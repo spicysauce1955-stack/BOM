@@ -7,6 +7,10 @@ const OX = 60, OY = 260;       // world origin in canvas px
 const SNAP_MM = 100;           // drawing snap
 
 const $ = (id) => document.getElementById(id);
+// verbatim user/expert text must never be interpreted as HTML (script-injection
+// surface: annotations, correction comments, knowledge source_text)
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g,
+  (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const api = {
   async get(url) { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); },
   async send(method, url, body) {
@@ -84,6 +88,13 @@ async function openProject(id) {
   state.project = await api.get(`/api/projects/${id}`);
   state.result = null;
   state.critique = [];
+  // never re-mint ids that already exist in the loaded project
+  const maxSuffix = (items, prefix) => items.reduce((m, it) => {
+    const match = it.id.match(new RegExp(`^${prefix}(\\d+)$`));
+    return match ? Math.max(m, +match[1]) : m;
+  }, 0);
+  state.nodeSeq = maxSuffix(state.project.topology.nodes, "n") + 1;
+  state.runSeq = maxSuffix(state.project.topology.runs, "run") + 1;
   // resume the latest persisted generation run, if any
   try {
     const runs = await api.get(`/api/projects/${id}/runs`);
@@ -298,7 +309,7 @@ function renderOverrides() {
     const d = document.createElement("div");
     d.className = "card";
     const orphaned = state.result?.orphaned_overrides?.includes(ov.id);
-    d.innerHTML = `${ov.directive.kind} @ ${ov.directive.station_mm ?? ""} on ${ov.run_id}
+    d.innerHTML = `${esc(ov.directive.kind)} @ ${esc(ov.directive.station_mm ?? "")} on ${esc(ov.run_id)}
       ${orphaned ? '<span class="tag rejected">orphaned</span>' : ""}
       <button data-ov="${ov.id}">remove</button>`;
     d.querySelector("button").addEventListener("click", async () => {
@@ -363,7 +374,7 @@ async function renderBom() {
       <td>${l.overage_qty || ""}</td>
       <td>${(l.unit_price_cents / 100).toFixed(2)}</td>
       <td>${(l.total_cents / 100).toFixed(2)}</td>
-      <td>${(l.notes || []).join("; ")}</td></tr>`;
+      <td>${esc((l.notes || []).join("; "))}</td></tr>`;
   }
   html += "</table></div>";
   for (const [sku, plan] of Object.entries(bom.cut_plans || {})) {
@@ -394,23 +405,23 @@ async function renderAnnotations() {
   for (const ann of state.project?.annotations || []) {
     const card = document.createElement("div");
     card.className = "card";
-    let html = `<div class="meta">${ann.id} · on ${ann.target_ref} · by ${ann.author}</div>
-      <div class="verbatim">“${ann.text}”</div>
+    let html = `<div class="meta">${esc(ann.id)} · on ${esc(ann.target_ref)} · by ${esc(ann.author)}</div>
+      <div class="verbatim">“${esc(ann.text)}”</div>
       <button data-act="interpret">Interpret with AI</button>`;
     for (const rec of ann.interpretations) {
-      html += `<div class="meta">interpretation by ${rec.interpreter}</div>`;
+      html += `<div class="meta">interpretation by ${esc(rec.interpreter)}</div>`;
       for (const c of rec.candidates) {
-        html += `<div>→ <b>${c.kind}</b> ${JSON.stringify(c.params)}
+        html += `<div>→ <b>${esc(c.kind)}</b> ${esc(JSON.stringify(c.params))}
           <span class="tag ${c.confidence}">${c.confidence}</span>
           <span class="tag ${c.status}">${c.status}</span>`;
         if (c.status === "proposed")
           html += ` <button data-confirm="${c.id}" data-ann="${ann.id}">Confirm</button>
                     <button data-rejint="${c.id}">✕</button>`;
         html += "</div>";
-        if (c.ambiguity_note) html += `<div class="meta">⚠ ${c.ambiguity_note}</div>`;
+        if (c.ambiguity_note) html += `<div class="meta">⚠ ${esc(c.ambiguity_note)}</div>`;
       }
       for (const u of rec.unparsed_spans)
-        html += `<div class="meta">unparsed: “${u}”</div>`;
+        html += `<div class="meta">unparsed: “${esc(u)}”</div>`;
     }
     card.innerHTML = html;
     card.querySelector('[data-act="interpret"]').addEventListener("click", async () => {
@@ -419,9 +430,12 @@ async function renderAnnotations() {
     });
     card.querySelectorAll("[data-confirm]").forEach((btn) =>
       btn.addEventListener("click", async () => {
-        const runId = ann.target_ref.startsWith("run:")
-          ? ann.target_ref.slice(4)
-          : state.project.topology.runs[0]?.id;
+        let runId = ann.target_ref.startsWith("run:") ? ann.target_ref.slice(4) : null;
+        if (!runId) {
+          const options = state.project.topology.runs.map((r) => r.id).join(", ");
+          runId = prompt(`Apply to which run? (${options})`, state.project.topology.runs[0]?.id);
+          if (!runId) return;
+        }
         await api.send("POST", `/api/projects/${state.projectId}/intents/${btn.dataset.confirm}/confirm`,
           { annotation_id: btn.dataset.ann, run_id: runId });
         await openProject(state.projectId);
@@ -440,11 +454,11 @@ async function renderKnowledge() {
     card.className = "card";
     let html = `<span class="tag ${v.type}">${v.type}</span>
       <span class="tag ${v.status}">${v.status}</span>
-      <b>${v.object_id}@v${v.version}</b> — ${v.title}
-      <div class="meta">scope ${JSON.stringify(v.scope)} · by ${v.attributed_to}
-        ${v.derived_from?.length ? "· derived from " + v.derived_from.join(", ") : ""}</div>`;
-    if (v.source_text) html += `<div class="verbatim">“${v.source_text}”</div>`;
-    html += `<div class="meta">actions: ${JSON.stringify(v.actions)}</div>`;
+      <b>${esc(v.object_id)}@v${v.version}</b> — ${esc(v.title)}
+      <div class="meta">scope ${esc(JSON.stringify(v.scope))} · by ${esc(v.attributed_to)}
+        ${v.derived_from?.length ? "· derived from " + esc(v.derived_from.join(", ")) : ""}</div>`;
+    if (v.source_text) html += `<div class="verbatim">“${esc(v.source_text)}”</div>`;
+    html += `<div class="meta">actions: ${esc(JSON.stringify(v.actions))}</div>`;
     if (v.status === "active")
       html += `<button data-retire="1">Retire</button>`;
     card.innerHTML = html;
@@ -465,11 +479,11 @@ async function renderCandidates() {
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `<span class="tag candidate">candidate</span>
-      <b>${c.object_id}@v${c.version}</b> — ${c.title}
-      <div class="meta">proposed scope ${JSON.stringify(c.scope)} ·
-        derived from ${c.derived_from.join(", ")}</div>
-      ${c.source_text ? `<div class="verbatim">“${c.source_text}”</div>` : ""}
-      <div class="meta">actions: ${JSON.stringify(c.actions)}</div>
+      <b>${esc(c.object_id)}@v${c.version}</b> — ${esc(c.title)}
+      <div class="meta">proposed scope ${esc(JSON.stringify(c.scope))} ·
+        derived from ${esc(c.derived_from.join(", "))}</div>
+      ${c.source_text ? `<div class="verbatim">“${esc(c.source_text)}”</div>` : ""}
+      <div class="meta">actions: ${esc(JSON.stringify(c.actions))}</div>
       <button data-a="approve">Approve</button>
       <button data-a="scope_restrict">Approve narrower…</button>
       <button data-a="reject">Reject…</button>`;
@@ -523,7 +537,8 @@ function addIntervalEvent(payload, start, end) {
 // ---------- wiring ----------
 function renderAll() {
   renderGrid(); renderTopology(); renderOverlay(); renderWarnings();
-  renderRunSelectors(); renderOverrides(); renderAnnotations(); renderInventory(); renderBom();
+  renderRunSelectors(); renderOverrides(); renderAnnotations(); renderInventory();
+  if ($("tab-bom").classList.contains("active")) renderBom();
 }
 
 function setupUi() {

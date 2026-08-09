@@ -68,16 +68,26 @@ def spine(request):
     result = generate(topo, knowledge, catalog, overrides=overrides)
     reqs = derive_requirements(result.strategy, catalog)
     bom = fulfill(reqs, catalog, inventory)
-    return result, reqs, bom, catalog
+    return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge)
+
+
+@pytest.fixture()
+def rerun(spine):
+    """Regenerate the whole spine from the same inputs (real determinism check)."""
+    _, _, _, catalog, (topo, overrides, inventory, knowledge) = spine
+    result = generate(topo, knowledge, catalog, overrides=overrides)
+    reqs = derive_requirements(result.strategy, catalog)
+    bom = fulfill(reqs, catalog, inventory)
+    return result, reqs, bom
 
 
 def test_span_never_exceeds_hard_max(spine):
-    result, _, _, _ = spine
+    result, _, _, _, _ = spine
     assert all(sp.width_mm <= 1800 for sp in result.strategy.spans)
 
 
 def test_cut_plans_feasible_and_conserving(spine):
-    result, reqs, bom, catalog = spine
+    result, reqs, bom, catalog, _ = spine
     for sku, plan in bom.cut_plans.items():
         sem = catalog.product(sku).consumption
         demanded = sorted(
@@ -93,17 +103,23 @@ def test_cut_plans_feasible_and_conserving(spine):
 
 
 def test_packages_never_undersupply(spine):
-    result, reqs, bom, catalog = spine
+    result, reqs, bom, catalog, _ = spine
     for line in bom.lines:
         sem = catalog.product(line.sku).consumption
         if sem.kind == "packaged_discrete":
             supplied = line.purchase_qty * sem.qty_per_package
             allocated = sum(a.qty for a in bom.allocations if a.sku == line.sku)
             assert supplied + allocated >= line.engineering_qty
+        elif sem.kind == "coverage_based":
+            # purchase * den >= applications * num  <=>  supply covers demand exactly
+            assert (
+                line.purchase_qty * sem.qty_per_application.den
+                >= line.engineering_qty * sem.qty_per_application.num
+            )
 
 
 def test_full_traceability_chain(spine):
-    result, reqs, bom, _ = spine
+    result, reqs, bom, _, _ = spine
     req_ids = {r.id for r in reqs}
     element_ids = set(result.strategy.element_ids())
     for r in reqs:
@@ -115,7 +131,7 @@ def test_full_traceability_chain(spine):
 
 
 def test_decision_edges_reference_existing_nodes(spine):
-    result, _, _, _ = spine
+    result, _, _, _, _ = spine
     graph = result.graph
     node_ids = {n.id for n in graph.nodes}
     for e in graph.edges:
@@ -123,17 +139,58 @@ def test_decision_edges_reference_existing_nodes(spine):
 
 
 def test_projected_remnants_meet_threshold(spine):
-    result, _, bom, catalog = spine
+    result, _, bom, catalog, _ = spine
     for item in bom.projected_remnants:
         sem = catalog.product(item.sku).consumption
         assert item.length_mm >= sem.min_reusable_remnant_mm
 
 
-def test_determinism(spine):
-    result, reqs, bom, _ = spine
-    # regenerate the whole spine from the run's captured inputs is exercised in the
-    # spike; here: graph and strategy serialization is stable
-    assert result.strategy.model_dump() == result.strategy.model_dump()
+def test_determinism(spine, rerun):
+    """Real double-run: regenerate the whole spine from the same inputs and demand
+    byte-identical output — across every fixture shape (test-review finding 1)."""
+    result, reqs, bom, _, _ = spine
+    result2, reqs2, bom2 = rerun
+    assert result2.strategy.model_dump() == result.strategy.model_dump()
+    assert result2.graph.model_dump() == result.graph.model_dump()
+    assert result2.run.id == result.run.id
+    assert [r.model_dump() for r in reqs2] == [r.model_dump() for r in reqs]
+    assert bom2.model_dump() == bom.model_dump()
+
+
+def test_knowledge_refs_resolve_to_snapshot(spine):
+    """Every governed_by/defeated edge cites a version present in the run's
+    knowledge snapshot (test-review finding 7)."""
+    result, _, _, _, _ = spine
+    snapshot = {f"{oid}@v{ver}" for oid, ver in result.run.knowledge_snapshot}
+    for e in result.graph.edges:
+        if e.knowledge_ref is not None:
+            assert e.knowledge_ref in snapshot, e.knowledge_ref
+
+
+def test_coverage_and_cap_quantities_plain():
+    """S01 spine: 5 posts -> 5 caps; 5 soil footings at 0.5 bag -> 3 bags (odd
+    round-up boundary) — coverage semantics numerically pinned (finding 2/3)."""
+    knowledge, catalog = demo_knowledge(), demo_catalog()
+    result = generate(straight_topology(6000), knowledge, catalog)
+    reqs = derive_requirements(result.strategy, catalog)
+    bom = fulfill(reqs, catalog)
+    caps = next(l for l in bom.lines if l.sku == "POST-CAP")
+    assert caps.engineering_qty == 5 and caps.purchase_qty == 5
+    conc = next(l for l in bom.lines if l.sku == "CONC-25")
+    assert conc.engineering_qty == 5  # applications
+    assert conc.purchase_qty == 3     # ceil(5 * 1/2)
+
+
+def test_sliver_span_warning_cites_preference():
+    """Run shorter than the preferred minimum span -> surfaced sliver warning
+    citing K-SLIVER (test-review finding 4)."""
+    knowledge, catalog = demo_knowledge(), demo_catalog()
+    result = generate(straight_topology(400), knowledge, catalog)
+    assert [sp.width_mm for sp in result.strategy.spans] == [400]
+    warning = next(w for w in result.strategy.warnings if w.code == "sliver_span")
+    node = result.graph.node(warning.decision_ref)
+    refs = {e.knowledge_ref for e in result.graph.in_edges(node.id) if e.type == "governed_by"}
+    assert "K-SLIVER@v1" in refs
 
 
 def test_missing_hard_knowledge_is_generation_failure():

@@ -25,9 +25,13 @@ def apply_review(candidate: KnowledgeVersion, action: ReviewAction) -> Knowledge
     if action.action == "scope_restrict":
         if not action.edited_scope:
             raise ValueError("scope_restrict requires edited_scope")
-        # restriction may only ADD dimensions (narrow), never remove
-        if not all(k in action.edited_scope for k in scope):
+        # restriction may only ADD dimensions (narrow) — existing dimensions must
+        # keep their values, or a "restriction" could retarget the rule entirely
+        # (final architecture review, finding 2)
+        if any(action.edited_scope.get(k) != v for k, v in scope.items()):
             raise ValueError("scope_restrict may only narrow the proposed scope")
+        if len(action.edited_scope) <= len(scope):
+            raise ValueError("scope_restrict must add at least one scope dimension")
         scope = action.edited_scope
 
     approved = KnowledgeVersion(

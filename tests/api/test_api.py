@@ -188,6 +188,117 @@ def test_inventory_flow(client):
     assert any(a["inventory_item_id"] == "rem1" for a in bom["allocations"])
 
 
+def test_project_listing_and_get(client):
+    pid = make_project(client, name="alpha")
+    assert any(p["id"] == pid and p["name"] == "alpha" for p in client.get("/api/projects").json())
+    assert client.get(f"/api/projects/{pid}").json()["name"] == "alpha"
+    assert client.get("/api/projects/nope").status_code == 404
+    assert client.get("/api/runs/nope").status_code == 404
+
+
+def test_duplicate_topology_ids_rejected(client):
+    pid = make_project(client)
+    bad = {
+        "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0}, {"id": "n1", "x_mm": 5000, "y_mm": 0}],
+        "runs": [],
+    }
+    r = client.put(f"/api/projects/{pid}/topology", json=bad)
+    assert r.status_code == 422  # corruption becomes a validation error (review #1)
+
+
+def test_delete_override_and_regenerate(client):
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    ov = client.post(
+        f"/api/projects/{pid}/overrides",
+        json={"id": "", "run_id": "run1", "directive": {"kind": "pin_post", "station_mm": 2000}},
+    ).json()
+    r1 = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    assert any(p["pinned"] for p in r1["strategy"]["posts"])
+    client.delete(f"/api/projects/{pid}/overrides/{ov['id']}")
+    r2 = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    assert not any(p["pinned"] for p in r2["strategy"]["posts"])
+    assert client.delete(f"/api/projects/{pid}/overrides/gone").status_code == 404
+
+
+def test_candidate_reject_and_scope_restrict(client):
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run = client.post(f"/api/projects/{pid}/generate").json()["result"]
+
+    def correction(comment):
+        client.post(
+            f"/api/projects/{pid}/corrections",
+            json={"generation_run_id": run["run"]["id"], "comment": comment, "author": "e"},
+        )
+
+    correction("use the existing foundation here")
+    cand = client.post(f"/api/projects/{pid}/propose-knowledge").json()[0]
+
+    # widening/retargeting disguised as restriction is rejected (review #2)
+    r = client.post(
+        f"/api/candidates/{cand['object_id']}/{cand['version']}/review",
+        json={"action": "scope_restrict", "reviewer": "boss",
+              "edited_scope": {"project_id": "other-project", "series": "X"}},
+    )
+    assert r.status_code == 400
+
+    r = client.post(
+        f"/api/candidates/{cand['object_id']}/{cand['version']}/review",
+        json={"action": "scope_restrict", "reviewer": "boss",
+              "edited_scope": {**cand["scope"], "series": "X"}},
+    )
+    assert r.status_code == 200
+    approved = r.json()
+    assert approved["status"] == "active" and approved["scope"]["series"] == "X"
+
+    # a second candidate: reject path with reason, kept as rejected
+    correction2 = client.post(
+        f"/api/projects/{pid}/corrections",
+        json={"generation_run_id": run["run"]["id"],
+              "comment": "another foundation note", "author": "e"},
+    )
+    cand2 = client.post(f"/api/projects/{pid}/propose-knowledge").json()
+    if cand2:
+        c2 = cand2[0]
+        out = client.post(
+            f"/api/candidates/{c2['object_id']}/{c2['version']}/review",
+            json={"action": "reject", "reviewer": "boss", "reason": "one-off"},
+        ).json()
+        assert out["status"] == "rejected"
+    assert client.post(
+        "/api/candidates/NOPE/1/review", json={"action": "approve", "reviewer": "x"}
+    ).status_code == 404
+
+
+def test_catalog_and_audit(client):
+    catalog = client.get("/api/catalog").json()
+    assert "RAIL-3000" in catalog["products"]
+    new_product = {
+        "sku": "POST-ALU", "name": "Aluminium post",
+        "consumption": {"kind": "indivisible_discrete"}, "price_cents": 5100,
+    }
+    client.put("/api/catalog/products", json=new_product)
+    assert "POST-ALU" in client.get("/api/catalog").json()["products"]
+
+    entries = client.get("/api/audit").json()
+    assert any(e["action"] == "save_catalog" for e in entries)
+
+
+def test_bom_reports_inventory_hash(client):
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    h1 = client.get(f"/api/runs/{run['run']['id']}/bom").json()["inventory_hash"]
+    client.put(
+        f"/api/projects/{pid}/inventory",
+        json={"items": [{"id": "s1", "sku": "POST-S", "kind": "full_stock", "qty": 2}]},
+    )
+    h2 = client.get(f"/api/runs/{run['run']['id']}/bom").json()["inventory_hash"]
+    assert h1 != h2  # a re-quoted BOM is distinguishable (review #5)
+    assert any(e["action"] == "fulfill" for e in client.get("/api/audit").json())
+
+
 def test_generation_failure_is_422(client):
     pid = make_project(client)
     put_straight_topology(client, pid)

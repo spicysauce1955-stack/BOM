@@ -77,18 +77,34 @@ class Store:
 
     # -- knowledge (append-only versions) --------------------------------------
 
+    # lifecycle transitions a version may take; anything else is a caller bug
+    _STATUS_TRANSITIONS = {
+        "draft": {"active", "retired"},
+        "active": {"retired"},
+        "proposed": {"retired", "rejected"},
+    }
+
     def insert_knowledge_version(self, v: KnowledgeVersion, actor: str = "system") -> None:
+        self._insert_version_nocommit(v, actor)
+        self._conn.commit()
+
+    def _insert_version_nocommit(self, v: KnowledgeVersion, actor: str) -> None:
         self._conn.execute(
             "INSERT INTO knowledge_versions (object_id, version, status, doc) VALUES (?,?,?,?)",
             (v.object_id, v.version, v.status, v.model_dump_json()),
         )
         self._audit(actor, "insert_knowledge_version", v.ref)
-        self._conn.commit()
 
     def update_knowledge_status(
         self, object_id: str, version: int, status: str, actor: str = "system"
     ) -> None:
         """The only mutation versions allow: lifecycle status (content is immutable)."""
+        self._update_status_nocommit(object_id, version, status, actor)
+        self._conn.commit()
+
+    def _update_status_nocommit(
+        self, object_id: str, version: int, status: str, actor: str
+    ) -> None:
         row = self._conn.execute(
             "SELECT doc FROM knowledge_versions WHERE object_id=? AND version=?",
             (object_id, version),
@@ -96,13 +112,51 @@ class Store:
         if row is None:
             raise KeyError(f"{object_id}@v{version}")
         v = KnowledgeVersion.model_validate_json(row[0])
+        if status not in self._STATUS_TRANSITIONS.get(v.status, set()):
+            raise ValueError(f"illegal status transition {v.status} -> {status} for {v.ref}")
         v.status = status  # type: ignore[assignment]
+        v = KnowledgeVersion.model_validate(v.model_dump())  # re-validate the Literal
         self._conn.execute(
             "UPDATE knowledge_versions SET status=?, doc=? WHERE object_id=? AND version=?",
             (status, v.model_dump_json(), object_id, version),
         )
         self._audit(actor, f"knowledge_status:{status}", v.ref)
-        self._conn.commit()
+
+    def replace_active_version(self, v: KnowledgeVersion, actor: str = "system") -> None:
+        """Atomically retire the object's active version(s) and insert the new one —
+        a crash can never leave a retired rule without its successor (final
+        architecture review, finding 6)."""
+        try:
+            rows = self._conn.execute(
+                "SELECT version FROM knowledge_versions WHERE object_id=? AND status='active'",
+                (v.object_id,),
+            ).fetchall()
+            for (prev_version,) in rows:
+                self._update_status_nocommit(v.object_id, prev_version, "retired", actor)
+            self._insert_version_nocommit(v, actor)
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+    def apply_review_outcome(
+        self,
+        candidate: KnowledgeVersion,
+        approved: KnowledgeVersion | None,
+        actor: str,
+    ) -> None:
+        """Atomically persist a review: candidate status change + optional approved
+        version in one transaction."""
+        try:
+            self._update_status_nocommit(
+                candidate.object_id, candidate.version, candidate.status, actor
+            )
+            if approved is not None:
+                self._insert_version_nocommit(approved, actor)
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
 
     def knowledge_base(self) -> KnowledgeBase:
         rows = self._conn.execute(
@@ -194,6 +248,12 @@ class Store:
         return Catalog.model_validate_json(row[0]) if row else None
 
     # -- audit -------------------------------------------------------------------
+
+    def log(self, actor: str, action: str, ref: str) -> None:
+        """Public audit hook for domain events the store doesn't itself perform
+        (e.g. a BOM computed against an inventory snapshot)."""
+        self._audit(actor, action, ref)
+        self._conn.commit()
 
     def audit_entries(self, limit: int = 100) -> list[dict]:
         rows = self._conn.execute(

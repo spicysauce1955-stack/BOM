@@ -82,10 +82,15 @@ def test_s10_gate_with_reinforced_posts(knowledge, catalog):
     # no spans inside the opening; 2+2 spans on the flanks
     assert sorted(sp.width_mm for sp in s.spans) == [1000, 1000, 1000, 1000]
 
-    # reinforcement decision cites the gate rule
+    # reinforcement decision cites the gate rule AND the gate topology event
     d = result.graph.nodes_for_element(gate_posts[0].id)[0]
     refs = {e.knowledge_ref for e in result.graph.in_edges(d.id) if e.type == "governed_by"}
     assert "K-GATE-REINF@v1" in refs
+    gate_facts = [
+        a for a in result.graph.ancestors(d.id)
+        if a.action == "gate_event" and a.payload.get("event_id") == "ev_gate"
+    ]
+    assert gate_facts, "gate post decision must cite the gate topology event (S10)"
 
     kit_line = next(l for l in bom.lines if l.sku == "GATE-KIT-1000")
     assert kit_line.purchase_qty == 1

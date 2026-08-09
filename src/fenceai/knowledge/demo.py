@@ -74,6 +74,11 @@ def demo_knowledge() -> KnowledgeBase:
                         ctx={"scope": {}, "run": {"length_mm": 6000, "slope_permille": 100}},
                         expect_applicable=False,
                     ),
+                    RuleExample(
+                        description="exactly 15.0% stays raked (strict inequality)",
+                        ctx={"scope": {}, "run": {"length_mm": 6000, "slope_permille": 150}},
+                        expect_applicable=False,
+                    ),
                 ],
             ),
             KnowledgeVersion(

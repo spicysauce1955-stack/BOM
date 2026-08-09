@@ -23,6 +23,9 @@ class StubInterpreter:
     def interpret(self, annotation: Annotation) -> InterpretationRecord:
         text = annotation.text
         lower = text.lower()
+        # record ordinal is part of every intent id so re-interpretation never
+        # collides with earlier records (final architecture review, finding 3)
+        rec_no = len(annotation.interpretations) + 1
         candidates: list[CandidateIntent] = []
         unparsed: list[str] = []
 
@@ -31,7 +34,7 @@ class StubInterpreter:
             if m and any(k in lower for k in ("align", "level", "top")):
                 candidates.append(
                     CandidateIntent(
-                        id=f"intent_{annotation.id}_1",
+                        id=f"intent_{annotation.id}_{rec_no}_1",
                         kind="top_line",
                         params={"mode": "level", "z_mm": int(m.group(1))},
                         source_text=text,
@@ -44,7 +47,7 @@ class StubInterpreter:
             elif m:
                 candidates.append(
                     CandidateIntent(
-                        id=f"intent_{annotation.id}_1",
+                        id=f"intent_{annotation.id}_{rec_no}_1",
                         kind="height_intent",
                         params={"height_mm": int(m.group(1))},
                         source_text=text,
@@ -56,7 +59,7 @@ class StubInterpreter:
         elif "privacy" in lower:
             candidates.append(
                 CandidateIntent(
-                    id=f"intent_{annotation.id}_1",
+                    id=f"intent_{annotation.id}_{rec_no}_1",
                     kind="height_intent",
                     params={"height_mm": 1800},
                     source_text=text,
@@ -68,7 +71,7 @@ class StubInterpreter:
             m = _MM_IN_TEXT.search(lower)
             candidates.append(
                 CandidateIntent(
-                    id=f"intent_{annotation.id}_1",
+                    id=f"intent_{annotation.id}_{rec_no}_1",
                     kind="post_request",
                     params={"station_mm": int(m.group(1))} if m else {},
                     source_text=text,
@@ -80,7 +83,7 @@ class StubInterpreter:
             unparsed.append(text)
 
         return InterpretationRecord(
-            id=f"interp_{annotation.id}_{len(annotation.interpretations) + 1}",
+            id=f"interp_{annotation.id}_{rec_no}",
             annotation_id=annotation.id,
             interpreter=self.interpreter_id,
             candidates=candidates,

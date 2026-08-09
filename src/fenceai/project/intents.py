@@ -25,10 +25,15 @@ def confirm_intent(
     confirmed_by: str = "user",
 ) -> str:
     """Confirm one candidate intent; returns the id of the materialized object."""
-    annotation = next(a for a in project.annotations if a.id == annotation_id)
+    annotation = next((a for a in project.annotations if a.id == annotation_id), None)
+    if annotation is None:
+        raise ValueError(f"annotation {annotation_id} not found")
     record = next(
-        r for r in annotation.interpretations if any(c.id == intent_id for c in r.candidates)
+        (r for r in annotation.interpretations if any(c.id == intent_id for c in r.candidates)),
+        None,
     )
+    if record is None:
+        raise ValueError(f"intent {intent_id} not found on annotation {annotation_id}")
     intent = next(c for c in record.candidates if c.id == intent_id)
     if intent.status == "confirmed":
         raise ValueError(f"intent {intent_id} already confirmed")

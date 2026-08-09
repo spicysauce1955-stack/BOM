@@ -6,6 +6,7 @@ lives here. AI adapters are selected once at startup (stub by default, ADR-0009)
 
 from __future__ import annotations
 
+import hashlib
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -225,7 +226,11 @@ def get_bom(run_id: str):
     inventory = state.store.load_inventory(result.run.project_id)
     requirements = derive_requirements(result.strategy, catalog)
     bom = fulfill(requirements, catalog, inventory)
-    return {"requirements": requirements, "bom": bom}
+    # the BOM is what a customer gets quoted on: record which inventory state
+    # produced it so a later recomputation is distinguishable (final review, #5)
+    inventory_hash = hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16]
+    state.store.log("system", "fulfill", f"{run_id}:inv={inventory_hash}")
+    return {"requirements": requirements, "bom": bom, "inventory_hash": inventory_hash}
 
 
 @app.get("/api/runs/{run_id}/explain/{element_id}")
@@ -304,9 +309,8 @@ def review_candidate(object_id: str, version: int, body: ReviewBody):
         outcome = apply_review(cand, ReviewAction(**body.model_dump()))
     except ValueError as e:
         raise HTTPException(400, str(e))
-    state.store.update_knowledge_status(object_id, version, cand.status, actor=body.reviewer)
-    if outcome is not cand:  # approval created a new active version
-        state.store.insert_knowledge_version(outcome, actor=body.reviewer)
+    approved = outcome if outcome is not cand else None
+    state.store.apply_review_outcome(cand, approved, actor=body.reviewer)
     return outcome
 
 
@@ -341,19 +345,18 @@ def upsert_knowledge(body: KnowledgeCreate):
         derived_from=[f"{body.object_id}@v{version_no - 1}"] if version_no > 1 else [],
         status="active",
     )
-    kb = state.store.knowledge_base()
-    for prev in kb.versions:
-        if prev.object_id == body.object_id and prev.status == "active":
-            state.store.update_knowledge_status(
-                prev.object_id, prev.version, "retired", actor=body.author
-            )
-    state.store.insert_knowledge_version(v, actor=body.author)
+    state.store.replace_active_version(v, actor=body.author)
     return v
 
 
 @app.post("/api/knowledge/{object_id}/{version}/retire")
 def retire_knowledge(object_id: str, version: int, author: str = "user"):
-    state.store.update_knowledge_status(object_id, version, "retired", actor=author)
+    try:
+        state.store.update_knowledge_status(object_id, version, "retired", actor=author)
+    except KeyError:
+        raise HTTPException(404, f"{object_id}@v{version} not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"retired": f"{object_id}@v{version}"}
 
 

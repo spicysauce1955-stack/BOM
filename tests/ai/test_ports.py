@@ -68,9 +68,32 @@ def test_claude_optin_without_credentials_falls_back_to_stub(monkeypatch):
     monkeypatch.setenv("FENCEAI_AI", "claude")
     for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
         monkeypatch.delenv(var, raising=False)
-    interp = build_interpreter()
-    # offline guarantee: never crash, never hang — stub is acceptable fallback
-    assert interp.interpreter_id == "stub" or interp.interpreter_id.startswith("claude:")
+    monkeypatch.setattr(
+        "anthropic.Anthropic",
+        _raise_missing_key,
+        raising=False,
+    )
+    # offline guarantee: with no constructible client the composition root must
+    # land on the stub — exactly, not "either"
+    assert build_interpreter().interpreter_id == "stub"
+
+
+def _raise_missing_key(*args, **kwargs):
+    raise RuntimeError("no credentials")
+
+
+def test_reinterpretation_ids_never_collide():
+    """Re-interpreting the same annotation must mint distinct intent ids so
+    confirmation can never resolve to a stale record (final review, finding 3)."""
+    a = ann("keep the top aligned with the neighbour (approx. 1750)")
+    r1 = StubInterpreter().interpret(a)
+    a.interpretations.append(r1)
+    r2 = StubInterpreter().interpret(a)
+    a.interpretations.append(r2)
+    ids1 = {c.id for c in r1.candidates}
+    ids2 = {c.id for c in r2.candidates}
+    assert ids1 and ids2 and ids1.isdisjoint(ids2)
+    assert r1.id != r2.id
 
 
 def test_critic_is_advisory_only(knowledge, catalog):

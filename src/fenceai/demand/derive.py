@@ -19,6 +19,7 @@ DEMAND_POLICY_DEFAULTS = {
     "rail_sku": "RAIL-3000",
     "screw_sku": "SCREW-S10",
     "concrete_sku": "CONC-25",
+    "cap_sku": "POST-CAP",  # golden-scenarios shared catalog: 1 cap per post
 }
 
 
@@ -50,6 +51,7 @@ def derive_requirements(
 
     for post in strategy.posts:
         add(post.sku, 1, "each", [post.id])
+        add(policy["cap_sku"], 1, "each", [post.id])
         if post.mounting == "ground":
             add(policy["concrete_sku"], 1, "application", [post.id])
 

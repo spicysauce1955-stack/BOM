@@ -21,7 +21,7 @@ def _cases():
             yield pytest.param(v, ex, id=f"{v.ref}-ex{i}")
 
 
-@pytest.mark.parametrize("version,example", _cases())
+@pytest.mark.parametrize("version,example", list(_cases()))
 def test_rule_examples(version, example):
     kb = KnowledgeBase(versions=[version])
     fired = any(f.version.ref == version.ref for f in applicable_firings(kb, example.ctx))

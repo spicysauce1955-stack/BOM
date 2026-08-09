@@ -47,12 +47,13 @@ class ClaudeInterpreter:
 
     def interpret(self, annotation: Annotation) -> InterpretationRecord:
         errors: str | None = None
+        rec_no = len(annotation.interpretations) + 1
         for _attempt in range(2):
             wire = self._call(annotation.text, errors)
             try:
                 candidates = [
                     CandidateIntent(
-                        id=f"intent_{annotation.id}_{i + 1}",
+                        id=f"intent_{annotation.id}_{rec_no}_{i + 1}",
                         kind=c.kind,  # type: ignore[arg-type]
                         params=c.params,
                         source_text=c.source_text,
@@ -63,7 +64,7 @@ class ClaudeInterpreter:
                     if c.source_text in annotation.text  # ground: span must be verbatim
                 ]
                 return InterpretationRecord(
-                    id=f"interp_{annotation.id}_{len(annotation.interpretations) + 1}",
+                    id=f"interp_{annotation.id}_{rec_no}",
                     annotation_id=annotation.id,
                     interpreter=self.interpreter_id,
                     candidates=candidates,
@@ -73,7 +74,7 @@ class ClaudeInterpreter:
                 errors = str(e)
         # degrade: needs human interpretation (Research D retry cap)
         return InterpretationRecord(
-            id=f"interp_{annotation.id}_{len(annotation.interpretations) + 1}",
+            id=f"interp_{annotation.id}_{rec_no}",
             annotation_id=annotation.id,
             interpreter=self.interpreter_id,
             candidates=[],

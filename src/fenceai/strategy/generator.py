@@ -376,6 +376,18 @@ def _generate_run(
             gates.append((gs, ge, kit, ev.id))
     gates.sort()
     gate_edges = {s for gs, ge, _, _ in gates for s in (gs, ge)}
+    # gate fact nodes exist before any post so flanking-post decisions cite the
+    # gate topology event (golden-scenarios S10)
+    gate_fact_ids: dict[str, str] = {}
+    gate_edge_facts: dict[Mm, list[str]] = {}
+    for gs, ge, _, ev_id in gates:
+        fact = builder.add(
+            "input_fact", "gate_event",
+            payload={"event_id": ev_id, "start_mm": gs, "end_mm": ge},
+        )
+        gate_fact_ids[ev_id] = fact.id
+        for s in (gs, ge):
+            gate_edge_facts.setdefault(s, []).append(fact.id)
 
     # -- overrides addressed to this run ---------------------------------------
     pinned_stations: dict[Mm, Override] = {}
@@ -412,6 +424,7 @@ def _generate_run(
         if station in gate_edges:
             kind = "gate"
             reinforced = surface != "masonry_wall" and reinf_sku is not None
+            inputs = inputs + gate_edge_facts.get(station, [])
         elif station in corners:
             kind = "corner"
         elif station in transitions:
@@ -455,10 +468,7 @@ def _generate_run(
 
     # -- gate elements ---------------------------------------------------------
     for gs, ge, kit, ev_id in gates:
-        gate_fact = builder.add(
-            "input_fact", "gate_event",
-            payload={"event_id": ev_id, "start_mm": gs, "end_mm": ge},
-        )
+        gate_fact_id = gate_fact_ids[ev_id]
         gate = Gate(
             id=f"gate@{run.id}:{gs}-{ge}", run_ref=run.id,
             start_station_mm=gs, end_station_mm=ge, kit_sku=kit,
@@ -468,7 +478,7 @@ def _generate_run(
             "structural", "place_gate",
             payload={"start_mm": gs, "end_mm": ge},
             scope_refs=[gate.id],
-            inputs=[gate_fact.id],
+            inputs=[gate_fact_id],
         )
         builder.add(
             "selection", "select_gate_kit",

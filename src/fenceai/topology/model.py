@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from fenceai.core.units import Mm
 
@@ -129,6 +129,28 @@ class Topology(BaseModel):
     revision: int = 0
     nodes: list[Node] = []
     runs: list[Run] = []
+
+    @model_validator(mode="after")
+    def _integrity(self) -> "Topology":
+        """Duplicate ids silently merge distinct objects downstream — reject at the
+        model boundary so a bad PUT becomes a 422, never corrupted geometry
+        (final architecture review, finding 1)."""
+        node_ids = [n.id for n in self.nodes]
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("duplicate node ids in topology")
+        run_ids = [r.id for r in self.runs]
+        if len(run_ids) != len(set(run_ids)):
+            raise ValueError("duplicate run ids in topology")
+        event_ids = [
+            e.id for r in self.runs for e in [*r.point_events, *r.interval_events]
+        ]
+        if len(event_ids) != len(set(event_ids)):
+            raise ValueError("duplicate event ids in topology")
+        known = set(node_ids)
+        for r in self.runs:
+            if r.start_node_id not in known or r.end_node_id not in known:
+                raise ValueError(f"run {r.id} references a missing node")
+        return self
 
     def node(self, node_id: str) -> Node:
         for n in self.nodes:
