@@ -40,11 +40,14 @@ def layout_segment(
     *,
     prefer_equal: bool = True,
     min_span_mm: Mm | None = None,
+    nominal_mm: Mm | None = None,
 ) -> LayoutResult:
     """Lay out one free segment. Equal-width preferred layout, recording the nominal
-    alternative when it differs (decision-graph alternatives, scenario S02)."""
+    alternative when it differs (decision-graph alternatives, scenario S02).
+    nominal_mm defaults to max_span_mm and is always clamped to the hard maximum."""
+    nominal_width = min(nominal_mm or max_span_mm, max_span_mm)
     equal = equal_layout(length_mm, max_span_mm)
-    nominal = nominal_layout(length_mm, max_span_mm)
+    nominal = nominal_layout(length_mm, nominal_width)
     if prefer_equal:
         chosen, rejected = equal, (nominal if nominal != equal else None)
     else:

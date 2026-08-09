@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fenceai.knowledge.ast import Cmp, FieldRef, Lit
 from fenceai.knowledge.model import (
+    DefaultComponent,
     KnowledgeBase,
     KnowledgeVersion,
     PreferEqualSpans,
@@ -56,9 +57,16 @@ def demo_knowledge() -> KnowledgeBase:
             ),
             KnowledgeVersion(
                 object_id="K-STEP-SLOPE", version=1, type="heuristic",
-                title="Steep runs look better stepped",
-                condition=Cmp(cmp=">", left=FieldRef(path="run.slope_pct"), right=Lit(value=15)),
+                title="Steep runs look better stepped (slope > 15%)",
+                condition=Cmp(
+                    cmp=">", left=FieldRef(path="run.slope_permille"), right=Lit(value=150)
+                ),
                 actions=[PreferVertical(mode="stepped")],
+            ),
+            KnowledgeVersion(
+                object_id="K-POST-DEFAULT", version=1, type="fact",
+                title="Default ground post product",
+                actions=[DefaultComponent(role="post_ground", sku="POST-S")],
             ),
         ]
     )

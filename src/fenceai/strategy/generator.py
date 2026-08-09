@@ -1,8 +1,14 @@
 """Strategy generation: pure, deterministic pipeline (ADR-0004, foundation §7).
 
 generate(topology, knowledge, catalog, overrides, policy) -> GenerationResult.
-Every structural/selection output is created through the GraphBuilder with its
-evidence edges — the decision graph is not reconstructed afterwards.
+
+Discipline (post-spike architecture review):
+- pure: inputs are never mutated; orphaned overrides are reported in the result;
+- every behavioral choice flows through knowledge resolution — product selection,
+  layout preferences, vertical mode, quantities — with the winning/defeated version
+  refs recorded as decision-graph edges (no cite-but-hardcode);
+- override anchors match generated stations within SNAP_TOLERANCE_MM;
+- elements are never mutated after their decision node is recorded.
 """
 
 from __future__ import annotations
@@ -12,9 +18,15 @@ import json
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.errors import GenerationFailure
-from fenceai.core.units import Mm, slope_len_mm
+from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
-from fenceai.knowledge.evaluator import preference_firings, resolve_actions, resolve_param
+from fenceai.knowledge.evaluator import (
+    Resolution,
+    preference_firings,
+    resolve as evaluator_resolve,
+    resolve_actions,
+    resolve_param,
+)
 from fenceai.knowledge.model import KnowledgeBase
 from fenceai.strategy.layout import boundaries, layout_segment
 from fenceai.strategy.model import (
@@ -34,22 +46,15 @@ from fenceai.topology.station import (
     base_transition_stations,
     corner_stations,
     ground_z,
+    max_slope_permille,
     run_length,
 )
 
 DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "fewest_new_stock"}
-GATE_REINFORCEMENT_REACH_MM = 1  # flanking post exactly at gate edge
 
 
-def _height_at(topo: Topology, run: Run, station: Mm, policy: dict) -> tuple[Mm, str | None]:
-    """Height intent at a station: (height, source event id or None for policy default)."""
-    for ev in run.interval_events:
-        if ev.payload.kind == "height_intent":
-            s0 = anchor_station(topo, run, ev.start_anchor)
-            s1 = anchor_station(topo, run, ev.end_anchor)
-            if s0 <= station <= s1:
-                return ev.payload.height_mm, ev.id
-    return policy["default_height_mm"], None
+def _near(a: Mm, b: Mm) -> bool:
+    return abs(a - b) <= SNAP_TOLERANCE_MM
 
 
 def generate(
@@ -64,52 +69,24 @@ def generate(
     policy = {**DEFAULT_POLICY, **(policy or {})}
     builder = GraphBuilder()
     strategy = Strategy(id="strategy")
-    applied_overrides: list[str] = []
+    applied: set[str] = set()
 
-    # --- shared node posts (S03: one physical post per node) -----------------
-    node_degree: dict[str, list[tuple[Run, str]]] = {}
-    for run in topology.runs:
-        node_degree.setdefault(run.start_node_id, []).append((run, "start"))
-        node_degree.setdefault(run.end_node_id, []).append((run, "end"))
-
-    node_post_ids: dict[str, str] = {}
-    for node in topology.nodes:
-        touches = node_degree.get(node.id, [])
-        if not touches:
-            continue
-        run, end = touches[0]
-        station = 0 if end == "start" else run_length(topology, run)
-        surface = base_surface_at(topology, run, station)
-        kind = "end" if len(touches) == 1 else ("corner" if len(touches) == 2 else "junction")
-        fact = builder.add(
-            "input_fact", "topology_node",
-            payload={"node_id": node.id, "x_mm": node.x_mm, "y_mm": node.y_mm, "runs": len(touches)},
-        )
-        post, decision = _make_post(
-            builder, topology, knowledge, run, station,
-            post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
-            kind=kind, surface=surface, inputs=[fact.id], strategy=strategy,
-        )
-        node_post_ids[node.id] = post.id
-        strategy.posts.append(post)
-
-    # --- per-run generation ---------------------------------------------------
+    _generate_node_posts(topology, knowledge, catalog, overrides, builder, strategy, applied)
     for run in topology.runs:
         _generate_run(
-            topology, run, knowledge, catalog, overrides, policy,
-            builder, strategy, applied_overrides,
+            topology, run, knowledge, catalog, overrides, policy, builder, strategy, applied
         )
 
-    # --- orphaned overrides ---------------------------------------------------
-    for ov in overrides:
-        if ov.id not in applied_overrides:
-            ov.status = "orphaned"
-            strategy.warnings.append(
-                StrategyWarning(
-                    code="orphaned_override", severity="warning",
-                    message=f"Override {ov.id} ({ov.directive.kind}) no longer matches the topology and was not applied.",
-                )
+    orphaned = [ov.id for ov in overrides if ov.id not in applied]
+    for ov_id in orphaned:
+        ov = next(o for o in overrides if o.id == ov_id)
+        strategy.warnings.append(
+            StrategyWarning(
+                code="orphaned_override", severity="warning",
+                message=f"Override {ov.id} ({ov.directive.kind}) no longer matches the "
+                        "topology and was not applied.",
             )
+        )
 
     graph = builder.build()
     run_meta = GenerationRun(
@@ -118,75 +95,233 @@ def generate(
         topology_revision=topology.revision,
         knowledge_snapshot=knowledge.snapshot_set(),
         snapshot_hash=knowledge.snapshot_hash(),
-        overrides_applied=applied_overrides,
+        overrides_applied=sorted(applied),
         policy=policy,
     )
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
-            [topology.model_dump(), run_meta.knowledge_snapshot, [o.model_dump() for o in overrides], policy],
+            [topology.model_dump(), run_meta.knowledge_snapshot,
+             [o.model_dump() for o in overrides], policy],
             sort_keys=True, default=str,
         ).encode()
     ).hexdigest()[:12]
-    return GenerationResult(run=run_meta, strategy=strategy, graph=graph)
+    return GenerationResult(
+        run=run_meta, strategy=strategy, graph=graph, orphaned_overrides=orphaned
+    )
+
+
+# --- knowledge-resolved selection helpers -----------------------------------
+
+def _post_ctx(surface: str, context: str = "") -> dict:
+    return {"scope": {}, "post": {"surface": surface, "context": context}}
+
+
+def _resolve_mounting(kb: KnowledgeBase, surface: str) -> tuple[str, str | None, list[str]]:
+    """(mounting, rule sku, governed refs) for a base surface — slot-scoped so rules
+    for other surfaces never compete (critic finding 5)."""
+    res = resolve_actions(
+        kb, _post_ctx(surface), "require_mounting", match=lambda a: a.surface == surface
+    )
+    if res.winner:
+        act = res.winner.actions[0]
+        return act.mounting, act.sku, [res.winner.version.ref]
+    return "ground", None, []
+
+
+def _resolve_reinforcement(kb: KnowledgeBase) -> tuple[str | None, list[str]]:
+    """(reinforced-post sku, governed refs) for gate context, or (None, [])."""
+    res = resolve_actions(
+        kb, _post_ctx("", context="gate"), "require_post_reinforcement",
+        match=lambda a: a.context == "gate",
+    )
+    if res.winner:
+        return res.winner.actions[0].sku, [res.winner.version.ref]
+    return None, []
+
+
+def _resolve_default_post(kb: KnowledgeBase, surface: str) -> tuple[str, list[str]]:
+    res = resolve_actions(
+        kb, _post_ctx(surface), "default_component", match=lambda a: a.role == "post_ground"
+    )
+    if res.winner:
+        return res.winner.actions[0].sku, [res.winner.version.ref]
+    raise GenerationFailure("no default ground-post product in knowledge (role post_ground)")
+
+
+def _resolve_quantity(kb: KnowledgeBase, ctx: dict, param: str, default: int) -> tuple[int, list[str]]:
+    res = resolve_param(kb, ctx, param)
+    if res.winner:
+        return (
+            next(a.value for a in res.winner.actions if a.kind == "set_param"),
+            [res.winner.version.ref],
+        )
+    return default, []
+
+
+def _matched_force_overrides(
+    overrides: list[Override], run_id: str, station: Mm
+) -> tuple[str | None, str | None, list[Override]]:
+    """(forced_sku, forced_mounting, matched overrides) at a station, within tolerance."""
+    forced_sku = forced_mounting = None
+    matched: list[Override] = []
+    for ov in overrides:
+        if ov.run_id != run_id:
+            continue
+        d = ov.directive
+        if d.kind == "force_post_sku" and _near(d.station_mm, station):
+            forced_sku = d.sku
+            matched.append(ov)
+        elif d.kind == "force_mounting" and _near(d.station_mm, station):
+            forced_mounting = d.mounting
+            matched.append(ov)
+    return forced_sku, forced_mounting, matched
 
 
 def _make_post(
     builder: GraphBuilder,
-    topo: Topology,
     kb: KnowledgeBase,
-    run: Run,
-    station: Mm,
     *,
     post_id: str,
     run_ref: str,
+    station: Mm,
     kind: str,
     surface: str,
+    ground_z_mm: Mm,
     inputs: list[str],
-    strategy: Strategy,
     reinforced: bool = False,
     reinforcement_refs: list[str] | None = None,
+    reinforced_sku: str | None = None,
     pinned: bool = False,
     forced_sku: str | None = None,
     forced_mounting: str | None = None,
-) -> tuple[Post, object]:
-    """Create a post with mounting + product selection decisions."""
-    ctx = {"scope": {}, "post": {"surface": surface, "context": "gate" if kind == "gate" else ""}}
-    mounting = "ground"
-    governed: list[str] = []
-    res = resolve_actions(kb, ctx, "require_mounting")
-    mount_sku: str | None = None
-    if res.winner:
-        for act in res.winner.actions:
-            if act.kind == "require_mounting" and act.surface == surface:
-                mounting = act.mounting
-                mount_sku = act.sku
-                governed.append(res.winner.version.ref)
+    override_nodes: list[str] | None = None,
+) -> Post:
+    """Create a post; every selection resolved from knowledge BEFORE the decision
+    node is recorded — elements are never mutated afterwards (critic finding 4)."""
+    mounting, mount_sku, governed = _resolve_mounting(kb, surface)
     if forced_mounting:
         mounting = forced_mounting
-    if mounting == "masonry":
-        sku = mount_sku or "POST-M"
-    elif reinforced:
-        sku = "POST-S-HD"
-    else:
-        sku = "POST-S"
     if forced_sku:
         sku = forced_sku
+        sku_refs: list[str] = []
+    elif mounting == "masonry" and mount_sku:
+        sku = mount_sku
+        sku_refs = []
+    elif reinforced and reinforced_sku:
+        sku = reinforced_sku
+        sku_refs = []
+    else:
+        sku, sku_refs = _resolve_default_post(kb, surface)
     post = Post(
         id=post_id, run_ref=run_ref, station_mm=station, kind=kind,  # type: ignore[arg-type]
         reinforced=reinforced, mounting=mounting, sku=sku,  # type: ignore[arg-type]
-        ground_z_mm=ground_z(topo, run, station), pinned=pinned,
+        ground_z_mm=ground_z_mm, pinned=pinned,
     )
-    decision = builder.add(
+    builder.add(
         "structural", "place_post",
         payload={"station_mm": station, "kind": kind, "surface": surface,
                  "mounting": mounting, "sku": sku},
         scope_refs=[post.id],
-        inputs=inputs,
-        governed_by=governed + (reinforcement_refs or []),
+        inputs=inputs + (override_nodes or []),
+        governed_by=governed + (reinforcement_refs or []) + sku_refs,
         status="pinned" if pinned else "proposed",
     )
-    return post, decision
+    return post
 
+
+# --- node posts ---------------------------------------------------------------
+
+def _generate_node_posts(
+    topology: Topology,
+    kb: KnowledgeBase,
+    catalog: Catalog,
+    overrides: list[Override],
+    builder: GraphBuilder,
+    strategy: Strategy,
+    applied: set[str],
+) -> None:
+    touches_by_node: dict[str, list[tuple[Run, Mm]]] = {}
+    for run in topology.runs:
+        touches_by_node.setdefault(run.start_node_id, []).append((run, 0))
+        touches_by_node.setdefault(run.end_node_id, []).append(
+            (run, run_length(topology, run))
+        )
+
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb)
+
+    for node in topology.nodes:
+        touches = sorted(touches_by_node.get(node.id, []), key=lambda t: t[0].id)
+        if not touches:
+            continue
+        # context from ALL incident runs (critic finding 9)
+        surfaces = sorted({base_surface_at(topology, r, s) for r, s in touches})
+        surface = "masonry_wall" if "masonry_wall" in surfaces else surfaces[0]
+        conflict_inputs: list[str] = []
+        if len(surfaces) > 1:
+            cnode = builder.add(
+                "conflict", "node_surface_disagreement",
+                payload={"node_id": node.id, "surfaces": surfaces, "chosen": surface},
+            )
+            strategy.warnings.append(
+                StrategyWarning(
+                    code="node_surface_disagreement", severity="warning",
+                    message=f"Runs meeting at node {node.id} disagree on base surface "
+                            f"({', '.join(surfaces)}); using {surface}.",
+                    decision_ref=cnode.id,
+                )
+            )
+            conflict_inputs = [cnode.id]
+
+        # gate adjacency: a gate edge at a run terminus reinforces the node post
+        reinforced = False
+        for r, s in touches:
+            for ev in r.point_events:
+                if ev.payload.kind == "gate":
+                    gs = anchor_station(topology, r, ev.anchor)
+                    ge = min(gs + ev.payload.width_mm, run_length(topology, r))
+                    if _near(gs, s) or _near(ge, s):
+                        reinforced = True
+
+        forced_sku = forced_mounting = None
+        matched_all: list[Override] = []
+        for r, s in touches:
+            fs, fm, matched = _matched_force_overrides(overrides, r.id, s)
+            forced_sku = fs or forced_sku
+            forced_mounting = fm or forced_mounting
+            matched_all += matched
+        override_nodes = []
+        for ov in matched_all:
+            applied.add(ov.id)
+            override_nodes.append(
+                builder.add(
+                    "override_applied", ov.directive.kind,
+                    payload={"override_id": ov.id, "node_id": node.id},
+                ).id
+            )
+
+        run0, station0 = touches[0]
+        kind = "end" if len(touches) == 1 else ("corner" if len(touches) == 2 else "junction")
+        fact = builder.add(
+            "input_fact", "topology_node",
+            payload={"node_id": node.id, "x_mm": node.x_mm, "y_mm": node.y_mm,
+                     "runs": len(touches)},
+        )
+        post = _make_post(
+            builder, kb,
+            post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
+            station=station0, kind=kind, surface=surface,
+            ground_z_mm=ground_z(topology, run0, station0),
+            inputs=[fact.id] + conflict_inputs,
+            reinforced=reinforced and surface != "masonry_wall",
+            reinforcement_refs=reinf_refs if reinforced else [],
+            reinforced_sku=reinf_sku,
+            forced_sku=forced_sku, forced_mounting=forced_mounting,
+            override_nodes=override_nodes,
+        )
+        strategy.posts.append(post)
+
+
+# --- per-run generation --------------------------------------------------------
 
 def _generate_run(
     topo: Topology,
@@ -197,18 +332,17 @@ def _generate_run(
     policy: dict,
     builder: GraphBuilder,
     strategy: Strategy,
-    applied_overrides: list[str],
+    applied: set[str],
 ) -> None:
     length = run_length(topo, run)
-    z0, z1 = ground_z(topo, run, 0), ground_z(topo, run, length)
-    slope_pct = abs(z1 - z0) / length * 100 if length else 0.0
+    slope_permille = max_slope_permille(topo, run)
     run_fact = builder.add(
         "input_fact", "run_geometry",
-        payload={"run_id": run.id, "length_mm": length, "slope_pct": round(slope_pct, 2)},
+        payload={"run_id": run.id, "length_mm": length, "slope_permille": slope_permille},
     )
-    ctx = {"scope": {}, "run": {"length_mm": length, "slope_pct": slope_pct}}
+    ctx = {"scope": {}, "run": {"length_mm": length, "slope_permille": slope_permille}}
 
-    # -- resolve hard span parameter ------------------------------------------
+    # -- hard span parameter ---------------------------------------------------
     res = resolve_param(kb, ctx, "max_span_mm")
     if res.winner is None:
         raise GenerationFailure(f"no max_span_mm knowledge applies to run {run.id}")
@@ -223,18 +357,30 @@ def _generate_run(
     )
     _surface_conflicts(res.conflicts, builder, strategy)
 
-    # -- fixed stations & gate openings ---------------------------------------
-    gates: list[tuple[Mm, Mm, str, str]] = []  # (start, end, kit_sku, event_id)
+    # -- gates -----------------------------------------------------------------
+    gates: list[tuple[Mm, Mm, str, str]] = []
     for ev in run.point_events:
         if ev.payload.kind == "gate":
             gs = anchor_station(topo, run, ev.anchor)
             ge = min(gs + ev.payload.width_mm, length)
             kit = ev.payload.kit_sku or f"GATE-KIT-{ev.payload.width_mm}"
+            if kit not in catalog.products:
+                strategy.warnings.append(
+                    StrategyWarning(
+                        code="unknown_product", severity="error",
+                        message=f"Gate kit '{kit}' is not in the catalog; BOM will "
+                                "price it at zero.",
+                        element_refs=[f"gate@{run.id}:{gs}-{ge}"],
+                    )
+                )
             gates.append((gs, ge, kit, ev.id))
     gates.sort()
+    gate_edges = {s for gs, ge, _, _ in gates for s in (gs, ge)}
 
+    # -- overrides addressed to this run ---------------------------------------
     pinned_stations: dict[Mm, Override] = {}
-    suppressed: dict[Mm, Override] = {}
+    suppress_ovs: list[Override] = []
+    force_vertical_ovs: list[Override] = []
     for ov in overrides:
         if ov.run_id != run.id:
             continue
@@ -242,72 +388,69 @@ def _generate_run(
         if d.kind == "pin_post" and 0 < d.station_mm < length:
             pinned_stations[d.station_mm] = ov
         elif d.kind == "suppress_post":
-            suppressed[d.station_mm] = ov
+            suppress_ovs.append(ov)
+        elif d.kind == "force_vertical":
+            force_vertical_ovs.append(ov)
 
     corners = corner_stations(topo, run)
     transitions = base_transition_stations(topo, run)
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
-    for gs, ge, _, _ in gates:
-        fixed |= {gs, ge}
+    fixed |= gate_edges
     fixed_sorted = sorted(fixed)
 
-    # -- interior fixed posts (corners, transitions, gate edges, pins) --------
-    gate_edges = {s for gs, ge, _, _ in gates for s in (gs, ge)}
-    reinf_res = resolve_actions(kb, {"scope": {}, "post": {"context": "gate", "surface": ""}},
-                                "require_post_reinforcement")
-    reinf_ref = reinf_res.winner.version.ref if reinf_res.winner else None
-    reinf_sku = None
-    if reinf_res.winner:
-        reinf_sku = next(
-            (a.sku for a in reinf_res.winner.actions if a.kind == "require_post_reinforcement"), None
-        )
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb)
 
+    # -- interior fixed posts --------------------------------------------------
     for station in fixed_sorted:
         if station in (0, length):
-            continue  # node posts already exist
+            continue  # node posts own the termini
         surface = base_surface_at(topo, run, station)
         inputs = [run_fact.id]
         kind = "line"
         pinned = False
         reinforced = False
-        reinforcement_refs: list[str] = []
         if station in gate_edges:
             kind = "gate"
-            if reinf_ref:
-                reinforced = True
-                reinforcement_refs = [reinf_ref]
+            reinforced = surface != "masonry_wall" and reinf_sku is not None
         elif station in corners:
             kind = "corner"
         elif station in transitions:
             kind = "transition"
+        override_nodes: list[str] = []
         ov = pinned_stations.get(station)
         if ov is not None:
             pinned = True
-            applied_overrides.append(ov.id)
-            ov_node = builder.add(
-                "override_applied", "pin_post",
-                payload={"override_id": ov.id, "station_mm": station},
+            applied.add(ov.id)
+            override_nodes.append(
+                builder.add(
+                    "override_applied", "pin_post",
+                    payload={"override_id": ov.id, "station_mm": station},
+                ).id
             )
-            inputs = inputs + [ov_node.id]
-        forced_sku = None
-        forced_mounting = None
-        for o in overrides:
-            if o.run_id == run.id and o.directive.kind == "force_post_sku" and o.directive.station_mm == station:
-                forced_sku = o.directive.sku
-                applied_overrides.append(o.id)
-            if o.run_id == run.id and o.directive.kind == "force_mounting" and o.directive.station_mm == station:
-                forced_mounting = o.directive.mounting
-                applied_overrides.append(o.id)
-        post, _ = _make_post(
-            builder, topo, kb, run, station,
-            post_id=f"post@{run.id}:{station}", run_ref=run.id, kind=kind,
-            surface=surface, inputs=inputs, strategy=strategy,
-            reinforced=reinforced and surface != "masonry_wall",
-            reinforcement_refs=reinforcement_refs, pinned=pinned,
-            forced_sku=forced_sku, forced_mounting=forced_mounting,
+        forced_sku, forced_mounting, matched = _matched_force_overrides(
+            overrides, run.id, station
         )
-        if reinf_sku and reinforced and post.mounting == "ground":
-            post.sku = reinf_sku
+        for mov in matched:
+            applied.add(mov.id)
+            override_nodes.append(
+                builder.add(
+                    "override_applied", mov.directive.kind,
+                    payload={"override_id": mov.id, "station_mm": station},
+                ).id
+            )
+        post = _make_post(
+            builder, kb,
+            post_id=f"post@{run.id}:{station}", run_ref=run.id,
+            station=station, kind=kind, surface=surface,
+            ground_z_mm=ground_z(topo, run, station),
+            inputs=inputs,
+            reinforced=reinforced,
+            reinforcement_refs=reinf_refs if reinforced else [],
+            reinforced_sku=reinf_sku,
+            pinned=pinned,
+            forced_sku=forced_sku, forced_mounting=forced_mounting,
+            override_nodes=override_nodes,
+        )
         strategy.posts.append(post)
 
     # -- gate elements ---------------------------------------------------------
@@ -321,61 +464,114 @@ def _generate_run(
             start_station_mm=gs, end_station_mm=ge, kit_sku=kit,
         )
         strategy.gates.append(gate)
+        placed = builder.add(
+            "structural", "place_gate",
+            payload={"start_mm": gs, "end_mm": ge},
+            scope_refs=[gate.id],
+            inputs=[gate_fact.id],
+        )
         builder.add(
             "selection", "select_gate_kit",
             payload={"kit_sku": kit},
             scope_refs=[gate.id],
-            inputs=[gate_fact.id],
-            governed_by=[reinf_ref] if reinf_ref else [],
+            inputs=[placed.id],
+            governed_by=reinf_refs,
         )
 
-    # -- vertical mode ---------------------------------------------------------
-    vertical = "level" if slope_pct == 0 else "raked"
-    vertical_refs: list[str] = []
-    for f in preference_firings(kb, ctx, {"prefer_vertical"}):
-        for a in f.actions:
-            if a.kind == "prefer_vertical":
-                vertical = a.mode
-                vertical_refs.append(f.version.ref)
-    for ov in overrides:
-        if ov.run_id == run.id and ov.directive.kind == "force_vertical":
-            vertical = ov.directive.mode
-            applied_overrides.append(ov.id)
-            ov_node = builder.add(
-                "override_applied", "force_vertical",
-                payload={"override_id": ov.id, "mode": vertical},
-            )
-            vertical_refs = []
-            break
+    # -- vertical mode: slot-resolved, never loop-overwritten ------------------
+    default_vertical = "level" if slope_permille == 0 else "raked"
+    vert_firings = preference_firings(kb, ctx, {"prefer_vertical"})
+    modes = {a.mode for f in vert_firings for a in f.actions if a.kind == "prefer_vertical"}
+    vert_res: Resolution = evaluator_resolve(
+        vert_firings, "vertical_mode", values_agree=len(modes) <= 1
+    )
+    _surface_conflicts(vert_res.conflicts, builder, strategy)
+    if vert_res.winner:
+        vertical = next(
+            a.mode for a in vert_res.winner.actions if a.kind == "prefer_vertical"
+        )
+        vertical_refs = [vert_res.winner.version.ref]
+        vertical_defeated = [
+            ref for f in vert_res.firings for ref in f.defeated_by
+        ]
+    else:
+        vertical = default_vertical
+        vertical_refs = []
+        vertical_defeated = []
     vertical_node = builder.add(
         "vertical", "choose_vertical_mode",
-        payload={"mode": vertical, "slope_pct": round(slope_pct, 2)},
+        payload={"mode": vertical, "slope_permille": slope_permille},
         inputs=[run_fact.id],
         governed_by=vertical_refs,
+        defeated=vertical_defeated,
     )
 
-    # -- span layout per free segment -----------------------------------------
-    prefs = preference_firings(kb, ctx, {"prefer_equal_spans", "prefer_min_span_width"})
+    fv_nodes: dict[str, str] = {}  # override id -> decision node id
+
+    def span_vertical(mid: Mm) -> tuple[str, str | None]:
+        for ov in force_vertical_ovs:
+            d = ov.directive
+            if d.start_station_mm <= mid <= d.end_station_mm:
+                applied.add(ov.id)
+                if ov.id not in fv_nodes:
+                    fv_nodes[ov.id] = builder.add(
+                        "override_applied", "force_vertical",
+                        payload={"override_id": ov.id, "mode": d.mode,
+                                 "interval": [d.start_station_mm, d.end_station_mm]},
+                    ).id
+                return d.mode, fv_nodes[ov.id]
+        return vertical, None
+
+    # -- span quantities (resolved here so demand needs no knowledge access) ---
+    rails_per_span, rails_refs = _resolve_quantity(kb, ctx, "rails_per_span", 2)
+    screws_per_span, screws_refs = _resolve_quantity(kb, ctx, "screws_per_span", 8)
+
+    # -- layout preferences: resolved, conflicts surfaced (S13) ----------------
+    prefs = preference_firings(
+        kb, ctx, {"prefer_equal_spans", "prefer_min_span_width", "prefer_span_width"}
+    )
     prefer_equal_ref = None
     min_span: Mm | None = None
     min_span_ref = None
+    width_pref: Mm | None = None
+    equal_firing = None
+    width_firing = None
     for f in prefs:
         for a in f.actions:
             if a.kind == "prefer_equal_spans":
                 prefer_equal_ref = f.version.ref
+                equal_firing = f
             elif a.kind == "prefer_min_span_width":
                 min_span = a.min_mm
                 min_span_ref = f.version.ref
+            elif a.kind == "prefer_span_width":
+                width_pref = a.width_mm
+                width_firing = f
+
+    prefer_equal = True
+    layout_pref_ref = prefer_equal_ref
+    if width_firing is not None and equal_firing is not None:
+        res_layout = evaluator_resolve([width_firing, equal_firing], "span_layout_preference")
+        _surface_conflicts(res_layout.conflicts, builder, strategy)
+        prefer_equal = res_layout.winner is equal_firing
+        layout_pref_ref = res_layout.winner.version.ref
+    elif width_firing is not None:
+        prefer_equal = False
+        layout_pref_ref = width_firing.version.ref
 
     gate_intervals = [(gs, ge) for gs, ge, _, _ in gates]
+    span_ids: list[str] = []
     for seg_start, seg_end in zip(fixed_sorted, fixed_sorted[1:]):
         if any(gs <= seg_start and seg_end <= ge for gs, ge in gate_intervals):
-            continue  # inside a gate opening: no fence spans
+            continue
         seg_len = seg_end - seg_start
         if seg_len <= 0:
             continue
-        layout = layout_segment(seg_len, max_span, prefer_equal=True, min_span_mm=min_span)
-        governed = [max_span_ref] + ([prefer_equal_ref] if prefer_equal_ref else [])
+        layout = layout_segment(
+            seg_len, max_span,
+            prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
+        )
+        governed = [max_span_ref] + ([layout_pref_ref] if layout_pref_ref else [])
         layout_node = builder.add(
             "structural", "layout_spans",
             payload={
@@ -383,7 +579,7 @@ def _generate_run(
                 "widths": layout.widths,
                 "alternatives": (
                     [{"widths": layout.rejected_alternative,
-                      "rejected_because": prefer_equal_ref or "policy"}]
+                      "rejected_because": layout_pref_ref or "policy"}]
                     if layout.rejected_alternative else []
                 ),
             },
@@ -394,23 +590,32 @@ def _generate_run(
         for s0, s1 in zip(stations, stations[1:]):
             width = s1 - s0
             gz0, gz1 = ground_z(topo, run, s0), ground_z(topo, run, s1)
-            height, height_src = _height_at(topo, run, (s0 + s1) // 2, policy)
+            mid = (s0 + s1) // 2
+            v_mode, fv_node = span_vertical(mid)
+            height, height_src, height_extra = _span_height(topo, run, mid, gz0, gz1, policy)
             span = Span(
                 id=f"span@{run.id}:{s0}-{s1}", run_ref=run.id,
                 start_station_mm=s0, end_station_mm=s1, width_mm=width,
-                slope_len_mm=slope_len_mm(width, gz1 - gz0) if vertical == "raked" else width,
-                vertical=vertical, height_mm=height,  # type: ignore[arg-type]
+                slope_len_mm=slope_len_mm(width, gz1 - gz0) if v_mode == "raked" else width,
+                vertical=v_mode, height_mm=height,  # type: ignore[arg-type]
                 bottom_z_start_mm=gz0, bottom_z_end_mm=gz1,
-                rail_count=_rails_per_span(kb, ctx),
-                rail_cut_basis="slope" if vertical == "raked" else "width",
+                rail_count=rails_per_span,
+                screws_count=screws_per_span,
+                rail_cut_basis="slope" if v_mode == "raked" else "width",
             )
             strategy.spans.append(span)
+            span_ids.append(span.id)
             builder.add(
                 "structural", "create_span",
-                payload={"width_mm": width, "vertical": vertical, "height_mm": height,
-                         "height_source": height_src or "policy_default"},
+                payload={
+                    "width_mm": width, "vertical": v_mode, "height_mm": height,
+                    "height_source": height_src,
+                    "bottom_z_start_mm": gz0, "bottom_z_end_mm": gz1,
+                    **({"step_mm": abs(gz1 - gz0)} if v_mode == "stepped" else {}),
+                    **height_extra,
+                },
                 scope_refs=[span.id],
-                inputs=[layout_node.id],
+                inputs=[layout_node.id] + ([fv_node] if fv_node else []),
                 governed_by=governed,
             )
             if width > max_span:
@@ -428,34 +633,104 @@ def _generate_run(
                 strategy.warnings.append(
                     StrategyWarning(
                         code="sliver_span", severity="warning",
-                        message=f"Span {span.id} is {width} mm, below preferred minimum {min_span} mm.",
+                        message=f"Span {span.id} is {width} mm, below preferred "
+                                f"minimum {min_span} mm.",
                         element_refs=[span.id], decision_ref=conflict_node.id,
                     )
                 )
         # interior line posts for this segment
         for s in stations[1:-1]:
-            if s in suppressed:
-                ov = suppressed[s]
-                applied_overrides.append(ov.id)
+            suppressor = next(
+                (ov for ov in suppress_ovs if _near(ov.directive.station_mm, s)), None
+            )
+            if suppressor is not None:
+                applied.add(suppressor.id)
                 builder.add(
                     "override_applied", "suppress_post",
-                    payload={"override_id": ov.id, "station_mm": s},
+                    payload={"override_id": suppressor.id, "station_mm": s},
                 )
                 continue
             surface = base_surface_at(topo, run, s)
-            post, _ = _make_post(
-                builder, topo, kb, run, s,
-                post_id=f"post@{run.id}:{s}", run_ref=run.id, kind="line",
-                surface=surface, inputs=[layout_node.id], strategy=strategy,
+            forced_sku, forced_mounting, matched = _matched_force_overrides(
+                overrides, run.id, s
+            )
+            override_nodes = []
+            for mov in matched:
+                applied.add(mov.id)
+                override_nodes.append(
+                    builder.add(
+                        "override_applied", mov.directive.kind,
+                        payload={"override_id": mov.id, "station_mm": s},
+                    ).id
+                )
+            post = _make_post(
+                builder, kb,
+                post_id=f"post@{run.id}:{s}", run_ref=run.id,
+                station=s, kind="line", surface=surface,
+                ground_z_mm=ground_z(topo, run, s),
+                inputs=[layout_node.id],
+                forced_sku=forced_sku, forced_mounting=forced_mounting,
+                override_nodes=override_nodes,
             )
             strategy.posts.append(post)
 
+    if span_ids:
+        builder.add(
+            "quantity", "resolve_span_quantities",
+            payload={"rails_per_span": rails_per_span, "screws_per_span": screws_per_span},
+            scope_refs=span_ids,
+            inputs=[run_fact.id],
+            governed_by=rails_refs + screws_refs,
+        )
 
-def _rails_per_span(kb: KnowledgeBase, ctx: dict) -> int:
-    res = resolve_param(kb, ctx, "rails_per_span")
-    if res.winner:
-        return next(a.value for a in res.winner.actions if a.kind == "set_param")
-    return 2
+
+# --- span height (intents, wall profiles) -------------------------------------
+
+def _interval_at(topo: Topology, run: Run, station: Mm, kind: str):
+    for ev in run.interval_events:
+        if ev.payload.kind == kind:
+            s0 = anchor_station(topo, run, ev.start_anchor)
+            s1 = anchor_station(topo, run, ev.end_anchor)
+            if s0 <= station <= s1:
+                return ev, s0, s1
+    return None, 0, 0
+
+
+def _wall_top_at(topo: Topology, run: Run, station: Mm) -> tuple[Mm, str] | None:
+    ev, s0, s1 = _interval_at(topo, run, station, "wall_profile")
+    if ev is None:
+        return None
+    p = ev.payload
+    if s1 == s0:
+        return p.top_z_start_mm, ev.id
+    top = round(p.top_z_start_mm + (p.top_z_end_mm - p.top_z_start_mm) * (station - s0) / (s1 - s0))
+    return top, ev.id
+
+
+def _span_height(
+    topo: Topology, run: Run, mid: Mm, gz0: Mm, gz1: Mm, policy: dict
+) -> tuple[Mm, str, dict]:
+    """Panel height for a span: (height_mm, source, extra decision payload).
+
+    Priority: confirmed top_line intent (level top) > height intent (reduced by wall
+    top when the panel sits on a wall) > policy default.
+    """
+    top_ev, _, _ = _interval_at(topo, run, mid, "top_line")
+    if top_ev is not None and top_ev.payload.mode == "level" and top_ev.payload.z_mm is not None:
+        height = max(0, top_ev.payload.z_mm - max(gz0, gz1))
+        return height, top_ev.id, {"top_line_z_mm": top_ev.payload.z_mm}
+
+    height_ev, _, _ = _interval_at(topo, run, mid, "height_intent")
+    height = height_ev.payload.height_mm if height_ev is not None else policy["default_height_mm"]
+    source = height_ev.id if height_ev is not None else "policy_default"
+    extra: dict = {}
+    if base_surface_at(topo, run, mid) == "masonry_wall":
+        wall = _wall_top_at(topo, run, mid)
+        if wall is not None:
+            wall_top, wall_ev_id = wall
+            height = max(0, height - wall_top)
+            extra = {"adjusted_by_wall_profile": wall_ev_id, "wall_top_mm": wall_top}
+    return height, source, extra
 
 
 def _surface_conflicts(conflicts, builder: GraphBuilder, strategy: Strategy) -> None:

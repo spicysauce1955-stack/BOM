@@ -71,6 +71,15 @@ class PreferVertical(BaseModel):
     weight: int = 1
 
 
+class DefaultComponent(BaseModel):
+    """Default product selection for a role — selection is knowledge, never a code
+    literal (architecture-critic finding 4)."""
+
+    kind: Literal["default_component"] = "default_component"
+    role: str  # "post_ground" | "post_masonry" | "post_reinforced" | ...
+    sku: str
+
+
 class AddNote(BaseModel):
     kind: Literal["add_note"] = "add_note"
     text: str
@@ -90,6 +99,7 @@ Action = Annotated[
         PreferMinSpanWidth,
         PreferSpanWidth,
         PreferVertical,
+        DefaultComponent,
         AddNote,
         FlagForReview,
     ],

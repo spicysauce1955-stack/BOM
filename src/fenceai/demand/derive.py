@@ -1,7 +1,10 @@
 """Engineering demand derived from a strategy (material-optimization.md).
 
-Pure: strategy + knowledge + catalog -> requirement lines, every line pegged to the
-strategy elements that caused it. Purchasing knows nothing yet — that's fulfillment.
+Pure: strategy + catalog -> requirement lines, every line pegged to the strategy
+elements that caused it. Knowledge-resolved quantities (rails/screws per span) were
+already resolved during generation and live on the Span — demand needs no knowledge
+access (module map, critic finding 7). Purchasing knows nothing yet — that's
+fulfillment.
 """
 
 from __future__ import annotations
@@ -10,8 +13,6 @@ from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
-from fenceai.knowledge.evaluator import resolve_param
-from fenceai.knowledge.model import KnowledgeBase
 from fenceai.strategy.model import Strategy
 
 DEMAND_POLICY_DEFAULTS = {
@@ -33,7 +34,6 @@ class RequirementLine(BaseModel):
 
 def derive_requirements(
     strategy: Strategy,
-    knowledge: KnowledgeBase,
     catalog: Catalog,
     policy: dict | None = None,
 ) -> list[RequirementLine]:
@@ -53,23 +53,15 @@ def derive_requirements(
         if post.mounting == "ground":
             add(policy["concrete_sku"], 1, "application", [post.id])
 
-    screws_per_span = _param(knowledge, "screws_per_span", default=8)
     for span in strategy.spans:
         cut_len = span.slope_len_mm if span.rail_cut_basis == "slope" else span.width_mm
         add(
             policy["rail_sku"], span.rail_count, "cut", [span.id],
             cut_length_mm=cut_len, length_basis=span.rail_cut_basis,
         )
-        add(policy["screw_sku"], screws_per_span, "each", [span.id])
+        add(policy["screw_sku"], span.screws_count, "each", [span.id])
 
     for gate in strategy.gates:
         add(gate.kit_sku, 1, "each", [gate.id])
 
     return lines
-
-
-def _param(kb: KnowledgeBase, param: str, default: int) -> int:
-    res = resolve_param(kb, {"scope": {}}, param)
-    if res.winner:
-        return next(a.value for a in res.winner.actions if a.kind == "set_param")
-    return default

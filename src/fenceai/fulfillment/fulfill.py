@@ -74,9 +74,22 @@ def fulfill(
 
     for sku in sorted(by_sku):
         reqs = by_sku[sku]
-        product = catalog.product(sku)
-        sem = product.consumption
+        product = catalog.products.get(sku)
         pegs = [r.id for r in reqs]
+        if product is None:
+            # unknown SKU: priced at zero and flagged — never a deep KeyError and
+            # never a silent drop (critic finding 15)
+            demand = sum(r.engineering_qty for r in reqs)
+            bom.lines.append(
+                BomLine(
+                    sku=sku, name=f"UNKNOWN: {sku}", purchase_qty=demand,
+                    purchase_unit="each", engineering_qty=demand,
+                    engineering_unit="each", unit_price_cents=0, total_cents=0,
+                    pegs=pegs, notes=["unknown product — not in catalog"],
+                )
+            )
+            continue
+        sem = product.consumption
 
         if sem.kind == "divisible_linear":
             pieces = [

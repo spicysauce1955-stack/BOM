@@ -8,9 +8,15 @@ recording winners, defeated_by, and surfaced conflicts. Ties never resolve silen
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
+from fenceai.core.errors import GenerationFailure
 from fenceai.knowledge.ast import MissingField, evaluate_expr
 from fenceai.knowledge.model import Action, KnowledgeBase, KnowledgeVersion
+
+# Authority tiers at or above company_rule are "hard": a tie between them with
+# disagreeing outputs is a generation failure, not a survivable conflict.
+HARD_AUTHORITY_MAX = 3
 
 
 @dataclass
@@ -78,8 +84,12 @@ def _beats(a: KnowledgeVersion, b: KnowledgeVersion) -> bool:
     return False
 
 
-def resolve(firings: list[Firing], key: str) -> Resolution:
-    """Pick a winner among firings that all target the same param/action slot."""
+def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> Resolution:
+    """Pick a winner among firings that all target the same param/action slot.
+
+    Ties are surfaced as Conflicts (never silent); a tie between hard-authority
+    contenders with disagreeing outputs raises GenerationFailure (knowledge-system.md).
+    """
     if not firings:
         return Resolution(winner=None, firings=[], conflicts=[])
     contenders = list(firings)
@@ -91,8 +101,18 @@ def resolve(firings: list[Firing], key: str) -> Resolution:
         elif _beats(other.version, winner.version):
             winner.defeated_by.append(other.version.ref)
             winner = other
+        elif values_agree:
+            other.defeated_by.append(winner.version.ref)  # DMN ANY: agreement, no conflict
         else:
-            # tie: surfaced, never silent (knowledge-system.md)
+            if (
+                winner.version.effective_authority() <= HARD_AUTHORITY_MAX
+                and other.version.effective_authority() <= HARD_AUTHORITY_MAX
+            ):
+                raise GenerationFailure(
+                    f"hard knowledge conflict on '{key}': {winner.version.ref} vs "
+                    f"{other.version.ref} tie with disagreeing outputs",
+                    constraint_refs=[winner.version.ref, other.version.ref],
+                )
             conflicts.append(
                 Conflict(
                     param_or_action=key,
@@ -115,17 +135,23 @@ def resolve_param(kb: KnowledgeBase, ctx: dict, param: str) -> Resolution:
         if acts:
             relevant.append(Firing(version=f.version, actions=acts))
     same_value = len({a.value for f in relevant for a in f.actions}) <= 1
-    res = resolve(relevant, param)
-    if same_value:
-        res.conflicts = []  # agreeing outputs are not conflicts (DMN ANY semantics)
-    return res
+    return resolve(relevant, param, values_agree=same_value)
 
 
-def resolve_actions(kb: KnowledgeBase, ctx: dict, kind: str) -> Resolution:
-    """Resolve action-kind firings (e.g. require_mounting) for a context."""
+def resolve_actions(
+    kb: KnowledgeBase,
+    ctx: dict,
+    kind: str,
+    match: Callable[[Action], bool] | None = None,
+) -> Resolution:
+    """Resolve action-kind firings for a context.
+
+    `match` narrows to the slot (e.g. only require_mounting actions for THIS surface)
+    so rules governing different slots never spuriously compete (critic finding 5).
+    """
     relevant = []
     for f in applicable_firings(kb, ctx):
-        acts = [a for a in f.actions if a.kind == kind]
+        acts = [a for a in f.actions if a.kind == kind and (match is None or match(a))]
         if acts:
             relevant.append(Firing(version=f.version, actions=acts))
     return resolve(relevant, kind)

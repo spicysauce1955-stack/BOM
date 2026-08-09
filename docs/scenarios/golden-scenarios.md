@@ -70,7 +70,7 @@ Expect: purchase 3 boxes (60), overage 12 recorded; BOM line pegged to the span 
 
 ### S09 — Inventory remnants
 Inventory holds one RAIL remnant 1250 mm. Demand includes a 1200 cut.
-Expect: remnant allocated (1200+kerf ≤ 1250), one fewer new stock bar; allocation cites the remnant policy K-REMNANT.
+Expect: remnant allocated (1200+kerf ≤ 1250), one fewer new stock bar; allocation honors the catalog's remnant-reuse policy (min_reusable_remnant_mm — catalog data, not a KB object; see review response).
 
 ### S10 — Gate with contextual structural rule
 5000 mm run with a 1000 mm gate opening at 2000–3000.

@@ -34,6 +34,7 @@ class Span(BaseModel):
     bottom_z_start_mm: Mm = 0
     bottom_z_end_mm: Mm = 0
     rail_count: int = 2
+    screws_count: int = 8  # resolved from knowledge during generation (K-SCREWS)
     rail_cut_basis: Literal["width", "slope"] = "width"
 
 
@@ -82,3 +83,6 @@ class GenerationResult(BaseModel):
     run: GenerationRun
     strategy: Strategy
     graph: DecisionGraph
+    # overrides that no longer matched the topology — reported, never mutated on the
+    # caller's objects (generate() is pure, ADR-0004)
+    orphaned_overrides: list[str] = []

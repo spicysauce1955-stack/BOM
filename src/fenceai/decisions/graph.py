@@ -103,6 +103,11 @@ class GraphBuilder:
         inputs: list[str] | None = None,  # earlier node ids
         assumptions: list[str] | None = None,
     ) -> DecisionNode:
+        # materialize knowledge input nodes FIRST so every edge points from an
+        # earlier ordinal to a later one — acyclicity by construction, no exceptions
+        knowledge_srcs = {
+            ref: self._knowledge_node(ref) for ref in [*(governed_by or []), *(defeated or [])]
+        }
         self._n += 1
         node = DecisionNode(
             id=f"d{self._n:04d}",
@@ -115,30 +120,23 @@ class GraphBuilder:
             status=status,  # type: ignore[arg-type]
         )
         self._graph.nodes.append(node)
-        known = {n.id for n in self._graph.nodes}
         for src in inputs or []:
-            self._edge(src, node.id, "input_from", known)
+            self._edge(src, node.id, "input_from")
         for ref in governed_by or []:
-            self._knowledge_edge(node.id, "governed_by", ref, known)
+            self._edge(knowledge_srcs[ref], node.id, "governed_by", knowledge_ref=ref)
         for ref in defeated or []:
-            self._knowledge_edge(node.id, "defeated", ref, known)
+            self._edge(knowledge_srcs[ref], node.id, "defeated", knowledge_ref=ref)
         for src in assumptions or []:
-            self._edge(src, node.id, "assumption_of", known)
+            self._edge(src, node.id, "assumption_of")
         return node
 
-    def _edge(self, from_id: str, to_id: str, type_: EdgeType, known: set[str]) -> None:
-        if from_id not in known:
-            raise ValueError(f"edge references unknown node {from_id}")
+    def _edge(
+        self, from_id: str, to_id: str, type_: EdgeType, *, knowledge_ref: str | None = None
+    ) -> None:
         if self._graph.node(from_id).ordinal >= self._graph.node(to_id).ordinal:
             raise ValueError("edges must point from earlier to later ordinals (acyclicity)")
-        self._graph.edges.append(DecisionEdge(from_id=from_id, to_id=to_id, type=type_))
-
-    def _knowledge_edge(self, to_id: str, type_: EdgeType, knowledge_ref: str, known: set[str]) -> None:
-        # governed_by/defeated edges reference knowledge versions via a synthetic
-        # input_fact node per knowledge ref (created lazily, once per graph).
-        src_id = self._knowledge_node(knowledge_ref)
         self._graph.edges.append(
-            DecisionEdge(from_id=src_id, to_id=to_id, type=type_, knowledge_ref=knowledge_ref)
+            DecisionEdge(from_id=from_id, to_id=to_id, type=type_, knowledge_ref=knowledge_ref)
         )
 
     def _knowledge_node(self, knowledge_ref: str) -> str:
@@ -153,10 +151,6 @@ class GraphBuilder:
             action="knowledge_version",
             payload={"knowledge_ref": knowledge_ref},
         )
-        # Knowledge nodes are inputs; ordering vs the consuming node is fixed up by
-        # inserting before use — but ordinals must stay monotonic, so we simply allow
-        # knowledge nodes to appear later in ordinal order while edges still originate
-        # from them (they are sources, never targets, so acyclicity holds).
         self._graph.nodes.append(node)
         return node.id
 

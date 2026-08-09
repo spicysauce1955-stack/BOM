@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 from fenceai.core.errors import InvalidTopology
-from fenceai.core.units import Mm, dist_mm
+from fenceai.core.units import NUMERIC_TOLERANCE_MM, Mm, dist_mm
 from fenceai.topology.model import Anchor, Run, Topology
 
 CORNER_ANGLE_DEG = 15.0  # turn angle above which a vertex is a structural corner
@@ -104,17 +104,39 @@ def corner_stations(topo: Topology, run: Run) -> list[Mm]:
         ang2 = math.atan2(c[1] - b[1], c[0] - b[0])
         turn = abs(math.degrees((ang2 - ang1 + math.pi) % (2 * math.pi) - math.pi))
         is_corner = turn > CORNER_ANGLE_DEG
-        if stations[i] in overrides:
-            is_corner = overrides[stations[i]]
+        for ov_station, ov_value in overrides.items():
+            # tolerance match: re-anchoring rounding must not detach the override
+            if abs(ov_station - stations[i]) <= NUMERIC_TOLERANCE_MM:
+                is_corner = ov_value
         if is_corner:
             corners.append(stations[i])
     return corners
 
 
-def ground_z(topo: Topology, run: Run, station_mm: Mm) -> Mm:
-    """Piecewise-linear ground elevation from elevation_sample events; default 0.
+def max_slope_permille(topo: Topology, run: Run) -> int:
+    """Steepest grade (permille, int) across consecutive elevation samples.
 
-    Samples at run start/end default to z=0 unless provided.
+    Endpoint-only slope would read an up-then-down run as flat (critic finding 16).
+    """
+    samples: list[tuple[Mm, Mm]] = []
+    for ev in run.point_events:
+        if ev.payload.kind == "elevation_sample":
+            samples.append((anchor_station(topo, run, ev.anchor), ev.payload.z_mm))
+    if len(samples) < 2:
+        return 0
+    samples.sort()
+    steepest = 0
+    for (s0, z0), (s1, z1) in zip(samples, samples[1:]):
+        if s1 > s0:
+            steepest = max(steepest, round(abs(z1 - z0) * 1000 / (s1 - s0)))
+    return steepest
+
+
+def ground_z(topo: Topology, run: Run, station_mm: Mm) -> Mm:
+    """Piecewise-linear ground elevation from elevation_sample events.
+
+    No samples at all -> flat 0. Beyond the outermost samples the nearest sample's
+    elevation extends (no extrapolation).
     """
     samples: list[tuple[Mm, Mm]] = []
     for ev in run.point_events:
@@ -138,12 +160,20 @@ def ground_z(topo: Topology, run: Run, station_mm: Mm) -> Mm:
 
 
 def base_surface_at(topo: Topology, run: Run, station_mm: Mm) -> str:
-    """Base surface at a station; base interval events override the default 'soil'."""
+    """Base surface at a station; base interval events override the default 'soil'.
+
+    Intervals are half-open [start, end) so the surface at a transition station is
+    the RIGHT side's surface — except an interval ending at the run end includes its
+    end (a boundary post at the very end still stands on that base). This makes the
+    result independent of event authoring order (critic finding 8).
+    """
+    total = run_length(topo, run)
     for ev in run.interval_events:
         if ev.payload.kind == "base":
             s0 = anchor_station(topo, run, ev.start_anchor)
             s1 = anchor_station(topo, run, ev.end_anchor)
-            if s0 <= station_mm <= s1:
+            end_inclusive = s1 >= total
+            if s0 <= station_mm < s1 or (end_inclusive and station_mm == s1):
                 return ev.payload.surface
     return "soil"
 
