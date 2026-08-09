@@ -1,0 +1,136 @@
+# Domain model
+
+All lengths int mm (ADR-0002). All entities have stable string IDs (`prefix_ulid`). Pydantic
+v2 models are the single schema source (domain = API = LLM validation).
+
+## Topology (user-authored reality; never mutated by generation)
+
+```
+Project      { id, name, created_at, topology, annotations[], overrides[], inventory_ref, policy }
+Topology     { revision (int, bumped per edit), nodes[], runs[] }
+Node         { id, x_mm, y_mm, kind: terminal|junction }        # identity for shared posts
+Run          { id, start_node_id, end_node_id, interior_vertices[(x_mm,y_mm)],
+               point_events[], interval_events[] }
+```
+
+Stationing: derived per run — cumulative plan (chord) length over [start_node, *interior,
+end_node]. Corner classification derived from turn angle (> 15° ⇒ corner) with per-vertex
+override event. Straight segments only (ADR-0003; `segment_kind` reserved).
+
+Events (station-addressed attributes; ADR-0003):
+
+```
+Anchor        { segment_index, offset_mm, seg_len_at_authoring_mm }   # proportional re-anchor rule
+PointEvent    { id, kind, anchor, payload }
+   kinds: gate{width_mm, kit_sku?}, obstacle{desc}, existing_foundation{},
+          elevation_sample{z_mm}, corner_override{is_corner}
+IntervalEvent { id, kind, start_anchor, end_anchor, payload }
+   kinds: base{surface: soil|concrete|masonry_wall}, height_intent{height_mm, source: user|interpretation_id},
+          top_line{mode: follow|level|stepped, z_mm?}, wall_profile{top_z_start_mm, top_z_end_mm}
+```
+
+`ground(s)`: piecewise-linear interpolation over elevation_sample events (default z=0).
+Fence top-line is derived, never stored (ADR-0003).
+
+```
+Annotation   { id, target: ref(project|run|node|event|span-interval), text (VERBATIM, immutable),
+               author, created_at, interpretations: [InterpretationRecord] }
+```
+
+## Catalog
+
+```
+Product { sku, name, price_cents (per purchase unit), consumption, attrs{} }
+consumption (discriminated union):
+  IndivisibleDiscrete {}
+  DivisibleLinear     { purchase_length_mm, kerf_mm, min_reusable_remnant_mm }
+  PackagedDiscrete    { engineering_unit, qty_per_package }
+  CoverageBased       { engineering_unit, purchase_unit, qty_per_application: Ratio, application: per_post_footing|per_span|... }
+  AssemblyKit         { components: [{sku, qty}] }
+SubstitutionRule { id, from_sku, to_sku, policy: auto|suggest_only, condition: Expr? }
+```
+
+## Knowledge  (details: knowledge-system.md)
+
+```
+KnowledgeObject  { id, current_version }
+KnowledgeVersion { object_id, version, type: fact|hard_constraint|company_rule|preference|
+                   heuristic|override|candidate, authority (derived; explicit field),
+                   scope: {project_id?, series?, base?, context?...}, condition: Expr?,
+                   actions: [Action], source_text?, derived_from: [ref], author, created_at,
+                   status: draft|active|retired|proposed|rejected, examples[], counterexamples[] }
+```
+
+## Strategy (generated proposal; regenerated wholesale — ADR-0004)
+
+```
+GenerationRun { id, project_id, topology_revision, knowledge_snapshot: [(object_id, version)],
+                snapshot_hash, overrides_applied: [id], policy, created_at }
+Strategy      { id, run_id, status: proposed|accepted|superseded,
+                posts[], spans[], gates[], warnings[] }
+Post  { id, run_ref (topology run id | node id), station_mm?, kind: end|corner|line|gate|junction,
+        reinforced: bool, mounting: ground|masonry, sku, ground_z_mm, pinned: bool }
+Span  { id, run_ref, start_station_mm, end_station_mm, width_mm (plan),
+        slope_len_mm, vertical: level|stepped|raked, height_mm,
+        bottom_z_start_mm, bottom_z_end_mm, rail_count }
+Gate  { id, run_ref, start_station_mm, end_station_mm, kit_sku }
+Warning { code, severity, message, element_refs[], decision_ref? }
+```
+
+Element IDs are content-addressed within a run (`post@{run}:{station}`) so regenerated
+identical elements keep identical IDs; overrides never reference them anyway (anchors only).
+
+```
+Override { id, anchor: {run_id, station_mm | [start,end], kind: post|span|mounting|vertical|product},
+           directive: PinPost{station_mm} | ForcePostSku{sku} | ForceMounting{m} |
+                      ForceVertical{mode} | SuppressPost{} | SetSpanBoundary{...},
+           status: active|orphaned, origin: user|correction{id}, author, created_at }
+```
+
+## Decisions  (details: decision-model.md)
+
+Per GenerationRun: append-only `DecisionNode` / `DecisionEdge` document.
+
+## Demand & fulfillment  (details: material-optimization.md)
+
+```
+RequirementLine { id, run_id, sku, engineering_qty, unit: each|mm|application,
+                  cut_length_mm?, pegs: [element_id] }
+InventoryItem   { id, sku, kind: full_stock|remnant{length_mm}|opened_package{remaining},
+                  qty }
+CutPlan   { bars: [{source: new|inventory_item_id, stock_length_mm,
+                    pieces: [{length_mm, requirement_id}], kerf_total_mm,
+                    leftover_mm, leftover_reusable: bool}],
+            lp_lower_bound, certified_optimal: bool }
+BomLine   { sku, purchase_qty, purchase_unit, engineering_qty, engineering_unit,
+            unit_price_cents, total_cents, overage_qty, pegs: [requirement_id], notes[] }
+Bom       { id, run_id, lines[], cut_plans{sku: CutPlan}, allocations[], totals }
+```
+
+## Learning
+
+```
+Correction { id, project_id, run_id, decision_ref?, element_ref?, before, after,
+             comment?, author, created_at }
+```
+Knowledge candidates are `KnowledgeVersion` records with `status: proposed`,
+`derived_from: [correction ids]` — inactive until review (knowledge-system.md).
+
+## AI interpretation records
+
+```
+InterpretationRecord { id, annotation_id, interpreter: stub|claude{model}, created_at,
+                       candidates: [CandidateIntent], unparsed_spans[] }
+CandidateIntent { id, kind: height_intent|top_line|post_request|material_preference|other,
+                  params{}, source_text (verbatim span), confidence: high|medium|low,
+                  status: proposed|confirmed|rejected, confirmed_by? }
+```
+Only `confirmed` intents feed generation (they materialize as events/knowledge with
+provenance back to the record + annotation).
+
+## Key invariant restatements
+
+- Topology never references strategy. Overrides/annotations anchor to topology coordinates.
+- `generate()` inputs are all captured in GenerationRun; same inputs ⇒ identical output.
+- Every BOM line pegs → requirements → elements → decisions → knowledge versions/topology.
+- Verbatim text is immutable wherever it appears.
