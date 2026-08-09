@@ -1,0 +1,163 @@
+"""Derived stationing and profiles over runs (ADR-0003).
+
+All station math is exact integer arithmetic over straight segments; float64 appears
+only transiently inside interpolation and is rounded once at the boundary (ADR-0002).
+"""
+
+from __future__ import annotations
+
+import math
+
+from fenceai.core.errors import InvalidTopology
+from fenceai.core.units import Mm, dist_mm
+from fenceai.topology.model import Anchor, Run, Topology
+
+CORNER_ANGLE_DEG = 15.0  # turn angle above which a vertex is a structural corner
+
+
+def run_points(topo: Topology, run: Run) -> list[tuple[Mm, Mm]]:
+    start = topo.node(run.start_node_id)
+    end = topo.node(run.end_node_id)
+    return [(start.x_mm, start.y_mm), *run.interior_vertices, (end.x_mm, end.y_mm)]
+
+
+def segment_lengths(points: list[tuple[Mm, Mm]]) -> list[Mm]:
+    lens = [dist_mm(points[i], points[i + 1]) for i in range(len(points) - 1)]
+    if any(l == 0 for l in lens):
+        raise InvalidTopology("zero-length segment in run")
+    return lens
+
+
+def run_length(topo: Topology, run: Run) -> Mm:
+    return sum(segment_lengths(run_points(topo, run)))
+
+
+def cumulative_stations(points: list[tuple[Mm, Mm]]) -> list[Mm]:
+    """Station of each vertex: [0, s1, s1+s2, ...]."""
+    stations = [0]
+    for length in segment_lengths(points):
+        stations.append(stations[-1] + length)
+    return stations
+
+
+def anchor_station(topo: Topology, run: Run, anchor: Anchor) -> Mm:
+    """Resolve an anchor to a current station, re-anchoring proportionally within its
+    originating segment if that segment's length changed (ADR-0003 anchoring rule)."""
+    points = run_points(topo, run)
+    lens = segment_lengths(points)
+    if not 0 <= anchor.segment_index < len(lens):
+        raise InvalidTopology(f"anchor segment {anchor.segment_index} out of range")
+    seg_len = lens[anchor.segment_index]
+    if anchor.seg_len_at_authoring_mm == seg_len:
+        offset = min(anchor.offset_mm, seg_len)
+    else:
+        offset = round(anchor.offset_mm * seg_len / anchor.seg_len_at_authoring_mm)
+    return sum(lens[: anchor.segment_index]) + offset
+
+
+def make_anchor(topo: Topology, run: Run, station_mm: Mm) -> Anchor:
+    """Author an anchor at an absolute station on the current geometry."""
+    points = run_points(topo, run)
+    lens = segment_lengths(points)
+    total = sum(lens)
+    station = max(0, min(station_mm, total))
+    acc = 0
+    for i, seg_len in enumerate(lens):
+        if station <= acc + seg_len or i == len(lens) - 1:
+            return Anchor(
+                segment_index=i,
+                offset_mm=station - acc,
+                seg_len_at_authoring_mm=seg_len,
+            )
+        acc += seg_len
+    raise AssertionError("unreachable")
+
+
+def point_at_station(topo: Topology, run: Run, station_mm: Mm) -> tuple[Mm, Mm]:
+    points = run_points(topo, run)
+    lens = segment_lengths(points)
+    station = max(0, min(station_mm, sum(lens)))
+    acc = 0
+    for i, seg_len in enumerate(lens):
+        if station <= acc + seg_len:
+            t = (station - acc) / seg_len
+            (x0, y0), (x1, y1) = points[i], points[i + 1]
+            return (round(x0 + (x1 - x0) * t), round(y0 + (y1 - y0) * t))
+        acc += seg_len
+    return points[-1]
+
+
+def corner_stations(topo: Topology, run: Run) -> list[Mm]:
+    """Stations of interior vertices classified as structural corners (turn angle
+    > CORNER_ANGLE_DEG), honoring corner_override point events."""
+    points = run_points(topo, run)
+    stations = cumulative_stations(points)
+    overrides: dict[Mm, bool] = {}
+    for ev in run.point_events:
+        if ev.payload.kind == "corner_override":
+            overrides[anchor_station(topo, run, ev.anchor)] = ev.payload.is_corner
+
+    corners: list[Mm] = []
+    for i in range(1, len(points) - 1):
+        a, b, c = points[i - 1], points[i], points[i + 1]
+        ang1 = math.atan2(b[1] - a[1], b[0] - a[0])
+        ang2 = math.atan2(c[1] - b[1], c[0] - b[0])
+        turn = abs(math.degrees((ang2 - ang1 + math.pi) % (2 * math.pi) - math.pi))
+        is_corner = turn > CORNER_ANGLE_DEG
+        if stations[i] in overrides:
+            is_corner = overrides[stations[i]]
+        if is_corner:
+            corners.append(stations[i])
+    return corners
+
+
+def ground_z(topo: Topology, run: Run, station_mm: Mm) -> Mm:
+    """Piecewise-linear ground elevation from elevation_sample events; default 0.
+
+    Samples at run start/end default to z=0 unless provided.
+    """
+    samples: list[tuple[Mm, Mm]] = []
+    for ev in run.point_events:
+        if ev.payload.kind == "elevation_sample":
+            samples.append((anchor_station(topo, run, ev.anchor), ev.payload.z_mm))
+    if not samples:
+        return 0
+    samples.sort()
+    total = run_length(topo, run)
+    if samples[0][0] > 0:
+        samples.insert(0, (0, samples[0][1]))
+    if samples[-1][0] < total:
+        samples.append((total, samples[-1][1]))
+    s = max(0, min(station_mm, total))
+    for (s0, z0), (s1, z1) in zip(samples, samples[1:]):
+        if s0 <= s <= s1:
+            if s1 == s0:
+                return z0
+            return round(z0 + (z1 - z0) * (s - s0) / (s1 - s0))
+    return samples[-1][1]
+
+
+def base_surface_at(topo: Topology, run: Run, station_mm: Mm) -> str:
+    """Base surface at a station; base interval events override the default 'soil'."""
+    for ev in run.interval_events:
+        if ev.payload.kind == "base":
+            s0 = anchor_station(topo, run, ev.start_anchor)
+            s1 = anchor_station(topo, run, ev.end_anchor)
+            if s0 <= station_mm <= s1:
+                return ev.payload.surface
+    return "soil"
+
+
+def base_transition_stations(topo: Topology, run: Run) -> list[Mm]:
+    """Interior stations where the base surface changes (candidate structural boundaries)."""
+    bounds: set[Mm] = set()
+    total = run_length(topo, run)
+    for ev in run.interval_events:
+        if ev.payload.kind == "base":
+            for s in (
+                anchor_station(topo, run, ev.start_anchor),
+                anchor_station(topo, run, ev.end_anchor),
+            ):
+                if 0 < s < total:
+                    bounds.add(s)
+    return sorted(s for s in bounds if base_surface_at(topo, run, s - 1) != base_surface_at(topo, run, s + 1))

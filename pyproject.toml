@@ -1,0 +1,29 @@
+[project]
+name = "fenceai"
+version = "0.1.0"
+description = "Fence AI — visual construction topology, explainable strategy generation, BOM optimization"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9,<3",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "anthropic>=0.40",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fenceai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["live: tests requiring a live Anthropic API key"]
