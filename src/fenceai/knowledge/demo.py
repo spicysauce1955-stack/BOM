@@ -7,6 +7,7 @@ from fenceai.knowledge.model import (
     DefaultComponent,
     KnowledgeBase,
     KnowledgeVersion,
+    RuleExample,
     PreferEqualSpans,
     PreferMinSpanWidth,
     PreferVertical,
@@ -62,6 +63,18 @@ def demo_knowledge() -> KnowledgeBase:
                     cmp=">", left=FieldRef(path="run.slope_permille"), right=Lit(value=150)
                 ),
                 actions=[PreferVertical(mode="stepped")],
+                examples=[
+                    RuleExample(
+                        description="16.7% uphill run steps",
+                        ctx={"scope": {}, "run": {"length_mm": 6000, "slope_permille": 167}},
+                        expect_applicable=True,
+                    ),
+                    RuleExample(
+                        description="gentle 10% run does not step",
+                        ctx={"scope": {}, "run": {"length_mm": 6000, "slope_permille": 100}},
+                        expect_applicable=False,
+                    ),
+                ],
             ),
             KnowledgeVersion(
                 object_id="K-POST-DEFAULT", version=1, type="fact",
