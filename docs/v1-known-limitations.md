@@ -46,6 +46,10 @@ Deliberate deferrals and honest weaknesses, with the trigger that should revisit
   event re-anchoring code exists but the UI path always rewrites whole topology.
 - **Strategy statuses** (accepted/superseded) are persisted but there is no
   accept/compare-alternatives workflow in the UI.
+- **BOMs are recomputed, not snapshotted**: `/api/runs/{id}/bom` recomputes against
+  current inventory; each response carries an inventory content hash and the fulfill
+  is audit-logged, but a quoted BOM document is not persisted. Trigger: real quoting
+  workflow (persist `(run_id, inventory_hash) → bom` append-only).
 - **No undo** in the editor beyond regenerating.
 - **The UI is pragmatic** (mission §13): forms in side panels rather than direct
   canvas manipulation for events; no elevation side-view rendering.
