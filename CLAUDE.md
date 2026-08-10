@@ -4,45 +4,71 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Fence AI** — visual fence-construction topology → explainable strategy generation → BOM
 optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
-(`src/fenceai/`), FastAPI + Pydantic v2, SQLite, static SVG/JS frontend.
+(`src/fenceai/`), FastAPI + Pydantic v2, SQLite. Frontend: vanilla ES modules + SVG
+(no build step), Hebrew-first RTL with an EN toggle.
 
 ## Commands
 
 - `uv sync` — install deps (creates `.venv`)
 - `uv run pytest -q` — full test suite; single test: `uv run pytest tests/path/test_x.py::test_name -q`
 - `uv run pytest tests/scenarios -q` — golden scenarios S01–S14 + invariants (the release gate)
-- `uv run uvicorn fenceai.api.app:app --reload` — run the app (UI at http://localhost:8000)
+- `uv run uvicorn fenceai.api.app:app --reload` — run the app (UI at http://localhost:8000, opens in Hebrew)
+- `uv run --with websocket-client python tools/ui_smoke.py` — browser smoke suite (CDP-driven; run at UI milestones; needs google-chrome)
 
 ## Where truth lives
 
 - `docs/product/architecture-foundation-v0.1.md` — the product foundation; §15 lists the
   non-negotiable properties every change must respect.
-- `docs/architecture/` — system/domain/knowledge/decision/AI/fulfillment design; `docs/adr/` —
-  decisions with rationale. Change code and these docs together, or not at all.
-- `docs/scenarios/golden-scenarios.md` — the behavioral contract; `tests/scenarios/` mirrors
-  it. Never silently reconcile a disagreement between them (use the `golden-scenarios` skill).
+- `docs/architecture/` + `docs/adr/` — design and decisions. Change code and these docs
+  together, or not at all.
+- `docs/scenarios/golden-scenarios.md` ⇄ `tests/scenarios/` — the behavioral contract.
+  Never silently reconcile a disagreement between them (use the `golden-scenarios` skill).
+- `docs/superpowers/specs/` + `docs/superpowers/plans/` — feature specs and implementation
+  plans (UI v2 lives there). `docs/reviews/` — review verdicts and dispositions.
 - `plan/current-status.md` — live progress; update at each checkpoint.
 
-## Durable principles (short form of foundation §15 + ADRs)
+## Durable principles — backend (foundation §15 + ADRs)
 
 - **Integer millimeters and cents at rest; float only transient** (ADR-0002). Exactly two
   named tolerances live in `fenceai/core/units.py`.
 - **`generate()` is pure and deterministic**; overrides are patches anchored to
   `(run_id, station, kind)`, never to generated element identity (ADR-0004).
-- **Hard constraint ≠ preference ≠ objective ≠ override** — distinct types, distinct handling;
-  conflation is an architecture bug.
+- **Hard constraint ≠ preference ≠ objective ≠ override** — distinct types, distinct handling.
 - **Rules are data** (typed ASTs + owned evaluator, ADR-0005); no rule may exist only in a
   prompt. Knowledge versions are immutable; runs stamp their snapshot set.
-- **The decision graph is the explanation**; prose is rendered from it. Every strategy
-  element, requirement, and BOM line must trace back through it.
-- **Verbatim human text is immutable** wherever it appears; AI interpretations are proposals
-  until a human confirms; knowledge candidates are inert until approved.
+- **The decision graph is the explanation**; prose is rendered from it via per-language
+  templates (`decisions/explain.py` TEMPLATES — en/he must stay key-identical; a `defeated`
+  edge cites the LOSING version). Every element, requirement, and BOM line traces through it.
+- **Verbatim human text is immutable**; AI interpretations are proposals until confirmed;
+  knowledge candidates are inert until approved.
 - **No AI inside deterministic computation** — AI sits behind the ports in `fenceai/ai/`;
-  the stub implementation must keep the whole system working offline.
+  the stub keeps the whole system working offline (it understands the demo vocabulary in
+  English AND Hebrew; keep it capped — it must not become a second rule engine).
+- User-visible warnings/critiques carry `code + params` (English `message` is fallback only);
+  a new code needs `warning.<code>`/`critique.<code>` entries in BOTH locale bundles —
+  `tests/web/test_locale_bundles.py` enforces this.
+
+## Durable principles — frontend (`src/fenceai/web/static/`)
+
+- ES modules under `js/` communicate ONLY via `state.js` (events + exports); no module
+  touches another's DOM subtree. No framework, no build step, no CDN (fonts are bundled).
+- **Mutation discipline, always in this order**: `pushSnapshot(label)` → mutate
+  `state.project` → `saveTopology()`. Undo/redo restore locally and PUT a NEW forward
+  revision — server revisions never go backwards. Non-user changes never push history;
+  use `reloadProject()` (not `openProject`) after non-topology mutations or you wipe the
+  user's undo stack.
+- **Anchors are segment-local**: author with `geom.anchorFor`, resolve with
+  `geom.stationOfAnchor` — these mirror backend `make_anchor`/`anchor_station` exactly.
+  Never read `anchor.offset_mm` as a station.
+- **i18n**: every user-visible string goes through `t("key")` (JS) or `data-i18n` (HTML);
+  `i18n/he.json` and `en.json` must keep identical key sets. CSS uses logical properties
+  only (no left/right); **the plan canvas and profile SVG are NEVER mirrored in RTL**;
+  SKUs/ids/dimensions get `.sku`/`.num`/`<bdi>` isolation.
+- **XSS**: any user/expert text interpolated into `innerHTML` goes through `esc()`.
 
 ## Project agents & skills
 
-- `architecture-critic` / `test-reviewer` agents: run after the spike, after slices touching
-  domain abstractions, and before declaring milestones done.
-- `golden-scenarios` skill: procedure for adding/validating scenarios and converting expert
-  corrections into regression scenarios.
+- `architecture-critic` / `test-reviewer` agents: run after slices touching domain
+  abstractions or the frontend contracts above, and before declaring milestones done.
+- `golden-scenarios` skill: adding/validating scenarios; converting expert corrections
+  into regression scenarios.

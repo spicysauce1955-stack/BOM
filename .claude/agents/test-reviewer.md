@@ -14,5 +14,6 @@ Check:
 4. **Determinism**: at least one test runs generation twice and asserts identical output.
 5. **Negative/boundary cases**: zero-length runs, run shorter than min span, demand exactly at package boundary, cut exactly equal to stock, remnant exactly at the reuse threshold.
 6. **LLM isolation**: no test depends on a live API; the stub interpreter is used and at least one test validates schema-rejection of malformed AI output.
+7. **i18n contracts**: explanation TEMPLATES en/he key parity and rare branches rendered in both languages (tests/decisions/test_explain_i18n.py); locale-bundle parity + backend code coverage (tests/web/test_locale_bundles.py). Browser behavior is verified by tools/ui_smoke.py (run it: `uv run --with websocket-client python tools/ui_smoke.py`), not pytest — judge its checks for false-pass risk instead of demanding pytest browser coverage.
 
 Report: numbered findings with severity, file:line, and the specific missing assertion or test. End with verdict: ADEQUATE / GAPS / INADEQUATE.
