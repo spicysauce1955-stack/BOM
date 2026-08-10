@@ -69,6 +69,20 @@ def test_full_generation_flow(client):
     assert impact["decisions"]
 
 
+def test_explain_lang_param(client):
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    result = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = result["run"]["id"]
+    post_id = result["strategy"]["posts"][0]["id"]
+    he = client.get(f"/api/runs/{run_id}/explain/{post_id}?lang=he").json()
+    assert any("עמוד בתחנה" in line for line in he["explanation"])
+    en = client.get(f"/api/runs/{run_id}/explain/{post_id}?lang=en").json()
+    assert any("Post at station" in line for line in en["explanation"])
+    # only en|he accepted
+    assert client.get(f"/api/runs/{run_id}/explain/{post_id}?lang=fr").status_code == 422
+
+
 def test_annotation_interpret_confirm_flow(client):
     pid = make_project(client)
     put_straight_topology(client, pid, length=3000)

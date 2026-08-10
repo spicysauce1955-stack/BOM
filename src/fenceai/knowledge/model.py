@@ -124,6 +124,7 @@ class KnowledgeVersion(BaseModel):
     condition: Expr | None = None
     actions: list[Action] = []
     title: str = ""
+    title_i18n: dict[str, str] = {}  # optional localized titles; empty = fallback to title
     source_text: str | None = None  # verbatim human words, immutable
     derived_from: list[str] = []  # version refs / correction ids / interpretation ids
     attributed_to: str = "system"
@@ -135,6 +136,9 @@ class KnowledgeVersion(BaseModel):
     @property
     def ref(self) -> str:
         return f"{self.object_id}@v{self.version}"
+
+    def display_title(self, lang: str) -> str:
+        return self.title_i18n.get(lang) or self.title
 
     def effective_authority(self) -> int:
         return self.authority if self.authority is not None else DEFAULT_AUTHORITY[self.type]

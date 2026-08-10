@@ -38,7 +38,9 @@ class InterpretationRecord(BaseModel):
 class CritiqueNote(BaseModel):
     element_refs: list[str] = []
     severity: Literal["info", "warning"] = "info"
-    text: str
+    text: str  # English fallback; clients localize from code + params
+    code: str = "generic"
+    params: dict[str, str | int] = {}
 
 
 class ProposedRule(BaseModel):
