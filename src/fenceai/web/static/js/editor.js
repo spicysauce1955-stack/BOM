@@ -2,6 +2,7 @@
 // Draw (snapped dots, rubber band, typed lengths) — plan Tasks 6-8.
 // The canvas is never mirrored in RTL (spec §4).
 
+import { apiSend, esc } from "./api.js";
 import {
   clearGroup, el, nodeById, pointAtStation, runById, runLength, runPoints,
   snapPoint, stationAtPoint, toMmRaw, toPx,
@@ -10,8 +11,11 @@ import { pushSnapshot, redo, undo } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import {
-  generateStrategy, on, saveTopology, setSelection, setTool, state,
+  addIntervalEvent, addPointEvent, generateStrategy, on, saveTopology,
+  setSelection, setTool, state,
 } from "./state.js";
+
+const EVENT_TOOLS = ["gate", "base", "ground", "pin"];
 
 const BASE_COLORS = { soil: "#a16207", concrete: "#64748b", masonry_wall: "#dc2626" };
 const POST_COLORS = { line: "#2563eb", end: "#1e293b", corner: "#1e293b",
@@ -24,7 +28,9 @@ export function initEditor() {
   renderGrid();
   on("project-loaded", () => { renderAllCanvas(); renderHandles(); });
   on("result-changed", () => { renderOverlay(); renderWarnings(); });
-  on("tool-changed", () => { updateToolButtons(); renderHandles(); updateStatus(); });
+  on("tool-changed", () => {
+    updateToolButtons(); renderHandles(); updateStatus(); closePopover();
+  });
   on("selection-changed", () => { renderTopology(); renderHandles(); });
   on("locale-changed", () => { renderAllCanvas(); renderHandles(); updateStatus(); });
   updateStatus();
@@ -108,6 +114,15 @@ function setupCanvas() {
       if (hit) setSelection({ runId: hit.dataset.run });
       else if (!ev.target.closest("#g-overlay") && !ev.target.closest("#g-handles"))
         setSelection({});
+    } else if (EVENT_TOOLS.includes(state.tool)) {
+      const hit = ev.target.closest && ev.target.closest(".run-hit");
+      closePopover();
+      if (hit) {
+        const run = runById(hit.dataset.run);
+        const [mx, my] = svgCoords(ev);
+        const station = stationAtPoint(run, mx, my).station;
+        openEventPopover(state.tool, run.id, station, ev.clientX, ev.clientY);
+      }
     }
   });
 
@@ -140,7 +155,7 @@ function setupCanvas() {
       return;
     }
     if (typing) return;
-    if (ev.key === "Escape") cancelDraft();
+    if (ev.key === "Escape") { closePopover(); cancelDraft(); }
     if (ev.key === "Enter" && state.draftNodes.length) finishDraft();
     if ((ev.key === "Delete" || ev.key === "Backspace") && state.tool === "select")
       deleteSelectedDot();
@@ -252,6 +267,99 @@ function deleteSelectedDot() {
     setSelection({});
     saveTopology();
   }
+}
+
+// ---------- event tools: gate/base/ground/pin popover (Task 8) ----------
+let popover = null;
+
+function closePopover() {
+  if (!popover) return;
+  popover.remove();
+  popover = null;
+  document.removeEventListener("pointerdown", onOutsidePointer, true);
+}
+
+function onOutsidePointer(ev) {
+  if (popover && !popover.contains(ev.target)) closePopover();
+}
+
+function openEventPopover(tool, runId, station, clientX, clientY) {
+  closePopover();
+  const run = runById(runId);
+  if (!run) return;
+  const L = runLength(run);
+  const numField = (key, id, value) =>
+    `<label>${t(key)}<input id="${id}" type="number" value="${value}"></label>`;
+  let html = `<h4>${t("tool." + tool)}</h4>
+    <div class="meta"><bdi>${esc(runId)}</bdi> · ${t("popover.station")}
+      <span class="num">${station}</span></div>`;
+  if (tool === "gate") {
+    html += numField("popover.width", "pop-width", 1000);
+    html += `<label>${t("popover.kit")}<input id="pop-kit" value="GATE-KIT-1000"></label>`;
+  } else if (tool === "base") {
+    html += numField("popover.start", "pop-start", station);
+    html += numField("popover.end", "pop-end", Math.min(station + 1000, L));
+    html += `<label>${t("popover.surface")}<select id="pop-surface">
+      <option value="soil">${t("surface.soil")}</option>
+      <option value="concrete">${t("surface.concrete")}</option>
+      <option value="masonry_wall">${t("surface.masonry_wall")}</option>
+    </select></label>`;
+  } else if (tool === "ground") {
+    html += numField("popover.z", "pop-z", 0);
+  } else if (tool === "pin") {
+    html += `<div class="meta">${t("popover.pin_hint")}</div>`;
+  }
+  html += `<div class="popover-actions">
+    <button id="pop-cancel">${t("popover.cancel")}</button>
+    <button id="pop-save" class="primary">${t("popover.save")}</button></div>`;
+  popover = document.createElement("div");
+  popover.className = "popover";
+  popover.innerHTML = html;
+  document.body.appendChild(popover);
+  // position at the click, kept inside the viewport (cursor-anchored:
+  // physical coords by nature; the canvas is never mirrored)
+  popover.style.left = `${Math.max(4, Math.min(clientX + 8, window.innerWidth - popover.offsetWidth - 12))}px`;
+  popover.style.top = `${Math.max(4, Math.min(clientY + 8, window.innerHeight - popover.offsetHeight - 12))}px`;
+
+  async function save() {
+    pushSnapshot(tool);
+    if (tool === "gate") {
+      addPointEvent(runId, {
+        kind: "gate",
+        width_mm: Math.round(+document.getElementById("pop-width").value),
+        kit_sku: document.getElementById("pop-kit").value.trim() || null,
+      }, station);
+    } else if (tool === "base") {
+      addIntervalEvent(runId, {
+        kind: "base", surface: document.getElementById("pop-surface").value,
+      }, Math.round(+document.getElementById("pop-start").value),
+        Math.round(+document.getElementById("pop-end").value));
+    } else if (tool === "ground") {
+      addPointEvent(runId, {
+        kind: "elevation_sample",
+        z_mm: Math.round(+document.getElementById("pop-z").value),
+      }, station);
+    } else if (tool === "pin") {
+      await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
+        id: "", run_id: runId,
+        directive: { kind: "pin_post", station_mm: station },
+      });
+    }
+    closePopover();
+    await saveTopology();
+  }
+
+  popover.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Escape") closePopover();
+    else if (ev.key === "Enter") { ev.preventDefault(); save(); }
+  });
+  popover.querySelector("#pop-cancel").addEventListener("click", closePopover);
+  popover.querySelector("#pop-save").addEventListener("click", save);
+  const first = popover.querySelector("input, select, button");
+  if (first) first.focus();
+  // blur = pointer down anywhere outside cancels (registered after this click)
+  setTimeout(() => document.addEventListener("pointerdown", onOutsidePointer, true), 0);
 }
 
 // ---------- typed exact length ----------
@@ -434,7 +542,9 @@ function renderTopology() {
   }
   for (const n of topo.nodes) {
     const p = toPx([n.x_mm, n.y_mm]);
-    el("rect", { x: p[0] - 4, y: p[1] - 4, width: 8, height: 8, fill: "#334155" }, g);
+    // visual only — must not steal clicks from the run hit lines underneath
+    el("rect", { x: p[0] - 4, y: p[1] - 4, width: 8, height: 8, fill: "#334155",
+      "pointer-events": "none" }, g);
   }
 }
 
