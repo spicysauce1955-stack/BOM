@@ -11,80 +11,107 @@
     <h1>Fence AI</h1>
     <div class="project-bar">
       <select id="project-select"></select>
-      <input id="new-project-name" placeholder="new project name">
-      <button id="btn-new-project">Create</button>
+      <input id="new-project-name" data-i18n-placeholder="project.new_placeholder" placeholder="new project name">
+      <button id="btn-new-project" data-i18n="project.create">Create</button>
+      <button id="btn-locale" title="עברית / English">עב / EN</button>
       <span id="ai-badge" class="badge"></span>
     </div>
   </header>
 
   <nav id="tabs">
-    <button data-tab="canvas" class="active">Topology &amp; Strategy</button>
-    <button data-tab="annotations">Annotations</button>
-    <button data-tab="knowledge">Knowledge</button>
-    <button data-tab="review">Review queue</button>
-    <button data-tab="bom">BOM</button>
-    <button data-tab="inventory">Inventory</button>
+    <button data-tab="canvas" class="active" data-i18n="tabs.canvas">Topology &amp; Strategy</button>
+    <button data-tab="annotations" data-i18n="tabs.annotations">Annotations</button>
+    <button data-tab="knowledge" data-i18n="tabs.knowledge">Knowledge</button>
+    <button data-tab="review" data-i18n="tabs.review">Review queue</button>
+    <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
+    <button data-tab="inventory" data-i18n="tabs.inventory">Inventory</button>
   </nav>
 
   <main>
     <!-- ============ canvas tab ============ -->
     <section id="tab-canvas" class="tab active">
       <div class="canvas-row">
+        <div id="toolbar">
+          <button id="tool-select" class="tool active" data-i18n-title="tool.select" title="Select / edit">⬚</button>
+          <button id="tool-draw" class="tool" data-i18n-title="tool.draw" title="Draw runs">✏️</button>
+          <button id="tool-gate" class="tool" data-i18n-title="tool.gate" title="Place gate">🚪</button>
+          <button id="tool-base" class="tool" data-i18n-title="tool.base" title="Base surface">🧱</button>
+          <button id="tool-ground" class="tool" data-i18n-title="tool.ground" title="Ground elevation point">⛰️</button>
+          <button id="tool-pin" class="tool" data-i18n-title="tool.pin" title="Pin post">📍</button>
+          <div class="toolbar-spacer"></div>
+          <button id="btn-undo" data-i18n-title="tool.undo" title="Undo (Ctrl+Z)">↶</button>
+          <button id="btn-redo" data-i18n-title="tool.redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+          <button id="btn-clear" data-i18n-title="tool.clear" title="Clear topology">🗑</button>
+        </div>
         <div class="canvas-col">
           <div class="toolbar">
-            <button id="btn-draw" class="mode active" title="Click to place fence nodes; double-click or Esc to finish">✏️ Draw runs</button>
-            <button id="btn-clear-topo">🗑 Clear topology</button>
-            <button id="btn-generate" class="primary">⚙ Generate strategy</button>
-            <label><input type="checkbox" id="chk-overlay" checked> show strategy overlay</label>
+            <button id="btn-generate" class="primary" data-i18n="editor.generate">⚙ Generate strategy</button>
+            <label><input type="checkbox" id="chk-overlay" checked> <span data-i18n="editor.show_overlay">show strategy overlay</span></label>
+            <div id="draft-actions" style="display:none">
+              <button id="btn-finish-draft" class="primary" data-i18n="editor.finish_run">Finish run</button>
+              <button id="btn-cancel-draft" data-i18n="editor.cancel_run">Cancel</button>
+            </div>
           </div>
           <svg id="canvas" viewBox="0 0 900 500" preserveAspectRatio="xMidYMid meet">
             <g id="g-grid"></g>
             <g id="g-topology"></g>
             <g id="g-overlay"></g>
+            <g id="g-handles"></g>
             <g id="g-draft"></g>
+            <g id="g-snap"></g>
           </svg>
+          <div id="statusbar"></div>
           <div id="warnings"></div>
+          <div id="profile">
+            <div class="profile-header">
+              <span data-i18n="profile.title">Side view</span>
+              <button id="profile-exag" data-i18n-title="profile.exaggeration" title="Vertical exaggeration">5×</button>
+              <button id="profile-toggle">▾</button>
+            </div>
+            <div id="profile-placeholder" class="meta"></div>
+            <svg id="profile-svg" viewBox="0 0 900 180" preserveAspectRatio="none"></svg>
+          </div>
         </div>
         <aside class="side-col">
           <div class="panel">
-            <h3>Run editing</h3>
+            <h3 data-i18n="inspect.run_editing">Run editing</h3>
             <select id="run-select"></select>
-            <details open><summary>Gate</summary>
-              <input id="gate-station" type="number" placeholder="station mm">
+            <details open><summary data-i18n="events.gate">Gate</summary>
+              <input id="gate-station" type="number" data-i18n-placeholder="events.station" placeholder="station mm">
               <input id="gate-width" type="number" value="1000" placeholder="width mm">
               <input id="gate-kit" value="GATE-KIT-1000" placeholder="kit sku">
-              <button id="btn-add-gate">Add gate</button>
+              <button id="btn-add-gate" data-i18n="events.add_gate">Add gate</button>
             </details>
-            <details><summary>Base interval</summary>
-              <input id="base-start" type="number" placeholder="start mm">
-              <input id="base-end" type="number" placeholder="end mm">
+            <details><summary data-i18n="events.base">Base interval</summary>
+              <input id="base-start" type="number" data-i18n-placeholder="events.start" placeholder="start mm">
+              <input id="base-end" type="number" data-i18n-placeholder="events.end" placeholder="end mm">
               <select id="base-surface">
-                <option value="soil">soil</option>
-                <option value="concrete">concrete</option>
-                <option value="masonry_wall">masonry wall</option>
+                <option value="soil" data-i18n="surface.soil">soil</option>
+                <option value="concrete" data-i18n="surface.concrete">concrete</option>
+                <option value="masonry_wall" data-i18n="surface.masonry_wall">masonry wall</option>
               </select>
-              <button id="btn-add-base">Set base</button>
+              <button id="btn-add-base" data-i18n="events.set_base">Set base</button>
             </details>
-            <details><summary>Elevation sample</summary>
-              <input id="elev-station" type="number" placeholder="station mm">
+            <details><summary data-i18n="events.elevation">Elevation sample</summary>
+              <input id="elev-station" type="number" data-i18n-placeholder="events.station" placeholder="station mm">
               <input id="elev-z" type="number" placeholder="z mm">
-              <button id="btn-add-elev">Add sample</button>
+              <button id="btn-add-elev" data-i18n="events.add_sample">Add sample</button>
             </details>
-            <details><summary>Height intent</summary>
-              <input id="height-start" type="number" placeholder="start mm">
-              <input id="height-end" type="number" placeholder="end mm">
+            <details><summary data-i18n="events.height">Height intent</summary>
+              <input id="height-start" type="number" data-i18n-placeholder="events.start" placeholder="start mm">
+              <input id="height-end" type="number" data-i18n-placeholder="events.end" placeholder="end mm">
               <input id="height-mm" type="number" value="1800" placeholder="height mm">
-              <button id="btn-add-height">Set height intent</button>
+              <button id="btn-add-height" data-i18n="events.set_height">Set height intent</button>
             </details>
-            <details><summary>Override: pin post</summary>
-              <input id="pin-station" type="number" placeholder="station mm">
-              <button id="btn-pin-post">Pin post</button>
+            <details><summary data-i18n="events.pin">Override: pin post</summary>
+              <input id="pin-station" type="number" data-i18n-placeholder="events.station" placeholder="station mm">
+              <button id="btn-pin-post" data-i18n="events.pin_post">Pin post</button>
             </details>
             <div id="override-list"></div>
           </div>
           <div class="panel" id="inspector">
-            <h3>Inspector</h3>
-            <div id="inspector-body"><em>Click a generated post, span, or gate.</em></div>
+            <h3 data-i18n="inspect.title">Inspector</h3>
+            <div id="inspector-body"><em data-i18n="inspect.empty">Click a generated post, span, or gate.</em></div>
           </div>
         </aside>
       </div>
@@ -93,10 +120,10 @@
     <!-- ============ annotations tab ============ -->
     <section id="tab-annotations" class="tab">
       <div class="panel">
-        <h3>Attach annotation</h3>
+        <h3 data-i18n="annotations.attach">Attach annotation</h3>
         <select id="ann-target"></select>
-        <input id="ann-text" placeholder="e.g. keep the top aligned with the neighbour (approx. 1750)" size="60">
-        <button id="btn-add-ann">Add</button>
+        <input id="ann-text" dir="auto" data-i18n-placeholder="annotations.placeholder" placeholder="e.g. keep the top aligned with the neighbour (approx. 1750)" size="60">
+        <button id="btn-add-ann" data-i18n="common.add">Add</button>
       </div>
       <div id="annotation-list"></div>
     </section>
@@ -104,15 +131,15 @@
     <!-- ============ knowledge tab ============ -->
     <section id="tab-knowledge" class="tab">
       <div class="panel">
-        <h3>New knowledge version (JSON actions)</h3>
-        <input id="k-object" placeholder="object id e.g. K-MAXSPAN">
+        <h3 data-i18n="knowledge.new_version">New knowledge version (JSON actions)</h3>
+        <input id="k-object" data-i18n-placeholder="knowledge.object_placeholder" placeholder="object id e.g. K-MAXSPAN">
         <select id="k-type">
           <option>hard_constraint</option><option>company_rule</option>
           <option>preference</option><option>heuristic</option><option>fact</option>
         </select>
-        <input id="k-title" placeholder="title" size="40">
-        <textarea id="k-actions" rows="3" cols="70">[{"kind": "set_param", "param": "max_span_mm", "value": 1800}]</textarea>
-        <button id="btn-add-knowledge">Save new version</button>
+        <input id="k-title" dir="auto" data-i18n-placeholder="knowledge.title_placeholder" placeholder="title" size="40">
+        <textarea id="k-actions" dir="ltr" rows="3" cols="70">[{"kind": "set_param", "param": "max_span_mm", "value": 1800}]</textarea>
+        <button id="btn-add-knowledge" data-i18n="knowledge.save_version">Save new version</button>
       </div>
       <div id="knowledge-list"></div>
     </section>
@@ -120,22 +147,22 @@
     <!-- ============ review tab ============ -->
     <section id="tab-review" class="tab">
       <div class="panel">
-        <button id="btn-propose">Propose knowledge from corrections</button>
+        <button id="btn-propose" data-i18n="review.propose">Propose knowledge from corrections</button>
       </div>
       <div id="candidate-list"></div>
     </section>
 
     <!-- ============ bom tab ============ -->
     <section id="tab-bom" class="tab">
-      <div id="bom-body"><em>Generate a strategy first.</em></div>
+      <div id="bom-body"></div>
     </section>
 
     <!-- ============ inventory tab ============ -->
     <section id="tab-inventory" class="tab">
       <div class="panel">
-        <h3>Inventory (JSON)</h3>
-        <textarea id="inventory-json" rows="10" cols="80"></textarea>
-        <button id="btn-save-inventory">Save inventory</button>
+        <h3 data-i18n="inventory.title">Inventory (JSON)</h3>
+        <textarea id="inventory-json" dir="ltr" rows="10" cols="80"></textarea>
+        <button id="btn-save-inventory" data-i18n="inventory.save">Save inventory</button>
       </div>
     </section>
   </main>

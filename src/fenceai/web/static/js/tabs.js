@@ -1,0 +1,215 @@
+// Tab panels: annotations, knowledge, review queue, BOM, inventory.
+
+import { apiGet, apiSend, esc } from "./api.js";
+import { currentLocale, t } from "./i18n.js";
+import { on, refreshProject, state } from "./state.js";
+
+export function initTabs() {
+  document.querySelectorAll("#tabs button").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#tabs button").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+      if (btn.dataset.tab === "knowledge") renderKnowledge();
+      if (btn.dataset.tab === "review") renderCandidates();
+      if (btn.dataset.tab === "bom") renderBom();
+    }));
+
+  document.getElementById("btn-add-ann").addEventListener("click", async () => {
+    const text = document.getElementById("ann-text").value.trim();
+    if (!text) return;
+    await apiSend("POST", `/api/projects/${state.projectId}/annotations`,
+      { target_ref: document.getElementById("ann-target").value, text });
+    document.getElementById("ann-text").value = "";
+    await refreshProject();
+  });
+  document.getElementById("btn-add-knowledge").addEventListener("click", async () => {
+    let actions;
+    try { actions = JSON.parse(document.getElementById("k-actions").value); }
+    catch { return alert(t("knowledge.actions_json_invalid")); }
+    await apiSend("POST", "/api/knowledge", {
+      object_id: document.getElementById("k-object").value.trim(),
+      type: document.getElementById("k-type").value,
+      title: document.getElementById("k-title").value, actions, author: "expert-admin",
+    });
+    renderKnowledge();
+  });
+  document.getElementById("btn-propose").addEventListener("click", async () => {
+    const out = await apiSend("POST", `/api/projects/${state.projectId}/propose-knowledge`);
+    alert(out.length ? t("review.proposed_n", { n: out.length }) : t("review.no_new"));
+    renderCandidates();
+  });
+  document.getElementById("btn-save-inventory").addEventListener("click", async () => {
+    let inv;
+    try { inv = JSON.parse(document.getElementById("inventory-json").value); }
+    catch { return alert(t("inventory.json_invalid")); }
+    await apiSend("PUT", `/api/projects/${state.projectId}/inventory`, inv);
+    alert(t("inventory.saved"));
+  });
+
+  on("project-loaded", () => { renderAnnotations(); renderInventory(); maybeRenderBom(); });
+  on("result-changed", maybeRenderBom);
+  on("locale-changed", () => { renderAnnotations(); maybeRenderBom(); });
+}
+
+function maybeRenderBom() {
+  if (document.getElementById("tab-bom").classList.contains("active")) renderBom();
+}
+
+// ---------- BOM ----------
+async function renderBom() {
+  const div = document.getElementById("bom-body");
+  if (!state.result) { div.innerHTML = `<em>${t("bom.generate_first")}</em>`; return; }
+  const data = await apiGet(`/api/runs/${state.result.run.id}/bom`);
+  const bom = data.bom;
+  let html = `<div class="panel"><h3>${t("bom.title")} — ${t("bom.total")} €${(bom.total_cents / 100).toFixed(2)}</h3>
+  <table><tr><th>${t("bom.sku")}</th><th>${t("bom.purchase")}</th><th>${t("bom.engineering")}</th>
+  <th>${t("bom.overage")}</th><th>${t("bom.unit_price")}</th><th>${t("bom.line_total")}</th><th>${t("bom.notes")}</th></tr>`;
+  for (const l of bom.lines) {
+    html += `<tr><td><span class="sku">${esc(l.sku)}</span><br><span class="meta">${esc(l.name)}</span></td>
+      <td><span class="num">${l.purchase_qty}</span> × ${esc(l.purchase_unit)}</td>
+      <td><span class="num">${l.engineering_qty}</span> ${esc(l.engineering_unit)}</td>
+      <td>${l.overage_qty || ""}</td>
+      <td class="num">${(l.unit_price_cents / 100).toFixed(2)}</td>
+      <td class="num">${(l.total_cents / 100).toFixed(2)}</td>
+      <td>${esc((l.notes || []).join("; "))}</td></tr>`;
+  }
+  html += "</table></div>";
+  for (const [sku, plan] of Object.entries(bom.cut_plans || {})) {
+    html += `<div class="panel"><h3>${t("bom.cut_plan")} — <span class="sku">${esc(sku)}</span>
+      ${plan.certified_optimal ? `<span class="tag active">${t("bom.optimal")}</span>`
+        : `<span class="tag medium">${t("bom.heuristic", { bound: plan.lp_lower_bound })}</span>`}</h3>
+      <table><tr><th>${t("bom.bar_source")}</th><th>${t("bom.stock")}</th><th>${t("bom.cuts")}</th><th>${t("bom.leftover")}</th></tr>`;
+    for (const b of plan.bars) {
+      html += `<tr><td><bdi>${esc(b.source)}</bdi></td><td class="num">${b.stock_length_mm}</td>
+        <td class="num">${b.pieces.map((p) => p.length_mm).join(" + ")}</td>
+        <td class="num">${b.leftover_mm}${b.leftover_reusable ? " ♻" : ""}</td></tr>`;
+    }
+    html += "</table></div>";
+  }
+  if ((bom.allocations || []).length) {
+    html += `<div class="panel"><h3>${t("bom.allocations")}</h3>
+      <table><tr><th>${t("bom.item")}</th><th>${t("bom.sku")}</th><th>${t("bom.used")}</th></tr>`;
+    for (const a of bom.allocations)
+      html += `<tr><td><bdi>${esc(a.inventory_item_id)}</bdi></td><td><span class="sku">${esc(a.sku)}</span></td>
+        <td class="num">${a.length_used_mm ? a.length_used_mm + " mm" : a.qty}</td></tr>`;
+    html += "</table></div>";
+  }
+  div.innerHTML = html;
+}
+
+// ---------- annotations ----------
+async function renderAnnotations() {
+  const div = document.getElementById("annotation-list");
+  div.innerHTML = "";
+  for (const ann of state.project?.annotations || []) {
+    const card = document.createElement("div");
+    card.className = "card";
+    let html = `<div class="meta"><bdi>${esc(ann.id)}</bdi> · ${esc(ann.target_ref)} · ${esc(ann.author)}</div>
+      <div class="verbatim" dir="auto">“${esc(ann.text)}”</div>
+      <button data-act="interpret">${t("annotations.interpret")}</button>`;
+    for (const rec of ann.interpretations) {
+      html += `<div class="meta">${t("annotations.by")} <bdi>${esc(rec.interpreter)}</bdi></div>`;
+      for (const c of rec.candidates) {
+        html += `<div>→ <b>${esc(c.kind)}</b> <bdi>${esc(JSON.stringify(c.params))}</bdi>
+          <span class="tag ${c.confidence}">${t("confidence." + c.confidence)}</span>
+          <span class="tag ${c.status}">${t("status." + c.status)}</span>`;
+        if (c.status === "proposed")
+          html += ` <button data-confirm="${esc(c.id)}" data-ann="${esc(ann.id)}">${t("annotations.confirm")}</button>`;
+        html += "</div>";
+        if (c.ambiguity_note) html += `<div class="meta">⚠ ${esc(c.ambiguity_note)}</div>`;
+      }
+      for (const u of rec.unparsed_spans)
+        html += `<div class="meta">${t("annotations.unparsed")}: <span dir="auto">“${esc(u)}”</span></div>`;
+    }
+    card.innerHTML = html;
+    card.querySelector('[data-act="interpret"]').addEventListener("click", async () => {
+      await apiSend("POST", `/api/projects/${state.projectId}/annotations/${ann.id}/interpret`);
+      await refreshProject();
+    });
+    card.querySelectorAll("[data-confirm]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        let runId = ann.target_ref.startsWith("run:") ? ann.target_ref.slice(4) : null;
+        if (!runId) {
+          const options = state.project.topology.runs.map((r) => r.id).join(", ");
+          runId = prompt(t("annotations.which_run", { options }),
+            state.project.topology.runs[0]?.id);
+          if (!runId) return;
+        }
+        await apiSend("POST",
+          `/api/projects/${state.projectId}/intents/${btn.dataset.confirm}/confirm`,
+          { annotation_id: btn.dataset.ann, run_id: runId });
+        await refreshProject();
+      }));
+    div.appendChild(card);
+  }
+}
+
+// ---------- knowledge ----------
+async function renderKnowledge() {
+  const versions = await apiGet("/api/knowledge");
+  const div = document.getElementById("knowledge-list");
+  div.innerHTML = "";
+  for (const v of versions) {
+    const card = document.createElement("div");
+    card.className = "card";
+    let html = `<span class="tag ${v.type}">${esc(v.type)}</span>
+      <span class="tag ${v.status}">${t("status." + v.status)}</span>
+      <b><bdi>${esc(v.object_id)}@v${v.version}</bdi></b> — <span dir="auto">${esc(v.title)}</span>
+      <div class="meta">${t("knowledge.scope")} <bdi>${esc(JSON.stringify(v.scope))}</bdi> · ${esc(v.attributed_to)}
+        ${v.derived_from?.length ? "· " + t("knowledge.derived_from") + " <bdi>" + esc(v.derived_from.join(", ")) + "</bdi>" : ""}</div>`;
+    if (v.source_text) html += `<div class="verbatim" dir="auto">“${esc(v.source_text)}”</div>`;
+    html += `<div class="meta">${t("knowledge.actions")}: <bdi>${esc(JSON.stringify(v.actions))}</bdi></div>`;
+    if (v.status === "active") html += `<button data-retire="1">${t("knowledge.retire")}</button>`;
+    card.innerHTML = html;
+    card.querySelector("[data-retire]")?.addEventListener("click", async () => {
+      await apiSend("POST", `/api/knowledge/${v.object_id}/${v.version}/retire`);
+      renderKnowledge();
+    });
+    div.appendChild(card);
+  }
+}
+
+// ---------- review queue ----------
+async function renderCandidates() {
+  const candidates = await apiGet("/api/candidates");
+  const div = document.getElementById("candidate-list");
+  div.innerHTML = candidates.length ? "" : `<em>${t("review.empty")}</em>`;
+  for (const c of candidates) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `<span class="tag candidate">${t("status.proposed")}</span>
+      <b><bdi>${esc(c.object_id)}@v${c.version}</bdi></b> — <span dir="auto">${esc(c.title)}</span>
+      <div class="meta">${t("knowledge.scope")} <bdi>${esc(JSON.stringify(c.scope))}</bdi> ·
+        ${t("knowledge.derived_from")} <bdi>${esc(c.derived_from.join(", "))}</bdi></div>
+      ${c.source_text ? `<div class="verbatim" dir="auto">“${esc(c.source_text)}”</div>` : ""}
+      <div class="meta">${t("knowledge.actions")}: <bdi>${esc(JSON.stringify(c.actions))}</bdi></div>
+      <button data-a="approve">${t("review.approve")}</button>
+      <button data-a="scope_restrict">${t("review.approve_narrower")}</button>
+      <button data-a="reject">${t("review.reject")}</button>`;
+    card.querySelectorAll("button").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const action = btn.dataset.a;
+        const body = { action, reviewer: "expert-admin" };
+        if (action === "reject") {
+          body.reason = prompt(t("review.why_reject")) || "no reason given";
+        } else if (action === "scope_restrict") {
+          const extra = prompt(t("review.scope_prompt"));
+          if (!extra || !extra.includes("=")) return;
+          const [k, val] = extra.split("=");
+          body.edited_scope = { ...c.scope, [k.trim()]: val.trim() };
+        }
+        await apiSend("POST", `/api/candidates/${c.object_id}/${c.version}/review`, body);
+        renderCandidates(); renderKnowledge();
+      }));
+    div.appendChild(card);
+  }
+}
+
+// ---------- inventory ----------
+async function renderInventory() {
+  if (!state.projectId) return;
+  const inv = await apiGet(`/api/projects/${state.projectId}/inventory`);
+  document.getElementById("inventory-json").value = JSON.stringify(inv, null, 2);
+}
