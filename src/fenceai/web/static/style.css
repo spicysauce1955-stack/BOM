@@ -78,6 +78,19 @@ th { background: #eef2f6; }
 #profile-placeholder { padding: 6px 10px; }
 
 #canvas { direction: ltr; } /* the plan canvas is never mirrored (spec §4) */
+
+/* ---------- select/draw editing grammar (Task 7) ---------- */
+.run-hit { stroke: transparent; stroke-width: 16; fill: none; cursor: pointer; pointer-events: stroke; }
+.run-label { cursor: text; }
+.handle { fill: #fff; stroke: #2563eb; stroke-width: 2; cursor: move; }
+.handle.selected { fill: #2563eb; }
+.ghost { fill: #fff; stroke: #94a3b8; stroke-width: 1.5; opacity: 0.85; cursor: copy; }
+.snap-guide { stroke: #f59e0b; stroke-width: 1.5; stroke-dasharray: 4 3; }
+.rubber { stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 6 4; }
+#g-snap { pointer-events: none; }
+#g-draft { pointer-events: none; }
+.mm-input { inline-size: 84px; font-size: 12px; padding: 2px 4px;
+  border: 1px solid #2563eb; border-radius: 4px; direction: ltr; }
 #draft-actions { display: flex; gap: 6px; }
 .num, .sku { direction: ltr; unicode-bidi: isolate; }
 input[type="number"] { direction: ltr; }
