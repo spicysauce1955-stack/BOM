@@ -85,6 +85,7 @@ def generate(
                 code="orphaned_override", severity="warning",
                 message=f"Override {ov.id} ({ov.directive.kind}) no longer matches the "
                         "topology and was not applied.",
+                params={"override_id": ov.id, "directive": ov.directive.kind},
             )
         )
 
@@ -267,6 +268,8 @@ def _generate_node_posts(
                     code="node_surface_disagreement", severity="warning",
                     message=f"Runs meeting at node {node.id} disagree on base surface "
                             f"({', '.join(surfaces)}); using {surface}.",
+                    params={"node_id": node.id, "surfaces": ", ".join(surfaces),
+                            "chosen": surface},
                     decision_ref=cnode.id,
                 )
             )
@@ -370,6 +373,7 @@ def _generate_run(
                         code="unknown_product", severity="error",
                         message=f"Gate kit '{kit}' is not in the catalog; BOM will "
                                 "price it at zero.",
+                        params={"sku": kit},
                         element_refs=[f"gate@{run.id}:{gs}-{ge}"],
                     )
                 )
@@ -645,6 +649,7 @@ def _generate_run(
                         code="sliver_span", severity="warning",
                         message=f"Span {span.id} is {width} mm, below preferred "
                                 f"minimum {min_span} mm.",
+                        params={"span_id": span.id, "width_mm": width, "min_mm": min_span},
                         element_refs=[span.id], decision_ref=conflict_node.id,
                     )
                 )
@@ -752,6 +757,8 @@ def _surface_conflicts(conflicts, builder: GraphBuilder, strategy: Strategy) -> 
         strategy.warnings.append(
             StrategyWarning(
                 code="knowledge_conflict", severity="warning",
-                message=c.message, decision_ref=node.id,
+                message=c.message,
+                params={"slot": c.param_or_action, "contenders": ", ".join(c.contenders)},
+                decision_ref=node.id,
             )
         )

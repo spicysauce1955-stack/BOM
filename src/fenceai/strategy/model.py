@@ -49,7 +49,8 @@ class Gate(BaseModel):
 class StrategyWarning(BaseModel):
     code: str
     severity: Literal["info", "warning", "error"] = "warning"
-    message: str
+    message: str  # English fallback; clients localize from code + params
+    params: dict[str, str | int] = {}  # the values interpolated into message
     element_refs: list[str] = []
     decision_ref: str | None = None
 

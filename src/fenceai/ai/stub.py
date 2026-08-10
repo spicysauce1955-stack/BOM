@@ -133,6 +133,8 @@ class StubCritic:
                         element_refs=[span.id],
                         severity="warning",
                         text=f"Span {span.id} is only {span.width_mm} mm wide — check buildability.",
+                        code="narrow_span",
+                        params={"span_id": span.id, "width_mm": span.width_mm},
                     )
                 )
         return notes
