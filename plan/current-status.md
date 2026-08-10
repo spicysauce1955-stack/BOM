@@ -56,3 +56,12 @@ band popover edits first/last and converts legacy wall_profile into a 2-point ba
 Inspector lists base_top with a localized point count. 8 he/en keys added.
 217 pytest + 26/26 smoke + 28/28 dedicated CDP drive (step -> K-STEP-POST transition
 post verified in plan AND profile) + inspected screenshots.
+
+## UI ease-of-use round (2026-08-10) — COMPLETE (#2-#4 of research menu; #1 auto-compute rejected by user)
+Type-while-drawing exact lengths (SketchUp mechanic, unit-tolerant, angle-snap on
+direction only); gate catalog picker (components excluded); seeded sample project +
+getting-started checklist + empty-canvas CTA + labeled toolbar; zero prompt()/JSON
+UIs left: inline quote/reject/scope/run forms, sentence-style knowledge rule builder
+with Advanced-JSON toggle, inventory table editor. 220 pytest + 27/27 smoke,
+272-key he/en parity. Research report menu retained for next rounds (#5-#10:
+adaptive UI, wizard spine, dimension pad, spatial warnings, segment table, aerial).
