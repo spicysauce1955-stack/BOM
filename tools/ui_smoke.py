@@ -156,6 +156,17 @@ def main() -> int:
         c = Cdp(f"http://localhost:{PORT}/")
         c.js("window.confirm = () => true; undefined")
 
+        # fresh DBs now open into the seeded sample project (which already has
+        # runs + a gate); create an EMPTY project so every check below starts
+        # from known-zero state
+        c.js("document.getElementById('new-project-name').value = 'smoke'; 'ok'")
+        c.click(*c.element_center("#btn-new-project"))
+        time.sleep(1.5)
+        n_runs0 = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => p.topology.runs.length)""")
+        check("fresh project starts empty", n_runs0 == 0)
+
         # --- draw a 6 m run with the Draw tool ------------------------------
         c.click(*c.element_center("#tool-draw"))
         c.click(*c.canvas_px(0, 0))
