@@ -163,5 +163,19 @@
   "impact.spans": "מפתחים {before} ← {after}",
   "impact.posts": "עמודים ‎+{added} ‎−{removed} ‎~{modified}",
   "editor.fit": "התאמת תצוגה (גלגלת לזום, גרירה עם לחצן אמצעי/Ctrl להזזה)",
-  "canvas.grid_note_5m": "כל משבצת רשת = 5 מטרים"
+  "canvas.grid_note_5m": "כל משבצת רשת = 5 מטרים",
+  "quote.save": "💾 שמירת הצעת מחיר",
+  "quote.title": "הצעות מחיר",
+  "quote.label": "כותרת",
+  "quote.date": "תאריך",
+  "quote.status": "סטטוס",
+  "quote.label_prompt": "כותרת להצעת המחיר (רשות):",
+  "quote.draft": "טיוטה",
+  "quote.accepted": "אושרה",
+  "quote.superseded": "הוחלפה",
+  "quote.accept": "אישור",
+  "quote.view": "צפייה",
+  "quote.snapshot_banner": "הצעת מחיר שמורה \\u201c{label}\\u201d — מסמך קפוא, לא כתב הכמויות החי",
+  "quote.back_live": "→ חזרה לכתב הכמויות החי",
+  "impact.vs_accepted": "מול הצעה מאושרת: {delta}€"
 }

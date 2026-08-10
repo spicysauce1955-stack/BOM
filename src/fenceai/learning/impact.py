@@ -32,6 +32,7 @@ class ImpactCase(BaseModel):
     topology: Topology
     overrides: list[Override] = []
     inventory: Inventory = Inventory()
+    accepted_quote_cents: Cents | None = None  # latest accepted quote, if any
 
 
 class ProjectImpact(BaseModel):
@@ -49,6 +50,9 @@ class ProjectImpact(BaseModel):
     bom_delta_cents: Cents = 0
     warnings_before: int = 0
     warnings_after: int = 0
+    # vs the project's ACCEPTED quote (the number the customer actually saw)
+    accepted_quote_cents: Cents | None = None
+    vs_accepted_delta_cents: Cents | None = None
 
 
 class ImpactReport(BaseModel):
@@ -140,6 +144,9 @@ def preview_impact(
         _diff_strategies(strategy_before, strategy_after, impact)
         impact.bom_after_cents = bom_after.total_cents
         impact.bom_delta_cents = bom_after.total_cents - bom_before.total_cents
+        if case.accepted_quote_cents is not None:
+            impact.accepted_quote_cents = case.accepted_quote_cents
+            impact.vs_accepted_delta_cents = bom_after.total_cents - case.accepted_quote_cents
         impact.changed = (
             strategy_before.model_dump() != strategy_after.model_dump()
             or bom_before.model_dump() != bom_after.model_dump()

@@ -25,6 +25,7 @@ from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, fulfill
+from fenceai.fulfillment.quote import Quote
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion
 from fenceai.learning.impact import (
@@ -240,6 +241,60 @@ def get_bom(run_id: str):
     return {"requirements": requirements, "bom": bom, "inventory_hash": inventory_hash}
 
 
+# -- quotes (persisted BOM snapshots) ---------------------------------------------
+
+class QuoteCreate(BaseModel):
+    label: str = ""
+    author: str = "user"
+
+
+@app.post("/api/runs/{run_id}/quote")
+def create_quote(run_id: str, body: QuoteCreate) -> Quote:
+    """Snapshot the run's BOM as an immutable quote document."""
+    result = _run(run_id)
+    catalog = state.store.load_catalog()
+    inventory = state.store.load_inventory(result.run.project_id)
+    requirements = derive_requirements(result.strategy, catalog)
+    bom = fulfill(requirements, catalog, inventory)
+    quote = Quote(
+        id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
+        label=body.label,
+        inventory_hash=hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16],
+        knowledge_snapshot_hash=result.run.snapshot_hash,
+        requirements=requirements, bom=bom, total_cents=bom.total_cents,
+    )
+    state.store.save_quote(quote, actor=body.author)
+    return quote
+
+
+@app.get("/api/projects/{project_id}/quotes")
+def list_quotes(project_id: str):
+    _project(project_id)
+    return [
+        {"id": q.id, "label": q.label, "created_at": q.created_at, "status": q.status,
+         "total_cents": q.total_cents, "run_id": q.run_id}
+        for q in state.store.list_quotes(project_id)
+    ]
+
+
+@app.get("/api/quotes/{quote_id}")
+def get_quote(quote_id: str) -> Quote:
+    q = state.store.load_quote(quote_id)
+    if q is None:
+        raise HTTPException(404, f"quote {quote_id} not found")
+    return q
+
+
+@app.post("/api/quotes/{quote_id}/accept")
+def accept_quote(quote_id: str, author: str = "user") -> Quote:
+    try:
+        return state.store.accept_quote(quote_id, actor=author)
+    except KeyError:
+        raise HTTPException(404, f"quote {quote_id} not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/runs/{run_id}/explain/{element_id}")
 def explain(run_id: str, element_id: str, lang: Literal["en", "he"] = "en"):
     result = _run(run_id)
@@ -359,13 +414,15 @@ def upsert_knowledge(body: KnowledgeCreate):
 # -- impact preview ---------------------------------------------------------------
 
 def _impact_cases() -> list[ImpactCase]:
-    return [
-        ImpactCase(
+    cases = []
+    for p in state.store.list_projects():
+        accepted = state.store.latest_accepted_quote(p.id)
+        cases.append(ImpactCase(
             project_id=p.id, project_name=p.name, topology=p.topology,
             overrides=p.overrides, inventory=state.store.load_inventory(p.id),
-        )
-        for p in state.store.list_projects()
-    ]
+            accepted_quote_cents=accepted.total_cents if accepted else None,
+        ))
+    return cases
 
 
 @app.post("/api/knowledge/preview-impact")

@@ -163,5 +163,19 @@
   "impact.spans": "spans {before} → {after}",
   "impact.posts": "posts +{added} −{removed} ~{modified}",
   "editor.fit": "Fit view (wheel zooms, middle/Ctrl-drag pans)",
-  "canvas.grid_note_5m": "1 grid square = 5 m"
+  "canvas.grid_note_5m": "1 grid square = 5 m",
+  "quote.save": "💾 Save quote",
+  "quote.title": "Quotes",
+  "quote.label": "Label",
+  "quote.date": "Date",
+  "quote.status": "Status",
+  "quote.label_prompt": "Quote label (optional):",
+  "quote.draft": "draft",
+  "quote.accepted": "accepted",
+  "quote.superseded": "superseded",
+  "quote.accept": "Accept",
+  "quote.view": "View",
+  "quote.snapshot_banner": "Snapshot quote “{label}” — frozen document, not the live BOM",
+  "quote.back_live": "← back to live BOM",
+  "impact.vs_accepted": "vs accepted quote: {delta}€"
 }

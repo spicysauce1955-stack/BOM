@@ -129,6 +129,15 @@ class Cdp:
 
 
 def main() -> int:
+    # a stale server on our port would silently serve old code/data — abort loudly
+    try:
+        urllib.request.urlopen(f"http://localhost:{PORT}/api/health", timeout=1)
+        print(f"FATAL: something is already listening on :{PORT} — kill it first "
+              f"(pkill -f 'port {PORT}')")
+        return 2
+    except Exception:
+        pass  # port free, good
+
     db = tempfile.mktemp(suffix=".db")
     env = {**os.environ, "FENCEAI_DB": db, "FENCEAI_AI": "stub"}
     server = subprocess.Popen(
@@ -212,6 +221,24 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         profile_ground = c.js("document.querySelectorAll('#p-ground *').length")
         check("profile renders generated panels/posts", (profile_drawn or 0) > 0)
         check("profile renders the ground line", (profile_ground or 0) > 0)
+
+        # --- quotes: snapshot, freeze, accept ---------------------------------
+        c.js("window.prompt = () => 'smoke offer'; undefined")
+        c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
+        time.sleep(1.2)
+        c.click(*c.element_center("#btn-save-quote"))
+        time.sleep(1.2)
+        quote_rows = c.js("document.querySelectorAll('[data-view-quote]').length")
+        check("saved quote appears in the quotes table", (quote_rows or 0) >= 1)
+        c.js("document.querySelector('[data-accept-quote]')?.click(); 'ok'")
+        time.sleep(1.2)
+        accepted = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
+  .then(r => r.json()).then(qs => qs.filter(q => q.status === 'accepted').length)""")
+        check("quote accepted via UI", accepted == 1)
+        c.shot("07-quotes.png")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.3)
 
         # --- zoom / pan / fit --------------------------------------------------
         vb0 = c.js("document.getElementById('canvas').getAttribute('viewBox')")

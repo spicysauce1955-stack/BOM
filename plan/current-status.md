@@ -40,3 +40,8 @@ Research D's highest-value review feature. learning/impact.py (pure regenerate-a
 Wheel zoom anchored at cursor (0.25x-6x), middle/Ctrl-drag pan (screen-space math),
 fit-view button, world-aligned grid re-rendered per view (5 m spacing when zoomed out).
 202 pytest + 24/24 smoke.
+
+## Persisted quotes (2026-08-10) — COMPLETE
+Immutable BOM snapshots with lifecycle (draft/accepted/superseded, atomic supersede),
+quotes panel in the BOM tab (he/en), impact preview reports vs-accepted-quote deltas.
+Smoke hardened: aborts if a stale server holds the port. 208 pytest + 26/26 smoke.

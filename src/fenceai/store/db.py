@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS corrections (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, doc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS inventories (project_id TEXT PRIMARY KEY, doc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS catalogs (id TEXT PRIMARY KEY, doc TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS quotes (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, status TEXT NOT NULL,
+    created_at TEXT NOT NULL, doc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
     action TEXT NOT NULL, ref TEXT NOT NULL);
@@ -229,6 +232,74 @@ class Store:
             "SELECT doc FROM inventories WHERE project_id=?", (project_id,)
         ).fetchone()
         return Inventory.model_validate_json(row[0]) if row else Inventory()
+
+    # -- quotes (append-only content; lifecycle status only) ---------------------
+
+    def save_quote(self, quote: "Quote", actor: str = "system") -> None:
+        quote.created_at = quote.created_at or _now()
+        self._conn.execute(
+            "INSERT INTO quotes (id, project_id, status, created_at, doc) VALUES (?,?,?,?,?)",
+            (quote.id, quote.project_id, quote.status, quote.created_at,
+             quote.model_dump_json()),
+        )
+        self._audit(actor, "save_quote", quote.id)
+        self._conn.commit()
+
+    def load_quote(self, quote_id: str) -> "Quote | None":
+        from fenceai.fulfillment.quote import Quote
+
+        row = self._conn.execute(
+            "SELECT doc FROM quotes WHERE id=?", (quote_id,)
+        ).fetchone()
+        return Quote.model_validate_json(row[0]) if row else None
+
+    def list_quotes(self, project_id: str) -> list["Quote"]:
+        from fenceai.fulfillment.quote import Quote
+
+        rows = self._conn.execute(
+            "SELECT doc FROM quotes WHERE project_id=? ORDER BY created_at, id",
+            (project_id,),
+        ).fetchall()
+        return [Quote.model_validate_json(r[0]) for r in rows]
+
+    def latest_accepted_quote(self, project_id: str) -> "Quote | None":
+        quotes = [q for q in self.list_quotes(project_id) if q.status == "accepted"]
+        return quotes[-1] if quotes else None
+
+    def accept_quote(self, quote_id: str, actor: str = "system") -> "Quote":
+        """Atomically accept a quote and supersede the project's previously
+        accepted quote (mirrors the knowledge-version lifecycle discipline)."""
+        from fenceai.fulfillment.quote import QUOTE_STATUS_TRANSITIONS, Quote
+
+        quote = self.load_quote(quote_id)
+        if quote is None:
+            raise KeyError(quote_id)
+        if "accepted" not in QUOTE_STATUS_TRANSITIONS.get(quote.status, set()):
+            raise ValueError(f"illegal quote transition {quote.status} -> accepted")
+        try:
+            rows = self._conn.execute(
+                "SELECT id, doc FROM quotes WHERE project_id=? AND status='accepted'",
+                (quote.project_id,),
+            ).fetchall()
+            for qid, doc in rows:
+                prev = Quote.model_validate_json(doc)
+                prev.status = "superseded"
+                self._conn.execute(
+                    "UPDATE quotes SET status=?, doc=? WHERE id=?",
+                    ("superseded", prev.model_dump_json(), qid),
+                )
+                self._audit(actor, "quote_status:superseded", qid)
+            quote.status = "accepted"
+            self._conn.execute(
+                "UPDATE quotes SET status=?, doc=? WHERE id=?",
+                ("accepted", quote.model_dump_json(), quote_id),
+            )
+            self._audit(actor, "quote_status:accepted", quote_id)
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+        return quote
 
     # -- catalog -----------------------------------------------------------------
 

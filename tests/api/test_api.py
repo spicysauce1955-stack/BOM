@@ -366,3 +366,55 @@ def test_candidate_impact_preview(client):
     assert report["projects_checked"] == 1
     assert report["projects_affected"] == 0  # advisory AddNote: honest zero impact
     assert client.post("/api/candidates/NOPE/1/preview").status_code == 404
+
+
+def test_quote_snapshot_flow(client):
+    pid = make_project(client, name="quote-flow")
+    put_straight_topology(client, pid)
+    run = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = run["run"]["id"]
+
+    q1 = client.post(f"/api/runs/{run_id}/quote", json={"label": "first offer"}).json()
+    assert q1["status"] == "draft"
+    assert q1["total_cents"] == q1["bom"]["total_cents"] > 0
+    assert q1["knowledge_snapshot_hash"] == run["run"]["snapshot_hash"]
+    total_before = q1["total_cents"]
+
+    # inventory changes -> LIVE bom changes, but the quote document does not
+    client.put(
+        f"/api/projects/{pid}/inventory",
+        json={"items": [{"id": "s1", "sku": "POST-S", "kind": "full_stock", "qty": 5}]},
+    )
+    live = client.get(f"/api/runs/{run_id}/bom").json()["bom"]
+    assert live["total_cents"] != total_before
+    frozen = client.get(f"/api/quotes/{q1['id']}").json()
+    assert frozen["total_cents"] == total_before
+
+    # accept; a second accepted quote supersedes the first
+    assert client.post(f"/api/quotes/{q1['id']}/accept").json()["status"] == "accepted"
+    q2 = client.post(f"/api/runs/{run_id}/quote", json={"label": "revised"}).json()
+    client.post(f"/api/quotes/{q2['id']}/accept")
+    quotes = client.get(f"/api/projects/{pid}/quotes").json()
+    assert [q["status"] for q in quotes] == ["superseded", "accepted"]
+    assert client.post(f"/api/quotes/{q1['id']}/accept").status_code == 400
+    assert client.get("/api/quotes/none").status_code == 404
+
+
+def test_impact_preview_reports_vs_accepted_quote(client):
+    pid = make_project(client, name="quoted")
+    put_straight_topology(client, pid)
+    run = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    q = client.post(f"/api/runs/{run['run']['id']}/quote", json={}).json()
+    client.post(f"/api/quotes/{q['id']}/accept")
+
+    report = client.post(
+        "/api/knowledge/preview-impact",
+        json={
+            "object_id": "K-MAXSPAN", "type": "hard_constraint",
+            "title": "tighter", "author": "expert-admin",
+            "actions": [{"kind": "set_param", "param": "max_span_mm", "value": 1400}],
+        },
+    ).json()
+    impact = next(i for i in report["impacts"] if i["project_id"] == pid)
+    assert impact["accepted_quote_cents"] == q["total_cents"]
+    assert impact["vs_accepted_delta_cents"] == impact["bom_after_cents"] - q["total_cents"]

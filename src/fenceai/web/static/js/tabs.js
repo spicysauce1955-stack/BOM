@@ -112,9 +112,60 @@ function lineName(products, line) {
 async function renderBom() {
   const div = document.getElementById("bom-body");
   if (!state.result) { div.innerHTML = `<em>${t("bom.generate_first")}</em>`; return; }
-  const [data, products] = await Promise.all(
-    [apiGet(`/api/runs/${state.result.run.id}/bom`), loadCatalogProducts()]);
-  const bom = data.bom;
+  const [data, products, quotes] = await Promise.all([
+    apiGet(`/api/runs/${state.result.run.id}/bom`),
+    loadCatalogProducts(),
+    apiGet(`/api/projects/${state.projectId}/quotes`).catch(() => []),
+  ]);
+  div.innerHTML = `<div class="panel">
+      <button id="btn-save-quote" class="primary">${t("quote.save")}</button>
+    </div>`
+    + quotesHtml(quotes)
+    + bomHtml(data.bom, products);
+  document.getElementById("btn-save-quote").addEventListener("click", async () => {
+    const label = prompt(t("quote.label_prompt")) ?? "";
+    await apiSend("POST", `/api/runs/${state.result.run.id}/quote`, { label });
+    renderBom();
+  });
+  wireQuoteButtons(div, products);
+}
+
+function quotesHtml(quotes) {
+  if (!quotes.length) return "";
+  let html = `<div class="panel"><h3>${t("quote.title")}</h3>
+    <table><tr><th>${t("quote.label")}</th><th>${t("quote.date")}</th>
+    <th>${t("bom.line_total")}</th><th>${t("quote.status")}</th><th></th></tr>`;
+  for (const q of quotes) {
+    html += `<tr><td dir="auto">${esc(q.label) || `<bdi class="meta">${esc(q.id.slice(0, 14))}</bdi>`}</td>
+      <td class="num">${esc((q.created_at || "").slice(0, 16).replace("T", " "))}</td>
+      <td class="num">${(q.total_cents / 100).toFixed(2)}</td>
+      <td><span class="tag ${q.status === "accepted" ? "active" : q.status === "superseded" ? "retired" : "medium"}">${t("quote." + q.status)}</span></td>
+      <td><button data-view-quote="${esc(q.id)}">${t("quote.view")}</button>
+        ${q.status === "draft" ? `<button data-accept-quote="${esc(q.id)}">${t("quote.accept")}</button>` : ""}</td></tr>`;
+  }
+  return html + "</table></div>";
+}
+
+function wireQuoteButtons(div, products) {
+  div.querySelectorAll("[data-accept-quote]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      await apiSend("POST", `/api/quotes/${btn.dataset.acceptQuote}/accept`);
+      renderBom();
+    }));
+  div.querySelectorAll("[data-view-quote]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const q = await apiGet(`/api/quotes/${btn.dataset.viewQuote}`);
+      div.innerHTML = `<div class="panel impact">
+          <b>${t("quote.snapshot_banner", { label: q.label || q.id.slice(0, 14) })}</b>
+          <span class="meta"> · ${esc((q.created_at || "").slice(0, 16).replace("T", " "))}
+          · <bdi>inv ${esc(q.inventory_hash)}</bdi> · <bdi>kb ${esc(q.knowledge_snapshot_hash)}</bdi></span>
+          <button id="btn-quote-back">${t("quote.back_live")}</button>
+        </div>` + bomHtml(q.bom, products);
+      document.getElementById("btn-quote-back").addEventListener("click", renderBom);
+    }));
+}
+
+function bomHtml(bom, products) {
   let html = `<div class="panel"><h3>${t("bom.title")} — ${t("bom.total")} €${(bom.total_cents / 100).toFixed(2)}</h3>
   <table><tr><th>${t("bom.sku")}</th><th>${t("bom.purchase")}</th><th>${t("bom.engineering")}</th>
   <th>${t("bom.overage")}</th><th>${t("bom.unit_price")}</th><th>${t("bom.line_total")}</th><th>${t("bom.notes")}</th></tr>`;
@@ -148,7 +199,7 @@ async function renderBom() {
         <td class="num">${a.length_used_mm ? a.length_used_mm + " mm" : a.qty}</td></tr>`;
     html += "</table></div>";
   }
-  div.innerHTML = html;
+  return html;
 }
 
 // ---------- annotations ----------
@@ -239,6 +290,11 @@ function renderImpactReport(container, report) {
       html += `${t("impact.spans", { before: i.spans_before, after: i.spans_after })} · `
         + `${t("impact.posts", { added: i.posts_added, removed: i.posts_removed, modified: i.posts_modified })} · `
         + `<span class="num">${sign}${delta}€</span>`;
+      if (i.vs_accepted_delta_cents !== null && i.vs_accepted_delta_cents !== undefined) {
+        const vs = (i.vs_accepted_delta_cents / 100).toFixed(2);
+        const vsSign = i.vs_accepted_delta_cents > 0 ? "+" : "";
+        html += ` · ${t("impact.vs_accepted", { delta: `${vsSign}${vs}` })}`;
+      }
     }
     html += "</div>";
   }

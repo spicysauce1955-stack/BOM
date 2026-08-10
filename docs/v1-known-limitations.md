@@ -48,10 +48,12 @@ Deliberate deferrals and honest weaknesses, with the trigger that should revisit
   event re-anchoring code exists but the UI path always rewrites whole topology.
 - **Strategy statuses** (accepted/superseded) are persisted but there is no
   accept/compare-alternatives workflow in the UI.
-- **BOMs are recomputed, not snapshotted**: `/api/runs/{id}/bom` recomputes against
-  current inventory; each response carries an inventory content hash and the fulfill
-  is audit-logged, but a quoted BOM document is not persisted. Trigger: real quoting
-  workflow (persist `(run_id, inventory_hash) → bom` append-only).
+- ~~BOMs recomputed, not snapshotted~~ **Done (2026-08-10)**: persisted quotes —
+  `POST /api/runs/{id}/quote` freezes requirements+BOM with inventory + knowledge
+  snapshot hashes; draft→accepted→superseded lifecycle (accept supersedes the
+  project's prior accepted quote, atomically); quotes panel in the BOM tab; impact
+  preview now also reports the delta vs each project's accepted quote. The live
+  `/bom` endpoint still recomputes (by design — it's the working view).
 - **The UI is pragmatic** (mission §13). UI v2 added direct canvas manipulation,
   undo/redo, the elevation side view, and Hebrew-first RTL; still missing: touch-optimized gestures beyond big targets,
   and interior-vertex drawing in one stroke (corners are made by chaining runs or
