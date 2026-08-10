@@ -141,7 +141,12 @@ input[type="number"] { direction: ltr; }
   cursor: copy; pointer-events: stroke; }
 .profile-sample { fill: #7c3aed; stroke: #fff; stroke-width: 1.5; cursor: ns-resize; }
 .profile-sample-label { font-size: 8px; fill: #7c3aed; }
+.profile-node { fill: #1e293b; stroke: #fff; stroke-width: 1.5; cursor: ns-resize; }
+.profile-node-label { font-size: 8px; fill: #1e293b; }
+.profile-section-tick { stroke: #d4dae2; stroke-dasharray: 3 3; }
+.profile-section-label { font-size: 9px; fill: #475569; }
 .profile-wall { stroke: #dc2626; stroke-width: 2.5; }
+.profile-wall-hit { stroke: transparent; stroke-width: 12; cursor: pointer; }
 .profile-wall-handle { fill: #dc2626; stroke: #fff; stroke-width: 1; cursor: ns-resize; }
 .profile-intent { fill: none; stroke: #0891b2; stroke-width: 1.5;
   stroke-dasharray: 5 4; }

@@ -320,15 +320,14 @@ function openEventPopover(tool, runId, station, clientX, clientY) {
   const L = runLength(run);
   const numField = (key, id, value) =>
     `<label>${t(key)}<input id="${id}" type="number" value="${value}"></label>`;
+  // base applies to the whole section: no station in the header, no range fields
   let html = `<h4>${t("tool." + tool)}</h4>
-    <div class="meta"><bdi>${esc(runId)}</bdi> · ${t("popover.station")}
-      <span class="num">${station}</span></div>`;
+    <div class="meta"><bdi>${esc(runId)}</bdi>${tool === "base" ? ""
+      : ` · ${t("popover.station")} <span class="num">${station}</span>`}</div>`;
   if (tool === "gate") {
     html += numField("popover.width", "pop-width", 1000);
     html += `<label>${t("popover.kit")}<input id="pop-kit" value="GATE-KIT-1000"></label>`;
   } else if (tool === "base") {
-    html += numField("popover.start", "pop-start", station);
-    html += numField("popover.end", "pop-end", Math.min(station + 1000, L));
     html += `<label>${t("popover.surface")}<select id="pop-surface">
       <option value="soil">${t("surface.soil")}</option>
       <option value="concrete">${t("surface.concrete")}</option>
@@ -364,10 +363,12 @@ function openEventPopover(tool, runId, station, clientX, clientY) {
         kit_sku: document.getElementById("pop-kit").value.trim() || null,
       }, station);
     } else if (tool === "base") {
+      // one base per section: replace any existing base interval, whole run
+      run.interval_events = run.interval_events.filter(
+        (iv) => iv.payload.kind !== "base");
       addIntervalEvent(runId, {
         kind: "base", surface: document.getElementById("pop-surface").value,
-      }, Math.round(+document.getElementById("pop-start").value),
-        Math.round(+document.getElementById("pop-end").value));
+      }, 0, runLength(run));
     } else if (tool === "ground") {
       addPointEvent(runId, {
         kind: "elevation_sample",
