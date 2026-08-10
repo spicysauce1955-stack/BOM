@@ -4,7 +4,7 @@
 // pushSnapshot -> mutate -> saveTopology). Station axis is NEVER mirrored in
 // RTL (spec §3; #profile-svg is direction:ltr in CSS).
 
-import { clearGroup, el, runById, runLength, runPoints } from "./geom.js";
+import { clearGroup, el, runById, runLength, runPoints, stationOfAnchor } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
@@ -62,7 +62,7 @@ function groundSamples(run, L) {
   return run.point_events
     .filter((ev) => ev.payload.kind === "elevation_sample")
     .map((ev) => ({
-      ev, station: Math.min(ev.anchor.offset_mm, L), z: ev.payload.z_mm,
+      ev, station: Math.min(stationOfAnchor(run, ev.anchor), L), z: ev.payload.z_mm,
     }))
     .sort((a, b) => a.station - b.station);
 }
@@ -88,8 +88,8 @@ function wallProfiles(run, L) {
     .filter((iv) => iv.payload.kind === "wall_profile")
     .map((iv) => ({
       iv,
-      s0: Math.min(iv.start_anchor.offset_mm, L),
-      s1: Math.min(iv.end_anchor.offset_mm, L),
+      s0: Math.min(stationOfAnchor(run, iv.start_anchor), L),
+      s1: Math.min(stationOfAnchor(run, iv.end_anchor), L),
       z0: iv.payload.top_z_start_mm, z1: iv.payload.top_z_end_mm,
     }));
 }
@@ -98,8 +98,8 @@ function heightIntents(run, L) {
   return run.interval_events
     .filter((iv) => iv.payload.kind === "height_intent")
     .map((iv) => ({
-      s0: Math.min(iv.start_anchor.offset_mm, L),
-      s1: Math.min(iv.end_anchor.offset_mm, L),
+      s0: Math.min(stationOfAnchor(run, iv.start_anchor), L),
+      s1: Math.min(stationOfAnchor(run, iv.end_anchor), L),
       h: iv.payload.height_mm,
     }));
 }
@@ -416,7 +416,7 @@ function openZInput(evId) {
   if (!pe) return;
   const existing = document.getElementById("profile-z-editor");
   if (existing) existing.remove();
-  const station = Math.min(pe.anchor.offset_mm, view.L);
+  const station = Math.min(stationOfAnchor(run, pe.anchor), view.L);
   const g = document.getElementById("p-edit");
   const fo = el("foreignObject", { x: Math.min(xOf(station) + 8, W - 80),
     y: Math.max(yOf(pe.payload.z_mm) - 26, 2), width: 76, height: 24,

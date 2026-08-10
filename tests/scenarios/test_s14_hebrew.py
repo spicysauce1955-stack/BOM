@@ -77,3 +77,13 @@ def test_unknown_hebrew_text_surfaced_not_dropped():
     rec = _interpret("שהגדר תיראה יפה")
     assert rec.candidates == []
     assert rec.unparsed_spans == ["שהגדר תיראה יפה"]
+
+
+def test_hebrew_height_word_without_number_is_unparsed():
+    from fenceai.ai.stub import StubInterpreter
+    from fenceai.project.model import Annotation
+
+    ann = Annotation(id="ann_x", target_ref="run:run1", text="גובה")
+    rec = StubInterpreter().interpret(ann)
+    assert rec.candidates == []
+    assert rec.unparsed_spans == ["גובה"]

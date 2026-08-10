@@ -5,7 +5,7 @@
 import { apiSend, esc } from "./api.js";
 import {
   clearGroup, el, nodeById, pointAtStation, runById, runLength, runPoints,
-  snapPoint, stationAtPoint, toMmRaw, toPx,
+  snapPoint, stationAtPoint, stationOfAnchor, toMmRaw, toPx,
 } from "./geom.js";
 import { pushSnapshot, redo, undo } from "./history.js";
 import { t } from "./i18n.js";
@@ -517,16 +517,17 @@ function renderTopology() {
     for (const iv of run.interval_events) {
       if (iv.payload.kind !== "base") continue;
       const L = runLength(run);
-      const p0 = toPx(pointAtStation(run.id, iv.start_anchor.offset_mm));
-      const p1 = toPx(pointAtStation(run.id, Math.min(iv.end_anchor.offset_mm, L)));
+      const p0 = toPx(pointAtStation(run.id, stationOfAnchor(run, iv.start_anchor)));
+      const p1 = toPx(pointAtStation(run.id, Math.min(stationOfAnchor(run, iv.end_anchor), L)));
       el("line", { x1: p0[0], y1: p0[1] + 7, x2: p1[0], y2: p1[1] + 7,
         stroke: BASE_COLORS[iv.payload.surface] || "#a16207", "stroke-width": 4,
         "stroke-linecap": "round", opacity: 0.7 }, g);
     }
     for (const pe of run.point_events) {
-      const p = toPx(pointAtStation(run.id, pe.anchor.offset_mm));
+      const evStation = stationOfAnchor(run, pe.anchor);
+      const p = toPx(pointAtStation(run.id, evStation));
       if (pe.payload.kind === "gate") {
-        const pEnd = toPx(pointAtStation(run.id, pe.anchor.offset_mm + pe.payload.width_mm));
+        const pEnd = toPx(pointAtStation(run.id, evStation + pe.payload.width_mm));
         el("line", { x1: p[0], y1: p[1], x2: pEnd[0], y2: pEnd[1], stroke: "#fff",
           "stroke-width": 5 }, g);
         el("line", { x1: p[0], y1: p[1], x2: pEnd[0], y2: pEnd[1], stroke: "#0891b2",

@@ -111,11 +111,40 @@ export function snapPoint(xMm, yMm, anchor, opts = {}) {
   return { p, kind };
 }
 
+function segmentLengths(run) {
+  const pts = runPoints(run);
+  const lens = [];
+  for (let i = 0; i + 1 < pts.length; i++)
+    lens.push(Math.round(Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])));
+  return lens;
+}
+
 export function anchorFor(runId, station) {
-  // UI-authored runs are single-segment; segment 0, offset = station (clamped)
+  // per-segment anchor matching backend make_anchor() (station.py): find the
+  // containing segment; offset/authored-length are SEGMENT-local. Whole-run
+  // anchors silently re-anchor wrong on multi-segment runs (final UI-v2 review #1).
   const run = runById(runId);
-  const L = runLength(run);
-  return { segment_index: 0, offset_mm: Math.min(station, L), seg_len_at_authoring_mm: L };
+  const lens = segmentLengths(run);
+  const total = lens.reduce((a, b) => a + b, 0);
+  let s = Math.max(0, Math.min(station, total));
+  for (let i = 0; i < lens.length; i++) {
+    if (s <= lens[i] || i === lens.length - 1)
+      return { segment_index: i, offset_mm: Math.min(s, lens[i]), seg_len_at_authoring_mm: lens[i] };
+    s -= lens[i];
+  }
+  return { segment_index: 0, offset_mm: 0, seg_len_at_authoring_mm: total || 1 };
+}
+
+export function stationOfAnchor(run, anchor) {
+  // resolve an anchor to a current station exactly like backend anchor_station():
+  // proportional re-anchoring within the (possibly resized) originating segment
+  const lens = segmentLengths(run);
+  const i = Math.max(0, Math.min(anchor.segment_index, lens.length - 1));
+  const segLen = lens[i];
+  const offset = anchor.seg_len_at_authoring_mm === segLen
+    ? Math.min(anchor.offset_mm, segLen)
+    : Math.round((anchor.offset_mm * segLen) / Math.max(anchor.seg_len_at_authoring_mm, 1));
+  return lens.slice(0, i).reduce((a, b) => a + b, 0) + offset;
 }
 
 // ---------- SVG helpers ----------

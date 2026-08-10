@@ -43,3 +43,11 @@ def test_i18n_fields_are_optional_and_additive():
     v = KnowledgeVersion(object_id="K-X", version=1, type="fact", title="Plain title")
     assert v.title_i18n == {}
     assert v.display_title("he") == "Plain title"
+
+
+def test_empty_string_translation_falls_back():
+    from fenceai.catalog.model import IndivisibleDiscrete, Product
+
+    p = Product(sku="X", name="Plain", consumption=IndivisibleDiscrete(),
+                name_i18n={"he": ""})
+    assert p.display_name("he") == "Plain"  # empty string is not a translation

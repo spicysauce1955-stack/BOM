@@ -5,13 +5,17 @@
 // monotonic, never rolled back (spec §2).
 
 import { apiSend } from "./api.js";
-import { emit, saveTopology, state } from "./state.js";
+import { emit, on, saveTopology, state } from "./state.js";
+
+on("project-opened", () => resetHistory());
 
 const CAP = 100;
 let past = [];
 let future = [];
 let queue = Promise.resolve(); // restores are serialized, never dropped
 let lastTarget = null;         // logical current state while restores are in flight
+let generation = 0;            // bumped on reset: queued restores from a previous
+                               // project/session must never write (review #4)
 
 function snapshot() {
   return structuredClone({
@@ -32,7 +36,7 @@ export function pushSnapshot(_label) {
 export function canUndo() { return past.length > 0; }
 export function canRedo() { return future.length > 0; }
 
-export function resetHistory() { past = []; future = []; lastTarget = null; }
+export function resetHistory() { generation++; past = []; future = []; lastTarget = null; }
 
 // what "current" means for stack bookkeeping: the target of the most recently
 // queued restore if one is still in flight, else the live state
@@ -58,17 +62,32 @@ async function syncOverrides(target) {
   }
 }
 
-function restore(snap) {
+function restore(snap, dir) {
   // stack bookkeeping is synchronous (callers already did it); the server
-  // round-trips are chained so rapid Ctrl+Z presses are applied in order
+  // round-trips are chained so rapid Ctrl+Z presses are applied in order.
+  // Guards: a queued restore must never write into a different project or a
+  // reset session (review #4); a failed PUT rolls the bookkeeping back (#8).
+  const gen = generation;
+  const pid = state.projectId;
   lastTarget = snap;
   queue = queue
     .then(async () => {
-      await syncOverrides(snap.overrides);
-      state.project.topology = snap.topology;
-      await saveTopology(); // forward revision; refreshes state.project, emits project-loaded
-      emit("topology-changed");
+      if (gen !== generation || state.projectId !== pid) return;
+      try {
+        await syncOverrides(snap.overrides);
+        state.project.topology = snap.topology;
+        await saveTopology(); // forward revision; refreshes state.project, emits project-loaded
+        emit("topology-changed");
+      } catch (err) {
+        if (gen === generation) {
+          if (dir === "undo") { past.push(snap); future.pop(); }
+          else { future.push(snap); past.pop(); }
+          emit("topology-changed"); // refresh button disabled states
+        }
+        throw err;
+      }
     })
+    .catch(() => {})
     .finally(() => { if (lastTarget === snap) lastTarget = null; });
 }
 
@@ -76,7 +95,7 @@ export function undo() {
   if (!state.project || !past.length) return false;
   const snap = past.pop();
   future.push(logicalSnapshot());
-  restore(snap);
+  restore(snap, "undo");
   return true;
 }
 
@@ -84,6 +103,6 @@ export function redo() {
   if (!state.project || !future.length) return false;
   const snap = future.pop();
   past.push(logicalSnapshot());
-  restore(snap);
+  restore(snap, "redo");
   return true;
 }

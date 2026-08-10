@@ -36,6 +36,7 @@ def check(name: str, ok: bool) -> None:
 
 class Cdp:
     def __init__(self, url: str):
+        self.page_errors: list[str] = []
         req = urllib.request.Request(
             f"http://localhost:{CDP_PORT}/json/new?about:blank", method="PUT"
         )
@@ -55,6 +56,10 @@ class Cdp:
         deadline = time.time() + 20
         while time.time() < deadline:
             msg = json.loads(self.ws.recv())
+            if msg.get("method") == "Runtime.exceptionThrown":
+                d = msg["params"]["exceptionDetails"]
+                desc = (d.get("exception") or {}).get("description", d.get("text", ""))
+                self.page_errors.append(desc[:300])
             if msg.get("id") == self.mid:
                 return msg.get("result", msg)
         raise TimeoutError(method)
@@ -203,8 +208,38 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.shot("03-generated.png")
 
         # --- profile panel renders -------------------------------------------
-        profile_children = c.js("document.getElementById('profile-svg').childNodes.length")
-        check("profile panel has content", (profile_children or 0) > 0)
+        profile_drawn = c.js("document.querySelectorAll('#p-result *').length")
+        profile_ground = c.js("document.querySelectorAll('#p-ground *').length")
+        check("profile renders generated panels/posts", (profile_drawn or 0) > 0)
+        check("profile renders the ground line", (profile_ground or 0) > 0)
+
+        # --- multi-segment anchors (final-review blocker regression) ---------
+        # insert a vertex via the midpoint ghost, then place a ground point on
+        # the SECOND segment; the stored anchor must be segment-local
+        c.click(*c.element_center("#tool-select"))
+        c.click(*c.canvas_px(1500, 0))       # select the run
+        time.sleep(0.3)
+        c.drag(*c.canvas_px(3000, 0), *c.canvas_px(3000, 1000))  # ghost -> vertex
+        time.sleep(0.5)
+        n_vertices = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => p.topology.runs[0].interior_vertices.length)""")
+        check("midpoint ghost inserts an interior vertex", n_vertices == 1)
+        c.click(*c.element_center("#tool-ground"))
+        c.click(*c.canvas_px(4500, 500))     # on the second segment
+        time.sleep(0.4)
+        if c.js("!!document.querySelector('.popover')"):
+            c.js("document.getElementById('pop-save').click(); 'ok'")
+            time.sleep(1)
+        anchor = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => {
+    const ev = p.topology.runs[0].point_events.find(e => e.payload.kind === 'elevation_sample');
+    return ev ? ev.anchor : null;
+  })""")
+        check("event on segment 2 stores a segment-local anchor",
+              bool(anchor) and anchor.get("segment_index") == 1
+              and anchor.get("seg_len_at_authoring_mm", 99999) < 4000)
 
         # --- clear topology (draft + persisted, the original bug) ------------
         c.click(*c.element_center("#tool-draw"))
@@ -228,11 +263,18 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         hebrew_font = c.js("document.fonts.check('13px \"Noto Sans Hebrew\"', 'שלום')")
         check("Hebrew font loaded", bool(hebrew_font))
         c.shot("04-hebrew-rtl.png")
+        label_he = c.js("document.getElementById('btn-generate').textContent")
         c.click(*c.element_center("#btn-locale"))
         time.sleep(1)
         check("toggle flips chrome to LTR English",
               c.js("document.documentElement.dir") == "ltr")
+        label_en = c.js("document.getElementById('btn-generate').textContent")
+        check("toggle actually swaps strings", label_he != label_en and bool(label_en))
         c.shot("05-english-ltr.png")
+
+        check("no uncaught page errors", not c.page_errors)
+        if c.page_errors:
+            print("  page errors:", *c.page_errors[:5], sep="\n    ")
 
         failed = [n for n, ok in CHECKS if not ok]
         print(f"\n{len(CHECKS) - len(failed)}/{len(CHECKS)} checks passed")

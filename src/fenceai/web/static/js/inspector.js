@@ -2,10 +2,10 @@
 // selected run's event list (events are ADDED via the canvas tools, Task 8).
 
 import { apiGet, apiSend, esc } from "./api.js";
-import { runLength } from "./geom.js";
+import { runLength, stationOfAnchor } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
-import { on, refreshProject, saveTopology, setSelection, state } from "./state.js";
+import { on, reloadProject, saveTopology, setSelection, state } from "./state.js";
 
 export function initInspector() {
   const sel = document.getElementById("run-select");
@@ -62,23 +62,14 @@ export async function inspect(elementId, label) {
 }
 
 function renderRunSelectors() {
-  const runs = state.project ? state.project.topology.runs : [];
-  for (const selId of ["run-select", "ann-target"]) {
-    const sel = document.getElementById(selId);
-    if (!sel) continue;
-    sel.innerHTML = "";
-    if (selId === "ann-target") {
-      const o = document.createElement("option");
-      o.value = "project";
-      o.textContent = t("annotations.whole_project");
-      sel.appendChild(o);
-    }
-    for (const r of runs) {
-      const o = document.createElement("option");
-      o.value = selId === "ann-target" ? `run:${r.id}` : r.id;
-      o.textContent = `${r.id} (${runLength(r)} mm)`;
-      sel.appendChild(o);
-    }
+  // run-select only; #ann-target belongs to the annotations tab (review #5)
+  const sel = document.getElementById("run-select");
+  sel.innerHTML = "";
+  for (const r of state.project ? state.project.topology.runs : []) {
+    const o = document.createElement("option");
+    o.value = r.id;
+    o.textContent = `${r.id} (${runLength(r)} mm)`;
+    sel.appendChild(o);
   }
 }
 
@@ -94,8 +85,9 @@ function renderOverrides() {
       ${orphaned ? `<span class="tag rejected">${t("inspect.orphaned")}</span>` : ""}
       <button data-ov="${esc(ov.id)}">${t("common.remove")}</button>`;
     d.querySelector("button").addEventListener("click", async () => {
+      pushSnapshot("delete-override");  // removal is a user gesture (review #3)
       await apiSend("DELETE", `/api/projects/${state.projectId}/overrides/${ov.id}`);
-      await refreshProject();
+      await reloadProject();
     });
     div.appendChild(d);
   }
@@ -129,13 +121,13 @@ function renderRunEvents() {
   const run = state.project?.topology.runs.find((r) => r.id === runId);
   if (!run) return;
   const rows = [];
-  run.point_events.forEach((pe, i) => rows.push({
-    list: "point_events", index: i,
-    html: `${eventLabel(pe.payload)} @ <span class="num">${pe.anchor.offset_mm}</span>`,
+  run.point_events.forEach((pe) => rows.push({
+    list: "point_events", id: pe.id,
+    html: `${eventLabel(pe.payload)} @ <span class="num">${stationOfAnchor(run, pe.anchor)}</span>`,
   }));
-  run.interval_events.forEach((iv, i) => rows.push({
-    list: "interval_events", index: i,
-    html: `${eventLabel(iv.payload)} · <span class="num">${iv.start_anchor.offset_mm}–${iv.end_anchor.offset_mm}</span>`,
+  run.interval_events.forEach((iv) => rows.push({
+    list: "interval_events", id: iv.id,
+    html: `${eventLabel(iv.payload)} · <span class="num">${stationOfAnchor(run, iv.start_anchor)}–${stationOfAnchor(run, iv.end_anchor)}</span>`,
   }));
   if (!rows.length) {
     div.innerHTML += `<div class="meta">${t("inspect.no_events")}</div>`;
@@ -147,8 +139,11 @@ function renderRunEvents() {
     d.innerHTML = `<span>${row.html}</span>
       <button class="event-delete" title="${esc(t("common.remove"))}">✕</button>`;
     d.querySelector("button").addEventListener("click", () => {
+      // delete by id: a stale render must never splice the wrong event (review #3)
+      const idx = run[row.list].findIndex((e) => e.id === row.id);
+      if (idx < 0) return;
       pushSnapshot("delete-event");
-      run[row.list].splice(row.index, 1);
+      run[row.list].splice(idx, 1);
       saveTopology();
     });
     div.appendChild(d);

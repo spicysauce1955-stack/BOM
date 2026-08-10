@@ -2,7 +2,6 @@
 // (events + exported functions) — never each other's DOM (spec module map).
 
 import { apiGet, apiSend } from "./api.js";
-import { resetHistory } from "./history.js";
 
 export const state = {
   projectId: null,
@@ -46,7 +45,7 @@ export async function openProject(id) {
   state.result = null;
   state.critique = [];
   state.selection = { runId: null, dotIndex: null, elementId: null };
-  resetHistory();
+  emit("project-opened", id);  // true project switch: history subscribes and resets
   const maxSuffix = (items, prefix) => items.reduce((m, it) => {
     const match = it.id.match(new RegExp(`^${prefix}(\\d+)$`));
     return match ? Math.max(m, +match[1]) : m;
@@ -84,6 +83,13 @@ export async function generateStrategy() {
 
 export async function refreshProject() {
   await openProject(state.projectId);
+}
+
+export async function reloadProject() {
+  // refresh server state after a non-topology mutation (annotations, overrides)
+  // WITHOUT resetting undo history or selection (final UI-v2 review #2)
+  state.project = await apiGet(`/api/projects/${state.projectId}`);
+  emit("project-loaded", state.project);
 }
 
 // ---------- topology mutation helpers (data ops; callers push history first) ----

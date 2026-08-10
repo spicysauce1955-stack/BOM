@@ -356,7 +356,9 @@ def _generate_run(
         payload={"param": "max_span_mm", "value": max_span},
         inputs=[run_fact.id],
         governed_by=[max_span_ref],
-        defeated=[ref for f in res.firings for ref in f.defeated_by],
+        # a defeated edge cites the LOSING version (decision-model.md); the loser
+        # is any firing whose defeated_by is non-empty
+        defeated=[f.version.ref for f in res.firings if f.defeated_by],
     )
     _surface_conflicts(res.conflicts, builder, strategy)
 
@@ -505,9 +507,7 @@ def _generate_run(
             a.mode for a in vert_res.winner.actions if a.kind == "prefer_vertical"
         )
         vertical_refs = [vert_res.winner.version.ref]
-        vertical_defeated = [
-            ref for f in vert_res.firings for ref in f.defeated_by
-        ]
+        vertical_defeated = [f.version.ref for f in vert_res.firings if f.defeated_by]
     else:
         vertical = default_vertical
         vertical_refs = []

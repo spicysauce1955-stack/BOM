@@ -2,7 +2,7 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import { currentLocale, t } from "./i18n.js";
-import { on, refreshProject, state } from "./state.js";
+import { on, reloadProject, state } from "./state.js";
 
 export function initTabs() {
   document.querySelectorAll("#tabs button").forEach((btn) =>
@@ -22,7 +22,7 @@ export function initTabs() {
     await apiSend("POST", `/api/projects/${state.projectId}/annotations`,
       { target_ref: document.getElementById("ann-target").value, text });
     document.getElementById("ann-text").value = "";
-    await refreshProject();
+    await reloadProject();
   });
   document.getElementById("btn-add-knowledge").addEventListener("click", async () => {
     let actions;
@@ -48,13 +48,30 @@ export function initTabs() {
     alert(t("inventory.saved"));
   });
 
-  on("project-loaded", () => { renderAnnotations(); renderInventory(); maybeRenderBom(); });
+  on("project-loaded", () => {
+    renderAnnTargets(); renderAnnotations(); renderInventory(); maybeRenderBom();
+  });
   on("result-changed", maybeRenderBom);
   on("locale-changed", () => {
-    renderAnnotations(); maybeRenderBom();
+    renderAnnTargets(); renderAnnotations(); maybeRenderBom();
     if (document.getElementById("tab-knowledge").classList.contains("active")) renderKnowledge();
     if (document.getElementById("tab-review").classList.contains("active")) renderCandidates();
   });
+}
+
+function renderAnnTargets() {
+  const sel = document.getElementById("ann-target");
+  sel.innerHTML = "";
+  const o = document.createElement("option");
+  o.value = "project";
+  o.textContent = t("annotations.whole_project");
+  sel.appendChild(o);
+  for (const r of state.project?.topology.runs || []) {
+    const opt = document.createElement("option");
+    opt.value = `run:${r.id}`;
+    opt.textContent = r.id;
+    sel.appendChild(opt);
+  }
 }
 
 function maybeRenderBom() {
@@ -149,7 +166,7 @@ async function renderAnnotations() {
     card.innerHTML = html;
     card.querySelector('[data-act="interpret"]').addEventListener("click", async () => {
       await apiSend("POST", `/api/projects/${state.projectId}/annotations/${ann.id}/interpret`);
-      await refreshProject();
+      await reloadProject();
     });
     card.querySelectorAll("[data-confirm]").forEach((btn) =>
       btn.addEventListener("click", async () => {
@@ -163,7 +180,7 @@ async function renderAnnotations() {
         await apiSend("POST",
           `/api/projects/${state.projectId}/intents/${btn.dataset.confirm}/confirm`,
           { annotation_id: btn.dataset.ann, run_id: runId });
-        await refreshProject();
+        await reloadProject();
       }));
     div.appendChild(card);
   }
