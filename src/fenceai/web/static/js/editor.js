@@ -357,7 +357,16 @@ function loadCatalogProducts() {
 }
 
 function gateKitProducts(products) {
+  // components of assembly kits (gate leaves, hinge sets...) are parts, not
+  // sellable gates — exclude them even when their sku matches /GATE/i
+  const kitComponents = new Set(
+    Object.values(products).flatMap((p) =>
+      p.consumption?.kind === "assembly_kit"
+        ? (p.consumption.components || []).map((c) => c.sku) : []
+    )
+  );
   return Object.values(products).filter((p) => {
+    if (kitComponents.has(p.sku)) return false;
     if ((p.attrs || {}).category === "gate") return true;
     if (/GATE/i.test(p.sku)) return true;
     if (p.consumption?.kind === "assembly_kit") {
