@@ -127,7 +127,9 @@ function renderRunEvents() {
   }));
   run.interval_events.forEach((iv) => rows.push({
     list: "interval_events", id: iv.id,
-    html: `${eventLabel(iv.payload)} · <span class="num">${stationOfAnchor(run, iv.start_anchor)}–${stationOfAnchor(run, iv.end_anchor)}</span>`,
+    // base covers the whole section: just "Base · <surface>", no station range
+    html: iv.payload.kind === "base" ? eventLabel(iv.payload)
+      : `${eventLabel(iv.payload)} · <span class="num">${stationOfAnchor(run, iv.start_anchor)}–${stationOfAnchor(run, iv.end_anchor)}</span>`,
   }));
   if (!rows.length) {
     div.innerHTML += `<div class="meta">${t("inspect.no_events")}</div>`;
