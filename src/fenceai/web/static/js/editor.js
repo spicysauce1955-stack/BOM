@@ -2,13 +2,13 @@
 // Draw (snapped dots, rubber band, typed lengths) — plan Tasks 6-8.
 // The canvas is never mirrored in RTL (spec §4).
 
-import { apiSend, esc } from "./api.js";
+import { apiGet, apiSend, esc } from "./api.js";
 import {
   clearGroup, el, nodeById, pointAtStation, runById, runLength, runPoints,
   snapPoint, stationAtPoint, stationOfAnchor, toMmRaw, toPx,
 } from "./geom.js";
 import { pushSnapshot, redo, undo } from "./history.js";
-import { t } from "./i18n.js";
+import { currentLocale, t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import {
   addIntervalEvent, addPointEvent, generateStrategy, on, saveTopology,
@@ -26,10 +26,12 @@ export function initEditor() {
   setupCanvas();
   setupToolbar();
   renderGrid();
+  loadCatalogProducts(); // warm the cache so the gate popover opens instantly
   on("project-loaded", () => { renderAllCanvas(); renderHandles(); });
   on("result-changed", () => { renderOverlay(); renderWarnings(); });
   on("tool-changed", () => {
     updateToolButtons(); renderHandles(); updateStatus(); closePopover();
+    clearLengthBuffer();
   });
   on("selection-changed", () => { renderTopology(); renderHandles(); });
   on("locale-changed", () => { renderAllCanvas(); renderHandles(); updateStatus(); });
@@ -99,6 +101,9 @@ function svgCoords(ev) {
 
 function setupCanvas() {
   const svg = document.getElementById("canvas");
+  // empty-canvas CTA layer (created here, not in index.html: editor-owned DOM);
+  // separate from g-draft so clearing the draft layer never leaves CTA remnants
+  el("g", { id: "g-cta", "pointer-events": "none" }, svg);
 
   svg.addEventListener("click", (ev) => {
     if (suppressClick) { suppressClick = false; return; }
@@ -109,6 +114,7 @@ function setupCanvas() {
         ? state.draftNodes[state.draftNodes.length - 1] : null;
       const snap = snapPoint(mx, my, anchor, { alt: ev.altKey });
       state.draftNodes.push(snap.p);
+      clearLengthBuffer(); // typed buffer resets after each placed dot
       renderDraft();
     } else if (state.tool === "select") {
       const hit = ev.target.closest && ev.target.closest(".run-hit");
@@ -185,8 +191,35 @@ function setupCanvas() {
       return;
     }
     if (typing) return;
-    if (ev.key === "Escape") { closePopover(); cancelDraft(); }
-    if (ev.key === "Enter" && state.draftNodes.length) finishDraft();
+    // SketchUp-style typed lengths: digits typed anywhere while drawing feed the
+    // length buffer (never when focus is in a field — the guard above)
+    const drawTyping = state.tool === "draw" && state.draftNodes.length > 0;
+    if (drawTyping && !ev.ctrlKey && !ev.metaKey && !ev.altKey
+        && /^[\d.cmמ]$/.test(ev.key)) {
+      const next = lengthBuffer + ev.key;
+      if (/^(\d+(\.\d*)?|\.\d*)(mm|cm|c|m|מ)?$/.test(next)) {
+        ev.preventDefault();
+        lengthBuffer = next;
+        updateLengthChip();
+        return;
+      }
+    }
+    if (drawTyping && ev.key === "Backspace" && lengthBuffer) {
+      ev.preventDefault();
+      lengthBuffer = lengthBuffer.slice(0, -1);
+      updateLengthChip();
+      return;
+    }
+    if (ev.key === "Escape") {
+      closePopover();
+      // first Esc clears only the typed buffer; a second Esc cancels the draft
+      if (drawTyping && lengthBuffer) { clearLengthBuffer(); return; }
+      cancelDraft();
+    }
+    if (ev.key === "Enter" && state.draftNodes.length) {
+      if (drawTyping && lengthBuffer) { commitTypedDot(); return; }
+      finishDraft();
+    }
     if ((ev.key === "Delete" || ev.key === "Backspace") && state.tool === "select")
       deleteSelectedDot();
   });
@@ -198,6 +231,7 @@ function onPointerMove(ev) {
   if (drag) { onDragMove(ev); return; }
   const [mx, my] = svgCoords(ev);
   if (state.tool === "draw" && state.draftNodes.length) {
+    lastDrawMouse = [mx, my]; // remembered aim for typed-length commits
     renderRubberBand(mx, my, ev.altKey);
   }
   // live cursor readout when hovering a run
@@ -313,11 +347,44 @@ function onOutsidePointer(ev) {
   if (popover && !popover.contains(ev.target)) closePopover();
 }
 
-function openEventPopover(tool, runId, station, clientX, clientY) {
+// ---------- gate kit catalog (fetched once, cached like tabs.js does) ----------
+let catalogPromise = null;
+function loadCatalogProducts() {
+  catalogPromise ??= apiGet("/api/catalog")
+    .then((c) => c.products || {})
+    .catch(() => { catalogPromise = null; return {}; }); // retry on next open
+  return catalogPromise;
+}
+
+function gateKitProducts(products) {
+  return Object.values(products).filter((p) => {
+    if ((p.attrs || {}).category === "gate") return true;
+    if (/GATE/i.test(p.sku)) return true;
+    if (p.consumption?.kind === "assembly_kit") {
+      const names = [p.name || "", ...Object.values(p.name_i18n || {})];
+      return names.some((n) => /gate/i.test(n));
+    }
+    return false;
+  });
+}
+
+// width encoded in the product (e.g. GATE-KIT-1000, BAR-GATE-1168) — sku first
+function widthFromProduct(p) {
+  const m = /\b(\d{3,4})\b/.exec(p.sku || "") || /\b(\d{3,4})\b/.exec(p.name || "");
+  return m ? +m[1] : null;
+}
+
+async function openEventPopover(tool, runId, station, clientX, clientY) {
   closePopover();
   const run = runById(runId);
   if (!run) return;
   const L = runLength(run);
+  // gate: kit choices come from the catalog; empty catalog falls back to free text
+  let gateKits = [], defaultKit = null;
+  if (tool === "gate") {
+    gateKits = gateKitProducts(await loadCatalogProducts());
+    defaultKit = gateKits.find((p) => p.sku === "GATE-KIT-1000") || gateKits[0] || null;
+  }
   const numField = (key, id, value) =>
     `<label>${t(key)}<input id="${id}" type="number" value="${value}"></label>`;
   // base applies to the whole section: no station in the header, no range fields
@@ -325,8 +392,19 @@ function openEventPopover(tool, runId, station, clientX, clientY) {
     <div class="meta"><bdi>${esc(runId)}</bdi>${tool === "base" ? ""
       : ` · ${t("popover.station")} <span class="num">${station}</span>`}</div>`;
   if (tool === "gate") {
-    html += numField("popover.width", "pop-width", 1000);
-    html += `<label>${t("popover.kit")}<input id="pop-kit" value="GATE-KIT-1000"></label>`;
+    html += numField("popover.width", "pop-width",
+      (defaultKit && widthFromProduct(defaultKit)) || 1000);
+    if (gateKits.length) {
+      // options cannot hold nested markup: dir="auto" + an LRM before the price
+      // keep the €-figure readable in RTL (in lieu of a .num span)
+      html += `<label>${t("popover.kit")}<select id="pop-kit">` + gateKits.map((p) =>
+        `<option value="${esc(p.sku)}" dir="auto"${p === defaultKit ? " selected" : ""}>`
+        + `${esc(p.name_i18n?.[currentLocale()] || p.name)}`
+        + ` — ‎€${(p.price_cents / 100).toFixed(2)}</option>`).join("")
+        + `</select></label>`;
+    } else {
+      html += `<label>${t("popover.kit")}<input id="pop-kit" value="GATE-KIT-1000"></label>`;
+    }
   } else if (tool === "base") {
     html += `<label>${t("popover.surface")}<select id="pop-surface">
       <option value="soil">${t("surface.soil")}</option>
@@ -398,6 +476,13 @@ function openEventPopover(tool, runId, station, clientX, clientY) {
   });
   popover.querySelector("#pop-cancel").addEventListener("click", closePopover);
   popover.querySelector("#pop-save").addEventListener("click", save);
+  // kit choice drives the width field when the product encodes one
+  const kitSel = popover.querySelector("select#pop-kit");
+  if (kitSel) kitSel.addEventListener("change", () => {
+    const p = gateKits.find((g) => g.sku === kitSel.value);
+    const w = p && widthFromProduct(p);
+    if (w) popover.querySelector("#pop-width").value = w;
+  });
   const first = popover.querySelector("input, select, button");
   if (first) first.focus();
   // blur = pointer down anywhere outside cancels (registered after this click)
@@ -448,12 +533,97 @@ function commitTypedLength(runId, typedTotal) {
   saveTopology();
 }
 
+// ---------- type-while-drawing lengths (SketchUp Measurements-box mechanic) ----
+let lengthBuffer = "";     // raw typed entry, e.g. "4", "3.5", "250cm"
+let lastDrawMouse = null;  // last cursor world position while drawing (the aim)
+let chipAnchorView = null; // rubber-band end in SVG view coords (chip anchor)
+
+// "4" -> 4000 (values < 100 are meters), "4200" -> 4200 (>= 100 are mm);
+// explicit trailing unit wins: "250cm" -> 2500, "1.2m"/"1.2מ" -> 1200, "80mm" -> 80
+function parseLengthMm(buf) {
+  const m = /^(\d+(?:\.\d+)?|\.\d+)(mm|cm|m|מ)?$/.exec(buf);
+  if (!m) return null;
+  const v = parseFloat(m[1]);
+  if (!(v > 0)) return null;
+  const mm = m[2] === "mm" ? v : m[2] === "cm" ? v * 10 : m[2] ? v * 1000
+    : v < 100 ? v * 1000 : v;
+  return Math.round(mm);
+}
+
+function clearLengthBuffer() {
+  lengthBuffer = "";
+  updateLengthChip();
+}
+
+function updateLengthChip() {
+  let chip = document.getElementById("length-chip");
+  if (!lengthBuffer) { if (chip) chip.remove(); return; }
+  if (!chip) {
+    chip = document.createElement("div");
+    chip.id = "length-chip";
+    document.body.appendChild(chip);
+  }
+  const mm = parseLengthMm(lengthBuffer);
+  const echo = mm ? t("editor.length_chip_echo", { v: (mm / 1000).toFixed(2) }) : "";
+  chip.innerHTML = `<span class="num">${esc(lengthBuffer)}</span>`
+    + (echo ? `<span class="chip-echo">${esc(echo)}</span>` : "");
+  positionLengthChip();
+}
+
+function positionLengthChip() {
+  const chip = document.getElementById("length-chip");
+  if (!chip) return;
+  const ref = chipAnchorView
+    || (state.draftNodes.length ? toPx(state.draftNodes[state.draftNodes.length - 1]) : null);
+  if (!ref) return;
+  const svg = document.getElementById("canvas");
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return;
+  const pt = svg.createSVGPoint();
+  pt.x = ref[0]; pt.y = ref[1];
+  const q = pt.matrixTransform(ctm); // chip is cursor-anchored: physical coords
+  chip.style.left = `${q.x + 14}px`;
+  chip.style.top = `${q.y - 34}px`;
+}
+
+// Enter with a buffer: place the next dot at EXACTLY the typed distance along the
+// current rubber-band direction. The direction gets the same 45-degree/6-degree
+// angle snap as drawing (aim roughly + type = perfect axis-aligned segments); the
+// magnitude is exact — deliberately no grid snap.
+function commitTypedDot() {
+  const mm = parseLengthMm(lengthBuffer);
+  if (!mm || !state.draftNodes.length) return;
+  const anchor = state.draftNodes[state.draftNodes.length - 1];
+  let ang = 0; // no aim yet: default along +x
+  if (lastDrawMouse) {
+    const dx = lastDrawMouse[0] - anchor[0], dy = lastDrawMouse[1] - anchor[1];
+    if (Math.hypot(dx, dy) >= 1) {
+      ang = Math.atan2(dy, dx);
+      const step = Math.PI / 4;
+      const k = Math.round(ang / step);
+      if (Math.abs(ang - k * step) <= (6 * Math.PI) / 180) ang = k * step;
+    }
+  }
+  state.draftNodes.push([
+    Math.round(anchor[0] + Math.cos(ang) * mm),
+    Math.round(anchor[1] + Math.sin(ang) * mm),
+  ]);
+  clearLengthBuffer();
+  chipAnchorView = null;
+  clearGroup("g-snap"); // stale rubber band anchored on the previous dot
+  renderDraft();
+}
+
 // ---------- draw tool ----------
 function cancelDraft() {
   state.draftNodes = [];
+  lastDrawMouse = null;
+  chipAnchorView = null;
+  clearLengthBuffer();
   clearGroup("g-draft");
   clearGroup("g-snap");
   updateDraftButtons();
+  renderCta();
 }
 
 function finishDraft() {
@@ -489,6 +659,7 @@ function renderDraft() {
   for (const p of pts)
     el("circle", { cx: p[0], cy: p[1], r: 4, fill: "#94a3b8" }, g);
   updateDraftButtons();
+  renderCta(); // a draft dot hides the empty-canvas CTA
 }
 
 function renderRubberBand(mx, my, alt) {
@@ -504,6 +675,8 @@ function renderRubberBand(mx, my, alt) {
   const len = Math.round(Math.hypot(snap.p[0] - anchor[0], snap.p[1] - anchor[1]));
   el("text", { x: (a[0] + p[0]) / 2 + 8, y: (a[1] + p[1]) / 2 - 8, "font-size": 10,
     fill: "#2563eb", class: "num" }, g).textContent = t("canvas.mm", { n: len });
+  chipAnchorView = p; // the typed-length chip follows the rubber-band end
+  positionLengthChip();
 }
 
 function renderSnapFeedback(snap, anchor) {
@@ -550,6 +723,8 @@ function applyViewBox() {
   document.getElementById("canvas")
     .setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
   renderGrid();
+  renderCta();          // keep the CTA centered in the new view
+  positionLengthChip(); // and the typed-length chip glued to its anchor
 }
 
 function svgViewPoint(ev) {
@@ -590,9 +765,49 @@ function fitView() {
   applyViewBox();
 }
 
+// ---------- empty-canvas CTA (g-cta; disappears once a run or draft dot exists) --
+function renderCta() {
+  const g = document.getElementById("g-cta");
+  if (!g) return;
+  while (g.firstChild) g.removeChild(g.firstChild);
+  if (!state.project) return;
+  if (state.project.topology.runs.length || state.draftNodes.length) return;
+  const scale = viewBox.w / 900;
+  const cx = viewBox.x + viewBox.w / 2, cy = viewBox.y + viewBox.h / 2;
+  el("text", { x: cx, y: cy, "text-anchor": "middle", "font-size": 22 * scale,
+    fill: "#94a3b8" }, g).textContent = t("editor.empty_cta");
+  // subtle arrow from the message toward the Draw tool button — computed from the
+  // button's actual screen position, so it points correctly in LTR and RTL while
+  // the canvas itself stays unmirrored
+  const btn = document.getElementById("tool-draw");
+  const svg = document.getElementById("canvas");
+  const ctm = svg.getScreenCTM();
+  if (!btn || !ctm) return;
+  const r = btn.getBoundingClientRect();
+  const pt = svg.createSVGPoint();
+  pt.x = r.left + r.width / 2; pt.y = r.top + r.height / 2;
+  const q = pt.matrixTransform(ctm.inverse());
+  const start = [cx, cy - 40 * scale];
+  let dx = q.x - start[0], dy = q.y - start[1];
+  const h = Math.hypot(dx, dy) || 1;
+  dx /= h; dy /= h;
+  const len = Math.min(h * 0.55, viewBox.w * 0.3);
+  const end = [start[0] + dx * len, start[1] + dy * len];
+  el("line", { x1: start[0], y1: start[1], x2: end[0], y2: end[1],
+    stroke: "#cbd5e1", "stroke-width": 2 * scale,
+    "stroke-dasharray": `${6 * scale} ${5 * scale}` }, g);
+  const a = 9 * scale;
+  el("polygon", { fill: "#cbd5e1", points: [
+    [end[0] + dx * a, end[1] + dy * a],
+    [end[0] - dy * a * 0.5, end[1] + dx * a * 0.5],
+    [end[0] + dy * a * 0.5, end[1] - dx * a * 0.5],
+  ].map((p) => p.join(",")).join(" ") }, g);
+}
+
 function renderTopology() {
   const g = clearGroup("g-topology");
   renderGrid();
+  renderCta();
   if (!state.project) return;
   const topo = state.project.topology;
   for (const run of topo.runs) {

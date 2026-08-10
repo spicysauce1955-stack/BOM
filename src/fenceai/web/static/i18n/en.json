@@ -19,7 +19,7 @@
   "tool.redo": "Redo (Ctrl+Shift+Z)",
   "tool.clear": "Clear topology",
   "hint.select": "Select: click a run to edit its dots; drag handles to move, ghost dots to insert, Delete to remove.",
-  "hint.draw": "Draw: click to place dots; Enter or double-click finishes the run, Esc cancels.",
+  "hint.draw": "Draw: click to place dots — or aim and type a length (4 = 4 m, 4200 = mm, 250cm) and Enter places the next dot exactly; Enter or double-click finishes the run, Esc cancels.",
   "hint.gate": "Gate: click a position on a run to place a gate.",
   "hint.base": "Base: click a section to choose the base surface for the whole section.",
   "hint.ground": "Ground: click a position on a run to set the ground elevation there.",
@@ -194,5 +194,17 @@
   "checklist.dismiss": "Dismiss",
   "checklist.draw": "Draw a fence section — ✏️ then click on the map, Enter to finish",
   "checklist.gate": "Add a gate — 🚪 then click a spot on a section",
-  "checklist.compute": "Press ⚙ to compute the strategy and see your quote"
+  "checklist.compute": "Press ⚙ to compute the strategy and see your quote",
+  "editor.length_chip_echo": "= {v} m",
+  "editor.empty_cta": "Click ✏️ and then the map to draw your first section",
+  "toolbar.select": "Select",
+  "toolbar.draw": "Draw",
+  "toolbar.gate": "Gate",
+  "toolbar.base": "Base",
+  "toolbar.ground": "Ground",
+  "toolbar.height": "Height",
+  "toolbar.pin": "Pin",
+  "toolbar.undo": "Undo",
+  "toolbar.redo": "Redo",
+  "toolbar.clear": "Clear"
 }

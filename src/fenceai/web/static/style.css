@@ -74,9 +74,17 @@ th { background: #eef2f6; }
   background: #fff; border: 1px solid #d4dae2; border-radius: 8px;
   /* sticky + own height: undo/redo/clear must never fall below the fold */
   align-self: flex-start; position: sticky; inset-block-start: 8px;
-  max-block-size: calc(100vh - 140px); overflow-y: auto; }
-#toolbar button { width: 40px; height: 40px; font-size: 16px; padding: 0; }
+  max-block-size: calc(100vh - 140px); overflow-y: auto;
+  /* never shrink below the buttons' width (avoids a phantom inner h-scrollbar) */
+  flex: 0 0 auto; }
+/* icon-over-label tool buttons: >=44px hit area in both axes */
+#toolbar button { inline-size: 56px; block-size: 56px; padding: 4px 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; }
+#toolbar button .t-icon { font-size: 16px; line-height: 1.2; }
+#toolbar button .t-label { font-size: 9px; line-height: 1.2; color: #475569; }
 #toolbar button.tool.active { background: #dbeafe; border-color: #2563eb; }
+#toolbar button.tool.active .t-label { color: #1d4ed8; }
 .toolbar-spacer { flex: 1; }
 #toolbar button:disabled { opacity: 0.4; cursor: default; }
 
@@ -106,6 +114,14 @@ th { background: #eef2f6; }
 #g-draft { pointer-events: none; }
 .mm-input { inline-size: 84px; font-size: 12px; padding: 2px 4px;
   border: 1px solid #2563eb; border-radius: 4px; direction: ltr; }
+#g-cta { pointer-events: none; }
+
+/* SketchUp-style typed-length chip: follows the rubber-band end while drawing */
+#length-chip { position: fixed; z-index: 35; pointer-events: none; direction: ltr;
+  background: #1d2733; color: #fff; border-radius: 6px;
+  padding-block: 3px; padding-inline: 8px; font-size: 12px;
+  box-shadow: 0 2px 8px rgba(29, 39, 51, 0.35); white-space: nowrap; }
+#length-chip .chip-echo { color: #93c5fd; margin-inline-start: 6px; }
 
 /* ---------- on-canvas event popover (Task 8) ---------- */
 .popover { position: fixed; z-index: 40; min-inline-size: 200px; max-inline-size: 280px;
