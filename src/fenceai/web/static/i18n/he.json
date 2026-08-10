@@ -161,5 +161,7 @@
   "impact.none": "אף פרויקט לא ישתנה — בטוח להחיל.",
   "impact.generation_fails": "החישוב ייכשל",
   "impact.spans": "מפתחים {before} ← {after}",
-  "impact.posts": "עמודים ‎+{added} ‎−{removed} ‎~{modified}"
+  "impact.posts": "עמודים ‎+{added} ‎−{removed} ‎~{modified}",
+  "editor.fit": "התאמת תצוגה (גלגלת לזום, גרירה עם לחצן אמצעי/Ctrl להזזה)",
+  "canvas.grid_note_5m": "כל משבצת רשת = 5 מטרים"
 }

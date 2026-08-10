@@ -35,3 +35,8 @@ Verified: 174 pytest + 14/14 tools/ui_smoke.py checks + inspected screenshots.
 "This change would affect N of your projects" before approving/saving knowledge —
 Research D's highest-value review feature. learning/impact.py (pure regenerate-and-diff),
 2 API endpoints, UI in review queue + knowledge editor (he/en). 202 pytest + 21/21 smoke.
+
+## Canvas zoom/pan/fit (2026-08-10) — COMPLETE
+Wheel zoom anchored at cursor (0.25x-6x), middle/Ctrl-drag pan (screen-space math),
+fit-view button, world-aligned grid re-rendered per view (5 m spacing when zoomed out).
+202 pytest + 24/24 smoke.

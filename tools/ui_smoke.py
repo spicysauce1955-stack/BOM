@@ -213,6 +213,22 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("profile renders generated panels/posts", (profile_drawn or 0) > 0)
         check("profile renders the ground line", (profile_ground or 0) > 0)
 
+        # --- zoom / pan / fit --------------------------------------------------
+        vb0 = c.js("document.getElementById('canvas').getAttribute('viewBox')")
+        cx, cy = c.canvas_px(3000, 0)
+        c.cmd("Input.dispatchMouseEvent", type="mouseWheel", x=cx, y=cy,
+              deltaX=0, deltaY=-240)
+        time.sleep(0.4)
+        vb1 = c.js("document.getElementById('canvas').getAttribute('viewBox')")
+        check("wheel zooms the canvas viewBox", vb1 != vb0 and bool(vb1))
+        c.click(*c.element_center("#btn-fit"))
+        time.sleep(0.4)
+        vb2 = c.js("document.getElementById('canvas').getAttribute('viewBox')")
+        check("fit view reframes the topology", vb2 != vb1 and bool(vb2))
+        # grid still covers the view after zoom/fit
+        check("grid re-renders for the new view",
+              c.js("document.querySelectorAll('#g-grid line').length") > 5)
+
         # --- rule impact preview (knowledge tab) ------------------------------
         c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
         time.sleep(0.5)

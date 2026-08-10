@@ -51,6 +51,7 @@ function setupToolbar() {
     if (btn) btn.addEventListener("click", () => { setTool(tool); updateStatus(); });
   }
   document.getElementById("btn-generate").addEventListener("click", generateStrategy);
+  document.getElementById("btn-fit").addEventListener("click", fitView);
   document.getElementById("chk-overlay").addEventListener("change", renderOverlay);
   document.getElementById("btn-clear").addEventListener("click", clearTopology);
   updateToolButtons();
@@ -128,7 +129,19 @@ function setupCanvas() {
 
   svg.addEventListener("dblclick", (ev) => { ev.preventDefault(); finishDraft(); });
 
+  svg.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    zoomAt(ev, ev.deltaY > 0 ? 1.15 : 1 / 1.15);
+  }, { passive: false });
+
   svg.addEventListener("pointerdown", (ev) => {
+    // pan: middle button, or Ctrl/Cmd + primary (never conflicts with editing)
+    if (ev.button === 1 || (ev.button === 0 && (ev.ctrlKey || ev.metaKey))) {
+      ev.preventDefault();
+      pan = { screen: [ev.clientX, ev.clientY], view: { ...viewBox } };
+      svg.setPointerCapture(ev.pointerId);
+      return;
+    }
     if (state.tool !== "select" || !state.project) return;
     const target = ev.target;
     if (target.classList.contains("handle")) {
@@ -141,9 +154,26 @@ function setupCanvas() {
       svg.setPointerCapture(ev.pointerId);
     }
   });
-  svg.addEventListener("pointermove", onPointerMove);
-  svg.addEventListener("pointerup", onDragEnd);
-  svg.addEventListener("pointercancel", onDragEnd);
+  svg.addEventListener("pointermove", (ev) => {
+    if (pan) {
+      // delta in SCREEN pixels scaled by the pan-start view: immune to the
+      // feedback of viewBox changing mid-gesture
+      const svgEl = document.getElementById("canvas");
+      viewBox.x = pan.view.x - (ev.clientX - pan.screen[0]) * (pan.view.w / svgEl.clientWidth);
+      viewBox.y = pan.view.y - (ev.clientY - pan.screen[1]) * (pan.view.h / svgEl.clientHeight);
+      applyViewBox();
+      return;
+    }
+    onPointerMove(ev);
+  });
+  svg.addEventListener("pointerup", (ev) => {
+    if (pan) { pan = null; suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); return; }
+    onDragEnd(ev);
+  });
+  svg.addEventListener("pointercancel", (ev) => {
+    if (pan) { pan = null; return; }
+    onDragEnd(ev);
+  });
 
   document.addEventListener("keydown", (ev) => {
     const tag = ev.target && ev.target.tagName;
@@ -494,13 +524,69 @@ function updateDraftButtons() {
 // ---------- rendering ----------
 function renderGrid() {
   const g = clearGroup("g-grid");
-  const step = 1000 * 0.045; // 1 m in px
-  for (let x = 0; x < 900; x += step)
-    el("line", { x1: x, y1: 0, x2: x, y2: 500, stroke: "#eef2f6" }, g);
-  for (let y = 0; y < 500; y += step)
-    el("line", { x1: 0, y1: y, x2: 900, y2: y, stroke: "#eef2f6" }, g);
-  el("text", { x: 6, y: 14, "font-size": 10, fill: "#94a3b8", class: "grid-note" }, g)
-    .textContent = t("canvas.grid_note");
+  // 1 m grid aligned to world coordinates, covering the current viewBox
+  // (5 m spacing when zoomed far out so the grid never becomes a moiré)
+  let step = 1000 * 0.045;
+  if (viewBox.w > 2700) step *= 5;
+  const x0 = Math.floor(viewBox.x / step) * step;
+  const y0 = Math.floor(viewBox.y / step) * step;
+  for (let x = x0; x < viewBox.x + viewBox.w; x += step)
+    el("line", { x1: x, y1: viewBox.y, x2: x, y2: viewBox.y + viewBox.h, stroke: "#eef2f6" }, g);
+  for (let y = y0; y < viewBox.y + viewBox.h; y += step)
+    el("line", { x1: viewBox.x, y1: y, x2: viewBox.x + viewBox.w, y2: y, stroke: "#eef2f6" }, g);
+  const scale = viewBox.w / 900;
+  el("text", { x: viewBox.x + 6 * scale, y: viewBox.y + 14 * scale,
+    "font-size": 10 * scale, fill: "#94a3b8", class: "grid-note" }, g)
+    .textContent = viewBox.w > 2700 ? t("canvas.grid_note_5m") : t("canvas.grid_note");
+}
+
+// ---------- zoom & pan (viewBox only; world<->viewBox mapping is unchanged) ----
+const DEFAULT_VIEW = { x: 0, y: 0, w: 900, h: 500 };
+let viewBox = { ...DEFAULT_VIEW };
+let pan = null; // active pan session
+
+function applyViewBox() {
+  document.getElementById("canvas")
+    .setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+  renderGrid();
+}
+
+function svgViewPoint(ev) {
+  const svg = document.getElementById("canvas");
+  const pt = svg.createSVGPoint();
+  pt.x = ev.clientX; pt.y = ev.clientY;
+  const { x, y } = pt.matrixTransform(svg.getScreenCTM().inverse());
+  return [x, y];
+}
+
+function zoomAt(ev, factor) {
+  const [cx, cy] = svgViewPoint(ev);
+  const w = Math.max(225, Math.min(viewBox.w * factor, 5400)); // 0.25x .. 6x
+  const scale = w / viewBox.w;
+  viewBox = {
+    x: cx - (cx - viewBox.x) * scale,
+    y: cy - (cy - viewBox.y) * scale,
+    w, h: viewBox.h * scale,
+  };
+  applyViewBox();
+}
+
+function fitView() {
+  const pts = [];
+  for (const n of state.project?.topology.nodes || []) pts.push(toPx([n.x_mm, n.y_mm]));
+  for (const r of state.project?.topology.runs || [])
+    for (const v of r.interior_vertices || []) pts.push(toPx(v));
+  if (!pts.length) { viewBox = { ...DEFAULT_VIEW }; applyViewBox(); return; }
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const pad = 60;
+  let x = Math.min(...xs) - pad, y = Math.min(...ys) - pad;
+  let w = Math.max(...xs) - x + pad * 2, h = Math.max(...ys) - y + pad * 2;
+  // preserve the 900:500 aspect so nothing distorts
+  if (w / h > 900 / 500) { const nh = w * 500 / 900; y -= (nh - h) / 2; h = nh; }
+  else { const nw = h * 900 / 500; x -= (nw - w) / 2; w = nw; }
+  if (w < 450) { const nw = 450, nh = 250; x -= (nw - w) / 2; y -= (nh - h) / 2; w = nw; h = nh; }
+  viewBox = { x, y, w, h };
+  applyViewBox();
 }
 
 function renderTopology() {

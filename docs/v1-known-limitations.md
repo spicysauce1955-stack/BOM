@@ -53,7 +53,7 @@ Deliberate deferrals and honest weaknesses, with the trigger that should revisit
   is audit-logged, but a quoted BOM document is not persisted. Trigger: real quoting
   workflow (persist `(run_id, inventory_hash) → bom` append-only).
 - **The UI is pragmatic** (mission §13). UI v2 added direct canvas manipulation,
-  undo/redo, the elevation side view, and Hebrew-first RTL; still missing: canvas
-  zoom/pan (auto-fit viewBox only), touch-optimized gestures beyond big targets,
+  undo/redo, the elevation side view, and Hebrew-first RTL; still missing: touch-optimized gestures beyond big targets,
   and interior-vertex drawing in one stroke (corners are made by chaining runs or
-  inserting via midpoint handles).
+  inserting via midpoint handles). Zoom/pan/fit added 2026-08-10 (wheel zoom,
+  middle/Ctrl-drag pan, ⤢ fit).

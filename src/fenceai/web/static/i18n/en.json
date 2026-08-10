@@ -161,5 +161,7 @@
   "impact.none": "No project would change — safe to apply.",
   "impact.generation_fails": "generation would FAIL",
   "impact.spans": "spans {before} → {after}",
-  "impact.posts": "posts +{added} −{removed} ~{modified}"
+  "impact.posts": "posts +{added} −{removed} ~{modified}",
+  "editor.fit": "Fit view (wheel zooms, middle/Ctrl-drag pans)",
+  "canvas.grid_note_5m": "1 grid square = 5 m"
 }
