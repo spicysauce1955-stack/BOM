@@ -23,42 +23,50 @@ def demo_knowledge() -> KnowledgeBase:
             KnowledgeVersion(
                 object_id="K-MAXSPAN", version=1, type="hard_constraint",
                 title="Manufacturer max span 1800 mm",
+                title_i18n={"he": 'מפתח מרבי 1800 מ"מ (יצרן)'},
                 actions=[SetParam(param="max_span_mm", value=1800)],
                 attributed_to="manufacturer",
             ),
             KnowledgeVersion(
                 object_id="K-RAILS", version=1, type="fact",
                 title="2 rails per span",
+                title_i18n={"he": "2 מוטות לכל מפתח"},
                 actions=[SetParam(param="rails_per_span", value=2)],
             ),
             KnowledgeVersion(
                 object_id="K-SCREWS", version=1, type="fact",
                 title="8 screws per span (2 per rail-end connection)",
+                title_i18n={"he": "8 ברגים לכל מפתח (2 לכל חיבור קצה מוט)"},
                 actions=[SetParam(param="screws_per_span", value=8)],
             ),
             KnowledgeVersion(
                 object_id="K-MASONRY", version=1, type="hard_constraint",
                 title="Masonry base requires masonry mounting",
+                title_i18n={"he": "בסיס בנוי מחייב עיגון קיר"},
                 actions=[RequireMounting(surface="masonry_wall", mounting="masonry", sku="POST-M")],
             ),
             KnowledgeVersion(
                 object_id="K-GATE-REINF", version=1, type="company_rule",
                 title="Gates get reinforced posts on both sides",
+                title_i18n={"he": "עמודים מחוזקים משני צידי שער"},
                 actions=[RequirePostReinforcement(context="gate", sku="POST-S-HD")],
             ),
             KnowledgeVersion(
                 object_id="K-EQUAL", version=1, type="preference",
                 title="Prefer equal span widths",
+                title_i18n={"he": "העדפת מפתחים שווים"},
                 actions=[PreferEqualSpans()],
             ),
             KnowledgeVersion(
                 object_id="K-SLIVER", version=1, type="preference",
                 title="Avoid spans under 500 mm",
+                title_i18n={"he": 'הימנעות ממפתחים צרים מ-500 מ"מ'},
                 actions=[PreferMinSpanWidth(min_mm=500)],
             ),
             KnowledgeVersion(
                 object_id="K-STEP-SLOPE", version=1, type="heuristic",
                 title="Steep runs look better stepped (slope > 15%)",
+                title_i18n={"he": "קטעים תלולים נראים טוב יותר במדורג (שיפוע מעל 15%)"},
                 condition=Cmp(
                     cmp=">", left=FieldRef(path="run.slope_permille"), right=Lit(value=150)
                 ),
@@ -84,6 +92,7 @@ def demo_knowledge() -> KnowledgeBase:
             KnowledgeVersion(
                 object_id="K-POST-DEFAULT", version=1, type="fact",
                 title="Default ground post product",
+                title_i18n={"he": "מוצר ברירת מחדל לעמוד קרקע"},
                 actions=[DefaultComponent(role="post_ground", sku="POST-S")],
             ),
         ]

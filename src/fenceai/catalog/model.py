@@ -60,9 +60,13 @@ Consumption = Annotated[
 class Product(BaseModel):
     sku: str
     name: str
+    name_i18n: dict[str, str] = {}  # optional localized names; empty = fallback to name
     consumption: Consumption
     price_cents: Cents = 0  # per purchase unit
     attrs: dict[str, str | int | bool] = {}
+
+    def display_name(self, lang: str) -> str:
+        return self.name_i18n.get(lang) or self.name
 
 
 class SubstitutionRule(BaseModel):
