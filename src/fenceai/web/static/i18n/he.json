@@ -154,5 +154,12 @@
   "profile.gate_label": "שער {width} מ\"מ",
   "tool.height": "גובה גדר",
   "hint.height": "גובה: לחצו על קטע כדי לקבוע את גובה הגדר לטווח.",
-  "popover.height": "גובה מ\"מ"
+  "popover.height": "גובה מ\"מ",
+  "impact.preview": "תצוגת השפעה",
+  "impact.computing": "מחשב השפעה על כל הפרויקטים…",
+  "impact.summary": "{affected} מתוך {checked} פרויקטים ישתנו",
+  "impact.none": "אף פרויקט לא ישתנה — בטוח להחיל.",
+  "impact.generation_fails": "החישוב ייכשל",
+  "impact.spans": "מפתחים {before} ← {after}",
+  "impact.posts": "עמודים ‎+{added} ‎−{removed} ‎~{modified}"
 }

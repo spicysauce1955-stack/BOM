@@ -157,3 +157,7 @@ input[type="number"] { direction: ltr; }
 .profile-gate-label { font-size: 9px; fill: #0891b2; }
 .profile-z-input { inline-size: 100%; font-size: 11px; padding: 2px 4px;
   border: 1px solid #b9c2cd; border-radius: 4px; }
+
+.impact { margin-block-start: 6px; padding: 6px 10px; background: #f0f9ff;
+  border: 1px solid #bae6fd; border-radius: 6px; font-size: 13px; }
+.impact-row { margin-block: 3px; }

@@ -16,7 +16,7 @@ demand      requirement derivation from strategy                   (strategy, ca
 fulfillment cut planner, packaging, inventory netting, BOM         (demand, catalog)
 ai          ports + records (dependency-free); stub/claude ADAPTERS may import domain models
 project     project aggregate, annotations, intent confirmation    (topology, ai.records, strategy.overrides)
-learning    corrections, knowledge candidates, review workflow     (knowledge, decisions)
+learning    corrections, candidates, review, impact preview       (knowledge, decisions, strategy, demand, fulfillment)
 store       SQLite repositories                                    (all models; no domain logic)
 api         FastAPI routes + composition root                      (everything)
 web         static frontend assets                                 (—)

@@ -321,3 +321,48 @@ def test_generation_failure_is_422(client):
     r = client.post(f"/api/projects/{pid}/generate")
     assert r.status_code == 422
     assert "max_span" in r.json()["detail"]
+
+
+def test_knowledge_impact_preview(client):
+    pid = make_project(client, name="impact-demo")
+    put_straight_topology(client, pid)
+    client.post(f"/api/projects/{pid}/generate")
+
+    report = client.post(
+        "/api/knowledge/preview-impact",
+        json={
+            "object_id": "K-MAXSPAN", "type": "hard_constraint",
+            "title": "tighter", "author": "expert-admin",
+            "actions": [{"kind": "set_param", "param": "max_span_mm", "value": 1400}],
+        },
+    ).json()
+    assert report["projects_checked"] == 1
+    assert report["projects_affected"] == 1
+    impact = report["impacts"][0]
+    assert impact["project_id"] == pid
+    assert (impact["spans_before"], impact["spans_after"]) == (4, 5)
+    assert impact["bom_delta_cents"] == -2600  # tighter cuts pack better (see impact tests)
+
+    # preview must not have persisted anything
+    versions = client.get("/api/knowledge").json()
+    assert not any(v["object_id"] == "K-MAXSPAN" and v["version"] == 2 for v in versions)
+    runs = client.get(f"/api/projects/{pid}/runs").json()
+    assert len(runs) == 1  # preview regenerations are never saved
+
+
+def test_candidate_impact_preview(client):
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    client.post(
+        f"/api/projects/{pid}/corrections",
+        json={"generation_run_id": run["run"]["id"],
+              "comment": "use existing foundations here", "author": "e"},
+    )
+    cand = client.post(f"/api/projects/{pid}/propose-knowledge").json()[0]
+    report = client.post(
+        f"/api/candidates/{cand['object_id']}/{cand['version']}/preview"
+    ).json()
+    assert report["projects_checked"] == 1
+    assert report["projects_affected"] == 0  # advisory AddNote: honest zero impact
+    assert client.post("/api/candidates/NOPE/1/preview").status_code == 404

@@ -22,9 +22,11 @@ Deliberate deferrals and honest weaknesses, with the trigger that should revisit
 - **Cut-plan optimality**: FFD + LP bound; when the bound is not met the plan is
   flagged, not escalated. Trigger: real jobs where FFD misses (then CP-SAT extra,
   ADR-0007).
-- **Impact analysis is per-run** (`/api/runs/{id}/impact/{object}`) — no cross-project
-  "which quotes would this rule change" preview yet (Research D's killer feature;
-  V2 candidate).
+- ~~Impact analysis is per-run only~~ **Done (2026-08-10)**: cross-project rule impact
+  preview (`POST /api/knowledge/preview-impact`, `POST /api/candidates/{id}/{v}/preview`
+  + UI buttons in the review queue and knowledge editor) — regenerate-and-diff across
+  all projects; previews persist nothing. Remaining refinement: diff against *historical*
+  accepted quotes once BOM snapshots exist (see below).
 
 ## Learning / AI
 

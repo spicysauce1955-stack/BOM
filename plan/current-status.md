@@ -30,3 +30,8 @@ editor (undo/redo, select/draw grammar, snapping, typed lengths, canvas event po
 incl. height tool); profile side view (ground/wall editing, synced selection); Hebrew-first
 RTL (153-key parity, Noto Sans Hebrew, logical-properties CSS, localized dynamic content).
 Verified: 174 pytest + 14/14 tools/ui_smoke.py checks + inspected screenshots.
+
+## Rule impact preview (2026-08-10) — COMPLETE
+"This change would affect N of your projects" before approving/saving knowledge —
+Research D's highest-value review feature. learning/impact.py (pure regenerate-and-diff),
+2 API endpoints, UI in review queue + knowledge editor (he/en). 202 pytest + 21/21 smoke.

@@ -27,6 +27,12 @@ from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, fulfill
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion
+from fenceai.learning.impact import (
+    ImpactCase,
+    ImpactReport,
+    activated_copy,
+    preview_impact,
+)
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
@@ -348,6 +354,47 @@ def upsert_knowledge(body: KnowledgeCreate):
     )
     state.store.replace_active_version(v, actor=body.author)
     return v
+
+
+# -- impact preview ---------------------------------------------------------------
+
+def _impact_cases() -> list[ImpactCase]:
+    return [
+        ImpactCase(
+            project_id=p.id, project_name=p.name, topology=p.topology,
+            overrides=p.overrides, inventory=state.store.load_inventory(p.id),
+        )
+        for p in state.store.list_projects()
+    ]
+
+
+@app.post("/api/knowledge/preview-impact")
+def preview_knowledge_impact(body: "KnowledgeCreate") -> ImpactReport:
+    """What would saving this knowledge version change, across all projects?"""
+    hypo = KnowledgeVersion(
+        object_id=body.object_id,
+        version=state.store.next_version(body.object_id),
+        type=body.type,  # type: ignore[arg-type]
+        title=body.title, scope=body.scope,
+        condition=body.condition, actions=body.actions,  # type: ignore[arg-type]
+        attributed_to=body.author, status="draft",
+    )
+    return preview_impact(hypo, state.store.knowledge_base(), state.store.load_catalog(),
+                          _impact_cases())
+
+
+@app.post("/api/candidates/{object_id}/{version}/preview")
+def preview_candidate_impact(object_id: str, version: int) -> ImpactReport:
+    """What would approving this candidate change, across all projects?"""
+    kb = state.store.knowledge_base()
+    cand = next(
+        (v for v in kb.versions if v.object_id == object_id and v.version == version), None
+    )
+    if cand is None or cand.status != "proposed":
+        raise HTTPException(404, "candidate not found or not reviewable")
+    return preview_impact(activated_copy(cand), kb, state.store.load_catalog(),
+                          _impact_cases())
+
 
 
 @app.post("/api/knowledge/{object_id}/{version}/retire")

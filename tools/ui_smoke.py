@@ -213,6 +213,28 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("profile renders generated panels/posts", (profile_drawn or 0) > 0)
         check("profile renders the ground line", (profile_ground or 0) > 0)
 
+        # --- rule impact preview (knowledge tab) ------------------------------
+        c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
+        time.sleep(0.5)
+        c.js("""
+document.getElementById('k-object').value = 'K-MAXSPAN';
+document.getElementById('k-title').value = 'tighter test';
+document.getElementById('k-actions').value =
+  JSON.stringify([{kind: 'set_param', param: 'max_span_mm', value: 1400}]);
+'filled'""")
+        c.click(*c.element_center("#btn-knowledge-impact"))
+        time.sleep(2)
+        impact_text = c.js("document.querySelector('#knowledge-impact-out .impact')?.textContent || ''")
+        check("impact preview reports affected projects", "1" in (impact_text or ""))
+        # preview must persist nothing
+        k_versions = c.js("""
+fetch('/api/knowledge').then(r => r.json())
+  .then(vs => vs.filter(v => v.object_id === 'K-MAXSPAN').length)""")
+        check("impact preview persists nothing", k_versions == 1)
+        c.shot("06-impact-preview.png")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.3)
+
         # --- multi-segment anchors (final-review blocker regression) ---------
         # insert a vertex via the midpoint ghost, then place a ground point on
         # the SECOND segment; the stored anchor must be segment-local

@@ -154,5 +154,12 @@
   "profile.gate_label": "gate {width} mm",
   "tool.height": "Height intent",
   "hint.height": "Height: click a run to set the fence height for a range.",
-  "popover.height": "height mm"
+  "popover.height": "height mm",
+  "impact.preview": "Preview impact",
+  "impact.computing": "computing impact across your projects…",
+  "impact.summary": "{affected} of {checked} projects would change",
+  "impact.none": "No project would change — safe to apply.",
+  "impact.generation_fails": "generation would FAIL",
+  "impact.spans": "spans {before} → {after}",
+  "impact.posts": "posts +{added} −{removed} ~{modified}"
 }

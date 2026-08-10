@@ -24,16 +24,28 @@ export function initTabs() {
     document.getElementById("ann-text").value = "";
     await reloadProject();
   });
-  document.getElementById("btn-add-knowledge").addEventListener("click", async () => {
+  const knowledgeBody = () => {
     let actions;
     try { actions = JSON.parse(document.getElementById("k-actions").value); }
-    catch { return alert(t("knowledge.actions_json_invalid")); }
-    await apiSend("POST", "/api/knowledge", {
+    catch { alert(t("knowledge.actions_json_invalid")); return null; }
+    return {
       object_id: document.getElementById("k-object").value.trim(),
       type: document.getElementById("k-type").value,
       title: document.getElementById("k-title").value, actions, author: "expert-admin",
-    });
+    };
+  };
+  document.getElementById("btn-add-knowledge").addEventListener("click", async () => {
+    const body = knowledgeBody();
+    if (!body) return;
+    await apiSend("POST", "/api/knowledge", body);
     renderKnowledge();
+  });
+  document.getElementById("btn-knowledge-impact").addEventListener("click", async () => {
+    const body = knowledgeBody();
+    if (!body) return;
+    const out = document.getElementById("knowledge-impact-out");
+    out.innerHTML = `<em>${t("impact.computing")}</em>`;
+    renderImpactReport(out, await apiSend("POST", "/api/knowledge/preview-impact", body));
   });
   document.getElementById("btn-propose").addEventListener("click", async () => {
     const out = await apiSend("POST", `/api/projects/${state.projectId}/propose-knowledge`);
@@ -211,6 +223,30 @@ async function renderKnowledge() {
   }
 }
 
+// ---------- impact preview (shared by review queue + knowledge form) ----------
+function renderImpactReport(container, report) {
+  let html = `<div class="impact"><b>${t("impact.summary",
+    { affected: report.projects_affected, checked: report.projects_checked })}</b>`;
+  for (const i of report.impacts) {
+    if (!i.changed) continue;
+    html += `<div class="impact-row"><bdi>${esc(i.project_name || i.project_id)}</bdi>: `;
+    if (i.generation_failed) {
+      html += `<span class="tag rejected">${t("impact.generation_fails")}</span>
+        <span class="meta" dir="auto">${esc(i.generation_failed)}</span>`;
+    } else {
+      const delta = (i.bom_delta_cents / 100).toFixed(2);
+      const sign = i.bom_delta_cents > 0 ? "+" : "";
+      html += `${t("impact.spans", { before: i.spans_before, after: i.spans_after })} · `
+        + `${t("impact.posts", { added: i.posts_added, removed: i.posts_removed, modified: i.posts_modified })} · `
+        + `<span class="num">${sign}${delta}€</span>`;
+    }
+    html += "</div>";
+  }
+  if (!report.projects_affected) html += `<div class="meta">${t("impact.none")}</div>`;
+  html += "</div>";
+  container.innerHTML = html;
+}
+
 // ---------- review queue ----------
 async function renderCandidates() {
   const candidates = await apiGet("/api/candidates");
@@ -225,10 +261,19 @@ async function renderCandidates() {
         ${t("knowledge.derived_from")} <bdi>${esc(c.derived_from.join(", "))}</bdi></div>
       ${c.source_text ? `<div class="verbatim" dir="auto">“${esc(c.source_text)}”</div>` : ""}
       <div class="meta">${t("knowledge.actions")}: <bdi>${esc(JSON.stringify(c.actions))}</bdi></div>
+      <button data-preview="1">${t("impact.preview")}</button>
       <button data-a="approve">${t("review.approve")}</button>
       <button data-a="scope_restrict">${t("review.approve_narrower")}</button>
-      <button data-a="reject">${t("review.reject")}</button>`;
-    card.querySelectorAll("button").forEach((btn) =>
+      <button data-a="reject">${t("review.reject")}</button>
+      <div class="impact-out"></div>`;
+    card.querySelector("[data-preview]").addEventListener("click", async () => {
+      const out = card.querySelector(".impact-out");
+      out.innerHTML = `<em>${t("impact.computing")}</em>`;
+      const report = await apiSend(
+        "POST", `/api/candidates/${c.object_id}/${c.version}/preview`);
+      renderImpactReport(out, report);
+    });
+    card.querySelectorAll("button[data-a]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         const action = btn.dataset.a;
         const body = { action, reviewer: "expert-admin" };
