@@ -174,3 +174,14 @@ input[type="number"] { direction: ltr; }
 .impact { margin-block-start: 6px; padding: 6px 10px; background: #f0f9ff;
   border: 1px solid #bae6fd; border-radius: 6px; font-size: 13px; }
 .impact-row { margin-block: 3px; }
+
+/* getting-started checklist */
+#checklist { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px;
+  padding: 8px 12px; margin-block-end: 6px; font-size: 13px; }
+#checklist.all-done { background: #f0fdf4; border-color: #86efac; }
+.checklist-header { display: flex; justify-content: space-between; align-items: center;
+  font-weight: 600; margin-block-end: 4px; }
+.checklist-header button { border: none; background: none; padding: 0 4px; }
+.checklist-item { padding-block: 2px; color: #1e40af; }
+#checklist.all-done .checklist-item { color: #166534; }
+.checklist-item.done { opacity: 0.7; text-decoration: line-through; }

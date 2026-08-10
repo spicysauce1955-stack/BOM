@@ -336,10 +336,9 @@ def test_knowledge_impact_preview(client):
             "actions": [{"kind": "set_param", "param": "max_span_mm", "value": 1400}],
         },
     ).json()
-    assert report["projects_checked"] == 1
-    assert report["projects_affected"] == 1
-    impact = report["impacts"][0]
-    assert impact["project_id"] == pid
+    assert report["projects_checked"] >= 1  # includes the seeded sample project
+    impact = next(i for i in report["impacts"] if i["project_id"] == pid)
+    assert impact["changed"]
     assert (impact["spans_before"], impact["spans_after"]) == (4, 5)
     assert impact["bom_delta_cents"] == -2600  # tighter cuts pack better (see impact tests)
 
@@ -363,7 +362,7 @@ def test_candidate_impact_preview(client):
     report = client.post(
         f"/api/candidates/{cand['object_id']}/{cand['version']}/preview"
     ).json()
-    assert report["projects_checked"] == 1
+    assert report["projects_checked"] >= 1
     assert report["projects_affected"] == 0  # advisory AddNote: honest zero impact
     assert client.post("/api/candidates/NOPE/1/preview").status_code == 404
 
@@ -418,3 +417,15 @@ def test_impact_preview_reports_vs_accepted_quote(client):
     impact = next(i for i in report["impacts"] if i["project_id"] == pid)
     assert impact["accepted_quote_cents"] == q["total_cents"]
     assert impact["vs_accepted_delta_cents"] == impact["bom_after_cents"] - q["total_cents"]
+
+
+def test_fresh_database_seeds_a_sample_project(client):
+    projects = client.get("/api/projects").json()
+    assert len(projects) == 1
+    sample = client.get(f"/api/projects/{projects[0]['id']}").json()
+    assert len(sample["topology"]["runs"]) == 2  # L-shape with gate + wall section
+    kinds = {e["payload"]["kind"] for r in sample["topology"]["runs"]
+             for e in r["point_events"] + r["interval_events"]}
+    assert {"gate", "base", "base_top"} <= kinds
+    # it generates cleanly out of the box
+    assert client.post(f"/api/projects/{projects[0]['id']}/generate").status_code == 200

@@ -2,6 +2,7 @@
 // All behavior lives in js/* modules communicating via state.js events.
 
 import { apiGet } from "./js/api.js";
+import { initChecklist } from "./js/checklist.js";
 import { initEditor } from "./js/editor.js";
 import { currentLocale, initI18n, setLocale, t } from "./js/i18n.js";
 import { canRedo, canUndo, redo, undo } from "./js/history.js";
@@ -53,6 +54,7 @@ async function main() {
   initInspector();
   initTabs();
   initProfile();
+  initChecklist();
   setupHeader();
   setupUndoButtons();
 

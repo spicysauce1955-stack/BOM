@@ -71,8 +71,50 @@ async def lifespan(app: FastAPI):
     if not state.store.knowledge_base().versions:
         for v in demo_knowledge().versions:
             state.store.insert_knowledge_version(v, actor="seed")
+    if not state.store.list_projects():
+        state.store.save_project(_sample_project(), actor="seed")
     yield
     state.store.close()
+
+
+
+
+def _sample_project() -> Project:
+    """Seeded example fence: an L with a gate, a slope, and a wall section — new
+    users land in a working project, never a blank grid (template-as-onboarding)."""
+    from fenceai.topology.model import (
+        BasePayload, BaseTopPayload, BaseTopPoint, GatePayload, IntervalEvent,
+        Node, PointEvent, Run, Topology,
+    )
+
+    def anchor(seg_len, offset):
+        return {"segment_index": 0, "offset_mm": offset, "seg_len_at_authoring_mm": seg_len}
+
+    topology = Topology(
+        nodes=[
+            Node(id="n1", x_mm=0, y_mm=0),
+            Node(id="n2", x_mm=9000, y_mm=0),
+            Node(id="n3", x_mm=9000, y_mm=6000, z_mm=600),
+        ],
+        runs=[
+            Run(id="run1", start_node_id="n1", end_node_id="n2", point_events=[
+                PointEvent(id="ev_gate", anchor=anchor(9000, 3000),
+                           payload=GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000")),
+            ]),
+            Run(id="run2", start_node_id="n2", end_node_id="n3", interval_events=[
+                IntervalEvent(id="ev_base", start_anchor=anchor(6000, 0),
+                              end_anchor=anchor(6000, 6000),
+                              payload=BasePayload(surface="masonry_wall")),
+                IntervalEvent(id="ev_top", start_anchor=anchor(6000, 0),
+                              end_anchor=anchor(6000, 6000),
+                              payload=BaseTopPayload(points=[
+                                  BaseTopPoint(pos_permille=0, z_mm=300),
+                                  BaseTopPoint(pos_permille=1000, z_mm=300),
+                              ])),
+            ]),
+        ],
+    )
+    return Project(id=new_id("proj"), name="פרויקט לדוגמה", topology=topology)
 
 
 app = FastAPI(title="Fence AI", version="0.1.0", lifespan=lifespan)

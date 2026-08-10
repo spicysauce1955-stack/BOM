@@ -189,5 +189,10 @@
   "quote.view": "צפייה",
   "quote.snapshot_banner": "הצעת מחיר שמורה \\u201c{label}\\u201d — מסמך קפוא, לא כתב הכמויות החי",
   "quote.back_live": "→ חזרה לכתב הכמויות החי",
-  "impact.vs_accepted": "מול הצעה מאושרת: {delta}€"
+  "impact.vs_accepted": "מול הצעה מאושרת: {delta}€",
+  "checklist.title": "איך מתחילים",
+  "checklist.dismiss": "הסתרה",
+  "checklist.draw": "ציירו קטע גדר — ✏️ ואז לחיצות על המפה, Enter לסיום",
+  "checklist.gate": "הוסיפו שער — 🚪 ואז לחיצה על נקודה בקטע",
+  "checklist.compute": "לחצו ⚙ לחישוב האסטרטגיה וקבלת הצעת המחיר"
 }
