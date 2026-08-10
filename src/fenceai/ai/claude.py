@@ -22,15 +22,33 @@ candidate intents. Rules:
 - Text you cannot map to a known intent kind goes into unparsed_spans, never dropped.
 - confidence is "high" only when the text is unambiguous and contains explicit values.
 - You propose; humans confirm. Never invent values not present or clearly implied.
-- Annotations may be in Hebrew; keep source_text verbatim in the original language."""
+- Annotations may be in Hebrew; keep source_text verbatim in the original language.
+- ALWAYS convert stated measurements into integer millimeters in params
+  (e.g. height_intent -> {"height_mm": ...}): "1.5m" / "מטר וחצי" -> 1500,
+  "שני מטר" -> 2000, "80 ס"מ" -> 800. A hedged value ("בערך", "approx") still goes
+  into params — hedging lowers confidence, it does not remove the number."""
 
 
 class _WireIntent(BaseModel):
+    # Structured outputs require additionalProperties:false — a free-form params
+    # dict is INEXPRESSIBLE in the constrained schema and silently stays empty.
+    # Explicit typed fields instead; the adapter folds them into params.
     kind: str
-    params: dict[str, int | str] = {}
+    height_mm: int | None = None   # height_intent
+    z_mm: int | None = None        # top_line (absolute top height)
+    mode: str | None = None        # top_line: "level" | "follow" | "stepped"
+    station_mm: int | None = None  # post_request
     source_text: str
     confidence: str
     ambiguity_note: str | None = None
+
+    def to_params(self) -> dict[str, int | str]:
+        params: dict[str, int | str] = {}
+        for key in ("height_mm", "z_mm", "mode", "station_mm"):
+            value = getattr(self, key)
+            if value is not None:
+                params[key] = value
+        return params
 
 
 class _WireResult(BaseModel):
@@ -56,7 +74,7 @@ class ClaudeInterpreter:
                     CandidateIntent(
                         id=f"intent_{annotation.id}_{rec_no}_{i + 1}",
                         kind=c.kind,  # type: ignore[arg-type]
-                        params=c.params,
+                        params=c.to_params(),
                         source_text=c.source_text,
                         confidence=c.confidence,  # type: ignore[arg-type]
                         ambiguity_note=c.ambiguity_note,

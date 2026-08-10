@@ -1,0 +1,148 @@
+{
+  "_note": "Barrette Outdoor Living vinyl fence system — small starter list, metric-mapped (8 ft bay = 2438 mm, 9 ft posts). PRICES ARE APPROXIMATE list prices for trying the system, not a live price feed.",
+  "products": [
+    {
+      "sku": "BAR-POST-LINE",
+      "name": "Barrette 9 ft vinyl line post 5x5 in (2743 mm)",
+      "name_i18n": {"he": "עמוד שורה ויניל 2743 מ\"מ (Barrette)"},
+      "consumption": {"kind": "indivisible_discrete"},
+      "price_cents": 4500
+    },
+    {
+      "sku": "BAR-POST-END",
+      "name": "Barrette 9 ft vinyl end/gate post (2743 mm)",
+      "name_i18n": {"he": "עמוד קצה/שער ויניל 2743 מ\"מ (Barrette)"},
+      "consumption": {"kind": "indivisible_discrete"},
+      "price_cents": 5200
+    },
+    {
+      "sku": "BAR-POST-CORNER",
+      "name": "Barrette 9 ft vinyl corner post (2743 mm)",
+      "name_i18n": {"he": "עמוד פינה ויניל 2743 מ\"מ (Barrette)"},
+      "consumption": {"kind": "indivisible_discrete"},
+      "price_cents": 5200
+    },
+    {
+      "sku": "BAR-CAP",
+      "name": "Barrette vinyl post cap 5x5 in",
+      "name_i18n": {"he": "כיפת עמוד ויניל (Barrette)"},
+      "consumption": {"kind": "indivisible_discrete"},
+      "price_cents": 1200
+    },
+    {
+      "sku": "BAR-RAIL-8FT",
+      "name": "Barrette vinyl fence rail 2438 mm (8 ft, 5.5 in)",
+      "name_i18n": {"he": "מוט אופקי ויניל 2438 מ\"מ (Barrette)"},
+      "consumption": {
+        "kind": "divisible_linear",
+        "purchase_length_mm": 2438,
+        "kerf_mm": 3,
+        "min_reusable_remnant_mm": 300
+      },
+      "price_cents": 2500
+    },
+    {
+      "sku": "BAR-PICKET",
+      "name": "Barrette tongue-and-groove picket 1829 mm (6 ft)",
+      "name_i18n": {"he": "לוח מילוי לשון-וחריץ 1829 מ\"מ (Barrette)"},
+      "consumption": {"kind": "indivisible_discrete"},
+      "price_cents": 800
+    },
+    {
+      "sku": "BAR-PANEL-6X8",
+      "name": "Barrette vinyl privacy panel kit 1829x2438 mm (6x8 ft)",
+      "name_i18n": {"he": "ערכת פאנל פרטיות ויניל 1829x2438 מ\"מ (Barrette)"},
+      "consumption": {
+        "kind": "assembly_kit",
+        "components": [
+          {"sku": "BAR-RAIL-8FT", "qty": 2},
+          {"sku": "BAR-PICKET", "qty": 16}
+        ]
+      },
+      "price_cents": 18000
+    },
+    {
+      "sku": "BAR-GATE-1168",
+      "name": "Barrette vinyl walk gate 1829x1168 mm (72x46 in)",
+      "name_i18n": {"he": "שער הליכה ויניל 1829x1168 מ\"מ (Barrette)"},
+      "consumption": {"kind": "indivisible_discrete"},
+      "price_cents": 31000
+    },
+    {
+      "sku": "BAR-BRACKET-WALL",
+      "name": "Barrette transition/mounting bracket",
+      "name_i18n": {"he": "תושבת חיבור לקיר (Barrette)"},
+      "consumption": {"kind": "indivisible_discrete"},
+      "price_cents": 900
+    },
+    {
+      "sku": "BAR-SCREW-SS",
+      "name": "Barrette stainless screws (box of 50)",
+      "name_i18n": {"he": "ברגי נירוסטה (קופסה של 50) (Barrette)"},
+      "consumption": {
+        "kind": "packaged_discrete",
+        "engineering_unit": "each",
+        "qty_per_package": 50
+      },
+      "price_cents": 1300
+    }
+  ],
+  "knowledge": [
+    {
+      "object_id": "K-MAXSPAN",
+      "type": "hard_constraint",
+      "title": "Barrette vinyl system: max bay 2438 mm (8 ft)",
+      "title_i18n": {"he": "מערכת ויניל Barrette: מפתח מרבי 2438 מ\"מ (8 רגל)"},
+      "actions": [{"kind": "set_param", "param": "max_span_mm", "value": 2438}],
+      "attributed_to": "barrette-catalog"
+    },
+    {
+      "object_id": "K-POST-DEFAULT",
+      "type": "fact",
+      "title": "Default ground post: Barrette line post",
+      "title_i18n": {"he": "עמוד ברירת מחדל: עמוד שורה Barrette"},
+      "actions": [{"kind": "default_component", "role": "post_ground", "sku": "BAR-POST-LINE"}],
+      "attributed_to": "barrette-catalog"
+    },
+    {
+      "object_id": "K-RAIL-DEFAULT",
+      "type": "fact",
+      "title": "Default rail: Barrette 8 ft vinyl rail",
+      "title_i18n": {"he": "מוט ברירת מחדל: מוט ויניל Barrette"},
+      "actions": [{"kind": "default_component", "role": "rail", "sku": "BAR-RAIL-8FT"}],
+      "attributed_to": "barrette-catalog"
+    },
+    {
+      "object_id": "K-SCREW-DEFAULT",
+      "type": "fact",
+      "title": "Default screws: Barrette stainless (box of 50)",
+      "title_i18n": {"he": "ברגים ברירת מחדל: נירוסטה Barrette"},
+      "actions": [{"kind": "default_component", "role": "screw", "sku": "BAR-SCREW-SS"}],
+      "attributed_to": "barrette-catalog"
+    },
+    {
+      "object_id": "K-CAP-DEFAULT",
+      "type": "fact",
+      "title": "Default post cap: Barrette vinyl cap",
+      "title_i18n": {"he": "כיפה ברירת מחדל: כיפת ויניל Barrette"},
+      "actions": [{"kind": "default_component", "role": "cap", "sku": "BAR-CAP"}],
+      "attributed_to": "barrette-catalog"
+    },
+    {
+      "object_id": "K-MASONRY",
+      "type": "hard_constraint",
+      "title": "Masonry base requires the Barrette wall bracket",
+      "title_i18n": {"he": "בסיס בנוי מחייב תושבת קיר Barrette"},
+      "actions": [{"kind": "require_mounting", "surface": "masonry_wall", "mounting": "masonry", "sku": "BAR-BRACKET-WALL"}],
+      "attributed_to": "barrette-catalog"
+    },
+    {
+      "object_id": "K-GATE-REINF",
+      "type": "company_rule",
+      "title": "Gates get Barrette end/gate posts on both sides",
+      "title_i18n": {"he": "משני צידי שער: עמודי קצה/שער Barrette"},
+      "actions": [{"kind": "require_post_reinforcement", "context": "gate", "sku": "BAR-POST-END"}],
+      "attributed_to": "barrette-catalog"
+    }
+  ]
+}

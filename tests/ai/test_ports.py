@@ -48,13 +48,21 @@ def test_wire_schema_accepts_valid_payload():
     wire = _WireResult.model_validate(
         {
             "candidates": [
-                {"kind": "height_intent", "params": {"height_mm": 1800},
+                {"kind": "height_intent", "height_mm": 1800,
                  "source_text": "1800 high please", "confidence": "high"}
             ],
             "unparsed_spans": [],
         }
     )
     assert wire.candidates[0].source_text == "1800 high please"
+    # typed wire fields fold into the domain params dict (structured outputs
+    # forbid free-form dicts — additionalProperties:false)
+    assert wire.candidates[0].to_params() == {"height_mm": 1800}
+    top = _WireResult.model_validate(
+        {"candidates": [{"kind": "top_line", "mode": "level", "z_mm": 1750,
+                         "source_text": "x", "confidence": "medium"}]}
+    )
+    assert top.candidates[0].to_params() == {"z_mm": 1750, "mode": "level"}
 
 
 def test_composition_root_defaults_to_stub(monkeypatch):
