@@ -114,17 +114,10 @@ def corner_stations(topo: Topology, run: Run) -> list[Mm]:
 
 
 def max_slope_permille(topo: Topology, run: Run) -> int:
-    """Steepest grade (permille, int) across consecutive elevation samples.
-
-    Endpoint-only slope would read an up-then-down run as flat (critic finding 16).
-    """
-    samples: list[tuple[Mm, Mm]] = []
-    for ev in run.point_events:
-        if ev.payload.kind == "elevation_sample":
-            samples.append((anchor_station(topo, run, ev.anchor), ev.payload.z_mm))
-    if len(samples) < 2:
-        return 0
-    samples.sort()
+    """Steepest grade (permille, int) across consecutive ground samples (node
+    elevations + events — endpoint-only slope would read an up-then-down run as
+    flat, critic finding 16)."""
+    samples = ground_samples(topo, run)
     steepest = 0
     for (s0, z0), (s1, z1) in zip(samples, samples[1:]):
         if s1 > s0:
@@ -132,30 +125,39 @@ def max_slope_permille(topo: Topology, run: Run) -> int:
     return steepest
 
 
-def ground_z(topo: Topology, run: Run, station_mm: Mm) -> Mm:
-    """Piecewise-linear ground elevation from elevation_sample events.
-
-    No samples at all -> flat 0. Beyond the outermost samples the nearest sample's
-    elevation extends (no extrapolation).
+def ground_samples(topo: Topology, run: Run) -> list[tuple[Mm, Mm]]:
+    """(station, z) ground samples for a run: the two node elevations anchor the
+    endpoints (shared corners are single-valued fence-wide) plus any interior
+    elevation_sample events. An explicit event within NUMERIC_TOLERANCE_MM of an
+    endpoint overrides the node value (backwards compatible with event-only runs).
     """
-    samples: list[tuple[Mm, Mm]] = []
+    total = run_length(topo, run)
+    events: list[tuple[Mm, Mm]] = []
     for ev in run.point_events:
         if ev.payload.kind == "elevation_sample":
-            samples.append((anchor_station(topo, run, ev.anchor), ev.payload.z_mm))
-    if not samples:
-        return 0
+            events.append((anchor_station(topo, run, ev.anchor), ev.payload.z_mm))
+    events.sort()
+    samples = list(events)
+    if not any(abs(s) <= NUMERIC_TOLERANCE_MM for s, _ in events):
+        samples.insert(0, (0, topo.node(run.start_node_id).z_mm))
+    if not any(abs(s - total) <= NUMERIC_TOLERANCE_MM for s, _ in events):
+        samples.append((total, topo.node(run.end_node_id).z_mm))
     samples.sort()
+    return samples
+
+
+def ground_z(topo: Topology, run: Run, station_mm: Mm) -> Mm:
+    """Piecewise-linear ground elevation from node elevations + sample events."""
+    samples = ground_samples(topo, run)
     total = run_length(topo, run)
-    if samples[0][0] > 0:
-        samples.insert(0, (0, samples[0][1]))
-    if samples[-1][0] < total:
-        samples.append((total, samples[-1][1]))
     s = max(0, min(station_mm, total))
     for (s0, z0), (s1, z1) in zip(samples, samples[1:]):
         if s0 <= s <= s1:
             if s1 == s0:
                 return z0
             return round(z0 + (z1 - z0) * (s - s0) / (s1 - s0))
+    if s <= samples[0][0]:
+        return samples[0][1]
     return samples[-1][1]
 
 

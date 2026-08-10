@@ -146,3 +146,45 @@ def test_base_surface_and_transitions():
     assert base_surface_at(topo, run, 3999) == "soil"
     assert base_surface_at(topo, run, 4000) == "masonry_wall"
     assert base_transition_stations(topo, run) == [4000]
+
+
+def test_node_elevations_anchor_ground():
+    """Ground endpoints come from node z; a shared corner has ONE height fence-wide."""
+    from fenceai.topology.station import ground_samples, max_slope_permille
+
+    topo = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0, z_mm=0),
+               Node(id="n2", x_mm=4000, y_mm=0, z_mm=500),
+               Node(id="n3", x_mm=4000, y_mm=3000, z_mm=500)],
+        runs=[Run(id="runA", start_node_id="n1", end_node_id="n2"),
+              Run(id="runB", start_node_id="n2", end_node_id="n3")],
+    )
+    runA, runB = topo.run("runA"), topo.run("runB")
+    assert ground_z(topo, runA, 4000) == 500
+    assert ground_z(topo, runB, 0) == 500  # same corner, same height, no re-entry
+    assert ground_z(topo, runA, 2000) == 250  # interpolates node-to-node
+    assert max_slope_permille(topo, runA) == 125  # 500/4000
+    assert ground_samples(topo, runB) == [(0, 500), (3000, 500)]
+
+
+def test_event_sample_overrides_node_at_endpoint():
+    """Backwards compatibility: explicit endpoint events beat node elevations."""
+    topo = straight_topology(6000)
+    topo.node("n1").z_mm = 999  # would be wrong if used
+    add_point_event(topo, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
+    add_point_event(topo, "run1", "z1", 6000, ElevationSamplePayload(z_mm=1000))
+    run = topo.run("run1")
+    assert ground_z(topo, run, 0) == 0
+    assert ground_z(topo, run, 6000) == 1000
+    assert ground_z(topo, run, 3000) == 500
+
+
+def test_interior_events_combine_with_node_endpoints():
+    topo = straight_topology(6000)
+    topo.node("n2").z_mm = 600
+    add_point_event(topo, "run1", "zm", 3000, ElevationSamplePayload(z_mm=300))
+    run = topo.run("run1")
+    assert ground_z(topo, run, 0) == 0      # node n1
+    assert ground_z(topo, run, 3000) == 300  # event
+    assert ground_z(topo, run, 6000) == 600  # node n2
+    assert ground_z(topo, run, 4500) == 450

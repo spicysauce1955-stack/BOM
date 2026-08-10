@@ -17,6 +17,9 @@ class Node(BaseModel):
     id: str
     x_mm: Mm
     y_mm: Mm
+    # ground elevation at this node — a corner shared by two runs has ONE height,
+    # and the whole-fence ground profile is continuous by construction
+    z_mm: Mm = 0
     kind: Literal["terminal", "junction"] = "terminal"
 
 
