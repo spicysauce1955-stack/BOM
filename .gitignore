@@ -7,3 +7,4 @@ __pycache__/
 *.db-shm
 nohup.out
 .claude/worktrees/
+.env

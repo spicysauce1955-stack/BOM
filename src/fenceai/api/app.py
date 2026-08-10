@@ -16,7 +16,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from fenceai.ai.claude import build_interpreter
+from fenceai.core.env import load_dotenv
+
+load_dotenv()  # .env in the working directory fills gaps; real env vars win
+
+from fenceai.ai.claude import build_interpreter  # noqa: E402
 from fenceai.ai.stub import StubCritic, StubProposer
 from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import Product

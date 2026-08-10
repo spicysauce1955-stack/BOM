@@ -19,6 +19,10 @@ uv run uvicorn fenceai.api.app:app --reload
 # open http://localhost:8000
 ```
 
+Configuration: copy `.env.example` to `.env` in the repo root and fill in your
+values (easiest way to set the Anthropic key). The real `.env` is gitignored;
+real environment variables always override it.
+
 Environment:
 
 | Var | Default | Meaning |
