@@ -29,18 +29,27 @@ class StubInterpreter:
         candidates: list[CandidateIntent] = []
         unparsed: list[str] = []
 
-        if any(k in lower for k in ("top", "align", "level with", "height")):
+        # Hebrew demo vocabulary (capped — mirrors the English set only, UI v2 §4):
+        # ליישר/יישר + עם -> top_line; גובה -> height_intent; פרטיות -> privacy;
+        # עמוד + כאן/בתחנה -> post_request; בערך/בסביבות hedge like approx/about.
+        he_top = "יישר" in text and "עם" in text
+        he_height = "גובה" in text
+        hedged = any(k in lower for k in ("approx", "about")) or any(
+            k in text for k in ("בערך", "בסביבות")
+        )
+
+        if any(k in lower for k in ("top", "align", "level with", "height")) or he_top or he_height:
             m = _MM_IN_TEXT.search(lower)
-            if m and any(k in lower for k in ("align", "level", "top")):
+            if m and (any(k in lower for k in ("align", "level", "top")) or he_top):
                 candidates.append(
                     CandidateIntent(
                         id=f"intent_{annotation.id}_{rec_no}_1",
                         kind="top_line",
                         params={"mode": "level", "z_mm": int(m.group(1))},
                         source_text=text,
-                        confidence="medium" if "approx" in lower or "about" in lower else "high",
+                        confidence="medium" if hedged else "high",
                         ambiguity_note=(
-                            "approximate value in source text" if "approx" in lower or "about" in lower else None
+                            "approximate value in source text" if hedged else None
                         ),
                     )
                 )
@@ -51,12 +60,15 @@ class StubInterpreter:
                         kind="height_intent",
                         params={"height_mm": int(m.group(1))},
                         source_text=text,
-                        confidence="high",
+                        confidence="medium" if hedged else "high",
+                        ambiguity_note=(
+                            "approximate value in source text" if hedged else None
+                        ),
                     )
                 )
             else:
                 unparsed.append(text)
-        elif "privacy" in lower:
+        elif "privacy" in lower or "פרטיות" in text:
             candidates.append(
                 CandidateIntent(
                     id=f"intent_{annotation.id}_{rec_no}_1",
@@ -67,7 +79,9 @@ class StubInterpreter:
                     ambiguity_note="'privacy' mapped to default privacy height 1800",
                 )
             )
-        elif "post" in lower and any(k in lower for k in ("here", "at ")):
+        elif ("post" in lower and any(k in lower for k in ("here", "at "))) or (
+            "עמוד" in text and any(k in text for k in ("כאן", "בתחנה"))
+        ):
             m = _MM_IN_TEXT.search(lower)
             candidates.append(
                 CandidateIntent(

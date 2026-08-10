@@ -21,7 +21,8 @@ candidate intents. Rules:
 - source_text must be the VERBATIM span of the annotation that supports the intent.
 - Text you cannot map to a known intent kind goes into unparsed_spans, never dropped.
 - confidence is "high" only when the text is unambiguous and contains explicit values.
-- You propose; humans confirm. Never invent values not present or clearly implied."""
+- You propose; humans confirm. Never invent values not present or clearly implied.
+- Annotations may be in Hebrew; keep source_text verbatim in the original language."""
 
 
 class _WireIntent(BaseModel):
