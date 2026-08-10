@@ -234,10 +234,12 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("profile renders the ground line", (profile_ground or 0) > 0)
 
         # --- quotes: snapshot, freeze, accept ---------------------------------
-        c.js("window.prompt = () => 'smoke offer'; undefined")
+        # save-quote opens an inline label form (no window.prompt anymore)
         c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
         time.sleep(1.2)
         c.click(*c.element_center("#btn-save-quote"))
+        c.js("document.getElementById('quote-label-input').value = 'smoke offer'; 'ok'")
+        c.click(*c.element_center("#btn-quote-confirm"))
         time.sleep(1.2)
         quote_rows = c.js("document.querySelectorAll('[data-view-quote]').length")
         check("saved quote appears in the quotes table", (quote_rows or 0) >= 1)
@@ -270,11 +272,15 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         # --- rule impact preview (knowledge tab) ------------------------------
         c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
         time.sleep(0.5)
+        # the actions JSON textarea became a rule builder — drive its default
+        # set_param row (max_span_mm) through the real number input
         c.js("""
 document.getElementById('k-object').value = 'K-MAXSPAN';
 document.getElementById('k-title').value = 'tighter test';
-document.getElementById('k-actions').value =
-  JSON.stringify([{kind: 'set_param', param: 'max_span_mm', value: 1400}]);
+const row = document.querySelector('#k-action-rows .builder-row');
+const num = row.querySelector('input[type="number"]');
+num.value = 1400;
+num.dispatchEvent(new Event('change'));
 'filled'""")
         c.click(*c.element_center("#btn-knowledge-impact"))
         time.sleep(2)

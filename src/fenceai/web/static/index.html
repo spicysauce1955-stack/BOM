@@ -110,7 +110,7 @@
     <!-- ============ knowledge tab ============ -->
     <section id="tab-knowledge" class="tab">
       <div class="panel">
-        <h3 data-i18n="knowledge.new_version">New knowledge version (JSON actions)</h3>
+        <h3 data-i18n="knowledge.new_version">New knowledge rule</h3>
         <input id="k-object" data-i18n-placeholder="knowledge.object_placeholder" placeholder="object id e.g. K-MAXSPAN">
         <select id="k-type">
           <option value="hard_constraint" data-i18n="type.hard_constraint">hard_constraint</option>
@@ -120,9 +120,17 @@
           <option value="fact" data-i18n="type.fact">fact</option>
         </select>
         <input id="k-title" dir="auto" data-i18n-placeholder="knowledge.title_placeholder" placeholder="title" size="40">
-        <textarea id="k-actions" dir="ltr" rows="3" cols="70">[{"kind": "set_param", "param": "max_span_mm", "value": 1800}]</textarea>
-        <button id="btn-knowledge-impact" data-i18n="impact.preview">Preview impact</button>
-        <button id="btn-add-knowledge" data-i18n="knowledge.save_version">Save new version</button>
+        <div id="k-builder">
+          <div id="k-action-rows"></div>
+          <button id="btn-k-add-action" type="button" data-i18n="knowledge.builder.add_action">+ Add action</button>
+          <div class="meta" data-i18n="knowledge.builder.conditions_hint">Rule conditions can only be edited in Advanced (JSON).</div>
+        </div>
+        <textarea id="k-actions" dir="ltr" rows="6" cols="70" hidden>[{"kind": "set_param", "param": "max_span_mm", "value": 1800}]</textarea>
+        <div>
+          <button id="btn-k-advanced" type="button" data-i18n="knowledge.builder.advanced">Advanced (JSON)</button>
+          <button id="btn-knowledge-impact" data-i18n="impact.preview">Preview impact</button>
+          <button id="btn-add-knowledge" data-i18n="knowledge.save_version">Save new version</button>
+        </div>
         <div id="knowledge-impact-out"></div>
       </div>
       <div id="knowledge-list"></div>
@@ -144,9 +152,16 @@
     <!-- ============ inventory tab ============ -->
     <section id="tab-inventory" class="tab">
       <div class="panel">
-        <h3 data-i18n="inventory.title">Inventory (JSON)</h3>
-        <textarea id="inventory-json" dir="ltr" rows="10" cols="80"></textarea>
-        <button id="btn-save-inventory" data-i18n="inventory.save">Save inventory</button>
+        <h3 data-i18n="inventory.title">Inventory</h3>
+        <div id="inventory-editor">
+          <div id="inventory-table-host"></div>
+          <button id="btn-inv-add-row" type="button" data-i18n="inventory.add_row">+ Add item</button>
+        </div>
+        <textarea id="inventory-json" dir="ltr" rows="10" cols="80" hidden></textarea>
+        <div>
+          <button id="btn-inv-advanced" type="button" data-i18n="knowledge.builder.advanced">Advanced (JSON)</button>
+          <button id="btn-save-inventory" data-i18n="inventory.save">Save inventory</button>
+        </div>
       </div>
     </section>
   </main>
