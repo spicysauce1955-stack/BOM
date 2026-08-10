@@ -108,7 +108,10 @@ def _diff_strategies(before: Strategy, after: Strategy, impact: ProjectImpact) -
 
 def _spine(topology, kb, catalog, overrides, inventory):
     result = generate(topology, kb, catalog, overrides=overrides)
-    bom = fulfill(derive_requirements(result.strategy, catalog), catalog, inventory)
+    bom = fulfill(
+        derive_requirements(result.strategy, catalog, result.run.demand_skus),
+        catalog, inventory,
+    )
     return result.strategy, bom
 
 

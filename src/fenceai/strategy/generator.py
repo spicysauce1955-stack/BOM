@@ -73,6 +73,13 @@ def generate(
     strategy = Strategy(id="strategy")
     applied: set[str] = set()
 
+    demand_skus, demand_refs = _resolve_demand_skus(knowledge)
+    builder.add(
+        "quantity", "resolve_demand_products",
+        payload=dict(demand_skus),
+        governed_by=demand_refs,
+    )
+
     _generate_node_posts(topology, knowledge, catalog, overrides, builder, strategy, applied)
     for run in topology.runs:
         _generate_run(
@@ -100,6 +107,7 @@ def generate(
         snapshot_hash=knowledge.snapshot_hash(),
         overrides_applied=sorted(applied),
         policy=policy,
+        demand_skus=demand_skus,
     )
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
@@ -149,6 +157,33 @@ def _resolve_default_post(kb: KnowledgeBase, surface: str) -> tuple[str, list[st
     if res.winner:
         return res.winner.actions[0].sku, [res.winner.version.ref]
     raise GenerationFailure("no default ground-post product in knowledge (role post_ground)")
+
+
+DEMAND_ROLE_DEFAULTS = {
+    "rail": ("rail_sku", "RAIL-3000"),
+    "screw": ("screw_sku", "SCREW-S10"),
+    "concrete": ("concrete_sku", "CONC-25"),
+    "cap": ("cap_sku", "POST-CAP"),
+}
+
+
+def _resolve_demand_skus(kb: KnowledgeBase) -> tuple[dict[str, str], list[str]]:
+    """Demand product selection is knowledge (DefaultComponent roles), never a
+    code literal — swapping the whole fence system (e.g. to a Barrette catalog)
+    is a rule change. Falls back to the demo defaults when no rule exists."""
+    skus: dict[str, str] = {}
+    refs: list[str] = []
+    for role, (key, fallback) in DEMAND_ROLE_DEFAULTS.items():
+        res = resolve_actions(
+            kb, {"scope": {}, "post": {"surface": "", "context": ""}},
+            "default_component", match=lambda a, role=role: a.role == role,
+        )
+        if res.winner:
+            skus[key] = res.winner.actions[0].sku
+            refs.append(res.winner.version.ref)
+        else:
+            skus[key] = fallback
+    return skus, refs
 
 
 def _resolve_quantity(kb: KnowledgeBase, ctx: dict, param: str, default: int) -> tuple[int, list[str]]:

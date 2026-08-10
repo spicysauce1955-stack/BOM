@@ -77,6 +77,9 @@ class GenerationRun(BaseModel):
     snapshot_hash: str = ""
     overrides_applied: list[str] = []
     policy: dict = {}
+    # demand product selection resolved from knowledge at generation time
+    # (DefaultComponent roles rail/screw/concrete/cap) — consumed by derive_requirements
+    demand_skus: dict[str, str] = {}
     created_at: str = ""
 
 

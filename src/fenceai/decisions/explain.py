@@ -44,6 +44,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "resolve_span_quantities": (
             "Quantities per span: {rails_per_span} rails, {screws_per_span} screws."
         ),
+        "resolve_demand_products": (
+            "Demand products: rail {rail_sku}, screws {screw_sku}, "
+            "concrete {concrete_sku}, caps {cap_sku}."
+        ),
         "place_gate": "Gate opening from {start_mm} to {end_mm} mm.",
         "select_gate_kit": "Gate kit {kit_sku} selected.",
         "knowledge_conflict": (
@@ -82,6 +86,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "resolve_max_span": "המפתח המרבי נקבע ל-{value} מ\"מ.",
         "resolve_span_quantities": (
             "כמויות לכל מפתח: {rails_per_span} מוטות, {screws_per_span} ברגים."
+        ),
+        "resolve_demand_products": (
+            "מוצרי הדרישה: מוט {rail_sku}, ברגים {screw_sku}, "
+            "בטון {concrete_sku}, כיפות {cap_sku}."
         ),
         "place_gate": "פתח שער מתחנה {start_mm} עד {end_mm} מ\"מ.",
         "select_gate_kit": "נבחרה ערכת שער {kit_sku}.",
@@ -147,6 +155,11 @@ def explain_node(graph: DecisionGraph, node: DecisionNode, lang: str = "en") -> 
         case "resolve_span_quantities":
             base = t["resolve_span_quantities"].format(
                 rails_per_span=p.get("rails_per_span"), screws_per_span=p.get("screws_per_span")
+            )
+        case "resolve_demand_products":
+            base = t["resolve_demand_products"].format(
+                rail_sku=p.get("rail_sku"), screw_sku=p.get("screw_sku"),
+                concrete_sku=p.get("concrete_sku"), cap_sku=p.get("cap_sku"),
             )
         case "place_gate":
             base = t["place_gate"].format(start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))

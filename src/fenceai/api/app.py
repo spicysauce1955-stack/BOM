@@ -236,7 +236,7 @@ def get_bom(run_id: str):
     result = _run(run_id)
     catalog = state.store.load_catalog()
     inventory = state.store.load_inventory(result.run.project_id)
-    requirements = derive_requirements(result.strategy, catalog)
+    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
     bom = fulfill(requirements, catalog, inventory)
     # the BOM is what a customer gets quoted on: record which inventory state
     # produced it so a later recomputation is distinguishable (final review, #5)
@@ -258,7 +258,7 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     result = _run(run_id)
     catalog = state.store.load_catalog()
     inventory = state.store.load_inventory(result.run.project_id)
-    requirements = derive_requirements(result.strategy, catalog)
+    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
     bom = fulfill(requirements, catalog, inventory)
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
