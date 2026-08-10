@@ -611,6 +611,18 @@ function renderOverlay() {
   }
 }
 
+// Localize a warning/critique by code: t("<prefix>.<code>", params) with each param
+// bidi-isolated (<bdi>); falls back to the server's English text when no key exists.
+function localizedByCode(prefix, code, params, fallback) {
+  const key = `${prefix}.${code}`;
+  const template = t(key);  // no params: placeholders stay intact for wrapped interpolation
+  if (template === key) return esc(fallback ?? code);
+  let s = esc(template);
+  for (const [k, v] of Object.entries(params || {}))
+    s = s.replaceAll(`{${k}}`, `<bdi>${esc(String(v))}</bdi>`);
+  return s;
+}
+
 function renderWarnings() {
   const div = document.getElementById("warnings");
   div.innerHTML = "";
@@ -618,13 +630,13 @@ function renderWarnings() {
   for (const w of state.result.strategy.warnings) {
     const d = document.createElement("div");
     d.className = `warning ${w.severity}`;
-    d.textContent = `⚠ [${w.code}] ${w.message}`;
+    d.innerHTML = `⚠ [<span class="sku">${esc(w.code)}</span>] ${localizedByCode("warning", w.code, w.params, w.message)}`;
     div.appendChild(d);
   }
   for (const c of state.critique || []) {
     const d = document.createElement("div");
     d.className = "warning";
-    d.textContent = `🤖 ${t("warning.critic_prefix")}: ${c.text}`;
+    d.innerHTML = `🤖 ${t("warning.critic_prefix")}: ${localizedByCode("critique", c.code, c.params, c.text)}`;
     div.appendChild(d);
   }
 }

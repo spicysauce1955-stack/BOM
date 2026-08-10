@@ -30,11 +30,12 @@ export async function inspect(elementId, label) {
   body.innerHTML = `<strong>${esc(label)}</strong><div class="meta"><bdi>${esc(elementId)}</bdi></div>`;
   try {
     const exp = await apiGet(
-      `/api/runs/${state.result.run.id}/explain/${encodeURIComponent(elementId)}`
+      `/api/runs/${state.result.run.id}/explain/${encodeURIComponent(elementId)}?lang=${currentLocale()}`
     );
     for (const line of exp.explanation) {
       const d = document.createElement("div");
       d.className = line.startsWith("  ←") ? "expl sub" : "expl";
+      d.setAttribute("dir", "auto");  // Hebrew lines with LTR SKUs, or English in RTL chrome
       d.textContent = line;
       body.appendChild(d);
     }
@@ -88,7 +89,7 @@ function renderOverrides() {
     const d = document.createElement("div");
     d.className = "card";
     const orphaned = state.result?.orphaned_overrides?.includes(ov.id);
-    d.innerHTML = `<bdi>${esc(ov.directive.kind)}</bdi> @ ${esc(ov.directive.station_mm ?? "")}
+    d.innerHTML = `<bdi>${esc(ov.directive.kind)}</bdi> @ <span class="num">${esc(ov.directive.station_mm ?? "")}</span>
       · <bdi>${esc(ov.run_id)}</bdi>
       ${orphaned ? `<span class="tag rejected">${t("inspect.orphaned")}</span>` : ""}
       <button data-ov="${esc(ov.id)}">${t("common.remove")}</button>`;

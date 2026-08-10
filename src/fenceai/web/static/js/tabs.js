@@ -50,7 +50,11 @@ export function initTabs() {
 
   on("project-loaded", () => { renderAnnotations(); renderInventory(); maybeRenderBom(); });
   on("result-changed", maybeRenderBom);
-  on("locale-changed", () => { renderAnnotations(); maybeRenderBom(); });
+  on("locale-changed", () => {
+    renderAnnotations(); maybeRenderBom();
+    if (document.getElementById("tab-knowledge").classList.contains("active")) renderKnowledge();
+    if (document.getElementById("tab-review").classList.contains("active")) renderCandidates();
+  });
 }
 
 function maybeRenderBom() {
@@ -58,19 +62,38 @@ function maybeRenderBom() {
 }
 
 // ---------- BOM ----------
+// BomLine carries only the English `name`; localized names live on the catalog
+// Product (`name_i18n`). Fetch the catalog once and map sku -> product for display.
+let catalogProducts = null;
+async function loadCatalogProducts() {
+  if (!catalogProducts) {
+    try {
+      catalogProducts = (await apiGet("/api/catalog")).products || {};
+    } catch {
+      catalogProducts = {};
+    }
+  }
+  return catalogProducts;
+}
+
+function lineName(products, line) {
+  return products[line.sku]?.name_i18n?.[currentLocale()] || line.name;
+}
+
 async function renderBom() {
   const div = document.getElementById("bom-body");
   if (!state.result) { div.innerHTML = `<em>${t("bom.generate_first")}</em>`; return; }
-  const data = await apiGet(`/api/runs/${state.result.run.id}/bom`);
+  const [data, products] = await Promise.all(
+    [apiGet(`/api/runs/${state.result.run.id}/bom`), loadCatalogProducts()]);
   const bom = data.bom;
   let html = `<div class="panel"><h3>${t("bom.title")} — ${t("bom.total")} €${(bom.total_cents / 100).toFixed(2)}</h3>
   <table><tr><th>${t("bom.sku")}</th><th>${t("bom.purchase")}</th><th>${t("bom.engineering")}</th>
   <th>${t("bom.overage")}</th><th>${t("bom.unit_price")}</th><th>${t("bom.line_total")}</th><th>${t("bom.notes")}</th></tr>`;
   for (const l of bom.lines) {
-    html += `<tr><td><span class="sku">${esc(l.sku)}</span><br><span class="meta">${esc(l.name)}</span></td>
+    html += `<tr><td><span class="sku">${esc(l.sku)}</span><br><span class="meta" dir="auto">${esc(lineName(products, l))}</span></td>
       <td><span class="num">${l.purchase_qty}</span> × ${esc(l.purchase_unit)}</td>
       <td><span class="num">${l.engineering_qty}</span> ${esc(l.engineering_unit)}</td>
-      <td>${l.overage_qty || ""}</td>
+      <td class="num">${l.overage_qty || ""}</td>
       <td class="num">${(l.unit_price_cents / 100).toFixed(2)}</td>
       <td class="num">${(l.total_cents / 100).toFixed(2)}</td>
       <td>${esc((l.notes || []).join("; "))}</td></tr>`;
@@ -154,9 +177,9 @@ async function renderKnowledge() {
   for (const v of versions) {
     const card = document.createElement("div");
     card.className = "card";
-    let html = `<span class="tag ${v.type}">${esc(v.type)}</span>
+    let html = `<span class="tag ${v.type}">${t("type." + v.type)}</span>
       <span class="tag ${v.status}">${t("status." + v.status)}</span>
-      <b><bdi>${esc(v.object_id)}@v${v.version}</bdi></b> — <span dir="auto">${esc(v.title)}</span>
+      <b><bdi>${esc(v.object_id)}@v${v.version}</bdi></b> — <span dir="auto">${esc(v.title_i18n?.[currentLocale()] || v.title)}</span>
       <div class="meta">${t("knowledge.scope")} <bdi>${esc(JSON.stringify(v.scope))}</bdi> · ${esc(v.attributed_to)}
         ${v.derived_from?.length ? "· " + t("knowledge.derived_from") + " <bdi>" + esc(v.derived_from.join(", ")) + "</bdi>" : ""}</div>`;
     if (v.source_text) html += `<div class="verbatim" dir="auto">“${esc(v.source_text)}”</div>`;
@@ -180,7 +203,7 @@ async function renderCandidates() {
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `<span class="tag candidate">${t("status.proposed")}</span>
-      <b><bdi>${esc(c.object_id)}@v${c.version}</bdi></b> — <span dir="auto">${esc(c.title)}</span>
+      <b><bdi>${esc(c.object_id)}@v${c.version}</bdi></b> — <span dir="auto">${esc(c.title_i18n?.[currentLocale()] || c.title)}</span>
       <div class="meta">${t("knowledge.scope")} <bdi>${esc(JSON.stringify(c.scope))}</bdi> ·
         ${t("knowledge.derived_from")} <bdi>${esc(c.derived_from.join(", "))}</bdi></div>
       ${c.source_text ? `<div class="verbatim" dir="auto">“${esc(c.source_text)}”</div>` : ""}
