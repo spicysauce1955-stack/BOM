@@ -43,6 +43,8 @@ from fenceai.topology.model import Run, Topology
 from fenceai.topology.station import (
     anchor_station,
     base_surface_at,
+    base_top_at,
+    base_top_step_stations,
     base_transition_stations,
     corner_stations,
     ground_z,
@@ -412,8 +414,16 @@ def _generate_run(
 
     corners = corner_stations(topo, run)
     transitions = base_transition_stations(topo, run)
+    # base-top STEPS >= threshold force a structural boundary; the threshold is
+    # knowledge, not code (K-STEP-POST) — sections-model addendum
+    step_threshold, step_refs = _resolve_quantity(
+        kb, ctx, "base_top_step_boundary_mm", 100
+    )
+    base_steps = base_top_step_stations(topo, run, step_threshold)
+    step_stations = {station for station, _, _ in base_steps}
+    step_info = {station: (delta, ev_id) for station, delta, ev_id in base_steps}
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
-    fixed |= gate_edges
+    fixed |= gate_edges | step_stations
     fixed_sorted = sorted(fixed)
 
     reinf_sku, reinf_refs = _resolve_reinforcement(kb)
@@ -427,6 +437,7 @@ def _generate_run(
         kind = "line"
         pinned = False
         reinforced = False
+        step_governed: list[str] = []
         if station in gate_edges:
             kind = "gate"
             reinforced = surface != "masonry_wall" and reinf_sku is not None
@@ -435,6 +446,16 @@ def _generate_run(
             kind = "corner"
         elif station in transitions:
             kind = "transition"
+        elif station in step_stations:
+            kind = "transition"
+            delta, ev_id = step_info[station]
+            step_fact = builder.add(
+                "input_fact", "base_top_step",
+                payload={"event_id": ev_id, "station_mm": station, "step_mm": delta,
+                         "threshold_mm": step_threshold},
+            )
+            inputs = inputs + [step_fact.id]
+            step_governed = list(step_refs)
         override_nodes: list[str] = []
         ov = pinned_stations.get(station)
         if ov is not None:
@@ -464,7 +485,7 @@ def _generate_run(
             ground_z_mm=ground_z(topo, run, station),
             inputs=inputs,
             reinforced=reinforced,
-            reinforcement_refs=reinf_refs if reinforced else [],
+            reinforcement_refs=(reinf_refs if reinforced else []) + step_governed,
             reinforced_sku=reinf_sku,
             pinned=pinned,
             forced_sku=forced_sku, forced_mounting=forced_mounting,
@@ -605,6 +626,15 @@ def _generate_run(
             width = s1 - s0
             gz0, gz1 = ground_z(topo, run, s0), ground_z(topo, run, s1)
             mid = (s0 + s1) // 2
+            if base_surface_at(topo, run, mid) in BUILT_BASES:
+                # panel bottom rests on the base top; sample just inside the span so
+                # a step boundary reads its own side (half-open step convention)
+                t0 = base_top_at(topo, run, min(s0 + 1, mid))
+                t1 = base_top_at(topo, run, max(s1 - 1, mid))
+                if t0 is not None:
+                    gz0 += t0[0]
+                if t1 is not None:
+                    gz1 += t1[0]
             v_mode, fv_node = span_vertical(mid)
             height, height_src, height_extra = _span_height(topo, run, mid, gz0, gz1, policy)
             span = Span(
@@ -711,15 +741,7 @@ def _interval_at(topo: Topology, run: Run, station: Mm, kind: str):
     return None, 0, 0
 
 
-def _wall_top_at(topo: Topology, run: Run, station: Mm) -> tuple[Mm, str] | None:
-    ev, s0, s1 = _interval_at(topo, run, station, "wall_profile")
-    if ev is None:
-        return None
-    p = ev.payload
-    if s1 == s0:
-        return p.top_z_start_mm, ev.id
-    top = round(p.top_z_start_mm + (p.top_z_end_mm - p.top_z_start_mm) * (station - s0) / (s1 - s0))
-    return top, ev.id
+BUILT_BASES = ("masonry_wall", "concrete")
 
 
 def _span_height(
@@ -739,12 +761,14 @@ def _span_height(
     height = height_ev.payload.height_mm if height_ev is not None else policy["default_height_mm"]
     source = height_ev.id if height_ev is not None else "policy_default"
     extra: dict = {}
-    if base_surface_at(topo, run, mid) == "masonry_wall":
-        wall = _wall_top_at(topo, run, mid)
-        if wall is not None:
-            wall_top, wall_ev_id = wall
-            height = max(0, height - wall_top)
-            extra = {"adjusted_by_wall_profile": wall_ev_id, "wall_top_mm": wall_top}
+    if base_surface_at(topo, run, mid) in BUILT_BASES:
+        top = base_top_at(topo, run, mid)
+        if top is not None:
+            top_h, top_ev_id = top
+            height = max(0, height - top_h)
+            # key names kept from the wall-only era; the id may reference a
+            # base_top OR wall_profile event (sections-model addendum)
+            extra = {"adjusted_by_wall_profile": top_ev_id, "wall_top_mm": top_h}
     return height, source, extra
 
 

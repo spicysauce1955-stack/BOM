@@ -106,8 +106,26 @@ class WallProfilePayload(BaseModel):
     top_z_end_mm: Mm
 
 
+class BaseTopPoint(BaseModel):
+    """A point of a built base's top line, positioned proportionally along its
+    interval (permille, so points re-anchor with the interval on geometry edits).
+    Two consecutive points at the same position = a vertical STEP."""
+
+    pos_permille: int  # 0..1000 along the interval
+    z_mm: Mm  # height of the base top ABOVE local ground (wall_profile semantics)
+
+
+class BaseTopPayload(BaseModel):
+    """General top profile for wall/concrete bases: slopes, steps, or both, as a
+    point sequence (sections-model addendum). wall_profile remains the 2-point
+    linear special case and keeps working."""
+
+    kind: Literal["base_top"] = "base_top"
+    points: list[BaseTopPoint] = []
+
+
 IntervalPayload = Annotated[
-    Union[BasePayload, HeightIntentPayload, TopLinePayload, WallProfilePayload],
+    Union[BasePayload, HeightIntentPayload, TopLinePayload, WallProfilePayload, BaseTopPayload],
     Field(discriminator="kind"),
 ]
 

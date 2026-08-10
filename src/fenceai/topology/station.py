@@ -180,6 +180,86 @@ def base_surface_at(topo: Topology, run: Run, station_mm: Mm) -> str:
     return "soil"
 
 
+def base_top_at(topo: Topology, run: Run, station_mm: Mm) -> tuple[Mm, str] | None:
+    """Height of the built base's top ABOVE local ground at a station, with the
+    source event id — from a base_top point profile (steps + slopes), falling back
+    to the linear wall_profile. None when no built-base top is defined here.
+
+    At an exact step position the value AFTER the step wins (half-open convention,
+    matching base_surface_at)."""
+    for ev in run.interval_events:
+        if ev.payload.kind != "base_top":
+            continue
+        s0 = anchor_station(topo, run, ev.start_anchor)
+        s1 = anchor_station(topo, run, ev.end_anchor)
+        if not (s0 <= station_mm <= s1) or s1 <= s0:
+            continue
+        pts = sorted(
+            enumerate(ev.payload.points), key=lambda ip: (ip[1].pos_permille, ip[0])
+        )
+        if not pts:
+            continue
+        # exact fractional position — rounding to whole permille would make a
+        # sample 1 mm left of a step read the step's right side
+        p = (station_mm - s0) * 1000 / (s1 - s0)
+        points = [pt for _, pt in pts]
+        if p <= points[0].pos_permille:
+            return points[0].z_mm, ev.id
+        for a, b in zip(points, points[1:]):
+            if a.pos_permille == b.pos_permille:
+                if p == a.pos_permille:
+                    return b.z_mm, ev.id  # right side of the step wins
+                continue
+            if a.pos_permille <= p <= b.pos_permille:
+                if p == b.pos_permille:
+                    continue  # let a following step (if any) claim the boundary
+                z = a.z_mm + (b.z_mm - a.z_mm) * (p - a.pos_permille) / (
+                    b.pos_permille - a.pos_permille
+                )
+                return round(z), ev.id
+        return points[-1].z_mm, ev.id
+    # linear wall_profile fallback (the 2-point special case)
+    for ev in run.interval_events:
+        if ev.payload.kind != "wall_profile":
+            continue
+        s0 = anchor_station(topo, run, ev.start_anchor)
+        s1 = anchor_station(topo, run, ev.end_anchor)
+        if s0 <= station_mm <= s1:
+            if s1 == s0:
+                return ev.payload.top_z_start_mm, ev.id
+            z = ev.payload.top_z_start_mm + (
+                ev.payload.top_z_end_mm - ev.payload.top_z_start_mm
+            ) * (station_mm - s0) / (s1 - s0)
+            return round(z), ev.id
+    return None
+
+
+def base_top_step_stations(
+    topo: Topology, run: Run, min_step_mm: Mm
+) -> list[tuple[Mm, Mm, str]]:
+    """Interior stations where the base top JUMPS by >= min_step_mm:
+    [(station, step_mm, event_id)] — candidates for structural boundaries."""
+    steps: list[tuple[Mm, Mm, str]] = []
+    total = run_length(topo, run)
+    for ev in run.interval_events:
+        if ev.payload.kind != "base_top":
+            continue
+        s0 = anchor_station(topo, run, ev.start_anchor)
+        s1 = anchor_station(topo, run, ev.end_anchor)
+        if s1 <= s0:
+            continue
+        pts = sorted(
+            enumerate(ev.payload.points), key=lambda ip: (ip[1].pos_permille, ip[0])
+        )
+        points = [pt for _, pt in pts]
+        for a, b in zip(points, points[1:]):
+            if a.pos_permille == b.pos_permille and abs(b.z_mm - a.z_mm) >= min_step_mm:
+                station = s0 + round((s1 - s0) * a.pos_permille / 1000)
+                if 0 < station < total:
+                    steps.append((station, b.z_mm - a.z_mm, ev.id))
+    return sorted(steps)
+
+
 def base_transition_stations(topo: Topology, run: Run) -> list[Mm]:
     """Interior stations where the base surface changes (candidate structural boundaries)."""
     bounds: set[Mm] = set()

@@ -90,6 +90,12 @@ def demo_knowledge() -> KnowledgeBase:
                 ],
             ),
             KnowledgeVersion(
+                object_id="K-STEP-POST", version=1, type="company_rule",
+                title="A base-top step of 100 mm or more needs a post",
+                title_i18n={"he": 'מדרגה של 100 מ"מ ומעלה בראש הבסיס מחייבת עמוד'},
+                actions=[SetParam(param="base_top_step_boundary_mm", value=100)],
+            ),
+            KnowledgeVersion(
                 object_id="K-POST-DEFAULT", version=1, type="fact",
                 title="Default ground post product",
                 title_i18n={"he": "מוצר ברירת מחדל לעמוד קרקע"},
