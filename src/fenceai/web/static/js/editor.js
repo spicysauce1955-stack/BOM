@@ -5,7 +5,7 @@ import { esc } from "./api.js";
 import {
   clearGroup, el, pointAtStation, runLength, runPoints, toMm, toPx,
 } from "./geom.js";
-import { pushSnapshot } from "./history.js";
+import { pushSnapshot, redo, undo } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import {
@@ -83,8 +83,16 @@ function setupCanvas() {
   });
   svg.addEventListener("dblclick", (ev) => { ev.preventDefault(); finishDraft(); });
   document.addEventListener("keydown", (ev) => {
+    const tag = ev.target && ev.target.tagName;
+    const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") {
+      if (typing) return; // leave text-field undo alone
+      ev.preventDefault();
+      if (ev.shiftKey) redo(); else undo();
+      return;
+    }
     if (ev.key === "Escape") cancelDraft();
-    if (ev.key === "Enter" && state.draftNodes.length) finishDraft();
+    if (ev.key === "Enter" && state.draftNodes.length && !typing) finishDraft();
   });
   document.getElementById("btn-finish-draft").addEventListener("click", finishDraft);
   document.getElementById("btn-cancel-draft").addEventListener("click", cancelDraft);
