@@ -146,5 +146,11 @@
   "inventory.title": "Inventory (JSON)",
   "inventory.save": "Save inventory",
   "inventory.saved": "inventory saved",
-  "inventory.json_invalid": "inventory must be valid JSON"
+  "inventory.json_invalid": "inventory must be valid JSON",
+  "profile.empty": "Draw a run to see its side view.",
+  "profile.run_label": "{id} · {len} mm",
+  "profile.ground_hint": "Double-click the ground line to add an elevation sample",
+  "profile.sample_tooltip": "Ground sample — drag vertically (10 mm snap) or click to type z",
+  "profile.wall_tooltip": "Wall top — drag vertically (10 mm snap)",
+  "profile.gate_label": "gate {width} mm"
 }
