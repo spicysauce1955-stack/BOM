@@ -1,4 +1,6 @@
 * { box-sizing: border-box; }
+/* the hidden attribute must win over any display rule (inline forms use it) */
+[hidden] { display: none !important; }
 
 /* Noto Sans Hebrew (SIL OFL, fonts/OFL.txt) — Hebrew glyphs; Latin falls through. */
 @font-face {
@@ -174,6 +176,24 @@ input[type="number"] { direction: ltr; }
 .impact { margin-block-start: 6px; padding: 6px 10px; background: #f0f9ff;
   border: 1px solid #bae6fd; border-radius: 6px; font-size: 13px; }
 .impact-row { margin-block: 3px; }
+
+/* inline confirm/cancel forms (quote label, review reject/narrow, run picker) */
+.inline-form { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  margin-block: 6px; padding: 4px 8px; background: #f8fafc;
+  border: 1px solid #d4dae2; border-radius: 6px; }
+
+/* knowledge rule builder + inventory table editor */
+#k-builder { margin-block: 6px; }
+.builder-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  margin-block: 4px; padding: 4px 6px; background: #f8fafc;
+  border: 1px solid #eef2f6; border-radius: 6px; }
+.builder-row select.builder-kind { font-weight: 600; }
+.builder-field { display: inline-flex; align-items: center; gap: 4px; }
+.builder-row input[type="number"], #inventory-table input[type="number"] { inline-size: 96px; }
+.remove-row { border: none; background: none; color: #dc2626; padding: 2px 6px;
+  margin-inline-start: auto; }
+#inventory-table { margin-block-end: 6px; }
+#inventory-table .remove-row { margin-inline-start: 0; }
 
 /* getting-started checklist */
 #checklist { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px;
