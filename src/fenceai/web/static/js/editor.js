@@ -15,7 +15,7 @@ import {
   setSelection, setTool, state,
 } from "./state.js";
 
-const EVENT_TOOLS = ["gate", "base", "ground", "pin"];
+const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin"];
 
 const BASE_COLORS = { soil: "#a16207", concrete: "#64748b", masonry_wall: "#dc2626" };
 const POST_COLORS = { line: "#2563eb", end: "#1e293b", corner: "#1e293b",
@@ -43,7 +43,7 @@ function renderAllCanvas() {
 }
 
 // ---------- toolbar ----------
-const TOOLS = ["select", "draw", "gate", "base", "ground", "pin"];
+const TOOLS = ["select", "draw", "gate", "base", "ground", "height", "pin"];
 
 function setupToolbar() {
   for (const tool of TOOLS) {
@@ -306,6 +306,10 @@ function openEventPopover(tool, runId, station, clientX, clientY) {
     </select></label>`;
   } else if (tool === "ground") {
     html += numField("popover.z", "pop-z", 0);
+  } else if (tool === "height") {
+    html += numField("popover.start", "pop-start", station);
+    html += numField("popover.end", "pop-end", L);
+    html += numField("popover.height", "pop-height", 1800);
   } else if (tool === "pin") {
     html += `<div class="meta">${t("popover.pin_hint")}</div>`;
   }
@@ -339,6 +343,13 @@ function openEventPopover(tool, runId, station, clientX, clientY) {
         kind: "elevation_sample",
         z_mm: Math.round(+document.getElementById("pop-z").value),
       }, station);
+    } else if (tool === "height") {
+      addIntervalEvent(runId, {
+        kind: "height_intent",
+        height_mm: Math.round(+document.getElementById("pop-height").value),
+        source: "user",
+      }, Math.round(+document.getElementById("pop-start").value),
+        Math.round(+document.getElementById("pop-end").value));
     } else if (tool === "pin") {
       await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
         id: "", run_id: runId,

@@ -87,7 +87,6 @@
   "critique.narrow_span": "Span {span_id} is only {width_mm} mm wide — check buildability.",
   "profile.title": "Side view",
   "profile.exaggeration": "Vertical exaggeration",
-  "profile.coming_soon": "Side view arrives with the profile task.",
   "annotations.attach": "Attach annotation",
   "annotations.placeholder": "e.g. keep the top aligned with the neighbour (approx. 1750)",
   "annotations.whole_project": "whole project",
@@ -152,5 +151,8 @@
   "profile.ground_hint": "Double-click the ground line to add an elevation sample",
   "profile.sample_tooltip": "Ground sample — drag vertically (10 mm snap) or click to type z",
   "profile.wall_tooltip": "Wall top — drag vertically (10 mm snap)",
-  "profile.gate_label": "gate {width} mm"
+  "profile.gate_label": "gate {width} mm",
+  "tool.height": "Height intent",
+  "hint.height": "Height: click a run to set the fence height for a range.",
+  "popover.height": "height mm"
 }

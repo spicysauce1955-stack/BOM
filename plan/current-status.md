@@ -21,3 +21,12 @@ developer can run from docs/v1-runbook.md.
 Next (V2 candidates): see docs/v1-known-limitations.md triggers — persisted BOM
 snapshots, cross-project impact preview, CP-SAT escalation, substitution netting,
 Claude proposer/critic adapters, Tier-2 explanation polish, multi-tenant Postgres.
+
+## UI v2 (2026-08-10) — COMPLETE
+Spec docs/superpowers/specs/2026-08-10-ui-v2-design.md; plan .../plans/2026-08-10-ui-v2.md.
+Delivered by 4 worktree agents + integrator: module scaffold; backend i18n (warning
+codes+params, he/en explanation templates, Hebrew stub interpretation, bilingual names);
+editor (undo/redo, select/draw grammar, snapping, typed lengths, canvas event popovers
+incl. height tool); profile side view (ground/wall editing, synced selection); Hebrew-first
+RTL (153-key parity, Noto Sans Hebrew, logical-properties CSS, localized dynamic content).
+Verified: 174 pytest + 14/14 tools/ui_smoke.py checks + inspected screenshots.

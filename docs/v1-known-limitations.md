@@ -50,6 +50,8 @@ Deliberate deferrals and honest weaknesses, with the trigger that should revisit
   current inventory; each response carries an inventory content hash and the fulfill
   is audit-logged, but a quoted BOM document is not persisted. Trigger: real quoting
   workflow (persist `(run_id, inventory_hash) → bom` append-only).
-- **No undo** in the editor beyond regenerating.
-- **The UI is pragmatic** (mission §13): forms in side panels rather than direct
-  canvas manipulation for events; no elevation side-view rendering.
+- **The UI is pragmatic** (mission §13). UI v2 added direct canvas manipulation,
+  undo/redo, the elevation side view, and Hebrew-first RTL; still missing: canvas
+  zoom/pan (auto-fit viewBox only), touch-optimized gestures beyond big targets,
+  and interior-vertex drawing in one stroke (corners are made by chaining runs or
+  inserting via midpoint handles).

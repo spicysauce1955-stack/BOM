@@ -96,9 +96,12 @@ class Cdp:
 
     def element_center(self, selector: str) -> tuple[float, float]:
         rect = self.js(
-            f"(() => {{ const r = document.querySelector({selector!r}).getBoundingClientRect();"
+            f"(() => {{ const el = document.querySelector({selector!r});"
+            f" el.scrollIntoView({{block: 'center', inline: 'nearest'}});"
+            f" const r = el.getBoundingClientRect();"
             f" return [r.x + r.width/2, r.y + r.height/2]; }})()"
         )
+        time.sleep(0.1)
         return rect[0], rect[1]
 
     def canvas_px(self, world_x_mm: int, world_y_mm: int) -> tuple[float, float]:
@@ -145,7 +148,6 @@ def main() -> int:
         c.click(*c.canvas_px(6000, 0))
         c.key("Enter")
         time.sleep(1)
-        runs = c.js("fetch(`/api/projects/${document.querySelector('#project-select').value}/topology`).catch(()=>null), null")
         n_runs = c.js("""
 fetch(`/api/projects/${document.getElementById('project-select').value}`)
   .then(r => r.json()).then(p => p.topology.runs.length)""")
@@ -187,9 +189,13 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         has_popover = c.js("!!document.querySelector('.popover')")
         check("gate popover opens", has_popover)
         if has_popover:
-            c.js("""(() => { const b = [...document.querySelectorAll('.popover button')]
-                 .find(x => x.dataset.action === 'save' || x.type === 'submit' || true); b.click(); })()""")
+            c.js("document.getElementById('pop-save').click(); 'saved'")
             time.sleep(1)
+            n_gates = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json())
+  .then(p => p.topology.runs[0].point_events.filter(e => e.payload.kind === 'gate').length)""")
+            check("gate saved to topology", n_gates == 1)
         c.click(*c.element_center("#btn-generate"))
         time.sleep(1.5)
         n_posts = c.js("document.querySelectorAll('#g-overlay circle').length")
@@ -212,14 +218,21 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("clear wipes persisted topology", n_runs3 == 0)
         check("clear wipes the draft layer too", draft_left == 0)
 
-        # --- Hebrew switch ----------------------------------------------------
+        # --- locale: Hebrew is the default; toggle flips to English -----------
+        dir0 = c.js("document.documentElement.dir")
+        check("Hebrew RTL is the default", dir0 == "rtl")
+        canvas_dir = c.js("getComputedStyle(document.getElementById('canvas')).direction")
+        profile_dir = c.js("getComputedStyle(document.getElementById('profile-svg')).direction")
+        check("canvas is never mirrored", canvas_dir == "ltr")
+        check("profile is never mirrored", profile_dir == "ltr")
+        hebrew_font = c.js("document.fonts.check('13px \"Noto Sans Hebrew\"', 'שלום')")
+        check("Hebrew font loaded", bool(hebrew_font))
+        c.shot("04-hebrew-rtl.png")
         c.click(*c.element_center("#btn-locale"))
         time.sleep(1)
-        dir_ = c.js("document.documentElement.dir")
-        canvas_dir = c.js("getComputedStyle(document.getElementById('canvas')).direction")
-        check("locale toggle flips chrome to RTL", dir_ == "rtl")
-        check("canvas is never mirrored", canvas_dir == "ltr")
-        c.shot("04-hebrew-rtl.png")
+        check("toggle flips chrome to LTR English",
+              c.js("document.documentElement.dir") == "ltr")
+        c.shot("05-english-ltr.png")
 
         failed = [n for n, ok in CHECKS if not ok]
         print(f"\n{len(CHECKS) - len(failed)}/{len(CHECKS)} checks passed")

@@ -87,7 +87,6 @@
   "critique.narrow_span": "המפתח {span_id} רחב {width_mm} מ\"מ בלבד — כדאי לבדוק את ישימות הבנייה.",
   "profile.title": "מבט צד",
   "profile.exaggeration": "הגזמה אנכית",
-  "profile.coming_soon": "מבט הצד יגיע עם משימת הפרופיל.",
   "annotations.attach": "צירוף הערה",
   "annotations.placeholder": "למשל: לשמור על קו עליון מיושר עם הגדר של השכן (בערך 1750)",
   "annotations.whole_project": "כל הפרויקט",
@@ -146,5 +145,14 @@
   "inventory.title": "מלאי (JSON)",
   "inventory.save": "שמירת מלאי",
   "inventory.saved": "המלאי נשמר",
-  "inventory.json_invalid": "המלאי חייב להיות JSON תקין"
+  "inventory.json_invalid": "המלאי חייב להיות JSON תקין",
+  "profile.empty": "ציירו קטע גדר כדי לראות את מבט הצד שלו.",
+  "profile.run_label": "{id} · {len} מ\"מ",
+  "profile.ground_hint": "לחיצה כפולה על קו הקרקע מוסיפה נקודת גובה",
+  "profile.sample_tooltip": "נקודת קרקע — גררו אנכית (קפיצות של 10 מ\"מ) או לחצו להקלדת גובה",
+  "profile.wall_tooltip": "ראש הקיר — גררו אנכית (קפיצות של 10 מ\"מ)",
+  "profile.gate_label": "שער {width} מ\"מ",
+  "tool.height": "גובה גדר",
+  "hint.height": "גובה: לחצו על קטע כדי לקבוע את גובה הגדר לטווח.",
+  "popover.height": "גובה מ\"מ"
 }

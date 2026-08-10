@@ -31,13 +31,25 @@ First start seeds the demo catalog and knowledge base automatically.
 
 ## 10-minute walkthrough (exercises most of V1)
 
-1. **Draw**: on *Topology & Strategy*, click twice on the canvas ~5 m apart,
-   double-click to finish → a run appears. (Click more times before finishing for
-   corners — each click is a shared node.)
-2. **Gate**: in *Run editing → Gate*, station `2000`, width `1000`, Add gate.
-3. **Mixed base**: *Base interval* start `4000` end `5000` surface `masonry wall`.
+0. **Language**: the UI opens in Hebrew (RTL). The עב/EN button in the header
+   switches languages; the map canvas and side view never mirror.
+1. **Draw** (✏️ tool): click on the canvas to place dots (snapped to grid/dots/45°);
+   **Enter or double-click finishes, Esc cancels** — Finish/Cancel buttons appear
+   while drafting. Multiple clicks before finishing create corners (shared nodes).
+2. **Edit** (⬚ Select tool): click a run → drag square handles to move dots, drag
+   the ghost midpoint to insert a corner, Delete removes a dot. Click the run's
+   length label and type an exact mm value. **Ctrl+Z / Ctrl+Shift+Z undo/redo any
+   gesture.**
+3. **Events on canvas**: pick the 🚪 gate / 🧱 base / ⛰️ ground / 📏 height / 📍 pin
+   tool, click a position on a run, fill the popover. The selected run's events are
+   listed (and deletable) in the side panel.
 4. **Generate strategy** → overlay shows posts (cyan = reinforced gate posts,
-   red ring = masonry mount, red = base-transition post), spans, warnings below.
+   red ring = masonry mount, red = base-transition post), spans, warnings below —
+   localized per the current language.
+4b. **Side view**: the panel below the plan shows the selected run unrolled —
+   ground line (drag its dots vertically, double-click to add samples), wall tops
+   (drag endpoints), dashed height intent, and after generation the actual
+   stepped/raked panels and posts. 1×/5× toggles vertical exaggeration.
 5. **Explain**: click any post → Inspector shows the decision trail with the
    governing knowledge versions.
 6. **Override**: *Pin post* at station `1000`, Generate again → pinned post (amber
@@ -55,6 +67,12 @@ First start seeds the demo catalog and knowledge base automatically.
     `always use existing foundations when within 300 mm` → *Review queue* →
     *Propose knowledge from corrections* → approve (or approve-narrower/reject).
     Approved knowledge appears versioned in the *Knowledge* tab.
+
+UI smoke suite (drives the real browser; run at milestones):
+
+```bash
+uv run --with websocket-client python tools/ui_smoke.py
+```
 
 ## Troubleshooting
 
