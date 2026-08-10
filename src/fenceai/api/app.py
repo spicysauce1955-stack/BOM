@@ -10,6 +10,7 @@ import hashlib
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -234,9 +235,9 @@ def get_bom(run_id: str):
 
 
 @app.get("/api/runs/{run_id}/explain/{element_id}")
-def explain(run_id: str, element_id: str):
+def explain(run_id: str, element_id: str, lang: Literal["en", "he"] = "en"):
     result = _run(run_id)
-    lines = explain_element(result.graph, element_id)
+    lines = explain_element(result.graph, element_id, lang=lang)
     if not lines:
         raise HTTPException(404, f"no decisions reference {element_id}")
     return {"element_id": element_id, "explanation": lines}
