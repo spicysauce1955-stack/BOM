@@ -76,37 +76,7 @@
           <div class="panel">
             <h3 data-i18n="inspect.run_editing">Run editing</h3>
             <select id="run-select"></select>
-            <details open><summary data-i18n="events.gate">Gate</summary>
-              <input id="gate-station" type="number" data-i18n-placeholder="events.station" placeholder="station mm">
-              <input id="gate-width" type="number" value="1000" placeholder="width mm">
-              <input id="gate-kit" value="GATE-KIT-1000" placeholder="kit sku">
-              <button id="btn-add-gate" data-i18n="events.add_gate">Add gate</button>
-            </details>
-            <details><summary data-i18n="events.base">Base interval</summary>
-              <input id="base-start" type="number" data-i18n-placeholder="events.start" placeholder="start mm">
-              <input id="base-end" type="number" data-i18n-placeholder="events.end" placeholder="end mm">
-              <select id="base-surface">
-                <option value="soil" data-i18n="surface.soil">soil</option>
-                <option value="concrete" data-i18n="surface.concrete">concrete</option>
-                <option value="masonry_wall" data-i18n="surface.masonry_wall">masonry wall</option>
-              </select>
-              <button id="btn-add-base" data-i18n="events.set_base">Set base</button>
-            </details>
-            <details><summary data-i18n="events.elevation">Elevation sample</summary>
-              <input id="elev-station" type="number" data-i18n-placeholder="events.station" placeholder="station mm">
-              <input id="elev-z" type="number" placeholder="z mm">
-              <button id="btn-add-elev" data-i18n="events.add_sample">Add sample</button>
-            </details>
-            <details><summary data-i18n="events.height">Height intent</summary>
-              <input id="height-start" type="number" data-i18n-placeholder="events.start" placeholder="start mm">
-              <input id="height-end" type="number" data-i18n-placeholder="events.end" placeholder="end mm">
-              <input id="height-mm" type="number" value="1800" placeholder="height mm">
-              <button id="btn-add-height" data-i18n="events.set_height">Set height intent</button>
-            </details>
-            <details><summary data-i18n="events.pin">Override: pin post</summary>
-              <input id="pin-station" type="number" data-i18n-placeholder="events.station" placeholder="station mm">
-              <button id="btn-pin-post" data-i18n="events.pin_post">Pin post</button>
-            </details>
+            <div id="run-events"></div>
             <div id="override-list"></div>
           </div>
           <div class="panel" id="inspector">

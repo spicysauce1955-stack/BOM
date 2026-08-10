@@ -72,6 +72,45 @@ export function stationAtPoint(run, xMm, yMm) {
   return best;
 }
 
+export function nearestNode(xMm, yMm, radiusMm, excludeId) {
+  let best = null, bestD = radiusMm;
+  for (const n of state.project.topology.nodes) {
+    if (n.id === excludeId) continue;
+    const d = Math.hypot(n.x_mm - xMm, n.y_mm - yMm);
+    if (d <= bestD) { best = n; bestD = d; }
+  }
+  return best;
+}
+
+// Snapping (draw + drag) — plan Task 7, implemented exactly:
+//   1. dot snap: nearest existing node within 150 mm -> that node
+//   2. angle snap: if angle to anchor within 6 deg of k*45 deg -> project onto ray
+//   3. grid snap: round each coord to 100 mm
+// Alt (opts.alt) bypasses 2+3. Grid rounding after a 45-degree projection keeps
+// the angle exact when the anchor is on-grid (|dx| == |dy| rounds equally).
+export function snapPoint(xMm, yMm, anchor, opts = {}) {
+  const node = nearestNode(xMm, yMm, 150, opts.excludeNodeId);
+  if (node) return { p: [node.x_mm, node.y_mm], kind: "dot", node };
+  if (opts.alt) return { p: [Math.round(xMm), Math.round(yMm)], kind: null };
+  let p = [xMm, yMm], kind = "grid";
+  if (anchor) {
+    const dx = xMm - anchor[0], dy = yMm - anchor[1];
+    if (Math.hypot(dx, dy) > 1) {
+      const step = Math.PI / 4;
+      const ang = Math.atan2(dy, dx);
+      const k = Math.round(ang / step);
+      if (Math.abs(ang - k * step) <= (6 * Math.PI) / 180) {
+        const ux = Math.cos(k * step), uy = Math.sin(k * step);
+        const along = dx * ux + dy * uy;
+        p = [anchor[0] + ux * along, anchor[1] + uy * along];
+        kind = "angle";
+      }
+    }
+  }
+  p = [Math.round(p[0] / SNAP_MM) * SNAP_MM, Math.round(p[1] / SNAP_MM) * SNAP_MM];
+  return { p, kind };
+}
+
 export function anchorFor(runId, station) {
   // UI-authored runs are single-segment; segment 0, offset = station (clamped)
   const run = runById(runId);

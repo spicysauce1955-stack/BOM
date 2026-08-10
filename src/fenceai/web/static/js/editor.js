@@ -1,29 +1,38 @@
-// Plan-canvas editor: rendering + tools. Task 1 carries over V1 behavior
-// (draw + clear + overlay); Tasks 6-8 add select/drag/snapping/popovers.
+// Plan-canvas editor: rendering + tools. Select (handles/ghosts/drag/delete),
+// Draw (snapped dots, rubber band, typed lengths) — plan Tasks 6-8.
+// The canvas is never mirrored in RTL (spec §4).
 
-import { esc } from "./api.js";
+import { apiSend, esc } from "./api.js";
 import {
-  clearGroup, el, pointAtStation, runLength, runPoints, toMm, toPx,
+  clearGroup, el, nodeById, pointAtStation, runById, runLength, runPoints,
+  snapPoint, stationAtPoint, toMmRaw, toPx,
 } from "./geom.js";
-import { pushSnapshot } from "./history.js";
+import { pushSnapshot, redo, undo } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import {
-  emit, generateStrategy, on, saveTopology, setTool, state,
+  addIntervalEvent, addPointEvent, generateStrategy, on, saveTopology,
+  setSelection, setTool, state,
 } from "./state.js";
+
+const EVENT_TOOLS = ["gate", "base", "ground", "pin"];
 
 const BASE_COLORS = { soil: "#a16207", concrete: "#64748b", masonry_wall: "#dc2626" };
 const POST_COLORS = { line: "#2563eb", end: "#1e293b", corner: "#1e293b",
   junction: "#1e293b", gate: "#0891b2", transition: "#dc2626" };
+const HOVER_RUN_MM = 400; // cursor-readout proximity
 
 export function initEditor() {
   setupCanvas();
   setupToolbar();
   renderGrid();
-  on("project-loaded", renderAllCanvas);
+  on("project-loaded", () => { renderAllCanvas(); renderHandles(); });
   on("result-changed", () => { renderOverlay(); renderWarnings(); });
-  on("tool-changed", updateToolButtons);
-  on("locale-changed", () => { renderAllCanvas(); updateStatus(); });
+  on("tool-changed", () => {
+    updateToolButtons(); renderHandles(); updateStatus(); closePopover();
+  });
+  on("selection-changed", () => { renderTopology(); renderHandles(); });
+  on("locale-changed", () => { renderAllCanvas(); renderHandles(); updateStatus(); });
   updateStatus();
 }
 
@@ -54,9 +63,12 @@ function updateToolButtons() {
   }
 }
 
-function updateStatus() {
+function updateStatus(cursor) {
   const bar = document.getElementById("statusbar");
-  if (bar) bar.textContent = t(`hint.${state.tool}`);
+  if (!bar) return;
+  let text = t(`hint.${state.tool}`);
+  if (cursor) text += ` · ${t("hint.cursor", cursor)}`;
+  bar.textContent = text;
 }
 
 async function clearTopology() {
@@ -64,35 +76,341 @@ async function clearTopology() {
   pushSnapshot("clear");
   state.draftNodes = [];
   clearGroup("g-draft");
+  clearGroup("g-snap");
+  setSelection({});
   state.project.topology = {
     revision: state.project.topology.revision, nodes: [], runs: [],
   };
   await saveTopology();
 }
 
-// ---------- draw tool (V1 behavior; Task 7 upgrades) ----------
+// ---------- canvas input ----------
+let drag = null;           // active handle/ghost drag session
+let suppressClick = false; // swallow the click that follows a pointer gesture
+
+function svgCoords(ev) {
+  const svg = document.getElementById("canvas");
+  const pt = svg.createSVGPoint();
+  pt.x = ev.clientX; pt.y = ev.clientY;
+  const { x, y } = pt.matrixTransform(svg.getScreenCTM().inverse());
+  return toMmRaw(x, y);
+}
+
 function setupCanvas() {
   const svg = document.getElementById("canvas");
+
   svg.addEventListener("click", (ev) => {
-    if (state.tool !== "draw" || !state.project) return;
-    const pt = svg.createSVGPoint();
-    pt.x = ev.clientX; pt.y = ev.clientY;
-    const { x, y } = pt.matrixTransform(svg.getScreenCTM().inverse());
-    state.draftNodes.push(toMm(x, y));
-    renderDraft();
+    if (suppressClick) { suppressClick = false; return; }
+    if (!state.project) return;
+    if (state.tool === "draw") {
+      const [mx, my] = svgCoords(ev);
+      const anchor = state.draftNodes.length
+        ? state.draftNodes[state.draftNodes.length - 1] : null;
+      const snap = snapPoint(mx, my, anchor, { alt: ev.altKey });
+      state.draftNodes.push(snap.p);
+      renderDraft();
+    } else if (state.tool === "select") {
+      const hit = ev.target.closest && ev.target.closest(".run-hit");
+      if (hit) setSelection({ runId: hit.dataset.run });
+      else if (!ev.target.closest("#g-overlay") && !ev.target.closest("#g-handles"))
+        setSelection({});
+    } else if (EVENT_TOOLS.includes(state.tool)) {
+      const hit = ev.target.closest && ev.target.closest(".run-hit");
+      closePopover();
+      if (hit) {
+        const run = runById(hit.dataset.run);
+        const [mx, my] = svgCoords(ev);
+        const station = stationAtPoint(run, mx, my).station;
+        openEventPopover(state.tool, run.id, station, ev.clientX, ev.clientY);
+      }
+    }
   });
+
   svg.addEventListener("dblclick", (ev) => { ev.preventDefault(); finishDraft(); });
+
+  svg.addEventListener("pointerdown", (ev) => {
+    if (state.tool !== "select" || !state.project) return;
+    const target = ev.target;
+    if (target.classList.contains("handle")) {
+      drag = { kind: "dot", runId: target.dataset.run, dotIndex: +target.dataset.dot,
+        started: false, start: [ev.clientX, ev.clientY] };
+      svg.setPointerCapture(ev.pointerId);
+    } else if (target.classList.contains("ghost")) {
+      drag = { kind: "ghost", runId: target.dataset.run, seg: +target.dataset.seg,
+        started: false, start: [ev.clientX, ev.clientY] };
+      svg.setPointerCapture(ev.pointerId);
+    }
+  });
+  svg.addEventListener("pointermove", onPointerMove);
+  svg.addEventListener("pointerup", onDragEnd);
+  svg.addEventListener("pointercancel", onDragEnd);
+
   document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape") cancelDraft();
+    const tag = ev.target && ev.target.tagName;
+    const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") {
+      if (typing) return; // leave text-field undo alone
+      ev.preventDefault();
+      if (ev.shiftKey) redo(); else undo();
+      return;
+    }
+    if (typing) return;
+    if (ev.key === "Escape") { closePopover(); cancelDraft(); }
     if (ev.key === "Enter" && state.draftNodes.length) finishDraft();
+    if ((ev.key === "Delete" || ev.key === "Backspace") && state.tool === "select")
+      deleteSelectedDot();
   });
   document.getElementById("btn-finish-draft").addEventListener("click", finishDraft);
   document.getElementById("btn-cancel-draft").addEventListener("click", cancelDraft);
 }
 
+function onPointerMove(ev) {
+  if (drag) { onDragMove(ev); return; }
+  const [mx, my] = svgCoords(ev);
+  if (state.tool === "draw" && state.draftNodes.length) {
+    renderRubberBand(mx, my, ev.altKey);
+  }
+  // live cursor readout when hovering a run
+  let cursor = null;
+  if (state.project) {
+    for (const run of state.project.topology.runs) {
+      const hit = stationAtPoint(run, mx, my);
+      if (hit.dist <= HOVER_RUN_MM) {
+        cursor = { station: hit.station, x: Math.round(mx), y: Math.round(my) };
+        break;
+      }
+    }
+  }
+  updateStatus(cursor);
+}
+
+// ---------- select tool: drag / insert / delete ----------
+function onDragMove(ev) {
+  const [mx, my] = svgCoords(ev);
+  if (!drag.started) {
+    if (Math.hypot(ev.clientX - drag.start[0], ev.clientY - drag.start[1]) < 4) return;
+    // gesture begins: snapshot BEFORE any mutation
+    pushSnapshot(drag.kind === "ghost" ? "insert-vertex" : "move-dot");
+    if (drag.kind === "ghost") {
+      const run = runById(drag.runId);
+      run.interior_vertices.splice(drag.seg, 0, [mx, my]);
+      drag.dotIndex = drag.seg + 1;
+      drag.kind = "dot";
+    }
+    drag.started = true;
+  }
+  const run = runById(drag.runId);
+  const pts = runPoints(run);
+  const anchor = pts[drag.dotIndex > 0 ? drag.dotIndex - 1 : 1];
+  const isNode = drag.dotIndex === 0 || drag.dotIndex === pts.length - 1;
+  const nodeId = drag.dotIndex === 0 ? run.start_node_id : run.end_node_id;
+  const snap = snapPoint(mx, my, anchor,
+    { alt: ev.altKey, excludeNodeId: isNode ? nodeId : undefined });
+  applyDotPosition(run, drag.dotIndex, snap.p);
+  renderTopology();
+  renderHandles();
+  renderSnapFeedback(snap, anchor);
+}
+
+function applyDotPosition(run, dotIndex, [x, y]) {
+  const last = runPoints(run).length - 1;
+  if (dotIndex === 0) {
+    const n = nodeById(run.start_node_id); n.x_mm = x; n.y_mm = y;
+  } else if (dotIndex === last) {
+    const n = nodeById(run.end_node_id); n.x_mm = x; n.y_mm = y;
+  } else {
+    run.interior_vertices[dotIndex - 1] = [x, y];
+  }
+}
+
+function onDragEnd() {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  clearGroup("g-snap");
+  // swallow the click that may follow this pointer gesture; a drag fires no
+  // click at all, so clear the flag on the next tick either way
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 0);
+  if (d.started) {
+    setSelection({ runId: d.runId, dotIndex: d.dotIndex });
+    saveTopology(); // snapshot was pushed at gesture start
+  } else if (d.kind === "dot") {
+    setSelection({ runId: d.runId, dotIndex: d.dotIndex }); // plain click on a dot
+  } else {
+    setSelection({ runId: d.runId });
+  }
+}
+
+function deleteSelectedDot() {
+  const { runId, dotIndex } = state.selection;
+  if (runId == null || dotIndex == null) return;
+  const run = runById(runId);
+  if (!run) return;
+  const last = runPoints(run).length - 1;
+  if (dotIndex > 0 && dotIndex < last) {
+    pushSnapshot("delete-vertex");
+    run.interior_vertices.splice(dotIndex - 1, 1);
+    setSelection({ runId });
+    saveTopology();
+  } else if (run.interior_vertices.length === 0) {
+    // end node of a 2-dot run: delete the run (and orphaned nodes), confirmed
+    if (!confirm(t("confirm.delete_run"))) return;
+    pushSnapshot("delete-run");
+    const topo = state.project.topology;
+    topo.runs = topo.runs.filter((r) => r.id !== run.id);
+    for (const nid of [run.start_node_id, run.end_node_id]) {
+      const used = topo.runs.some(
+        (r) => r.start_node_id === nid || r.end_node_id === nid);
+      if (!used) topo.nodes = topo.nodes.filter((n) => n.id !== nid);
+    }
+    setSelection({});
+    saveTopology();
+  }
+}
+
+// ---------- event tools: gate/base/ground/pin popover (Task 8) ----------
+let popover = null;
+
+function closePopover() {
+  if (!popover) return;
+  popover.remove();
+  popover = null;
+  document.removeEventListener("pointerdown", onOutsidePointer, true);
+}
+
+function onOutsidePointer(ev) {
+  if (popover && !popover.contains(ev.target)) closePopover();
+}
+
+function openEventPopover(tool, runId, station, clientX, clientY) {
+  closePopover();
+  const run = runById(runId);
+  if (!run) return;
+  const L = runLength(run);
+  const numField = (key, id, value) =>
+    `<label>${t(key)}<input id="${id}" type="number" value="${value}"></label>`;
+  let html = `<h4>${t("tool." + tool)}</h4>
+    <div class="meta"><bdi>${esc(runId)}</bdi> · ${t("popover.station")}
+      <span class="num">${station}</span></div>`;
+  if (tool === "gate") {
+    html += numField("popover.width", "pop-width", 1000);
+    html += `<label>${t("popover.kit")}<input id="pop-kit" value="GATE-KIT-1000"></label>`;
+  } else if (tool === "base") {
+    html += numField("popover.start", "pop-start", station);
+    html += numField("popover.end", "pop-end", Math.min(station + 1000, L));
+    html += `<label>${t("popover.surface")}<select id="pop-surface">
+      <option value="soil">${t("surface.soil")}</option>
+      <option value="concrete">${t("surface.concrete")}</option>
+      <option value="masonry_wall">${t("surface.masonry_wall")}</option>
+    </select></label>`;
+  } else if (tool === "ground") {
+    html += numField("popover.z", "pop-z", 0);
+  } else if (tool === "pin") {
+    html += `<div class="meta">${t("popover.pin_hint")}</div>`;
+  }
+  html += `<div class="popover-actions">
+    <button id="pop-cancel">${t("popover.cancel")}</button>
+    <button id="pop-save" class="primary">${t("popover.save")}</button></div>`;
+  popover = document.createElement("div");
+  popover.className = "popover";
+  popover.innerHTML = html;
+  document.body.appendChild(popover);
+  // position at the click, kept inside the viewport (cursor-anchored:
+  // physical coords by nature; the canvas is never mirrored)
+  popover.style.left = `${Math.max(4, Math.min(clientX + 8, window.innerWidth - popover.offsetWidth - 12))}px`;
+  popover.style.top = `${Math.max(4, Math.min(clientY + 8, window.innerHeight - popover.offsetHeight - 12))}px`;
+
+  async function save() {
+    pushSnapshot(tool);
+    if (tool === "gate") {
+      addPointEvent(runId, {
+        kind: "gate",
+        width_mm: Math.round(+document.getElementById("pop-width").value),
+        kit_sku: document.getElementById("pop-kit").value.trim() || null,
+      }, station);
+    } else if (tool === "base") {
+      addIntervalEvent(runId, {
+        kind: "base", surface: document.getElementById("pop-surface").value,
+      }, Math.round(+document.getElementById("pop-start").value),
+        Math.round(+document.getElementById("pop-end").value));
+    } else if (tool === "ground") {
+      addPointEvent(runId, {
+        kind: "elevation_sample",
+        z_mm: Math.round(+document.getElementById("pop-z").value),
+      }, station);
+    } else if (tool === "pin") {
+      await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
+        id: "", run_id: runId,
+        directive: { kind: "pin_post", station_mm: station },
+      });
+    }
+    closePopover();
+    await saveTopology();
+  }
+
+  popover.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Escape") closePopover();
+    else if (ev.key === "Enter") { ev.preventDefault(); save(); }
+  });
+  popover.querySelector("#pop-cancel").addEventListener("click", closePopover);
+  popover.querySelector("#pop-save").addEventListener("click", save);
+  const first = popover.querySelector("input, select, button");
+  if (first) first.focus();
+  // blur = pointer down anywhere outside cancels (registered after this click)
+  setTimeout(() => document.addEventListener("pointerdown", onOutsidePointer, true), 0);
+}
+
+// ---------- typed exact length ----------
+function openLengthInput(runId) {
+  const existing = document.getElementById("length-editor");
+  if (existing) existing.remove();
+  const run = runById(runId);
+  if (!run) return;
+  const mid = toPx(pointAtStation(run.id, runLength(run) / 2));
+  const g = document.getElementById("g-handles");
+  const fo = el("foreignObject", { x: mid[0] - 45, y: mid[1] - 34, width: 92,
+    height: 28, id: "length-editor" }, g);
+  const input = document.createElement("input");
+  input.type = "number";
+  input.className = "mm-input";
+  input.value = runLength(run);
+  fo.appendChild(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const close = () => { done = true; fo.remove(); };
+  input.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Enter") { const v = Math.round(+input.value); close(); commitTypedLength(runId, v); }
+    else if (ev.key === "Escape") close();
+  });
+  input.addEventListener("blur", () => { if (!done) close(); });
+}
+
+function commitTypedLength(runId, typedTotal) {
+  const run = runById(runId);
+  if (!run || !Number.isFinite(typedTotal)) return;
+  const pts = runPoints(run);
+  const A = pts[pts.length - 2], B = pts[pts.length - 1];
+  const h = Math.hypot(B[0] - A[0], B[1] - A[1]);
+  if (!h) return;
+  const upTo = runLength(run) - Math.round(h); // length up to the last segment
+  if (typedTotal <= upTo) { alert(t("editor.invalid_length", { min: upTo })); return; }
+  const d = [(B[0] - A[0]) / h, (B[1] - A[1]) / h];
+  pushSnapshot("typed-length");
+  const end = nodeById(run.end_node_id); // end NODE moves; shared runs follow by design
+  end.x_mm = Math.round(A[0] + d[0] * (typedTotal - upTo));
+  end.y_mm = Math.round(A[1] + d[1] * (typedTotal - upTo));
+  saveTopology();
+}
+
+// ---------- draw tool ----------
 function cancelDraft() {
   state.draftNodes = [];
   clearGroup("g-draft");
+  clearGroup("g-snap");
   updateDraftButtons();
 }
 
@@ -131,6 +449,32 @@ function renderDraft() {
   updateDraftButtons();
 }
 
+function renderRubberBand(mx, my, alt) {
+  const g = clearGroup("g-snap");
+  const anchor = state.draftNodes[state.draftNodes.length - 1];
+  const snap = snapPoint(mx, my, anchor, { alt });
+  const a = toPx(anchor), p = toPx(snap.p);
+  el("line", { x1: a[0], y1: a[1], x2: p[0], y2: p[1], class: "rubber" }, g);
+  if (snap.kind === "dot" && snap.node)
+    el("circle", { cx: p[0], cy: p[1], r: 9, fill: "none", class: "snap-guide" }, g);
+  else if (snap.kind === "angle")
+    el("line", { x1: a[0], y1: a[1], x2: p[0], y2: p[1], class: "snap-guide" }, g);
+  const len = Math.round(Math.hypot(snap.p[0] - anchor[0], snap.p[1] - anchor[1]));
+  el("text", { x: (a[0] + p[0]) / 2 + 8, y: (a[1] + p[1]) / 2 - 8, "font-size": 10,
+    fill: "#2563eb", class: "num" }, g).textContent = t("canvas.mm", { n: len });
+}
+
+function renderSnapFeedback(snap, anchor) {
+  const g = clearGroup("g-snap");
+  if (snap.kind === "dot" && snap.node) {
+    const p = toPx([snap.node.x_mm, snap.node.y_mm]);
+    el("circle", { cx: p[0], cy: p[1], r: 9, fill: "none", class: "snap-guide" }, g);
+  } else if (snap.kind === "angle" && anchor) {
+    const a = toPx(anchor), p = toPx(snap.p);
+    el("line", { x1: a[0], y1: a[1], x2: p[0], y2: p[1], class: "snap-guide" }, g);
+  }
+}
+
 function updateDraftButtons() {
   const show = state.draftNodes.length > 0;
   document.getElementById("draft-actions").style.display = show ? "flex" : "none";
@@ -154,9 +498,11 @@ function renderTopology() {
   if (!state.project) return;
   const topo = state.project.topology;
   for (const run of topo.runs) {
+    const selected = state.selection.runId === run.id;
     const pts = runPoints(run).map(toPx);
-    el("polyline", { points: pts.map((p) => p.join(",")).join(" "), fill: "none",
-      stroke: "#334155", "stroke-width": 3 }, g);
+    const ptsAttr = pts.map((p) => p.join(",")).join(" ");
+    el("polyline", { points: ptsAttr, fill: "none",
+      stroke: selected ? "#2563eb" : "#334155", "stroke-width": selected ? 4 : 3 }, g);
     for (const iv of run.interval_events) {
       if (iv.payload.kind !== "base") continue;
       const L = runLength(run);
@@ -181,15 +527,45 @@ function renderTopology() {
           .textContent = `z=${pe.payload.z_mm}`;
       }
     }
+    // invisible fat hit line: run selection + event-tool clicks + touch targets
+    el("polyline", { points: ptsAttr, fill: "none", class: "run-hit",
+      "data-run": run.id }, g);
     const mid = toPx(pointAtStation(run.id, runLength(run) / 2));
-    el("text", { x: mid[0] - 12, y: mid[1] - 8, "font-size": 10, fill: "#334155",
-      class: "run-label", "data-run": run.id }, g)
-      .textContent = `${run.id} (${runLength(run)} mm)`;
+    const label = el("text", { x: mid[0] - 12, y: mid[1] - 8, "font-size": 10,
+      fill: selected ? "#2563eb" : "#334155", class: "run-label", "data-run": run.id }, g);
+    label.textContent = `${run.id} (${runLength(run)} mm)`;
+    el("title", {}, label).textContent = t("editor.length_tooltip");
+    label.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openLengthInput(run.id);
+    });
   }
   for (const n of topo.nodes) {
     const p = toPx([n.x_mm, n.y_mm]);
-    el("rect", { x: p[0] - 4, y: p[1] - 4, width: 8, height: 8, fill: "#334155" }, g);
+    // visual only — must not steal clicks from the run hit lines underneath
+    el("rect", { x: p[0] - 4, y: p[1] - 4, width: 8, height: 8, fill: "#334155",
+      "pointer-events": "none" }, g);
   }
+}
+
+// Dots of the selected run: squares (vertex handles) + midpoint ghosts (circles).
+function renderHandles() {
+  const g = clearGroup("g-handles");
+  if (state.tool !== "select" || !state.project || !state.selection.runId) return;
+  const run = runById(state.selection.runId);
+  if (!run) return;
+  const pts = runPoints(run);
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const m = toPx([(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2]);
+    el("circle", { cx: m[0], cy: m[1], r: 5, class: "ghost",
+      "data-run": run.id, "data-seg": i }, g);
+  }
+  pts.forEach((p, i) => {
+    const q = toPx(p);
+    el("rect", { x: q[0] - 5, y: q[1] - 5, width: 10, height: 10,
+      class: "handle" + (state.selection.dotIndex === i ? " selected" : ""),
+      "data-run": run.id, "data-dot": i }, g);
+  });
 }
 
 function renderOverlay() {

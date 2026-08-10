@@ -1,19 +1,27 @@
-// Inspector + run-editing side panel. Task 8 replaces the event forms with
-// on-canvas tools; the decision-trail and overrides views live here permanently.
+// Inspector + run-editing side panel: decision trail, overrides, and the
+// selected run's event list (events are ADDED via the canvas tools, Task 8).
 
 import { apiGet, apiSend, esc } from "./api.js";
 import { runLength } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
-import {
-  addIntervalEvent, addPointEvent, on, refreshProject, saveTopology, state,
-} from "./state.js";
+import { on, refreshProject, saveTopology, setSelection, state } from "./state.js";
 
 export function initInspector() {
-  setupForms();
-  on("project-loaded", () => { renderRunSelectors(); renderOverrides(); });
+  const sel = document.getElementById("run-select");
+  sel.addEventListener("change", () => setSelection({ runId: sel.value }));
+  on("project-loaded", () => {
+    renderRunSelectors(); syncRunSelect(); renderOverrides(); renderRunEvents();
+  });
   on("result-changed", renderOverrides);
-  on("locale-changed", renderOverrides);
+  on("selection-changed", () => { syncRunSelect(); renderRunEvents(); });
+  on("locale-changed", () => { renderOverrides(); renderRunEvents(); });
+}
+
+function syncRunSelect() {
+  const sel = document.getElementById("run-select");
+  if (state.selection.runId && sel.value !== state.selection.runId)
+    sel.value = state.selection.runId;
 }
 
 export async function inspect(elementId, label) {
@@ -92,50 +100,56 @@ function renderOverrides() {
   }
 }
 
-// ---------- V1 event forms (removed in Task 8) ----------
-function currentRunId() {
-  return document.getElementById("run-select").value;
+// ---------- selected run's events (delete each with ✕; add = canvas tools) ---
+const EVENT_LABEL_KEYS = {
+  gate: "events.gate",
+  base: "events.base",
+  elevation_sample: "events.elevation",
+  height_intent: "events.height",
+};
+
+function eventLabel(payload) {
+  const name = t(EVENT_LABEL_KEYS[payload.kind] || payload.kind);
+  if (payload.kind === "gate")
+    return `${name} · <span class="num">${payload.width_mm}</span> mm`;
+  if (payload.kind === "base") return `${name} · ${t("surface." + payload.surface)}`;
+  if (payload.kind === "elevation_sample")
+    return `${name} · z=<span class="num">${esc(payload.z_mm)}</span>`;
+  if (payload.kind === "height_intent")
+    return `${name} · <span class="num">${payload.height_mm}</span> mm`;
+  return name;
 }
 
-function setupForms() {
-  const val = (id) => +document.getElementById(id).value;
-  const bind = (id, fn) => document.getElementById(id)?.addEventListener("click", fn);
-
-  bind("btn-add-gate", () => {
-    pushSnapshot("gate");
-    if (addPointEvent(currentRunId(), {
-      kind: "gate", width_mm: val("gate-width"),
-      kit_sku: document.getElementById("gate-kit").value || null,
-    }, val("gate-station"))) saveTopology();
-    else alert(t("editor.draw_first"));
-  });
-  bind("btn-add-base", () => {
-    pushSnapshot("base");
-    if (addIntervalEvent(currentRunId(), {
-      kind: "base", surface: document.getElementById("base-surface").value,
-    }, val("base-start"), val("base-end"))) saveTopology();
-    else alert(t("editor.draw_first"));
-  });
-  bind("btn-add-elev", () => {
-    pushSnapshot("ground");
-    if (addPointEvent(currentRunId(), { kind: "elevation_sample", z_mm: val("elev-z") },
-      val("elev-station"))) saveTopology();
-    else alert(t("editor.draw_first"));
-  });
-  bind("btn-add-height", () => {
-    pushSnapshot("height");
-    if (addIntervalEvent(currentRunId(), {
-      kind: "height_intent", height_mm: val("height-mm"), source: "user",
-    }, val("height-start"), val("height-end"))) saveTopology();
-    else alert(t("editor.draw_first"));
-  });
-  bind("btn-pin-post", async () => {
-    const runId = currentRunId();
-    if (!runId) return alert(t("editor.draw_first"));
-    await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
-      id: "", run_id: runId,
-      directive: { kind: "pin_post", station_mm: val("pin-station") },
+function renderRunEvents() {
+  const div = document.getElementById("run-events");
+  if (!div) return;
+  div.innerHTML = `<h3 data-i18n="inspect.run_events">${t("inspect.run_events")}</h3>`;
+  const runId = state.selection.runId || document.getElementById("run-select").value;
+  const run = state.project?.topology.runs.find((r) => r.id === runId);
+  if (!run) return;
+  const rows = [];
+  run.point_events.forEach((pe, i) => rows.push({
+    list: "point_events", index: i,
+    html: `${eventLabel(pe.payload)} @ <span class="num">${pe.anchor.offset_mm}</span>`,
+  }));
+  run.interval_events.forEach((iv, i) => rows.push({
+    list: "interval_events", index: i,
+    html: `${eventLabel(iv.payload)} · <span class="num">${iv.start_anchor.offset_mm}–${iv.end_anchor.offset_mm}</span>`,
+  }));
+  if (!rows.length) {
+    div.innerHTML += `<div class="meta">${t("inspect.no_events")}</div>`;
+    return;
+  }
+  for (const row of rows) {
+    const d = document.createElement("div");
+    d.className = "event-row";
+    d.innerHTML = `<span>${row.html}</span>
+      <button class="event-delete" title="${esc(t("common.remove"))}">✕</button>`;
+    d.querySelector("button").addEventListener("click", () => {
+      pushSnapshot("delete-event");
+      run[row.list].splice(row.index, 1);
+      saveTopology();
     });
-    await refreshProject();
-  });
+    div.appendChild(d);
+  }
 }
