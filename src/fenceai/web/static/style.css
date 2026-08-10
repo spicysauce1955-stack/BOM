@@ -116,3 +116,30 @@ th { background: #eef2f6; }
 #draft-actions { display: flex; gap: 6px; }
 .num, .sku { direction: ltr; unicode-bidi: isolate; }
 input[type="number"] { direction: ltr; }
+
+/* profile side view (Task 9) — svg paint attrs; logical properties only */
+.profile-run-label { font-size: 10px; fill: #64748b; }
+.profile-zero { stroke: #eef2f6; }
+.profile-tick { stroke: #b9c2cd; }
+.profile-tick-label { font-size: 8px; fill: #94a3b8; }
+.profile-ground { fill: none; stroke: #a16207; stroke-width: 2; }
+.profile-ground-hit { fill: none; stroke: transparent; stroke-width: 14;
+  cursor: copy; pointer-events: stroke; }
+.profile-sample { fill: #7c3aed; stroke: #fff; stroke-width: 1.5; cursor: ns-resize; }
+.profile-sample-label { font-size: 8px; fill: #7c3aed; }
+.profile-wall { stroke: #dc2626; stroke-width: 2.5; }
+.profile-wall-handle { fill: #dc2626; stroke: #fff; stroke-width: 1; cursor: ns-resize; }
+.profile-intent { fill: none; stroke: #0891b2; stroke-width: 1.5;
+  stroke-dasharray: 5 4; }
+.profile-panel { opacity: 0.8; cursor: pointer; stroke-width: 1; }
+.profile-panel.level { fill: #bfdbfe; stroke: #60a5fa; }
+.profile-panel.stepped { fill: #ddd6fe; stroke: #a78bfa; }
+.profile-panel.raked { fill: #a7f3d0; stroke: #34d399; }
+.profile-post { stroke: #1e293b; stroke-width: 3; stroke-linecap: round; }
+.profile-post-hit { stroke: transparent; stroke-width: 11; cursor: pointer; }
+.profile-panel.selected, .profile-post.selected, .profile-gate.selected {
+  stroke: #f59e0b; stroke-width: 2.5; }
+.profile-gate { stroke: #0891b2; stroke-width: 1.5; cursor: pointer; }
+.profile-gate-label { font-size: 9px; fill: #0891b2; }
+.profile-z-input { inline-size: 100%; font-size: 11px; padding: 2px 4px;
+  border: 1px solid #b9c2cd; border-radius: 4px; }
