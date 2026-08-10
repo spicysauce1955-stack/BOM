@@ -46,7 +46,7 @@ export function applyStatic() {
 }
 
 export async function initI18n() {
-  const stored = localStorage.getItem("fenceai.locale") || "en";
+  const stored = localStorage.getItem("fenceai.locale") || "he";  // Hebrew-first (spec §4)
   await loadLocale("en");
   await setLocale(stored);
 }

@@ -104,8 +104,11 @@
         <h3 data-i18n="knowledge.new_version">New knowledge version (JSON actions)</h3>
         <input id="k-object" data-i18n-placeholder="knowledge.object_placeholder" placeholder="object id e.g. K-MAXSPAN">
         <select id="k-type">
-          <option>hard_constraint</option><option>company_rule</option>
-          <option>preference</option><option>heuristic</option><option>fact</option>
+          <option value="hard_constraint" data-i18n="type.hard_constraint">hard_constraint</option>
+          <option value="company_rule" data-i18n="type.company_rule">company_rule</option>
+          <option value="preference" data-i18n="type.preference">preference</option>
+          <option value="heuristic" data-i18n="type.heuristic">heuristic</option>
+          <option value="fact" data-i18n="type.fact">fact</option>
         </select>
         <input id="k-title" dir="auto" data-i18n-placeholder="knowledge.title_placeholder" placeholder="title" size="40">
         <textarea id="k-actions" dir="ltr" rows="3" cols="70">[{"kind": "set_param", "param": "max_span_mm", "value": 1800}]</textarea>
