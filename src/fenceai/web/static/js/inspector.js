@@ -97,6 +97,7 @@ function renderOverrides() {
 const EVENT_LABEL_KEYS = {
   gate: "events.gate",
   base: "events.base",
+  base_top: "events.base_top",
   elevation_sample: "events.elevation",
   height_intent: "events.height",
 };
@@ -106,6 +107,8 @@ function eventLabel(payload) {
   if (payload.kind === "gate")
     return `${name} · <span class="num">${payload.width_mm}</span> mm`;
   if (payload.kind === "base") return `${name} · ${t("surface." + payload.surface)}`;
+  if (payload.kind === "base_top")
+    return `${name} · ${t("profile.top_points", { n: payload.points.length })}`;
   if (payload.kind === "elevation_sample")
     return `${name} · z=<span class="num">${esc(payload.z_mm)}</span>`;
   if (payload.kind === "height_intent")
@@ -127,8 +130,9 @@ function renderRunEvents() {
   }));
   run.interval_events.forEach((iv) => rows.push({
     list: "interval_events", id: iv.id,
-    // base covers the whole section: just "Base · <surface>", no station range
-    html: iv.payload.kind === "base" ? eventLabel(iv.payload)
+    // base/base_top cover the whole section: label only, no station range
+    html: iv.payload.kind === "base" || iv.payload.kind === "base_top"
+      ? eventLabel(iv.payload)
       : `${eventLabel(iv.payload)} · <span class="num">${stationOfAnchor(run, iv.start_anchor)}–${stationOfAnchor(run, iv.end_anchor)}</span>`,
   }));
   if (!rows.length) {

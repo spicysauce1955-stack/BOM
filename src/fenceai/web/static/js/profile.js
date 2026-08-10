@@ -10,7 +10,7 @@ import { clearGroup, el, nodeById, runById, runLength, runPoints, stationOfAncho
 import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
-import { addPointEvent, on, saveTopology, setSelection, state } from "./state.js";
+import { addIntervalEvent, addPointEvent, on, saveTopology, setSelection, state } from "./state.js";
 
 // viewBox geometry (preserveAspectRatio=none stretches to the container width)
 const W = 900, H = 180;
@@ -22,6 +22,11 @@ const Z_SNAP = 10;           // mm snap for vertical edits
 const DEFAULT_POST_MM = 1800;
 const GAP_MM = 600;          // visual gap before a disconnected section
 const TOL_MM = 1;            // NUMERIC_TOLERANCE_MM (units.py)
+const STEP_SNAP_PX = 12;     // dragging a top dot within this of a neighbour snaps
+                             // its pos to the neighbour's — that's how a STEP is made
+const HINT_LIFT_PX = 6;      // dashed creation-hint line sits this far above ground
+// band/edge tones per built-base surface (matches plan-view BASE_COLORS)
+const BASE_TONES = { masonry_wall: "#dc2626", concrete: "#64748b" };
 
 let exag = 5;                // 1x / 5x toggle, default 5x
 let view = null;             // { chain, span, sx, sy, zMin } of the last render
@@ -130,6 +135,80 @@ function wallProfiles(run, L) {
     }));
 }
 
+// base_top interval events with resolved stations; payload.points stay SORTED by
+// pos (two consecutive points at the same pos = a vertical STEP, right side wins)
+function baseTops(run, L) {
+  return run.interval_events
+    .filter((iv) => iv.payload.kind === "base_top")
+    .map((iv) => ({
+      iv,
+      s0: Math.min(stationOfAnchor(run, iv.start_anchor), L),
+      s1: Math.min(stationOfAnchor(run, iv.end_anchor), L),
+      points: iv.payload.points,
+    }))
+    .filter((w) => w.s1 > w.s0 && w.points.length);
+}
+
+// built-base surface of the section (wall/concrete), or null for soil/none
+function builtSurface(run) {
+  const base = run.interval_events.find(
+    (iv) => iv.payload.kind === "base" && iv.payload.surface !== "soil");
+  return base ? base.payload.surface : null;
+}
+
+const toneFor = (run) => BASE_TONES[builtSurface(run)] || BASE_TONES.masonry_wall;
+
+// top height ABOVE ground at a permille position — mirrors backend base_top_at():
+// flat beyond the end points, linear between, right side wins AT a step
+function topZAt(points, p) {
+  if (!points.length) return 0;
+  if (p <= points[0].pos_permille) return points[0].z_mm;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const a = points[i], b = points[i + 1];
+    if (a.pos_permille === b.pos_permille) {
+      if (p === a.pos_permille) return b.z_mm; // right side of the step wins
+      continue;
+    }
+    if (a.pos_permille <= p && p <= b.pos_permille) {
+      if (p === b.pos_permille) continue; // a following step may claim the boundary
+      return Math.round(a.z_mm + ((b.z_mm - a.z_mm) * (p - a.pos_permille))
+        / (b.pos_permille - a.pos_permille));
+    }
+  }
+  return points[points.length - 1].z_mm;
+}
+
+// top edge of a base_top as [{s, z}] ABSOLUTE samples in station order: ground +
+// top height, with kinks at every point pos AND every ground sample between,
+// and duplicate stations at steps (the vertical jump)
+function topEdgeSamples(entry, w) {
+  const posStation = (pos) => w.s0 + ((w.s1 - w.s0) * pos) / 1000;
+  const grounds = entry.samples.map((s) => s.station);
+  const out = [];
+  const zAbs = (s, zTop) => groundZAt(entry.samples, Math.round(s)) + zTop;
+  const seg = (pA, zA, pB, zB) => {
+    const sA = posStation(pA), sB = posStation(pB);
+    const stops = [sA, ...grounds.filter((s) => s > sA && s < sB), sB];
+    for (const s of stops) {
+      const zTop = sB === sA ? zA : zA + ((zB - zA) * (s - sA)) / (sB - sA);
+      out.push({ s, z: zAbs(s, Math.round(zTop)) });
+    }
+  };
+  const pts = w.points;
+  const first = pts[0], last = pts[pts.length - 1];
+  if (first.pos_permille > 0) seg(0, first.z_mm, first.pos_permille, first.z_mm);
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (a.pos_permille === b.pos_permille) {
+      const s = posStation(a.pos_permille);
+      out.push({ s, z: zAbs(s, a.z_mm) });
+      out.push({ s, z: zAbs(s, b.z_mm) });
+    } else seg(a.pos_permille, a.z_mm, b.pos_permille, b.z_mm);
+  }
+  if (last.pos_permille < 1000) seg(last.pos_permille, last.z_mm, 1000, last.z_mm);
+  return out;
+}
+
 function heightIntents(run, L) {
   return run.interval_events
     .filter((iv) => iv.payload.kind === "height_intent")
@@ -166,6 +245,14 @@ function computeView(chain, span) {
     entry.result = resultFor(run, L);
     for (const s of samples) see(s.z);
     for (const w of wallProfiles(run, L)) { see(w.z0); see(w.z1); }
+    for (const w of baseTops(run, L)) {
+      const posStation = (pos) => w.s0 + ((w.s1 - w.s0) * pos) / 1000;
+      for (const pt of w.points)
+        see(groundZAt(samples, Math.round(posStation(pt.pos_permille))) + pt.z_mm);
+      // flat extensions to the interval ends ride a possibly different ground
+      see(groundZAt(samples, Math.round(w.s0)) + w.points[0].z_mm);
+      see(groundZAt(samples, Math.round(w.s1)) + w.points[w.points.length - 1].z_mm);
+    }
     for (const it of heightIntents(run, L)) {
       see(groundZAt(samples, it.s0) + it.h);
       see(groundZAt(samples, it.s1) + it.h);
@@ -231,7 +318,7 @@ function render() {
   renderGrid(chain);
   renderResult(chain);
   renderGround(chain);
-  renderWall(chain);
+  renderTops(chain);
   renderIntent(chain);
 }
 
@@ -325,25 +412,77 @@ function renderGround(chain) {
   // wall-top endpoint handles live in p-edit too (drawn by renderWall)
 }
 
-function renderWall(chain) {
+function renderTops(chain) {
   const g = clearGroup("p-wall");
   const edit = document.getElementById("p-edit");
   for (const entry of chain) {
-    for (const w of wallProfiles(entry.run, entry.L)) {
-      const x0 = xOf(gsOf(entry, w.s0)), x1 = xOf(gsOf(entry, w.s1));
-      el("line", { x1: x0, y1: yOf(w.z0), x2: x1, y2: yOf(w.z1),
-        class: "profile-wall" }, g);
-      // fat invisible band: click opens the typed start/end editor
-      const hit = el("line", { x1: x0, y1: yOf(w.z0), x2: x1, y2: yOf(w.z1),
-        class: "profile-wall-hit", "data-ev": w.iv.id, "data-run": entry.run.id }, g);
-      el("title", {}, hit).textContent = t("profile.wall_band_tooltip");
+    const { run, L } = entry;
+    const tone = toneFor(run);
+    const tops = baseTops(run, L);
+
+    for (const w of tops) {
+      const posStation = (pos) => w.s0 + ((w.s1 - w.s0) * pos) / 1000;
+      const edge = topEdgeSamples(entry, w);
+      const xy = edge.map(({ s, z }) => `${xOf(gsOf(entry, s))},${yOf(z)}`);
+      // band filled between the ground line and the top edge
+      const back = edge
+        .map(({ s }) => `${xOf(gsOf(entry, s))},${yOf(groundZAt(entry.samples, Math.round(s)))}`)
+        .reverse();
+      const band = el("polygon", { points: [...xy, ...back].join(" "),
+        class: "profile-top-band", fill: tone,
+        "data-ev": w.iv.id, "data-run": run.id }, g);
+      el("title", {}, band).textContent = t("profile.top_band_tooltip");
+      band.addEventListener("click", (ev) =>
+        openTopPopover(run.id, w.iv.id, ev.clientX, ev.clientY));
+      // top edge polyline with vertical jumps at steps
+      el("polyline", { points: xy.join(" "), class: "profile-top", stroke: tone }, g);
+      // fat invisible edge: click types first/last, double-click inserts a point
+      const hit = el("polyline", { points: xy.join(" "), class: "profile-top-hit",
+        "data-ev": w.iv.id, "data-run": run.id }, g);
+      el("title", {}, hit).textContent = t("profile.top_band_tooltip");
       hit.addEventListener("click", (ev) =>
-        openWallPopover(entry.run.id, w.iv.id, ev.clientX, ev.clientY));
-      for (const [end, s, z] of [["start", w.s0, w.z0], ["end", w.s1, w.z1]]) {
-        const h = el("rect", { x: xOf(gsOf(entry, s)) - 4, y: yOf(z) - 4, width: 8, height: 8,
-          class: "profile-wall-handle", "data-ev": w.iv.id, "data-run": entry.run.id,
-          "data-end": end }, edit);
-        el("title", {}, h).textContent = t("profile.wall_tooltip");
+        openTopPopover(run.id, w.iv.id, ev.clientX, ev.clientY));
+      // draggable point dots — diamonds, visually distinct from ground circles
+      w.points.forEach((pt, i) => {
+        const st = posStation(pt.pos_permille);
+        const gx = xOf(gsOf(entry, st));
+        const gy = yOf(groundZAt(entry.samples, Math.round(st)) + pt.z_mm);
+        const d = el("rect", { x: gx - 4, y: gy - 4, width: 8, height: 8,
+          transform: `rotate(45 ${gx} ${gy})`, class: "profile-top-dot", fill: tone,
+          "data-ev": w.iv.id, "data-run": run.id, "data-idx": i }, edit);
+        el("title", {}, d).textContent = t("profile.top_dot_tooltip");
+      });
+    }
+
+    if (!tops.length) {
+      // legacy linear wall_profile fallback — rendered as before
+      const legacy = wallProfiles(run, L);
+      for (const w of legacy) {
+        const x0 = xOf(gsOf(entry, w.s0)), x1 = xOf(gsOf(entry, w.s1));
+        el("line", { x1: x0, y1: yOf(w.z0), x2: x1, y2: yOf(w.z1),
+          class: "profile-wall" }, g);
+        // fat invisible band: click opens the typed start/end editor
+        const hit = el("line", { x1: x0, y1: yOf(w.z0), x2: x1, y2: yOf(w.z1),
+          class: "profile-wall-hit", "data-ev": w.iv.id, "data-run": run.id }, g);
+        el("title", {}, hit).textContent = t("profile.wall_band_tooltip");
+        hit.addEventListener("click", (ev) =>
+          openTopPopover(run.id, w.iv.id, ev.clientX, ev.clientY));
+        for (const [end, s, z] of [["start", w.s0, w.z0], ["end", w.s1, w.z1]]) {
+          const h = el("rect", { x: xOf(gsOf(entry, s)) - 4, y: yOf(z) - 4, width: 8, height: 8,
+            class: "profile-wall-handle", "data-ev": w.iv.id, "data-run": run.id,
+            "data-end": end }, edit);
+          el("title", {}, h).textContent = t("profile.wall_tooltip");
+        }
+      }
+      // built base with no top event at all: dashed creation hint above ground
+      if (builtSurface(run) && !legacy.length) {
+        const ordered = entry.reversed ? [...entry.samples].reverse() : entry.samples;
+        const attr = ordered
+          .map((s) => `${xOf(gsOf(entry, s.station))},${yOf(s.z) - HINT_LIFT_PX}`).join(" ");
+        el("polyline", { points: attr, class: "profile-top-hintline", stroke: tone }, g);
+        const hh = el("polyline", { points: attr, class: "profile-top-hint-hit",
+          "data-run": run.id }, g);
+        el("title", {}, hh).textContent = t("profile.top_hint_tooltip");
       }
     }
   }
@@ -457,18 +596,32 @@ function setupSvg() {
       drag = { kind: "wall", runId: target.dataset.run, evId: target.dataset.ev,
         end: target.dataset.end, started: false, startY: ev.clientY };
       svg.setPointerCapture(ev.pointerId);
+    } else if (target.classList.contains("profile-top-dot")) {
+      drag = { kind: "topdot", runId: target.dataset.run, evId: target.dataset.ev,
+        idx: +target.dataset.idx, started: false,
+        startX: ev.clientX, startY: ev.clientY };
+      svg.setPointerCapture(ev.pointerId);
     }
   });
 
   svg.addEventListener("pointermove", (ev) => {
     if (!drag || !view) return;
     if (!drag.started) {
-      if (Math.abs(ev.clientY - drag.startY) < 3) return;
+      // top dots drag in BOTH axes (pos + z); everything else vertically only
+      const moved = Math.abs(ev.clientY - drag.startY) >= 3 ||
+        (drag.kind === "topdot" && Math.abs(ev.clientX - drag.startX) >= 3);
+      if (!moved) return;
       // gesture begins: snapshot BEFORE the first mutation
-      pushSnapshot(drag.kind === "wall" ? "profile-wall" : "ground");
+      pushSnapshot(drag.kind === "wall" ? "profile-wall"
+        : drag.kind === "topdot" ? "profile-top" : "ground");
       drag.started = true;
     }
-    const [, y] = svgPoint(ev);
+    const [x, y] = svgPoint(ev);
+    if (drag.kind === "topdot") {
+      moveTopDot(drag, x, y);
+      render();
+      return;
+    }
     const z = snapZ(zOfY(y));
     if (drag.kind === "node") {
       // one node z: moving it moves the ground of BOTH adjacent sections
@@ -501,27 +654,103 @@ function setupSvg() {
       openSampleZInput(d.runId, d.evId); // click without a drag: type an exact z
     } else if (ev.type === "pointerup" && d.kind === "node") {
       openNodeZInput(d.nodeId);
+    } else if (ev.type === "pointerup" && d.kind === "topdot") {
+      openTopDotPopover(d.runId, d.evId, d.idx, ev.clientX, ev.clientY);
     }
   };
   svg.addEventListener("pointerup", endDrag);
   svg.addEventListener("pointercancel", endDrag);
 
-  // double-click the ground line: add an interior sample at that station
+  // double-click: ground line adds a sample; the base-top hint line creates a
+  // top event; the base-top edge inserts an interpolated point
   svg.addEventListener("dblclick", (ev) => {
-    if (!view || !ev.target.classList.contains("profile-ground-hit")) return;
-    ev.preventDefault();
+    if (!view) return;
+    const cls = ev.target.classList;
     const entry = chainEntry(ev.target.dataset.run);
     if (!entry) return;
-    const [x] = svgPoint(ev);
-    // global station -> (run, local station) via the chain
-    const gs = stationOfX(x);
-    const local = Math.max(0, Math.min(
-      entry.reversed ? entry.offset + entry.L - gs : gs - entry.offset, entry.L));
-    const z = snapZ(groundZAt(entry.samples, local));
-    pushSnapshot("profile-add-sample");
-    addPointEvent(entry.run.id, { kind: "elevation_sample", z_mm: z }, local);
-    saveTopology();
+
+    if (cls.contains("profile-ground-hit")) {
+      ev.preventDefault();
+      const [x] = svgPoint(ev);
+      // global station -> (run, local station) via the chain
+      const gs = stationOfX(x);
+      const local = Math.max(0, Math.min(
+        entry.reversed ? entry.offset + entry.L - gs : gs - entry.offset, entry.L));
+      const z = snapZ(groundZAt(entry.samples, local));
+      pushSnapshot("profile-add-sample");
+      addPointEvent(entry.run.id, { kind: "elevation_sample", z_mm: z }, local);
+      saveTopology();
+    } else if (cls.contains("profile-top-hint-hit")) {
+      // create a base_top spanning the whole section, level at the clicked height
+      ev.preventDefault();
+      const [x, y] = svgPoint(ev);
+      const local = localStationOf(entry, x);
+      const z = Math.max(0, snapZ(zOfY(y) - groundZAt(entry.samples, Math.round(local))));
+      pushSnapshot("profile-top-create");
+      addIntervalEvent(entry.run.id, {
+        kind: "base_top",
+        points: [{ pos_permille: 0, z_mm: z }, { pos_permille: 1000, z_mm: z }],
+      }, 0, entry.L);
+      saveTopology();
+    } else if (cls.contains("profile-top-hit")) {
+      // insert a point on the top edge; interpolated z keeps the line unchanged
+      ev.preventDefault();
+      closeWallPopover(); // the first click of the double-click opened it
+      const run = entry.run;
+      const iv = run.interval_events.find((e) => e.id === ev.target.dataset.ev);
+      if (!iv || iv.payload.kind !== "base_top") return;
+      const s0 = Math.min(stationOfAnchor(run, iv.start_anchor), entry.L);
+      const s1 = Math.min(stationOfAnchor(run, iv.end_anchor), entry.L);
+      if (s1 <= s0) return;
+      const [x] = svgPoint(ev);
+      const local = localStationOf(entry, x);
+      const p = Math.max(0, Math.min(1000, Math.round(((local - s0) * 1000) / (s1 - s0))));
+      const pts = iv.payload.points;
+      const z = topZAt(pts, p);
+      let at = pts.findIndex((pt) => pt.pos_permille > p);
+      if (at < 0) at = pts.length;
+      pushSnapshot("profile-top-insert");
+      pts.splice(at, 0, { pos_permille: p, z_mm: z });
+      saveTopology();
+    }
   });
+}
+
+// svg x -> station local to a chain entry's run (float, clamped to [0, L])
+function localStationOf(entry, x) {
+  const gs = (x - PAD) / view.sx;
+  return Math.max(0, Math.min(
+    entry.reversed ? entry.offset + entry.L - gs : gs - entry.offset, entry.L));
+}
+
+// one 2-axis drag step of a base_top point: horizontal moves pos_permille
+// (clamped between its neighbours; within STEP_SNAP_PX of a neighbour's x it
+// snaps to EXACTLY the neighbour's pos — that's how a user makes a step),
+// vertical moves z_mm with the usual 10 mm snap, never below ground
+function moveTopDot(d, x, y) {
+  const entry = chainEntry(d.runId);
+  const run = entry?.run;
+  const iv = run?.interval_events.find((e) => e.id === d.evId);
+  if (!entry || !iv || iv.payload.kind !== "base_top") return;
+  const pts = iv.payload.points;
+  const pt = pts[d.idx];
+  if (!pt) return;
+  const s0 = Math.min(stationOfAnchor(run, iv.start_anchor), entry.L);
+  const s1 = Math.min(stationOfAnchor(run, iv.end_anchor), entry.L);
+  if (s1 <= s0) return;
+  const local = localStationOf(entry, x);
+  let p = Math.round(((local - s0) * 1000) / (s1 - s0));
+  const lo = d.idx > 0 ? pts[d.idx - 1].pos_permille : 0;
+  const hi = d.idx + 1 < pts.length ? pts[d.idx + 1].pos_permille : 1000;
+  p = Math.max(lo, Math.min(p, hi));
+  for (const n of [pts[d.idx - 1], pts[d.idx + 1]]) {
+    if (!n) continue;
+    const nx = xOf(gsOf(entry, s0 + ((s1 - s0) * n.pos_permille) / 1000));
+    if (Math.abs(x - nx) <= STEP_SNAP_PX) p = n.pos_permille;
+  }
+  pt.pos_permille = p;
+  const st = s0 + ((s1 - s0) * p) / 1000;
+  pt.z_mm = Math.max(0, snapZ(zOfY(y) - groundZAt(entry.samples, Math.round(st))));
 }
 
 // ---------- typed z editors ----------
@@ -596,21 +825,30 @@ function onWallOutside(ev) {
   if (wallPopover && !wallPopover.contains(ev.target)) closeWallPopover();
 }
 
-function openWallPopover(runId, evId, clientX, clientY) {
+// band-click editor: two typed fields for the FIRST and LAST points. Saving a
+// legacy wall_profile converts it into the equivalent 2-point base_top in place
+// (same event id, same interval, one snapshot).
+function openTopPopover(runId, evId, clientX, clientY) {
   closeWallPopover();
   const run = runById(runId);
   const iv = run?.interval_events.find((e) => e.id === evId);
   if (!iv) return;
+  const legacy = iv.payload.kind === "wall_profile";
+  if (!legacy && iv.payload.kind !== "base_top") return;
+  const pts = legacy ? null : iv.payload.points;
+  if (!legacy && pts.length < 2) return;
+  const z0 = legacy ? iv.payload.top_z_start_mm : pts[0].z_mm;
+  const z1 = legacy ? iv.payload.top_z_end_mm : pts[pts.length - 1].z_mm;
   wallPopover = document.createElement("div");
   wallPopover.className = "popover";
-  wallPopover.innerHTML = `<h4>${t("profile.wall_editor")}</h4>
+  wallPopover.innerHTML = `<h4>${t(legacy ? "profile.wall_editor" : "events.base_top")}</h4>
     <div class="meta"><bdi>${esc(runId)}</bdi></div>
     <label>${t("popover.wall_start")}
-      <input id="profile-wall-start" type="number" step="${Z_SNAP}"
-        value="${iv.payload.top_z_start_mm}"></label>
+      <input id="profile-wall-start" type="number" step="${Z_SNAP}" value="${z0}"></label>
     <label>${t("popover.wall_end")}
-      <input id="profile-wall-end" type="number" step="${Z_SNAP}"
-        value="${iv.payload.top_z_end_mm}"></label>
+      <input id="profile-wall-end" type="number" step="${Z_SNAP}" value="${z1}"></label>
+    ${!legacy && pts.length > 2
+      ? `<div class="meta">${t("profile.top_interior_hint")}</div>` : ""}
     <div class="popover-actions">
       <button id="profile-wall-cancel">${t("popover.cancel")}</button>
       <button id="profile-wall-save" class="primary">${t("popover.save")}</button></div>`;
@@ -619,14 +857,20 @@ function openWallPopover(runId, evId, clientX, clientY) {
   wallPopover.style.top = `${Math.max(4, Math.min(clientY + 8, window.innerHeight - wallPopover.offsetHeight - 12))}px`;
 
   function save() {
-    const z0 = Math.round(+document.getElementById("profile-wall-start").value);
-    const z1 = Math.round(+document.getElementById("profile-wall-end").value);
+    const nz0 = Math.round(+document.getElementById("profile-wall-start").value);
+    const nz1 = Math.round(+document.getElementById("profile-wall-end").value);
     closeWallPopover();
-    if (!Number.isFinite(z0) || !Number.isFinite(z1)) return;
-    if (z0 === iv.payload.top_z_start_mm && z1 === iv.payload.top_z_end_mm) return;
-    pushSnapshot("profile-wall-typed");
-    iv.payload.top_z_start_mm = z0;
-    iv.payload.top_z_end_mm = z1;
+    if (!Number.isFinite(nz0) || !Number.isFinite(nz1)) return;
+    if (!legacy && nz0 === z0 && nz1 === z1) return;
+    pushSnapshot("profile-top-typed");
+    if (legacy) {
+      // migrate: the linear special case becomes an explicit 2-point base_top
+      iv.payload = { kind: "base_top", points: [
+        { pos_permille: 0, z_mm: nz0 }, { pos_permille: 1000, z_mm: nz1 }] };
+    } else {
+      pts[0].z_mm = nz0;
+      pts[pts.length - 1].z_mm = nz1;
+    }
     saveTopology();
   }
 
@@ -640,5 +884,61 @@ function openWallPopover(runId, evId, clientX, clientY) {
   const first = wallPopover.querySelector("input");
   if (first) { first.focus(); first.select(); }
   // pointer down anywhere outside cancels (registered after this click)
+  setTimeout(() => document.addEventListener("pointerdown", onWallOutside, true), 0);
+}
+
+// clicked (not dragged) base-top dot: type an exact z, or delete the point.
+// Deleting splices it; a base_top left with fewer than 2 points is removed.
+function openTopDotPopover(runId, evId, idx, clientX, clientY) {
+  closeWallPopover();
+  const run = runById(runId);
+  const iv = run?.interval_events.find((e) => e.id === evId);
+  if (!iv || iv.payload.kind !== "base_top") return;
+  const pts = iv.payload.points;
+  const pt = pts[idx];
+  if (!pt) return;
+  wallPopover = document.createElement("div");
+  wallPopover.className = "popover";
+  wallPopover.innerHTML = `<h4>${t("events.base_top")}</h4>
+    <div class="meta"><bdi>${esc(runId)}</bdi></div>
+    <label>${t("popover.top_z")}
+      <input id="profile-top-z" type="number" step="${Z_SNAP}" min="0"
+        value="${pt.z_mm}"></label>
+    <div class="popover-actions">
+      <button id="profile-top-delete" title="${esc(t("common.remove"))}">✕</button>
+      <button id="profile-top-cancel">${t("popover.cancel")}</button>
+      <button id="profile-top-save" class="primary">${t("popover.save")}</button></div>`;
+  document.body.appendChild(wallPopover);
+  wallPopover.style.left = `${Math.max(4, Math.min(clientX + 8, window.innerWidth - wallPopover.offsetWidth - 12))}px`;
+  wallPopover.style.top = `${Math.max(4, Math.min(clientY + 8, window.innerHeight - wallPopover.offsetHeight - 12))}px`;
+
+  function save() {
+    const z = Math.round(+document.getElementById("profile-top-z").value);
+    closeWallPopover();
+    if (!Number.isFinite(z) || z === pt.z_mm) return;
+    pushSnapshot("profile-top-typed");
+    pt.z_mm = Math.max(0, z);
+    saveTopology();
+  }
+
+  function del() {
+    closeWallPopover();
+    pushSnapshot("profile-top-delete");
+    pts.splice(idx, 1);
+    if (pts.length < 2)
+      run.interval_events = run.interval_events.filter((e) => e.id !== evId);
+    saveTopology();
+  }
+
+  wallPopover.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Escape") closeWallPopover();
+    else if (ev.key === "Enter") { ev.preventDefault(); save(); }
+  });
+  wallPopover.querySelector("#profile-top-cancel").addEventListener("click", closeWallPopover);
+  wallPopover.querySelector("#profile-top-save").addEventListener("click", save);
+  wallPopover.querySelector("#profile-top-delete").addEventListener("click", del);
+  const first = wallPopover.querySelector("input");
+  if (first) { first.focus(); first.select(); }
   setTimeout(() => document.addEventListener("pointerdown", onWallOutside, true), 0);
 }

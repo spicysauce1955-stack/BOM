@@ -148,6 +148,14 @@ input[type="number"] { direction: ltr; }
 .profile-wall { stroke: #dc2626; stroke-width: 2.5; }
 .profile-wall-hit { stroke: transparent; stroke-width: 12; cursor: pointer; }
 .profile-wall-handle { fill: #dc2626; stroke: #fff; stroke-width: 1; cursor: ns-resize; }
+/* base top-line (base_top): filled band + edge + diamond point dots */
+.profile-top-band { stroke: none; fill-opacity: 0.16; cursor: pointer; }
+.profile-top { fill: none; stroke-width: 2.5; }
+.profile-top-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+.profile-top-dot { stroke: #fff; stroke-width: 1.2; cursor: move; }
+.profile-top-hintline { fill: none; stroke-width: 1.5; stroke-dasharray: 5 4;
+  opacity: 0.55; pointer-events: none; }
+.profile-top-hint-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: copy; }
 .profile-intent { fill: none; stroke: #0891b2; stroke-width: 1.5;
   stroke-dasharray: 5 4; }
 .profile-panel { opacity: 0.8; cursor: pointer; stroke-width: 1; }

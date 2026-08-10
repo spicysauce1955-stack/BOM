@@ -45,3 +45,14 @@ fit-view button, world-aligned grid re-rendered per view (5 m spacing when zoome
 Immutable BOM snapshots with lifecycle (draft/accepted/superseded, atomic supersede),
 quotes panel in the BOM tab (he/en), impact preview reports vs-accepted-quote deltas.
 Smoke hardened: aborts if a stale server holds the port. 208 pytest + 26/26 smoke.
+
+## Base top-line editing UI (2026-08-10) — COMPLETE
+Side-view editing for the base_top event (backend efc49e7): filled band whose top edge
+follows the point profile (vertical jumps at steps, concrete/wall tones), draggable
+diamond dots (10 mm z snap; horizontal drag moves pos_permille, snapping onto a
+neighbour makes a STEP), dbl-click edge inserts an interpolated point, dbl-click the
+dashed hint line gives a bare built base a top line, dot popover types/deletes points,
+band popover edits first/last and converts legacy wall_profile into a 2-point base_top.
+Inspector lists base_top with a localized point count. 8 he/en keys added.
+217 pytest + 26/26 smoke + 28/28 dedicated CDP drive (step -> K-STEP-POST transition
+post verified in plan AND profile) + inspected screenshots.
