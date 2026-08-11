@@ -57,6 +57,10 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
   revision — server revisions never go backwards. Non-user changes never push history;
   use `reloadProject()` (not `openProject`) after non-topology mutations or you wipe the
   user's undo stack.
+- **Base-top geometry is pure**: the side view's base actions (height, level,
+  match-neighbours, add-step) are point-list transforms in `base-top.js` with no DOM
+  or state — `profile.js` only wires them to buttons. Keep new profile math there so it
+  stays testable in node (`tests/web/test_base_top_module.py`).
 - **Anchors are segment-local**: author with `geom.anchorFor`, resolve with
   `geom.stationOfAnchor` — these mirror backend `make_anchor`/`anchor_station` exactly.
   Never read `anchor.offset_mm` as a station.

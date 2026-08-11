@@ -75,9 +75,15 @@
           <div id="profile">
             <div class="profile-header">
               <span data-i18n="profile.title">Side view</span>
+              <select id="profile-scope" data-i18n-title="profile.scope">
+                <option value="all" data-i18n="profile.scope.all">Whole fence</option>
+                <option value="section" data-i18n="profile.scope.section">Selected section</option>
+              </select>
+              <select id="profile-section"></select>
               <button id="profile-exag" data-i18n-title="profile.exaggeration" title="Vertical exaggeration">5×</button>
               <button id="profile-toggle">▾</button>
             </div>
+            <div id="profile-base-bar" class="profile-base-bar"></div>
             <div id="profile-placeholder" class="meta"></div>
             <svg id="profile-svg" viewBox="0 0 900 180" preserveAspectRatio="none"></svg>
           </div>

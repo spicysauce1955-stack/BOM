@@ -319,5 +319,20 @@
   "enum.plumb": "plumb",
   "enum.perpendicular": "perpendicular",
   "enum.custom": "custom",
-  "hint.draw_cm": "Draw: click to place dots — or aim and type a length: a bare number is {u} ({ex_mm} = 42 m), or add a unit (4m, 250cm). Enter places the next dot exactly; Enter or double-click finishes the run, Esc cancels."
+  "hint.draw_cm": "Draw: click to place dots — or aim and type a length: a bare number is {u} ({ex_mm} = 42 m), or add a unit (4m, 250cm). Enter places the next dot exactly; Enter or double-click finishes the run, Esc cancels.",
+  "profile.scope": "What the side view shows",
+  "profile.scope.all": "Whole fence",
+  "profile.scope.section": "One section",
+  "profile.base_height": "top height above ground ({u})",
+  "profile.level": "⎯ Horizontal",
+  "profile.level_title": "Make the base top level (one elevation across the section, with a point at every ground break)",
+  "profile.match": "⇄ Match neighbours",
+  "profile.match_title": "Move this section's ends to meet the adjacent sections' base tops at the shared corners",
+  "profile.add_step": "⌐ Add step",
+  "profile.add_step_title": "Put a step in the middle of the base top; drag its diamonds to move or resize it",
+  "profile.base_soil_hint": "This section sits on soil — set a wall or concrete base to give it a top profile.",
+  "profile.base_needs_height": "Type a height first.",
+  "profile.base_needs_top": "Give this section a base height first.",
+  "profile.base_no_neighbour": "No adjacent section with a base top to match.",
+  "profile.base_bad_height": "Height must be a number, 0 or more."
 }

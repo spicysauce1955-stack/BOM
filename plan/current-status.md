@@ -180,3 +180,17 @@ editor.js into units.js as `parseTypedLength(buf, unit)`, so its unit-dependent 
 matrix is pinned in node as well as through a canvas keystroke check — both layers
 mutation-verified. 260 pytest + 44/44 smoke. Dispositions:
 docs/reviews/units-review-response.md.
+
+## Side view: scope switch + base-top actions (2026-08-11) — COMPLETE
+User feedback: aligning two sections' bases, changing a base height at all, making one
+horizontal and creating steps were all hard, and the whole fence competed for one strip.
+The side view now has a SCOPE switch (whole fence | one section, remembered) with a section
+picker that keeps the plan selection in step; a focused section fills a taller panel, so the
+drag targets are far bigger. New `js/base-top.js` holds the geometry as pure transforms —
+`flatPoints` (a height above ground), `levelPoints` (ONE absolute elevation, with a point at
+every ground break, since z is stored above local ground), `matchEnds` (meet the neighbour's
+top at a shared node), `withStep` (a plateau: everything past the step rises with it) — plus
+`topZAt`, moved out of profile.js. A base bar drives them by number instead of by aim, and
+says plainly when a section is on soil (base_top only affects BUILT_BASES). 395 pytest
+(13 new node-run geometry tests) + 58/58 smoke, incl. two adjacent sections aligned
+end-to-end. Level is exact to NUMERIC_TOLERANCE_MM — permille point positions quantize it.

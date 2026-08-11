@@ -437,6 +437,156 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("switching back to mm shows the same length in mm",
               "2100" in (event_row or ""))
 
+        # --- side view: scope switch + base-top actions -----------------------
+        c.click(*c.element_center("#btn-units"))   # drive this block in cm
+        time.sleep(0.6)
+        c.js("document.getElementById('profile-scope').value = 'section';"
+             "document.getElementById('profile-scope').dispatchEvent(new Event('change'));"
+             "'ok'")
+        time.sleep(0.8)
+        sections_drawn = c.js(
+            "new Set([...document.querySelectorAll('.profile-section-label')]"
+            ".map(e => e.textContent)).size")
+        check("section scope draws exactly one section", sections_drawn == 1)
+        check("focused side view gets a taller panel",
+              c.js("document.getElementById('profile-svg').clientHeight") > 200)
+        # a soil section has no base top to edit — say so, offer nothing
+        bar = c.js("document.getElementById('profile-base-bar').textContent")
+        check("a soil section explains why there is no base profile",
+              "קרקע" in (bar or "") and not c.js("!!document.getElementById('base-height')"))
+        # give the section a built base, then drive the four base actions.
+        # the picker decides which section the bar edits — pin it explicitly so
+        # the checks below read back the very same run
+        c.js("""
+{
+  const sel = document.getElementById('profile-section');
+  sel.value = sel.options[0].value;
+  sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.8)
+        focus_id = c.js("document.getElementById('profile-section').value")
+        c.click(*c.element_center("#tool-base"))
+        c.click(*c.canvas_px(1500, 500))
+        time.sleep(0.5)
+        c.js("""
+{
+  const s = document.getElementById('pop-surface');
+  if (s) { s.value = 'masonry_wall'; document.getElementById('pop-save').click(); }
+}
+'ok'""")
+        time.sleep(1.2)
+        c.js("""
+{
+  const h = document.getElementById('base-height');
+  h.value = '60';                      // 60 cm, in cm mode
+  h.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.2)
+        top_points = c.js(f"""
+fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+  .then(r => r.json()).then(p => {{
+    const run = p.topology.runs.find(r => r.id === {focus_id!r});
+    const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
+    return ev ? ev.payload.points : null;
+  }})""")
+        if top_points is None:
+            print("  base bar said:", c.js("document.getElementById('profile-base-bar').textContent"))
+        check("typing a base height creates the top profile in mm",
+              top_points is not None and [p["z_mm"] for p in top_points] == [600, 600])
+        c.click(*c.element_center("#base-step"))
+        time.sleep(1.2)
+        stepped = c.js(f"""
+fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+  .then(r => r.json()).then(p => {{
+    const run = p.topology.runs.find(r => r.id === {focus_id!r});
+    const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
+    return ev ? ev.payload.points : null;
+  }})""")
+        positions = [p["pos_permille"] for p in (stepped or [])]
+        check("add-step inserts a real step (two points at one position)",
+              positions.count(500) == 2
+              and [p["z_mm"] for p in stepped] == [600, 600, 800, 800])
+        c.click(*c.element_center("#base-level"))
+        time.sleep(1.2)
+        levelled = c.js(f"""
+fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+  .then(r => r.json()).then(p => {{
+    const run = p.topology.runs.find(r => r.id === {focus_id!r});
+    const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
+    return ev ? ev.payload.points : null;
+  }})""")
+        check("horizontal replaces the step with one level elevation",
+              levelled is not None
+              and len({p["pos_permille"] for p in levelled}) == len(levelled)
+              and max(p["z_mm"] for p in levelled) == 800)
+        # match-neighbours: the headline complaint ("aligning two sections is
+        # hard"). Draw a second section off run1's END node, give it its own
+        # base height, then make run1 meet it at the shared corner.
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.canvas_px(6000, 0))      # snaps onto run1's end node
+        c.click(*c.canvas_px(6000, 2000))
+        c.key("Enter")
+        time.sleep(1.2)
+        neighbour_id = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => {
+    const run1 = p.topology.runs[0];
+    const nb = p.topology.runs.find(r => r.id !== run1.id &&
+      (r.start_node_id === run1.end_node_id || r.end_node_id === run1.end_node_id));
+    return nb ? nb.id : null;
+  })""")
+        check("the new section shares run1's end node", bool(neighbour_id))
+        c.click(*c.element_center("#tool-base"))
+        c.click(*c.canvas_px(6000, 1000))   # midpoint of the new section
+        time.sleep(0.5)
+        c.js("""
+{
+  const s = document.getElementById('pop-surface');
+  if (s) { s.value = 'concrete'; document.getElementById('pop-save').click(); }
+}
+'ok'""")
+        time.sleep(1.2)
+        c.js(f"""
+{{
+  const sel = document.getElementById('profile-section');
+  sel.value = {neighbour_id!r};
+  sel.dispatchEvent(new Event('change'));
+}}
+'ok'""")
+        time.sleep(0.8)
+        c.js("""
+{
+  const h = document.getElementById('base-height');
+  h.value = '40';                      // the neighbour's top: 40 cm
+  h.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.2)
+        c.js(f"""
+{{
+  const sel = document.getElementById('profile-section');
+  sel.value = {focus_id!r};            // back to run1, whose top is at 80 cm
+  sel.dispatchEvent(new Event('change'));
+}}
+'ok'""")
+        time.sleep(0.8)
+        c.click(*c.element_center("#base-match"))
+        time.sleep(1.2)
+        matched = c.js(f"""
+fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+  .then(r => r.json()).then(p => {{
+    const run = p.topology.runs.find(r => r.id === {focus_id!r});
+    const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
+    return ev ? ev.payload.points.map(pt => pt.z_mm) : null;
+  }})""")
+        check("match-neighbours moves the shared end to the neighbour's top",
+              matched is not None and matched[-1] == 400 and matched[0] == 800)
+        c.shot("10-side-view-section.png")
+        c.click(*c.element_center("#btn-units"))   # back to mm
+        time.sleep(0.6)
+
         # --- clear topology (draft + persisted, the original bug) ------------
         c.click(*c.element_center("#tool-draw"))
         c.click(*c.canvas_px(1000, 3000))   # start a draft, leave it unfinished

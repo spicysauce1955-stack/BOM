@@ -14,7 +14,12 @@ import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { addIntervalEvent, addPointEvent, on, saveTopology, setSelection, state } from "./state.js";
-import { enumWord, fmt, fmtLen, snapStep, toDisplayValue, toMm, tu } from "./units.js";
+import {
+  enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu,
+} from "./units.js";
+import {
+  STEP_RISE_MM, flatPoints, levelPoints, matchEnds, topZAt, withStep,
+} from "./base-top.js";
 
 // viewBox geometry (preserveAspectRatio=none stretches to the container width)
 const W = 900, H = 180;
@@ -34,6 +39,8 @@ const BASE_TONES = { masonry_wall: "#dc2626", concrete: "#64748b" };
 let exag = 5;                // 1x / 5x toggle, default 5x
 let view = null;             // { chain, span, sx, sy, zMin } of the last render
 let drag = null;             // active vertical-drag session
+let scope = "all";           // "all" (whole fence) | "section" (one, focused)
+let focusRunId = null;       // section-scope choice when nothing is selected
 
 export function initProfile() {
   const panel = document.getElementById("profile");
@@ -53,6 +60,21 @@ export function initProfile() {
     render();
   });
 
+  // scope: the whole fence, or ONE chosen section across the full width
+  const scopeSel = document.getElementById("profile-scope");
+  scope = localStorage.getItem("fenceai.profile.scope") === "section" ? "section" : "all";
+  scopeSel.value = scope;
+  scopeSel.addEventListener("change", () => {
+    scope = scopeSel.value;
+    localStorage.setItem("fenceai.profile.scope", scope);
+    closeWallPopover();
+    render();
+  });
+  document.getElementById("profile-section").addEventListener("change", (ev) => {
+    focusRunId = ev.target.value;
+    setSelection({ runId: focusRunId });   // the plan canvas follows the choice
+  });
+
   setupSvg();
   on("project-loaded", () => { closeWallPopover(); render(); });
   on("topology-changed", render);
@@ -67,8 +89,23 @@ export function initProfile() {
 // Runs in stored order, each placed at a global offset. A run connects forward
 // when its start node is the chain's current end, REVERSED when its end node
 // is; otherwise (disconnected piece / branch) it starts after a small gap.
-function buildChain() {
+// Which section the panel is FOCUSED on: the canvas selection when there is one,
+// otherwise the section picker's own choice, otherwise the first run.
+function focusedRunId() {
   const runs = state.project?.topology.runs || [];
+  if (state.selection.runId && runs.some((r) => r.id === state.selection.runId))
+    return state.selection.runId;
+  if (focusRunId && runs.some((r) => r.id === focusRunId)) return focusRunId;
+  return runs[0]?.id || null;
+}
+
+function buildChain() {
+  const all = state.project?.topology.runs || [];
+  // section scope draws ONE section across the full width — the same drawing,
+  // just not sharing the panel with every other section (user request)
+  const runs = scope === "section"
+    ? all.filter((r) => r.id === focusedRunId())
+    : all;
   const chain = [];
   let cursor = 0;
   let endNode = null;
@@ -128,26 +165,6 @@ function builtSurface(run) {
 }
 
 const toneFor = (run) => BASE_TONES[builtSurface(run)] || BASE_TONES.masonry_wall;
-
-// top height ABOVE ground at a permille position — mirrors backend base_top_at():
-// flat beyond the end points, linear between, right side wins AT a step
-function topZAt(points, p) {
-  if (!points.length) return 0;
-  if (p <= points[0].pos_permille) return points[0].z_mm;
-  for (let i = 0; i + 1 < points.length; i++) {
-    const a = points[i], b = points[i + 1];
-    if (a.pos_permille === b.pos_permille) {
-      if (p === a.pos_permille) return b.z_mm; // right side of the step wins
-      continue;
-    }
-    if (a.pos_permille <= p && p <= b.pos_permille) {
-      if (p === b.pos_permille) continue; // a following step may claim the boundary
-      return Math.round(a.z_mm + ((b.z_mm - a.z_mm) * (p - a.pos_permille))
-        / (b.pos_permille - a.pos_permille));
-    }
-  }
-  return points[points.length - 1].z_mm;
-}
 
 // top edge of a base_top as [{s, z}] ABSOLUTE samples in station order: ground +
 // top height, with kinks at every point pos AND every ground sample between,
@@ -276,10 +293,13 @@ function render() {
   ensureGroups();
   const placeholder = document.getElementById("profile-placeholder");
   const runs = state.project?.topology.runs || [];
+  renderSectionPicker(runs);
+  document.getElementById("profile").classList.toggle("focused", scope === "section");
   if (!runs.length) {
     view = null;
     for (const id of GROUPS) clearGroup(id);
     if (placeholder) placeholder.textContent = t("profile.empty");
+    renderBaseBar(null);
     return;
   }
   if (placeholder) placeholder.textContent = "";
@@ -291,6 +311,154 @@ function render() {
   renderGround(chain);
   renderTops(chain);
   renderIntent(chain);
+  renderBaseBar(runById(focusedRunId()));
+}
+
+function renderSectionPicker(runs) {
+  const sel = document.getElementById("profile-section");
+  if (!sel) return;
+  const current = focusedRunId();
+  sel.innerHTML = "";
+  for (const r of runs) {
+    const o = document.createElement("option");
+    o.value = r.id;
+    o.textContent = `${r.id} · ${fmtLen(runLength(r))}`;
+    if (r.id === current) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.disabled = runs.length < 2;
+}
+
+// ---------- base-top toolbar (the section's built base, edited by numbers) ----
+// Dragging diamonds is precise but hard to aim; these four actions are what the
+// dragging was always FOR: give it a height, make it horizontal, meet the next
+// section, put a step in it.
+
+// the section's base_top event and its resolved interval, or null
+function baseTopOf(run) {
+  const L = Math.max(runLength(run), 1);
+  return baseTops(run, L)[0] || null;
+}
+
+// absolute elevation of a section's top at one of its end nodes, or null when
+// that section has no base top (nothing to match against)
+function endTopAbs(run, nodeId) {
+  const L = Math.max(runLength(run), 1);
+  const w = baseTops(run, L)[0];
+  if (!w) return null;
+  const station = run.start_node_id === nodeId ? 0
+    : run.end_node_id === nodeId ? L : null;
+  if (station === null) return null;
+  const pos = w.s1 > w.s0
+    ? Math.max(0, Math.min(Math.round(((station - w.s0) * 1000) / (w.s1 - w.s0)), 1000))
+    : 0;
+  return groundZAt(groundSamplesFor(run, L), Math.round(station)) + topZAt(w.points, pos);
+}
+
+// the neighbouring section's top elevation at a shared node, or null
+function neighbourTopAbs(run, nodeId) {
+  for (const other of state.project?.topology.runs || []) {
+    if (other.id === run.id) continue;
+    if (other.start_node_id !== nodeId && other.end_node_id !== nodeId) continue;
+    const abs = endTopAbs(other, nodeId);
+    if (abs !== null) return abs;
+  }
+  return null;
+}
+
+// write a new point profile for the section: one base_top per section, replaced
+// whole (a legacy 2-point wall_profile is migrated in the same gesture)
+function applyBaseTop(run, points, label) {
+  pushSnapshot(label);
+  const existing = run.interval_events.find((iv) => iv.payload.kind === "base_top");
+  if (existing) {
+    existing.payload.points = points;
+  } else {
+    run.interval_events = run.interval_events.filter(
+      (iv) => iv.payload.kind !== "wall_profile");
+    addIntervalEvent(run.id, { kind: "base_top", points }, 0, Math.max(runLength(run), 1));
+  }
+  saveTopology();
+}
+
+function renderBaseBar(run) {
+  const bar = document.getElementById("profile-base-bar");
+  if (!bar) return;
+  bar.innerHTML = "";
+  if (!run) return;
+  const surface = builtSurface(run);
+  if (!surface) {
+    // base_top only changes anything on a BUILT base (generator BUILT_BASES) —
+    // say so instead of offering controls that would quietly do nothing
+    bar.innerHTML = `<span class="meta">${esc(tu("profile.base_soil_hint"))}</span>`;
+    return;
+  }
+  const w = baseTopOf(run);
+  const startZ = w ? topZAt(w.points, 0) : null;
+  bar.innerHTML = `
+    <span class="meta"><bdi>${esc(run.id)}</bdi> · ${esc(t("surface." + surface))}</span>
+    <label>${esc(tu("profile.base_height"))}
+      <input id="base-height" type="number" step="${inputStep()}" min="0"
+        value="${startZ === null ? "" : toDisplayValue(startZ)}"></label>
+    <button id="base-level" title="${esc(t("profile.level_title"))}">${esc(t("profile.level"))}</button>
+    <button id="base-match" title="${esc(t("profile.match_title"))}">${esc(t("profile.match"))}</button>
+    <button id="base-step" title="${esc(t("profile.add_step_title"))}">${esc(t("profile.add_step"))}</button>
+    <span class="meta" id="base-note"></span>`;
+
+  const note = (key) => { document.getElementById("base-note").textContent = t(key); };
+
+  // height: one number, applied as a constant height above the ground
+  bar.querySelector("#base-height").addEventListener("change", (ev) => {
+    const mm = toMm(ev.target.value);
+    if (mm === null || mm < 0) { note("profile.base_bad_height"); render(); return; }
+    applyBaseTop(run, flatPoints(mm), "base-height");
+  });
+
+  // horizontal: one absolute elevation, with a point at every ground break so
+  // the top stays level instead of following the ground's kinks
+  bar.querySelector("#base-level").addEventListener("click", () => {
+    const L = Math.max(runLength(run), 1);
+    const samples = groundSamplesFor(run, L);
+    const stations = samples.map((s) => s.station);
+    const groundAt = (s) => groundZAt(samples, Math.round(s));
+    const cur = baseTopOf(run);
+    let absZ;
+    if (cur) {
+      // level UP to the highest point of the current top: never buries a corner
+      absZ = Math.max(...cur.points.map((pt) =>
+        groundAt(cur.s0 + ((cur.s1 - cur.s0) * pt.pos_permille) / 1000) + pt.z_mm));
+    } else {
+      const typed = toMm(document.getElementById("base-height").value);
+      if (typed === null) { note("profile.base_needs_height"); return; }
+      absZ = Math.max(...stations.map(groundAt)) + typed;
+    }
+    const s0 = cur ? cur.s0 : 0, s1 = cur ? cur.s1 : L;
+    applyBaseTop(run, levelPoints(stations, groundAt, s0, s1, absZ), "base-level");
+  });
+
+  // match: meet the neighbouring section's top at each shared node
+  bar.querySelector("#base-match").addEventListener("click", () => {
+    const cur = baseTopOf(run);
+    if (!cur) { note("profile.base_needs_top"); return; }
+    const L = Math.max(runLength(run), 1);
+    const samples = groundSamplesFor(run, L);
+    const startAbs = neighbourTopAbs(run, run.start_node_id);
+    const endAbs = neighbourTopAbs(run, run.end_node_id);
+    if (startAbs === null && endAbs === null) { note("profile.base_no_neighbour"); return; }
+    applyBaseTop(run, matchEnds(cur.points, {
+      startAbs, endAbs,
+      groundStart: groundZAt(samples, 0),
+      groundEnd: groundZAt(samples, L),
+    }), "base-match");
+  });
+
+  // step: a real plateau — everything past the step moves up with it
+  bar.querySelector("#base-step").addEventListener("click", () => {
+    const cur = baseTopOf(run);
+    const points = cur ? cur.points : flatPoints(toMm(
+      document.getElementById("base-height").value) ?? STEP_RISE_MM);
+    applyBaseTop(run, withStep(points, 500, STEP_RISE_MM), "base-step");
+  });
 }
 
 function renderGrid(chain) {
