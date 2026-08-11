@@ -31,6 +31,10 @@ class RequirementLine(BaseModel):
     cut_length_mm: Mm | None = None
     length_basis: str | None = None  # "width" | "slope" (Research A pitfall 4)
     pegs: list[str] = []  # strategy element ids
+    # what this line IS, structurally. Presentation depends on it — a customer
+    # proposal names posts and panels but describes fixings and concrete rather
+    # than itemising them — and guessing that from a SKU string would be a lie.
+    role: str = ""  # post | cap | concrete | rail | screw | gate_kit
 
 
 def derive_requirements(
@@ -42,7 +46,7 @@ def derive_requirements(
     lines: list[RequirementLine] = []
     n = 0
 
-    def add(sku: str, qty: int, unit: str, pegs: list[str], **kw) -> None:
+    def add(sku: str, qty: int, unit: str, pegs: list[str], **kw) -> None:  # noqa: D401
         nonlocal n
         n += 1
         lines.append(
@@ -50,21 +54,21 @@ def derive_requirements(
         )
 
     for post in strategy.posts:
-        add(post.sku, 1, "each", [post.id])
-        add(policy["cap_sku"], 1, "each", [post.id])
+        add(post.sku, 1, "each", [post.id], role="post")
+        add(policy["cap_sku"], 1, "each", [post.id], role="cap")
         if post.mounting == "ground":
-            add(policy["concrete_sku"], 1, "application", [post.id])
+            add(policy["concrete_sku"], 1, "application", [post.id], role="concrete")
 
     for span in strategy.spans:
         cut_len = span.slope_len_mm if span.rail_cut_basis == "slope" else span.width_mm
         add(
             policy["rail_sku"], span.rail_count, "cut", [span.id],
-            cut_length_mm=cut_len, length_basis=span.rail_cut_basis,
+            cut_length_mm=cut_len, length_basis=span.rail_cut_basis, role="rail",
         )
-        add(policy["screw_sku"], span.screws_count, "each", [span.id])
+        add(policy["screw_sku"], span.screws_count, "each", [span.id], role="screw")
 
     for gate in strategy.gates:
         if gate.kit_sku:  # no kit fits this opening — the strategy already said so
-            add(gate.kit_sku, 1, "each", [gate.id])
+            add(gate.kit_sku, 1, "each", [gate.id], role="gate_kit")
 
     return lines

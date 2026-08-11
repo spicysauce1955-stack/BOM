@@ -42,6 +42,7 @@ from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.project.model import Annotation, Project
+from fenceai.report.structure import build_structure
 from fenceai.store.db import Store
 from fenceai.strategy.generator import generate
 from fenceai.strategy.overrides import Override
@@ -285,6 +286,19 @@ def get_bom(run_id: str):
     inventory_hash = hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16]
     state.store.log("system", "fulfill", f"{run_id}:inv={inventory_hash}")
     return {"requirements": requirements, "bom": bom, "inventory_hash": inventory_hash}
+
+
+@app.get("/api/runs/{run_id}/structure")
+def get_structure(run_id: str):
+    """How the fence is laid out and what each element consists of — a derived view
+    over the run, persisted nowhere (docs/superpowers/specs/2026-08-11-structure...)."""
+    result = _run(run_id)
+    catalog = state.store.load_catalog()
+    inventory = state.store.load_inventory(result.run.project_id)
+    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    bom = fulfill(requirements, catalog, inventory)
+    topology = state.store.load_project(result.run.project_id).topology
+    return build_structure(topology, result.strategy, requirements, bom, run_id=run_id)
 
 
 # -- quotes (persisted BOM snapshots) ---------------------------------------------

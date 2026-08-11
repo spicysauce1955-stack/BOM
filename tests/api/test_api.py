@@ -449,3 +449,30 @@ def test_fresh_database_seeds_a_sample_project(client):
     assert {"gate", "base", "base_top"} <= kinds
     # it generates cleanly out of the box
     assert client.post(f"/api/projects/{projects[0]['id']}/generate").status_code == 200
+
+
+def test_structure_endpoint_lays_out_the_run(client):
+    """The structure view is derived: same run in, same document out, and every
+    element it names exists in the strategy."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    result = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = result["run"]["id"]
+    doc = client.get(f"/api/runs/{run_id}/structure").json()
+
+    assert doc["run_id"] == run_id
+    section = doc["sections"][0]
+    assert section["tag"] == "A"
+    assert [s["tag"] for s in section["setting_out"]][:2] == ["P1", "P2"]
+    element_ids = {p["id"] for p in result["strategy"]["posts"]} \
+        | {s["id"] for s in result["strategy"]["spans"]}
+    for row in [*section["setting_out"], *section["bays"]]:
+        assert row["element_id"] in element_ids
+    # every bay says what it is made of
+    assert all(bay["parts"] for bay in section["bays"])
+    # reading it twice changes nothing
+    assert client.get(f"/api/runs/{run_id}/structure").json() == doc
+
+
+def test_structure_endpoint_404s_on_an_unknown_run(client):
+    assert client.get("/api/runs/nope/structure").status_code == 404

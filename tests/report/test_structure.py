@@ -215,3 +215,17 @@ def test_remnants_are_named_as_their_own_source():
     report, _, _, _ = _report(topo, inventory)
     bars = [b for s in report.sections for bay in s.bays for p in bay.parts for b in p.from_bars]
     assert any("⟲inv1" in b for b in bars), bars
+
+
+def test_every_part_says_what_it_structurally_is():
+    """A customer proposal names posts and panels but describes fixings — that
+    filter must read a role, never guess from a SKU string."""
+    report, _, _, _ = _report(_straight_with_gate())
+    roles: dict[str, set[str]] = {}
+    for section in report.sections:
+        for element in [*section.setting_out, *section.bays, *section.gates]:
+            for part in element.parts:
+                assert part.role, part.sku
+                roles.setdefault(part.role, set()).add(part.sku)
+    assert set(roles) == {"post", "cap", "concrete", "rail", "screw", "gate_kit"}
+    assert roles["concrete"] == {"CONC-25"} and roles["screw"] == {"SCREW-S10"}
