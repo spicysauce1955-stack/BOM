@@ -483,13 +483,17 @@ function builderRow(a, idx, products) {
 
   // plain counts (weights) stay raw; `*_mm` action fields are lengths and follow
   // the display unit — the stored action keeps int mm either way
-  const num = (key, labelKey, isLength = key.endsWith("_mm")) => {
+  // `lengthNow` is re-evaluated on every commit, never captured: the free-text
+  // param box writes a.param on `input` WITHOUT re-rendering the row, so a
+  // render-time flag would store centimetres as millimetres (10x, in rule data)
+  const num = (key, labelKey, lengthNow = () => key.endsWith("_mm")) => {
     const raw = a[key] ?? "";
+    const isLength = lengthNow();
     const i = el("input", { type: "number",
       step: isLength ? inputStep() : "1",
       value: raw === "" || !isLength ? raw : toDisplayValue(raw) });
     i.addEventListener("change", () => {
-      a[key] = isLength ? (toMm(i.value) ?? 0) : Math.round(i.valueAsNumber || 0);
+      a[key] = lengthNow() ? (toMm(i.value) ?? 0) : Math.round(i.valueAsNumber || 0);
     });
     return field(labelKey, i);
   };
@@ -511,7 +515,7 @@ function builderRow(a, idx, products) {
   if (a.kind === "set_param") {
     const isOther = !KNOWN_PARAMS.includes(a.param);
     const s = el("select");
-    for (const p of KNOWN_PARAMS) s.appendChild(option(p, t("action.param." + p), a.param === p));
+    for (const p of KNOWN_PARAMS) s.appendChild(option(p, tu("action.param." + p), a.param === p));
     s.appendChild(option("__other", t("action.param.other"), isOther));
     s.addEventListener("change", () => {
       a.param = s.value === "__other" ? "" : s.value;
@@ -524,10 +528,11 @@ function builderRow(a, idx, products) {
       i.addEventListener("input", () => { a.param = i.value.trim(); });
       row.appendChild(i);
     }
-    // a set_param value is a length exactly when its param name says so
-    const paramIsLength = String(a.param || "").endsWith("_mm");
+    // a set_param value is a length exactly when its param name says so — and
+    // the param name can change under this row without a re-render
+    const paramIsLength = () => String(a.param || "").endsWith("_mm");
     row.appendChild(num("value",
-      paramIsLength ? "knowledge.builder.value_len" : "knowledge.builder.value",
+      paramIsLength() ? "knowledge.builder.value_len" : "knowledge.builder.value",
       paramIsLength));
   } else if (a.kind === "default_component") {
     if (!a.sku) a.sku = Object.keys(products).sort()[0] || "";

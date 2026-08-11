@@ -70,7 +70,8 @@ def test_backend_code_list_is_current():
 
 UNIT_LITERAL_ALLOWED = {
     "units.mm", "units.cm", "units.toggle_title",  # the unit vocabulary itself
-    "hint.draw",  # documents the typed-length suffixes ("250cm"), not a rendered value
+    # these two document the typed-length suffixes ("250cm") — not rendered values
+    "hint.draw", "hint.draw_cm",
 }
 
 
@@ -79,7 +80,8 @@ def test_lengths_carry_the_unit_placeholder_not_a_literal():
     would keep saying mm after the user switches. Lengths render "{...} {u}"."""
     import re
 
-    pattern = re.compile(r'(?<![a-z_])mm\b|(?<![a-z_])cm\b|מ"מ|ס"מ')
+    # Hebrew may spell the unit with the proper gershayim (U+05F4) or an ASCII quote
+    pattern = re.compile(r'(?<![a-z_])[mc]m\b|[מס]["\u05f4]מ', re.IGNORECASE)
     for name, table in zip(("en", "he"), _bundles()):
         offenders = [
             k for k, v in table.items()
@@ -97,12 +99,42 @@ def test_unit_bearing_keys_are_rendered_with_tu():
     sources = {p.name: p.read_text() for p in [*js_dir.glob("*.js"), STATIC / "app.js"]}
     en, _ = _bundles()
     unit_keys = [k for k, v in en.items() if "{u}" in str(v)]
-    # t("key") with no params; t("key", {u: ...}) supplies the label explicitly
-    offenders = [
-        (fname, key) for key in unit_keys for fname, src in sources.items()
-        if re.search(r'(?<![a-z])t\(["`]' + re.escape(key) + r'["`]\s*\)', src)
-    ]
+    # EVERY call whose first argument is a {u}-bearing key must go through tu()
+    # or hand `u` in explicitly — `t("key", {width_mm: 5})` (params, but no unit)
+    # is the mistake that actually happens.
+    offenders = []
+    for key in unit_keys:
+        call = re.compile(r'([a-zA-Z_]*)\(\s*["\'`]' + re.escape(key) + r'["\'`]\s*(,|\))')
+        for fname, src in sources.items():
+            for m in call.finditer(src):
+                fn = m.group(1)
+                if fn == "tu":
+                    continue
+                if fn != "t":
+                    continue      # some other function that happens to take the key
+                tail = src[m.end():m.end() + 200]
+                if m.group(2) == "," and re.match(r"\s*\{[^}]*\bu\s*:", tail):
+                    continue      # t("key", { u: ... }) supplies the label itself
+                offenders.append((fname, key))
     assert not offenders, offenders
+
+
+def test_unit_label_keys_exist_and_are_non_empty():
+    """`units.mm`/`units.cm` ARE the unit words — parity alone would not catch
+    both bundles losing them together."""
+    en, he = _bundles()
+    for key in ("units.mm", "units.cm", "units.button", "units.toggle_title"):
+        assert en.get(key, "").strip() and he.get(key, "").strip(), key
+
+
+def test_warning_renderer_converts_its_dynamic_key_params():
+    """Warnings/critiques are localized by a COMPUTED key (`warning.${code}`), so
+    the call-site guards above are blind to them — the one thing that keeps their
+    `{u}` and their millimetres honest is localizedByCode passing params through
+    unitParams()."""
+    src = (STATIC / "js" / "editor.js").read_text()
+    fn = src[src.index("function localizedByCode"):src.index("function renderWarnings")]
+    assert "unitParams(" in fn, "warning params must be unit-converted and carry {u}"
 
 
 def test_no_empty_translations():

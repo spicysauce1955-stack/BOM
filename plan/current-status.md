@@ -89,3 +89,16 @@ inspection on language/unit change. Tests pin: cm rendering without float noise,
 enum prose, every domain Literal has a Hebrew word, the two lexicons agree, `?units=inch`
 is a 422, and reading never mutates the graph. 251 pytest + 37/37 smoke (decision trail
 verified in cm with Hebrew enums; screenshot 09).
+
+## Units review round (2026-08-11) — COMPLETE
+architecture-critic + test-reviewer on the units work. Three real defects fixed: blank
+popover length fields wrote `null` into topology payloads (422 + a zero-length interval at
+station 0); the rule builder stored a cm value as mm when the param name was typed into the
+free-text box (10x, in persisted rule data); `{u}` rendered literally in the known-params
+dropdown. Also removed the cm-mode "bare number < 100 = metres" trap (90 → 90 m) with a
+per-unit draw hint. Tests hardened: sub-mm rounding, field steps, both param directions,
+the stateful half of units.js (stubbed localStorage/DOM), gershayim-proof unit-literal
+guard, inverted call-site guard, and a source guard for the dynamic warning renderer.
+Smoke: blank-field refusal, real reload, converted BOM numbers, raw-JSON-stays-mm,
+post-generation placeholder sweep. 257 pytest + 42/42 smoke. Dispositions:
+docs/reviews/units-review-response.md.

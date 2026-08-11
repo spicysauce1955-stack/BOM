@@ -305,5 +305,6 @@
   "enum.follow": "follow",
   "enum.plumb": "plumb",
   "enum.perpendicular": "perpendicular",
-  "enum.custom": "custom"
+  "enum.custom": "custom",
+  "hint.draw_cm": "Draw: click to place dots — or aim and type a length: a bare number is {u} ({ex_mm} = 42 m), or add a unit (4m, 250cm). Enter places the next dot exactly; Enter or double-click finishes the run, Esc cancels."
 }

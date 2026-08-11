@@ -15,7 +15,8 @@ import {
   setSelection, setTool, state,
 } from "./state.js";
 import {
-  enumWord, fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitParams,
+  currentUnit, enumWord, fmt, fmtLen, inputStep, toDisplayValue, toMm, tu,
+  unitParams,
 } from "./units.js";
 
 const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin"];
@@ -76,7 +77,10 @@ function updateToolButtons() {
 function updateStatus(cursor) {
   const bar = document.getElementById("statusbar");
   if (!bar) return;
-  let text = tu(`hint.${state.tool}`, { ex_mm: 4200 });
+  // the draw hint documents the typed-length rules, which differ per unit
+  const hintKey = state.tool === "draw" && currentUnit() === "cm"
+    ? "hint.draw_cm" : `hint.${state.tool}`;
+  let text = tu(hintKey, { ex_mm: 4200 });
   if (cursor) text += ` · ${tu("hint.cursor", cursor)}`;
   bar.textContent = text;
 }
@@ -462,11 +466,24 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
   popover.style.top = `${Math.max(4, Math.min(clientY + 8, window.innerHeight - popover.offsetHeight - 12))}px`;
 
   async function save() {
+    // a blank or unparseable length is NOT zero: refuse the save, flag the field
+    // and leave the popover open — never push null into a topology payload
+    const needed = { gate: ["pop-width"], ground: ["pop-z"],
+      height: ["pop-height", "pop-start", "pop-end"] }[tool] || [];
+    const values = {};
+    let bad = null;
+    for (const id of needed) {
+      const field = document.getElementById(id);
+      values[id] = fieldMm(id);
+      field.classList.toggle("invalid", values[id] === null);
+      if (values[id] === null && !bad) bad = field;
+    }
+    if (bad) { bad.focus(); return; }
     pushSnapshot(tool);
     if (tool === "gate") {
       addPointEvent(runId, {
         kind: "gate",
-        width_mm: fieldMm("pop-width"),
+        width_mm: values["pop-width"],
         kit_sku: document.getElementById("pop-kit").value.trim() || null,
       }, station);
     } else if (tool === "base") {
@@ -487,12 +504,12 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
       }
     } else if (tool === "ground") {
       addPointEvent(runId, {
-        kind: "elevation_sample", z_mm: fieldMm("pop-z"),
+        kind: "elevation_sample", z_mm: values["pop-z"],
       }, station);
     } else if (tool === "height") {
       addIntervalEvent(runId, {
-        kind: "height_intent", height_mm: fieldMm("pop-height"), source: "user",
-      }, fieldMm("pop-start"), fieldMm("pop-end"));
+        kind: "height_intent", height_mm: values["pop-height"], source: "user",
+      }, values["pop-start"], values["pop-end"]);
     } else if (tool === "pin") {
       await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
         id: "", run_id: runId,
@@ -577,16 +594,19 @@ let lastDrawMouse = null;  // last cursor world position while drawing (the aim)
 let chipAnchorView = null; // rubber-band end in SVG view coords (chip anchor)
 
 // An explicit trailing unit always wins: "250cm" -> 2500, "1.2m"/"1.2מ" -> 1200,
-// "80mm" -> 80. A bare number under 100 is meters ("4" -> 4000); at 100 and above
-// it is read in the ACTIVE display unit — "4200" is 4200 mm in mm mode, and "420"
-// is 4200 mm in cm mode.
+// "80mm" -> 80. A bare number is read in the ACTIVE display unit — "4200" is
+// 4200 mm in mm mode, "420" is 4200 mm in cm mode — except in mm mode, where a
+// value under 100 is metres ("4" -> 4000).
 function parseLengthMm(buf) {
   const m = /^(\d+(?:\.\d+)?|\.\d+)(mm|cm|m|מ)?$/.exec(buf);
   if (!m) return null;
   const v = parseFloat(m[1]);
   if (!(v > 0)) return null;
   const mm = m[2] === "mm" ? v : m[2] === "cm" ? v * 10 : m[2] ? v * 1000
-    : v < 100 ? v * 1000 : toMm(v);
+    // the "small bare number = metres" shortcut only makes sense in mm mode:
+    // in cm a value under 100 is the COMMON case (anything under a metre), so a
+    // bare number is always centimetres there
+    : currentUnit() === "mm" && v < 100 ? v * 1000 : toMm(v);
   return Math.round(mm);
 }
 

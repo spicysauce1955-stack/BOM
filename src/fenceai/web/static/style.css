@@ -136,6 +136,8 @@ th { background: #eef2f6; }
 .popover input, .popover select { display: block; inline-size: 100%;
   margin-block-start: 2px; padding: 4px 6px; border: 1px solid #b9c2cd;
   border-radius: 4px; font-size: 13px; }
+/* a length field that could not be read (blank/garbage): the save is refused */
+.popover input.invalid { border-color: #dc2626; background: #fef2f2; }
 .popover .popover-actions { display: flex; gap: 6px; justify-content: flex-end;
   margin-block-start: 10px; }
 

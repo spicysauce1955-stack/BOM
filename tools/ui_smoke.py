@@ -342,7 +342,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(0.6)
         label_cm = c.js("document.querySelector('.run-label').textContent")
         check("switching to cm re-renders the canvas in cm",
-              str(run_len / 10) in (label_cm or "") and label_cm != label_mm)
+              f"{run_len / 10:g}" in (label_cm or "") and label_cm != label_mm)
         check("unit choice is remembered",
               c.js("localStorage.getItem('fenceai.units')") == "cm")
         # a length typed in cm must be stored as the equivalent int mm
@@ -353,12 +353,31 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("popover length fields open in cm", field_cm == "180")
         # every {u} placeholder must have been substituted (t() instead of tu())
         check("no unsubstituted unit placeholders",
-              not c.js("document.body.innerText.includes('{u}')"))
+              not c.js("document.documentElement.innerHTML.includes('{u}')"))
+        events_before = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => p.topology.runs[0].interval_events.length)""")
         c.js("""
-const h = document.getElementById('pop-height');
-if (h) {
-  h.value = '210'; h.dispatchEvent(new Event('change'));
-  document.getElementById('pop-save').click();
+{
+  const field = document.getElementById('pop-height');
+  if (field) { field.value = ''; field.dispatchEvent(new Event('change'));
+               document.getElementById('pop-save').click(); }
+}
+'ok'""")
+        time.sleep(1)
+        events_after_blank = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => p.topology.runs[0].interval_events.length)""")
+        check("a blank length field saves nothing (no null reaches the API)",
+              events_after_blank == events_before
+              and c.js("!!document.querySelector('.popover input.invalid')"))
+        c.js("""
+{
+  const field = document.getElementById('pop-height');
+  if (field) {
+    field.value = '210'; field.dispatchEvent(new Event('change'));
+    document.getElementById('pop-save').click();
+  }
 }
 'ok'""")
         time.sleep(1)
@@ -388,8 +407,39 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(1.5)
         bom_text = c.js("document.getElementById('tab-bom').textContent")
         check("BOM cut plan is labelled in the chosen unit", 'ס"מ' in (bom_text or ""))
+        stock = c.js("""
+[...document.querySelectorAll('#tab-bom table tr')]
+  .map(r => r.cells?.[1]?.textContent || '').join('|')""")
+        check("BOM cut-plan lengths are converted, not just relabelled",
+              "300" in (stock or "") and "3000" not in (stock or ""))
+        # the raw-JSON editors are the STORAGE view: they must stay in mm
+        c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
+        time.sleep(0.8)
+        c.click(*c.element_center("#btn-k-advanced"))
+        time.sleep(0.5)
+        raw = c.js("document.getElementById('k-actions').value")
+        check("raw action JSON stays in millimetres", '"value": 1400' in (raw or ""))
+        c.click(*c.element_center("#btn-k-advanced"))
+        time.sleep(0.3)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
+        check("no unit placeholder survives once warnings are rendered",
+              not c.js("document.documentElement.innerHTML.includes('{u}')"))
+        pid = c.js("document.getElementById('project-select').value")
+        c.cmd("Page.navigate", url=f"http://localhost:{PORT}/")
+        time.sleep(3)
+        c.js("window.confirm = () => true; undefined")  # the reload dropped the stub
+        check("the unit preference survives a reload",
+              'ס"מ' in (c.js("document.getElementById('btn-units').textContent") or ""))
+        # a reload opens the FIRST project in the list — come back to the smoke one
+        c.js(f"""
+{{
+  const sel = document.getElementById('project-select');
+  sel.value = {pid!r};
+  sel.dispatchEvent(new Event('change'));
+}}
+'ok'""")
+        time.sleep(2)
         c.click(*c.element_center("#btn-units"))   # back to mm for the checks below
         time.sleep(0.6)
         event_row = c.js("""
