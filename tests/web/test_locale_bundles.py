@@ -25,6 +25,8 @@ WARNING_CODES = [
     "gate_on_slope",
     "insufficient_post_length",
     "tilted_stepped",
+    "gate_kit_width_mismatch",
+    "no_gate_kit",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 
@@ -192,18 +194,35 @@ def test_no_double_escaped_unicode_in_bundles():
         assert not offenders, (name, offenders)
 
 
-def test_every_alert_is_localized():
-    """A raw alert() string is untranslated English in a Hebrew-first RTL app —
-    every alert argument must start with t(...) or tu(...)."""
+def _call_argument(src: str, open_paren: int) -> str:
+    """The text between `(` at open_paren and its matching `)`."""
+    depth = 0
+    for i in range(open_paren, len(src)):
+        if src[i] == "(":
+            depth += 1
+        elif src[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return src[open_paren + 1:i]
+    return src[open_paren + 1:]
+
+
+def test_every_alert_and_confirm_is_localized():
+    """A literal string in an alert()/confirm() is untranslated English in a
+    Hebrew-first RTL app. Every string in one must be a t()/tu() lookup key."""
     import re
 
     js_dir = STATIC / "js"
+    key_call = re.compile(r"\b(t|tu)\(\s*[\"'`][^\"'`]*[\"'`]")
     offenders = []
     for path in [*js_dir.glob("*.js"), STATIC / "app.js"]:
         src = path.read_text()
-        for m in re.finditer(r"\balert\(", src):
-            if not re.match(r"\s*(t|tu)\(", src[m.end():]):
-                offenders.append((path.name, src[m.start():m.start() + 60]))
+        for m in re.finditer(r"\b(?:alert|confirm)\(", src):
+            arg = _call_argument(src, m.end() - 1)
+            # drop the localized lookups; any string literal left is raw text
+            stripped = key_call.sub("", arg)
+            if re.search(r"[\"'`]", stripped):
+                offenders.append((path.name, arg[:70]))
     assert not offenders, offenders
 
 

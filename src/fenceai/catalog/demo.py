@@ -65,6 +65,8 @@ def demo_catalog() -> Catalog:
                 ]
             ),
             price_cents=18500,
+            # the opening this kit fits: fit is catalog DATA, never parsed from the sku
+            attrs={"category": "gate", "opening_width_mm": 1000},
         ),
         Product(sku="GATE-LEAF-1000", name="Gate leaf 1000 mm", name_i18n={"he": 'כנף שער 1000 מ"מ'},
                 consumption=IndivisibleDiscrete(), price_cents=12000),

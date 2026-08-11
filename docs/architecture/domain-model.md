@@ -50,6 +50,19 @@ consumption (discriminated union):
 SubstitutionRule { id, from_sku, to_sku, policy: auto|suggest_only, condition: Expr? }
 ```
 
+`attrs` carries the physical facts the generator checks a product against. A SKU is an
+opaque id — **never** parse dimensions out of it, or the system only works for one
+catalog's naming convention. Attributes read today:
+
+| attr | read by | meaning |
+|---|---|---|
+| `length_mm` | `_check_post_lengths` | physical length of a post product |
+| `opening_width_mm` | gate kit selection + `gate_kit_width_mismatch` | the opening a kit fits; a product that declares nothing is never second-guessed |
+
+A gate event with no `kit_sku` selects the kit whose `opening_width_mm` equals the
+opening; if no product declares a fit, the strategy says so (`no_gate_kit`) rather than
+inventing a SKU.
+
 ## Knowledge  (details: knowledge-system.md)
 
 ```

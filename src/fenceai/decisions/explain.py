@@ -115,6 +115,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Gate opening sits on a {slope_permille}‰ slope (limit {max_permille}‰) "
             "— the ground needs leveling."
         ),
+        "gate_kit_width_mismatch": (
+            "Kit {sku} fits a {kit_width_mm} {u} opening, but this opening is "
+            "{opening_width_mm} {u}."
+        ),
         "insufficient_post_length": (
             "Post needs {required_mm} {u} ({exposed_mm} exposed + {embed_mm} embedded) "
             "but the product is only {available_mm} {u} long."
@@ -178,6 +182,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "gate_on_slope": (
             "פתח השער יושב על שיפוע של {slope_permille}‰ (המגבלה {max_permille}‰) — "
             "יש לפלס את הקרקע."
+        ),
+        "gate_kit_width_mismatch": (
+            "הערכה {sku} מתאימה לפתח של {kit_width_mm} {u}, אך רוחב הפתח הוא "
+            "{opening_width_mm} {u}."
         ),
         "insufficient_post_length": (
             'העמוד דורש {required_mm} {u} ({exposed_mm} חשוף + {embed_mm} מוטמן) '
@@ -294,6 +302,10 @@ def explain_node(
         case "gate_on_slope":
             base = _fmt(t, "gate_on_slope", lang, units,
                 slope_permille=p.get("slope_permille"), max_permille=p.get("max_permille"))
+        case "gate_kit_width_mismatch":
+            base = _fmt(t, "gate_kit_width_mismatch", lang, units, sku=p.get("sku"),
+                kit_width_mm=p.get("kit_width_mm"),
+                opening_width_mm=p.get("opening_width_mm"))
         case "insufficient_post_length":
             base = _fmt(t, "insufficient_post_length", lang, units,
                 required_mm=p.get("required_mm"), exposed_mm=p.get("exposed_mm"),

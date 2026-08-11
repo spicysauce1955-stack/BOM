@@ -64,6 +64,7 @@ def derive_requirements(
         add(policy["screw_sku"], span.screws_count, "each", [span.id])
 
     for gate in strategy.gates:
-        add(gate.kit_sku, 1, "each", [gate.id])
+        if gate.kit_sku:  # no kit fits this opening — the strategy already said so
+            add(gate.kit_sku, 1, "each", [gate.id])
 
     return lines

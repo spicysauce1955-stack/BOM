@@ -56,9 +56,32 @@ from fenceai.topology.station import (
 
 DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "fewest_new_stock"}
 
+# The catalog attribute by which a product declares the opening width it fits.
+# Fit is DATA, like Product.attrs["length_mm"] for posts: a SKU is an opaque id and
+# "GATE-KIT-1000" is a naming accident of one catalog, never a width to parse.
+KIT_OPENING_ATTR = "opening_width_mm"
+
 
 def _near(a: Mm, b: Mm) -> bool:
     return abs(a - b) <= SNAP_TOLERANCE_MM
+
+
+def _declared_opening(catalog: Catalog, sku: str) -> Mm | None:
+    """The opening width a catalog product declares it fits, or None if it says
+    nothing — an undeclared product is never second-guessed."""
+    product = catalog.products.get(sku)
+    value = product.attrs.get(KIT_OPENING_ATTR) if product else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _kit_for_opening(catalog: Catalog, opening_mm: Mm) -> str:
+    """The catalog product declaring that it fits this opening ("" if none).
+    Deterministic: lowest sku wins when a catalog offers several."""
+    fits = sorted(
+        sku for sku in catalog.products
+        if _declared_opening(catalog, sku) == opening_mm
+    )
+    return fits[0] if fits else ""
 
 
 def generate(
@@ -466,19 +489,35 @@ def _generate_run(
 
     # -- gates -----------------------------------------------------------------
     gates: list[tuple[Mm, Mm, str, str]] = []
+    openings: dict[str, Mm] = {}  # event id -> the opening the USER asked for
     for ev in run.point_events:
         if ev.payload.kind == "gate":
             gs = anchor_station(topo, run, ev.anchor)
-            ge = min(gs + ev.payload.width_mm, length)
-            kit = ev.payload.kit_sku or f"GATE-KIT-{ev.payload.width_mm}"
-            if kit not in catalog.products:
+            opening = ev.payload.width_mm
+            ge = min(gs + opening, length)
+            gate_ref = f"gate@{run.id}:{gs}-{ge}"
+            openings[ev.id] = opening
+            # the payload's kit wins (it is the user's choice); otherwise the kit is
+            # selected from the catalog BY DECLARED WIDTH — never by a SKU pattern
+            kit = ev.payload.kit_sku or _kit_for_opening(catalog, opening)
+            if not kit:
+                strategy.warnings.append(
+                    StrategyWarning(
+                        code="no_gate_kit", severity="error",
+                        message=f"No product in the catalog declares that it fits a "
+                                f"{opening} mm gate opening; this gate cannot be priced.",
+                        params={"element": gate_ref, "opening_width_mm": opening},
+                        element_refs=[gate_ref],
+                    )
+                )
+            elif kit not in catalog.products:
                 strategy.warnings.append(
                     StrategyWarning(
                         code="unknown_product", severity="error",
                         message=f"Gate kit '{kit}' is not in the catalog; BOM will "
                                 "price it at zero.",
                         params={"sku": kit},
-                        element_refs=[f"gate@{run.id}:{gs}-{ge}"],
+                        element_refs=[gate_ref],
                     )
                 )
             gates.append((gs, ge, kit, ev.id))
@@ -640,6 +679,28 @@ def _generate_run(
             start_station_mm=gs, end_station_mm=ge, kit_sku=kit,
         )
         strategy.gates.append(gate)
+        # the kit must fit the opening the user asked for (not the clamped span):
+        # a kit priced against a wider opening is a quote sent to a customer
+        opening = openings[ev_id]
+        kit_width = _declared_opening(catalog, kit)
+        if kit_width is not None and kit_width != opening:
+            k_node = builder.add(
+                "conflict", "gate_kit_width_mismatch",
+                payload={"element": gate.id, "sku": kit,
+                         "kit_width_mm": kit_width, "opening_width_mm": opening},
+                scope_refs=[gate.id],
+            )
+            strategy.warnings.append(
+                StrategyWarning(
+                    code="gate_kit_width_mismatch", severity="error",
+                    message=f"Gate kit {kit} fits a {kit_width} mm opening but the "
+                            f"opening is {opening} mm — the BOM would price the wrong "
+                            "gate.",
+                    element_refs=[gate.id], decision_ref=k_node.id,
+                    params={"element": gate.id, "sku": kit,
+                            "kit_width_mm": kit_width, "opening_width_mm": opening},
+                )
+            )
         if max_gate_slope is not None and ge > gs:
             drop = abs(ground_z(topo, run, ge) - ground_z(topo, run, gs))
             gate_slope = round(drop * 1000 / (ge - gs))
