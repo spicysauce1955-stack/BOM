@@ -62,7 +62,7 @@ read visible in the transcript audit (§4.4).
 method bodies are copied verbatim; the only edit is that the two module globals the class
 closed over (`CDP_PORT`, `OUT`) become constructor keyword arguments whose defaults
 reproduce today's values, since two stacks must now coexist on different ports.
-`tools/ui_smoke.py` is the release gate, so **34/34 smoke checks must still pass after
+`tools/ui_smoke.py` is the release gate, so **44/44 smoke checks must still pass after
 the move**, and that is the first verifiable step of the implementation plan, before any
 persona code exists.
 
@@ -246,7 +246,7 @@ the severity of a finding it authored.
 CI stays browser-free per the existing convention): boots a stack, asserts `look` returns
 a non-empty outline with visible labels and no `#`-selectors, asserts click-by-handle
 changes the visible screen, and asserts `act.py` rejects a call missing `intent` or
-`expected`. Plus the standing gate: `tools/ui_smoke.py` still reports 34/34 after the
+`expected`. Plus the standing gate: `tools/ui_smoke.py` still reports 44/44 after the
 `Cdp` move.
 
 ## 8. Non-goals and limits

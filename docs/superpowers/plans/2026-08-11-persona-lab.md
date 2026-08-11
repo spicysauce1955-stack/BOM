@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Spec: `docs/superpowers/specs/2026-08-11-persona-lab-design.md`. Where plan and spec disagree, the spec wins — stop and flag it.
-- **`tools/ui_smoke.py` must report 34/34 after every task.** It is the release gate.
+- **`tools/ui_smoke.py` must report 44/44 after every task.** It is the release gate.
 - Run artifacts go to the scratchpad, never the repo: `$SCRATCH/persona-lab/<date>/<persona>/`. Only the final report is committed, to `docs/reviews/`.
 - The driver exposes **no** `js()`, `fetch`, API, or DB access to personas. Outline output must never contain `#id` or CSS-class text.
 - Python: `from __future__ import annotations`, stdlib-first, match the terse style of `tools/ui_smoke.py`.
@@ -198,7 +198,7 @@ Expected: PASS (3 passed)
 - [ ] **Step 7: Run the release gate — the step that actually matters**
 
 Run: `uv run --with websocket-client python tools/ui_smoke.py`
-Expected: `34/34 checks passed`, exit 0.
+Expected: `44/44 checks passed`, exit 0.
 
 If any check fails, the move was not verbatim. Diff your `cdp.py` against `git show HEAD:tools/ui_smoke.py` before touching anything else.
 
@@ -1603,7 +1603,7 @@ Then add, by hand, the per-persona narrative section (§6.1 of the spec) — wha
 - [ ] **Step 8: Verify everything still passes**
 
 Run: `uv run pytest -q` — expected: all green.
-Run: `uv run --with websocket-client python tools/ui_smoke.py` — expected: `34/34`.
+Run: `uv run --with websocket-client python tools/ui_smoke.py` — expected: `44/44`.
 Run: `pgrep -af "remote-debugging-port=94"` — expected: nothing; no leaked Chrome.
 
 - [ ] **Step 9: Update status and commit**
