@@ -19,6 +19,7 @@ WARNING_CODES = [
     "unknown_product",
     "knowledge_conflict",
     "node_surface_disagreement",
+    "excessive_step",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 

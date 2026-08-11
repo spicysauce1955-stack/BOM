@@ -270,5 +270,6 @@
   "toolbar.pin": "נעיצה",
   "toolbar.undo": "ביטול",
   "toolbar.redo": "שחזור",
-  "toolbar.clear": "נקה"
+  "toolbar.clear": "נקה",
+  "warning.excessive_step": "מדרגה של {step_mm} מ\"מ ב-{element} חורגת מהמקסימום הניתן לביצוע ({max_mm} מ\"מ) — נדרש פתרון הנדסי"
 }

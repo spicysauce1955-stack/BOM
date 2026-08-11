@@ -270,5 +270,6 @@
   "toolbar.pin": "Pin",
   "toolbar.undo": "Undo",
   "toolbar.redo": "Redo",
-  "toolbar.clear": "Clear"
+  "toolbar.clear": "Clear",
+  "warning.excessive_step": "Step of {step_mm} mm at {element} exceeds the buildable maximum ({max_mm} mm) — needs an engineered solution"
 }

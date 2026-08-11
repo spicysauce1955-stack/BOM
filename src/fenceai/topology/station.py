@@ -151,15 +151,33 @@ def ground_z(topo: Topology, run: Run, station_mm: Mm) -> Mm:
     samples = ground_samples(topo, run)
     total = run_length(topo, run)
     s = max(0, min(station_mm, total))
-    for (s0, z0), (s1, z1) in zip(samples, samples[1:]):
+    for i, ((s0, z0), (s1, z1)) in enumerate(zip(samples, samples[1:])):
         if s0 <= s <= s1:
             if s1 == s0:
-                return z0
+                return z1  # vertical ground step: the right side wins (half-open)
+            if s == s1 and i + 2 < len(samples) and samples[i + 2][0] == s1:
+                continue  # a step at s1 follows — let it claim the boundary
             return round(z0 + (z1 - z0) * (s - s0) / (s1 - s0))
     if s <= samples[0][0]:
         return samples[0][1]
     return samples[-1][1]
 
+
+
+def ground_step_stations(
+    topo: Topology, run: Run, min_step_mm: Mm
+) -> list[tuple[Mm, Mm]]:
+    """Interior stations where the GROUND itself jumps vertically (two samples at
+    the same station) by >= min_step_mm: [(station, delta)]. A cliff/retaining
+    drop must never be invisible to generation — max_slope_permille skips
+    equal-station pairs by design (grade vs. discontinuity)."""
+    steps: list[tuple[Mm, Mm]] = []
+    total = run_length(topo, run)
+    samples = ground_samples(topo, run)
+    for (s0, z0), (s1, z1) in zip(samples, samples[1:]):
+        if s0 == s1 and abs(z1 - z0) >= min_step_mm and 0 < s0 < total:
+            steps.append((s0, z1 - z0))
+    return steps
 
 def base_surface_at(topo: Topology, run: Run, station_mm: Mm) -> str:
     """Base surface at a station; base interval events override the default 'soil'.

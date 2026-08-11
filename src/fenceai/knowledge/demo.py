@@ -91,9 +91,15 @@ def demo_knowledge() -> KnowledgeBase:
             ),
             KnowledgeVersion(
                 object_id="K-STEP-POST", version=1, type="company_rule",
-                title="A base-top step of 100 mm or more needs a post",
-                title_i18n={"he": 'מדרגה של 100 מ"מ ומעלה בראש הבסיס מחייבת עמוד'},
+                title="A step of 100 mm or more (base top or ground) needs a post",
+                title_i18n={"he": 'מדרגה של 100 מ"מ ומעלה (בראש הבסיס או בקרקע) מחייבת עמוד'},
                 actions=[SetParam(param="base_top_step_boundary_mm", value=100)],
+            ),
+            KnowledgeVersion(
+                object_id="K-MAX-STEP", version=1, type="company_rule",
+                title="Buildability: a single step may not exceed 600 mm",
+                title_i18n={"he": 'כשירות ביצוע: מדרגה בודדת לא תעלה על 600 מ"מ'},
+                actions=[SetParam(param="max_panel_step_mm", value=600)],
             ),
             KnowledgeVersion(
                 object_id="K-POST-DEFAULT", version=1, type="fact",

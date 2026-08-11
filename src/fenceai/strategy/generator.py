@@ -46,6 +46,7 @@ from fenceai.topology.station import (
     base_top_at,
     base_top_step_stations,
     base_transition_stations,
+    ground_step_stations,
     corner_stations,
     ground_z,
     max_slope_permille,
@@ -455,8 +456,14 @@ def _generate_run(
         kb, ctx, "base_top_step_boundary_mm", 100
     )
     base_steps = base_top_step_stations(topo, run, step_threshold)
-    step_stations = {station for station, _, _ in base_steps}
-    step_info = {station: (delta, ev_id) for station, delta, ev_id in base_steps}
+    step_info = {station: (delta, ev_id, "base_top_step")
+                 for station, delta, ev_id in base_steps}
+    # vertical GROUND steps (cliffs/retaining drops) are structural boundaries too
+    for station, delta in ground_step_stations(topo, run, step_threshold):
+        step_info.setdefault(station, (delta, None, "ground_step"))
+    step_stations = set(step_info)
+    # buildability ceiling: a single step a fence can absorb (rule-editable)
+    max_step, max_step_refs = _resolve_quantity(kb, ctx, "max_panel_step_mm", 600)
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
     fixed |= gate_edges | step_stations
     fixed_sorted = sorted(fixed)
@@ -483,14 +490,34 @@ def _generate_run(
             kind = "transition"
         elif station in step_stations:
             kind = "transition"
-            delta, ev_id = step_info[station]
+            delta, ev_id, step_kind = step_info[station]
             step_fact = builder.add(
-                "input_fact", "base_top_step",
+                "input_fact", step_kind,
                 payload={"event_id": ev_id, "station_mm": station, "step_mm": delta,
                          "threshold_mm": step_threshold},
             )
             inputs = inputs + [step_fact.id]
             step_governed = list(step_refs)
+            if abs(delta) > max_step:
+                over = builder.add(
+                    "conflict", "excessive_step",
+                    payload={"element": f"post@{run.id}:{station}",
+                             "step_mm": abs(delta), "max_mm": max_step},
+                    governed_by=max_step_refs,
+                    inputs=[step_fact.id],
+                )
+                strategy.warnings.append(
+                    StrategyWarning(
+                        code="excessive_step", severity="error",
+                        message=f"Step of {abs(delta)} mm at station {station} exceeds "
+                                f"the buildable maximum of {max_step} mm — this needs "
+                                "an engineered solution.",
+                        element_refs=[f"post@{run.id}:{station}"],
+                        decision_ref=over.id,
+                        params={"element": f"post@{run.id}:{station}",
+                                "step_mm": abs(delta), "max_mm": max_step},
+                    )
+                )
         override_nodes: list[str] = []
         ov = pinned_stations.get(station)
         if ov is not None:
@@ -701,6 +728,25 @@ def _generate_run(
                 raise GenerationFailure(
                     f"span {span.id} width {width} exceeds hard max {max_span}",
                     constraint_refs=[max_span_ref],
+                )
+            if v_mode == "stepped" and abs(gz1 - gz0) > max_step:
+                over = builder.add(
+                    "conflict", "excessive_step",
+                    payload={"element": span.id, "step_mm": abs(gz1 - gz0),
+                             "max_mm": max_step},
+                    scope_refs=[span.id],
+                    governed_by=max_step_refs,
+                )
+                strategy.warnings.append(
+                    StrategyWarning(
+                        code="excessive_step", severity="error",
+                        message=f"Span {span.id} steps {abs(gz1 - gz0)} mm — beyond the "
+                                f"buildable maximum of {max_step} mm; the terrain here "
+                                "needs an engineered solution.",
+                        element_refs=[span.id], decision_ref=over.id,
+                        params={"element": span.id, "step_mm": abs(gz1 - gz0),
+                                "max_mm": max_step},
+                    )
                 )
             if min_span and width < min_span:
                 conflict_node = builder.add(
