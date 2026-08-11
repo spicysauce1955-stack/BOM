@@ -100,5 +100,6 @@ per-unit draw hint. Tests hardened: sub-mm rounding, field steps, both param dir
 the stateful half of units.js (stubbed localStorage/DOM), gershayim-proof unit-literal
 guard, inverted call-site guard, and a source guard for the dynamic warning renderer.
 Smoke: blank-field refusal, real reload, converted BOM numbers, raw-JSON-stays-mm,
-post-generation placeholder sweep. 257 pytest + 42/42 smoke. Dispositions:
+post-generation placeholder sweep, and a freehand `*_mm` rule param driven in cm mode
+(mutation-verified: fails against the pre-fix code). 257 pytest + 43/43 smoke. Dispositions:
 docs/reviews/units-review-response.md.

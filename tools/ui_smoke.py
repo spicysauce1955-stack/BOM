@@ -421,6 +421,38 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("raw action JSON stays in millimetres", '"value": 1400' in (raw or ""))
         c.click(*c.element_center("#btn-k-advanced"))
         time.sleep(0.3)
+        # A rule's `*_mm` value is persisted DATA, not a view. The param name can
+        # be typed freehand, and that box commits without re-rendering its row —
+        # the value field must still know it is a length at commit time, or a
+        # figure entered in cm is stored as millimetres (10x, silently).
+        c.js("""
+{
+  const row = document.querySelector('#k-action-rows .builder-row');
+  const params = row.querySelectorAll('select')[1];
+  params.value = '__other';
+  params.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.5)
+        c.js("""
+{
+  const row = document.querySelector('#k-action-rows .builder-row');
+  const name = row.querySelector('input[type="text"]');
+  name.value = 'max_gap_mm';           // now a length — with NO re-render
+  name.dispatchEvent(new Event('input'));
+  const value = row.querySelector('input[type="number"]');
+  value.value = '40';                  // 40 cm
+  value.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.5)
+        c.click(*c.element_center("#btn-k-advanced"))
+        time.sleep(0.5)
+        raw2 = c.js("document.getElementById('k-actions').value")
+        check("a freehand *_mm rule param stores 40 cm as 400 mm, not 40",
+              '"param": "max_gap_mm"' in (raw2 or "") and '"value": 400' in (raw2 or ""))
+        c.click(*c.element_center("#btn-k-advanced"))
+        time.sleep(0.3)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
         check("no unit placeholder survives once warnings are rendered",
