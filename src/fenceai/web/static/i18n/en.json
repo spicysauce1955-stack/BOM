@@ -411,5 +411,6 @@
   "structure.from_stock": "Met from stock (bought on no line, still picked in the yard):",
   "structure.shared_from": "(shared with {tag})",
   "profile.bay_dim": "Bay, centre to centre",
-  "profile.gate_dim": "Gate opening — this one must be exact"
+  "profile.gate_dim": "Gate opening — this one must be exact",
+  "warning.gate_past_run_end": "Gate at station {station_mm} {u} asks for {asked_mm} {u} but only {available_mm} {u} of the section remains — move it or shorten it."
 }

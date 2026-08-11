@@ -67,6 +67,7 @@ def test_bays_name_the_posts_they_run_between():
     section = report.sections[0]
     by_tag = {s.tag: s.station_mm for s in section.setting_out}
     for bay in section.bays:
+        assert bay.from_tag and bay.to_tag, bay.tag   # a missing link is a KeyError below
         assert by_tag[bay.from_tag] == bay.start_station_mm
         assert by_tag[bay.to_tag] == bay.end_station_mm
         assert bay.width_mm == bay.end_station_mm - bay.start_station_mm
@@ -106,8 +107,10 @@ def test_a_bay_lists_its_rails_with_their_cut_length_and_bar():
     rails = [p for p in bay.parts if p.unit == "cut"]
     assert rails, "a bay is rails and screws"
     rail = rails[0]
-    assert rail.cut_length_mm == bay.width_mm or rail.cut_length_mm == bay.slope_len_mm
     assert rail.length_basis in ("width", "slope")
+    # the basis decides which length: an `or` over both accepts a flipped basis
+    assert rail.cut_length_mm == (bay.slope_len_mm if rail.length_basis == "slope"
+                                  else bay.width_mm)
     assert rail.from_bars, "a cut piece knows which bar it comes from"
     assert all(b.startswith(rail.sku) for b in rail.from_bars)
 
@@ -136,27 +139,112 @@ def test_the_parts_sum_back_to_the_bom():
         assert counted + extra == line.engineering_qty, line.sku
 
 
+def test_each_element_gets_what_IT_asked_for():
+    """A per-SKU grand total is invariant under permuting parts across elements:
+    put every bag of concrete on P1 and the sum still balances, while the sheet
+    tells the crew to pour six bags into one hole. Identity, not just totals."""
+    report, result, _, _ = _report(_straight_with_gate())
+    by_id = {s.element_id: s for s in report.sections[0].setting_out}
+    for post in result.strategy.posts:
+        assert {(p.sku, p.qty) for p in by_id[post.id].parts} == {
+            (post.sku, 1), ("POST-CAP", 1), ("CONC-25", 1)}, post.id
+    for bay in report.sections[0].bays:
+        assert [(p.sku, p.qty) for p in bay.parts if p.role == "screw"] == \
+            [("SCREW-S10", 8)], bay.tag
+        assert [p.qty for p in bay.parts if p.role == "rail"] == [2], bay.tag
+
+
+def test_parts_hang_off_the_kind_of_element_that_causes_them():
+    """Roles drive the customer sheet (fixings are described, not counted), so a
+    cap labelled as a post silently changes what a proposal itemises."""
+    report, _, _, _ = _report(_straight_with_gate())
+    section = report.sections[0]
+    for st in section.setting_out:
+        assert {p.role for p in st.parts} <= {"post", "cap", "concrete"}, st.tag
+    for bay in section.bays:
+        assert {p.role for p in bay.parts} <= {"rail", "screw"}, bay.tag
+    for gate in section.gates:
+        assert {p.role for p in gate.parts} <= {"gate_kit"}, gate.tag
+
+
+def test_each_cut_piece_names_the_bar_it_actually_came_from():
+    """`startswith(sku)` accepts any bar: with every piece claiming bar #1 the
+    yard cuts eight rails out of one 3 m stick."""
+    report, _, _, bom = _report(_straight_with_gate())
+    labels = [b for s in report.sections for bay in s.bays
+              for p in bay.parts for b in p.from_bars]
+    plan = bom.cut_plans["RAIL-3000"]
+    assert len(labels) == sum(len(bar.pieces) for bar in plan.bars)
+    assert sorted(set(labels)) == [f"RAIL-3000 #{i}" for i in range(1, len(plan.bars) + 1)]
+    # every bar carries exactly the pieces the plan put on it
+    for i, bar in enumerate(plan.bars, start=1):
+        assert labels.count(f"RAIL-3000 #{i}") == len(bar.pieces)
+
+
+def _corner_topology():
+    return Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=4000, y_mm=0),
+               Node(id="n3", x_mm=4000, y_mm=3000)],
+        runs=[Run(id="runA", start_node_id="n1", end_node_id="n2"),
+              Run(id="runB", start_node_id="n2", end_node_id="n3")])
+
+
+def test_the_parts_sum_back_to_the_bom_across_sections():
+    """A shared corner post is SET OUT twice and BOUGHT once. Summing rendered
+    rows without deduping bills it to both sections — so a repeat row must
+    announce itself, and consumers that total must skip it."""
+    report, _, _, bom = _report(_corner_topology())
+    seen: set[str] = set()
+    per_sku: dict[str, int] = {}
+    for section in report.sections:
+        for element in [*section.setting_out, *section.bays, *section.gates]:
+            if element.element_id in seen:
+                assert getattr(element, "shared_from", None), element.tag
+                continue
+            seen.add(element.element_id)
+            for part in element.parts:
+                per_sku[part.sku] = per_sku.get(part.sku, 0) + part.qty
+    assert per_sku == {l.sku: l.engineering_qty for l in bom.lines}
+
+
+def test_a_gate_names_the_posts_it_hangs_between():
+    report, _, _, _ = _report(_straight_with_gate())
+    section = report.sections[0]
+    by_tag = {s.tag: s.station_mm for s in section.setting_out}
+    gate = section.gates[0]
+    assert gate.from_tag and gate.to_tag
+    assert by_tag[gate.from_tag] == gate.start_station_mm
+    assert by_tag[gate.to_tag] == gate.end_station_mm
+
+
 def test_totals_agree_with_the_sections():
     report, result, _, _ = _report(_straight_with_gate())
+    # pinned to the fixture, not to the strategy: a generator and a report that
+    # drift together would satisfy a self-comparison
+    assert (report.totals.posts, report.totals.bays, report.totals.gates,
+            report.totals.fence_length_mm) == (6, 4, 1, 6000)
     assert report.totals.posts == len(result.strategy.posts)
     assert report.totals.bays == len(result.strategy.spans)
     assert report.totals.gates == len(result.strategy.gates)
-    assert report.totals.fence_length_mm == sum(s.length_mm for s in report.sections)
     heights = {b.height_mm for s in report.sections for b in s.bays}
     assert report.totals.height_min_mm == min(heights)
     assert report.totals.height_max_mm == max(heights)
 
 
-def test_unassigned_demand_is_reported_not_hidden():
-    """A packaged SKU rounds up to whole boxes: the extra belongs to no element and
-    must still appear, or the report and the invoice disagree."""
+def test_the_sheet_says_what_is_fitted_and_the_bom_says_what_is_bought():
+    """These are different numbers and both are right: 32 screws go into the fence,
+    2 boxes of 50 get bought. The rounding lives in the BOM's purchase quantity,
+    NOT in the engineering demand — so the sheet must equal the demand exactly."""
     report, _, _, bom = _report(_straight_with_gate())
-    screws = next((l for l in bom.lines if l.sku == "SCREW-S10"), None)
-    assert screws is not None
+    screws = next(l for l in bom.lines if l.sku == "SCREW-S10")
+    per_box = demo_catalog().products["SCREW-S10"].consumption.qty_per_package
+    assert (screws.engineering_qty, screws.purchase_qty, screws.overage_qty) == (32, 2, 8)
     counted = sum(p.qty for s in report.sections for e in [*s.setting_out, *s.bays, *s.gates]
                   for p in e.parts if p.sku == "SCREW-S10")
-    extra = sum(u.qty for u in report.totals.unassigned if u.sku == "SCREW-S10")
-    assert counted + extra == screws.engineering_qty
+    assert counted == screws.engineering_qty == 32
+    assert screws.purchase_qty * per_box - counted == screws.overage_qty
+    # nothing to reconcile here: the demand is fully pegged
+    assert not [u for u in report.totals.unassigned if u.sku == "SCREW-S10"]
 
 
 # --- the built base and the section header ------------------------------------
@@ -176,10 +264,18 @@ def test_a_section_reports_its_base_and_what_its_posts_stand_on():
 
 def test_a_section_with_one_height_reports_it():
     report, _, _, _ = _report(straight_topology(6000))
-    assert report.sections[0].height_mm is not None
+    assert report.sections[0].height_mm == 1800
 
 
 # --- purity -------------------------------------------------------------------
+
+def test_the_whole_pipeline_is_reproducible():
+    """"Same run in, same report out" is about generate -> derive -> fulfil ->
+    report, not just the last step."""
+    first, _, _, _ = _report(_straight_with_gate())
+    second, _, _, _ = _report(_straight_with_gate())
+    assert first == second
+
 
 def test_the_report_is_a_pure_function_of_its_inputs():
     topo = _straight_with_gate()
@@ -228,7 +324,9 @@ def test_every_part_says_what_it_structurally_is():
             for part in element.parts:
                 assert part.role, part.sku
                 roles.setdefault(part.role, set()).add(part.sku)
-    assert set(roles) == {"post", "cap", "concrete", "rail", "screw", "gate_kit"}
+    assert {"post", "cap", "concrete", "rail", "screw", "gate_kit"} <= set(roles)
+    assert roles["post"] == {"POST-S", "POST-S-HD"} and roles["cap"] == {"POST-CAP"}
+    assert roles["rail"] == {"RAIL-3000"} and roles["gate_kit"] == {"GATE-KIT-1000"}
     assert roles["concrete"] == {"CONC-25"} and roles["screw"] == {"SCREW-S10"}
 
 

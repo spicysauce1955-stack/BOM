@@ -234,7 +234,18 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("the structure tab lists setting out and bays",
               all(w in (struct or "") for w in ["מקטע A", "P1", "B1", "סימון בשטח"]))
         rows = c.js("document.querySelectorAll('#structure-body tr[data-element]').length")
-        check("every element has a row", (rows or 0) >= 8)
+        expected_rows = c.js("""
+fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
+  .then(() => 0)""")
+        expected_rows = c.js("""
+(async () => {
+  const runs = await (await fetch(
+    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const doc = await (await fetch(`/api/runs/${runs[runs.length - 1].id}/structure`)).json();
+  return doc.sections.reduce((n, s) =>
+    n + s.setting_out.length + s.bays.length + s.gates.length, 0);
+})()""")
+        check("every element in the document has a row", rows == expected_rows)
         # the stations must be the ones the API reports, in order
         stations = c.js("""
 [...document.querySelectorAll('#structure-body table')][0]
@@ -254,17 +265,24 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("consumables are itemised on the installer sheet",
               "SCREW-S10" in (parts_text or "") and "CONC-25" in (parts_text or ""))
         # clicking a row selects that element and explains it
-        c.js("""
-{
+        picked = c.js("""
+(() => {
   const row = [...document.querySelectorAll('#structure-body tr[data-element]')]
     .find(tr => tr.dataset.element.startsWith('span@'));
   row.dispatchEvent(new MouseEvent('click', {bubbles: true}));
-}
-'ok'""")
+  return row.dataset.element;
+})()""")
         time.sleep(1.2)
-        check("clicking a row selects the element and explains it",
-              bool(c.js("!!document.querySelector('#structure-body tr.selected')"))
-              and "מפתח" in (c.js("document.getElementById('inspector-body').textContent") or ""))
+        selected = c.js("""
+(() => {
+  const rows = [...document.querySelectorAll('#structure-body tr.selected')]
+    .map(tr => tr.dataset.element);
+  const body = document.getElementById('inspector-body').textContent;
+  return { rows, body, id: (body.match(/span@[\w:@.-]+/) || [])[0] };
+})()""")
+        check("clicking a row selects THAT element and explains THAT element",
+              selected["rows"] == [picked] and selected["id"] == picked
+              and "מפתח" in (selected["body"] or ""))
         c.shot("12-structure-installer.png")
         # the schedule is a document: it must speak both languages and both units
         station_mm = c.js("""
@@ -378,6 +396,14 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               printed["canvasTab"] == "block" and printed["structureTab"] == "block"
               and printed["canvas"] not in (None, "none")
               and printed["profile"] not in (None, "none"))
+        printed_rows = c.js("""
+[...document.querySelectorAll('#structure-body tr[data-element]')]
+  .filter(tr => getComputedStyle(tr).display !== 'none').length""")
+        printed_tags = c.js("""
+[...document.querySelectorAll('#g-overlay text.elem-tag')]
+  .filter(t => getComputedStyle(t).display !== 'none').length""")
+        check("the schedule's rows survive printing", printed_rows == rows)
+        check("the drawing keeps its tags on paper", (printed_tags or 0) > 0)
         check("the sheet has a title block naming the job and when it was printed",
               printed["title"] == "block" and "smoke" in (printed["titleText"] or "")
               and "הודפס" in (printed["titleText"] or ""))
@@ -655,13 +681,24 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # dimension string: chained bay dimensions + one overall per section
         dims = c.js("""
 (() => {
-  const labels = [...document.querySelectorAll('#p-dims text')].map(t => t.textContent);
-  return { count: document.querySelectorAll('#p-dims line').length, labels };
+  const texts = [...document.querySelectorAll('#p-dims text')];
+  return {
+    count: document.querySelectorAll('#p-dims line').length,
+    labels: texts.map(t => t.textContent),
+    starred: texts.filter(t => t.textContent.includes('*')
+        && (t.getAttribute('class') || '').includes('profile-dim-label'))
+      .map(t => t.getAttribute('class')),
+    gates: texts.filter(t => (t.getAttribute('class') || '').includes('gate'))
+      .map(t => t.textContent),
+  };
 })()""")
         check("the side view carries a chained dimension string",
               (dims["count"] or 0) >= 6
-              and sum("*" in l for l in dims["labels"]) == 2   # one closing bay per section
-              and any('מ"מ' in l for l in dims["labels"]))   # the overall dimension
+              and any('מ"מ' in l for l in dims["labels"]))     # the overall dimension
+        check("only a bay closes the chain — never a gate opening",
+              dims["starred"]
+              and all("closing" in c and "gate" not in c for c in dims["starred"])
+              and not any("*" in g for g in dims["gates"]))   # the overall dimension
 
         # --- side view: scope switch + base-top actions -----------------------
         c.click(*c.element_center("#btn-units"))   # drive this block in cm
@@ -937,8 +974,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
     .map(t => t.textContent) };
 })()""")
         check("a shared post has one tag in both schedules",
-              shared_tags["shared"]
-              and all(set(t[0].split(" ")[0] for t in [tags]) or True for tags in shared_tags["shared"])
+              bool(shared_tags["shared"])
               and all(len({t.split(" ")[0] for t in tags}) == 1
                       for tags in shared_tags["shared"]))
         c.shot("14-structure-multi.png")

@@ -83,6 +83,9 @@ class Bay(BaseModel):
 class GateRow(BaseModel):
     tag: str
     element_id: str
+    # the posts the gate hangs between — the one thing a hanging crew needs
+    from_tag: str | None = None
+    to_tag: str | None = None
     start_station_mm: Mm
     end_station_mm: Mm
     opening_mm: Mm
@@ -339,6 +342,8 @@ def build_structure(
                    key=lambda g: g.start_station_mm), start=1):
             section.gates.append(GateRow(
                 tag=f"{section.tag}/G{n}", element_id=gate.id,
+                from_tag=station_tag.get(gate.start_station_mm),
+                to_tag=station_tag.get(gate.end_station_mm),
                 start_station_mm=gate.start_station_mm,
                 end_station_mm=gate.end_station_mm,
                 opening_mm=gate.end_station_mm - gate.start_station_mm,

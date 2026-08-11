@@ -192,6 +192,7 @@ function installerSection(section) {
   const gates = section.gates.map((g) => `
     <tr ${rowAttrs(section.run_id, g.element_id, "inspect.gate", { kit: g.kit_sku || "" })}>
       <td><b>${esc(g.tag)}</b></td>
+      <td>${esc(g.from_tag || "")}–${esc(g.to_tag || "")}</td>
       <td class="num">${esc(fmt(g.start_station_mm))}</td>
       <td class="num">${esc(fmt(g.opening_mm))}</td>
       <td><span class="sku">${esc(g.kit_sku || "—")}</span></td>
@@ -221,6 +222,7 @@ function installerSection(section) {
     ${section.gates.length ? `<h4>${esc(t("structure.gates_title"))}</h4>
     <table class="structure-table"><tr>
       <th>${esc(t("structure.tag"))}</th>
+      <th>${esc(t("structure.between"))}</th>
       <th>${esc(t("structure.station"))} (${esc(u)})</th>
       <th>${esc(t("structure.opening"))} (${esc(u)})</th>
       <th>${esc(t("structure.kit"))}</th>

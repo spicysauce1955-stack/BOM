@@ -514,6 +514,27 @@ def _generate_run(
             ge = min(gs + opening, length)
             gate_ref = f"gate@{run.id}:{gs}-{ge}"
             openings[ev.id] = opening
+            if gs + opening > length:
+                # the opening was CLAMPED to the section end: the drawing shows a
+                # gap the gate cannot fill, and the setting-out sheet would hand
+                # that contradiction to a crew
+                c_node = builder.add(
+                    "conflict", "gate_past_run_end",
+                    payload={"element": gate_ref, "asked_mm": opening,
+                             "available_mm": length - gs, "station_mm": gs},
+                    scope_refs=[gate_ref],
+                )
+                strategy.warnings.append(
+                    StrategyWarning(
+                        code="gate_past_run_end", severity="error",
+                        message=f"Gate at station {gs} asks for {opening} mm but only "
+                                f"{length - gs} mm of the section remains — move the "
+                                "gate or shorten it.",
+                        element_refs=[gate_ref], decision_ref=c_node.id,
+                        params={"element": gate_ref, "asked_mm": opening,
+                                "available_mm": length - gs, "station_mm": gs},
+                    )
+                )
             # the payload's kit wins (it is the user's choice); otherwise the kit is
             # selected from the catalog BY DECLARED WIDTH — never by a SKU pattern
             kit = ev.payload.kit_sku or _kit_for_opening(catalog, opening)
@@ -698,9 +719,11 @@ def _generate_run(
             start_station_mm=gs, end_station_mm=ge, kit_sku=kit,
         )
         strategy.gates.append(gate)
-        # the kit must fit the opening the user asked for (not the clamped span):
-        # a kit priced against a wider opening is a quote sent to a customer
-        opening = openings[ev_id]
+        # The kit must fit the opening that will EXIST on site. Checking the
+        # authored width instead let a clamped gate (one that runs past the end of
+        # its section) keep a kit that cannot fit the remaining gap — and the
+        # setting-out sheet then hands "opening 600 · GATE-KIT-1000" to a crew.
+        opening = min(openings[ev_id], ge - gs)
         kit_width = _declared_opening(catalog, kit)
         if kit_width is not None and kit_width != opening:
             k_node = builder.add(

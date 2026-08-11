@@ -104,6 +104,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "check the design intent."
         ),
         "place_post_tilt": " Post tilted {tilt_deg}° from vertical.",
+        "gate_past_run_end": (
+            "The gate asks for {asked_mm} {u} at station {station_mm} {u}, but only "
+            "{available_mm} {u} of the section remains."
+        ),
         "excessive_step": (
             "Step of {step_mm} {u} exceeds the buildable maximum of {max_mm} {u} — "
             "needs an engineered solution."
@@ -177,6 +181,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "בדקו את כוונת התכנון."
         ),
         "place_post_tilt": " העמוד נטוי {tilt_deg}° מהאנך.",
+        "gate_past_run_end": (
+            "השער מבקש {asked_mm} {u} בתחנה {station_mm} {u}, אך נותרו במקטע "
+            "{available_mm} {u} בלבד."
+        ),
         "excessive_step": (
             'מדרגה של {step_mm} {u} חורגת מהמקסימום הניתן לביצוע ({max_mm} {u}) — '
             "נדרש פתרון הנדסי."
@@ -303,6 +311,10 @@ def explain_node(
             )
         case "tilted_stepped":
             base = _fmt(t, "tilted_stepped", lang, units, run_id=p.get("run_id"), mode=p.get("mode"))
+        case "gate_past_run_end":
+            base = _fmt(t, "gate_past_run_end", lang, units,
+                asked_mm=p.get("asked_mm"), available_mm=p.get("available_mm"),
+                station_mm=p.get("station_mm"))
         case "excessive_step":
             base = _fmt(t, "excessive_step", lang, units, step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
         case "excessive_gap":

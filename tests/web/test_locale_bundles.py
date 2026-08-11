@@ -27,6 +27,7 @@ WARNING_CODES = [
     "tilted_stepped",
     "gate_kit_width_mismatch",
     "no_gate_kit",
+    "gate_past_run_end",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 

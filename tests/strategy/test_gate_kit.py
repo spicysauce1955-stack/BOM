@@ -131,3 +131,27 @@ def test_a_catalog_selected_kit_says_the_catalog_chose_it(knowledge):
     node = _kit_node(generate(_gated(3500, None), knowledge, cat))
     assert node.payload["source"] == "catalog"
     assert node.payload["opening_width_mm"] == 3500
+
+
+def test_a_gate_clamped_by_the_run_end_is_flagged_and_rechecks_its_kit(knowledge, catalog):
+    """A gate authored past the end of its section is clamped to fit. Silently,
+    that produced "opening 600 · GATE-KIT-1000" on the setting-out sheet: a gap
+    no kit fits, handed to a crew. Both the clamp AND the kit are now reported."""
+    topo = straight_topology(1200)
+    add_point_event(topo, "run1", "ev_gate", 600,
+                    GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    result = generate(topo, knowledge, catalog)
+
+    gate = result.strategy.gates[0]
+    assert gate.end_station_mm - gate.start_station_mm == 600
+    codes = _codes(result)
+    assert "gate_past_run_end" in codes, "the clamp itself must be reported"
+    assert "gate_kit_width_mismatch" in codes, "and the kit no longer fits"
+    clamp = next(w for w in result.strategy.warnings if w.code == "gate_past_run_end")
+    assert clamp.params["asked_mm"] == 1000 and clamp.params["available_mm"] == 600
+
+
+def test_a_gate_that_fits_says_nothing(knowledge, catalog):
+    result = generate(_gated(1000, "GATE-KIT-1000"), knowledge, catalog)
+    codes = _codes(result)
+    assert "gate_past_run_end" not in codes and "gate_kit_width_mismatch" not in codes

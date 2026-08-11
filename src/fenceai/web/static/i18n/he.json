@@ -411,5 +411,6 @@
   "structure.from_stock": "מסופק מהמלאי (לא נרכש בשורה, עדיין נלקט במחסן):",
   "structure.shared_from": "(משותף עם {tag})",
   "profile.bay_dim": "מפתח, ממרכז למרכז",
-  "profile.gate_dim": "פתח שער — זה חייב להיות מדויק"
+  "profile.gate_dim": "פתח שער — זה חייב להיות מדויק",
+  "warning.gate_past_run_end": "השער בתחנה {station_mm} {u} מבקש {asked_mm} {u} אך נותרו במקטע {available_mm} {u} בלבד — הזיזו אותו או הקטינו אותו."
 }
