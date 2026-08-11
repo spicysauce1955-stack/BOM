@@ -474,5 +474,29 @@ def test_structure_endpoint_lays_out_the_run(client):
     assert client.get(f"/api/runs/{run_id}/structure").json() == doc
 
 
+def test_structure_stamps_the_inventory_it_read(client):
+    """The layout depends on the run alone, but a part names the BAR it is cut
+    from — and that depends on what was in the yard. Two sheets that differ must
+    be explainable, so the snapshot is stamped like the BOM's."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    result = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = result["run"]["id"]
+    before = client.get(f"/api/runs/{run_id}/structure").json()
+    assert before["inventory_hash"]
+
+    client.put(f"/api/projects/{pid}/inventory", json={"items": [
+        {"id": "inv1", "sku": "RAIL-3000", "kind": "remnant", "qty": 1, "length_mm": 2000}]})
+    after = client.get(f"/api/runs/{run_id}/structure").json()
+    assert after["inventory_hash"] != before["inventory_hash"]
+    # the layout is untouched by what was in the yard; only the provenance moved
+    strip = lambda doc: [[(r["tag"], r["station_mm"]) for r in s["setting_out"]]
+                         for s in doc["sections"]]
+    assert strip(after) == strip(before)
+    bars = [b for s in after["sections"] for bay in s["bays"]
+            for p in bay["parts"] for b in p["from_bars"]]
+    assert any("inv1" in b for b in bars)
+
+
 def test_structure_endpoint_404s_on_an_unknown_run(client):
     assert client.get("/api/runs/nope/structure").status_code == 404

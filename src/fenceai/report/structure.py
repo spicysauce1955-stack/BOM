@@ -120,6 +120,9 @@ class StructureReport(BaseModel):
     run_id: str
     sections: list[Section] = []
     totals: Totals = Totals()
+    # which inventory snapshot the cut-piece provenance was read against; the
+    # layout never depends on it, the `from_bars` of a part does
+    inventory_hash: str = ""
 
 
 # --- parts, by inverting the pegs -------------------------------------------

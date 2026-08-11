@@ -298,7 +298,13 @@ def get_structure(run_id: str):
     requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
     bom = fulfill(requirements, catalog, inventory)
     topology = state.store.load_project(result.run.project_id).topology
-    return build_structure(topology, result.strategy, requirements, bom, run_id=run_id)
+    report = build_structure(topology, result.strategy, requirements, bom, run_id=run_id)
+    # The layout is a function of the run alone, but the PARTS name the bars a
+    # piece is cut from, and those depend on the inventory that was on hand.
+    # Stamp it, exactly as /bom does, so two sheets that differ are explainable.
+    report.inventory_hash = hashlib.sha256(
+        inventory.model_dump_json().encode()).hexdigest()[:16]
+    return report
 
 
 # -- quotes (persisted BOM snapshots) ---------------------------------------------
