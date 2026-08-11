@@ -85,4 +85,8 @@ def test_confusion_must_be_in_range(tmp_path):
     r = run(run_dir, "give-up", "--reason", "x", "--fallback", "y",
             "--observed", "z", "--confusion", "9")
 
+    # exit 2 alone does not discriminate: argparse errors and a missing act.py
+    # share it. Grep the message so removing the range check fails this test.
     assert r.returncode == 2
+    assert "confusion" in (r.stderr + r.stdout).lower()
+    assert "0, 1, 2 or 3" in (r.stderr + r.stdout)
