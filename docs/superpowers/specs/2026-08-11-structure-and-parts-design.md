@@ -1,6 +1,6 @@
 # The strategy's structure: layout and the items it consists of
 
-Status: proposed · 2026-08-11
+Status: implemented · 2026-08-11 (see the plan for the task breakdown)
 
 The generator already decides everything needed to build the fence, and the BOM already
 prices it. What is missing is the document in between: **how the structure is laid out**

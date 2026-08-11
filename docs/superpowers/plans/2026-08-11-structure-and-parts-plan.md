@@ -1,5 +1,7 @@
 # Structure & parts — implementation plan
 
+**Status: complete** — all five tasks shipped (report, endpoint, tab, tagged drawings + dimensions, print sheet). Deviations from the plan as written are noted per task.
+
 Spec: `docs/superpowers/specs/2026-08-11-structure-and-parts-design.md`
 
 **Goal:** the strategy shows how the structure is laid out and what each piece consists of.
@@ -28,26 +30,26 @@ test `tests/report/test_structure.py`.
 **Interfaces produced:** `build_structure(topology, strategy, requirements, bom) ->
 StructureReport` and the models in the spec.
 
-- [ ] Test first: a straight 6 m run with a gate → sections tagged `A`, posts `P1..Pn` in
+- [x] Test first: a straight 6 m run with a gate → sections tagged `A`, posts `P1..Pn` in
       station order, bays `B1..`, gate `G1`; `stations[i].spacing_mm == station[i] -
       station[i-1]`; the last station equals the run length.
-- [ ] Test: Σ parts per SKU across all elements ≡ BOM engineering qty per SKU, and anything
+- [x] Test: Σ parts per SKU across all elements ≡ BOM engineering qty per SKU, and anything
       unpegged appears in `Totals.unassigned`.
-- [ ] Test: purity — two calls on the same inputs return equal reports; the report contains
+- [x] Test: purity — two calls on the same inputs return equal reports; the report contains
       no object identity from the strategy (mutating the strategy afterwards doesn't change
       a built report).
-- [ ] Implement by inverting `RequirementLine.pegs` and `BomLine.pegs`; cut pieces via
+- [x] Implement by inverting `RequirementLine.pegs` and `BomLine.pegs`; cut pieces via
       `CutPlan.bars[].pieces[].requirement_id` for `from_bar`.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 2 — the endpoint
 
 **Files:** modify `src/fenceai/api/app.py`; test `tests/api/test_api.py`.
 
-- [ ] Test: `GET /api/runs/{run_id}/structure` returns sections/bays/parts for a generated
+- [x] Test: `GET /api/runs/{run_id}/structure` returns sections/bays/parts for a generated
       run; unknown run → 404; the response is byte-identical on a second call.
-- [ ] Implement next to `/bom` (same `_run` + requirements/bom derivation path).
-- [ ] Commit.
+- [x] Implement next to `/bom` (same `_run` + requirements/bom derivation path).
+- [x] Commit.
 
 ### Task 3 — the Structure tab
 
@@ -55,37 +57,43 @@ StructureReport` and the models in the spec.
 `src/fenceai/web/static/js/structure.js`, modify `app.js`, `style.css`, both `i18n/*.json`;
 test `tests/web/test_locale_bundles.py` (key parity is automatic), smoke additions.
 
-- [ ] Section cards: setting-out table (tag · station · spacing · kind · SKU) and bay table
+- [x] Section cards: setting-out table (tag · station · spacing · kind · SKU) and bay table
       (tag · width · height · mode · parts summary), gates row; all lengths via `tu()`.
-- [ ] Row click → `setSelection({runId, elementId})`; the canvas, side view and inspector
+- [x] Row click → `setSelection({runId, elementId})`; the canvas, side view and inspector
       already follow selection.
-- [ ] Detail toggle: installer (default) / customer — the customer view drops screw/concrete
+- [x] Detail toggle: installer (default) / customer — the customer view drops screw/concrete
       lines and shows materials as a described scope (spec §"Two presentations").
-- [ ] Smoke: generate → open the tab → a bay row shows its parts; clicking it selects the
+- [x] Smoke: generate → open the tab → a bay row shows its parts; clicking it selects the
       element on the canvas; the customer view has no screw line.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 4 — tags and dimensions on the drawings
+
+*Deviation: the tag cache became its own module (`js/structure-data.js`) rather than living
+in the tab, so the tab, the plan canvas and the side view all read the same tags; and
+`tabs.js` now announces `tab-changed` through `state.js` instead of calling into another
+module. The tolerance mark went to the CLOSING bay, not the widest one — a crew sets out
+from the start, so that is where accumulated tape error lands.*
 
 **Files:** modify `js/editor.js` (plan tags), `js/profile.js` (side-view tags + dimension
 string); `style.css`; smoke additions.
 
-- [ ] Post tags along the run in the plan; bay tags inside the panels in the side view.
-- [ ] One chained centre-to-centre dimension string under the side view plus an overall run
+- [x] Post tags along the run in the plan; bay tags inside the panels in the side view.
+- [x] One chained centre-to-centre dimension string under the side view plus an overall run
       dimension; the closing bay marked as the tolerance-absorbing one (AIA-minimal).
-- [ ] Tag derivation lives in ONE place — reuse the report's ordering via the endpoint, so a
+- [x] Tag derivation lives in ONE place — reuse the report's ordering via the endpoint, so a
       tag in the table and a tag in the drawing can never disagree.
-- [ ] Smoke: the tag drawn on a bay equals the tag in its table row.
-- [ ] Commit.
+- [x] Smoke: the tag drawn on a bay equals the tag in its table row.
+- [x] Commit.
 
 ### Task 5 — the printable sheet
 
 **Files:** `style.css` (`@media print`), a print button in the Structure tab.
 
-- [ ] Print stylesheet: drawing + schedules, one page, no chrome; landscape hint.
-- [ ] Smoke: the print stylesheet hides the toolbar and the tab bar (checked via
+- [x] Print stylesheet: drawing + schedules, one page, no chrome; landscape hint.
+- [x] Smoke: the print stylesheet hides the toolbar and the tab bar (checked via
       `matchMedia('print')` styles, not by printing).
-- [ ] Commit.
+- [x] Commit.
 
 ## Staging
 

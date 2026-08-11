@@ -227,3 +227,19 @@ elements' presentation attributes) — every cursor role is now spelled out: map
 draw=crosshair, event tools aim (crosshair) at a run, runs=pointer, vertices=move,
 ghosts=copy, generated elements=help, and an active pan forces `grabbing` over every
 element under the pointer so it never flickers mid-drag.
+
+## Structure & parts: layout and the items it consists of (2026-08-11) — COMPLETE
+Researched (fence estimating vendors, contractor spacing guides, permit-drawing rules, AIA
+dimensioning) and built in five tasks; spec + plan in docs/superpowers/.
+`fenceai/report/structure.py` is a pure read model over a run: sections/posts/bays/gates
+tagged (A, P1, B1, G1 — derived, never stored), setting out as running stations with
+centre-to-centre spacings, and per-element parts obtained by INVERTING existing pegs
+(element → RequirementLine → BomLine, plus cut-piece bar provenance). Its governing property
+is Σ(parts) ≡ BOM, with unpegged demand reported as `unassigned`. `RequirementLine.role`
+(post|cap|concrete|rail|screw|gate_kit) rides to `Part.role` so the customer sheet can
+describe fixings instead of counting them — trade practice, not a guess from SKU strings.
+GET /api/runs/{id}/structure serves it; the Structure tab renders both detail levels;
+`js/structure-data.js` is the single tag source for the tab AND both drawings; the side view
+gained a chained centre-to-centre dimension string with one overall per section and the
+CLOSING bay marked; printing yields the site sheet (drawings + schedules, title block, plan
+auto-framed). 424 pytest (16 new) + 88/88 smoke. Review round: see below.
