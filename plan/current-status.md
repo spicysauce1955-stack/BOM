@@ -66,6 +66,19 @@ with Advanced-JSON toggle, inventory table editor. 220 pytest + 27/27 smoke,
 272-key he/en parity. Research report menu retained for next rounds (#5-#10:
 adaptive UI, wizard spine, dimension pad, spatial warnings, segment table, aerial).
 
+## Persona lab (2026-08-11) — HARNESS COMPLETE, FIRST RUN DONE
+`tools/persona_lab/` — six real-role personas (5 he + 1 en control, from Israeli fence-trade
+research) drive the live app over CDP perceiving only rendered UI (visible labels, opaque
+handles, no ids/API/DB/repo). Independent refuters reproduce every finding and assign severity.
+First run: **0 of 6 completed their job**; 64 raw findings → 51 confirmed, 13 refuted.
+Report: `docs/reviews/persona-lab-2026-08-11.md`.
+Top blocker: `editor.js:541` focuses popover number fields without `.select()`, so typed digits
+prefix the prefilled value (1000+3500 → 35001000) and a bad `z_mm=-4000` persists unvalidated —
+hit by 5 of 6 personas. Then: no export, € hardcoded, no customer-facing price, no metre unit.
+The run also found 5 defects in the harness itself (all fixed, `5d08262` + `b720a2f`, regression
+-tested) which had manufactured 13 false findings — including a fake "app froze, data lost".
+302 pytest + 44/44 smoke.
+
 ## Display-unit toggle: mm / cm (2026-08-11) — COMPLETE
 User-selectable display unit in the header (persisted per browser, Hebrew מ"מ / ס"מ).
 New `js/units.js` is the only converter: `toDisplayValue`/`toMm` at every field boundary,
