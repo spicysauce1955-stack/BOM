@@ -406,5 +406,10 @@
   "inspect.pinned": "pinned",
   "profile.closing_bay": "The closing bay — set out from the start, so any tape error lands here.",
   "profile.closing_legend": "* closing bay",
-  "structure.printed": "printed {at}"
+  "structure.printed": "printed {at}",
+  "structure.stale": "The drawing has changed since this strategy was computed — press ⚙ Generate strategy to lay out the new one.",
+  "structure.from_stock": "Met from stock (bought on no line, still picked in the yard):",
+  "structure.shared_from": "(shared with {tag})",
+  "profile.bay_dim": "Bay, centre to centre",
+  "profile.gate_dim": "Gate opening — this one must be exact"
 }

@@ -14,7 +14,7 @@ import { esc } from "./api.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { emit, on, setSelection, state } from "./state.js";
-import { getReport, loadStructure } from "./structure-data.js";
+import { getReport, isStale, loadStructure } from "./structure-data.js";
 import { enumWord, fmt, fmtLen, tu, unitLabel } from "./units.js";
 
 let detail = "installer";
@@ -35,6 +35,11 @@ export function initStructure() {
     emit("fit-view");          // frame the plan on the fence before it goes to paper
     setTimeout(() => window.print(), 60);
   });
+  // re-stamp the title block at print time, however the print was triggered
+  window.addEventListener("beforeprint", () => {
+    const report = getReport();
+    if (report) renderPrintTitle(report);
+  });
 
   on("tab-changed", (tab) => { if (tab === "structure") loadStructure(); });
   on("structure-loaded", render);
@@ -52,7 +57,8 @@ function render() {
   const report = getReport();
   if (!report) {
     totals.innerHTML = "";
-    body.innerHTML = `<div class="panel meta">${esc(t("structure.empty"))}</div>`;
+    body.innerHTML = `<div class="panel meta">${
+      esc(t(isStale() ? "structure.stale" : "structure.empty"))}</div>`;
     return;
   }
   renderPrintTitle(report);
@@ -83,7 +89,11 @@ function highlight() {
 function renderPrintTitle(report) {
   const box = document.getElementById("print-title");
   if (!box) return;
-  const printed = new Date().toISOString().slice(0, 16).replace("T", " ");
+  // local time, stamped when the sheet is produced (see the beforeprint hook):
+  // a UTC time rendered hours earlier is worse than no time at all
+  const now = new Date();
+  const printed = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 16).replace("T", " ");
   box.innerHTML = `
     <div class="print-title-row">
       <b dir="auto">${esc(state.project?.name || "")}</b>
@@ -103,12 +113,14 @@ function renderTotals(totals) {
       ? tu("structure.height_one", { height_mm: totals.height_min_mm })
       : tu("structure.height_range",
            { min_mm: totals.height_min_mm, max_mm: totals.height_max_mm });
-  const unassigned = (totals.unassigned || []).length
-    ? `<div class="meta">${esc(t("structure.unassigned"))} `
-      + totals.unassigned.map((u) =>
+  const bucket = (key, rows) => (rows || []).length
+    ? `<div class="meta">${esc(t(key))} `
+      + rows.map((u) =>
           `<span class="sku">${esc(u.sku)}</span> <span class="num">${esc(String(u.qty))}</span>`)
         .join(" · ") + "</div>"
     : "";
+  const unassigned = bucket("structure.unassigned", totals.unassigned)
+    + bucket("structure.from_stock", totals.from_stock);
   return `<div class="summary-line">
       ${stat(totals.posts, "strategy.posts")}
       ${stat(totals.bays, "structure.bays")}
@@ -156,7 +168,8 @@ function installerSection(section) {
   const settingOut = section.setting_out.map((s) => `
     <tr ${rowAttrs(section.run_id, s.element_id, "inspect.post",
                    { sku: s.sku, station_mm: s.station_mm })}>
-      <td><b>${esc(s.tag)}</b></td>
+      <td><b>${esc(s.tag)}</b>${s.shared_from
+        ? ` <span class="meta">${esc(t("structure.shared_from", { tag: s.shared_from }))}</span>` : ""}</td>
       <td class="num">${esc(fmt(s.station_mm))}</td>
       <td class="num">${s.spacing_mm === null ? "—" : esc(fmt(s.spacing_mm))}</td>
       <td>${esc(enumWord(s.kind))}${s.pinned ? ` <span class="tag">${esc(t("inspect.pinned"))}</span>` : ""}</td>
@@ -226,7 +239,10 @@ function customerSection(section) {
     : "";
   const named = new Map();      // named materials: everything but the consumables
   let consumables = false;
+  const counted = new Set();    // a shared corner post is set out twice, bought once
   for (const element of [...section.setting_out, ...section.bays, ...section.gates]) {
+    if (counted.has(element.element_id)) continue;
+    counted.add(element.element_id);
     for (const part of element.parts) {
       if (CONSUMABLE_ROLES.has(part.role)) { consumables = true; continue; }
       named.set(part.sku, (named.get(part.sku) || 0) + part.qty);

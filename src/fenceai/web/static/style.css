@@ -331,8 +331,13 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
   .structure-section { break-inside: avoid; margin-block-start: 8px; }
   .structure-table { font-size: 10px; }
   .structure-table tr[data-element]:hover, .structure-table tr.selected { background: none; }
+  /* a collapsed side view must not silently drop the elevation from the sheet */
+  #profile.collapsed #profile-svg { display: block !important; }
+  #profile-placeholder { display: none; }
   .print-title { display: block; border-block-end: 1px solid #1d2733; margin-block-end: 6px; }
   .print-title-row { display: flex; gap: 14px; align-items: baseline; font-size: 12px; }
   .print-title-row b { font-size: 15px; }
 }
 .elem-tag.bay { fill: #2563eb; font-weight: 500; }
+.profile-dim.gate { stroke: #0891b2; }
+.profile-dim-label.gate { fill: #0891b2; }

@@ -463,7 +463,7 @@ def test_structure_endpoint_lays_out_the_run(client):
     assert doc["run_id"] == run_id
     section = doc["sections"][0]
     assert section["tag"] == "A"
-    assert [s["tag"] for s in section["setting_out"]][:2] == ["P1", "P2"]
+    assert [s["tag"] for s in section["setting_out"]][:2] == ["A/P1", "A/P2"]
     element_ids = {p["id"] for p in result["strategy"]["posts"]} \
         | {s["id"] for s in result["strategy"]["spans"]}
     for row in [*section["setting_out"], *section["bays"]]:
@@ -500,3 +500,24 @@ def test_structure_stamps_the_inventory_it_read(client):
 
 def test_structure_endpoint_404s_on_an_unknown_run(client):
     assert client.get("/api/runs/nope/structure").status_code == 404
+
+
+def test_structure_refuses_a_run_that_no_longer_matches_the_drawing(client):
+    """Laying a stored strategy over an edited topology invents stations for posts
+    nobody placed — and that document is what goes to site."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    result = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = result["run"]["id"]
+    assert client.get(f"/api/runs/{run_id}/structure").status_code == 200
+
+    put_straight_topology(client, pid, length=9000)      # the drawing moved
+    stale = client.get(f"/api/runs/{run_id}/structure")
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "topology_changed"
+
+    # regenerating makes it current again
+    again = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    fresh = client.get(f"/api/runs/{again['run']['id']}/structure")
+    assert fresh.status_code == 200
+    assert fresh.json()["sections"][0]["length_mm"] == 9000

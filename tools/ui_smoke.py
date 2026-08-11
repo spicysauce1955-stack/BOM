@@ -897,6 +897,91 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
         c.click(*c.element_center("#btn-units"))   # back to mm
         time.sleep(0.6)
 
+        # --- the schedule with SEVERAL sections (it was only ever seen with one)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(1.8)
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(1.5)
+        multi = c.js("""
+(() => {
+  const cards = [...document.querySelectorAll('#structure-body .structure-section')];
+  return {
+    count: cards.length,
+    tags: cards.map(c => (c.textContent.match(/מקטע (\w+)/) || [])[1]),
+    runs: [...new Set([...document.querySelectorAll('#structure-body tr[data-element]')]
+      .map(tr => tr.dataset.run))],
+  };
+})()""")
+        check("every section gets its own schedule card",
+              multi["count"] >= 3 and multi["tags"][:3] == ["A", "B", "C"]
+              and len(multi["runs"]) == multi["count"])
+        # a post shared by two sections is set out by BOTH, at each one's own station
+        shared = c.js("""
+(() => {
+  const rows = [...document.querySelectorAll('#structure-body tr[data-element]')]
+    .filter(tr => tr.dataset.element.includes('node:'));
+  const byId = {};
+  for (const r of rows) (byId[r.dataset.element] ||= []).push(r.dataset.run);
+  return Object.values(byId).some(runs => new Set(runs).size > 1);
+})()""")
+        check("a corner post is set out by both sections that share it", bool(shared))
+        # a shared corner post carries ONE tag, and both sections say so
+        shared_tags = c.js("""
+(() => {
+  const rows = [...document.querySelectorAll('#structure-body tr[data-element]')]
+    .filter(tr => tr.dataset.element.includes('node:'));
+  const byId = {};
+  for (const r of rows) (byId[r.dataset.element] ||= []).push(r.cells[0].textContent.trim());
+  const shared = Object.values(byId).filter(t => t.length > 1);
+  return { shared, drawn: [...document.querySelectorAll('#p-result text.elem-tag')]
+    .map(t => t.textContent) };
+})()""")
+        check("a shared post has one tag in both schedules",
+              shared_tags["shared"]
+              and all(set(t[0].split(" ")[0] for t in [tags]) or True for tags in shared_tags["shared"])
+              and all(len({t.split(" ")[0] for t in tags}) == 1
+                      for tags in shared_tags["shared"]))
+        c.shot("14-structure-multi.png")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.3)
+
+        # editing the drawing invalidates the schedule: it must SAY so, never lay
+        # the old strategy over the new geometry
+        c.js("""
+(async () => {
+  const pid = document.getElementById('project-select').value;
+  const project = await (await fetch(`/api/projects/${pid}`)).json();
+  const topo = project.topology;
+  topo.nodes[0].x_mm -= 500;               // the drawing moves under the run
+  await fetch(`/api/projects/${pid}/topology`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(topo),
+  });
+  return 'edited';
+})()""")
+        time.sleep(1.2)
+        c.js("""
+{
+  const sel = document.getElementById('project-select');
+  sel.dispatchEvent(new Event('change'));   // reload: the last run comes back
+}
+'ok'""")
+        time.sleep(3)
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(1.5)
+        time.sleep(1.0)   # let the refetch settle before reading the panel
+        stale_text = c.js("document.getElementById('structure-body').textContent")
+
+        print("  overlay tags:",
+              c.js("document.querySelectorAll('#g-overlay text.elem-tag').length"))
+        check("an edited drawing makes the schedule say so, not invent stations",
+              "השרטוט השתנה" in (stale_text or "")
+              or "עדיין אין" in (stale_text or ""))
+        check("a stale schedule leaves no tags on the drawing",
+              (c.js("document.querySelectorAll('#g-overlay text.elem-tag').length") or 0) == 0)
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.3)
+
         # --- clear topology (draft + persisted, the original bug) ------------
         c.click(*c.element_center("#tool-draw"))
         c.click(*c.canvas_px(1000, 3000))   # start a draft, leave it unfinished

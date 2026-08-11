@@ -79,6 +79,24 @@ export function initProfile() {
     setSelection({ runId: focusRunId });   // the plan canvas follows the choice
   });
 
+  // printing shows the WHOLE fence: a sheet whose drawing is one section while
+  // its schedules list them all is a sheet that contradicts itself
+  let scopeBeforePrint = null;
+  window.addEventListener("beforeprint", () => {
+    if (scope === "section") {
+      scopeBeforePrint = scope;
+      scope = "all";
+      render();
+    }
+  });
+  window.addEventListener("afterprint", () => {
+    if (scopeBeforePrint) {
+      scope = scopeBeforePrint;
+      scopeBeforePrint = null;
+      render();
+    }
+  });
+
   setupSvg();
   on("project-loaded", () => { closeWallPopover(); render(); });
   on("topology-changed", render);
@@ -586,27 +604,41 @@ function renderDimensions(chain) {
   for (const entry of chain) {
     const section = sectionOf(entry.run.id);
     if (!section || section.setting_out.length < 2) continue;
-    const stations = section.setting_out.map((st) => st.station_mm);
     const xAt = (s) => xOf(gsOf(entry, s));
+    // Dimension what things ARE, not every gap between two posts: a gate opening
+    // is not a bay, and it is the one dimension that must be exact — starring it
+    // as the tolerance-absorbing piece would tell the crew to lose their error
+    // into the gate the kit has to fit.
+    const intervals = [
+      ...section.bays.map((b) => ({ from: b.start_station_mm, to: b.end_station_mm,
+        length: b.width_mm, kind: "bay" })),
+      ...section.gates.map((gt) => ({ from: gt.start_station_mm, to: gt.end_station_mm,
+        length: gt.opening_mm, kind: "gate" })),
+    ].sort((a, b) => a.from - b.from);
     // the CLOSING bay absorbs the tape: a crew sets out from the start, so
-    // whatever error accumulates lands in the last bay, not in a middle one
-    const closing = stations.length - 2;
+    // whatever error accumulates lands in the LAST BAY (never in a gate)
+    const bays = intervals.filter((iv) => iv.kind === "bay");
+    const closing = bays.length > 1 ? bays[bays.length - 1] : null;
 
-    for (let i = 0; i + 1 < stations.length; i++) {
-      const a = xAt(stations[i]), b = xAt(stations[i + 1]);
+    for (const iv of intervals) {
+      const a = xAt(iv.from), b = xAt(iv.to);
       const [x0, x1] = a <= b ? [a, b] : [b, a];
-      const span = stations[i + 1] - stations[i];
-      el("line", { x1: x0, y1: DIM_Y, x2: x1, y2: DIM_Y, class: "profile-dim" }, g);
+      const isClosing = iv === closing;
+      el("line", { x1: x0, y1: DIM_Y, x2: x1, y2: DIM_Y,
+        class: `profile-dim${iv.kind === "gate" ? " gate" : ""}` }, g);
       for (const x of [x0, x1])
         el("line", { x1: x, y1: DIM_Y - 4, x2: x, y2: DIM_Y + 4, class: "profile-dim-tick" }, g);
       if (x1 - x0 > 26) {
         const label = el("text", { x: (x0 + x1) / 2, y: DIM_Y - 5, "text-anchor": "middle",
-          class: `profile-dim-label num${i === closing ? " closing" : ""}` }, g);
-        label.textContent = fmt(span) + (i === closing && stations.length > 2 ? " *" : "");
-        if (i === closing && stations.length > 2)
-          el("title", {}, label).textContent = t("profile.closing_bay");
+          class: `profile-dim-label num${isClosing ? " closing" : ""}`
+            + (iv.kind === "gate" ? " gate" : "") }, g);
+        label.textContent = fmt(iv.length) + (isClosing ? " *" : "");
+        el("title", {}, label).textContent = isClosing
+          ? t("profile.closing_bay")
+          : t(iv.kind === "gate" ? "profile.gate_dim" : "profile.bay_dim");
       }
     }
+    const stations = section.setting_out.map((st) => st.station_mm);
     // overall: the one dimension the crew checks the whole run against
     const first = xAt(stations[0]), last = xAt(stations[stations.length - 1]);
     const [ox0, ox1] = first <= last ? [first, last] : [last, first];
@@ -617,9 +649,13 @@ function renderDimensions(chain) {
         class: "profile-dim-tick" }, g);
     el("text", { x: (ox0 + ox1) / 2, y: DIM_TOTAL_Y - 4, "text-anchor": "middle",
       class: "profile-dim-label total num" }, g).textContent = fmtLen(section.length_mm);
-    if (stations.length > 2)
-      el("text", { x: ox1, y: DIM_TOTAL_Y + 6, "text-anchor": "end",
+    if (closing) {
+      // anchored to the STARRED bay, so a reversed section does not put the
+      // legend at the opposite end of the run from the thing it explains
+      const cx = (xAt(closing.from) + xAt(closing.to)) / 2;
+      el("text", { x: cx, y: DIM_TOTAL_Y + 7, "text-anchor": "middle",
         class: "profile-dim-legend" }, g).textContent = t("profile.closing_legend");
+    }
   }
 }
 

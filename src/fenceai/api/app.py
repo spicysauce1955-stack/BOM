@@ -293,12 +293,22 @@ def get_structure(run_id: str):
     """How the fence is laid out and what each element consists of — a derived view
     over the run, persisted nowhere (docs/superpowers/specs/2026-08-11-structure...)."""
     result = _run(run_id)
+    project = _project(result.run.project_id)
+    # The setting out is measured on the topology — so it must be THE topology the
+    # run was generated from. Laying a stored strategy over an edited drawing
+    # invents stations for posts nobody placed, and that document goes to site.
+    if project.topology.revision != result.run.topology_revision:
+        raise HTTPException(409, {
+            "code": "topology_changed",
+            "run_topology_revision": result.run.topology_revision,
+            "project_topology_revision": project.topology.revision,
+        })
     catalog = state.store.load_catalog()
     inventory = state.store.load_inventory(result.run.project_id)
     requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
     bom = fulfill(requirements, catalog, inventory)
-    topology = state.store.load_project(result.run.project_id).topology
-    report = build_structure(topology, result.strategy, requirements, bom, run_id=run_id)
+    report = build_structure(project.topology, result.strategy, requirements, bom,
+                             run_id=run_id)
     # The layout is a function of the run alone, but the PARTS name the bars a
     # piece is cut from, and those depend on the inventory that was on hand.
     # Stamp it, exactly as /bom does, so two sheets that differ are explainable.

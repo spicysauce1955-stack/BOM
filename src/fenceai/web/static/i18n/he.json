@@ -406,5 +406,10 @@
   "inspect.pinned": "ננעץ",
   "profile.closing_bay": "המפתח הסוגר — מסמנים מתחילת המקטע, ולכן סטיית המדידה מצטברת לכאן.",
   "profile.closing_legend": "* מפתח סוגר",
-  "structure.printed": "הודפס {at}"
+  "structure.printed": "הודפס {at}",
+  "structure.stale": "השרטוט השתנה מאז חישוב האסטרטגיה — לחצו ⚙ חישוב אסטרטגיה כדי לפרוס את החדש.",
+  "structure.from_stock": "מסופק מהמלאי (לא נרכש בשורה, עדיין נלקט במחסן):",
+  "structure.shared_from": "(משותף עם {tag})",
+  "profile.bay_dim": "מפתח, ממרכז למרכז",
+  "profile.gate_dim": "פתח שער — זה חייב להיות מדויק"
 }

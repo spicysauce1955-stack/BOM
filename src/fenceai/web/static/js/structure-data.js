@@ -11,7 +11,9 @@ import { emit, on, state } from "./state.js";
 let report = null;      // last fetched StructureReport
 let runId = null;       // the run it belongs to
 let inFlight = null;
+let inFlightFor = null; // the run id that fetch was started for
 let tags = new Map();   // element id -> tag, built once per report
+let stale = false;      // the run exists but no longer matches the drawing (409)
 
 export function getReport() {
   return report;
@@ -20,23 +22,35 @@ export function getReport() {
 export async function loadStructure() {
   const wanted = state.result?.run?.id || null;
   if (!wanted) {
-    report = null; runId = null; tags = new Map();
+    report = null; runId = null; tags = new Map(); stale = false;
     emit("structure-loaded", null); return null;
   }
   if (runId === wanted && report) return report;
-  if (inFlight) return inFlight;
+  // an in-flight fetch belongs to the run it was STARTED for: adopting it for a
+  // different run would label one drawing with another's schedule
+  if (inFlight && inFlightFor === wanted) return inFlight;
+  inFlightFor = wanted;
   inFlight = apiGet(`/api/runs/${wanted}/structure`)
     .then((doc) => {
-      report = doc;
-      runId = wanted;
-      tags = indexTags(doc);
+      if (state.result?.run?.id !== wanted) return null;   // the run moved on
+      report = doc; runId = wanted; tags = indexTags(doc); stale = false;
       return doc;
     })
-    .catch(() => { report = null; runId = null; tags = new Map(); return null; })
-    .finally(() => { inFlight = null; });
+    .catch((err) => {
+      report = null; runId = null; tags = new Map();
+      // 409: the run no longer matches the drawing — a real state, not a failure
+      stale = String(err?.message || "").includes("topology_changed");
+      return null;
+    })
+    .finally(() => { inFlight = null; inFlightFor = null; });
   const doc = await inFlight;
   emit("structure-loaded", doc);
   return doc;
+}
+
+// true when the last attempt found a run that no longer matches the topology
+export function isStale() {
+  return stale;
 }
 
 function indexTags(doc) {
@@ -66,4 +80,7 @@ export function initStructureData() {
   // a topology edit clears it) — without this the drawings lose their tags until
   // the user presses generate again
   on("project-loaded", () => { report = null; runId = null; tags = new Map(); loadStructure(); });
+  // the parts name the BAR a piece is cut from, so a change in the yard changes
+  // this document even though the layout is untouched
+  on("inventory-saved", () => { report = null; runId = null; tags = new Map(); loadStructure(); });
 }

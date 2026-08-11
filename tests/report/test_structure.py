@@ -42,9 +42,10 @@ def test_sections_posts_bays_and_gates_are_tagged_in_order():
     section = report.sections[0]
     assert section.tag == "A" and section.run_id == "run1"
     assert [s.tag for s in section.setting_out] == \
-        [f"P{i}" for i in range(1, len(section.setting_out) + 1)]
-    assert [b.tag for b in section.bays] == [f"B{i}" for i in range(1, len(section.bays) + 1)]
-    assert [g.tag for g in section.gates] == ["G1"]
+        [f"A/P{i}" for i in range(1, len(section.setting_out) + 1)]
+    assert [b.tag for b in section.bays] == \
+        [f"A/B{i}" for i in range(1, len(section.bays) + 1)]
+    assert [g.tag for g in section.gates] == ["A/G1"]
     stations = [s.station_mm for s in section.setting_out]
     assert stations == sorted(stations), "setting out must read along the run"
 
@@ -229,3 +230,104 @@ def test_every_part_says_what_it_structurally_is():
                 roles.setdefault(part.role, set()).add(part.sku)
     assert set(roles) == {"post", "cap", "concrete", "rail", "screw", "gate_kit"}
     assert roles["concrete"] == {"CONC-25"} and roles["screw"] == {"SCREW-S10"}
+
+
+# --- the findings the architecture review turned up ---------------------------
+
+def test_a_shared_corner_post_has_exactly_one_tag():
+    """It is one post: both sections set it out, and both must call it the same
+    thing, or the drawing (which can only print one label) contradicts a table."""
+    topo = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=4000, y_mm=0),
+               Node(id="n3", x_mm=4000, y_mm=3000)],
+        runs=[Run(id="runA", start_node_id="n1", end_node_id="n2"),
+              Run(id="runB", start_node_id="n2", end_node_id="n3")])
+    report, result, _, _ = _report(topo)
+    tags: dict[str, set[str]] = {}
+    for section in report.sections:
+        for row in [*section.setting_out, *section.bays, *section.gates]:
+            tags.setdefault(row.element_id, set()).add(row.tag)
+    assert all(len(v) == 1 for v in tags.values()), tags
+    assert len(set().union(*tags.values())) == len(tags), "tags are unique per element"
+    # the borrowing section says whose post it is
+    borrowed = [s for s in report.sections[1].setting_out if s.shared_from]
+    assert [b.shared_from for b in borrowed] == ["A"]
+    assert borrowed[0].tag.startswith("A/")
+    # and it is counted ONCE
+    assert report.totals.posts == len(result.strategy.posts)
+
+
+def test_demand_met_from_stock_is_reported_not_lost():
+    """Fulfilment emits no BOM line at all when inventory covers the demand. The
+    parts still exist and still have to be picked, so the report says so."""
+    topo = straight_topology(6000)
+    inventory = Inventory(items=[
+        InventoryItem(id="posts", sku="POST-S", kind="full_stock", qty=10)])
+    report, _, _, bom = _report(topo, inventory)
+    assert not any(l.sku == "POST-S" for l in bom.lines), "fixture must cover the demand"
+    from_stock = {u.sku: u.qty for u in report.totals.from_stock}
+    counted = sum(p.qty for s in report.sections for st in s.setting_out
+                  for p in st.parts if p.sku == "POST-S")
+    assert from_stock.get("POST-S") == counted > 0
+
+
+def test_every_sku_balances_in_both_directions():
+    """asked ≡ purchased + from_stock − unassigned, per (sku, unit). One equation,
+    checked over the union of what the elements want and what the BOM buys."""
+    topo = straight_topology(6000)
+    inventory = Inventory(items=[
+        InventoryItem(id="posts", sku="POST-S", kind="full_stock", qty=2),
+        InventoryItem(id="rail", sku="RAIL-3000", kind="remnant", qty=1, length_mm=2500)])
+    report, _, requirements, bom = _report(topo, inventory)
+    asked: dict[tuple[str, str], int] = {}
+    for req in requirements:
+        asked[(req.sku, req.unit)] = asked.get((req.sku, req.unit), 0) + req.engineering_qty
+    purchased = {(l.sku, l.engineering_unit): l.engineering_qty for l in bom.lines}
+    stock = {(u.sku, u.unit): u.qty for u in report.totals.from_stock}
+    extra = {(u.sku, u.unit): u.qty for u in report.totals.unassigned}
+    for key in set(asked) | set(purchased):
+        assert asked.get(key, 0) == (purchased.get(key, 0) + stock.get(key, 0)
+                                     - extra.get(key, 0)), key
+
+
+def test_unassigned_never_reports_a_negative_quantity():
+    """A negative count is a defect, not a quantity — it used to appear when one
+    SKU was demanded in two units (a tube bought as a post, cut as a rail)."""
+    from fenceai.demand.derive import RequirementLine
+    from fenceai.fulfillment.fulfill import Bom, BomLine
+    from fenceai.report.structure import _parts_by_element
+
+    ledger = _parts_by_element(
+        [RequirementLine(id="r1", sku="TUBE", engineering_qty=8, unit="cut",
+                         pegs=["span@run1:0-1000"], role="rail"),
+         RequirementLine(id="r2", sku="TUBE", engineering_qty=5, unit="each",
+                         pegs=["post@run1:0"], role="post")],
+        Bom(lines=[BomLine(sku="TUBE", name="tube", purchase_qty=4, purchase_unit="bar",
+                           engineering_qty=8, engineering_unit="cut",
+                           unit_price_cents=100, total_cents=400)]))
+    assert all(u.qty > 0 for u in ledger.unassigned), ledger.unassigned
+    assert all(u.qty > 0 for u in ledger.from_stock), ledger.from_stock
+    # the "each" demand is unpurchased, and says so in ITS unit
+    assert ("TUBE", 5, "each") in [(u.sku, u.qty, u.unit) for u in ledger.from_stock]
+
+
+def test_a_requirement_pegged_to_nothing_lands_in_unassigned():
+    """The spec says nothing is hidden; it used to land under a phantom element
+    that no table renders."""
+    from fenceai.demand.derive import RequirementLine
+    from fenceai.fulfillment.fulfill import Bom
+    from fenceai.report.structure import _parts_by_element
+
+    ledger = _parts_by_element(
+        [RequirementLine(id="r1", sku="MISC", engineering_qty=3, unit="each", pegs=[])],
+        Bom())
+    assert ledger.per_element == {}
+    assert [(u.sku, u.qty) for u in ledger.unassigned] == [("MISC", 3)]
+
+
+def test_a_section_with_two_base_surfaces_says_mixed():
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "b1", 0, 3000, BasePayload(surface="masonry_wall"))
+    add_interval_event(topo, "run1", "b2", 3000, 6000, BasePayload(surface="concrete"))
+    report, _, _, _ = _report(topo)
+    assert report.sections[0].base_surface == "mixed"

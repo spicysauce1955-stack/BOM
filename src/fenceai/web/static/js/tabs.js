@@ -152,6 +152,7 @@ export function initTabs() {
       inv = inventoryObj;
     }
     await apiSend("PUT", `/api/projects/${state.projectId}/inventory`, inv);
+    emit("inventory-saved");   // cut-piece provenance depends on the yard
     alert(t("inventory.saved"));
     await renderInventory();
   });

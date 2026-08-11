@@ -45,7 +45,11 @@ class Station(BaseModel):
     """A post, as the crew meets it: a running distance from the section start and
     the centre-to-centre spacing from the post before it."""
 
-    tag: str
+    tag: str          # unique per ELEMENT across the whole report ("A/P3")
+    # the section that owns this post, when this row is a cross-reference: a
+    # corner post belongs to one section and is SET OUT by both, and it must
+    # carry one tag, or the drawing and the two tables disagree about its name
+    shared_from: str | None = None
     element_id: str
     station_mm: Mm
     spacing_mm: Mm | None = None  # None for the first post of a section
@@ -112,8 +116,14 @@ class Totals(BaseModel):
     height_min_mm: Mm | None = None
     height_max_mm: Mm | None = None
     per_sku: list[SkuTotal] = []
-    # BOM demand that pegs to no element (overage, package remainders): shown, never hidden
+    # Both directions of "the parts and the BOM agree", because the BOM omits a
+    # line entirely when stock covers the demand:
+    #   unassigned — purchased beyond what any element asked for (rounding, whole
+    #                packages); shown, never hidden
+    #   from_stock — asked for and met from inventory, so it appears on no
+    #                purchase line but still has to be picked in the yard
     unassigned: list[SkuTotal] = []
+    from_stock: list[SkuTotal] = []
 
 
 class StructureReport(BaseModel):
@@ -138,31 +148,66 @@ def _bars_by_requirement(bom: Bom) -> dict[str, list[str]]:
     return out
 
 
-def _parts_by_element(
-    requirements: list[RequirementLine], bom: Bom
-) -> tuple[dict[str, list[Part]], list[SkuTotal]]:
-    """element id -> its parts, plus whatever the BOM carries for no element."""
+class _Ledger(BaseModel):
+    """What every element asked for, and how the BOM answered it."""
+
+    per_element: dict[str, list[Part]] = {}
+    per_sku: list[SkuTotal] = []
+    unassigned: list[SkuTotal] = []
+    from_stock: list[SkuTotal] = []
+
+
+def _parts_by_element(requirements: list[RequirementLine], bom: Bom) -> _Ledger:
+    """element id -> its parts, and the two ways the BOM can differ from them.
+
+    Everything is accounted per (sku, UNIT): one SKU can legitimately be demanded
+    in two units (a tube bought as a post and cut as a rail), and summing across
+    them produced nonsense — including negative "unassigned" quantities.
+    """
     bars = _bars_by_requirement(bom)
     per_element: dict[str, list[Part]] = {}
-    pegged: dict[tuple[str, str], int] = {}
+    asked: dict[tuple[str, str], int] = {}
+    unpegged: dict[tuple[str, str], int] = {}
     for req in requirements:
         part = Part(
             sku=req.sku, qty=req.engineering_qty, unit=req.unit, role=req.role,
             cut_length_mm=req.cut_length_mm, length_basis=req.length_basis,
             from_bars=bars.get(req.id, []),
         )
-        for element_id in req.pegs or ["—"]:
-            per_element.setdefault(element_id, []).append(part)
-        pegged[(req.sku, req.unit)] = pegged.get((req.sku, req.unit), 0) + req.engineering_qty
+        key = (req.sku, req.unit)
+        asked[key] = asked.get(key, 0) + req.engineering_qty
+        if req.pegs:
+            for element_id in req.pegs:
+                per_element.setdefault(element_id, []).append(part)
+        else:
+            # nobody's part: it belongs in the unassigned bucket, not in a
+            # phantom element that no table would ever show
+            unpegged[key] = unpegged.get(key, 0) + req.engineering_qty
 
-    # what the BOM demands beyond what elements asked for
-    unassigned: list[SkuTotal] = []
+    purchased: dict[tuple[str, str], int] = {}
     for line in bom.lines:
-        asked = sum(q for (sku, _u), q in pegged.items() if sku == line.sku)
-        extra = line.engineering_qty - asked
-        if extra:
-            unassigned.append(SkuTotal(sku=line.sku, qty=extra, unit=line.engineering_unit))
-    return per_element, unassigned
+        key = (line.sku, line.engineering_unit)
+        purchased[key] = purchased.get(key, 0) + line.engineering_qty
+    unassigned: list[SkuTotal] = []
+    from_stock: list[SkuTotal] = []
+    for key in sorted(set(asked) | set(purchased)):
+        sku, unit = key
+        extra = purchased.get(key, 0) - asked.get(key, 0)
+        if extra > 0:
+            unassigned.append(SkuTotal(sku=sku, qty=extra, unit=unit))
+        elif extra < 0:
+            # asked for but not purchased: inventory covered it (fulfilment emits
+            # no line at all when stock is enough), so the yard still picks it
+            from_stock.append(SkuTotal(sku=sku, qty=-extra, unit=unit))
+    for key, qty in sorted(unpegged.items()):
+        unassigned.append(SkuTotal(sku=key[0], qty=qty, unit=key[1]))
+
+    return _Ledger(
+        per_element=per_element,
+        per_sku=[SkuTotal(sku=sku, qty=qty, unit=unit)
+                 for (sku, unit), qty in sorted(asked.items())],
+        unassigned=unassigned, from_stock=from_stock,
+    )
 
 
 def _merge_parts(parts: list[Part]) -> list[Part]:
@@ -196,19 +241,23 @@ def _section_tag(index: int) -> str:
 
 
 def _base_surface(topo: Topology, run_id: str) -> str:
+    """The section's base surface — or "mixed" when it genuinely has more than
+    one, rather than whichever event happened to be authored first."""
     run = topo.run(run_id)
-    for iv in run.interval_events:
-        if iv.payload.kind == "base":
-            return iv.payload.surface
-    return "soil"
+    surfaces = {iv.payload.surface for iv in run.interval_events
+                if iv.payload.kind == "base"}
+    if not surfaces:
+        return "soil"
+    return surfaces.pop() if len(surfaces) == 1 else "mixed"
 
 
 def _post_tilt(topo: Topology, run_id: str) -> str:
     run = topo.run(run_id)
-    for iv in run.interval_events:
-        if iv.payload.kind == "post_tilt":
-            return iv.payload.mode
-    return "plumb"
+    modes = {iv.payload.mode for iv in run.interval_events
+             if iv.payload.kind == "post_tilt"}
+    if not modes:
+        return "plumb"
+    return modes.pop() if len(modes) == 1 else "mixed"
 
 
 def build_structure(
@@ -219,10 +268,12 @@ def build_structure(
     run_id: str = "",
 ) -> StructureReport:
     """Pure: the same inputs always produce the same report."""
-    parts, unassigned = _parts_by_element(requirements, bom)
+    ledger = _parts_by_element(requirements, bom)
+    parts = ledger.per_element
     report = StructureReport(run_id=run_id)
     heights: list[Mm] = []
-    per_sku: dict[tuple[str, str], int] = {}
+    element_tag: dict[str, str] = {}   # element id -> its ONE tag
+    tag_owner: dict[str, str] = {}     # element id -> the section that named it
 
     for index, run in enumerate(topology.runs):
         length = run_length(topology, run)
@@ -243,11 +294,21 @@ def build_structure(
 
         station_tag: dict[Mm, str] = {}
         previous: Mm | None = None
-        for n, (station, post) in enumerate(own, start=1):
-            tag = f"P{n}"
-            station_tag[station] = tag
+        owned = 0
+        for station, post in own:
+            # a post already tagged by an earlier section keeps that tag here
+            existing = element_tag.get(post.id)
+            if existing:
+                tag, shared_from = existing, tag_owner[post.id]
+            else:
+                owned += 1
+                tag = f"{section.tag}/P{owned}"
+                shared_from = None
+                element_tag[post.id] = tag
+                tag_owner[post.id] = section.tag
+            station_tag.setdefault(station, tag)
             section.setting_out.append(Station(
-                tag=tag, element_id=post.id, station_mm=station,
+                tag=tag, shared_from=shared_from, element_id=post.id, station_mm=station,
                 spacing_mm=None if previous is None else station - previous,
                 kind=post.kind, sku=post.sku, mounting=post.mounting,
                 ground_z_mm=post.ground_z_mm,
@@ -262,7 +323,7 @@ def build_structure(
                    key=lambda s: s.start_station_mm), start=1):
             heights.append(span.height_mm)
             section.bays.append(Bay(
-                tag=f"B{n}", element_id=span.id,
+                tag=f"{section.tag}/B{n}", element_id=span.id,
                 from_tag=station_tag.get(span.start_station_mm),
                 to_tag=station_tag.get(span.end_station_mm),
                 start_station_mm=span.start_station_mm, end_station_mm=span.end_station_mm,
@@ -277,7 +338,7 @@ def build_structure(
             sorted((g for g in strategy.gates if g.run_ref == run.id),
                    key=lambda g: g.start_station_mm), start=1):
             section.gates.append(GateRow(
-                tag=f"G{n}", element_id=gate.id,
+                tag=f"{section.tag}/G{n}", element_id=gate.id,
                 start_station_mm=gate.start_station_mm,
                 end_station_mm=gate.end_station_mm,
                 opening_mm=gate.end_station_mm - gate.start_station_mm,
@@ -290,19 +351,18 @@ def build_structure(
             section.height_mm = section_heights.pop()
         report.sections.append(section)
 
-    for element_parts in parts.values():
-        for part in element_parts:
-            per_sku[(part.sku, part.unit)] = per_sku.get((part.sku, part.unit), 0) + part.qty
-
+    # counted over ELEMENTS, not over rows: a shared corner post is set out by
+    # two sections and bought once
+    distinct_posts = {st.element_id for s in report.sections for st in s.setting_out}
     report.totals = Totals(
         fence_length_mm=sum(s.length_mm for s in report.sections),
-        posts=sum(len(s.setting_out) for s in report.sections),
+        posts=len(distinct_posts),
         bays=sum(len(s.bays) for s in report.sections),
         gates=sum(len(s.gates) for s in report.sections),
         height_min_mm=min(heights) if heights else None,
         height_max_mm=max(heights) if heights else None,
-        per_sku=[SkuTotal(sku=sku, qty=qty, unit=unit)
-                 for (sku, unit), qty in sorted(per_sku.items())],
-        unassigned=unassigned,
+        per_sku=ledger.per_sku,          # from the requirements, one basis for all totals
+        unassigned=ledger.unassigned,
+        from_stock=ledger.from_stock,
     )
     return report
