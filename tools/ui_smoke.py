@@ -174,8 +174,40 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.drag(empty[0], empty[1], empty[0] + 120, empty[1] + 60)
         vb_after = c.js("document.getElementById('canvas').getAttribute('viewBox')")
         check("dragging empty canvas moves the map", vb_before != vb_after)
-        check("empty canvas advertises panning",
-              c.js("getComputedStyle(document.getElementById('canvas')).cursor") == "grab")
+        # each cursor promises a different thing — the map's hand must not leak
+        # onto the elements drawn on it
+        c.js("document.getElementById('tool-select').click(); 'ok'")
+        time.sleep(0.3)
+        cursors = c.js("""
+(() => {
+  const cur = (sel) => { const el = document.querySelector(sel);
+    return el ? getComputedStyle(el).cursor : null; };
+  const canvas = document.getElementById('canvas');
+  const before = getComputedStyle(canvas).cursor;
+  canvas.classList.add('panning');
+  const panning = { canvas: getComputedStyle(canvas).cursor, run: cur('.run-hit') };
+  canvas.classList.remove('panning');
+  return { map: before, run: cur('.run-hit'), overlay: cur('#g-overlay circle'),
+           panning };
+})()""")
+        check("empty canvas advertises panning", cursors["map"] == "grab")
+        check("drawn elements keep their own cursor, not the map's hand",
+              cursors["run"] == "pointer" and cursors["overlay"] == "help")
+        check("a pan in progress overrides every cursor under the pointer",
+              cursors["panning"]["canvas"] == "grabbing"
+              and cursors["panning"]["run"] == "grabbing")
+        c.js("document.getElementById('tool-draw').click(); 'ok'")
+        time.sleep(0.3)
+        check("the draw tool aims instead of grabbing",
+              c.js("getComputedStyle(document.getElementById('canvas')).cursor")
+              == "crosshair")
+        c.js("document.getElementById('tool-gate').click(); 'ok'")
+        time.sleep(0.3)
+        check("an event tool aims at a station on the run",
+              c.js("getComputedStyle(document.querySelector('.run-hit')).cursor")
+              == "crosshair")
+        c.js("document.getElementById('tool-select').click(); 'ok'")
+        time.sleep(0.3)
         n_runs_after_pan = c.js("""
 fetch(`/api/projects/${document.getElementById('project-select').value}`)
   .then(r => r.json()).then(p => p.topology.runs.length)""")

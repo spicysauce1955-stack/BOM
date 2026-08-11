@@ -221,4 +221,9 @@ ground) — the check measures exposure from it and only `ground`-mounted posts 
 embedment. The profile draws posts from base_z to the adjacent panel tops. (4) A strategy
 summary above the warnings: counts, fence length, span width range, height, panel mode,
 post SKUs, note count, a link to the priced BOM and the "click anything to see why" hint.
-406 pytest (5 new built-base tests) + 70/70 smoke, screenshots inspected.
+406 pytest (5 new built-base tests) + 74/74 smoke, screenshots inspected. Follow-up: the
+map's `grab` leaked onto everything drawn on it (a CSS rule on the <svg> beats the
+elements' presentation attributes) — every cursor role is now spelled out: map=grab,
+draw=crosshair, event tools aim (crosshair) at a run, runs=pointer, vertices=move,
+ghosts=copy, generated elements=help, and an active pan forces `grabbing` over every
+element under the pointer so it never flickers mid-drag.

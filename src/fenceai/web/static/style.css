@@ -257,13 +257,25 @@ input[type="number"] { direction: ltr; }
 .profile-zlabel { font-size: 9px; fill: #64748b; }
 .profile-axis-unit { font-size: 9px; fill: #94a3b8; }
 
-/* dragging empty canvas moves the map (any tool) */
-svg#canvas { cursor: grab; }
-svg#canvas.panning { cursor: grabbing; }
-/* editable things keep their own cursor — only empty canvas reads as "grab" */
-#canvas .run-hit { cursor: pointer; }
-#canvas .handle { cursor: move; }
-#canvas .ghost { cursor: copy; }
+/* ---------- cursors: each one promises a different thing ----------
+   The canvas background is the MAP (drag it to pan) and carries the hand.
+   Everything drawn on it says what a press there does instead — a CSS rule on
+   the <svg> beats the elements' own presentation attributes, so each role is
+   spelled out here rather than left to inheritance. */
+svg#canvas { cursor: grab; }                       /* empty map: drag to pan */
+#canvas[data-tool="draw"] { cursor: crosshair; }   /* draw: click places a dot */
+/* a pan in progress overrides EVERY element under the pointer, so the cursor
+   never flickers back to pointer/move while the map is moving */
+svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
+
+#canvas .run-hit { cursor: pointer; }              /* select a run */
+#canvas .handle { cursor: move; }                  /* drag this vertex */
+#canvas .ghost { cursor: copy; }                   /* drop a new vertex here */
+#canvas #g-overlay * { cursor: help; }             /* generated: click explains it */
+/* the event tools place something AT a station: aim, don't "click a thing" */
+#canvas[data-tool="gate"] .run-hit, #canvas[data-tool="base"] .run-hit,
+#canvas[data-tool="ground"] .run-hit, #canvas[data-tool="height"] .run-hit,
+#canvas[data-tool="pin"] .run-hit { cursor: crosshair; }
 
 /* what the generate button actually produced, in words */
 .strategy-summary:empty { display: none; }
