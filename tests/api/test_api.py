@@ -83,6 +83,26 @@ def test_explain_lang_param(client):
     assert client.get(f"/api/runs/{run_id}/explain/{post_id}?lang=fr").status_code == 422
 
 
+def test_explain_units_param(client):
+    """`units` is a display choice like `lang`: same decisions, same structure,
+    numbers rendered in the reader's unit. The stored graph stays int mm."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    result = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = result["run"]["id"]
+    post = next(p for p in result["strategy"]["posts"] if p["station_mm"])
+    url = f"/api/runs/{run_id}/explain/{post['id']}"
+    mm = client.get(url).json()["explanation"]                 # default
+    cm = client.get(f"{url}?units=cm").json()["explanation"]
+    assert len(mm) == len(cm)
+    assert any(f"station {post['station_mm']} mm" in line for line in mm)
+    assert any(f"station {post['station_mm'] // 10} cm" in line for line in cm)
+    assert client.get(f"{url}?units=inch").status_code == 422
+    # the graph itself is untouched by how it was read
+    again = client.get(url).json()["explanation"]
+    assert again == mm
+
+
 def test_annotation_interpret_confirm_flow(client):
     pid = make_project(client)
     put_straight_topology(client, pid, length=3000)

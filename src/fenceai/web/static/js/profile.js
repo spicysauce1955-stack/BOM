@@ -11,7 +11,7 @@ import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { addIntervalEvent, addPointEvent, on, saveTopology, setSelection, state } from "./state.js";
-import { fmt, fmtLen, snapStep, toDisplayValue, toMm, tu } from "./units.js";
+import { enumWord, fmt, fmtLen, snapStep, toDisplayValue, toMm, tu } from "./units.js";
 
 // viewBox geometry (preserveAspectRatio=none stretches to the container width)
 const W = 900, H = 180;
@@ -530,11 +530,11 @@ function renderResult(chain) {
       shape.setAttribute("class",
         `profile-panel ${sp.vertical}${sel === sp.id ? " selected" : ""}`);
       shape.dataset.id = sp.id;
-      el("title", {}, shape).textContent = `${sp.id} (${sp.vertical}, ${fmtLen(h)})`;
+      el("title", {}, shape).textContent = `${sp.id} (${enumWord(sp.vertical)}, ${fmtLen(h)})`;
       shape.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: sp.id });
-        inspect(sp.id, tu("inspect.span",
-          { width_mm: sp.width_mm, height_mm: sp.height_mm, mode: sp.vertical }));
+        inspect(sp.id, "inspect.span",
+          { width_mm: sp.width_mm, height_mm: sp.height_mm, mode: sp.vertical });
       });
     }
 
@@ -552,7 +552,7 @@ function renderResult(chain) {
         tu("profile.gate_label", { width_mm: gate.end_station_mm - gate.start_station_mm });
       line.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: gate.id });
-        inspect(gate.id, t("inspect.gate", { kit: gate.kit_sku }));
+        inspect(gate.id, "inspect.gate", { kit: gate.kit_sku });
       });
     }
 
@@ -573,10 +573,11 @@ function renderResult(chain) {
         "data-id": post.id }, g);
       const hit = el("line", { x1: x, y1: y0, x2: x + lean, y2: y1,
         class: "profile-post-hit", "data-id": post.id }, g);
-      el("title", {}, hit).textContent = `${post.id}\n${post.sku} (${post.kind}, ${post.mounting})`;
+      el("title", {}, hit).textContent =
+        `${post.id}\n${post.sku} (${enumWord(post.kind)}, ${enumWord(post.mounting)})`;
       hit.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: post.id });
-        inspect(post.id, tu("inspect.post", { sku: post.sku, station_mm: post.station_mm }));
+        inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm });
       });
     }
   }

@@ -27,5 +27,8 @@ below the boundary changes: the API, the store, the rule data, and the raw-JSON 
 (knowledge actions, inventory JSON) stay int mm — those editors show the storage
 representation deliberately. Locale strings carry `{u}` plus `*_mm` placeholders instead
 of a hardcoded unit; `units.tu()`/`unitParams()` supply both, and backend warning params
-convert by name (`*_mm`). Server-rendered decision-graph prose keeps its mm figures — it
-is an immutable audit record, not a live field.
+convert by name (`*_mm`). Decision-graph prose is server-rendered, so `/explain` takes a
+`units` query param alongside `lang` and `decisions/explain.py` applies the same two rules
+(`*_mm` → display value, `{u}` → unit word) to its templates; the stored graph is never
+touched by how it was read. Raw payload dicts inside `input_fact` lines stay verbatim mm —
+they are the record, not a sentence.

@@ -342,9 +342,14 @@ def accept_quote(quote_id: str, author: str = "user") -> Quote:
 
 
 @app.get("/api/runs/{run_id}/explain/{element_id}")
-def explain(run_id: str, element_id: str, lang: Literal["en", "he"] = "en"):
+def explain(
+    run_id: str,
+    element_id: str,
+    lang: Literal["en", "he"] = "en",
+    units: Literal["mm", "cm"] = "mm",   # display unit only; the graph stores mm
+):
     result = _run(run_id)
-    lines = explain_element(result.graph, element_id, lang=lang)
+    lines = explain_element(result.graph, element_id, lang=lang, units=units)
     if not lines:
         raise HTTPException(404, f"no decisions reference {element_id}")
     return {"element_id": element_id, "explanation": lines}

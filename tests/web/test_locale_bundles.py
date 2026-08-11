@@ -110,3 +110,39 @@ def test_no_empty_translations():
     for table in (en, he):
         empties = [k for k, v in table.items() if not str(v).strip()]
         assert not empties, empties
+
+
+def test_every_enum_value_has_a_word_in_both_bundles():
+    """The UI renders enum values as words (post kind, mounting, base surface,
+    vertical mode, post orientation) via units.enumWord -> t("enum.<value>").
+    A missing key silently falls back to the raw English enum inside Hebrew."""
+    from typing import get_args
+
+    from fenceai.strategy.model import Post, Span
+    from fenceai.topology.model import BasePayload, PostTiltPayload, TopLinePayload
+
+    values = set()
+    for model, field in [(Post, "kind"), (Post, "mounting"), (Span, "vertical"),
+                         (BasePayload, "surface"), (PostTiltPayload, "mode"),
+                         (TopLinePayload, "mode")]:
+        values |= set(get_args(model.model_fields[field].annotation))
+    en, he = _bundles()
+    missing = sorted(
+        f"{lang}:{v}" for lang, table in (("en", en), ("he", he)) for v in values
+        if f"enum.{v}" not in table
+    )
+    assert not missing, missing
+
+
+def test_frontend_and_backend_enum_lexicons_agree():
+    """decisions/explain.py renders Hebrew decision prose; the bundle renders
+    Hebrew warnings and labels. The same value must read the same in both."""
+    from fenceai.decisions.explain import _ENUM_WORDS
+
+    _, he = _bundles()
+    mismatched = {
+        v: (word, he[f"enum.{v}"])
+        for v, word in _ENUM_WORDS["he"].items()
+        if f"enum.{v}" in he and he[f"enum.{v}"] != word
+    }
+    assert not mismatched, mismatched

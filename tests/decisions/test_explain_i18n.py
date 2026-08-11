@@ -155,3 +155,61 @@ def test_pinned_suffix_localizes():
     pinned = next(n for n in result.graph.nodes if n.status == "pinned")
     assert "pinned by a user override" in explain_node(result.graph, pinned, lang="en")
     assert "ננעצה" in explain_node(result.graph, pinned, lang="he")
+
+
+def test_explanations_render_in_the_readers_unit():
+    """Same graph, same structure — only the rendered unit changes. The graph
+    itself keeps int mm (ADR-0002); `units` is a display choice, like `lang`."""
+    knowledge, catalog = demo_knowledge(), demo_catalog()
+    result = generate(straight_topology(6000), knowledge, catalog)
+    post = next(p for p in result.strategy.posts if p.station_mm)
+    mm = explain_element(result.graph, post.id, lang="en")
+    cm = explain_element(result.graph, post.id, lang="en", units="cm")
+    assert len(mm) == len(cm)
+    assert any(f"station {post.station_mm} mm" in line for line in mm)
+    assert any(f"station {post.station_mm // 10} cm" in line for line in cm)
+    assert not any(" mm" in line for line in cm)
+
+
+def test_centimetre_rendering_keeps_one_decimal_without_float_noise():
+    from fenceai.decisions.explain import _display
+
+    assert _display(1234, "cm") == 123.4
+    assert _display(1200, "cm") == 120 and str(_display(1200, "cm")) == "120"
+    assert _display(5, "cm") == 0.5
+    assert _display(1234, "mm") == 1234
+    assert _display("POST-S", "cm") == "POST-S"  # non-numeric params pass through
+
+
+def test_hebrew_prose_uses_hebrew_enum_words():
+    """A Hebrew sentence must not carry raw English enum values (post kind,
+    mounting, base surface) — only ids/SKUs/refs stay Latin."""
+    knowledge, catalog = demo_knowledge(), demo_catalog()
+    result = generate(straight_topology(6000), knowledge, catalog)
+    post = next(p for p in result.strategy.posts if p.kind == "line")
+    he = explain_node(
+        result.graph,
+        next(n for n in result.graph.nodes_for_element(post.id) if n.action == "place_post"),
+        lang="he",
+    )
+    assert "שורה" in he and "קרקע" in he
+    assert "line" not in he and "soil" not in he
+    assert "POST-S" in he  # SKU still verbatim
+
+
+def test_every_enum_value_has_a_hebrew_word():
+    """Any Literal the domain can produce must have a Hebrew word, or Hebrew
+    prose silently falls back to the English enum name."""
+    from typing import get_args
+
+    from fenceai.decisions.explain import _ENUM_WORDS
+    from fenceai.strategy.model import Post, Span
+    from fenceai.topology.model import BasePayload, PostTiltPayload, TopLinePayload
+
+    values = set()
+    for model, field in [(Post, "kind"), (Post, "mounting"), (Span, "vertical"),
+                         (BasePayload, "surface"), (PostTiltPayload, "mode"),
+                         (TopLinePayload, "mode")]:
+        values |= set(get_args(model.model_fields[field].annotation))
+    missing = sorted(v for v in values if v not in _ENUM_WORDS["he"])
+    assert not missing, missing

@@ -6,7 +6,7 @@ import { runLength, stationOfAnchor } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
 import { on, reloadProject, saveTopology, setSelection, state } from "./state.js";
-import { fmt, fmtLen } from "./units.js";
+import { currentUnit, fmt, fmtLen, tu } from "./units.js";
 
 export function initInspector() {
   const sel = document.getElementById("run-select");
@@ -16,10 +16,15 @@ export function initInspector() {
   });
   on("result-changed", renderOverrides);
   on("selection-changed", () => { syncRunSelect(); renderRunEvents(); });
-  on("locale-changed", () => { renderOverrides(); renderRunEvents(); });
+  const replay = () => {
+    if (lastInspect) inspect(lastInspect.elementId, lastInspect.labelKey, lastInspect.params);
+  };
+  on("locale-changed", () => { renderOverrides(); renderRunEvents(); replay(); });
   on("units-changed", () => {
-    renderRunSelectors(); syncRunSelect(); renderOverrides(); renderRunEvents();
+    renderRunSelectors(); syncRunSelect(); renderOverrides(); renderRunEvents(); replay();
   });
+  // a regenerated run invalidates the element ids the last explanation referenced
+  on("result-changed", () => { lastInspect = null; });
 }
 
 function syncRunSelect() {
@@ -28,13 +33,20 @@ function syncRunSelect() {
     sel.value = state.selection.runId;
 }
 
-export async function inspect(elementId, label) {
+// last inspection, replayed when the language or the display unit changes (the
+// label is re-rendered from its key + mm params, and the prose is re-fetched)
+let lastInspect = null;
+
+export async function inspect(elementId, labelKey, params) {
+  lastInspect = { elementId, labelKey, params };
   const body = document.getElementById("inspector-body");
   if (!state.result) return;
+  const label = params ? tu(labelKey, params) : labelKey;
   body.innerHTML = `<strong>${esc(label)}</strong><div class="meta"><bdi>${esc(elementId)}</bdi></div>`;
   try {
     const exp = await apiGet(
-      `/api/runs/${state.result.run.id}/explain/${encodeURIComponent(elementId)}?lang=${currentLocale()}`
+      `/api/runs/${state.result.run.id}/explain/${encodeURIComponent(elementId)}`
+      + `?lang=${currentLocale()}&units=${currentUnit()}`
     );
     for (const line of exp.explanation) {
       const d = document.createElement("div");

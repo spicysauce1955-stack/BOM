@@ -77,3 +77,15 @@ lengths, and `*_mm` rule-builder fields. Storage stays int mm everywhere (ADR-00
 addendum); raw-JSON editors and server-rendered decision prose deliberately stay mm.
 244 pytest (incl. node-run round-trip tests for units.js + two bundle guards) +
 34/34 smoke (210 cm → 2100 mm verified end-to-end) + screenshot inspected.
+
+## Explanations follow language AND unit; enum words localized (2026-08-11) — COMPLETE
+`/api/runs/{id}/explain/{element}` gained a `units` param beside `lang`; explain.py renders
+`*_mm` values in the reader's unit with a `{u}` token (same two rules as units.js). Enum
+VALUES (post kind, mounting, base surface, vertical mode, post orientation) now render as
+words in both the prose (`_ENUM_WORDS`) and the UI (`enum.*` bundle keys + units.enumWord),
+so Hebrew no longer carries raw "line"/"soil"/"perpendicular" — this also fixes the
+tilted_stepped warning's raw-enum param. inspect() takes key+params and replays the last
+inspection on language/unit change. Tests pin: cm rendering without float noise, Hebrew
+enum prose, every domain Literal has a Hebrew word, the two lexicons agree, `?units=inch`
+is a 422, and reading never mutates the graph. 251 pytest + 37/37 smoke (decision trail
+verified in cm with Hebrew enums; screenshot 09).

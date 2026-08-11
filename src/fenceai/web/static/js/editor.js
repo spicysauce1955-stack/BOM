@@ -15,7 +15,7 @@ import {
   setSelection, setTool, state,
 } from "./state.js";
 import {
-  fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitParams,
+  enumWord, fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitParams,
 } from "./units.js";
 
 const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin"];
@@ -935,8 +935,8 @@ function renderOverlay() {
     const line = el("line", { x1: p0[0], y1: p0[1] - 8, x2: p1[0], y2: p1[1] - 8,
       stroke: color, "stroke-width": 6, opacity: 0.75, cursor: "pointer" }, g);
     line.addEventListener("click", () =>
-      inspect(span.id, tu("inspect.span",
-        { width_mm: span.width_mm, height_mm: span.height_mm, mode: span.vertical })));
+      inspect(span.id, "inspect.span",
+        { width_mm: span.width_mm, height_mm: span.height_mm, mode: span.vertical }));
   }
   for (const gate of s.gates) {
     const p0 = toPx(pointAtStation(gate.run_ref, gate.start_station_mm));
@@ -944,7 +944,7 @@ function renderOverlay() {
     if (!p0 || !p1) continue;
     const line = el("line", { x1: p0[0], y1: p0[1] - 8, x2: p1[0], y2: p1[1] - 8,
       stroke: "#0891b2", "stroke-width": 6, "stroke-dasharray": "4 4", cursor: "pointer" }, g);
-    line.addEventListener("click", () => inspect(gate.id, t("inspect.gate", { kit: gate.kit_sku })));
+    line.addEventListener("click", () => inspect(gate.id, "inspect.gate", { kit: gate.kit_sku }));
   }
   for (const post of s.posts) {
     let xy;
@@ -960,9 +960,10 @@ function renderOverlay() {
       fill: POST_COLORS[post.kind] || "#2563eb",
       stroke: post.pinned ? "#f59e0b" : post.mounting === "masonry" ? "#dc2626" : "#fff",
       "stroke-width": post.pinned ? 3 : 2, cursor: "pointer" }, g);
-    el("title", {}, c).textContent = `${post.id}\n${post.sku} (${post.kind}, ${post.mounting})`;
+    el("title", {}, c).textContent =
+      `${post.id}\n${post.sku} (${enumWord(post.kind)}, ${enumWord(post.mounting)})`;
     c.addEventListener("click", () =>
-      inspect(post.id, tu("inspect.post", { sku: post.sku, station_mm: post.station_mm })));
+      inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm }));
   }
 }
 

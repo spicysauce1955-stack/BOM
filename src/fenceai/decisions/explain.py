@@ -18,13 +18,51 @@ _INPUT_FACT_ACTIONS = frozenset(
     {"topology_node", "run_geometry", "gate_event", "knowledge_version"}
 )
 
+# Display units: the graph always stores int mm (ADR-0002); prose may render them
+# in the reader's chosen unit, exactly like the UI (web/static/js/units.js).
+_UNIT_WORDS = {"en": {"mm": "mm", "cm": "cm"}, "he": {"mm": 'מ"מ', "cm": 'ס"מ'}}
+_LENGTH_LISTS = frozenset({"widths", "alt_widths"})
+
+# Enum VALUES that appear as words inside a sentence get translated; ids, SKUs and
+# knowledge refs never pass through here (they stay verbatim Latin in every
+# language). English is identity — the enum name IS the English word.
+_ENUM_PARAMS = frozenset({"kind", "mounting", "surface", "surfaces", "vertical", "mode", "chosen"})
+_ENUM_WORDS: dict[str, dict[str, str]] = {
+    "en": {},
+    "he": {
+        # post kinds
+        "line": "שורה", "end": "קצה", "corner": "פינה", "junction": "צומת",
+        "gate": "שער", "transition": "מעבר",
+        # mounting / base surface
+        "ground": "קרקע", "masonry": "קיר בנוי",
+        "soil": "קרקע", "concrete": "בטון", "masonry_wall": "קיר בנוי",
+        # vertical modes
+        "level": "מאוזן", "stepped": "מדורג", "raked": "משופע", "follow": "עוקב",
+        # post orientation
+        "plumb": "אנכי לחלוטין", "perpendicular": "ניצב לקרקע", "custom": "זווית מותאמת",
+    },
+}
+
+
+def _display(value, units: str):
+    """mm -> the reader's unit. Mirrors units.js toDisplayValue: cm keeps one
+    decimal and whole centimetres lose the trailing '.0'."""
+    if units != "cm" or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    q = round(value) / 10
+    return int(q) if q == int(q) else q
+
+
+def _word(value, lang: str):
+    return _ENUM_WORDS.get(lang, {}).get(value, value)
+
 # One template per decision-graph action, per language. `_alt` / `_wall` / `_step`
 # are optional sentence fragments appended when the payload carries those fields;
 # `_governed` / `_defeated` / `_pinned` are the provenance suffixes.
 TEMPLATES: dict[str, dict[str, str]] = {
     "en": {
         "place_post": (
-            "Post at station {station_mm} mm ({kind}, {mounting} mount, {sku}) "
+            "Post at station {station_mm} {u} ({kind}, {mounting} mount, {sku}) "
             "on {surface} base."
         ),
         "layout_spans": "Segment {segment} divided into spans {widths}.",
@@ -32,15 +70,15 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " Alternative {alt_widths} was rejected because of {rejected_because}."
         ),
         "create_span": (
-            "Span of {width_mm} mm, height {height_mm} mm, vertical mode "
+            "Span of {width_mm} {u}, height {height_mm} {u}, vertical mode "
             "'{vertical}' (height source: {height_source})."
         ),
         "create_span_wall": (
-            " Height reduced by the wall top ({wall_top_mm} mm, event {wall_event})."
+            " Height reduced by the wall top ({wall_top_mm} {u}, event {wall_event})."
         ),
-        "create_span_step": " Steps {step_mm} mm against the grade.",
+        "create_span_step": " Steps {step_mm} {u} against the grade.",
         "choose_vertical_mode": "Vertical mode '{mode}' chosen at {slope_permille}‰ grade.",
-        "resolve_max_span": "Maximum span resolved to {value} mm.",
+        "resolve_max_span": "Maximum span resolved to {value_mm} {u}.",
         "resolve_span_quantities": (
             "Quantities per span: {rails_per_span} rails, {screws_per_span} screws."
         ),
@@ -48,7 +86,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Demand products: rail {rail_sku}, screws {screw_sku}, "
             "concrete {concrete_sku}, caps {cap_sku}."
         ),
-        "place_gate": "Gate opening from {start_mm} to {end_mm} mm.",
+        "place_gate": "Gate opening from {start_mm} to {end_mm} {u}.",
         "select_gate_kit": "Gate kit {kit_sku} selected.",
         "knowledge_conflict": (
             "Conflict on '{slot}' between {contenders} — surfaced for review."
@@ -63,26 +101,26 @@ TEMPLATES: dict[str, dict[str, str]] = {
         ),
         "place_post_tilt": " Post tilted {tilt_deg}° from vertical.",
         "excessive_step": (
-            "Step of {step_mm} mm exceeds the buildable maximum of {max_mm} mm — "
+            "Step of {step_mm} {u} exceeds the buildable maximum of {max_mm} {u} — "
             "needs an engineered solution."
         ),
         "excessive_gap": (
-            "Stepped span leaves a {gap_mm} mm gap underneath (limit {max_mm} mm)."
+            "Stepped span leaves a {gap_mm} {u} gap underneath (limit {max_mm} {u})."
         ),
         "max_height_exceeded": (
-            "Plumb height reaches {height_mm} mm at the downhill end — above the "
-            "{max_mm} mm limit."
+            "Plumb height reaches {height_mm} {u} at the downhill end — above the "
+            "{max_mm} {u} limit."
         ),
         "gate_on_slope": (
             "Gate opening sits on a {slope_permille}‰ slope (limit {max_permille}‰) "
             "— the ground needs leveling."
         ),
         "insufficient_post_length": (
-            "Post needs {required_mm} mm ({exposed_mm} exposed + {embed_mm} embedded) "
-            "but the product is only {available_mm} mm long."
+            "Post needs {required_mm} {u} ({exposed_mm} exposed + {embed_mm} embedded) "
+            "but the product is only {available_mm} {u} long."
         ),
         "sliver_span": (
-            "Span {span} is {width_mm} mm — below the preferred minimum of {min_mm} mm."
+            "Span {span} is {width_mm} {u} — below the preferred minimum of {min_mm} {u}."
         ),
         "override_applied": "User override {override_id} applied ({action}).",
         "input_fact": "Input fact: {action} {payload}.",
@@ -93,21 +131,21 @@ TEMPLATES: dict[str, dict[str, str]] = {
     },
     "he": {
         "place_post": (
-            "עמוד בתחנה {station_mm} מ\"מ ({kind}, עיגון {mounting}, {sku}) "
+            "עמוד בתחנה {station_mm} {u} ({kind}, עיגון {mounting}, {sku}) "
             "על בסיס {surface}."
         ),
         "layout_spans": "המקטע {segment} חולק למפתחים {widths}.",
         "layout_spans_alt": " החלופה {alt_widths} נדחתה בגלל {rejected_because}.",
         "create_span": (
-            "מפתח ברוחב {width_mm} מ\"מ, גובה {height_mm} מ\"מ, מצב אנכי "
+            "מפתח ברוחב {width_mm} {u}, גובה {height_mm} {u}, מצב אנכי "
             "'{vertical}' (מקור הגובה: {height_source})."
         ),
         "create_span_wall": (
-            " הגובה הופחת בשל ראש הקיר ({wall_top_mm} מ\"מ, אירוע {wall_event})."
+            " הגובה הופחת בשל ראש הקיר ({wall_top_mm} {u}, אירוע {wall_event})."
         ),
-        "create_span_step": " מדורג ב-{step_mm} מ\"מ כנגד השיפוע.",
+        "create_span_step": " מדורג ב-{step_mm} {u} כנגד השיפוע.",
         "choose_vertical_mode": "נבחר מצב אנכי '{mode}' בשיפוע {slope_permille}‰.",
-        "resolve_max_span": "המפתח המרבי נקבע ל-{value} מ\"מ.",
+        "resolve_max_span": "המפתח המרבי נקבע ל-{value_mm} {u}.",
         "resolve_span_quantities": (
             "כמויות לכל מפתח: {rails_per_span} מוטות, {screws_per_span} ברגים."
         ),
@@ -115,7 +153,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "מוצרי הדרישה: מוט {rail_sku}, ברגים {screw_sku}, "
             "בטון {concrete_sku}, כיפות {cap_sku}."
         ),
-        "place_gate": "פתח שער מתחנה {start_mm} עד {end_mm} מ\"מ.",
+        "place_gate": "פתח שער מתחנה {start_mm} עד {end_mm} {u}.",
         "select_gate_kit": "נבחרה ערכת שער {kit_sku}.",
         "knowledge_conflict": "סתירה על '{slot}' בין {contenders} — הוצפה לבדיקה.",
         "node_surface_disagreement": (
@@ -128,25 +166,25 @@ TEMPLATES: dict[str, dict[str, str]] = {
         ),
         "place_post_tilt": " העמוד נטוי {tilt_deg}° מהאנך.",
         "excessive_step": (
-            'מדרגה של {step_mm} מ"מ חורגת מהמקסימום הניתן לביצוע ({max_mm} מ"מ) — '
+            'מדרגה של {step_mm} {u} חורגת מהמקסימום הניתן לביצוע ({max_mm} {u}) — '
             "נדרש פתרון הנדסי."
         ),
         "excessive_gap": (
-            'הפאנל המדורג משאיר מרווח של {gap_mm} מ"מ מתחתיו (המגבלה {max_mm} מ"מ).'
+            'הפאנל המדורג משאיר מרווח של {gap_mm} {u} מתחתיו (המגבלה {max_mm} {u}).'
         ),
         "max_height_exceeded": (
-            'הגובה האנכי מגיע ל-{height_mm} מ"מ בקצה הנמוך — מעל המגבלה של {max_mm} מ"מ.'
+            'הגובה האנכי מגיע ל-{height_mm} {u} בקצה הנמוך — מעל המגבלה של {max_mm} {u}.'
         ),
         "gate_on_slope": (
             "פתח השער יושב על שיפוע של {slope_permille}‰ (המגבלה {max_permille}‰) — "
             "יש לפלס את הקרקע."
         ),
         "insufficient_post_length": (
-            'העמוד דורש {required_mm} מ"מ ({exposed_mm} חשוף + {embed_mm} מוטמן) '
-            'אך אורך המוצר הוא {available_mm} מ"מ בלבד.'
+            'העמוד דורש {required_mm} {u} ({exposed_mm} חשוף + {embed_mm} מוטמן) '
+            'אך אורך המוצר הוא {available_mm} {u} בלבד.'
         ),
         "sliver_span": (
-            "המפתח {span} הוא {width_mm} מ\"מ — מתחת למינימום המועדף של {min_mm} מ\"מ."
+            "המפתח {span} הוא {width_mm} {u} — מתחת למינימום המועדף של {min_mm} {u}."
         ),
         "override_applied": "דריסת משתמש {override_id} הוחלה ({action}).",
         "input_fact": "עובדת קלט: {action} {payload}.",
@@ -164,108 +202,131 @@ def _refs(graph: DecisionGraph, node: DecisionNode, edge_type: str) -> list[str]
     )
 
 
-def explain_node(graph: DecisionGraph, node: DecisionNode, lang: str = "en") -> str:
+def _fmt(t: dict[str, str], key: str, lang: str, units: str, **kw) -> str:
+    """Render one template: `*_mm` values (and length lists) in the reader's unit,
+    enum values as words in the reader's language, `{u}` as the unit word. Ids,
+    SKUs, refs and raw payloads pass through untouched."""
+    out = {}
+    for k, v in kw.items():
+        if k.endswith("_mm"):
+            out[k] = _display(v, units)
+        elif k in _LENGTH_LISTS and isinstance(v, (list, tuple)):
+            out[k] = [_display(x, units) for x in v]
+        elif k in _ENUM_PARAMS:
+            out[k] = (", ".join(_word(x, lang) for x in v)
+                      if isinstance(v, (list, tuple)) else _word(v, lang))
+        else:
+            out[k] = v
+    out["u"] = _UNIT_WORDS.get(lang, _UNIT_WORDS["en"]).get(units, units)
+    return t[key].format(**out)
+
+
+def explain_node(
+    graph: DecisionGraph, node: DecisionNode, lang: str = "en", units: str = "mm"
+) -> str:
     t = TEMPLATES.get(lang, TEMPLATES["en"])
     governed = _refs(graph, node, "governed_by")
     defeated = _refs(graph, node, "defeated")
     p = node.payload
     match node.action:
         case "place_post":
-            base = t["place_post"].format(
+            base = _fmt(t, "place_post", lang, units,
                 station_mm=p.get("station_mm"), kind=p.get("kind"),
                 mounting=p.get("mounting"), sku=p.get("sku"), surface=p.get("surface"),
             )
             if p.get("tilt_deg"):
-                base += t["place_post_tilt"].format(tilt_deg=p["tilt_deg"])
+                base += _fmt(t, "place_post_tilt", lang, units, tilt_deg=p["tilt_deg"])
         case "layout_spans":
             alt = p.get("alternatives") or []
-            base = t["layout_spans"].format(segment=p.get("segment"), widths=p.get("widths"))
+            base = _fmt(t, "layout_spans", lang, units, segment=p.get("segment"), widths=p.get("widths"))
             if alt:
-                base += t["layout_spans_alt"].format(
+                base += _fmt(t, "layout_spans_alt", lang, units,
                     alt_widths=alt[0]["widths"], rejected_because=alt[0]["rejected_because"]
                 )
         case "create_span":
-            base = t["create_span"].format(
+            base = _fmt(t, "create_span", lang, units,
                 width_mm=p.get("width_mm"), height_mm=p.get("height_mm"),
                 vertical=p.get("vertical"), height_source=p.get("height_source"),
             )
             if "adjusted_by_wall_profile" in p:
-                base += t["create_span_wall"].format(
+                base += _fmt(t, "create_span_wall", lang, units,
                     wall_top_mm=p.get("wall_top_mm"), wall_event=p["adjusted_by_wall_profile"]
                 )
             if "step_mm" in p:
-                base += t["create_span_step"].format(step_mm=p["step_mm"])
+                base += _fmt(t, "create_span_step", lang, units, step_mm=p["step_mm"])
         case "choose_vertical_mode":
-            base = t["choose_vertical_mode"].format(
+            base = _fmt(t, "choose_vertical_mode", lang, units,
                 mode=p.get("mode"), slope_permille=p.get("slope_permille")
             )
         case "resolve_max_span":
-            base = t["resolve_max_span"].format(value=p.get("value"))
+            base = _fmt(t, "resolve_max_span", lang, units, value_mm=p.get("value"))
         case "resolve_span_quantities":
-            base = t["resolve_span_quantities"].format(
+            base = _fmt(t, "resolve_span_quantities", lang, units,
                 rails_per_span=p.get("rails_per_span"), screws_per_span=p.get("screws_per_span")
             )
         case "resolve_demand_products":
-            base = t["resolve_demand_products"].format(
+            base = _fmt(t, "resolve_demand_products", lang, units,
                 rail_sku=p.get("rail_sku"), screw_sku=p.get("screw_sku"),
                 concrete_sku=p.get("concrete_sku"), cap_sku=p.get("cap_sku"),
             )
         case "place_gate":
-            base = t["place_gate"].format(start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))
+            base = _fmt(t, "place_gate", lang, units, start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))
         case "select_gate_kit":
-            base = t["select_gate_kit"].format(kit_sku=p.get("kit_sku"))
+            base = _fmt(t, "select_gate_kit", lang, units, kit_sku=p.get("kit_sku"))
         case "knowledge_conflict":
-            base = t["knowledge_conflict"].format(
+            base = _fmt(t, "knowledge_conflict", lang, units,
                 slot=p.get("slot"), contenders=", ".join(p.get("contenders", []))
             )
         case "node_surface_disagreement":
-            base = t["node_surface_disagreement"].format(
-                node_id=p.get("node_id"), surfaces=", ".join(p.get("surfaces", [])),
+            base = _fmt(t, "node_surface_disagreement", lang, units,
+                node_id=p.get("node_id"), surfaces=list(p.get("surfaces", [])),
                 chosen=p.get("chosen"),
             )
         case "tilted_stepped":
-            base = t["tilted_stepped"].format(run_id=p.get("run_id"), mode=p.get("mode"))
+            base = _fmt(t, "tilted_stepped", lang, units, run_id=p.get("run_id"), mode=p.get("mode"))
         case "excessive_step":
-            base = t["excessive_step"].format(step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
+            base = _fmt(t, "excessive_step", lang, units, step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
         case "excessive_gap":
-            base = t["excessive_gap"].format(gap_mm=p.get("gap_mm"), max_mm=p.get("max_mm"))
+            base = _fmt(t, "excessive_gap", lang, units, gap_mm=p.get("gap_mm"), max_mm=p.get("max_mm"))
         case "max_height_exceeded":
-            base = t["max_height_exceeded"].format(
+            base = _fmt(t, "max_height_exceeded", lang, units,
                 height_mm=p.get("height_mm"), max_mm=p.get("max_mm"))
         case "gate_on_slope":
-            base = t["gate_on_slope"].format(
+            base = _fmt(t, "gate_on_slope", lang, units,
                 slope_permille=p.get("slope_permille"), max_permille=p.get("max_permille"))
         case "insufficient_post_length":
-            base = t["insufficient_post_length"].format(
+            base = _fmt(t, "insufficient_post_length", lang, units,
                 required_mm=p.get("required_mm"), exposed_mm=p.get("exposed_mm"),
                 embed_mm=p.get("embed_mm"), available_mm=p.get("available_mm"))
         case "sliver_span":
-            base = t["sliver_span"].format(
+            base = _fmt(t, "sliver_span", lang, units,
                 span=p.get("span"), width_mm=p.get("width_mm"), min_mm=p.get("min_mm")
             )
         case action if action in _OVERRIDE_ACTIONS:
-            base = t["override_applied"].format(
+            base = _fmt(t, "override_applied", lang, units,
                 override_id=p.get("override_id"), action=node.action
             )
         case action if action in _INPUT_FACT_ACTIONS:
-            base = t["input_fact"].format(action=node.action, payload=p)
+            base = _fmt(t, "input_fact", lang, units, action=node.action, payload=p)
         case _:
-            base = t["generic"].format(action=node.action, payload=p)
+            base = _fmt(t, "generic", lang, units, action=node.action, payload=p)
     if governed:
-        base += t["_governed"].format(refs=", ".join(governed))
+        base += _fmt(t, "_governed", lang, units, refs=", ".join(governed))
     if defeated:
-        base += t["_defeated"].format(refs=", ".join(defeated))
+        base += _fmt(t, "_defeated", lang, units, refs=", ".join(defeated))
     if node.status == "pinned":
         base += t["_pinned"]
     return base
 
 
-def explain_element(graph: DecisionGraph, element_id: str, lang: str = "en") -> list[str]:
+def explain_element(
+    graph: DecisionGraph, element_id: str, lang: str = "en", units: str = "mm"
+) -> list[str]:
     """Why does this element exist / look the way it does? Rendered from the graph."""
     out: list[str] = []
     for node in graph.nodes_for_element(element_id):
-        out.append(explain_node(graph, node, lang))
+        out.append(explain_node(graph, node, lang, units))
         for anc in graph.ancestors(node.id):
             if anc.kind in ("input_fact", "rule_firing", "override_applied", "conflict"):
-                out.append("  ← " + explain_node(graph, anc, lang))
+                out.append("  ← " + explain_node(graph, anc, lang, units))
     return out

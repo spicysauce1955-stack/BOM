@@ -373,6 +373,17 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # the BOM follows too: cut plans are lengths, priced per purchase unit
         c.click(*c.element_center("#btn-generate"))
         time.sleep(1.5)
+        # the decision trail is server-rendered: it must follow BOTH the language
+        # and the unit, with enum values as Hebrew words (not raw "line"/"soil")
+        c.js("document.querySelector('#g-overlay circle')"
+             ".dispatchEvent(new MouseEvent('click', {bubbles: true})); 'ok'")
+        time.sleep(1.2)
+        trail = c.js("document.getElementById('inspector-body').textContent")
+        check("decision trail renders in the chosen unit", 'ס"מ' in (trail or ""))
+        check("decision trail uses Hebrew enum words",
+              "קרקע" in (trail or "") and "soil" not in (trail or "")
+              and " line" not in (trail or ""))
+        c.shot("09-decision-trail-cm.png")
         c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
         time.sleep(1.5)
         bom_text = c.js("document.getElementById('tab-bom').textContent")
