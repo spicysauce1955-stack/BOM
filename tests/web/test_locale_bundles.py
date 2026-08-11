@@ -68,6 +68,43 @@ def test_backend_code_list_is_current():
     assert emitted == set(WARNING_CODES) | set(CRITIQUE_CODES), emitted
 
 
+UNIT_LITERAL_ALLOWED = {
+    "units.mm", "units.cm", "units.toggle_title",  # the unit vocabulary itself
+    "hint.draw",  # documents the typed-length suffixes ("250cm"), not a rendered value
+}
+
+
+def test_lengths_carry_the_unit_placeholder_not_a_literal():
+    """Display units are user-selectable (mm | cm): a string that hardcodes "mm"
+    would keep saying mm after the user switches. Lengths render "{...} {u}"."""
+    import re
+
+    pattern = re.compile(r'(?<![a-z_])mm\b|(?<![a-z_])cm\b|מ"מ|ס"מ')
+    for name, table in zip(("en", "he"), _bundles()):
+        offenders = [
+            k for k, v in table.items()
+            if k not in UNIT_LITERAL_ALLOWED and pattern.search(str(v))
+        ]
+        assert not offenders, (name, offenders)
+
+
+def test_unit_bearing_keys_are_rendered_with_tu():
+    """`{u}` is supplied by units.tu()/unitParams() — a plain t("key") would leave
+    the placeholder in the UI."""
+    import re
+
+    js_dir = STATIC / "js"
+    sources = {p.name: p.read_text() for p in [*js_dir.glob("*.js"), STATIC / "app.js"]}
+    en, _ = _bundles()
+    unit_keys = [k for k, v in en.items() if "{u}" in str(v)]
+    # t("key") with no params; t("key", {u: ...}) supplies the label explicitly
+    offenders = [
+        (fname, key) for key in unit_keys for fname, src in sources.items()
+        if re.search(r'(?<![a-z])t\(["`]' + re.escape(key) + r'["`]\s*\)', src)
+    ]
+    assert not offenders, offenders
+
+
 def test_no_empty_translations():
     en, he = _bundles()
     for table in (en, he):

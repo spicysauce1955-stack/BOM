@@ -11,6 +11,7 @@ import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { addIntervalEvent, addPointEvent, on, saveTopology, setSelection, state } from "./state.js";
+import { fmt, fmtLen, snapStep, toDisplayValue, toMm, tu } from "./units.js";
 
 // viewBox geometry (preserveAspectRatio=none stretches to the container width)
 const W = 900, H = 180;
@@ -56,6 +57,7 @@ export function initProfile() {
   on("result-changed", render);
   on("selection-changed", render);
   on("locale-changed", () => { closeWallPopover(); render(); });
+  on("units-changed", () => { closeWallPopover(); render(); });
   render();
 }
 
@@ -351,7 +353,7 @@ function renderGrid(chain) {
       tickSeen.add(key);
       el("line", { x1: x, y1: BASE, x2: x, y2: BASE + 6, class: "profile-tick" }, g);
       el("text", { x, y: BASE + 17, "text-anchor": "middle",
-        class: "profile-tick-label num" }, labels).textContent = String(s);
+        class: "profile-tick-label num" }, labels).textContent = fmt(s);
     }
   }
 }
@@ -394,18 +396,18 @@ function renderGround(chain) {
       if (s.ev) {
         const c = el("circle", { cx: gx, cy: gy, r: 4.5, class: "profile-sample",
           "data-ev": s.ev.id, "data-run": entry.run.id }, edit);
-        el("title", {}, c).textContent = t("profile.sample_tooltip");
+        el("title", {}, c).textContent = tu("profile.sample_tooltip", { snap_mm: Z_SNAP });
         el("text", { x: gx + 6, y: gy - 6,
-          class: "profile-sample-label num" }, edit).textContent = String(s.z);
+          class: "profile-sample-label num" }, edit).textContent = fmt(s.z);
       } else if (s.node) {
         const key = `${s.node.id}@${Math.round(gx)}`;
         if (nodeSeen.has(key)) continue;
         nodeSeen.add(key);
         const c = el("circle", { cx: gx, cy: gy, r: 5, class: "profile-node",
           "data-node": s.node.id }, edit);
-        el("title", {}, c).textContent = t("profile.node_tooltip");
+        el("title", {}, c).textContent = tu("profile.node_tooltip", { snap_mm: Z_SNAP });
         el("text", { x: gx + 6, y: gy - 6,
-          class: "profile-node-label num" }, edit).textContent = String(s.z);
+          class: "profile-node-label num" }, edit).textContent = fmt(s.z);
       }
     }
   }
@@ -471,7 +473,7 @@ function renderTops(chain) {
           const h = el("rect", { x: xOf(gsOf(entry, s)) - 4, y: yOf(z) - 4, width: 8, height: 8,
             class: "profile-wall-handle", "data-ev": w.iv.id, "data-run": run.id,
             "data-end": end }, edit);
-          el("title", {}, h).textContent = t("profile.wall_tooltip");
+          el("title", {}, h).textContent = tu("profile.wall_tooltip", { snap_mm: Z_SNAP });
         }
       }
       // built base with no top event at all: dashed creation hint above ground
@@ -528,11 +530,11 @@ function renderResult(chain) {
       shape.setAttribute("class",
         `profile-panel ${sp.vertical}${sel === sp.id ? " selected" : ""}`);
       shape.dataset.id = sp.id;
-      el("title", {}, shape).textContent = `${sp.id} (${sp.vertical}, ${h} mm)`;
+      el("title", {}, shape).textContent = `${sp.id} (${sp.vertical}, ${fmtLen(h)})`;
       shape.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: sp.id });
-        inspect(sp.id, t("inspect.span",
-          { width: sp.width_mm, height: sp.height_mm, mode: sp.vertical }));
+        inspect(sp.id, tu("inspect.span",
+          { width_mm: sp.width_mm, height_mm: sp.height_mm, mode: sp.vertical }));
       });
     }
 
@@ -547,7 +549,7 @@ function renderResult(chain) {
       line.dataset.id = gate.id;
       el("text", { x: (x0 + x1) / 2, y: y - 5, "text-anchor": "middle",
         class: "profile-gate-label num" }, g).textContent =
-        t("profile.gate_label", { width: gate.end_station_mm - gate.start_station_mm });
+        tu("profile.gate_label", { width_mm: gate.end_station_mm - gate.start_station_mm });
       line.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: gate.id });
         inspect(gate.id, t("inspect.gate", { kit: gate.kit_sku }));
@@ -574,7 +576,7 @@ function renderResult(chain) {
       el("title", {}, hit).textContent = `${post.id}\n${post.sku} (${post.kind}, ${post.mounting})`;
       hit.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: post.id });
-        inspect(post.id, t("inspect.post", { sku: post.sku, station: post.station_mm }));
+        inspect(post.id, tu("inspect.post", { sku: post.sku, station_mm: post.station_mm }));
       });
     }
   }
@@ -770,8 +772,8 @@ function openZEditor(gx, gy, value, apply) {
   const input = document.createElement("input");
   input.type = "number";
   input.className = "mm-input profile-z-input";
-  input.step = Z_SNAP;
-  input.value = value;
+  input.step = snapStep(Z_SNAP);
+  input.value = toDisplayValue(value);
   fo.appendChild(input);
   input.focus();
   input.select();
@@ -780,7 +782,7 @@ function openZEditor(gx, gy, value, apply) {
   input.addEventListener("keydown", (ev) => {
     ev.stopPropagation();
     if (ev.key === "Enter") {
-      const z = Math.round(+input.value);
+      const z = toMm(input.value);
       close();
       if (Number.isFinite(z) && z !== value) apply(z);
     } else if (ev.key === "Escape") close();
@@ -849,10 +851,12 @@ function openTopPopover(runId, evId, clientX, clientY) {
   wallPopover.className = "popover";
   wallPopover.innerHTML = `<h4>${t(legacy ? "profile.wall_editor" : "events.base_top")}</h4>
     <div class="meta"><bdi>${esc(runId)}</bdi></div>
-    <label>${t("popover.wall_start")}
-      <input id="profile-wall-start" type="number" step="${Z_SNAP}" value="${z0}"></label>
-    <label>${t("popover.wall_end")}
-      <input id="profile-wall-end" type="number" step="${Z_SNAP}" value="${z1}"></label>
+    <label>${tu("popover.wall_start")}
+      <input id="profile-wall-start" type="number" step="${snapStep(Z_SNAP)}"
+        value="${toDisplayValue(z0)}"></label>
+    <label>${tu("popover.wall_end")}
+      <input id="profile-wall-end" type="number" step="${snapStep(Z_SNAP)}"
+        value="${toDisplayValue(z1)}"></label>
     ${!legacy && pts.length > 2
       ? `<div class="meta">${t("profile.top_interior_hint")}</div>` : ""}
     <div class="popover-actions">
@@ -863,8 +867,8 @@ function openTopPopover(runId, evId, clientX, clientY) {
   wallPopover.style.top = `${Math.max(4, Math.min(clientY + 8, window.innerHeight - wallPopover.offsetHeight - 12))}px`;
 
   function save() {
-    const nz0 = Math.round(+document.getElementById("profile-wall-start").value);
-    const nz1 = Math.round(+document.getElementById("profile-wall-end").value);
+    const nz0 = toMm(document.getElementById("profile-wall-start").value);
+    const nz1 = toMm(document.getElementById("profile-wall-end").value);
     closeWallPopover();
     if (!Number.isFinite(nz0) || !Number.isFinite(nz1)) return;
     if (!legacy && nz0 === z0 && nz1 === z1) return;
@@ -907,9 +911,9 @@ function openTopDotPopover(runId, evId, idx, clientX, clientY) {
   wallPopover.className = "popover";
   wallPopover.innerHTML = `<h4>${t("events.base_top")}</h4>
     <div class="meta"><bdi>${esc(runId)}</bdi></div>
-    <label>${t("popover.top_z")}
-      <input id="profile-top-z" type="number" step="${Z_SNAP}" min="0"
-        value="${pt.z_mm}"></label>
+    <label>${tu("popover.top_z")}
+      <input id="profile-top-z" type="number" step="${snapStep(Z_SNAP)}" min="0"
+        value="${toDisplayValue(pt.z_mm)}"></label>
     <div class="popover-actions">
       <button id="profile-top-delete" title="${esc(t("common.remove"))}">✕</button>
       <button id="profile-top-cancel">${t("popover.cancel")}</button>
@@ -919,7 +923,7 @@ function openTopDotPopover(runId, evId, idx, clientX, clientY) {
   wallPopover.style.top = `${Math.max(4, Math.min(clientY + 8, window.innerHeight - wallPopover.offsetHeight - 12))}px`;
 
   function save() {
-    const z = Math.round(+document.getElementById("profile-top-z").value);
+    const z = toMm(document.getElementById("profile-top-z").value);
     closeWallPopover();
     if (!Number.isFinite(z) || z === pt.z_mm) return;
     pushSnapshot("profile-top-typed");

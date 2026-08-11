@@ -10,6 +10,7 @@ export const state = {
   critique: [],
   selection: { runId: null, dotIndex: null, elementId: null },
   locale: "en",        // Task 10 flips the default to "he"
+  units: "mm",         // DISPLAY unit only (mm | cm); storage is always int mm
   tool: "select",
   draftNodes: [],
   nodeSeq: 1,
@@ -18,7 +19,7 @@ export const state = {
 };
 
 // events: "project-loaded","topology-changed","result-changed",
-//         "selection-changed","locale-changed","tool-changed"
+//         "selection-changed","locale-changed","units-changed","tool-changed"
 const bus = new EventTarget();
 export function on(event, fn) { bus.addEventListener(event, (e) => fn(e.detail)); }
 export function emit(event, detail) { bus.dispatchEvent(new CustomEvent(event, { detail })); }

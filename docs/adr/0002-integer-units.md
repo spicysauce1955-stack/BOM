@@ -17,3 +17,15 @@ plans; hashable, reproducible plans). int32 covers ±2147 km.
 ## Consequences
 Slope-length of a span uses `round(hypot(dx_mm, dz_mm))` — documented single rounding point.
 Chord (plan) vs slope length must be named explicitly on every quantity (A pitfall 4).
+
+### Display units are presentation only (2026-08-11)
+The UI offers a millimetre/centimetre toggle (`web/static/js/units.js`, persisted in
+`localStorage`). It converts at the presentation boundary ONLY: mm → rendered field/label
+on the way out, field → int mm on the way in, so a round trip is lossless at 1 mm
+(`toMm(toDisplayValue(x)) === x`, pinned in `tests/web/test_units_module.py`). Nothing
+below the boundary changes: the API, the store, the rule data, and the raw-JSON editors
+(knowledge actions, inventory JSON) stay int mm — those editors show the storage
+representation deliberately. Locale strings carry `{u}` plus `*_mm` placeholders instead
+of a hardcoded unit; `units.tu()`/`unitParams()` supply both, and backend warning params
+convert by name (`*_mm`). Server-rendered decision-graph prose keeps its mm figures — it
+is an immutable audit record, not a live field.

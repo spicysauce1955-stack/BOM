@@ -14,6 +14,9 @@ import {
   addIntervalEvent, addPointEvent, generateStrategy, on, saveTopology,
   setSelection, setTool, state,
 } from "./state.js";
+import {
+  fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitParams,
+} from "./units.js";
 
 const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin"];
 
@@ -35,6 +38,10 @@ export function initEditor() {
   });
   on("selection-changed", () => { renderTopology(); renderHandles(); });
   on("locale-changed", () => { renderAllCanvas(); renderHandles(); updateStatus(); });
+  on("units-changed", () => {
+    closePopover();          // its fields hold values in the OLD unit
+    renderAllCanvas(); renderHandles(); updateStatus(); updateLengthChip();
+  });
   updateStatus();
 }
 
@@ -69,8 +76,8 @@ function updateToolButtons() {
 function updateStatus(cursor) {
   const bar = document.getElementById("statusbar");
   if (!bar) return;
-  let text = t(`hint.${state.tool}`);
-  if (cursor) text += ` · ${t("hint.cursor", cursor)}`;
+  let text = tu(`hint.${state.tool}`, { ex_mm: 4200 });
+  if (cursor) text += ` · ${tu("hint.cursor", cursor)}`;
   bar.textContent = text;
 }
 
@@ -240,7 +247,7 @@ function onPointerMove(ev) {
     for (const run of state.project.topology.runs) {
       const hit = stationAtPoint(run, mx, my);
       if (hit.dist <= HOVER_RUN_MM) {
-        cursor = { station: hit.station, x: Math.round(mx), y: Math.round(my) };
+        cursor = { station_mm: hit.station, x_mm: Math.round(mx), y_mm: Math.round(my) };
         break;
       }
     }
@@ -394,12 +401,15 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
     gateKits = gateKitProducts(await loadCatalogProducts());
     defaultKit = gateKits.find((p) => p.sku === "GATE-KIT-1000") || gateKits[0] || null;
   }
-  const numField = (key, id, value) =>
-    `<label>${t(key)}<input id="${id}" type="number" value="${value}"></label>`;
+  // length fields carry mm in, display units out (units.js is the only converter)
+  const numField = (key, id, valueMm) =>
+    `<label>${tu(key)}<input id="${id}" type="number" step="${inputStep()}"
+      value="${toDisplayValue(valueMm)}"></label>`;
+  const fieldMm = (id) => toMm(document.getElementById(id).value);
   // base applies to the whole section: no station in the header, no range fields
   let html = `<h4>${t("tool." + tool)}</h4>
     <div class="meta"><bdi>${esc(runId)}</bdi>${tool === "base" ? ""
-      : ` · ${t("popover.station")} <span class="num">${station}</span>`}</div>`;
+      : ` · ${t("popover.station")} <span class="num">${esc(fmtLen(station))}</span>`}</div>`;
   if (tool === "gate") {
     html += numField("popover.width", "pop-width",
       (defaultKit && widthFromProduct(defaultKit)) || 1000);
@@ -456,7 +466,7 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
     if (tool === "gate") {
       addPointEvent(runId, {
         kind: "gate",
-        width_mm: Math.round(+document.getElementById("pop-width").value),
+        width_mm: fieldMm("pop-width"),
         kit_sku: document.getElementById("pop-kit").value.trim() || null,
       }, station);
     } else if (tool === "base") {
@@ -477,16 +487,12 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
       }
     } else if (tool === "ground") {
       addPointEvent(runId, {
-        kind: "elevation_sample",
-        z_mm: Math.round(+document.getElementById("pop-z").value),
+        kind: "elevation_sample", z_mm: fieldMm("pop-z"),
       }, station);
     } else if (tool === "height") {
       addIntervalEvent(runId, {
-        kind: "height_intent",
-        height_mm: Math.round(+document.getElementById("pop-height").value),
-        source: "user",
-      }, Math.round(+document.getElementById("pop-start").value),
-        Math.round(+document.getElementById("pop-end").value));
+        kind: "height_intent", height_mm: fieldMm("pop-height"), source: "user",
+      }, fieldMm("pop-start"), fieldMm("pop-end"));
     } else if (tool === "pin") {
       await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
         id: "", run_id: runId,
@@ -511,8 +517,8 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
   const kitSel = popover.querySelector("select#pop-kit");
   if (kitSel) kitSel.addEventListener("change", () => {
     const p = gateKits.find((g) => g.sku === kitSel.value);
-    const w = p && widthFromProduct(p);
-    if (w) popover.querySelector("#pop-width").value = w;
+    const w = p && widthFromProduct(p);   // product widths are mm, like the catalog
+    if (w) popover.querySelector("#pop-width").value = toDisplayValue(w);
   });
   const first = popover.querySelector("input, select, button");
   if (first) first.focus();
@@ -533,7 +539,8 @@ function openLengthInput(runId) {
   const input = document.createElement("input");
   input.type = "number";
   input.className = "mm-input";
-  input.value = runLength(run);
+  input.step = inputStep();
+  input.value = toDisplayValue(runLength(run));
   fo.appendChild(input);
   input.focus();
   input.select();
@@ -541,7 +548,7 @@ function openLengthInput(runId) {
   const close = () => { done = true; fo.remove(); };
   input.addEventListener("keydown", (ev) => {
     ev.stopPropagation();
-    if (ev.key === "Enter") { const v = Math.round(+input.value); close(); commitTypedLength(runId, v); }
+    if (ev.key === "Enter") { const v = toMm(input.value); close(); commitTypedLength(runId, v); }
     else if (ev.key === "Escape") close();
   });
   input.addEventListener("blur", () => { if (!done) close(); });
@@ -555,7 +562,7 @@ function commitTypedLength(runId, typedTotal) {
   const h = Math.hypot(B[0] - A[0], B[1] - A[1]);
   if (!h) return;
   const upTo = runLength(run) - Math.round(h); // length up to the last segment
-  if (typedTotal <= upTo) { alert(t("editor.invalid_length", { min: upTo })); return; }
+  if (typedTotal <= upTo) { alert(tu("editor.invalid_length", { min_mm: upTo })); return; }
   const d = [(B[0] - A[0]) / h, (B[1] - A[1]) / h];
   pushSnapshot("typed-length");
   const end = nodeById(run.end_node_id); // end NODE moves; shared runs follow by design
@@ -569,15 +576,17 @@ let lengthBuffer = "";     // raw typed entry, e.g. "4", "3.5", "250cm"
 let lastDrawMouse = null;  // last cursor world position while drawing (the aim)
 let chipAnchorView = null; // rubber-band end in SVG view coords (chip anchor)
 
-// "4" -> 4000 (values < 100 are meters), "4200" -> 4200 (>= 100 are mm);
-// explicit trailing unit wins: "250cm" -> 2500, "1.2m"/"1.2מ" -> 1200, "80mm" -> 80
+// An explicit trailing unit always wins: "250cm" -> 2500, "1.2m"/"1.2מ" -> 1200,
+// "80mm" -> 80. A bare number under 100 is meters ("4" -> 4000); at 100 and above
+// it is read in the ACTIVE display unit — "4200" is 4200 mm in mm mode, and "420"
+// is 4200 mm in cm mode.
 function parseLengthMm(buf) {
   const m = /^(\d+(?:\.\d+)?|\.\d+)(mm|cm|m|מ)?$/.exec(buf);
   if (!m) return null;
   const v = parseFloat(m[1]);
   if (!(v > 0)) return null;
   const mm = m[2] === "mm" ? v : m[2] === "cm" ? v * 10 : m[2] ? v * 1000
-    : v < 100 ? v * 1000 : v;
+    : v < 100 ? v * 1000 : toMm(v);
   return Math.round(mm);
 }
 
@@ -595,7 +604,7 @@ function updateLengthChip() {
     document.body.appendChild(chip);
   }
   const mm = parseLengthMm(lengthBuffer);
-  const echo = mm ? t("editor.length_chip_echo", { v: (mm / 1000).toFixed(2) }) : "";
+  const echo = mm ? tu("editor.length_chip_echo", { v_mm: mm }) : "";
   chip.innerHTML = `<span class="num">${esc(lengthBuffer)}</span>`
     + (echo ? `<span class="chip-echo">${esc(echo)}</span>` : "");
   positionLengthChip();
@@ -705,7 +714,7 @@ function renderRubberBand(mx, my, alt) {
     el("line", { x1: a[0], y1: a[1], x2: p[0], y2: p[1], class: "snap-guide" }, g);
   const len = Math.round(Math.hypot(snap.p[0] - anchor[0], snap.p[1] - anchor[1]));
   el("text", { x: (a[0] + p[0]) / 2 + 8, y: (a[1] + p[1]) / 2 - 8, "font-size": 10,
-    fill: "#2563eb", class: "num" }, g).textContent = t("canvas.mm", { n: len });
+    fill: "#2563eb", class: "num" }, g).textContent = tu("canvas.mm", { n_mm: len });
   chipAnchorView = p; // the typed-length chip follows the rubber-band end
   positionLengthChip();
 }
@@ -869,7 +878,7 @@ function renderTopology() {
           fill: "#0891b2" }, g).textContent = t("canvas.gate");
       } else if (pe.payload.kind === "elevation_sample") {
         el("text", { x: p[0] - 8, y: p[1] + 20, "font-size": 9, fill: "#7c3aed" }, g)
-          .textContent = `z=${pe.payload.z_mm}`;
+          .textContent = `z=${fmt(pe.payload.z_mm)}`;
       }
     }
     // invisible fat hit line: run selection + event-tool clicks + touch targets
@@ -878,7 +887,7 @@ function renderTopology() {
     const mid = toPx(pointAtStation(run.id, runLength(run) / 2));
     const label = el("text", { x: mid[0] - 12, y: mid[1] - 8, "font-size": 10,
       fill: selected ? "#2563eb" : "#334155", class: "run-label", "data-run": run.id }, g);
-    label.textContent = `${run.id} (${runLength(run)} mm)`;
+    label.textContent = `${run.id} (${fmtLen(runLength(run))})`;
     el("title", {}, label).textContent = t("editor.length_tooltip");
     label.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -926,7 +935,8 @@ function renderOverlay() {
     const line = el("line", { x1: p0[0], y1: p0[1] - 8, x2: p1[0], y2: p1[1] - 8,
       stroke: color, "stroke-width": 6, opacity: 0.75, cursor: "pointer" }, g);
     line.addEventListener("click", () =>
-      inspect(span.id, t("inspect.span", { width: span.width_mm, height: span.height_mm, mode: span.vertical })));
+      inspect(span.id, tu("inspect.span",
+        { width_mm: span.width_mm, height_mm: span.height_mm, mode: span.vertical })));
   }
   for (const gate of s.gates) {
     const p0 = toPx(pointAtStation(gate.run_ref, gate.start_station_mm));
@@ -952,18 +962,19 @@ function renderOverlay() {
       "stroke-width": post.pinned ? 3 : 2, cursor: "pointer" }, g);
     el("title", {}, c).textContent = `${post.id}\n${post.sku} (${post.kind}, ${post.mounting})`;
     c.addEventListener("click", () =>
-      inspect(post.id, t("inspect.post", { sku: post.sku, station: post.station_mm })));
+      inspect(post.id, tu("inspect.post", { sku: post.sku, station_mm: post.station_mm })));
   }
 }
 
 // Localize a warning/critique by code: t("<prefix>.<code>", params) with each param
 // bidi-isolated (<bdi>); falls back to the server's English text when no key exists.
+// Backend params are mm — unitParams converts every `*_mm` and supplies {u}.
 function localizedByCode(prefix, code, params, fallback) {
   const key = `${prefix}.${code}`;
   const template = t(key);  // no params: placeholders stay intact for wrapped interpolation
   if (template === key) return esc(fallback ?? code);
   let s = esc(template);
-  for (const [k, v] of Object.entries(params || {}))
+  for (const [k, v] of Object.entries(unitParams(params || {})))
     s = s.replaceAll(`{${k}}`, `<bdi>${esc(String(v))}</bdi>`);
   return s;
 }

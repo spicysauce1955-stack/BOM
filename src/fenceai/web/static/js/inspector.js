@@ -6,6 +6,7 @@ import { runLength, stationOfAnchor } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
 import { on, reloadProject, saveTopology, setSelection, state } from "./state.js";
+import { fmt, fmtLen } from "./units.js";
 
 export function initInspector() {
   const sel = document.getElementById("run-select");
@@ -16,6 +17,9 @@ export function initInspector() {
   on("result-changed", renderOverrides);
   on("selection-changed", () => { syncRunSelect(); renderRunEvents(); });
   on("locale-changed", () => { renderOverrides(); renderRunEvents(); });
+  on("units-changed", () => {
+    renderRunSelectors(); syncRunSelect(); renderOverrides(); renderRunEvents();
+  });
 }
 
 function syncRunSelect() {
@@ -68,7 +72,7 @@ function renderRunSelectors() {
   for (const r of state.project ? state.project.topology.runs : []) {
     const o = document.createElement("option");
     o.value = r.id;
-    o.textContent = `${r.id} (${runLength(r)} mm)`;
+    o.textContent = `${r.id} (${fmtLen(runLength(r))})`;
     sel.appendChild(o);
   }
 }
@@ -80,7 +84,8 @@ function renderOverrides() {
     const d = document.createElement("div");
     d.className = "card";
     const orphaned = state.result?.orphaned_overrides?.includes(ov.id);
-    d.innerHTML = `<bdi>${esc(ov.directive.kind)}</bdi> @ <span class="num">${esc(ov.directive.station_mm ?? "")}</span>
+    d.innerHTML = `<bdi>${esc(ov.directive.kind)}</bdi> @ <span class="num">${
+      esc(ov.directive.station_mm == null ? "" : fmtLen(ov.directive.station_mm))}</span>
       · <bdi>${esc(ov.run_id)}</bdi>
       ${orphaned ? `<span class="tag rejected">${t("inspect.orphaned")}</span>` : ""}
       <button data-ov="${esc(ov.id)}">${t("common.remove")}</button>`;
@@ -106,14 +111,14 @@ const EVENT_LABEL_KEYS = {
 function eventLabel(payload) {
   const name = t(EVENT_LABEL_KEYS[payload.kind] || payload.kind);
   if (payload.kind === "gate")
-    return `${name} · <span class="num">${payload.width_mm}</span> mm`;
+    return `${name} · <span class="num">${esc(fmtLen(payload.width_mm))}</span>`;
   if (payload.kind === "base") return `${name} · ${t("surface." + payload.surface)}`;
   if (payload.kind === "base_top")
     return `${name} · ${t("profile.top_points", { n: payload.points.length })}`;
   if (payload.kind === "elevation_sample")
-    return `${name} · z=<span class="num">${esc(payload.z_mm)}</span>`;
+    return `${name} · z=<span class="num">${esc(fmtLen(payload.z_mm))}</span>`;
   if (payload.kind === "height_intent")
-    return `${name} · <span class="num">${payload.height_mm}</span> mm`;
+    return `${name} · <span class="num">${esc(fmtLen(payload.height_mm))}</span>`;
   if (payload.kind === "post_tilt")
     return `${name} · ${t("tilt." + payload.mode)}${payload.mode === "custom"
       ? ` (<span class="num">${payload.tilt_deg}</span>°)` : ""}`;
@@ -130,14 +135,14 @@ function renderRunEvents() {
   const rows = [];
   run.point_events.forEach((pe) => rows.push({
     list: "point_events", id: pe.id,
-    html: `${eventLabel(pe.payload)} @ <span class="num">${stationOfAnchor(run, pe.anchor)}</span>`,
+    html: `${eventLabel(pe.payload)} @ <span class="num">${fmt(stationOfAnchor(run, pe.anchor))}</span>`,
   }));
   run.interval_events.forEach((iv) => rows.push({
     list: "interval_events", id: iv.id,
     // base/base_top cover the whole section: label only, no station range
     html: iv.payload.kind === "base" || iv.payload.kind === "base_top"
       ? eventLabel(iv.payload)
-      : `${eventLabel(iv.payload)} · <span class="num">${stationOfAnchor(run, iv.start_anchor)}–${stationOfAnchor(run, iv.end_anchor)}</span>`,
+      : `${eventLabel(iv.payload)} · <span class="num">${fmt(stationOfAnchor(run, iv.start_anchor))}–${fmt(stationOfAnchor(run, iv.end_anchor))}</span>`,
   }));
   if (!rows.length) {
     div.innerHTML += `<div class="meta">${t("inspect.no_events")}</div>`;

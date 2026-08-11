@@ -60,6 +60,10 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
 - **Anchors are segment-local**: author with `geom.anchorFor`, resolve with
   `geom.stationOfAnchor` — these mirror backend `make_anchor`/`anchor_station` exactly.
   Never read `anchor.offset_mm` as a station.
+- **Display units** (mm | cm) are a presentation preference in `units.js` — convert with
+  `toDisplayValue`/`toMm` at the field boundary and render length strings via `tu()`
+  (locale strings use `{…_mm}` + `{u}`, never a literal unit). Storage, API payloads, and
+  the raw-JSON editors stay int mm; a new length surface must round-trip losslessly.
 - **i18n**: every user-visible string goes through `t("key")` (JS) or `data-i18n` (HTML);
   `i18n/he.json` and `en.json` must keep identical key sets. CSS uses logical properties
   only (no left/right); **the plan canvas and profile SVG are NEVER mirrored in RTL**;

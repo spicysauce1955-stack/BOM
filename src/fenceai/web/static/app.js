@@ -12,6 +12,7 @@ import {
   createProject, loadProjects, on, openProject, state,
 } from "./js/state.js";
 import { initTabs } from "./js/tabs.js";
+import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
 function setupHeader() {
   document.getElementById("btn-new-project").addEventListener("click", async () => {
@@ -23,6 +24,9 @@ function setupHeader() {
     (e) => openProject(e.target.value));
   document.getElementById("btn-locale").addEventListener("click",
     () => setLocale(currentLocale() === "he" ? "en" : "he"));
+  document.getElementById("btn-units").addEventListener("click", toggleUnits);
+  // the unit label itself is localized: relabel the button when the language flips
+  on("locale-changed", updateUnitsButton);
 }
 
 async function refreshProjectList() {
@@ -50,6 +54,7 @@ function setupUndoButtons() {
 
 async function main() {
   await initI18n();
+  initUnits();      // display unit before the first render (i18n first: it labels it)
   initEditor();
   initInspector();
   initTabs();

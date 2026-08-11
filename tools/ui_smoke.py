@@ -323,6 +323,70 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               bool(anchor) and anchor.get("segment_index") == 1
               and anchor.get("seg_len_at_authoring_mm", 99999) < 4000)
 
+        # --- display units: mm <-> cm (storage stays int mm) -----------------
+        label_mm = c.js("document.querySelector('.run-label').textContent")
+        run_len = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => {
+    const run = p.topology.runs[0];
+    const n = (id) => p.topology.nodes.find(x => x.id === id);
+    const pts = [n(run.start_node_id), ...run.interior_vertices.map(v => ({x_mm: v[0], y_mm: v[1]})),
+                 n(run.end_node_id)];
+    let L = 0;
+    for (let i = 0; i + 1 < pts.length; i++)
+      L += Math.round(Math.hypot(pts[i+1].x_mm - pts[i].x_mm, pts[i+1].y_mm - pts[i].y_mm));
+    return L;
+  })""")
+        check("canvas run label reads in mm by default", str(run_len) in (label_mm or ""))
+        c.click(*c.element_center("#btn-units"))
+        time.sleep(0.6)
+        label_cm = c.js("document.querySelector('.run-label').textContent")
+        check("switching to cm re-renders the canvas in cm",
+              str(run_len / 10) in (label_cm or "") and label_cm != label_mm)
+        check("unit choice is remembered",
+              c.js("localStorage.getItem('fenceai.units')") == "cm")
+        # a length typed in cm must be stored as the equivalent int mm
+        c.click(*c.element_center("#tool-height"))
+        c.click(*c.canvas_px(1500, 500))     # on segment 1 (0,0)->(3000,1000)
+        time.sleep(0.5)
+        field_cm = c.js("document.getElementById('pop-height')?.value")
+        check("popover length fields open in cm", field_cm == "180")
+        # every {u} placeholder must have been substituted (t() instead of tu())
+        check("no unsubstituted unit placeholders",
+              not c.js("document.body.innerText.includes('{u}')"))
+        c.js("""
+const h = document.getElementById('pop-height');
+if (h) {
+  h.value = '210'; h.dispatchEvent(new Event('change'));
+  document.getElementById('pop-save').click();
+}
+'ok'""")
+        time.sleep(1)
+        stored_h = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => {
+    const ev = p.topology.runs[0].interval_events.find(e => e.payload.kind === 'height_intent');
+    return ev ? ev.payload.height_mm : null;
+  })""")
+        check("210 cm stores as 2100 mm", stored_h == 2100)
+        c.shot("08-units-cm.png")
+        # the BOM follows too: cut plans are lengths, priced per purchase unit
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(1.5)
+        c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
+        time.sleep(1.5)
+        bom_text = c.js("document.getElementById('tab-bom').textContent")
+        check("BOM cut plan is labelled in the chosen unit", 'ס"מ' in (bom_text or ""))
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.3)
+        c.click(*c.element_center("#btn-units"))   # back to mm for the checks below
+        time.sleep(0.6)
+        event_row = c.js("""
+[...document.querySelectorAll('#run-events .event-row')]
+  .map(d => d.textContent).join(' | ')""")
+        check("switching back to mm shows the same length in mm",
+              "2100" in (event_row or ""))
+
         # --- clear topology (draft + persisted, the original bug) ------------
         c.click(*c.element_center("#tool-draw"))
         c.click(*c.canvas_px(1000, 3000))   # start a draft, leave it unfinished

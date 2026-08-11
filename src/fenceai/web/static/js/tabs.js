@@ -3,6 +3,7 @@
 import { apiGet, apiSend, esc } from "./api.js";
 import { currentLocale, t } from "./i18n.js";
 import { on, reloadProject, state } from "./state.js";
+import { fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitLabel } from "./units.js";
 
 // ---------- small DOM helpers (builder rows are DOM-built, no innerHTML) ----------
 function el(tag, attrs = {}, ...children) {
@@ -24,7 +25,7 @@ function option(value, label, selected) {
 
 // small labelled field: <label><span class=meta>label</span> input</label>
 const field = (labelKey, input) =>
-  el("label", { class: "builder-field" }, el("span", { class: "meta", text: t(labelKey) }), input);
+  el("label", { class: "builder-field" }, el("span", { class: "meta", text: tu(labelKey) }), input);
 
 function productLabel(products, sku) {
   const name = products[sku]?.name_i18n?.[currentLocale()] || products[sku]?.name;
@@ -156,13 +157,15 @@ export function initTabs() {
     renderAnnTargets(); renderAnnotations(); renderInventory(); maybeRenderBom();
   });
   on("result-changed", maybeRenderBom);
-  on("locale-changed", () => {
+  const relocalize = () => {
     renderAnnTargets(); renderAnnotations(); maybeRenderBom();
     if (builderActions) renderBuilderRows();
     if (inventoryObj) drawInventoryTable();
     if (document.getElementById("tab-knowledge").classList.contains("active")) renderKnowledge();
     if (document.getElementById("tab-review").classList.contains("active")) renderCandidates();
-  });
+  };
+  on("locale-changed", relocalize);
+  on("units-changed", relocalize);   // same surfaces, different numbers
 }
 
 // show/hide the structured editor vs. the raw-JSON textarea; the toggle button's
@@ -294,7 +297,9 @@ function bomHtml(bom, products) {
   for (const l of bom.lines) {
     html += `<tr><td><span class="sku">${esc(l.sku)}</span><br><span class="meta" dir="auto">${esc(lineName(products, l))}</span></td>
       <td><span class="num">${l.purchase_qty}</span> × ${esc(l.purchase_unit)}</td>
-      <td><span class="num">${l.engineering_qty}</span> ${esc(l.engineering_unit)}</td>
+      <td><span class="num">${l.engineering_unit === "mm" ? esc(fmt(l.engineering_qty))
+        : l.engineering_qty}</span> ${esc(l.engineering_unit === "mm" ? unitLabel()
+        : l.engineering_unit)}</td>
       <td class="num">${l.overage_qty || ""}</td>
       <td class="num">${(l.unit_price_cents / 100).toFixed(2)}</td>
       <td class="num">${(l.total_cents / 100).toFixed(2)}</td>
@@ -305,11 +310,11 @@ function bomHtml(bom, products) {
     html += `<div class="panel"><h3>${t("bom.cut_plan")} — <span class="sku">${esc(sku)}</span>
       ${plan.certified_optimal ? `<span class="tag active">${t("bom.optimal")}</span>`
         : `<span class="tag medium">${t("bom.heuristic", { bound: plan.lp_lower_bound })}</span>`}</h3>
-      <table><tr><th>${t("bom.bar_source")}</th><th>${t("bom.stock")}</th><th>${t("bom.cuts")}</th><th>${t("bom.leftover")}</th></tr>`;
+      <table><tr><th>${t("bom.bar_source")}</th><th>${tu("bom.stock")}</th><th>${tu("bom.cuts")}</th><th>${tu("bom.leftover")}</th></tr>`;
     for (const b of plan.bars) {
-      html += `<tr><td><bdi>${esc(b.source)}</bdi></td><td class="num">${b.stock_length_mm}</td>
-        <td class="num">${b.pieces.map((p) => p.length_mm).join(" + ")}</td>
-        <td class="num">${b.leftover_mm}${b.leftover_reusable ? " ♻" : ""}</td></tr>`;
+      html += `<tr><td><bdi>${esc(b.source)}</bdi></td><td class="num">${esc(fmt(b.stock_length_mm))}</td>
+        <td class="num">${esc(b.pieces.map((p) => fmt(p.length_mm)).join(" + "))}</td>
+        <td class="num">${esc(fmt(b.leftover_mm))}${b.leftover_reusable ? " ♻" : ""}</td></tr>`;
     }
     html += "</table></div>";
   }
@@ -318,7 +323,7 @@ function bomHtml(bom, products) {
       <table><tr><th>${t("bom.item")}</th><th>${t("bom.sku")}</th><th>${t("bom.used")}</th></tr>`;
     for (const a of bom.allocations)
       html += `<tr><td><bdi>${esc(a.inventory_item_id)}</bdi></td><td><span class="sku">${esc(a.sku)}</span></td>
-        <td class="num">${a.length_used_mm ? a.length_used_mm + " mm" : a.qty}</td></tr>`;
+        <td class="num">${a.length_used_mm ? esc(fmtLen(a.length_used_mm)) : a.qty}</td></tr>`;
     html += "</table></div>";
   }
   return html;
@@ -476,9 +481,16 @@ function builderRow(a, idx, products) {
   });
   row.appendChild(kindSel);
 
-  const num = (key, labelKey) => {
-    const i = el("input", { type: "number", value: a[key] ?? "" });
-    i.addEventListener("change", () => { a[key] = Math.round(i.valueAsNumber || 0); });
+  // plain counts (weights) stay raw; `*_mm` action fields are lengths and follow
+  // the display unit — the stored action keeps int mm either way
+  const num = (key, labelKey, isLength = key.endsWith("_mm")) => {
+    const raw = a[key] ?? "";
+    const i = el("input", { type: "number",
+      step: isLength ? inputStep() : "1",
+      value: raw === "" || !isLength ? raw : toDisplayValue(raw) });
+    i.addEventListener("change", () => {
+      a[key] = isLength ? (toMm(i.value) ?? 0) : Math.round(i.valueAsNumber || 0);
+    });
     return field(labelKey, i);
   };
   const text = (key, labelKey) => {
@@ -512,7 +524,11 @@ function builderRow(a, idx, products) {
       i.addEventListener("input", () => { a.param = i.value.trim(); });
       row.appendChild(i);
     }
-    row.appendChild(num("value", "knowledge.builder.value"));
+    // a set_param value is a length exactly when its param name says so
+    const paramIsLength = String(a.param || "").endsWith("_mm");
+    row.appendChild(num("value",
+      paramIsLength ? "knowledge.builder.value_len" : "knowledge.builder.value",
+      paramIsLength));
   } else if (a.kind === "default_component") {
     if (!a.sku) a.sku = Object.keys(products).sort()[0] || "";
     row.appendChild(choice("role", COMPONENT_ROLES, (r) => t("action.role." + r), "knowledge.builder.role"));
@@ -693,7 +709,7 @@ async function drawInventoryTable() {
   const table = el("table", { id: "inventory-table" },
     el("tr", {},
       el("th", { text: t("bom.sku") }), el("th", { text: t("inventory.kind") }),
-      el("th", { text: t("inventory.qty") }), el("th", { text: t("inventory.length_mm") }),
+      el("th", { text: t("inventory.qty") }), el("th", { text: tu("inventory.length_mm") }),
       el("th")));
   inventoryObj.items.forEach((item, idx) => table.appendChild(inventoryRow(item, idx, products)));
   host.appendChild(table);
@@ -718,9 +734,10 @@ function inventoryRow(item, idx, products) {
 
   const lenTd = el("td");
   if (item.kind === "remnant") {
-    const len = el("input", { type: "number", min: "0", value: item.length_mm ?? "" });
+    const len = el("input", { type: "number", min: "0", step: inputStep(),
+      value: item.length_mm == null ? "" : toDisplayValue(item.length_mm) });
     len.addEventListener("change", () => {
-      item.length_mm = len.value === "" ? null : Math.round(len.valueAsNumber || 0);
+      item.length_mm = len.value === "" ? null : (toMm(len.value) ?? 0);
     });
     lenTd.appendChild(len);
   } else {

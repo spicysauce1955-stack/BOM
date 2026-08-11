@@ -65,3 +65,15 @@ UIs left: inline quote/reject/scope/run forms, sentence-style knowledge rule bui
 with Advanced-JSON toggle, inventory table editor. 220 pytest + 27/27 smoke,
 272-key he/en parity. Research report menu retained for next rounds (#5-#10:
 adaptive UI, wizard spine, dimension pad, spatial warnings, segment table, aerial).
+
+## Display-unit toggle: mm / cm (2026-08-11) — COMPLETE
+User-selectable display unit in the header (persisted per browser, Hebrew מ"מ / ס"מ).
+New `js/units.js` is the only converter: `toDisplayValue`/`toMm` at every field boundary,
+`tu()`/`unitParams()` render `{…_mm} {u}` locale strings (backend warning params convert
+by name). Covers canvas labels + cursor readout + typed lengths (a bare number ≥100 now
+reads in the active unit), every popover field, the side-view z editors/tooltips/ticks,
+inspector events + overrides, BOM cut plans/allocations/engineering demand, inventory
+lengths, and `*_mm` rule-builder fields. Storage stays int mm everywhere (ADR-0002
+addendum); raw-JSON editors and server-rendered decision prose deliberately stay mm.
+244 pytest (incl. node-run round-trip tests for units.js + two bundle guards) +
+34/34 smoke (210 cm → 2100 mm verified end-to-end) + screenshot inspected.
