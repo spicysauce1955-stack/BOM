@@ -19,6 +19,11 @@ class Post(BaseModel):
     mounting: Literal["ground", "masonry"] = "ground"
     sku: str = ""
     ground_z_mm: Mm = 0
+    # The elevation the post STANDS on: the top of a built base (wall/concrete)
+    # where one carries the fence, the ground otherwise. ground_z_mm stays the
+    # true ground, which is what embedment is measured into. None = same as the
+    # ground (also how strategies generated before this field read).
+    base_z_mm: Mm | None = None
     tilt_deg: int = 0  # degrees from vertical; 0 = plumb (the default and the norm)
     pinned: bool = False
 

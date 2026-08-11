@@ -295,6 +295,18 @@ def _post_tilt_at(topo: Topology, run: Run, station: Mm) -> tuple[int, str | Non
     return max(-45, min(45, deg)), ev.id
 
 
+def _stand_z(topo: Topology, run: Run, station: Mm) -> Mm:
+    """The elevation a post STANDS on. Where a BUILT base carries the fence, the
+    panels rest on the base top (see the span bottoms) and so does the post —
+    measuring the post from the ground would run it straight through the wall."""
+    gz = ground_z(topo, run, station)
+    if base_surface_at(topo, run, station) in BUILT_BASES:
+        top = base_top_at(topo, run, station)
+        if top is not None:
+            return gz + top[0]
+    return gz
+
+
 def _make_post(
     builder: GraphBuilder,
     kb: KnowledgeBase,
@@ -306,6 +318,7 @@ def _make_post(
     kind: str,
     surface: str,
     ground_z_mm: Mm,
+    base_z_mm: Mm | None = None,
     inputs: list[str],
     reinforced: bool = False,
     reinforcement_refs: list[str] | None = None,
@@ -335,12 +348,14 @@ def _make_post(
     post = Post(
         id=post_id, run_ref=run_ref, station_mm=station, kind=kind,  # type: ignore[arg-type]
         reinforced=reinforced, mounting=mounting, sku=sku,  # type: ignore[arg-type]
-        ground_z_mm=ground_z_mm, tilt_deg=tilt_deg, pinned=pinned,
+        ground_z_mm=ground_z_mm, base_z_mm=base_z_mm, tilt_deg=tilt_deg, pinned=pinned,
     )
     builder.add(
         "structural", "place_post",
         payload={"station_mm": station, "kind": kind, "surface": surface,
                  "mounting": mounting, "sku": sku,
+                 **({"base_z_mm": base_z_mm} if base_z_mm is not None
+                    and base_z_mm != ground_z_mm else {}),
                  **({"tilt_deg": tilt_deg} if tilt_deg else {})},
         scope_refs=[post.id],
         inputs=inputs + (override_nodes or []),
@@ -435,6 +450,7 @@ def _generate_node_posts(
             post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
             station=station0, kind=kind, surface=surface,
             ground_z_mm=ground_z(topology, run0, station0),
+            base_z_mm=_stand_z(topology, run0, station0),
             inputs=[fact.id] + conflict_inputs,
             reinforced=reinforced and surface != "masonry_wall",
             reinforcement_refs=reinf_refs if reinforced else [],
@@ -662,6 +678,7 @@ def _generate_run(
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
             station=station, kind=kind, surface=surface,
             ground_z_mm=ground_z(topo, run, station),
+            base_z_mm=_stand_z(topo, run, station),
             inputs=inputs,
             reinforced=reinforced,
             reinforcement_refs=(reinf_refs if reinforced else []) + step_governed,
@@ -1020,6 +1037,7 @@ def _generate_run(
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
                 station=s, kind="line", surface=surface,
                 ground_z_mm=ground_z(topo, run, s),
+                base_z_mm=_stand_z(topo, run, s),
                 inputs=[layout_node.id],
                 forced_sku=forced_sku, forced_mounting=forced_mounting,
                 override_nodes=override_nodes,
@@ -1077,12 +1095,15 @@ def _check_post_lengths(
             ]
         if not adjacent:
             continue
-        exposed = max(top_of(sp) for sp in adjacent) - post.ground_z_mm
+        stand_z = post.base_z_mm if post.base_z_mm is not None else post.ground_z_mm
+        exposed = max(top_of(sp) for sp in adjacent) - stand_z
         if post.tilt_deg:
             import math
 
             exposed = round(exposed / math.cos(math.radians(post.tilt_deg)))
-        required = exposed + embed
+        # a masonry-mounted post is bolted to what it stands on; only a post set
+        # INTO the ground spends length on embedment
+        required = exposed + (embed if post.mounting == "ground" else 0)
         product = catalog.products.get(post.sku)
         available = (product.attrs.get("length_mm") if product else None)
         if isinstance(available, int) and required > available:

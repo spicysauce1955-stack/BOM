@@ -207,3 +207,18 @@ would contradict a standing horizontal rule is REFUSED with a note pointing at t
 "≡ גובה השכן" action, which levels the whole section at the neighbour's elevation (the
 second reading of "align two sections", per user confirmation). 401 pytest (6 new lock
 tests) + 62/62 smoke, incl. lock persistence through the API and the refusal path.
+
+## Map panning, side-view scale, fence-on-base, strategy summary (2026-08-11) — COMPLETE
+Four pieces of user feedback. (1) The plan canvas pans by dragging empty space with the
+primary button (any tool; grab/grabbing cursors), alongside the existing middle- and
+Ctrl-drag; a press that never moves is still a click, so nothing edits by accident.
+(2) The side view gained an elevation scale — "nice" 1/2/5 tick steps, labels in the
+display unit, and the axis names its unit AND the vertical exaggeration that distorts it.
+(3) REAL MODEL FIX: posts on a built base were recorded at ground level while the panels
+already rested on the base top, so the post-length check measured through the wall and
+charged embedment on top. New `Post.base_z_mm` (the elevation a post stands on; None =
+ground) — the check measures exposure from it and only `ground`-mounted posts pay
+embedment. The profile draws posts from base_z to the adjacent panel tops. (4) A strategy
+summary above the warnings: counts, fence length, span width range, height, panel mode,
+post SKUs, note count, a link to the priced BOM and the "click anything to see why" hint.
+406 pytest (5 new built-base tests) + 70/70 smoke, screenshots inspected.

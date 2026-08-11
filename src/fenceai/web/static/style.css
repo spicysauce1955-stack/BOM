@@ -250,3 +250,27 @@ input[type="number"] { direction: ltr; }
 .profile-top-locked.step { stroke-dasharray: 3 3; }
 .segment-locks { display: flex; gap: 6px; margin-block: 6px; }
 .segment-locks button { flex: 1; padding: 4px 6px; font-size: 12px; }
+
+/* side-view elevation scale (the panel is a measurement, not a picture) */
+.profile-zline { stroke: #e2e8f0; stroke-width: 1; }
+.profile-zline.zero { stroke: #cbd5e1; }
+.profile-zlabel { font-size: 9px; fill: #64748b; }
+.profile-axis-unit { font-size: 9px; fill: #94a3b8; }
+
+/* dragging empty canvas moves the map (any tool) */
+svg#canvas { cursor: grab; }
+svg#canvas.panning { cursor: grabbing; }
+/* editable things keep their own cursor — only empty canvas reads as "grab" */
+#canvas .run-hit { cursor: pointer; }
+#canvas .handle { cursor: move; }
+#canvas .ghost { cursor: copy; }
+
+/* what the generate button actually produced, in words */
+.strategy-summary:empty { display: none; }
+.strategy-summary { margin-block: 6px; padding: 8px 10px; background: #fff;
+  border: 1px solid #d4dae2; border-radius: 8px; font-size: 13px; }
+.strategy-summary .summary-line { display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: baseline; margin-block: 2px; }
+.strategy-summary .summary-line.meta { display: block; color: #64748b; font-size: 12px; }
+.strategy-summary .stat b { font-size: 15px; margin-inline-end: 3px; }
+.strategy-summary a { color: #2563eb; }

@@ -32,7 +32,7 @@ export function initEditor() {
   renderGrid();
   loadCatalogProducts(); // warm the cache so the gate popover opens instantly
   on("project-loaded", () => { renderAllCanvas(); renderHandles(); });
-  on("result-changed", () => { renderOverlay(); renderWarnings(); });
+  on("result-changed", () => { renderOverlay(); renderWarnings(); renderStrategySummary(); });
   on("tool-changed", () => {
     updateToolButtons(); renderHandles(); updateStatus(); closePopover();
     clearLengthBuffer();
@@ -50,6 +50,7 @@ function renderAllCanvas() {
   renderTopology();
   renderOverlay();
   renderWarnings();
+  renderStrategySummary();
 }
 
 // ---------- toolbar ----------
@@ -172,15 +173,24 @@ function setupCanvas() {
   }, { passive: false });
 
   svg.addEventListener("pointerdown", (ev) => {
-    // pan: middle button, or Ctrl/Cmd + primary (never conflicts with editing)
-    if (ev.button === 1 || (ev.button === 0 && (ev.ctrlKey || ev.metaKey))) {
+    const target = ev.target;
+    // Panning, in order of how likely a user is to find it:
+    //   drag empty canvas (any tool)  ·  middle button  ·  Ctrl/Cmd + drag
+    // "empty" means the pointer is on nothing editable — a drag that starts on a
+    // run, a handle, a ghost or an overlay element still means what it meant.
+    const onSomething = target.closest
+      && (target.closest(".run-hit") || target.closest("#g-handles")
+          || target.closest("#g-overlay") || target.classList.contains("run-label"));
+    if (ev.button === 1 || (ev.button === 0 && (ev.ctrlKey || ev.metaKey))
+        || (ev.button === 0 && !onSomething)) {
       ev.preventDefault();
-      pan = { screen: [ev.clientX, ev.clientY], view: { ...viewBox } };
+      pan = { screen: [ev.clientX, ev.clientY], view: { ...viewBox },
+        moved: false, pointerId: ev.pointerId };
       svg.setPointerCapture(ev.pointerId);
+      svg.classList.add("panning");
       return;
     }
     if (state.tool !== "select" || !state.project) return;
-    const target = ev.target;
     if (target.classList.contains("handle")) {
       drag = { kind: "dot", runId: target.dataset.run, dotIndex: +target.dataset.dot,
         started: false, start: [ev.clientX, ev.clientY] };
@@ -193,6 +203,9 @@ function setupCanvas() {
   });
   svg.addEventListener("pointermove", (ev) => {
     if (pan) {
+      if (!pan.moved && Math.hypot(ev.clientX - pan.screen[0],
+                                   ev.clientY - pan.screen[1]) < 4) return;
+      pan.moved = true;
       // delta in SCREEN pixels scaled by the pan-start view: immune to the
       // feedback of viewBox changing mid-gesture
       const svgEl = document.getElementById("canvas");
@@ -204,11 +217,21 @@ function setupCanvas() {
     onPointerMove(ev);
   });
   svg.addEventListener("pointerup", (ev) => {
-    if (pan) { pan = null; suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); return; }
+    if (pan) {
+      const moved = pan.moved;
+      pan = null;
+      svg.classList.remove("panning");
+      // a press that never moved was a click, not a pan: let the tool have it
+      if (moved) {
+        suppressClick = true;
+        setTimeout(() => { suppressClick = false; }, 0);
+      }
+      return;
+    }
     onDragEnd(ev);
   });
   svg.addEventListener("pointercancel", (ev) => {
-    if (pan) { pan = null; return; }
+    if (pan) { pan = null; svg.classList.remove("panning"); return; }
     onDragEnd(ev);
   });
 
@@ -1049,6 +1072,59 @@ function localizedByCode(prefix, code, params, fallback) {
   for (const [k, v] of Object.entries(unitParams(params || {})))
     s = s.replaceAll(`{${k}}`, `<bdi>${esc(String(v))}</bdi>`);
   return s;
+}
+
+// What did the button actually produce? The overlay draws it and the BOM prices
+// it, but neither says it in words — so the strategy read as "something happened".
+function renderStrategySummary() {
+  const box = document.getElementById("strategy-summary");
+  if (!box) return;
+  if (!state.result) {
+    box.innerHTML = `<span class="meta">${esc(t("strategy.none"))}</span>`;
+    return;
+  }
+  const s = state.result.strategy;
+  const widths = s.spans.map((sp) => sp.width_mm);
+  const fenceLen = widths.reduce((a, b) => a + b, 0)
+    + s.gates.reduce((a, g) => a + (g.end_station_mm - g.start_station_mm), 0);
+  const modes = [...new Set(s.spans.map((sp) => sp.vertical))];
+  const heights = [...new Set(s.spans.map((sp) => sp.height_mm))];
+  const skus = [...new Set(s.posts.map((p) => p.sku))].filter(Boolean);
+  const errors = s.warnings.filter((w) => w.severity === "error").length;
+  // Hebrew (and English) count agreement: one post, not "1 posts"
+  const stat = (labelKey, value) =>
+    `<span class="stat"><b class="num">${esc(String(value))}</b> `
+    + `${esc(t(value === 1 ? `${labelKey}_one` : labelKey))}</span>`;
+  box.innerHTML = `
+    <div class="summary-line">
+      <b>${esc(t("strategy.title"))}</b>
+      ${stat("strategy.posts", s.posts.length)}
+      ${stat("strategy.spans", s.spans.length)}
+      ${s.gates.length ? stat("strategy.gates", s.gates.length) : ""}
+      <span class="stat">${esc(tu("strategy.length", { total_mm: fenceLen }))}</span>
+    </div>
+    <div class="summary-line meta">
+      ${widths.length ? esc(tu("strategy.span_widths", {
+        min_mm: Math.min(...widths), max_mm: Math.max(...widths),
+      })) : ""}
+      ${heights.length === 1 ? " · " + esc(tu("strategy.height", { height_mm: heights[0] })) : ""}
+      ${modes.length ? " · " + esc(t("strategy.vertical")) + " "
+        + modes.map((m) => esc(enumWord(m))).join(", ") : ""}
+      ${skus.length ? " · " + esc(t("strategy.post_skus")) + " "
+        + skus.map((k) => `<span class="sku">${esc(k)}</span>`).join(", ") : ""}
+    </div>
+    <div class="summary-line meta">
+      ${esc(s.warnings.length === 0 ? t("strategy.no_warnings")
+        : tu(s.warnings.length === 1 ? "strategy.warnings_count_one"
+          : "strategy.warnings_count", { n: s.warnings.length, errors }))}
+      · <a href="#" id="summary-to-bom">${esc(t("strategy.see_bom"))}</a>
+      · ${esc(t("strategy.click_hint"))}
+    </div>`;
+  const link = document.getElementById("summary-to-bom");
+  if (link) link.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    document.querySelector('#tabs button[data-tab="bom"]')?.click();
+  });
 }
 
 function renderWarnings() {

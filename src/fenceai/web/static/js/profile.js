@@ -15,7 +15,7 @@ import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { addIntervalEvent, addPointEvent, on, saveTopology, setSelection, state } from "./state.js";
 import {
-  enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu,
+  enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu, unitLabel,
 } from "./units.js";
 import {
   STEP_RISE_MM, enforceLocks, flatPoints, levelPoints, lockOf, matchEnds, setLock,
@@ -255,7 +255,8 @@ function computeView(chain, span) {
       see(Math.max(sp.bottom_z_start_mm, sp.bottom_z_end_mm) + sp.height_mm);
     }
     for (const { post } of entry.result.posts) {
-      see(post.ground_z_mm); see(post.ground_z_mm + DEFAULT_POST_MM);
+      const standZ = post.base_z_mm ?? post.ground_z_mm;
+      see(post.ground_z_mm); see(standZ); see(standZ + DEFAULT_POST_MM);
     }
   }
   const range = Math.max(zMax - zMin, 1000);
@@ -507,9 +508,38 @@ function renderBaseBar(run) {
   });
 }
 
+// A "nice" tick step for a range: 1/2/5 x 10^n, at least ~4 ticks, in mm.
+function niceStep(rangeMm, targetTicks = 5) {
+  const raw = Math.max(rangeMm, 1) / targetTicks;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  for (const m of [1, 2, 5, 10]) if (raw <= mag * m) return mag * m;
+  return mag * 10;
+}
+
+// Elevation scale: without it the side view is a picture, not a measurement —
+// and the vertical exaggeration (5x by default) makes eyeballing it a trap.
+function renderZScale(g, labels) {
+  const zTop = view.zMin + (BASE - TOP_PAD) / view.sy;
+  const step = niceStep(zTop - view.zMin, 4);
+  const first = Math.ceil(view.zMin / step) * step;
+  for (let z = first; z <= zTop; z += step) {
+    const y = yOf(z);
+    if (y < TOP_PAD || y > BASE) continue;
+    el("line", { x1: PAD, y1: y, x2: W - PAD, y2: y,
+      class: `profile-zline${z === 0 ? " zero" : ""}` }, g);
+    el("text", { x: PAD - 4, y: y + 3, "text-anchor": "end",
+      class: "profile-zlabel num" }, labels).textContent = fmt(z);
+  }
+  // what the axis is in, and the exaggeration that distorts it
+  el("text", { x: PAD - 4, y: TOP_PAD, "text-anchor": "end",
+    class: "profile-axis-unit" }, labels).textContent =
+    `${unitLabel()} · ${exag}×`;
+}
+
 function renderGrid(chain) {
   const g = clearGroup("p-grid");
   const labels = clearGroup("p-labels");
+  renderZScale(g, labels);
   // z=0 reference line
   el("line", { x1: PAD, y1: yOf(0), x2: W - PAD, y2: yOf(0), class: "profile-zero" }, g);
   const tickSeen = new Set(); // global x dedupe: shared boundaries get ONE label
@@ -755,12 +785,21 @@ function renderResult(chain) {
       if (postSeen.has(post.id)) continue;
       postSeen.add(post.id);
       const x = xOf(gsOf(entry, station));
-      const y0 = yOf(post.ground_z_mm);
-      const y1 = yOf(post.ground_z_mm + DEFAULT_POST_MM);
+      // a post STANDS on what carries the fence (a wall top, or the ground) and
+      // reaches the top of the panels beside it — never buried in its own base
+      const standZ = post.base_z_mm ?? post.ground_z_mm;
+      const adjacent = entry.result.spans.filter(
+        (sp) => sp.start_station_mm === station || sp.end_station_mm === station);
+      const topZ = adjacent.length
+        ? Math.max(...adjacent.map((sp) =>
+            Math.max(sp.bottom_z_start_mm, sp.bottom_z_end_mm) + sp.height_mm))
+        : standZ + DEFAULT_POST_MM;
+      const y0 = yOf(standZ);
+      const y1 = yOf(topZ);
       // tilted posts lean in the profile: horizontal offset = height * tan(tilt)
       const lean = post.tilt_deg
         ? (xOf(gsOf(entry, station) + Math.round(
-            DEFAULT_POST_MM * Math.tan(post.tilt_deg * Math.PI / 180)
+            Math.max(topZ - standZ, 1) * Math.tan(post.tilt_deg * Math.PI / 180)
               * (entry.reversed ? -1 : 1))) - x)
         : 0;
       el("line", { x1: x, y1: y0, x2: x + lean, y2: y1,

@@ -94,7 +94,8 @@ GenerationRun { id, project_id, topology_revision, knowledge_snapshot: [(object_
 Strategy      { id, run_id, status: proposed|accepted|superseded,
                 posts[], spans[], gates[], warnings[] }
 Post  { id, run_ref (topology run id | node id), station_mm?, kind: end|corner|line|gate|junction,
-        reinforced: bool, mounting: ground|masonry, sku, ground_z_mm, pinned: bool }
+        reinforced: bool, mounting: ground|masonry, sku, ground_z_mm, base_z_mm?, tilt_deg,
+        pinned: bool }
 Span  { id, run_ref, start_station_mm, end_station_mm, width_mm (plan),
         slope_len_mm, vertical: level|stepped|raked, height_mm,
         bottom_z_start_mm, bottom_z_end_mm, rail_count }
@@ -153,6 +154,17 @@ CandidateIntent { id, kind: height_intent|top_line|post_request|material_prefere
 ```
 Only `confirmed` intents feed generation (they materialize as events/knowledge with
 provenance back to the record + annotation).
+
+## A fence on a built base stands ON it (2026-08-11)
+
+Where a wall or concrete base carries the fence (`BUILT_BASES`), the panels rest on the
+base top — span bottoms already included it — and so does the post: `Post.base_z_mm` is
+the elevation the post STANDS on, while `ground_z_mm` stays the true ground, which is what
+embedment is measured into. `base_z_mm = None` means "same as the ground" (soil, and every
+strategy generated before the field existed). Consequences: the post-length check measures
+the exposed length from `base_z_mm`, not through the wall, and only a `ground`-mounted post
+spends length on embedment — a masonry-mounted post is bolted to what it stands on.
+See tests/strategy/test_built_base_posts.py.
 
 ## Post orientation: plumb by default, tilt supported (2026-08-11)
 

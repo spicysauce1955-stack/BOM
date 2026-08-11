@@ -161,13 +161,39 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(1.5)
         n_posts = c.js("document.querySelectorAll('#g-overlay circle').length")
         check("generate renders posts", (n_posts or 0) >= 3)
+        # the strategy must SAY what it produced, not only draw it
+        summary = c.js("document.getElementById('strategy-summary').textContent")
+        check("the strategy summary reports posts, spans and fence length",
+              all(w in (summary or "") for w in ["עמודים", "מפתחים", "גדר"])
+              and str(n_posts) in (summary or ""))
         c.shot("03-generated.png")
+
+        # --- the map moves: dragging empty canvas pans, a click still edits ---
+        vb_before = c.js("document.getElementById('canvas').getAttribute('viewBox')")
+        empty = c.canvas_px(1000, 4000)          # away from the run
+        c.drag(empty[0], empty[1], empty[0] + 120, empty[1] + 60)
+        vb_after = c.js("document.getElementById('canvas').getAttribute('viewBox')")
+        check("dragging empty canvas moves the map", vb_before != vb_after)
+        check("empty canvas advertises panning",
+              c.js("getComputedStyle(document.getElementById('canvas')).cursor") == "grab")
+        n_runs_after_pan = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => p.topology.runs.length)""")
+        check("panning never edits the drawing", n_runs_after_pan == 1)
+        c.click(*c.element_center("#btn-fit"))
+        time.sleep(0.4)
 
         # --- profile panel renders -------------------------------------------
         profile_drawn = c.js("document.querySelectorAll('#p-result *').length")
         profile_ground = c.js("document.querySelectorAll('#p-ground *').length")
         check("profile renders generated panels/posts", (profile_drawn or 0) > 0)
         check("profile renders the ground line", (profile_ground or 0) > 0)
+        # a side view without a scale is a picture, not a measurement
+        zlabels = c.js("document.querySelectorAll('.profile-zlabel').length")
+        axis_unit = c.js("document.querySelector('.profile-axis-unit')?.textContent")
+        check("side view has an elevation scale", (zlabels or 0) >= 2)
+        check("the scale names its unit and the exaggeration",
+              'מ"מ' in (axis_unit or "") and "×" in (axis_unit or ""))
 
         # --- quotes: snapshot, freeze, accept ---------------------------------
         # save-quote opens an inline label form (no window.prompt anymore)
@@ -633,6 +659,35 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
   }})""")
         check("match-neighbours moves the shared end to the neighbour's top",
               matched is not None and matched[-1] == 400 and matched[0] == 800)
+        # the fence STANDS ON the wall: regenerate with the base in place and
+        # check the drawn post starts at the wall top, not down at the ground
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(1.8)
+        stand = c.js("""
+(() => {
+  const post = document.querySelector('#p-result .profile-post');
+  const ground = document.querySelector('#p-ground polyline');
+  if (!post || !ground) return null;
+  const gy = parseFloat(ground.getAttribute('points').split(' ')[0].split(',')[1]);
+  return { bottom: parseFloat(post.getAttribute('y1')),
+           top: parseFloat(post.getAttribute('y2')), ground: gy };
+})()""")
+        check("a post on a wall is drawn standing on the wall top",
+              stand is not None and stand["bottom"] < stand["ground"] - 4
+              and stand["top"] < stand["bottom"])
+        api_post = c.js(f"""
+fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
+  .then(r => r.json()).then(runs =>
+    fetch(`/api/runs/${{runs[runs.length - 1].id}}`).then(r => r.json()))
+  .then(res => {{
+    const p = res.strategy.posts.find(p => p.run_ref === {focus_id!r});
+    return p ? {{ ground: p.ground_z_mm, base: p.base_z_mm }} : null;
+  }})""")
+        check("the post's standing elevation is the wall top, not the ground",
+              api_post is not None and api_post["base"] > api_post["ground"])
+        c.element_center("#profile-svg")     # scroll the side view into frame
+        c.shot("11-fence-on-wall.png")
+
         # finish on a stepped profile so the screenshot shows what a step IS now
         c.click(*c.element_center("#base-step"))
         time.sleep(1.2)
