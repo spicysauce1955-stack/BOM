@@ -242,4 +242,21 @@ GET /api/runs/{id}/structure serves it; the Structure tab renders both detail le
 `js/structure-data.js` is the single tag source for the tab AND both drawings; the side view
 gained a chained centre-to-centre dimension string with one overall per section and the
 CLOSING bay marked; printing yields the site sheet (drawings + schedules, title block, plan
-auto-framed). 424 pytest (16 new) + 88/88 smoke. Review round: see below.
+auto-framed). 424 pytest (16 new) + 88/88 smoke.
+
+## Structure & parts review round (2026-08-11) — COMPLETE
+architecture-critic + test-reviewer before calling the milestone done; both earned it.
+The layout half was sound; the parts half was not. Fixed: a stored run laid out over an
+EDITED topology (invented stations — now 409 + "the drawing changed"); the report being a
+function of mutable inventory with nothing recording it (inventory_hash + cache
+invalidation); Σ(parts) ≡ BOM holding in only one direction (fulfilment emits no line when
+stock covers demand → new `from_stock` bucket); `unassigned` summing across units and
+printing negatives; a shared corner post carrying TWO tags while the drawing prints one
+(tags now unique per element, `A/P1`, totals count elements not rows); the dimension chain
+starring a GATE opening as the tolerance-absorbing bay; a stale in-flight fetch labelling
+one run's drawing with another's schedule; and a gate clamped past its section end keeping
+a kit that cannot fit (new `gate_past_run_end` warning). Tests: four demonstrated mutations
+(concrete on the wrong post, screws on the wrong bay, every rail claiming bar #1, a cap
+labelled a post) now die; the vacuous `32 + 0 == 32` unassigned test became the real
+fitted-vs-bought relationship; browser checks assert identity rather than existence.
+440 pytest + 99/99 smoke. Dispositions: docs/reviews/structure-review-response.md.
