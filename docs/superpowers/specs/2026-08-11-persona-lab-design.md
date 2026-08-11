@@ -59,9 +59,12 @@ read visible in the transcript audit (§4.4).
 ### 2.1 The one change to existing code
 
 `Cdp` moves from `tools/ui_smoke.py` into `tools/cdp.py`; `ui_smoke.py` imports it. The
-class is copied unchanged — no signature or behavior edits. `tools/ui_smoke.py` is the
-release gate, so **34/34 smoke checks must still pass after the move**, and that is the
-first verifiable step of the implementation plan, before any persona code exists.
+method bodies are copied verbatim; the only edit is that the two module globals the class
+closed over (`CDP_PORT`, `OUT`) become constructor keyword arguments whose defaults
+reproduce today's values, since two stacks must now coexist on different ports.
+`tools/ui_smoke.py` is the release gate, so **34/34 smoke checks must still pass after
+the move**, and that is the first verifiable step of the implementation plan, before any
+persona code exists.
 
 ## 3. The driver — what a persona is allowed to perceive
 
@@ -99,8 +102,11 @@ question for this UI, and this keeps it a question rather than answering it for 
 
 `click` accepts a handle (`e07`) or a screen coordinate. Coordinates matter because the
 plan canvas and profile SVG are the heart of the product and cannot be operated by
-handle — a persona aims at the picture, like a person does. Screenshots carry a light
-coordinate ruler along the edges so aiming is possible without world-mm math.
+handle — a persona aims at the picture, like a person does. To make aiming possible
+without world-mm math, the outline reports each element's on-screen rectangle, including
+the plan canvas and the profile SVG, and coordinates are plain viewport pixels. An
+overlay ruler drawn into the page was rejected: it would inject DOM into the very
+document under test.
 
 ### 3.3 Session model
 
