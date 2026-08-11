@@ -106,8 +106,10 @@ def _diff_strategies(before: Strategy, after: Strategy, impact: ProjectImpact) -
     impact.warnings_after = len(after.warnings)
 
 
-def _spine(topology, kb, catalog, overrides, inventory):
-    result = generate(topology, kb, catalog, overrides=overrides)
+def _spine(topology, kb, catalog, overrides, inventory, project_id=""):
+    # project_id is a bound scope dimension during generation — a project-scoped
+    # rule must behave in the preview exactly as it will in the real run
+    result = generate(topology, kb, catalog, overrides=overrides, project_id=project_id)
     bom = fulfill(
         derive_requirements(result.strategy, catalog, result.run.demand_skus),
         catalog, inventory,
@@ -131,12 +133,13 @@ def preview_impact(
         report.projects_checked += 1
         impact = ProjectImpact(project_id=case.project_id, project_name=case.project_name)
         strategy_before, bom_before = _spine(
-            case.topology, kb, catalog, case.overrides, case.inventory
+            case.topology, kb, catalog, case.overrides, case.inventory, case.project_id
         )
         impact.bom_before_cents = bom_before.total_cents
         try:
             strategy_after, bom_after = _spine(
-                case.topology, kb_after, catalog, case.overrides, case.inventory
+                case.topology, kb_after, catalog, case.overrides, case.inventory,
+                case.project_id,
             )
         except GenerationFailure as e:
             impact.generation_failed = str(e)

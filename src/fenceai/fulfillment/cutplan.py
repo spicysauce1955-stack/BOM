@@ -1,11 +1,19 @@
 """1D cut planning: FFD/best-fit with kerf-aware capacity, remnant-first allocation,
-and an LP lower-bound optimality certificate (ADR-0007).
+and a lower-bound optimality certificate (ADR-0007).
 
 Kerf model: each piece costs (length + kerf) against capacity (stock + kerf) — this
 credits back the unneeded kerf after the final cut (Research C).
+
+Two lower bounds are computed and the STRONGER one certifies the plan. The LP
+relaxation alone is unattainable whenever the pieces do not tile the stock (10 x
+1800 mm out of 3000 mm stock: the relaxation says 7, the true minimum is 10), and
+certifying against it labelled provably optimal plans "heuristic" — which four
+users in the run-2 persona lab read as the tool padding their orders.
 """
 
 from __future__ import annotations
+
+from bisect import bisect_right
 
 from pydantic import BaseModel
 
@@ -31,7 +39,8 @@ class CutPlan(BaseModel):
     sku: str
     bars: list[PlannedBar] = []
     new_bar_count: int = 0
-    lp_lower_bound: int = 0
+    lp_lower_bound: int = 0  # fractional relaxation; often unattainable
+    lower_bound: int = 0  # strongest bound proved — the certificate's basis
     certified_optimal: bool = False
     waste_mm: Mm = 0
 

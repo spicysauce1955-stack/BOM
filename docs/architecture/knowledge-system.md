@@ -40,7 +40,7 @@ firing records object_id+version, matched condition bindings, produced actions, 
 
 ## Scope and precedence
 
-`scope` is a dict of bound dimensions (project_id, product series, base surface, context tag).
+`scope` is a dict of bound dimensions (project_id, base surface, context tag, …).
 Applicability = scope matches ctx AND condition true. Precedence when actions collide:
 
 1. authority tier (lower number wins);
@@ -55,6 +55,24 @@ the decision graph, generation continues with the flagged pick only if categorie
 
 A hard constraint violated by the final strategy (no authorized exception) is a
 **generation failure**, distinct from conflicts.
+
+### Which dimensions are bound during generation
+
+A dimension is only a key/value pair in the evaluation context — there is no enum of
+allowed dimensions, and none of them is specific to fences or to a catalog.
+`strategy/generator.bind_scope()` binds, from facts the run actually has:
+
+| dimension | bound where | source |
+|---|---|---|
+| `project_id` | every resolution in the run | `generate(..., project_id=)`; the impact preview binds `ImpactCase.project_id` |
+| `surface` | post-level slots (mounting, default component, demand roles) | `base_surface_at()` under the post |
+| `context` | post-level slots resolved in a structural context | e.g. `"gate"` for gate-post reinforcement |
+
+An absent or empty fact leaves its dimension **unbound**, so a rule scoped to it cannot
+match (`evaluator._scope_matches` compares `scope_ctx.get(k) == v`). Adding a dimension is
+therefore a matter of putting the fact in the context — no evaluator change. Dimensions the
+knowledge UI hints at but the topology model cannot yet supply (product series, soil type)
+need a **model** field first; they are not expressible today at any layer.
 
 ## Versioning and provenance (ADR-0006)
 

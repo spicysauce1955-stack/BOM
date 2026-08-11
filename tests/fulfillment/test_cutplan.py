@@ -102,8 +102,65 @@ def test_piece_conservation():
     bar_invariant(plan)
 
 
+def test_provably_optimal_plan_is_certified_when_the_lp_bound_is_loose():
+    """1800 mm pieces from 3000 mm stock: 1803 + 1803 > 3003, so one piece per bar
+    IS the minimum. The fractional relaxation says 7 and can never be reached —
+    calling that plan "heuristic" told four users the tool pads orders."""
+    plan = plan_cuts("RAIL-3000", SEM, pieces(*([1800] * 10)))
+    assert plan.new_bar_count == 10
+    assert plan.lp_lower_bound == 7  # the relaxation, reported unchanged
+    assert plan.lower_bound == 10  # what is actually provable
+    assert plan.certified_optimal
+
+
+def test_bound_lets_small_pieces_ride_along_with_the_big_ones():
+    # three 1800s each need their own bar; the 100 fits alongside one of them
+    plan = plan_cuts("RAIL-3000", SEM, pieces(1800, 1800, 1800, 100))
+    assert plan.new_bar_count == 3
+    assert plan.lower_bound == 3
+    assert plan.certified_optimal
+
+
+def test_plan_we_cannot_prove_optimal_stays_uncertified():
+    """2003 + 1003 > 3003 and 3 x 1003 > 3003, so 3 bars really is optimal — but
+    no bound we compute proves it. The label stays honest instead of claiming a
+    certificate it does not have."""
+    plan = plan_cuts("RAIL-3000", SEM, pieces(2000, 1000, 1000, 1000))
+    assert plan.new_bar_count == 3
+    assert plan.lower_bound == 2
+    assert not plan.certified_optimal
+
+
+def test_bound_credits_remnant_capacity():
+    # one 1200 goes on the remnant, one on a new bar: 1 new bar is provably minimal
+    remnant = RemnantStock(inventory_item_id="inv1", length_mm=1250)
+    plan = plan_cuts("RAIL-3000", SEM, pieces(1200, 1200), [remnant])
+    assert plan.new_bar_count == 1
+    assert plan.lower_bound == 1
+    assert plan.certified_optimal
+
+
 def test_determinism():
     demand = pieces(1500, 1200, 900, 800, 700, 2500)
     p1 = plan_cuts("RAIL-3000", SEM, demand)
     p2 = plan_cuts("RAIL-3000", SEM, list(reversed(demand)))
     assert p1.model_dump() == p2.model_dump()
+
+
+# ---- the cut plan's user-facing surface (persona lab run 2, §4) ----
+# A BOM note is printed verbatim into a Hebrew table. Solver vocabulary there is
+# both untranslated and unreadable — and it read as an admission of padding.
+
+def test_bom_line_for_an_uncertified_plan_carries_no_solver_jargon(catalog):
+    from fenceai.demand.derive import RequirementLine
+    from fenceai.fulfillment.fulfill import fulfill
+
+    reqs = [
+        RequirementLine(id=f"r{i}", sku="RAIL-3000", engineering_qty=1, unit="cut",
+                        cut_length_mm=length)
+        for i, length in enumerate((2000, 1000, 1000, 1000))
+    ]
+    bom = fulfill(reqs, catalog)
+    assert not bom.cut_plans["RAIL-3000"].certified_optimal
+    line = next(l for l in bom.lines if l.sku == "RAIL-3000")
+    assert line.notes == []

@@ -74,21 +74,27 @@ def generate(
     builder = GraphBuilder()
     strategy = Strategy(id="strategy")
     applied: set[str] = set()
+    # dimensions known for the whole run; narrower ones (surface, context) are
+    # bound where they become facts
+    scope = bind_scope({"project_id": project_id})
 
-    demand_skus, demand_refs = _resolve_demand_skus(knowledge)
+    demand_skus, demand_refs = _resolve_demand_skus(knowledge, scope)
     builder.add(
         "quantity", "resolve_demand_products",
         payload=dict(demand_skus),
         governed_by=demand_refs,
     )
 
-    _generate_node_posts(topology, knowledge, catalog, overrides, builder, strategy, applied)
+    _generate_node_posts(
+        topology, knowledge, scope, catalog, overrides, builder, strategy, applied
+    )
     for run in topology.runs:
         _generate_run(
-            topology, run, knowledge, catalog, overrides, policy, builder, strategy, applied
+            topology, run, knowledge, scope, catalog, overrides, policy,
+            builder, strategy, applied,
         )
 
-    _check_post_lengths(topology, knowledge, catalog, builder, strategy)
+    _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
 
     orphaned = [ov.id for ov in overrides if ov.id not in applied]
     for ov_id in orphaned:
@@ -127,15 +133,38 @@ def generate(
 
 # --- knowledge-resolved selection helpers -----------------------------------
 
-def _post_ctx(surface: str, context: str = "") -> dict:
-    return {"scope": {}, "post": {"surface": surface, "context": context}}
+def bind_scope(*bindings: dict) -> dict[str, str]:
+    """Bind evaluation-scope dimensions from the facts of this generation.
+
+    A *dimension* is nothing more than a key/value pair present in the generation
+    context — there is no enum of allowed dimensions and nothing here is specific
+    to a catalog, a product family or to fences. A fact that is absent or empty
+    leaves its dimension UNBOUND, so a rule scoped to it cannot match
+    (`evaluator._scope_matches` compares `scope_ctx.get(k) == v`).
+    """
+    out: dict[str, str] = {}
+    for binding in bindings:
+        for key, value in binding.items():
+            if value is None or value == "":
+                continue
+            out[key] = str(value)
+    return out
 
 
-def _resolve_mounting(kb: KnowledgeBase, surface: str) -> tuple[str, str | None, list[str]]:
+def _post_ctx(scope: dict[str, str], surface: str, context: str = "") -> dict:
+    return {
+        "scope": bind_scope(scope, {"surface": surface, "context": context}),
+        "post": {"surface": surface, "context": context},
+    }
+
+
+def _resolve_mounting(
+    kb: KnowledgeBase, scope: dict[str, str], surface: str
+) -> tuple[str, str | None, list[str]]:
     """(mounting, rule sku, governed refs) for a base surface — slot-scoped so rules
     for other surfaces never compete (critic finding 5)."""
     res = resolve_actions(
-        kb, _post_ctx(surface), "require_mounting", match=lambda a: a.surface == surface
+        kb, _post_ctx(scope, surface), "require_mounting", match=lambda a: a.surface == surface
     )
     if res.winner:
         act = res.winner.actions[0]
@@ -143,10 +172,12 @@ def _resolve_mounting(kb: KnowledgeBase, surface: str) -> tuple[str, str | None,
     return "ground", None, []
 
 
-def _resolve_reinforcement(kb: KnowledgeBase) -> tuple[str | None, list[str]]:
+def _resolve_reinforcement(
+    kb: KnowledgeBase, scope: dict[str, str]
+) -> tuple[str | None, list[str]]:
     """(reinforced-post sku, governed refs) for gate context, or (None, [])."""
     res = resolve_actions(
-        kb, _post_ctx("", context="gate"), "require_post_reinforcement",
+        kb, _post_ctx(scope, "", context="gate"), "require_post_reinforcement",
         match=lambda a: a.context == "gate",
     )
     if res.winner:
@@ -154,9 +185,12 @@ def _resolve_reinforcement(kb: KnowledgeBase) -> tuple[str | None, list[str]]:
     return None, []
 
 
-def _resolve_default_post(kb: KnowledgeBase, surface: str) -> tuple[str, list[str]]:
+def _resolve_default_post(
+    kb: KnowledgeBase, scope: dict[str, str], surface: str
+) -> tuple[str, list[str]]:
     res = resolve_actions(
-        kb, _post_ctx(surface), "default_component", match=lambda a: a.role == "post_ground"
+        kb, _post_ctx(scope, surface), "default_component",
+        match=lambda a: a.role == "post_ground",
     )
     if res.winner:
         return res.winner.actions[0].sku, [res.winner.version.ref]
@@ -171,7 +205,9 @@ DEMAND_ROLE_DEFAULTS = {
 }
 
 
-def _resolve_demand_skus(kb: KnowledgeBase) -> tuple[dict[str, str], list[str]]:
+def _resolve_demand_skus(
+    kb: KnowledgeBase, scope: dict[str, str]
+) -> tuple[dict[str, str], list[str]]:
     """Demand product selection is knowledge (DefaultComponent roles), never a
     code literal — swapping the whole fence system (e.g. to a Barrette catalog)
     is a rule change. Falls back to the demo defaults when no rule exists."""
@@ -179,7 +215,7 @@ def _resolve_demand_skus(kb: KnowledgeBase) -> tuple[dict[str, str], list[str]]:
     refs: list[str] = []
     for role, (key, fallback) in DEMAND_ROLE_DEFAULTS.items():
         res = resolve_actions(
-            kb, {"scope": {}, "post": {"surface": "", "context": ""}},
+            kb, _post_ctx(scope, ""),
             "default_component", match=lambda a, role=role: a.role == role,
         )
         if res.winner:
@@ -239,6 +275,7 @@ def _post_tilt_at(topo: Topology, run: Run, station: Mm) -> tuple[int, str | Non
 def _make_post(
     builder: GraphBuilder,
     kb: KnowledgeBase,
+    scope: dict[str, str],
     *,
     post_id: str,
     run_ref: str,
@@ -258,7 +295,7 @@ def _make_post(
 ) -> Post:
     """Create a post; every selection resolved from knowledge BEFORE the decision
     node is recorded — elements are never mutated afterwards (critic finding 4)."""
-    mounting, mount_sku, governed = _resolve_mounting(kb, surface)
+    mounting, mount_sku, governed = _resolve_mounting(kb, scope, surface)
     if forced_mounting:
         mounting = forced_mounting
     if forced_sku:
@@ -271,7 +308,7 @@ def _make_post(
         sku = reinforced_sku
         sku_refs = []
     else:
-        sku, sku_refs = _resolve_default_post(kb, surface)
+        sku, sku_refs = _resolve_default_post(kb, scope, surface)
     post = Post(
         id=post_id, run_ref=run_ref, station_mm=station, kind=kind,  # type: ignore[arg-type]
         reinforced=reinforced, mounting=mounting, sku=sku,  # type: ignore[arg-type]
@@ -295,6 +332,7 @@ def _make_post(
 def _generate_node_posts(
     topology: Topology,
     kb: KnowledgeBase,
+    scope: dict[str, str],
     catalog: Catalog,
     overrides: list[Override],
     builder: GraphBuilder,
@@ -308,7 +346,7 @@ def _generate_node_posts(
             (run, run_length(topology, run))
         )
 
-    reinf_sku, reinf_refs = _resolve_reinforcement(kb)
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope)
 
     for node in topology.nodes:
         touches = sorted(touches_by_node.get(node.id, []), key=lambda t: t[0].id)
@@ -370,7 +408,7 @@ def _generate_node_posts(
                      "runs": len(touches)},
         )
         post = _make_post(
-            builder, kb,
+            builder, kb, scope,
             post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
             station=station0, kind=kind, surface=surface,
             ground_z_mm=ground_z(topology, run0, station0),
@@ -390,6 +428,7 @@ def _generate_run(
     topo: Topology,
     run: Run,
     kb: KnowledgeBase,
+    scope: dict[str, str],
     catalog: Catalog,
     overrides: list[Override],
     policy: dict,
@@ -403,7 +442,10 @@ def _generate_run(
         "input_fact", "run_geometry",
         payload={"run_id": run.id, "length_mm": length, "slope_permille": slope_permille},
     )
-    ctx = {"scope": {}, "run": {"length_mm": length, "slope_permille": slope_permille}}
+    ctx = {
+        "scope": bind_scope(scope),
+        "run": {"length_mm": length, "slope_permille": slope_permille},
+    }
 
     # -- hard span parameter ---------------------------------------------------
     res = resolve_param(kb, ctx, "max_span_mm")
@@ -501,7 +543,7 @@ def _generate_run(
     fixed |= gate_edges | step_stations
     fixed_sorted = sorted(fixed)
 
-    reinf_sku, reinf_refs = _resolve_reinforcement(kb)
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope)
 
     # -- interior fixed posts --------------------------------------------------
     for station in fixed_sorted:
@@ -575,7 +617,7 @@ def _generate_run(
             )
         tilt_deg, tilt_ev = (0, None) if kind == "gate" else _post_tilt_at(topo, run, station)
         post = _make_post(
-            builder, kb,
+            builder, kb, scope,
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
             station=station, kind=kind, surface=surface,
             ground_z_mm=ground_z(topo, run, station),
@@ -906,7 +948,7 @@ def _generate_run(
                 )
             tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
             post = _make_post(
-                builder, kb,
+                builder, kb, scope,
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
                 station=s, kind="line", surface=surface,
                 ground_z_mm=ground_z(topo, run, s),
@@ -931,6 +973,7 @@ def _generate_run(
 def _check_post_lengths(
     topology: Topology,
     kb: KnowledgeBase,
+    scope: dict[str, str],
     catalog: Catalog,
     builder: GraphBuilder,
     strategy: Strategy,
@@ -938,7 +981,9 @@ def _check_post_lengths(
     """Plumb-post consequence of sloped ground: the downhill post of a stepped
     panel is exposed (panel height + step) above ITS ground, plus embedment below.
     When the catalog knows the post's physical length, verify it suffices."""
-    embed, embed_refs = _resolve_quantity(kb, {"scope": {}}, "post_embed_mm", 600)
+    embed, embed_refs = _resolve_quantity(
+        kb, {"scope": bind_scope(scope)}, "post_embed_mm", 600
+    )
 
     def top_of(span: Span) -> Mm:
         return max(span.bottom_z_start_mm, span.bottom_z_end_mm) + span.height_mm

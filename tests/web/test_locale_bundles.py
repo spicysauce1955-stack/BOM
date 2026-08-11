@@ -178,3 +178,50 @@ def test_frontend_and_backend_enum_lexicons_agree():
         if f"enum.{v}" in he and he[f"enum.{v}"] != word
     }
     assert not mismatched, mismatched
+
+
+# ---- run-2 persona lab §4: three more ways untranslated text reached the user ----
+
+def test_no_double_escaped_unicode_in_bundles():
+    r"""A JSON value holding `“` (escaped backslash) renders the six literal
+    characters, not the quote mark: he.json showed “test” as “test”."""
+    import re
+
+    for name, table in zip(("en", "he"), _bundles()):
+        offenders = [k for k, v in table.items() if re.search(r"\\u[0-9a-fA-F]{4}", str(v))]
+        assert not offenders, (name, offenders)
+
+
+def test_every_alert_is_localized():
+    """A raw alert() string is untranslated English in a Hebrew-first RTL app —
+    every alert argument must start with t(...) or tu(...)."""
+    import re
+
+    js_dir = STATIC / "js"
+    offenders = []
+    for path in [*js_dir.glob("*.js"), STATIC / "app.js"]:
+        src = path.read_text()
+        for m in re.finditer(r"\balert\(", src):
+            if not re.match(r"\s*(t|tu)\(", src[m.end():]):
+                offenders.append((path.name, src[m.start():m.start() + 60]))
+    assert not offenders, offenders
+
+
+# learning/impact.py reports a failed hypothetical generation as code + params
+IMPACT_FAILURE_CODES = ["generation_failed", "generation_failed_refs"]
+
+
+def test_impact_failure_codes_have_locale_entries():
+    en, he = _bundles()
+    for code in IMPACT_FAILURE_CODES:
+        assert f"impact.failure.{code}" in en and f"impact.failure.{code}" in he, code
+
+
+def test_impact_failure_code_list_is_current():
+    import re
+
+    src = (
+        Path(__file__).resolve().parents[2] / "src" / "fenceai" / "learning" / "impact.py"
+    ).read_text()
+    emitted = set(re.findall(r'code="([a-z_]+)"', src))
+    assert emitted == set(IMPACT_FAILURE_CODES), emitted

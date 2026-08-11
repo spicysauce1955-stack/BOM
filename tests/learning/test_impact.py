@@ -78,7 +78,38 @@ def test_breaking_change_reported_as_generation_failure():
     )
     report = preview_impact(hypo, demo_knowledge(), demo_catalog(), _cases())
     assert report.projects_affected == 2
-    assert all(i.generation_failed for i in report.impacts)
+    assert all(i.generation_failure for i in report.impacts)
+
+
+def test_generation_failure_is_code_plus_params_not_a_raw_engine_string():
+    """User-visible text carries `code + params`; the English engine message is a
+    fallback/diagnostic only (CLAUDE.md locale contract)."""
+    # a second hard constraint on the same slot with a different value: an
+    # unresolvable hard tie, which is the failure a reviewer actually meets
+    hypo = KnowledgeVersion(
+        object_id="K-MAXSPAN-ALT", version=1, type="hard_constraint",
+        title="conflicting max span", actions=[SetParam(param="max_span_mm", value=1234)],
+        status="draft",
+    )
+    report = preview_impact(hypo, demo_knowledge(), demo_catalog(), _cases())
+    failures = [i.generation_failure for i in report.impacts if i.generation_failure]
+    assert failures, "expected the hypothetical KB to break generation"
+    for f in failures:
+        assert f.code == "generation_failed_refs"
+        assert set(f.params) == {"refs"}
+        assert "K-MAXSPAN@v1" in f.params["refs"]
+        assert f.message  # the raw engine text survives as a diagnostic fallback
+
+
+def test_generation_failure_without_refs_uses_the_plain_code():
+    hypo = KnowledgeVersion(
+        object_id="K-MAXSPAN", version=2, type="hard_constraint",
+        title="broken: no param action", actions=[AddNote(text="oops")], status="draft",
+    )
+    report = preview_impact(hypo, demo_knowledge(), demo_catalog(), _cases())
+    failures = [i.generation_failure for i in report.impacts if i.generation_failure]
+    assert failures
+    assert all(f.code == "generation_failed" and f.params == {} for f in failures)
 
 
 def test_activated_copy_mirrors_review_promotion():
