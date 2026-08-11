@@ -266,6 +266,33 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               bool(c.js("!!document.querySelector('#structure-body tr.selected')"))
               and "מפתח" in (c.js("document.getElementById('inspector-body').textContent") or ""))
         c.shot("12-structure-installer.png")
+        # the schedule is a document: it must speak both languages and both units
+        station_mm = c.js("""
+[...document.querySelectorAll('#structure-body tr[data-element]')][1].cells[1].textContent.trim()""")
+        c.click(*c.element_center("#btn-units"))
+        time.sleep(0.8)
+        station_cm = c.js("""
+[...document.querySelectorAll('#structure-body tr[data-element]')][1].cells[1].textContent.trim()""")
+        check("the schedule follows the display unit",
+              float(station_cm) == float(station_mm) / 10)
+        header_he = c.js("document.querySelector('#structure-body th').textContent")
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.0)
+        header_en = c.js("document.querySelector('#structure-body th').textContent")
+        check("the schedule follows the language",
+              header_en != header_he and header_en.strip() == "Tag")
+        leftovers = c.js("""
+(() => {
+  const html = document.getElementById('tab-structure').innerHTML;
+  return [...html.matchAll(/\{[a-z_]+\}/g)].map(m => m[0]);
+})()""")
+        check("no unsubstituted placeholders in the schedule", not leftovers)
+        if leftovers:
+            print("  leftovers:", leftovers)
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.0)
+        c.click(*c.element_center("#btn-units"))
+        time.sleep(0.8)
         # tags on the drawings must be the SAME tags as in the schedule
         tag_match = c.js("""
 (() => {

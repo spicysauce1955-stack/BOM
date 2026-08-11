@@ -11,6 +11,7 @@ import { emit, on, state } from "./state.js";
 let report = null;      // last fetched StructureReport
 let runId = null;       // the run it belongs to
 let inFlight = null;
+let tags = new Map();   // element id -> tag, built once per report
 
 export function getReport() {
   return report;
@@ -18,30 +19,39 @@ export function getReport() {
 
 export async function loadStructure() {
   const wanted = state.result?.run?.id || null;
-  if (!wanted) { report = null; runId = null; emit("structure-loaded", null); return null; }
+  if (!wanted) {
+    report = null; runId = null; tags = new Map();
+    emit("structure-loaded", null); return null;
+  }
   if (runId === wanted && report) return report;
   if (inFlight) return inFlight;
   inFlight = apiGet(`/api/runs/${wanted}/structure`)
     .then((doc) => {
       report = doc;
       runId = wanted;
+      tags = indexTags(doc);
       return doc;
     })
-    .catch(() => { report = null; runId = null; return null; })
+    .catch(() => { report = null; runId = null; tags = new Map(); return null; })
     .finally(() => { inFlight = null; });
   const doc = await inFlight;
   emit("structure-loaded", doc);
   return doc;
 }
 
-// element id -> its tag ("P3", "B2", "G1"), or null when the report is stale
-export function tagOf(elementId) {
-  if (!report) return null;
-  for (const section of report.sections) {
+function indexTags(doc) {
+  const map = new Map();
+  for (const section of doc?.sections || [])
     for (const row of [...section.setting_out, ...section.bays, ...section.gates])
-      if (row.element_id === elementId) return row.tag;
-  }
-  return null;
+      map.set(row.element_id, row.tag);
+  return map;
+}
+
+// element id -> its tag ("P3", "B2", "G1"), or null when the report is stale.
+// Indexed once per report: this is called for EVERY element drawn, on every
+// render, so a scan here would make a big fence quadratic.
+export function tagOf(elementId) {
+  return tags.get(elementId) ?? null;
 }
 
 export function sectionOf(runIdWanted) {
@@ -51,9 +61,9 @@ export function sectionOf(runIdWanted) {
 export function initStructureData() {
   // a new result invalidates every tag: refetch eagerly so the drawings can
   // label themselves without each view fetching its own copy
-  on("result-changed", () => { report = null; runId = null; loadStructure(); });
+  on("result-changed", () => { report = null; runId = null; tags = new Map(); loadStructure(); });
   // and a project LOAD carries a result too (a reload lands on the last run, and
   // a topology edit clears it) — without this the drawings lose their tags until
   // the user presses generate again
-  on("project-loaded", () => { report = null; runId = null; loadStructure(); });
+  on("project-loaded", () => { report = null; runId = null; tags = new Map(); loadStructure(); });
 }
