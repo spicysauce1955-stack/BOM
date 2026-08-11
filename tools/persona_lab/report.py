@@ -15,6 +15,9 @@ SYMPTOMS = ["not-found", "wrong-language", "jargon-leak", "no-feedback",
 
 
 def collate(runs_root: Path) -> dict:
+    """Dedupe is keyed on (surface, symptom), so an off-enum symptom would
+    silently split a group and under-report how many personas hit the same
+    thing. Refusing it loudly is schema validation, not judgment."""
     confirmed: dict[tuple[str, str], dict] = {}
     hypotheses: list[dict] = []
     narratives: list[dict] = []
@@ -34,6 +37,11 @@ def collate(runs_root: Path) -> dict:
             "fallback": found.get("fallback", ""),
         })
         for f in found["findings"]:
+            if f["symptom"] not in SYMPTOMS:
+                raise ValueError(
+                    f"{found['persona']} finding {f['id']}: symptom "
+                    f"{f['symptom']!r} is not one of {SYMPTOMS}"
+                )
             v = verdicts.get(f["id"])
             if v is None or v["verdict"] != "CONFIRMED":
                 hypotheses.append({**f, "persona": found["persona"],

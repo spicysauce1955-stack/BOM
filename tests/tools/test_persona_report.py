@@ -87,3 +87,24 @@ def test_render_marks_hypotheses_as_unconfirmed(tmp_path):
     assert "abc1234" in text
     assert "unconfirmed" in text.lower()
     assert "gave up" in text.lower()
+
+
+def test_off_enum_symptom_is_refused_loudly(tmp_path):
+    """A typo'd symptom would split a dedupe group and quietly under-report
+    how many personas hit the same wall — the opposite of what the report is for."""
+    from persona_lab import report
+
+    d = tmp_path / "sales-rep"
+    d.mkdir(parents=True)
+    (d / "findings.json").write_text(json.dumps({
+        "persona": "sales-rep", "gave_up_at_step": 3, "fallback": "וורד",
+        "findings": [{"id": "A", "title": "a", "surface": "s1",
+                      "symptom": "jargon leak", "steps": [1], "shots": []}],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    try:
+        report.collate(tmp_path)
+    except ValueError as exc:
+        assert "jargon leak" in str(exc)
+    else:
+        raise AssertionError("off-enum symptom was silently accepted")
