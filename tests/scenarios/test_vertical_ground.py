@@ -89,3 +89,81 @@ def test_steep_meets_steep_corner_is_consistent_and_flagged(knowledge, catalog):
     assert all(sp.vertical == "stepped" for sp in s.spans)
     flagged = [w for w in s.warnings if w.code == "excessive_step"]
     assert len(flagged) == len(s.spans)  # every 1250 mm step flagged, none silent
+
+
+def test_stepped_gap_flagged_by_rule(knowledge, catalog):
+    """S04 slope (250 mm steps): gaps exceed K-MAX-GAP's 200 mm -> flagged, and the
+    downhill posts exceed the 2600 mm product length -> flagged too."""
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
+    add_point_event(topo, "run1", "z1", 6000, ElevationSamplePayload(z_mm=1000))
+    result = generate(topo, knowledge, catalog)
+    s = result.strategy
+
+    gaps = [w for w in s.warnings if w.code == "excessive_gap"]
+    assert len(gaps) == len(s.spans)  # every 250 mm gap > 200 limit
+    assert all(w.params["gap_mm"] == 250 for w in gaps)
+    assert all(w.severity == "warning" for w in gaps)  # notable, not unbuildable
+
+    lengths = [w for w in s.warnings if w.code == "insufficient_post_length"]
+    assert lengths, "downhill posts need 1800+250+600=2650 > 2600 mm POST-S"
+    w = lengths[0]
+    assert w.params["required_mm"] == 2650 and w.params["available_mm"] == 2600
+    node = result.graph.node(w.decision_ref)
+    refs = {e.knowledge_ref for e in result.graph.in_edges(node.id) if e.type == "governed_by"}
+    assert "K-POST-EMBED@v1" in refs
+
+
+def test_flat_ground_posts_fit(knowledge, catalog):
+    result = generate(straight_topology(6000), knowledge, catalog)
+    codes = {w.code for w in result.strategy.warnings}
+    assert "insufficient_post_length" not in codes  # 1800+600=2400 <= 2600
+    assert "excessive_gap" not in codes
+
+
+def test_gate_on_slope_flagged(knowledge, catalog):
+    from fenceai.topology.model import GatePayload
+
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
+    add_point_event(topo, "run1", "z1", 6000, ElevationSamplePayload(z_mm=600))
+    add_point_event(topo, "run1", "g", 2000, GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    result = generate(topo, knowledge, catalog)
+    w = next(w for w in result.strategy.warnings if w.code == "gate_on_slope")
+    assert w.params["slope_permille"] == 100  # 10% across the opening > 5% limit
+    node = result.graph.node(w.decision_ref)
+    refs = {e.knowledge_ref for e in result.graph.in_edges(node.id) if e.type == "governed_by"}
+    assert "K-GATE-SLOPE@v1" in refs
+
+
+def test_gate_on_flat_ground_not_flagged(knowledge, catalog):
+    from fenceai.topology.model import GatePayload
+
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "g", 2000, GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    result = generate(topo, knowledge, catalog)
+    assert not [w for w in result.strategy.warnings if w.code == "gate_on_slope"]
+
+
+def test_plumb_max_height_checked_when_rule_exists(knowledge, catalog):
+    """Max legal height is measured PLUMB: stepped panels exceed at the downhill
+    end even when the intent respects the limit. Checked only when a rule says so."""
+    from fenceai.knowledge.model import KnowledgeVersion, SetParam
+
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
+    add_point_event(topo, "run1", "z1", 6000, ElevationSamplePayload(z_mm=1000))
+
+    # no rule -> no check
+    r1 = generate(topo, knowledge, catalog)
+    assert not [w for w in r1.strategy.warnings if w.code == "max_height_exceeded"]
+
+    knowledge.versions.append(KnowledgeVersion(
+        object_id="K-MAX-HEIGHT", version=1, type="hard_constraint",
+        title="Municipal max fence height 2000 mm (plumb)",
+        actions=[SetParam(param="max_fence_height_mm", value=2000)],
+    ))
+    r2 = generate(topo, knowledge, catalog)
+    flagged = [w for w in r2.strategy.warnings if w.code == "max_height_exceeded"]
+    assert len(flagged) == len(r2.strategy.spans)  # 1800 + 250 step = 2050 > 2000
+    assert all(w.params["height_mm"] == 2050 and w.severity == "error" for w in flagged)

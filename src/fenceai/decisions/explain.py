@@ -57,6 +57,25 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Runs meeting at node {node_id} disagree on base surface ({surfaces}); "
             "'{chosen}' was used."
         ),
+        "excessive_step": (
+            "Step of {step_mm} mm exceeds the buildable maximum of {max_mm} mm — "
+            "needs an engineered solution."
+        ),
+        "excessive_gap": (
+            "Stepped span leaves a {gap_mm} mm gap underneath (limit {max_mm} mm)."
+        ),
+        "max_height_exceeded": (
+            "Plumb height reaches {height_mm} mm at the downhill end — above the "
+            "{max_mm} mm limit."
+        ),
+        "gate_on_slope": (
+            "Gate opening sits on a {slope_permille}‰ slope (limit {max_permille}‰) "
+            "— the ground needs leveling."
+        ),
+        "insufficient_post_length": (
+            "Post needs {required_mm} mm ({exposed_mm} exposed + {embed_mm} embedded) "
+            "but the product is only {available_mm} mm long."
+        ),
         "sliver_span": (
             "Span {span} is {width_mm} mm — below the preferred minimum of {min_mm} mm."
         ),
@@ -97,6 +116,24 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "node_surface_disagreement": (
             "קטעים שנפגשים בצומת {node_id} חלוקים לגבי משטח הבסיס ({surfaces}); "
             "נעשה שימוש ב-'{chosen}'."
+        ),
+        "excessive_step": (
+            'מדרגה של {step_mm} מ"מ חורגת מהמקסימום הניתן לביצוע ({max_mm} מ"מ) — '
+            "נדרש פתרון הנדסי."
+        ),
+        "excessive_gap": (
+            'הפאנל המדורג משאיר מרווח של {gap_mm} מ"מ מתחתיו (המגבלה {max_mm} מ"מ).'
+        ),
+        "max_height_exceeded": (
+            'הגובה האנכי מגיע ל-{height_mm} מ"מ בקצה הנמוך — מעל המגבלה של {max_mm} מ"מ.'
+        ),
+        "gate_on_slope": (
+            "פתח השער יושב על שיפוע של {slope_permille}‰ (המגבלה {max_permille}‰) — "
+            "יש לפלס את הקרקע."
+        ),
+        "insufficient_post_length": (
+            'העמוד דורש {required_mm} מ"מ ({exposed_mm} חשוף + {embed_mm} מוטמן) '
+            'אך אורך המוצר הוא {available_mm} מ"מ בלבד.'
         ),
         "sliver_span": (
             "המפתח {span} הוא {width_mm} מ\"מ — מתחת למינימום המועדף של {min_mm} מ\"מ."
@@ -174,6 +211,20 @@ def explain_node(graph: DecisionGraph, node: DecisionNode, lang: str = "en") -> 
                 node_id=p.get("node_id"), surfaces=", ".join(p.get("surfaces", [])),
                 chosen=p.get("chosen"),
             )
+        case "excessive_step":
+            base = t["excessive_step"].format(step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
+        case "excessive_gap":
+            base = t["excessive_gap"].format(gap_mm=p.get("gap_mm"), max_mm=p.get("max_mm"))
+        case "max_height_exceeded":
+            base = t["max_height_exceeded"].format(
+                height_mm=p.get("height_mm"), max_mm=p.get("max_mm"))
+        case "gate_on_slope":
+            base = t["gate_on_slope"].format(
+                slope_permille=p.get("slope_permille"), max_permille=p.get("max_permille"))
+        case "insufficient_post_length":
+            base = t["insufficient_post_length"].format(
+                required_mm=p.get("required_mm"), exposed_mm=p.get("exposed_mm"),
+                embed_mm=p.get("embed_mm"), available_mm=p.get("available_mm"))
         case "sliver_span":
             base = t["sliver_span"].format(
                 span=p.get("span"), width_mm=p.get("width_mm"), min_mm=p.get("min_mm")

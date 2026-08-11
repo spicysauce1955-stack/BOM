@@ -271,5 +271,9 @@
   "toolbar.undo": "ביטול",
   "toolbar.redo": "שחזור",
   "toolbar.clear": "נקה",
-  "warning.excessive_step": "מדרגה של {step_mm} מ\"מ ב-{element} חורגת מהמקסימום הניתן לביצוע ({max_mm} מ\"מ) — נדרש פתרון הנדסי"
+  "warning.excessive_step": "מדרגה של {step_mm} מ\"מ ב-{element} חורגת מהמקסימום הניתן לביצוע ({max_mm} מ\"מ) — נדרש פתרון הנדסי",
+  "warning.excessive_gap": "הפאנל המדורג {element} משאיר מרווח של {gap_mm} מ\"מ מתחתיו (המגבלה {max_mm} מ\"מ)",
+  "warning.max_height_exceeded": "{element} מגיע לגובה אנכי של {height_mm} מ\"מ בקצה הנמוך — מעל המגבלה של {max_mm} מ\"מ",
+  "warning.gate_on_slope": "השער {element} יושב על שיפוע של {slope_permille}‰ (המגבלה {max_permille}‰) — יש לפלס את הקרקע כדי שהשער ייפתח",
+  "warning.insufficient_post_length": "העמוד {element} דורש {required_mm} מ\"מ אך {sku} באורך {available_mm} מ\"מ בלבד — יש לבחור עמוד ארוך יותר"
 }

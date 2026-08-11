@@ -271,5 +271,9 @@
   "toolbar.undo": "Undo",
   "toolbar.redo": "Redo",
   "toolbar.clear": "Clear",
-  "warning.excessive_step": "Step of {step_mm} mm at {element} exceeds the buildable maximum ({max_mm} mm) — needs an engineered solution"
+  "warning.excessive_step": "Step of {step_mm} mm at {element} exceeds the buildable maximum ({max_mm} mm) — needs an engineered solution",
+  "warning.excessive_gap": "Stepped span {element} leaves a {gap_mm} mm gap underneath (limit {max_mm} mm)",
+  "warning.max_height_exceeded": "{element} reaches {height_mm} mm plumb height at the downhill end — above the {max_mm} mm limit",
+  "warning.gate_on_slope": "Gate {element} sits on a slope of {slope_permille}‰ (limit {max_permille}‰) — level the ground for the gate to swing",
+  "warning.insufficient_post_length": "Post {element} needs {required_mm} mm but {sku} is only {available_mm} mm long — choose a longer post"
 }

@@ -87,6 +87,8 @@ def generate(
             topology, run, knowledge, catalog, overrides, policy, builder, strategy, applied
         )
 
+    _check_post_lengths(topology, knowledge, catalog, builder, strategy)
+
     orphaned = [ov.id for ov in overrides if ov.id not in applied]
     for ov_id in orphaned:
         ov = next(o for o in overrides if o.id == ov_id)
@@ -464,6 +466,17 @@ def _generate_run(
     step_stations = set(step_info)
     # buildability ceiling: a single step a fence can absorb (rule-editable)
     max_step, max_step_refs = _resolve_quantity(kb, ctx, "max_panel_step_mm", 600)
+    # optional plumb-consequence rules: only checked when a rule exists
+    gap_res = resolve_param(kb, ctx, "max_panel_gap_mm")
+    max_gap = (next(a.value for a in gap_res.winner.actions if a.kind == "set_param")
+               if gap_res.winner else None)
+    height_res = resolve_param(kb, ctx, "max_fence_height_mm")
+    max_height = (next(a.value for a in height_res.winner.actions if a.kind == "set_param")
+                  if height_res.winner else None)
+    gate_slope_res = resolve_param(kb, ctx, "gate_max_slope_permille")
+    max_gate_slope = (
+        next(a.value for a in gate_slope_res.winner.actions if a.kind == "set_param")
+        if gate_slope_res.winner else None)
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
     fixed |= gate_edges | step_stations
     fixed_sorted = sorted(fixed)
@@ -563,6 +576,28 @@ def _generate_run(
             start_station_mm=gs, end_station_mm=ge, kit_sku=kit,
         )
         strategy.gates.append(gate)
+        if max_gate_slope is not None and ge > gs:
+            drop = abs(ground_z(topo, run, ge) - ground_z(topo, run, gs))
+            gate_slope = round(drop * 1000 / (ge - gs))
+            if gate_slope > max_gate_slope:
+                g_node = builder.add(
+                    "conflict", "gate_on_slope",
+                    payload={"element": f"gate@{run.id}:{gs}-{ge}",
+                             "slope_permille": gate_slope, "max_permille": max_gate_slope},
+                    governed_by=[gate_slope_res.winner.version.ref],
+                )
+                strategy.warnings.append(
+                    StrategyWarning(
+                        code="gate_on_slope", severity="warning",
+                        message=f"Gate opening at {gs}-{ge} sits on a "
+                                f"{gate_slope / 10:.1f}% slope — the ground needs "
+                                "leveling for the gate to swing.",
+                        element_refs=[f"gate@{run.id}:{gs}-{ge}"], decision_ref=g_node.id,
+                        params={"element": f"gate@{run.id}:{gs}-{ge}",
+                                "slope_permille": gate_slope,
+                                "max_permille": max_gate_slope},
+                    )
+                )
         placed = builder.add(
             "structural", "place_gate",
             payload={"start_mm": gs, "end_mm": ge},
@@ -686,8 +721,11 @@ def _generate_run(
         stations = boundaries(seg_start, layout.widths)
         for s0, s1 in zip(stations, stations[1:]):
             width = s1 - s0
-            gz0, gz1 = ground_z(topo, run, s0), ground_z(topo, run, s1)
             mid = (s0 + s1) // 2
+            # sample 1 mm inside: a vertical ground step exactly at a boundary is
+            # the POST's business, not the neighboring spans' bottoms
+            gz0 = ground_z(topo, run, min(s0 + 1, mid))
+            gz1 = ground_z(topo, run, max(s1 - 1, mid))
             if base_surface_at(topo, run, mid) in BUILT_BASES:
                 # panel bottom rests on the base top; sample just inside the span so
                 # a step boundary reads its own side (half-open step convention)
@@ -729,6 +767,43 @@ def _generate_run(
                     f"span {span.id} width {width} exceeds hard max {max_span}",
                     constraint_refs=[max_span_ref],
                 )
+            if v_mode == "stepped" and max_gap is not None and 0 < abs(gz1 - gz0) <= max_step \
+                    and abs(gz1 - gz0) > max_gap:
+                gap_node = builder.add(
+                    "conflict", "excessive_gap",
+                    payload={"element": span.id, "gap_mm": abs(gz1 - gz0), "max_mm": max_gap},
+                    scope_refs=[span.id],
+                    governed_by=[gap_res.winner.version.ref],
+                )
+                strategy.warnings.append(
+                    StrategyWarning(
+                        code="excessive_gap", severity="warning",
+                        message=f"Stepped span {span.id} leaves a {abs(gz1 - gz0)} mm gap "
+                                f"underneath (limit {max_gap} mm).",
+                        element_refs=[span.id], decision_ref=gap_node.id,
+                        params={"element": span.id, "gap_mm": abs(gz1 - gz0), "max_mm": max_gap},
+                    )
+                )
+            if max_height is not None:
+                plumb_worst = height + (abs(gz1 - gz0) if v_mode == "stepped" else 0)
+                if plumb_worst > max_height:
+                    h_node = builder.add(
+                        "conflict", "max_height_exceeded",
+                        payload={"element": span.id, "height_mm": plumb_worst,
+                                 "max_mm": max_height},
+                        scope_refs=[span.id],
+                        governed_by=[height_res.winner.version.ref],
+                    )
+                    strategy.warnings.append(
+                        StrategyWarning(
+                            code="max_height_exceeded", severity="error",
+                            message=f"Span {span.id} reaches {plumb_worst} mm plumb height "
+                                    f"at its downhill end — above the {max_height} mm limit.",
+                            element_refs=[span.id], decision_ref=h_node.id,
+                            params={"element": span.id, "height_mm": plumb_worst,
+                                    "max_mm": max_height},
+                        )
+                    )
             if v_mode == "stepped" and abs(gz1 - gz0) > max_step:
                 over = builder.add(
                     "conflict", "excessive_step",
@@ -808,6 +883,69 @@ def _generate_run(
             inputs=[run_fact.id],
             governed_by=rails_refs + screws_refs,
         )
+
+
+
+def _check_post_lengths(
+    topology: Topology,
+    kb: KnowledgeBase,
+    catalog: Catalog,
+    builder: GraphBuilder,
+    strategy: Strategy,
+) -> None:
+    """Plumb-post consequence of sloped ground: the downhill post of a stepped
+    panel is exposed (panel height + step) above ITS ground, plus embedment below.
+    When the catalog knows the post's physical length, verify it suffices."""
+    embed, embed_refs = _resolve_quantity(kb, {"scope": {}}, "post_embed_mm", 600)
+
+    def top_of(span: Span) -> Mm:
+        return max(span.bottom_z_start_mm, span.bottom_z_end_mm) + span.height_mm
+
+    run_lengths = {run.id: run_length(topology, run) for run in topology.runs}
+    for post in strategy.posts:
+        adjacent: list[Span] = []
+        if post.run_ref.startswith("node:"):
+            node_id = post.run_ref.split(":", 1)[1]
+            for run in topology.runs:
+                for sp in strategy.spans:
+                    if sp.run_ref != run.id:
+                        continue
+                    if run.start_node_id == node_id and sp.start_station_mm == 0:
+                        adjacent.append(sp)
+                    if run.end_node_id == node_id and sp.end_station_mm == run_lengths[run.id]:
+                        adjacent.append(sp)
+        else:
+            adjacent = [
+                sp for sp in strategy.spans
+                if sp.run_ref == post.run_ref
+                and post.station_mm in (sp.start_station_mm, sp.end_station_mm)
+            ]
+        if not adjacent:
+            continue
+        exposed = max(top_of(sp) for sp in adjacent) - post.ground_z_mm
+        required = exposed + embed
+        product = catalog.products.get(post.sku)
+        available = (product.attrs.get("length_mm") if product else None)
+        if isinstance(available, int) and required > available:
+            node = builder.add(
+                "conflict", "insufficient_post_length",
+                payload={"element": post.id, "required_mm": required,
+                         "available_mm": available, "exposed_mm": exposed,
+                         "embed_mm": embed},
+                scope_refs=[post.id],
+                governed_by=embed_refs,
+            )
+            strategy.warnings.append(
+                StrategyWarning(
+                    code="insufficient_post_length", severity="error",
+                    message=f"Post {post.id} needs {required} mm ({exposed} exposed "
+                            f"+ {embed} embedded) but {post.sku} is only "
+                            f"{available} mm long.",
+                    element_refs=[post.id], decision_ref=node.id,
+                    params={"element": post.id, "required_mm": required,
+                            "available_mm": available, "sku": post.sku},
+                )
+            )
 
 
 # --- span height (intents, wall profiles) -------------------------------------

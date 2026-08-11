@@ -102,6 +102,24 @@ def demo_knowledge() -> KnowledgeBase:
                 actions=[SetParam(param="max_panel_step_mm", value=600)],
             ),
             KnowledgeVersion(
+                object_id="K-POST-EMBED", version=1, type="fact",
+                title="Posts are embedded 600 mm below ground (plumb)",
+                title_i18n={"he": 'עמודים מוטמנים 600 מ"מ מתחת לקרקע (אנכיים לחלוטין)'},
+                actions=[SetParam(param="post_embed_mm", value=600)],
+            ),
+            KnowledgeVersion(
+                object_id="K-MAX-GAP", version=1, type="company_rule",
+                title="Gap under a stepped panel may not exceed 200 mm",
+                title_i18n={"he": 'מרווח מתחת לפאנל מדורג לא יעלה על 200 מ"מ'},
+                actions=[SetParam(param="max_panel_gap_mm", value=200)],
+            ),
+            KnowledgeVersion(
+                object_id="K-GATE-SLOPE", version=1, type="company_rule",
+                title="Gate openings need near-level ground (max 5% across the opening)",
+                title_i18n={"he": "פתח שער דורש קרקע כמעט מפולסת (עד 5% לרוחב הפתח)"},
+                actions=[SetParam(param="gate_max_slope_permille", value=50)],
+            ),
+            KnowledgeVersion(
                 object_id="K-POST-DEFAULT", version=1, type="fact",
                 title="Default ground post product",
                 title_i18n={"he": "מוצר ברירת מחדל לעמוד קרקע"},

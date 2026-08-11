@@ -19,9 +19,11 @@ from fenceai.catalog.model import (
 def demo_catalog() -> Catalog:
     return Catalog.of(
         Product(sku="POST-S", name="Ground post (soil)", name_i18n={"he": "עמוד קרקע"},
-                consumption=IndivisibleDiscrete(), price_cents=2500),
+                consumption=IndivisibleDiscrete(), price_cents=2500,
+                attrs={"length_mm": 2600}),
         Product(sku="POST-S-HD", name="Heavy-duty ground post", name_i18n={"he": "עמוד מחוזק"},
-                consumption=IndivisibleDiscrete(), price_cents=4200),
+                consumption=IndivisibleDiscrete(), price_cents=4200,
+                attrs={"length_mm": 2600}),
         Product(sku="POST-M", name="Masonry post/bracket", name_i18n={"he": "עמוד קיר"},
                 consumption=IndivisibleDiscrete(), price_cents=3100),
         Product(sku="POST-CAP", name="Post cap", name_i18n={"he": "כיפת עמוד"},

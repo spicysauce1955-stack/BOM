@@ -20,6 +20,10 @@ WARNING_CODES = [
     "knowledge_conflict",
     "node_surface_disagreement",
     "excessive_step",
+    "excessive_gap",
+    "max_height_exceeded",
+    "gate_on_slope",
+    "insufficient_post_length",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 
