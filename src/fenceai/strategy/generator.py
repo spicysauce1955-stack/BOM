@@ -490,6 +490,7 @@ def _generate_run(
     # -- gates -----------------------------------------------------------------
     gates: list[tuple[Mm, Mm, str, str]] = []
     openings: dict[str, Mm] = {}  # event id -> the opening the USER asked for
+    kit_sources: dict[str, str] = {}  # event id -> "payload" | "catalog"
     for ev in run.point_events:
         if ev.payload.kind == "gate":
             gs = anchor_station(topo, run, ev.anchor)
@@ -500,6 +501,7 @@ def _generate_run(
             # the payload's kit wins (it is the user's choice); otherwise the kit is
             # selected from the catalog BY DECLARED WIDTH — never by a SKU pattern
             kit = ev.payload.kit_sku or _kit_for_opening(catalog, opening)
+            kit_sources[ev.id] = "payload" if ev.payload.kit_sku else "catalog"
             if not kit:
                 strategy.warnings.append(
                     StrategyWarning(
@@ -729,13 +731,18 @@ def _generate_run(
             scope_refs=[gate.id],
             inputs=[gate_fact_id],
         )
-        builder.add(
-            "selection", "select_gate_kit",
-            payload={"kit_sku": kit},
-            scope_refs=[gate.id],
-            inputs=[placed.id],
-            governed_by=reinf_refs,
-        )
+        if kit:
+            # provenance is the SKU's real source. A kit copied from the user's gate
+            # event was never chosen by a rule: crediting K-GATE-REINF (which governs
+            # POST reinforcement, not the kit) made the explanation lie — foundation
+            # §15, "the decision graph is the explanation".
+            builder.add(
+                "selection", "select_gate_kit",
+                payload={"kit_sku": kit, "source": kit_sources[ev_id],
+                         "event_id": ev_id, "opening_width_mm": opening},
+                scope_refs=[gate.id],
+                inputs=[placed.id, gate_fact_id],
+            )
 
     # -- vertical mode: slot-resolved, never loop-overwritten ------------------
     default_vertical = "level" if slope_permille == 0 else "raked"

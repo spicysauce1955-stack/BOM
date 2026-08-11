@@ -87,7 +87,11 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "concrete {concrete_sku}, caps {cap_sku}."
         ),
         "place_gate": "Gate opening from {start_mm} to {end_mm} {u}.",
-        "select_gate_kit": "Gate kit {kit_sku} selected.",
+        "select_gate_kit": "Gate kit {kit_sku} taken from gate event {event_id} as entered.",
+        "select_gate_kit_catalog": (
+            "Gate kit {kit_sku} selected from the catalog: it declares a fit for the "
+            "{opening_width_mm} {u} opening of gate event {event_id}."
+        ),
         "knowledge_conflict": (
             "Conflict on '{slot}' between {contenders} — surfaced for review."
         ),
@@ -158,7 +162,11 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "בטון {concrete_sku}, כיפות {cap_sku}."
         ),
         "place_gate": "פתח שער מתחנה {start_mm} עד {end_mm} {u}.",
-        "select_gate_kit": "נבחרה ערכת שער {kit_sku}.",
+        "select_gate_kit": "ערכת השער {kit_sku} נלקחה מאירוע השער {event_id} כפי שהוזנה.",
+        "select_gate_kit_catalog": (
+            "ערכת השער {kit_sku} נבחרה מהקטלוג: היא מוצהרת כמתאימה לפתח של "
+            "{opening_width_mm} {u} באירוע השער {event_id}."
+        ),
         "knowledge_conflict": "סתירה על '{slot}' בין {contenders} — הוצפה לבדיקה.",
         "node_surface_disagreement": (
             "קטעים שנפגשים בצומת {node_id} חלוקים לגבי משטח הבסיס ({surfaces}); "
@@ -280,7 +288,10 @@ def explain_node(
         case "place_gate":
             base = _fmt(t, "place_gate", lang, units, start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))
         case "select_gate_kit":
-            base = _fmt(t, "select_gate_kit", lang, units, kit_sku=p.get("kit_sku"))
+            key = ("select_gate_kit_catalog" if p.get("source") == "catalog"
+                   else "select_gate_kit")
+            base = _fmt(t, key, lang, units, kit_sku=p.get("kit_sku"),
+                event_id=p.get("event_id"), opening_width_mm=p.get("opening_width_mm"))
         case "knowledge_conflict":
             base = _fmt(t, "knowledge_conflict", lang, units,
                 slot=p.get("slot"), contenders=", ".join(p.get("contenders", []))

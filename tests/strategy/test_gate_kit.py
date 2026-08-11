@@ -17,6 +17,7 @@ from fenceai.catalog.model import (
     KitComponent,
     Product,
 )
+from fenceai.decisions.explain import explain_node
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import GatePayload
 from tests.conftest import add_point_event, straight_topology
@@ -96,3 +97,37 @@ def test_no_kit_in_the_catalog_fits_the_opening(knowledge, catalog):
     assert w.severity == "error"
     assert w.params == {"element": "gate@run1:2000-5500", "opening_width_mm": 3500}
     assert [g.kit_sku for g in result.strategy.gates] == [""]
+
+
+# ---- provenance: the decision graph IS the explanation (foundation §15) ----
+
+def _kit_node(result):
+    return next(n for n in result.graph.nodes if n.action == "select_gate_kit")
+
+
+def test_a_payload_kit_is_never_credited_to_a_knowledge_rule(knowledge, catalog):
+    """`governed_by=reinf_refs` made the Hebrew explanation read "נבחרה ערכת שער
+    GATE-KIT-1000. נקבע לפי K-GATE-REINF@v1" for a SKU typed by the user."""
+    result = generate(_gated(1000, "GATE-KIT-1000"), knowledge, catalog)
+    node = _kit_node(result)
+    assert [e for e in result.graph.in_edges(node.id) if e.type == "governed_by"] == []
+    assert node.payload["source"] == "payload"
+    assert node.payload["event_id"] == "ev_gate"
+    # the gate event the sku was copied from is a direct input of the decision
+    gate_facts = {n.id for n in result.graph.nodes if n.action == "gate_event"}
+    assert gate_facts & {e.from_id for e in result.graph.in_edges(node.id)}
+    for lang in ("en", "he"):
+        text = explain_node(result.graph, node, lang)
+        assert "K-GATE-REINF" not in text
+        assert "ev_gate" in text
+
+
+def test_a_catalog_selected_kit_says_the_catalog_chose_it(knowledge):
+    cat = _catalog_with(Product(
+        sku="BAR-PORTAIL-A", name="portail", price_cents=9900,
+        consumption=AssemblyKit(components=[KitComponent(sku="LEAF", qty=1)]),
+        attrs={"opening_width_mm": 3500},
+    ))
+    node = _kit_node(generate(_gated(3500, None), knowledge, cat))
+    assert node.payload["source"] == "catalog"
+    assert node.payload["opening_width_mm"] == 3500

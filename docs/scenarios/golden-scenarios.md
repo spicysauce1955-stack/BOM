@@ -74,7 +74,7 @@ Expect: remnant allocated (1200+kerf ≤ 1250), one fewer new stock bar; allocat
 
 ### S10 — Gate with contextual structural rule
 5000 mm run with a 1000 mm gate opening at 2000–3000.
-Expect: GATE-KIT-1000 selected; both flanking posts upgraded per K-GATE-REINF; spans laid out on the remaining 2000+2000; gate decisions cite the gate topology node + rule.
+Expect: GATE-KIT-1000 selected; both flanking posts upgraded per K-GATE-REINF; spans laid out on the remaining 2000+2000; gate decisions cite the gate topology node + rule — `governed_by` K-GATE-REINF on the POST upgrade, while the kit SKU cites the gate event it came from (no rule chose it).
 
 ### S11 — User override
 S01 topology; user pins a post at station 2000.

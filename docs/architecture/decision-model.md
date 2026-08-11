@@ -32,6 +32,12 @@ builder with its evidence edges. Tests enforce: every strategy element id appear
 `scope_refs` of ≥1 structural node; every structural node has ≥1 `governed_by` or
 `input_from` edge; `assumption` nodes exist iff unconfirmed interpretations were used.
 
+`governed_by` means **this rule decided this value** — it is not a "related rule" link.
+A value copied from a user payload carries `input_from` the fact it was copied from and
+NO `governed_by` (e.g. `select_gate_kit` on a gate event that names its kit: the kit is
+the user's, while K-GATE-REINF governs only the flanking POST upgrade). Citing a rule for
+a value it did not choose makes the rendered explanation state something untrue.
+
 ## Questions the graph answers (and their query shapes)
 
 - *Why is this post here?* — nodes with element in scope_refs → walk `governed_by`/`input_from`
