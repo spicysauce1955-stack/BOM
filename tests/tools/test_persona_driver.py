@@ -69,3 +69,56 @@ def test_click_by_handle_changes_the_visible_screen(drv):
 def test_driver_exposes_no_javascript_escape_hatch(drv):
     assert not hasattr(drv, "js")
     assert not hasattr(drv, "fetch")
+
+
+def test_typing_fires_keydown_not_just_char(drv):
+    """A bare CDP `char` event inserts text without firing keydown, so any
+    feature listening on keydown looks dead. That defect manufactured false
+    findings in the first lab run — pin the fix."""
+    drv.look("10.jpg")
+    seen = drv._eval("""
+(() => {
+  window.__k = [];
+  document.addEventListener('keydown', (e) => window.__k.push(e.key), {once: false});
+  return 'armed';
+})()""")
+    assert seen == "armed"
+
+    drv.type_text("42")
+
+    assert drv._eval("window.__k.join('')") == "42"
+
+
+def test_editing_shortcuts_carry_their_commands(drv):
+    """Ctrl+Z is inert unless the keyDown carries virtual key codes AND the
+    matching commands list — without it, 'undo is broken' is a harness lie."""
+    drv.look("11.jpg")
+    drv._eval("""
+(() => {
+  const i = document.createElement('input');
+  i.id = '__probe'; i.value = '1800';
+  document.body.appendChild(i); i.focus(); i.select();
+  return 1;
+})()""")
+
+    drv.type_text("2200")
+    typed = drv._eval("document.getElementById('__probe').value")
+    drv.key("Ctrl+z")
+    undone = drv._eval("document.getElementById('__probe').value")
+    drv._eval("document.getElementById('__probe').remove(); 1")
+
+    assert typed == "2200", "select() then type should replace, not append"
+    assert undone == "1800", "Ctrl+Z did not reach the field"
+
+
+def test_clicking_a_handle_scrolls_it_into_view(drv):
+    """A click at a negative viewport y silently lands on nothing and reads
+    as 'the button does nothing'."""
+    drv._eval("window.scrollTo(0, 0); 1")
+    _shot, _text = drv.look("12.jpg")
+    handle = next(iter(drv.handles))
+    drv._eval("window.scrollTo(0, 3000); 1")
+
+    x, y = drv._point(handle)
+
+    assert y >= 0, f"handle resolved off-viewport at y={y}"

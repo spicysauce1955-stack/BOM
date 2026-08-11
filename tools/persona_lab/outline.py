@@ -11,8 +11,10 @@ import re
 
 INTERACTIVE = "button, a[href], input, select, textarea, summary, [role=button]"
 
-OUTLINE_JS = """
-(() => {
+# The element sweep is shared by OUTLINE_JS and POINT_JS so a handle always
+# resolves to the same element the persona was shown. Duplicating the sweep
+# would let the two drift and silently mis-aim clicks.
+_COLLECT = """
   const vis = (el) => {
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
@@ -32,9 +34,26 @@ OUTLINE_JS = """
     }
     return el.innerText || el.value || '';
   };
+  const els = [];
+  for (const el of document.querySelectorAll(%r)) if (vis(el)) els.push(el);
+  for (const el of document.querySelectorAll('svg')) if (vis(el)) els.push(el);
+""" % INTERACTIVE
+
+OUTLINE_JS = """
+(() => {
+%s
   const out = [];
-  for (const el of document.querySelectorAll(%r)) {
-    if (!vis(el)) continue;
+  for (const el of els) {
+    if (el.tagName.toLowerCase() === 'svg') {
+      const r = el.getBoundingClientRect();
+      out.push({
+        role: 'canvas', label: el.getAttribute('viewBox') ? 'drawing area' : 'graphic',
+        placeholder: '', has_title: false, title: '', disabled: false, checked: null,
+        x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
+        w: Math.round(r.width), h: Math.round(r.height)
+      });
+      continue;
+    }
     const r = el.getBoundingClientRect();
     const type = (el.getAttribute('type') || '').toLowerCase();
     const tick = (type === 'checkbox' || type === 'radio');
@@ -50,19 +69,22 @@ OUTLINE_JS = """
       w: Math.round(r.width), h: Math.round(r.height)
     });
   }
-  for (const el of document.querySelectorAll('svg')) {
-    if (!vis(el)) continue;
-    const r = el.getBoundingClientRect();
-    out.push({
-      role: 'canvas', label: el.getAttribute('viewBox') ? 'drawing area' : 'graphic',
-      placeholder: '', has_title: false, title: '', disabled: false, checked: null,
-      x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
-      w: Math.round(r.width), h: Math.round(r.height)
-    });
-  }
   return out;
 })()
-""" % INTERACTIVE
+""" % _COLLECT
+
+POINT_JS = """
+(() => {
+%s
+  const el = els[%%d];
+  if (!el) return null;
+  // A person scrolls to what they want to touch. Without this a click at a
+  // negative viewport y silently lands on nothing and reads as "no feedback".
+  el.scrollIntoView({block: 'center', inline: 'nearest'});
+  const r = el.getBoundingClientRect();
+  return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)];
+})()
+""" % _COLLECT
 
 _WORD = re.compile(r"\w", re.UNICODE)
 
