@@ -28,6 +28,22 @@ export function toMm(value, unit = state.units) {
   return Math.round(n * (MM_PER_UNIT[unit] ?? 1));
 }
 
+// A typed length from the draw tool -> int mm. An explicit trailing unit always
+// wins ("250cm" -> 2500, "1.2m"/"1.2מ" -> 1200, "80mm" -> 80). A bare number is
+// read in the ACTIVE unit, with one exception: in mm mode a value under 100 is
+// metres ("4" -> 4000), because sub-100 mm entries are implausible while drawing.
+// That shortcut does NOT apply in cm mode, where sub-100 values are the common
+// case (anything under a metre).
+export function parseTypedLength(buf, unit = state.units) {
+  const m = /^(\d+(?:\.\d+)?|\.\d+)(mm|cm|m|מ)?$/.exec(buf);
+  if (!m) return null;
+  const v = parseFloat(m[1]);
+  if (!(v > 0)) return null;
+  const mm = m[2] === "mm" ? v : m[2] === "cm" ? v * 10 : m[2] ? v * 1000
+    : unit === "mm" && v < 100 ? v * 1000 : toMm(v, unit);
+  return Math.round(mm);
+}
+
 export function unitLabel(unit = state.units) {
   return t(`units.${unit}`);
 }

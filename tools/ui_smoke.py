@@ -389,6 +389,27 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
   })""")
         check("210 cm stores as 2100 mm", stored_h == 2100)
         c.shot("08-units-cm.png")
+        # typed draw lengths follow the unit too: in cm mode a bare "90" is 90 cm,
+        # NOT 90 metres (the mm-mode "under 100 is metres" shortcut must not apply)
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.element_center("#canvas"))   # anywhere on the canvas: draw places a dot
+        time.sleep(0.4)
+        drafted = c.js("document.getElementById('g-draft').childNodes.length")
+        c.key("9"); c.key("0")
+        c.key("Enter")        # places the next dot at exactly the typed length
+        c.key("Enter")        # finishes the run
+        time.sleep(1.2)
+        typed_len = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => {
+    const run = p.topology.runs[p.topology.runs.length - 1];
+    const n = (id) => p.topology.nodes.find(x => x.id === id);
+    const a = n(run.start_node_id), b = n(run.end_node_id);
+    return Math.round(Math.hypot(b.x_mm - a.x_mm, b.y_mm - a.y_mm));
+  })""")
+        check("a bare typed length reads as cm while in cm mode (90 -> 900 mm)",
+              (drafted or 0) > 0 and typed_len == 900)
+        c.click(*c.element_center("#tool-select"))
         # the BOM follows too: cut plans are lengths, priced per purchase unit
         c.click(*c.element_center("#btn-generate"))
         time.sleep(1.5)

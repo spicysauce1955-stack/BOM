@@ -101,5 +101,8 @@ the stateful half of units.js (stubbed localStorage/DOM), gershayim-proof unit-l
 guard, inverted call-site guard, and a source guard for the dynamic warning renderer.
 Smoke: blank-field refusal, real reload, converted BOM numbers, raw-JSON-stays-mm,
 post-generation placeholder sweep, and a freehand `*_mm` rule param driven in cm mode
-(mutation-verified: fails against the pre-fix code). 257 pytest + 43/43 smoke. Dispositions:
+(mutation-verified: fails against the pre-fix code). The typed-length parser moved from
+editor.js into units.js as `parseTypedLength(buf, unit)`, so its unit-dependent boundary
+matrix is pinned in node as well as through a canvas keystroke check — both layers
+mutation-verified. 260 pytest + 44/44 smoke. Dispositions:
 docs/reviews/units-review-response.md.

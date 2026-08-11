@@ -31,8 +31,8 @@ globalThis.document = { getElementById: () => null };
 
 import { on, state } from "./js/state.js";
 import {
-  UNITS, initUnits, inputStep, setUnits, snapStep, toDisplayValue, toMm,
-  toggleUnits, unitParams,
+  UNITS, initUnits, inputStep, parseTypedLength, setUnits, snapStep,
+  toDisplayValue, toMm, toggleUnits, unitParams,
 } from "./js/units.js";
 
 const out = {};
@@ -73,6 +73,15 @@ toggleUnits(); toggleUnits();
 out.events_after_two_toggles = events.length;
 out.unit_after_two_toggles = state.units;
 out.persisted = localStorage.getItem("fenceai.units");
+// typed draw lengths: an explicit suffix always wins; a bare number follows the
+// active unit, except the mm-mode "under 100 is metres" shortcut
+const typed = (unit) => Object.fromEntries(
+  ["4", "9.5", "99", "100", "420", "4200", "0.5",
+   "250cm", "80mm", "1.2m", "1.2מ", "", "abc", "0", "12cm34"]
+    .map((s) => [s, parseTypedLength(s, unit)]));
+out.typed_mm = typed("mm");
+out.typed_cm = typed("cm");
+
 console.log(JSON.stringify(out));
 """
 
@@ -151,3 +160,32 @@ def test_stored_preference_is_validated_and_events_are_exact(units):
     assert units["events_after_two_toggles"] == 2
     assert units["unit_after_two_toggles"] == "cm"
     assert units["persisted"] == "cm"
+
+
+def test_typed_length_suffixes_win_in_both_units(units):
+    """An explicit unit means what it says, whatever the display unit is."""
+    for table in (units["typed_mm"], units["typed_cm"]):
+        assert table["250cm"] == 2500
+        assert table["80mm"] == 80
+        assert table["1.2m"] == 1200
+        assert table["1.2מ"] == 1200      # Hebrew metre suffix
+
+
+def test_bare_typed_length_follows_the_active_unit(units):
+    mm, cm = units["typed_mm"], units["typed_cm"]
+    # mm mode: a value under 100 is metres (typing "4" for a 4 m run)
+    assert mm["4"] == 4000 and mm["9.5"] == 9500 and mm["99"] == 99000
+    assert mm["100"] == 100 and mm["4200"] == 4200
+    # cm mode: NO metres shortcut — sub-metre lengths are the common case there,
+    # so "90" is 90 cm, not 90 metres (the trap this rule removed)
+    assert cm["4"] == 40 and cm["9.5"] == 95 and cm["99"] == 990
+    assert cm["100"] == 1000 and cm["420"] == 4200
+
+
+def test_typed_length_rejects_what_it_cannot_read(units):
+    for table in (units["typed_mm"], units["typed_cm"]):
+        assert table[""] is None
+        assert table["abc"] is None
+        assert table["0"] is None          # zero-length segment is not a length
+        assert table["12cm34"] is None     # unit must be a SUFFIX
+    assert units["typed_cm"]["0.5"] == 5   # sub-centimetre entry still resolves

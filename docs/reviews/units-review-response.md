@@ -12,7 +12,7 @@ follow-up that took units and enum words into the decision prose (dc3f20f):
 | A2 | Rule builder: `paramIsLength` was computed at render time and captured in the `change` closure, but the free-text param box commits on `input` without re-rendering — typing `max_gap_mm` then `40` in cm mode stored **40 mm instead of 400 mm** in persisted rule data. | length-ness is now a thunk (`lengthNow()`) re-evaluated at commit time. `tabs.js`. Pinned by a smoke check that drives the freehand param box in cm mode and reads the stored action back out of the raw-JSON view; verified to FAIL against the pre-fix code. |
 | A3 | `t("action.param." + p)` rendered the `{u}` placeholder literally in the known-params dropdown (dynamic key, so both new guards were blind to it). | `tu(...)`; a source guard now covers the other dynamic-key renderer (`localizedByCode`). |
 | A4 | Decision prose stayed in mm under a cm header — and the ADR justified it while the working tree was already contradicting it. | Resolved by dc3f20f: `/explain` takes `units`, `explain.py` applies the same two rules, ADR-0002 addendum rewritten to match. |
-| A5 | The "bare number < 100 is metres" shortcut is a trap in cm mode: `90` meaning 90 cm became a 90-metre segment. | The shortcut now applies only in mm mode; in cm a bare number is centimetres. New `hint.draw_cm` states the rule. |
+| A5 | The "bare number < 100 is metres" shortcut is a trap in cm mode: `90` meaning 90 cm became a 90-metre segment. | The shortcut now applies only in mm mode; in cm a bare number is centimetres. New `hint.draw_cm` states the rule. The parser moved out of `editor.js` into `units.js` as `parseTypedLength(buf, unit)` — pure and unit-explicit, so the whole boundary matrix is pinned in node, plus a smoke check that types `90` on the canvas in cm mode. Mutation-verified at both layers. |
 | T1 | `toMm` `trunc`/`floor` mutants survive the integer round trip (demonstrated by the reviewer). | `parse_sub` vector pins half-up rounding on sub-millimetre entry. |
 | T2 | `inputStep`/`snapStep` untested — a regression to `step="1"` would coarsen every cm field to whole centimetres. | pinned: `{mm: "1", cm: "0.1"}` and `snapStep(10) → 1` in cm. |
 | T3 | `unitParams` mutant converting *all* numerics survives (counts, degrees would be divided by 10). | fixture now carries `posts`/`tilt_deg`; both directions (`params_mm` and `params`) asserted. |
@@ -32,5 +32,3 @@ follow-up that took units and enum words into the decision prose (dc3f20f):
 - `input_fact` decision lines still print the raw payload dict (mm, English keys) — readable as a record, ugly as a sentence.
 - No CI: `tests/web/test_units_module.py` silently skips where node is absent. An
   opt-in `FENCEAI_REQUIRE_NODE` strictness flag was suggested and is not implemented.
-- The typed-length parser (`parseLengthMm`) is still module-private, so its unit-dependent
-  boundary is covered only through the browser.

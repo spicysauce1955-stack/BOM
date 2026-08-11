@@ -15,8 +15,8 @@ import {
   setSelection, setTool, state,
 } from "./state.js";
 import {
-  currentUnit, enumWord, fmt, fmtLen, inputStep, toDisplayValue, toMm, tu,
-  unitParams,
+  currentUnit, enumWord, fmt, fmtLen, inputStep, parseTypedLength, toDisplayValue,
+  toMm, tu, unitParams,
 } from "./units.js";
 
 const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin"];
@@ -593,23 +593,6 @@ let lengthBuffer = "";     // raw typed entry, e.g. "4", "3.5", "250cm"
 let lastDrawMouse = null;  // last cursor world position while drawing (the aim)
 let chipAnchorView = null; // rubber-band end in SVG view coords (chip anchor)
 
-// An explicit trailing unit always wins: "250cm" -> 2500, "1.2m"/"1.2מ" -> 1200,
-// "80mm" -> 80. A bare number is read in the ACTIVE display unit — "4200" is
-// 4200 mm in mm mode, "420" is 4200 mm in cm mode — except in mm mode, where a
-// value under 100 is metres ("4" -> 4000).
-function parseLengthMm(buf) {
-  const m = /^(\d+(?:\.\d+)?|\.\d+)(mm|cm|m|מ)?$/.exec(buf);
-  if (!m) return null;
-  const v = parseFloat(m[1]);
-  if (!(v > 0)) return null;
-  const mm = m[2] === "mm" ? v : m[2] === "cm" ? v * 10 : m[2] ? v * 1000
-    // the "small bare number = metres" shortcut only makes sense in mm mode:
-    // in cm a value under 100 is the COMMON case (anything under a metre), so a
-    // bare number is always centimetres there
-    : currentUnit() === "mm" && v < 100 ? v * 1000 : toMm(v);
-  return Math.round(mm);
-}
-
 function clearLengthBuffer() {
   lengthBuffer = "";
   updateLengthChip();
@@ -623,7 +606,7 @@ function updateLengthChip() {
     chip.id = "length-chip";
     document.body.appendChild(chip);
   }
-  const mm = parseLengthMm(lengthBuffer);
+  const mm = parseTypedLength(lengthBuffer);
   const echo = mm ? tu("editor.length_chip_echo", { v_mm: mm }) : "";
   chip.innerHTML = `<span class="num">${esc(lengthBuffer)}</span>`
     + (echo ? `<span class="chip-echo">${esc(echo)}</span>` : "");
@@ -651,7 +634,7 @@ function positionLengthChip() {
 // angle snap as drawing (aim roughly + type = perfect axis-aligned segments); the
 // magnitude is exact — deliberately no grid snap.
 function commitTypedDot() {
-  const mm = parseLengthMm(lengthBuffer);
+  const mm = parseTypedLength(lengthBuffer);
   if (!mm || !state.draftNodes.length) return;
   const anchor = state.draftNodes[state.draftNodes.length - 1];
   let ang = 0; // no aim yet: default along +x
