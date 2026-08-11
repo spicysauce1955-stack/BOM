@@ -22,7 +22,17 @@ from . import outline as outline_mod
 
 _VK = {"Enter": 13, "Escape": 27, "Backspace": 8, "Tab": 9, "Delete": 46,
        "ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40,
-       " ": 32, "Home": 36, "End": 35}
+       " ": 32, "Home": 36, "End": 35,
+       # Punctuation has its own OEM codes. Falling back to ord() maps '.' to
+       # 46 — which is VK_DELETE — so Chrome ate every decimal point and
+       # "1.80" arrived as "180". ',' '-' '/' collide with PrintScreen,
+       # Insert and Help the same way.
+       ";": 186, "=": 187, ",": 188, "-": 189, ".": 190, "/": 191, "`": 192,
+       "[": 219, "\\": 220, "]": 221, "'": 222}
+_OEM_CODE = {";": "Semicolon", "=": "Equal", ",": "Comma", "-": "Minus",
+             ".": "Period", "/": "Slash", "`": "Backquote",
+             "[": "BracketLeft", "\\": "Backslash", "]": "BracketRight",
+             "'": "Quote"}
 _CODE = {"Enter": "Enter", "Escape": "Escape", "Backspace": "Backspace",
          "Tab": "Tab", "Delete": "Delete", "ArrowLeft": "ArrowLeft",
          "ArrowUp": "ArrowUp", "ArrowRight": "ArrowRight",
@@ -38,7 +48,7 @@ def _code_for(name: str) -> str:
         return f"Digit{name}"
     if len(name) == 1 and name.isalpha() and name.isascii():
         return f"Key{name.upper()}"
-    return name
+    return _OEM_CODE.get(name, name)
 
 
 class Driver:

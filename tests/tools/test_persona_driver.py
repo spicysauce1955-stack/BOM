@@ -350,3 +350,23 @@ def test_move_is_a_browser_verb_taking_two_coordinates():
 
     assert "move" in act.BROWSER_VERBS
     assert act.ARITY["move"] == 2
+
+
+def test_a_decimal_point_survives_being_typed(drv):
+    """'.' fell through to ord('.') = 46, which is VK_DELETE, so Chrome ate
+    every decimal point: "1.80" arrived as "180" and two personas reported it
+    as an app bug that mangles company rules."""
+    drv.look("16.jpg")
+    drv._eval("""
+(() => {
+  const i = document.createElement('input');
+  i.id = '__dec'; i.type = 'text';
+  document.body.appendChild(i); i.focus();
+  return 1;
+})()""")
+
+    drv.type_text("1.80 מ' / 0,75-")
+    got = drv._eval("document.getElementById('__dec').value")
+    drv._eval("document.getElementById('__dec').remove(); 1")
+
+    assert got == "1.80 מ' / 0,75-", f"punctuation was mangled: {got!r}"
