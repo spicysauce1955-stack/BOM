@@ -12,6 +12,7 @@ is reachable exactly the way a user's own work would be.
 from __future__ import annotations
 
 import json
+import time
 import urllib.request
 
 # The jobs the run-2 briefs refer to by name, in the state the briefs describe.
@@ -86,6 +87,44 @@ def seed(port: int) -> list[dict]:
             entry["quote_id"] = quote["id"]
         made.append(entry)
     return made
+
+
+def open_project(session: dict, project_id: str, *, expect_name: str = "") -> str:
+    """Reload the tab and select a project, asserting the selection took.
+
+    The app builds its project list at load time. Seeding after the page has
+    loaded leaves the new options absent, so assigning `select.value` silently
+    does nothing and the persona lands on the seeded demo instead — which is
+    exactly what contaminated the first wave of run 2. Reload first, then
+    verify, and fail loudly rather than starting a persona in the wrong world.
+    """
+    from . import driver as driver_mod
+
+    d = driver_mod.Driver(session)
+    try:
+        d._cmd("Page.navigate", url=f"http://localhost:{session['port']}/")
+        time.sleep(4)
+        value = d._eval(
+            "(() => { const s = document.getElementById('project-select');"
+            f" s.value = {project_id!r};"
+            " s.dispatchEvent(new Event('change')); return s.value; })()"
+        )
+        if value != project_id:
+            raise RuntimeError(
+                f"project {project_id} is not in the selector after reload — "
+                f"got {value!r}; the persona would start in the wrong project"
+            )
+        time.sleep(2)
+        if expect_name:
+            shown = d._eval(
+                "(() => { const s = document.getElementById('project-select');"
+                " return s.selectedOptions.length ? s.selectedOptions[0].text : ''; })()"
+            )
+            if expect_name not in (shown or ""):
+                raise RuntimeError(f"selector shows {shown!r}, expected {expect_name!r}")
+        return value
+    finally:
+        d.close()
 
 
 if __name__ == "__main__":

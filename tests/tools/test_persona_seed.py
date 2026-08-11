@@ -80,3 +80,23 @@ def seed_portfolio():
     from persona_lab import seed
 
     return seed.PORTFOLIO
+
+
+def test_open_project_refuses_to_start_in_the_wrong_world(seeded):
+    """Seeding after page load leaves the new options absent, so assigning
+    select.value silently does nothing and the persona works on the demo
+    while believing it is their own job. That contaminated run 2 wave 1."""
+    from persona_lab import seed
+
+    session, made = seeded
+
+    chosen = seed.open_project(session, made[0]["project_id"],
+                              expect_name=made[0]["name"])
+    assert chosen == made[0]["project_id"]
+
+    try:
+        seed.open_project(session, "proj_does_not_exist")
+    except RuntimeError as exc:
+        assert "not in the selector" in str(exc)
+    else:
+        raise AssertionError("a missing project was silently accepted")
