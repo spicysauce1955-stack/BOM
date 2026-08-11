@@ -22,7 +22,8 @@ STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "stat
 
 SCRIPT = """
 import {
-  STEP_RISE_MM, flatPoints, levelPoints, matchEnds, stepPositions, topZAt, withStep,
+  STEP_RISE_MM, enforceLocks, flatPoints, levelPoints, lockOf, matchEnds, setLock,
+  stepPositions, topZAt, withStep,
 } from "./js/base-top.js";
 
 const out = {};
@@ -81,6 +82,49 @@ const stepped = [{ pos_permille: 0, z_mm: 100 }, { pos_permille: 500, z_mm: 100 
 out.right_side_wins = topZAt(stepped, 500);
 out.flat_beyond_ends = [topZAt(stepped, -20), topZAt(stepped, 1200)];
 out.empty_profile = topZAt([], 500);
+
+// ---- segment locks: the rule the user sets STICKS -------------------------
+// ground rises 0 -> 500 mm across the interval, so "horizontal" and "constant
+// height above ground" are visibly different things
+const groundAtPos = (pos) => Math.round((pos * 500) / 1000);
+
+// a step is a VERTICAL riser followed by a HORIZONTAL tread
+const riser = withStep(flatPoints(600), 500, 200, groundAtPos);
+out.step_locks = riser.map((p) => p.lock ?? null);
+out.step_positions_locked = stepPositions(riser);
+out.step_tread_abs = [500, 750, 1000].map((p) => groundAtPos(p) + topZAt(riser, p));
+
+// levelling marks every segment level, and the last point starts no segment
+out.level_locks = levelPoints([0, 2000, 6000], (s) => (s <= 2000 ? 0 : (s - 2000) / 4),
+                              0, 6000, 1600).map((p) => p.lock ?? null);
+
+// dragging a point: locked neighbours follow it, free ones do not
+const chain = [
+  { pos_permille: 0, z_mm: 600, lock: "level" },
+  { pos_permille: 500, z_mm: 350, lock: null },
+  { pos_permille: 1000, z_mm: 100 },
+];
+const dragged = chain.map((p, i) => (i === 1 ? { ...p, z_mm: 550 } : { ...p }));
+const settled = enforceLocks(dragged, groundAtPos, 1);
+out.drag_follows_lock = settled.map((p) => p.z_mm);
+out.drag_abs = settled.map((p) => groundAtPos(p.pos_permille) + p.z_mm);
+
+// a vertical lock keeps the two ends at one position when either is dragged
+const vertical = [
+  { pos_permille: 300, z_mm: 200, lock: "step" },
+  { pos_permille: 300, z_mm: 500, lock: null },
+  { pos_permille: 1000, z_mm: 500 },
+];
+const slid = vertical.map((p, i) => (i === 1 ? { ...p, pos_permille: 640 } : { ...p }));
+out.vertical_holds = enforceLocks(slid, groundAtPos, 1).map((p) => p.pos_permille);
+
+// setting a segment free stops it following
+const freed = setLock(chain, 0, null, groundAtPos);
+out.freed_lock = freed[0].lock ?? null;
+out.freed_z = enforceLocks(
+  freed.map((p, i) => (i === 1 ? { ...p, z_mm: 550 } : { ...p })), groundAtPos, 1)
+  .map((p) => p.z_mm);
+out.lock_of = [lockOf(chain, 0), lockOf(chain, 1), lockOf(chain, 9)];
 
 console.log(JSON.stringify(out));
 """
@@ -173,3 +217,36 @@ def test_top_z_boundary_rules_mirror_the_backend(bt):
     assert bt["right_side_wins"] == 400          # right side of a step wins
     assert bt["flat_beyond_ends"] == [100, 400]  # flat beyond the end points
     assert bt["empty_profile"] == 0
+
+
+def test_a_step_is_a_riser_then_a_tread(bt):
+    """The user's words: a step is a vertical line and a horizontal one after it."""
+    assert bt["step_locks"] == [None, "step", "level", None]
+    assert bt["step_positions_locked"] == [500]
+    # the tread is HORIZONTAL: one absolute elevation, over rising ground
+    assert len(set(bt["step_tread_abs"])) == 1
+
+
+def test_levelling_locks_every_segment(bt):
+    assert bt["level_locks"] == ["level", "level", None]
+
+
+def test_a_locked_neighbour_follows_the_dragged_point(bt):
+    """Segment 0 is held horizontal, so raising point 1 lifts point 0 with it —
+    the lock is a standing rule, not a one-time arrangement."""
+    assert bt["drag_follows_lock"][1] == 550          # what the user dragged
+    assert bt["drag_abs"][0] == bt["drag_abs"][1]     # still horizontal
+    assert bt["drag_follows_lock"][2] == 100          # free segment: untouched
+
+
+def test_a_vertical_lock_keeps_both_ends_at_one_position(bt):
+    assert bt["vertical_holds"] == [640, 640, 1000]
+
+
+def test_freeing_a_segment_stops_it_following(bt):
+    assert bt["freed_lock"] is None
+    assert bt["freed_z"] == [600, 550, 100]          # point 0 stayed put
+
+
+def test_lock_of_is_safe_off_the_end(bt):
+    assert bt["lock_of"] == ["level", None, None]

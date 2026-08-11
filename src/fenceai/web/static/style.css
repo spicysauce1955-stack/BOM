@@ -244,3 +244,9 @@ input[type="number"] { direction: ltr; }
 .checklist-item { padding-block: 2px; color: #1e40af; }
 #checklist.all-done .checklist-item { color: #166534; }
 .checklist-item.done { opacity: 0.7; text-decoration: line-through; }
+
+/* base-top segments carrying a standing rule (horizontal / vertical) */
+.profile-top-locked { fill: none; stroke-width: 3.5; opacity: 0.9; }
+.profile-top-locked.step { stroke-dasharray: 3 3; }
+.segment-locks { display: flex; gap: 6px; margin-block: 6px; }
+.segment-locks button { flex: 1; padding: 4px 6px; font-size: 12px; }

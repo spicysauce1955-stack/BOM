@@ -26,8 +26,20 @@ PointEvent    { id, kind, anchor, payload }
           elevation_sample{z_mm}, corner_override{is_corner}
 IntervalEvent { id, kind, start_anchor, end_anchor, payload }
    kinds: base{surface: soil|concrete|masonry_wall}, height_intent{height_mm, source: user|interpretation_id},
-          top_line{mode: follow|level|stepped, z_mm?}, wall_profile{top_z_start_mm, top_z_end_mm}
+          top_line{mode: follow|level|stepped, z_mm?}, wall_profile{top_z_start_mm, top_z_end_mm},
+          base_top{points: [BaseTopPoint]}, post_tilt{mode, tilt_deg}
+BaseTopPoint  { pos_permille (0..1000 along the interval), z_mm (ABOVE local ground),
+                lock: level|step|null }
 ```
+
+`base_top` is the general top profile of a BUILT base (wall/concrete); `wall_profile` is
+the 2-point linear special case that predates it. Two consecutive points at one position
+are a vertical STEP (the right side wins at the boundary). `lock` is an AUTHORING
+constraint on the segment that starts at its point — `level` holds that segment at one
+absolute elevation (z compensates the ground underneath), `step` holds it vertical. The
+editor re-imposes locks after every edit, so "make this horizontal" survives later
+dragging until the user frees it; `base_top_at()` and the generator read the resulting
+geometry and never the lock itself.
 
 `ground(s)`: piecewise-linear interpolation over elevation_sample events (default z=0).
 Fence top-line is derived, never stored (ADR-0003).

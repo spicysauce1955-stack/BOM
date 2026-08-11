@@ -334,5 +334,18 @@
   "profile.base_needs_height": "הקלידו קודם גובה.",
   "profile.base_needs_top": "קבעו קודם גובה בסיס למקטע.",
   "profile.base_no_neighbour": "אין מקטע סמוך עם ראש בסיס להתאמה.",
-  "profile.base_bad_height": "הגובה חייב להיות מספר, 0 ומעלה."
+  "profile.base_bad_height": "הגובה חייב להיות מספר, 0 ומעלה.",
+  "profile.segment_title": "הקטע הזה בראש הבסיס",
+  "profile.segment_n": "קטע {n}",
+  "profile.segment_level": "⎯ אופקי",
+  "profile.segment_step": "│ אנכי (מדרגה)",
+  "profile.segment_free": "╱ חופשי",
+  "profile.segment_note": "הכלל נשמר: עריכות הבאות ישאירו את הקטע אופקי או אנכי עד שתשחררו אותו.",
+  "profile.segment_heights": "הקלדת גבהים…",
+  "profile.segment_hint": "ראש הבסיס — לחצו כדי לקבוע את הקטע כאופקי או אנכי; לחיצה כפולה מוסיפה נקודה",
+  "profile.segment_locked_level": "נשמר אופקי — לחצו לשינוי",
+  "profile.segment_locked_step": "נשמר אנכי (מדרגה) — לחצו לשינוי",
+  "profile.match_all": "≡ גובה השכן",
+  "profile.match_all_title": "פילוס כל המקטע לגובה ראש הבסיס של המקטע הסמוך, כך שהשניים נקראים כקיר אחד",
+  "profile.base_locked_level": "הקצה הזה נשמר אופקי — שחררו את הקטע, או השתמשו ב\"גובה השכן\"."
 }

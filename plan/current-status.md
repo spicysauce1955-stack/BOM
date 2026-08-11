@@ -194,3 +194,16 @@ top at a shared node), `withStep` (a plateau: everything past the step rises wit
 says plainly when a section is on soil (base_top only affects BUILT_BASES). 395 pytest
 (13 new node-run geometry tests) + 58/58 smoke, incl. two adjacent sections aligned
 end-to-end. Level is exact to NUMERIC_TOLERANCE_MM — permille point positions quantize it.
+
+## Base-top segment rules + neighbour elevation (2026-08-11) — COMPLETE
+Follow-up to the side-view round. A step is now what the word means on site: a VERTICAL
+riser followed by a HORIZONTAL tread. Both are `lock` values on the new
+`BaseTopPoint.lock` field (level|step|null, an authoring constraint on the segment that
+starts at that point) — `enforceLocks` re-imposes them after every edit (drag, typed z,
+height, level, match, step), propagating outward from the point the user actually moved.
+Clicking any segment of the top line opens a rule popover (אופקי / אנכי / חופשי); locked
+segments render distinctly. "Horizontal" now locks every segment, and a corner match that
+would contradict a standing horizontal rule is REFUSED with a note pointing at the new
+"≡ גובה השכן" action, which levels the whole section at the neighbour's elevation (the
+second reading of "align two sections", per user confirmation). 401 pytest (6 new lock
+tests) + 62/62 smoke, incl. lock persistence through the API and the refusal path.

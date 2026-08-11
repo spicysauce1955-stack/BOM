@@ -18,7 +18,8 @@ import {
   enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu,
 } from "./units.js";
 import {
-  STEP_RISE_MM, flatPoints, levelPoints, matchEnds, topZAt, withStep,
+  STEP_RISE_MM, enforceLocks, flatPoints, levelPoints, lockOf, matchEnds, setLock,
+  topZAt, withStep,
 } from "./base-top.js";
 
 // viewBox geometry (preserveAspectRatio=none stretches to the container width)
@@ -185,15 +186,19 @@ function topEdgeSamples(entry, w) {
   const pts = w.points;
   const first = pts[0], last = pts[pts.length - 1];
   if (first.pos_permille > 0) seg(0, first.z_mm, first.pos_permille, first.z_mm);
+  const spans = [];   // per-segment slices, for per-segment hit lines
   for (let i = 0; i + 1 < pts.length; i++) {
     const a = pts[i], b = pts[i + 1];
+    const from = out.length;
     if (a.pos_permille === b.pos_permille) {
       const s = posStation(a.pos_permille);
       out.push({ s, z: zAbs(s, a.z_mm) });
       out.push({ s, z: zAbs(s, b.z_mm) });
     } else seg(a.pos_permille, a.z_mm, b.pos_permille, b.z_mm);
+    spans.push(out.slice(from));
   }
   if (last.pos_permille < 1000) seg(last.pos_permille, last.z_mm, 1000, last.z_mm);
+  out.spans = spans;
   return out;
 }
 
@@ -334,6 +339,15 @@ function renderSectionPicker(runs) {
 // dragging was always FOR: give it a height, make it horizontal, meet the next
 // section, put a step in it.
 
+// ground elevation at a permille position of a base_top interval — the lock
+// engine works in permille, the ground model in stations
+function groundAtPosOf(run, w) {
+  const L = Math.max(runLength(run), 1);
+  const samples = groundSamplesFor(run, L);
+  return (pos) => groundZAt(samples,
+    Math.round(w.s0 + ((w.s1 - w.s0) * Math.max(0, Math.min(pos, 1000))) / 1000));
+}
+
 // the section's base_top event and its resolved interval, or null
 function baseTopOf(run) {
   const L = Math.max(runLength(run), 1);
@@ -368,8 +382,15 @@ function neighbourTopAbs(run, nodeId) {
 
 // write a new point profile for the section: one base_top per section, replaced
 // whole (a legacy 2-point wall_profile is migrated in the same gesture)
-function applyBaseTop(run, points, label) {
+function applyBaseTop(run, points, label, fromIndex = 0) {
   pushSnapshot(label);
+  const w = baseTopOf(run);
+  // locks are the user's standing intent: re-impose them after every edit
+  if (w) points = enforceLocks(points, groundAtPosOf(run, w), fromIndex);
+  else if (points.length) {
+    const L = Math.max(runLength(run), 1);
+    points = enforceLocks(points, groundAtPosOf(run, { s0: 0, s1: L }), fromIndex);
+  }
   const existing = run.interval_events.find((iv) => iv.payload.kind === "base_top");
   if (existing) {
     existing.payload.points = points;
@@ -402,6 +423,7 @@ function renderBaseBar(run) {
         value="${startZ === null ? "" : toDisplayValue(startZ)}"></label>
     <button id="base-level" title="${esc(t("profile.level_title"))}">${esc(t("profile.level"))}</button>
     <button id="base-match" title="${esc(t("profile.match_title"))}">${esc(t("profile.match"))}</button>
+    <button id="base-match-all" title="${esc(t("profile.match_all_title"))}">${esc(t("profile.match_all"))}</button>
     <button id="base-step" title="${esc(t("profile.add_step_title"))}">${esc(t("profile.add_step"))}</button>
     <span class="meta" id="base-note"></span>`;
 
@@ -445,6 +467,12 @@ function renderBaseBar(run) {
     const startAbs = neighbourTopAbs(run, run.start_node_id);
     const endAbs = neighbourTopAbs(run, run.end_node_id);
     if (startAbs === null && endAbs === null) { note("profile.base_no_neighbour"); return; }
+    // a standing horizontal rule outranks this: sloping an end into a corner
+    // would contradict it, and locks only change when the user says so
+    const pts = cur.points;
+    const blocked = (startAbs !== null && lockOf(pts, 0) === "level")
+      || (endAbs !== null && lockOf(pts, pts.length - 2) === "level");
+    if (blocked) { note("profile.base_locked_level"); return; }
     applyBaseTop(run, matchEnds(cur.points, {
       startAbs, endAbs,
       groundStart: groundZAt(samples, 0),
@@ -452,12 +480,30 @@ function renderBaseBar(run) {
     }), "base-match");
   });
 
+  // same elevation as the neighbour: level THIS section at the adjacent
+  // section's top elevation, so the two read as one continuous wall
+  bar.querySelector("#base-match-all").addEventListener("click", () => {
+    const absZ = neighbourTopAbs(run, run.start_node_id)
+      ?? neighbourTopAbs(run, run.end_node_id);
+    if (absZ === null) { note("profile.base_no_neighbour"); return; }
+    const L = Math.max(runLength(run), 1);
+    const samples = groundSamplesFor(run, L);
+    const stations = samples.map((s) => s.station);
+    const groundAt = (s) => groundZAt(samples, Math.round(s));
+    const cur = baseTopOf(run);
+    applyBaseTop(run, levelPoints(stations, groundAt, cur ? cur.s0 : 0,
+      cur ? cur.s1 : L, absZ), "base-match-all");
+  });
+
   // step: a real plateau — everything past the step moves up with it
   bar.querySelector("#base-step").addEventListener("click", () => {
     const cur = baseTopOf(run);
     const points = cur ? cur.points : flatPoints(toMm(
       document.getElementById("base-height").value) ?? STEP_RISE_MM);
-    applyBaseTop(run, withStep(points, 500, STEP_RISE_MM), "base-step");
+    const w = baseTopOf(run);
+    const groundAtPos = groundAtPosOf(run,
+      w || { s0: 0, s1: Math.max(runLength(run), 1) });
+    applyBaseTop(run, withStep(points, 500, STEP_RISE_MM, groundAtPos), "base-step");
   });
 }
 
@@ -575,12 +621,24 @@ function renderTops(chain) {
         openTopPopover(run.id, w.iv.id, ev.clientX, ev.clientY));
       // top edge polyline with vertical jumps at steps
       el("polyline", { points: xy.join(" "), class: "profile-top", stroke: tone }, g);
-      // fat invisible edge: click types first/last, double-click inserts a point
-      const hit = el("polyline", { points: xy.join(" "), class: "profile-top-hit",
-        "data-ev": w.iv.id, "data-run": run.id }, g);
-      el("title", {}, hit).textContent = t("profile.top_band_tooltip");
-      hit.addEventListener("click", (ev) =>
-        openTopPopover(run.id, w.iv.id, ev.clientX, ev.clientY));
+      // fat invisible edge, ONE HIT LINE PER SEGMENT: clicking a segment is how
+      // you tell it to stay horizontal or vertical; double-click still inserts a
+      // point (the handler reads data-idx to know which segment was hit)
+      (edge.spans || []).forEach((slice, idx) => {
+        if (slice.length < 2) return;
+        const attr = slice.map(({ s, z }) => `${xOf(gsOf(entry, s))},${yOf(z)}`).join(" ");
+        const lock = lockOf(w.points, idx);
+        if (lock) {
+          el("polyline", { points: attr, stroke: tone,
+            class: `profile-top-locked ${lock}` }, g);
+        }
+        const hit = el("polyline", { points: attr, class: "profile-top-hit",
+          "data-ev": w.iv.id, "data-run": run.id, "data-idx": idx }, g);
+        el("title", {}, hit).textContent = t(lock
+          ? `profile.segment_locked_${lock}` : "profile.segment_hint");
+        hit.addEventListener("click", (ev) =>
+          openSegmentPopover(run.id, w.iv.id, idx, ev.clientX, ev.clientY));
+      });
       // draggable point dots — diamonds, visually distinct from ground circles
       w.points.forEach((pt, i) => {
         const st = posStation(pt.pos_permille);
@@ -902,6 +960,8 @@ function moveTopDot(d, x, y) {
   pt.pos_permille = p;
   const st = s0 + ((s1 - s0) * p) / 1000;
   pt.z_mm = Math.max(0, snapZ(zOfY(y) - groundZAt(entry.samples, Math.round(st))));
+  // the dragged point wins; locked neighbours follow it in both directions
+  iv.payload.points = enforceLocks(pts, groundAtPosOf(run, { s0, s1 }), d.idx);
 }
 
 // ---------- typed z editors ----------
@@ -1037,6 +1097,57 @@ function openTopPopover(runId, evId, clientX, clientY) {
   const first = wallPopover.querySelector("input");
   if (first) { first.focus(); first.select(); }
   // pointer down anywhere outside cancels (registered after this click)
+  setTimeout(() => document.addEventListener("pointerdown", onWallOutside, true), 0);
+}
+
+// A clicked base-top SEGMENT: say what that piece of the top line is, and have
+// it stay that way. "Horizontal" holds one absolute elevation across the piece
+// (z compensates the ground); "vertical" holds both ends at one position — a
+// step. The rule is stored on the point and re-imposed after every later edit,
+// until the user sets the segment free again.
+function openSegmentPopover(runId, evId, idx, clientX, clientY) {
+  closeWallPopover();
+  const run = runById(runId);
+  const iv = run?.interval_events.find((e) => e.id === evId);
+  if (!iv || iv.payload.kind !== "base_top") return;
+  const current = lockOf(iv.payload.points, idx);
+  const btn = (value, key) =>
+    `<button data-lock="${value}"${value === (current || "")
+      ? ' class="primary"' : ""}>${esc(t(key))}</button>`;
+  wallPopover = document.createElement("div");
+  wallPopover.className = "popover";
+  wallPopover.innerHTML = `<h4>${esc(t("profile.segment_title"))}</h4>
+    <div class="meta"><bdi>${esc(runId)}</bdi> · ${esc(t("profile.segment_n", { n: idx + 1 }))}</div>
+    <div class="segment-locks">
+      ${btn("level", "profile.segment_level")}
+      ${btn("step", "profile.segment_step")}
+      ${btn("", "profile.segment_free")}
+    </div>
+    <div class="meta">${esc(t("profile.segment_note"))}</div>
+    <div class="popover-actions">
+      <button id="profile-seg-heights">${esc(t("profile.segment_heights"))}</button>
+      <button id="profile-seg-cancel">${esc(t("popover.cancel"))}</button></div>`;
+  document.body.appendChild(wallPopover);
+  wallPopover.style.left = `${Math.max(4, Math.min(clientX + 8, window.innerWidth - wallPopover.offsetWidth - 12))}px`;
+  wallPopover.style.top = `${Math.max(4, Math.min(clientY + 8, window.innerHeight - wallPopover.offsetHeight - 12))}px`;
+
+  for (const b of wallPopover.querySelectorAll("[data-lock]")) {
+    b.addEventListener("click", () => {
+      const lock = b.dataset.lock || null;
+      closeWallPopover();
+      if (lock === current) return;
+      const w = baseTopOf(run);
+      if (!w) return;
+      pushSnapshot("base-segment-lock");
+      iv.payload.points = setLock(iv.payload.points, idx, lock, groundAtPosOf(run, w));
+      saveTopology();
+    });
+  }
+  wallPopover.querySelector("#profile-seg-heights").addEventListener("click", () => {
+    closeWallPopover();
+    openTopPopover(runId, evId, clientX, clientY);   // the typed first/last editor
+  });
+  wallPopover.querySelector("#profile-seg-cancel").addEventListener("click", closeWallPopover);
   setTimeout(() => document.addEventListener("pointerdown", onWallOutside, true), 0);
 }
 

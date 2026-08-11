@@ -124,6 +124,12 @@ class BaseTopPoint(BaseModel):
 
     pos_permille: int  # 0..1000 along the interval
     z_mm: Mm  # height of the base top ABOVE local ground (wall_profile semantics)
+    # AUTHORING constraint on the segment that STARTS at this point, kept so the
+    # user's intent survives later edits: "level" holds that segment at one
+    # absolute elevation (z compensates the ground), "step" holds it vertical
+    # (both ends at one position). None = free, the segment just follows its
+    # end points. The generator reads geometry, never this field.
+    lock: Literal["level", "step"] | None = None
 
 
 class BaseTopPayload(BaseModel):

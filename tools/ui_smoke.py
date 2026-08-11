@@ -508,6 +508,35 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
         check("add-step inserts a real step (two points at one position)",
               positions.count(500) == 2
               and [p["z_mm"] for p in stepped] == [600, 600, 800, 800])
+        # the step's rule must SURVIVE the round trip: a vertical riser, then a
+        # horizontal tread (new BaseTopPoint.lock field)
+        check("a step is stored as a vertical riser then a horizontal tread",
+              [p.get("lock") for p in stepped] == [None, "step", "level", None])
+        # and the rule sticks: set segment 0 horizontal from the segment popover
+        c.js("""
+{
+  const seg = document.querySelector('.profile-top-hit[data-idx="0"]');
+  seg.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+}
+'ok'""")
+        time.sleep(0.6)
+        has_popover = c.js("!!document.querySelector('.segment-locks')")
+        c.js("""
+{
+  const b = document.querySelector('.segment-locks [data-lock="level"]');
+  if (b) b.click();
+}
+'ok'""")
+        time.sleep(1.2)
+        locks = c.js(f"""
+fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+  .then(r => r.json()).then(p => {{
+    const run = p.topology.runs.find(r => r.id === {focus_id!r});
+    const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
+    return ev ? ev.payload.points.map(pt => pt.lock ?? null) : null;
+  }})""")
+        check("clicking a segment sets a rule that persists",
+              has_popover and locks is not None and locks[0] == "level")
         c.click(*c.element_center("#base-level"))
         time.sleep(1.2)
         levelled = c.js(f"""
@@ -572,6 +601,27 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 }}
 'ok'""")
         time.sleep(0.8)
+        # the section is currently held horizontal end to end, so a corner match
+        # must be REFUSED rather than silently breaking the rule
+        c.click(*c.element_center("#base-match"))
+        time.sleep(0.8)
+        check("a corner match refuses to break a standing horizontal rule",
+              bool(c.js("document.getElementById('base-note').textContent")))
+        # free the last segment, then the match applies
+        c.js("""
+{
+  const segs = document.querySelectorAll('.profile-top-hit');
+  segs[segs.length - 1].dispatchEvent(new MouseEvent('click', {bubbles: true}));
+}
+'ok'""")
+        time.sleep(0.6)
+        c.js("""
+{
+  const b = document.querySelector('.segment-locks [data-lock=""]');
+  if (b) b.click();
+}
+'ok'""")
+        time.sleep(1.2)
         c.click(*c.element_center("#base-match"))
         time.sleep(1.2)
         matched = c.js(f"""
@@ -583,6 +633,11 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
   }})""")
         check("match-neighbours moves the shared end to the neighbour's top",
               matched is not None and matched[-1] == 400 and matched[0] == 800)
+        # finish on a stepped profile so the screenshot shows what a step IS now
+        c.click(*c.element_center("#base-step"))
+        time.sleep(1.2)
+        check("segments carrying a rule are drawn differently",
+              (c.js("document.querySelectorAll('.profile-top-locked').length") or 0) >= 2)
         c.shot("10-side-view-section.png")
         c.click(*c.element_center("#btn-units"))   # back to mm
         time.sleep(0.6)

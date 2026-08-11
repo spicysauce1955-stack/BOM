@@ -51,27 +51,74 @@ export function levelPoints(stations, groundAt, s0, s1, absZ) {
     const pos = Math.round(((s - s0) * 1000) / span);
     if (pos === last) continue;                       // one point per position
     last = pos;
-    out.push({ pos_permille: pos, z_mm: Math.max(0, Math.round(absZ - groundAt(s))) });
+    // every segment is LOCKED level: "make it horizontal" is an intent that
+    // must survive the next edit, not a one-off arrangement of points
+    out.push({ pos_permille: pos, z_mm: Math.max(0, Math.round(absZ - groundAt(s))),
+      lock: "level" });
+  }
+  if (out.length) out[out.length - 1].lock = null;    // no segment starts here
+  return out;
+}
+
+// ---------- segment locks -------------------------------------------------
+// A lock lives on the point that STARTS a segment and says what that segment is:
+// "level" (one absolute elevation) or "step" (vertical). Locks are the user's
+// intent, so they SURVIVE later edits — every mutation re-runs enforceLocks.
+
+// Re-impose the locks after an edit at `fromIndex`, propagating outward: the
+// point the user just moved is the one that wins, and locked neighbours follow
+// it. `groundAtPos(pos)` gives the ground elevation at a permille position.
+export function enforceLocks(points, groundAtPos, fromIndex = 0) {
+  const out = points.map((p) => ({ ...p }));
+  const absOf = (pt) => groundAtPos(pt.pos_permille) + pt.z_mm;
+  const start = Math.max(0, Math.min(fromIndex, out.length - 1));
+  // forward: each locked segment drags its RIGHT end into line
+  for (let i = start; i + 1 < out.length; i++) {
+    const a = out[i], b = out[i + 1];
+    if (a.lock === "level") b.z_mm = Math.max(0, Math.round(absOf(a) - groundAtPos(b.pos_permille)));
+    else if (a.lock === "step") b.pos_permille = a.pos_permille;
+  }
+  // backward: locked segments before the edit drag their LEFT end instead
+  for (let i = start - 1; i >= 0; i--) {
+    const a = out[i], b = out[i + 1];
+    if (a.lock === "level") a.z_mm = Math.max(0, Math.round(absOf(b) - groundAtPos(a.pos_permille)));
+    else if (a.lock === "step") a.pos_permille = b.pos_permille;
   }
   return out;
 }
 
-// Insert a step at `pos`: the top keeps its shape on the way in, jumps by
-// `riseMm`, and everything after the step moves with it (that is what "add a
-// step" means — a plateau, not a ramp back down).
-export function withStep(points, pos, riseMm = STEP_RISE_MM) {
+// Set (or clear) the lock on the segment starting at `index`, then enforce it.
+// Locking a segment vertical IS how a step is made by hand.
+export function setLock(points, index, lock, groundAtPos) {
+  if (index < 0 || index + 1 >= points.length) return points;
+  const out = points.map((p, i) => (i === index ? { ...p, lock: lock || null } : { ...p }));
+  return enforceLocks(out, groundAtPos, index);
+}
+
+export function lockOf(points, index) {
+  return points[index]?.lock ?? null;
+}
+
+// Insert a step at `pos`: the top keeps its shape on the way in, rises
+// VERTICALLY, and continues HORIZONTALLY after it — a stepped wall, which is
+// what the word means on site. Both of those are locks, so they hold.
+export function withStep(points, pos, riseMm = STEP_RISE_MM, groundAtPos = null) {
   if (!points.length) return points;
   const p = Math.max(0, Math.min(Math.round(pos), 1000));
   const zBefore = topZAt(points, p);
   const out = [];
   for (const pt of points) if (pt.pos_permille < p) out.push({ ...pt });
-  out.push({ pos_permille: p, z_mm: zBefore });
-  out.push({ pos_permille: p, z_mm: Math.max(0, zBefore + Math.round(riseMm)) });
+  const riser = out.length;
+  out.push({ pos_permille: p, z_mm: zBefore, lock: "step" });     // the riser
+  out.push({ pos_permille: p, z_mm: Math.max(0, zBefore + Math.round(riseMm)),
+    lock: "level" });                                             // the tread
   for (const pt of points) {
     if (pt.pos_permille <= p) continue;
     out.push({ ...pt, z_mm: Math.max(0, pt.z_mm + Math.round(riseMm)) });
   }
-  return out;
+  // enforce FORWARD from the riser: the new step is what the user just asked
+  // for, so the tread's far end follows it, not the other way round
+  return groundAtPos ? enforceLocks(out, groundAtPos, riser) : out;
 }
 
 // Move an end point so the top meets a neighbouring section at their shared

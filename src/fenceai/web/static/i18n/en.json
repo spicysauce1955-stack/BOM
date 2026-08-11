@@ -334,5 +334,18 @@
   "profile.base_needs_height": "Type a height first.",
   "profile.base_needs_top": "Give this section a base height first.",
   "profile.base_no_neighbour": "No adjacent section with a base top to match.",
-  "profile.base_bad_height": "Height must be a number, 0 or more."
+  "profile.base_bad_height": "Height must be a number, 0 or more.",
+  "profile.segment_title": "This piece of the base top",
+  "profile.segment_n": "segment {n}",
+  "profile.segment_level": "⎯ Horizontal",
+  "profile.segment_step": "│ Vertical (step)",
+  "profile.segment_free": "╱ Free",
+  "profile.segment_note": "The rule sticks: later edits keep this segment horizontal or vertical until you set it free.",
+  "profile.segment_heights": "Type heights…",
+  "profile.segment_hint": "Base top — click to make this piece horizontal or vertical; double-click to add a point",
+  "profile.segment_locked_level": "Held horizontal — click to change",
+  "profile.segment_locked_step": "Held vertical (a step) — click to change",
+  "profile.match_all": "≡ Neighbour's elevation",
+  "profile.match_all_title": "Level this whole section at the adjacent section's top elevation, so the two read as one wall",
+  "profile.base_locked_level": "That end is held horizontal — free the segment, or use the neighbour's elevation."
 }
