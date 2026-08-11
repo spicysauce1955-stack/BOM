@@ -187,7 +187,14 @@ class Driver:
         carries virtual key codes AND the matching `commands` list — without
         them Ctrl+Z is silently inert and reads as "undo is broken".
         """
-        vk = _VK.get(name) or (ord(name.upper()) if len(name) == 1 else 0)
+        # Only letters and digits share their code point with their virtual key.
+        # Every other character that falls through to ord() collides with a
+        # control key — '"' is 34 = VK_NEXT, which made Chrome drop it and
+        # turned typed JSON into garbage. Unmapped punctuation carries no
+        # virtual key; the `text` field is what inserts it.
+        vk = _VK.get(name) or (
+            ord(name.upper()) if len(name) == 1 and name.isalnum() and name.isascii()
+            else 0)
         code = _CODE.get(name) or _code_for(name)
         down: dict = {
             "type": "keyDown", "key": name, "code": code, "modifiers": mods,

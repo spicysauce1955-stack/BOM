@@ -365,8 +365,10 @@ def test_a_decimal_point_survives_being_typed(drv):
   return 1;
 })()""")
 
-    drv.type_text("1.80 מ' / 0,75-")
+    typed = """1.80 מ' / 0,75- [{"kind": "set_param"}] (60/60)"""
+    drv.type_text(typed)
     got = drv._eval("document.getElementById('__dec').value")
     drv._eval("document.getElementById('__dec').remove(); 1")
 
-    assert got == "1.80 מ' / 0,75-", f"punctuation was mangled: {got!r}"
+    # '"' is 34 = VK_NEXT and was dropped, turning typed JSON into garbage
+    assert got == typed, f"punctuation was mangled: {got!r}"
