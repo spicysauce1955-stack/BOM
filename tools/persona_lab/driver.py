@@ -115,7 +115,10 @@ class Driver:
         data = self._cmd("Page.captureScreenshot", format="jpeg", quality=60)["data"]
         path = shots / shot_name
         path.write_bytes(base64.b64decode(data))
-        text = outline_mod.render(items)
+        # the status bar, warnings, an open popover and the getting-started
+        # checklist are read without deciding to; they are not "extra" DOM
+        feedback = self._eval(outline_mod.FEEDBACK_JS) or []
+        text = outline_mod.render(items, feedback)
         for message in self.take_dialogs():
             text = f'dialog (dismissed): "{message}"\n' + text
         return str(path), text
@@ -133,6 +136,17 @@ class Driver:
         if isinstance(target, str):
             return self.handles[target].get("title", "")
         return ""
+
+    def move(self, x, y) -> None:
+        """Mouse move with no button — the hover a person does while aiming.
+
+        Drawing is the product's core interaction, and it feeds back live: the
+        rubber band, the snap marks and the station readout in the status bar
+        all follow the pointer. Without this verb a persona draws one frozen
+        frame at a time and never sees where the next click would land.
+        """
+        self._mouse("mouseMoved", int(x), int(y))
+        time.sleep(0.3)
 
     def type_text(self, text: str) -> None:
         """Type as a keyboard does — keyDown/keyUp per character.

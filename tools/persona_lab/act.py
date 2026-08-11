@@ -21,12 +21,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-BROWSER_VERBS = {"look", "click", "type", "key", "drag", "hover", "scroll", "wait"}
+BROWSER_VERBS = {"look", "click", "type", "key", "drag", "hover", "scroll",
+                 "wait", "move"}
 BOOKKEEPING_VERBS = {"give-up", "finding", "done"}
 
 # how many positional arguments each verb needs before it can act
 ARITY = {"look": 0, "click": 1, "type": 1, "key": 1, "drag": 4,
-         "hover": 1, "scroll": 1, "wait": 1}
+         "hover": 1, "scroll": 1, "wait": 1, "move": 2}
+
+# Perception is not an action — real users look constantly. Run 1 spent a
+# third of its 30-step budget on looking and measured the first three minutes
+# of a first-ever session.
+ACTION_BUDGET = 60
+FREE_VERBS = {"look"}
 
 
 def load_trace(run_dir: Path) -> list[dict]:
@@ -96,6 +103,8 @@ def main() -> int:
             die(f"{a.verb} needs {ARITY[a.verb]} argument(s), got {len(a.args)}")
 
     n = len(records) + 1
+    spent = sum(1 for r in records if r.get("verb") not in FREE_VERBS)
+    action_n = spent if a.verb in FREE_VERBS else spent + 1
     t0 = time.time()
     shot = ""
     screen = ""
@@ -123,6 +132,8 @@ def main() -> int:
         elif a.verb == "hover":
             tip = d.hover(a.args[0])
             screen = f"tooltip: {tip}"
+        elif a.verb == "move":
+            d.move(int(a.args[0]), int(a.args[1]))
         elif a.verb == "scroll":
             d.scroll(int(a.args[0]))
         elif a.verb == "wait":
@@ -133,7 +144,7 @@ def main() -> int:
         d.close()
 
     record = {
-        "n": n, "verb": a.verb, "arg": " ".join(a.args),
+        "n": n, "action_n": action_n, "verb": a.verb, "arg": " ".join(a.args),
         "intent": a.intent, "expected": a.expected,
         "observed": None, "confusion": None,
         "shot": shot, "t_ms": int((time.time() - t0) * 1000),
@@ -150,6 +161,7 @@ def main() -> int:
     write_trace(run_dir, records)
 
     print(f"step {n} recorded")
+    print(f"actions {action_n}/{ACTION_BUDGET} (look is free)")
     if shot:
         print(f"screenshot: {shot}")
     if screen:

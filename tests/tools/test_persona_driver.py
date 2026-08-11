@@ -4,7 +4,9 @@ or internal state."""
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 import time
 import sys
 from pathlib import Path
@@ -13,6 +15,7 @@ import pytest
 
 TOOLS = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS))
+ACT = TOOLS / "persona_lab" / "act.py"
 
 
 @pytest.fixture(scope="module")
@@ -154,3 +157,196 @@ def test_a_native_alert_does_not_wedge_the_tab(drv):
 
     assert 'dialog (dismissed): "נשמר"' in text
     assert drv._eval("1 + 1") == 2, "renderer still blocked after the alert"
+
+
+# --- feedback regions: the app's teaching channels ------------------------
+# The status bar is a plain <div>, so run 1's outline — interactive elements
+# only — hid the one surface built to name the current mode and next gesture.
+
+ITEMS = [{"role": "button", "label": "צור אסטרטגיה", "placeholder": "",
+          "has_title": False, "title": "", "disabled": False, "checked": None,
+          "x": 10, "y": 20, "w": 100, "h": 30}]
+
+
+def test_feedback_is_rendered_above_the_handle_list():
+    from persona_lab import outline
+
+    text = outline.render(ITEMS, [{"region": "status", "text": "שרטוט: לחיצה מציבה נקודה"}])
+
+    assert "screen says:" in text
+    assert text.index("screen says:") < text.index("[e01")
+    assert "שרטוט: לחיצה מציבה נקודה" in text
+
+
+def test_feedback_regions_are_named_in_plain_words_not_selectors():
+    from persona_lab import outline
+
+    text = outline.render(ITEMS, [
+        {"region": "status", "text": "בחירה"},
+        {"region": "warning", "text": "אין גובה"},
+        {"region": "dialog", "text": "רוחב שער"},
+        {"region": "getting started", "text": "שרטטו קו"},
+    ])
+
+    for word in ("status:", "warning:", "dialog:", "getting started:"):
+        assert word in text
+    assert "#" not in text
+    assert "statusbar" not in text and "popover" not in text and "checklist" not in text
+
+
+def test_a_region_with_nothing_in_it_is_omitted_entirely():
+    from persona_lab import outline
+
+    text = outline.render(ITEMS, [])
+
+    assert "screen says:" not in text
+    assert text.startswith("[e01")
+
+
+def test_a_long_region_keeps_both_its_head_and_its_tail():
+    """The draw hint ends with the cursor readout. A plain head-truncation at
+    200 chars would delete exactly the live feedback `move` exists to expose."""
+    from persona_lab import outline
+
+    long = "התחלה " + "מ" * 400 + " סוף"
+    text = outline.render(ITEMS, [{"region": "status", "text": long}])
+
+    line = next(x for x in text.splitlines() if "status:" in x)
+    assert len(line) < 260
+    assert "התחלה" in line
+    assert "סוף" in line
+
+
+def test_the_page_read_collects_only_the_feedback_channels():
+    """Not licence to dump the DOM: the persona must not become a superhuman
+    reader of every heading and table."""
+    from persona_lab import outline
+
+    js = outline.FEEDBACK_JS
+
+    assert "statusbar" in js and "warnings" in js and "checklist" in js
+    assert "popover" in js
+    for greedy in ("document.body.innerText", "querySelectorAll('h1", "'*'"):
+        assert greedy not in js
+
+
+def test_look_reads_the_status_bar_the_app_writes(drv):
+    _shot, text = drv.look("20.jpg")
+
+    assert "screen says:" in text
+    assert "status:" in text
+    assert "#" not in text
+
+
+def test_move_aims_the_pointer_without_pressing_anything(drv):
+    """Run 1 drew one frozen frame at a time: no rubber band, no snap marks,
+    no station readout, for a product whose core interaction is canvas
+    drawing. `move` is the aiming half of every gesture."""
+    drv.look("21.jpg")
+    drv._eval("""
+(() => {
+  window.__m = []; window.__down = 0;
+  const svg = document.getElementById('canvas');
+  svg.addEventListener('pointermove', (e) => window.__m.push([e.clientX, e.clientY]));
+  svg.addEventListener('pointerdown', () => window.__down++);
+  return 1;
+})()""")
+    target = drv._eval("""
+(() => {
+  const r = document.getElementById('canvas').getBoundingClientRect();
+  return [Math.round(r.x + r.width * 0.4), Math.round(r.y + r.height * 0.6)];
+})()""")
+
+    drv.move(target[0], target[1])
+
+    assert drv._eval("window.__m.length ? window.__m[window.__m.length - 1] : null") == target
+    assert drv._eval("window.__down") == 0, "move must not press the button"
+
+
+def test_moving_over_a_run_shows_the_live_station_readout(drv):
+    """The status bar appends the cursor station while the pointer is over a
+    run — the feedback that makes aiming on a drawing possible at all."""
+    drv.look("22.jpg")
+    box = drv._eval("""
+(() => {
+  const r = document.getElementById('canvas').getBoundingClientRect();
+  return [r.x, r.y, r.width, r.height];
+})()""")
+    y = round(box[1] + box[3] * 0.5)
+    x0, x1 = round(box[0] + box[2] * 0.3), round(box[0] + box[2] * 0.7)
+    drv._eval("document.getElementById('tool-draw').click(); 1")
+    drv.click((x0, y))
+    drv.click((x1, y))
+    drv.key("Enter")
+    drv.wait(1)
+    on_run = drv._eval("""
+(() => {
+  const line = document.querySelector('#g-topology polyline');
+  if (!line) return null;
+  const pts = line.getAttribute('points').trim().split(/\\s+/).map(
+    (p) => p.split(',').map(Number));
+  if (pts.length < 2) return null;
+  const svg = document.getElementById('canvas');
+  const p = svg.createSVGPoint();
+  p.x = (pts[0][0] + pts[1][0]) / 2; p.y = (pts[0][1] + pts[1][1]) / 2;
+  const c = p.matrixTransform(svg.getScreenCTM());
+  return [Math.round(c.x), Math.round(c.y)];
+})()""")
+    assert on_run, "drawing produced no run to aim at"
+
+    drv.move(on_run[0], on_run[1])
+    _shot, after = drv.look("23.jpg")
+
+    says = after.split("\n\n")[0]
+    assert "תחנה" in says, f"mouse move produced no live cursor readout:\n{says}"
+
+
+# --- the action budget: look is free --------------------------------------
+
+
+def _fake_session(tmp_path: Path) -> Path:
+    run_dir = tmp_path / "kablan-gderot"
+    (run_dir / "shots").mkdir(parents=True)
+    (run_dir / "session.json").write_text(json.dumps({"run_dir": str(run_dir)}))
+    return run_dir
+
+
+def _act(run_dir: Path, *args):
+    return subprocess.run([sys.executable, str(ACT), "--session", str(run_dir), *args],
+                          capture_output=True, text=True)
+
+
+def _closed(n: int, verb: str) -> dict:
+    return {"n": n, "verb": verb, "arg": "", "intent": "a", "expected": "b",
+            "observed": "c", "confusion": 0, "shot": "", "t_ms": 1}
+
+
+def test_looking_costs_no_action(tmp_path):
+    run_dir = _fake_session(tmp_path)
+    (run_dir / "trace.jsonl").write_text("".join(
+        json.dumps(r) + "\n" for r in
+        [_closed(1, "look"), _closed(2, "finding"), _closed(3, "look")]))
+
+    r = _act(run_dir, "finding", "--title", "x", "--surface", "y", "--symptom", "z")
+
+    assert r.returncode == 0, r.stderr
+    last = json.loads((run_dir / "trace.jsonl").read_text().splitlines()[-1])
+    assert last["n"] == 4, "look must still be numbered in the trace"
+    assert last["action_n"] == 2, "only non-look verbs consume the budget"
+
+
+def test_the_running_action_count_is_printed_for_self_pacing(tmp_path):
+    run_dir = _fake_session(tmp_path)
+
+    r = _act(run_dir, "finding", "--title", "x", "--surface", "y", "--symptom", "z")
+
+    assert r.returncode == 0, r.stderr
+    assert "1/60" in r.stdout, r.stdout
+    assert "look" in r.stdout.lower(), "say that looking is free"
+
+
+def test_move_is_a_browser_verb_taking_two_coordinates():
+    from persona_lab import act
+
+    assert "move" in act.BROWSER_VERBS
+    assert act.ARITY["move"] == 2
