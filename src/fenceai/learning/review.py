@@ -9,6 +9,17 @@ from __future__ import annotations
 from fenceai.knowledge.model import KnowledgeVersion
 from fenceai.learning.model import ReviewAction
 
+# A promoted rule is no longer a proposal: drop the marker in every language the
+# candidate carries one (a Hebrew-only reader must not see an active rule labelled
+# as a candidate).
+CANDIDATE_MARKERS = (" (candidate)", " (מועמד)")
+
+
+def _promoted_title(text: str) -> str:
+    for marker in CANDIDATE_MARKERS:
+        text = text.removesuffix(marker)
+    return text
+
 
 def apply_review(candidate: KnowledgeVersion, action: ReviewAction) -> KnowledgeVersion:
     """Returns the resulting version record. Candidates are immutable: approval
@@ -41,7 +52,10 @@ def apply_review(candidate: KnowledgeVersion, action: ReviewAction) -> Knowledge
         scope=scope,
         condition=candidate.condition,
         actions=candidate.actions,
-        title=candidate.title.removesuffix(" (candidate)"),
+        title=_promoted_title(candidate.title),
+        title_i18n={
+            lang: _promoted_title(text) for lang, text in candidate.title_i18n.items()
+        },
         source_text=candidate.source_text,  # verbatim text travels with the promotion
         derived_from=[candidate.ref],
         attributed_to=action.reviewer,

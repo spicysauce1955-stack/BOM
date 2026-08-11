@@ -104,6 +104,48 @@ def test_reinterpretation_ids_never_collide():
     assert r1.id != r2.id
 
 
+def _correction(comment: str) -> "Correction":
+    from fenceai.learning.model import Correction
+
+    return Correction(id="c1", project_id="p1", generation_run_id="run1", comment=comment)
+
+
+def test_proposer_reads_the_demo_vocabulary_in_hebrew_too():
+    """The stub filtered on the literal English substring "foundation", so in a
+    Hebrew-first product an expert's correction never became a candidate
+    (persona-lab B1). CLAUDE.md: the stub understands the demo vocabulary in
+    English AND Hebrew."""
+    from fenceai.ai.stub import StubProposer
+
+    he = StubProposer().propose([_correction("העמוד צריך לשבת על היסוד הקיים כאן")])
+    en = StubProposer().propose([_correction("move the post onto the existing foundation")])
+    assert len(he) == len(en) == 1
+    assert he[0].status == "proposed" and he[0].type == "candidate"
+    assert he[0].source_text == "העמוד צריך לשבת על היסוד הקיים כאן"  # verbatim
+    assert he[0].display_title("he") != he[0].display_title("en")  # localized title
+
+
+def test_an_approved_candidate_keeps_a_clean_title_in_both_languages():
+    """Promotion drops the "(candidate)" marker — in every language the candidate
+    carries one, or the Hebrew reader sees a live rule still labelled a proposal."""
+    from fenceai.ai.stub import StubProposer
+    from fenceai.learning.model import ReviewAction
+    from fenceai.learning.review import apply_review
+
+    candidate = StubProposer().propose([_correction("יש כאן יסוד קיים")])[0]
+    approved = apply_review(candidate, ReviewAction(action="approve", reviewer="expert"))
+    assert "(candidate)" not in approved.display_title("en")
+    assert "מועמד" not in approved.display_title("he")
+    assert approved.display_title("he") != approved.display_title("en")
+
+
+def test_proposer_still_ignores_unrelated_corrections():
+    from fenceai.ai.stub import StubProposer
+
+    assert StubProposer().propose([_correction("הזזתי את המפתח קצת שמאלה")]) == []
+    assert StubProposer().propose([_correction("moved the span a bit left")]) == []
+
+
 def test_critic_is_advisory_only(knowledge, catalog):
     from fenceai.strategy.generator import generate
     from tests.conftest import straight_topology

@@ -108,13 +108,19 @@ class StubInterpreter:
 class StubProposer:
     interpreter_id = "stub"
 
+    # The one demo pattern this stub knows, in both demo languages (capped on
+    # purpose — the stub must not become a second rule engine). The Hebrew stem
+    # יסוד covers יסודות / היסוד / ליסוד by substring; casefolding is a no-op on it.
+    FOUNDATION_WORDS = ("foundation", "יסוד")
+
     def propose(self, corrections: list[Correction]) -> list[KnowledgeVersion]:
         """One narrow-scope proposed heuristic per repeated correction pattern.
 
         The stub recognizes the demo pattern: posts moved onto existing foundations.
         """
         foundation_corrections = [
-            c for c in corrections if "foundation" in (c.comment or "").lower()
+            c for c in corrections
+            if any(w in (c.comment or "").lower() for w in self.FOUNDATION_WORDS)
         ]
         if not foundation_corrections:
             return []
@@ -125,6 +131,7 @@ class StubProposer:
                 version=1,
                 type="candidate",
                 title="Prefer existing foundation points for posts (candidate)",
+                title_i18n={"he": "העדפת יסודות קיימים למיקום עמודים (מועמד)"},
                 scope={"project_id": example.project_id},  # narrowest scope by default
                 actions=[AddNote(text="Prefer snapping posts to existing foundations within 300 mm")],
                 source_text=example.comment or "",
