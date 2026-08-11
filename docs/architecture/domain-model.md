@@ -114,10 +114,11 @@ InventoryItem   { id, sku, kind: full_stock|remnant{length_mm}|opened_package{re
 CutPlan   { bars: [{source: new|inventory_item_id, stock_length_mm,
                     pieces: [{length_mm, requirement_id}], kerf_total_mm,
                     leftover_mm, leftover_reusable: bool}],
-            lp_lower_bound, certified_optimal: bool }
+            lp_lower_bound, lower_bound, certified_optimal: bool }
 BomLine   { sku, purchase_qty, purchase_unit, engineering_qty, engineering_unit,
             unit_price_cents, total_cents, overage_qty, pegs: [requirement_id], notes[] }
-Bom       { id, run_id, lines[], cut_plans{sku: CutPlan}, allocations[], totals }
+Bom       { id, run_id, lines[], cut_plans{sku: CutPlan}, allocations[], totals,
+            projected_remnants: [InventoryItem] }   # projection only, never stored
 ```
 
 ## Learning

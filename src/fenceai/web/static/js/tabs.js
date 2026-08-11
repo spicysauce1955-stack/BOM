@@ -66,8 +66,8 @@ export function initTabs() {
   const knowledgeBody = () => {
     let actions;
     if (kAdvancedOpen) {
-      try { actions = JSON.parse(document.getElementById("k-actions").value); }
-      catch { alert(t("knowledge.actions_json_invalid")); return null; }
+      actions = parseActions(document.getElementById("k-actions").value);
+      if (!actions) { alert(t("knowledge.actions_json_invalid")); return null; }
     } else {
       actions = builderActions;
     }
@@ -88,10 +88,12 @@ export function initTabs() {
       ta.value = JSON.stringify(builderActions, null, 2);
       kAdvancedOpen = true;
     } else {
-      let parsed;
-      try { parsed = JSON.parse(ta.value); } catch { return alert(t("knowledge.actions_json_invalid")); }
-      if (!Array.isArray(parsed)) return alert(t("knowledge.actions_json_invalid"));
-      builderActions = parsed;
+      // NEVER gate the way out on the thing that is broken: invalid JSON used to
+      // block save, impact preview AND this button, so the only escape from a
+      // stray comma was a page reload. Offer the exit, discard on confirmation.
+      const parsed = parseActions(ta.value);
+      if (parsed) builderActions = parsed;
+      else if (!confirm(t("knowledge.actions_json_discard"))) return;
       kAdvancedOpen = false;
       renderBuilderRows();
     }
@@ -112,14 +114,14 @@ export function initTabs() {
       if (inventoryObj) ta.value = JSON.stringify(inventoryObj, null, 2);
       invAdvancedOpen = true;
     } else {
-      let parsed;
-      try { parsed = JSON.parse(ta.value); } catch { return alert(t("inventory.json_invalid")); }
-      if (!parsed || !Array.isArray(parsed.items)) return alert(t("inventory.json_invalid"));
-      inventoryObj = parsed;
+      const parsed = parseInventory(ta.value);   // same escape hatch as the rule editor
+      if (parsed) inventoryObj = parsed;
+      else if (!confirm(t("inventory.json_discard"))) return;
       invAdvancedOpen = false;
       drawInventoryTable();
     }
-    updateAdvancedUi("inventory-editor", "inventory-json", "btn-inv-advanced", invAdvancedOpen);
+    updateAdvancedUi("inventory-editor", "inventory-json", "btn-inv-advanced",
+                     invAdvancedOpen, "inventory.back");
   });
   document.getElementById("btn-add-knowledge").addEventListener("click", async () => {
     const body = knowledgeBody();
@@ -142,8 +144,8 @@ export function initTabs() {
   document.getElementById("btn-save-inventory").addEventListener("click", async () => {
     let inv;
     if (invAdvancedOpen) {
-      try { inv = JSON.parse(document.getElementById("inventory-json").value); }
-      catch { return alert(t("inventory.json_invalid")); }
+      inv = parseInventory(document.getElementById("inventory-json").value);
+      if (!inv) return alert(t("inventory.json_invalid"));
     } else {
       if (!inventoryObj) return;
       inv = inventoryObj;
@@ -168,13 +170,32 @@ export function initTabs() {
   on("units-changed", relocalize);   // same surfaces, different numbers
 }
 
+// The raw-JSON editors are two-way, so both parsers answer the same question:
+// "can this text become the structured thing?" — null means no, and the caller
+// decides whether that blocks a save (it does) or an exit (it must not).
+function parseActions(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+function parseInventory(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && Array.isArray(parsed.items) ? parsed : null;
+  } catch { return null; }
+}
+
 // show/hide the structured editor vs. the raw-JSON textarea; the toggle button's
-// data-i18n key is swapped so applyStatic keeps it correct across locale changes
-function updateAdvancedUi(editorId, textareaId, btnId, open) {
+// data-i18n key is swapped so applyStatic keeps it correct across locale changes.
+// `backKey` names the surface being returned to — the inventory tab has no rule
+// builder, and labelling its button "back to the rule builder" misled a persona.
+function updateAdvancedUi(editorId, textareaId, btnId, open, backKey = "knowledge.builder.back") {
   document.getElementById(editorId).hidden = open;
   document.getElementById(textareaId).hidden = !open;
   const btn = document.getElementById(btnId);
-  btn.dataset.i18n = open ? "knowledge.builder.back" : "knowledge.builder.advanced";
+  btn.dataset.i18n = open ? backKey : "knowledge.builder.advanced";
   btn.textContent = t(btn.dataset.i18n);
 }
 
@@ -307,16 +328,23 @@ function bomHtml(bom, products) {
   }
   html += "</table></div>";
   for (const [sku, plan] of Object.entries(bom.cut_plans || {})) {
+    // no solver vocabulary and no bound number: the reader wants to know whether
+    // the bar count can still come down, not what a relaxation computed
     html += `<div class="panel"><h3>${t("bom.cut_plan")} — <span class="sku">${esc(sku)}</span>
       ${plan.certified_optimal ? `<span class="tag active">${t("bom.optimal")}</span>`
-        : `<span class="tag medium">${t("bom.heuristic", { bound: plan.lp_lower_bound })}</span>`}</h3>
+        : `<span class="tag medium">${t("bom.best_found")}</span>`}</h3>
       <table><tr><th>${t("bom.bar_source")}</th><th>${tu("bom.stock")}</th><th>${tu("bom.cuts")}</th><th>${tu("bom.leftover")}</th></tr>`;
     for (const b of plan.bars) {
-      html += `<tr><td><bdi>${esc(b.source)}</bdi></td><td class="num">${esc(fmt(b.stock_length_mm))}</td>
+      html += `<tr><td>${b.source === "new" ? t("bom.source_new") : `<bdi>${esc(b.source)}</bdi>`}</td>
+        <td class="num">${esc(fmt(b.stock_length_mm))}</td>
         <td class="num">${esc(b.pieces.map((p) => fmt(p.length_mm)).join(" + "))}</td>
         <td class="num">${esc(fmt(b.leftover_mm))}${b.leftover_reusable ? " ♻" : ""}</td></tr>`;
     }
-    html += "</table></div>";
+    html += "</table>";
+    // "was my shelf even consulted?" — silence used to be the only answer
+    if (plan.bars.every((b) => b.source === "new"))
+      html += `<div class="meta">${t("bom.inventory_not_used")}</div>`;
+    html += "</div>";
   }
   if ((bom.allocations || []).length) {
     html += `<div class="panel"><h3>${t("bom.allocations")}</h3>
@@ -326,7 +354,27 @@ function bomHtml(bom, products) {
         <td class="num">${a.length_used_mm ? esc(fmtLen(a.length_used_mm)) : a.qty}</td></tr>`;
     html += "</table></div>";
   }
+  html += remnantsHtml(bom.projected_remnants || []);
   return html;
+}
+
+// The planner computes the offcuts this plan leaves and the API ships them; until
+// now nothing rendered them, so a procurement user could not tell what goes back
+// on the shelf. Identical pieces are grouped — 12 rows of "1497" is not a report.
+function remnantsHtml(remnants) {
+  if (!remnants.length) return "";
+  const groups = new Map();
+  for (const r of remnants) {
+    const key = `${r.sku}|${r.length_mm}`;
+    groups.set(key, { sku: r.sku, length_mm: r.length_mm, n: (groups.get(key)?.n || 0) + 1 });
+  }
+  let html = `<div class="panel"><h3>${t("bom.projected_remnants")}</h3>
+    <div class="meta">${t("bom.projected_remnants_hint")}</div>
+    <table><tr><th>${t("bom.sku")}</th><th>${tu("inventory.length_mm")}</th><th>${t("bom.remnant_count")}</th></tr>`;
+  for (const g of [...groups.values()].sort((a, b) => a.sku.localeCompare(b.sku) || b.length_mm - a.length_mm))
+    html += `<tr><td><span class="sku">${esc(g.sku)}</span></td>
+      <td class="num">${esc(fmt(g.length_mm))}</td><td class="num">${g.n}</td></tr>`;
+  return html + "</table></div>";
 }
 
 // ---------- annotations ----------
@@ -518,7 +566,13 @@ function builderRow(a, idx, products) {
     for (const p of KNOWN_PARAMS) s.appendChild(option(p, tu("action.param." + p), a.param === p));
     s.appendChild(option("__other", t("action.param.other"), isOther));
     s.addEventListener("change", () => {
+      const wasLength = String(a.param || "").endsWith("_mm");
       a.param = s.value === "__other" ? "" : s.value;
+      // the value belongs to the OLD parameter. A length carried into a count is
+      // a different quantity in a different unit — 1800 survived two switches
+      // into screws_per_span. Reset unless the kind of number is unchanged;
+      // the sibling action-kind select has always done this via defaultActionFor.
+      if (String(a.param || "").endsWith("_mm") !== wasLength) a.value = 0;
       renderBuilderRows();  // swap the free-text param input in/out
     });
     row.appendChild(field("knowledge.builder.param", s));
@@ -580,9 +634,11 @@ function renderImpactReport(container, report) {
   for (const i of report.impacts) {
     if (!i.changed) continue;
     html += `<div class="impact-row"><bdi>${esc(i.project_name || i.project_id)}</bdi>: `;
-    if (i.generation_failed) {
+    if (i.generation_failure) {
+      // code + params, localized; the engine's English sentence stays a tooltip
+      const f = i.generation_failure;
       html += `<span class="tag rejected">${t("impact.generation_fails")}</span>
-        <span class="meta" dir="auto">${esc(i.generation_failed)}</span>`;
+        <span class="meta" title="${esc(f.message)}">${esc(t("impact.failure." + f.code, f.params || {}))}</span>`;
     } else {
       const delta = (i.bom_delta_cents / 100).toFixed(2);
       const sign = i.bom_delta_cents > 0 ? "+" : "";

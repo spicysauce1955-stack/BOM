@@ -34,7 +34,11 @@ def test_s07_rail_cutting_with_kerf(knowledge, catalog):
         assert sum(p.length_mm for p in bar.pieces) + 3 * (len(bar.pieces) - 1) <= 3000
         assert bar.leftover_mm == 1497
         assert bar.leftover_reusable
-    assert not plan.certified_optimal  # honest: LP bound is 3
+    # 4 bars is provably minimal (1500+3+1500 > 3000), even though the fractional
+    # LP bound of 3 can never be reached — labelling this "heuristic" is what made
+    # persona-lab readers conclude the tool pads orders
+    assert plan.certified_optimal
+    assert (plan.lp_lower_bound, plan.lower_bound) == (3, 4)
     line = next(l for l in bom.lines if l.sku == "RAIL-3000")
     assert line.purchase_qty == 4
     assert len(bom.projected_remnants) == 4

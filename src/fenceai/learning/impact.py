@@ -24,6 +24,19 @@ from fenceai.strategy.overrides import Override
 from fenceai.topology.model import Topology
 
 
+class ImpactFailure(BaseModel):
+    """Why the hypothetical knowledge base cannot generate, as `code + params`.
+
+    User-visible text is rendered from the code by the reader's locale bundle
+    (`impact.failure.<code>`); `message` is the raw engine string, a diagnostic
+    fallback only — never the thing a Hebrew reader is shown.
+    """
+
+    code: str
+    params: dict[str, str | int] = {}
+    message: str = ""
+
+
 class ImpactCase(BaseModel):
     """One project to evaluate the hypothetical change against."""
 
@@ -39,7 +52,7 @@ class ProjectImpact(BaseModel):
     project_id: str
     project_name: str = ""
     changed: bool = False
-    generation_failed: str | None = None  # hypothetical KB cannot generate at all
+    generation_failure: ImpactFailure | None = None  # hypothetical KB cannot generate
     posts_added: int = 0
     posts_removed: int = 0
     posts_modified: int = 0  # same station, different sku/kind/mounting/reinforced
@@ -106,6 +119,19 @@ def _diff_strategies(before: Strategy, after: Strategy, impact: ProjectImpact) -
     impact.warnings_after = len(after.warnings)
 
 
+def _failure(e: GenerationFailure) -> ImpactFailure:
+    """The engine's English sentence is not a user-facing message. Report the
+    structure a reader can act on — which knowledge blocked generation — and keep
+    the raw text only as a diagnostic."""
+    if e.constraint_refs:
+        return ImpactFailure(
+            code="generation_failed_refs",
+            params={"refs": ", ".join(e.constraint_refs)},
+            message=str(e),
+        )
+    return ImpactFailure(code="generation_failed", message=str(e))
+
+
 def _spine(topology, kb, catalog, overrides, inventory, project_id=""):
     # project_id is a bound scope dimension during generation — a project-scoped
     # rule must behave in the preview exactly as it will in the real run
@@ -142,7 +168,7 @@ def preview_impact(
                 case.project_id,
             )
         except GenerationFailure as e:
-            impact.generation_failed = str(e)
+            impact.generation_failure = _failure(e)
             impact.changed = True
             report.projects_affected += 1
             report.impacts.append(impact)

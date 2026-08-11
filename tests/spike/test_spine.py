@@ -67,8 +67,11 @@ def test_s07_cut_plan_kerf_accounting(catalog):
         assert sum(p.length_mm for p in bar.pieces) + sem.kerf_mm * (len(bar.pieces) - 1) <= bar.stock_length_mm
         assert bar.leftover_mm == 1497
         assert bar.leftover_reusable  # >= 300 min remnant
-    assert plan.lp_lower_bound == 3  # honest: heuristic used 4, bound is weaker
-    assert not plan.certified_optimal
+    assert plan.lp_lower_bound == 3  # the fractional relaxation, and unattainable
+    # two 1500s never share a 3000 bar, so 4 bars IS the minimum: the plan is
+    # certified against the stronger counting bound, not against the relaxation
+    assert plan.lower_bound == 4
+    assert plan.certified_optimal
 
 
 def test_s08_package_rounding(knowledge, catalog):

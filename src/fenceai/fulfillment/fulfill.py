@@ -122,13 +122,14 @@ def fulfill(
                         )
                     )
             if plan.new_bar_count:
+                # no solver vocabulary on a purchase line: whether the plan is
+                # certified optimal is rendered from `CutPlan.certified_optimal`
+                # on the cut-plan panel, localized, where it belongs
                 bom.lines.append(
                     _line(
                         product, plan.new_bar_count, "bar",
                         engineering_qty=len(pieces), engineering_unit="cut",
                         pegs=pegs,
-                        notes=[] if plan.certified_optimal else
-                        [f"heuristic plan: {plan.new_bar_count} bars vs LP lower bound {plan.lp_lower_bound}"],
                     )
                 )
 

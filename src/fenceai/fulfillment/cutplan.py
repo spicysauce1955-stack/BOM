@@ -50,6 +50,40 @@ class RemnantStock(BaseModel):
     length_mm: Mm
 
 
+def _capacity_lower_bound(costs: list[Mm], new_capacity: Mm, remnant_caps: list[Mm]) -> int:
+    """Lower bound on NEW bars from how many pieces a bar can physically hold.
+
+    For the m longest pieces, no bin holds more of them than fit when the bin is
+    filled with the *smallest* of those m — so, crediting every remnant its own
+    such count, `ceil((m - credited) / per_new_bar)` new bars are unavoidable.
+    Every m gives a valid bound, so the maximum over m is still a certificate.
+    Pure counting: nothing here knows what the pieces are or which catalog they
+    came from.
+    """
+    if not costs:
+        return 0
+    asc = sorted(costs)
+    n = len(asc)
+    prefix = [0] * (n + 1)
+    for i, c in enumerate(asc):
+        prefix[i + 1] = prefix[i] + c
+
+    def fits_from(start: int, capacity: Mm) -> int:
+        """How many of asc[start:] (ascending) fit in `capacity`."""
+        j = bisect_right(prefix, prefix[start] + capacity, start) - 1
+        return max(0, j - start)
+
+    best = 0
+    for m in range(1, n + 1):
+        start = n - m  # the m longest pieces, ascending from here
+        per_new_bar = fits_from(start, new_capacity)
+        if per_new_bar <= 0:
+            continue  # a piece longer than stock: rejected upstream
+        credited = sum(fits_from(start, cap) for cap in remnant_caps)
+        best = max(best, -(-max(0, m - credited) // per_new_bar))
+    return best
+
+
 def plan_cuts(
     sku: str,
     semantics: DivisibleLinear,
@@ -126,8 +160,19 @@ def plan_cuts(
         p.length_mm + kerf for b in bars if b.source != "new" for p in b.pieces
     )
     lp_bound = max(0, -(-(total_cost - used_remnant_capacity) // (stock + kerf)))
+    # the volume relaxation ignores that pieces cannot be poured; the counting
+    # bound is the one that proves "one 1800 per 3000 bar" plans minimal
+    bound = max(
+        lp_bound,
+        _capacity_lower_bound(
+            [p.length_mm + kerf for p in pieces],
+            stock + kerf,
+            [r.length_mm + kerf for r in remnants],
+        ),
+    )
     return CutPlan(
         sku=sku, bars=bars, new_bar_count=new_bars,
-        lp_lower_bound=lp_bound, certified_optimal=new_bars == lp_bound,
+        lp_lower_bound=lp_bound, lower_bound=bound,
+        certified_optimal=new_bars <= bound,
         waste_mm=waste,
     )
