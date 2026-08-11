@@ -24,6 +24,7 @@ WARNING_CODES = [
     "max_height_exceeded",
     "gate_on_slope",
     "insufficient_post_length",
+    "tilted_stepped",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 

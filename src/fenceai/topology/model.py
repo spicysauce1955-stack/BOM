@@ -106,6 +106,17 @@ class WallProfilePayload(BaseModel):
     top_z_end_mm: Mm
 
 
+class PostTiltPayload(BaseModel):
+    """Per-section post orientation. Plumb (vertical to earth) is the default and
+    the construction norm; 'perpendicular' follows the local ground slope
+    (agricultural/slope-following fences); 'custom' is an explicit lean.
+    tilt_deg: degrees from vertical, positive leans toward increasing station."""
+
+    kind: Literal["post_tilt"] = "post_tilt"
+    mode: Literal["plumb", "perpendicular", "custom"] = "plumb"
+    tilt_deg: int = Field(default=0, ge=-45, le=45)
+
+
 class BaseTopPoint(BaseModel):
     """A point of a built base's top line, positioned proportionally along its
     interval (permille, so points re-anchor with the interval on geometry edits).
@@ -125,7 +136,7 @@ class BaseTopPayload(BaseModel):
 
 
 IntervalPayload = Annotated[
-    Union[BasePayload, HeightIntentPayload, TopLinePayload, WallProfilePayload, BaseTopPayload],
+    Union[BasePayload, HeightIntentPayload, TopLinePayload, WallProfilePayload, BaseTopPayload, PostTiltPayload],
     Field(discriminator="kind"),
 ]
 

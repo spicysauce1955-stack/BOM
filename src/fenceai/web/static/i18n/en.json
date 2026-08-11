@@ -275,5 +275,12 @@
   "warning.excessive_gap": "Stepped span {element} leaves a {gap_mm} mm gap underneath (limit {max_mm} mm)",
   "warning.max_height_exceeded": "{element} reaches {height_mm} mm plumb height at the downhill end — above the {max_mm} mm limit",
   "warning.gate_on_slope": "Gate {element} sits on a slope of {slope_permille}‰ (limit {max_permille}‰) — level the ground for the gate to swing",
-  "warning.insufficient_post_length": "Post {element} needs {required_mm} mm but {sku} is only {available_mm} mm long — choose a longer post"
+  "warning.insufficient_post_length": "Post {element} needs {required_mm} mm but {sku} is only {available_mm} mm long — choose a longer post",
+  "warning.tilted_stepped": "Section {run_id} combines tilted posts ({mode}) with stepped panels — stepped panels normally pair with plumb posts; check the design",
+  "popover.post_tilt": "post orientation",
+  "tilt.plumb": "plumb (default)",
+  "tilt.perpendicular": "perpendicular to ground",
+  "tilt.custom": "custom angle…",
+  "popover.tilt_deg": "tilt (degrees)",
+  "events.post_tilt": "Post orientation"
 }

@@ -47,6 +47,7 @@ from fenceai.topology.station import (
     base_top_step_stations,
     base_transition_stations,
     ground_step_stations,
+    local_slope_permille,
     corner_stations,
     ground_z,
     max_slope_permille,
@@ -218,6 +219,23 @@ def _matched_force_overrides(
     return forced_sku, forced_mounting, matched
 
 
+
+def _post_tilt_at(topo: Topology, run: Run, station: Mm) -> tuple[int, str | None]:
+    """(tilt_deg, event id) for a post at this station, from the section's
+    post_tilt event. Plumb (0) when no event. 'perpendicular' derives the angle
+    from the local ground gradient, clamped to ±45°."""
+    import math
+
+    ev, _, _ = _interval_at(topo, run, station, "post_tilt")
+    if ev is None or ev.payload.mode == "plumb":
+        return 0, ev.id if ev is not None else None
+    if ev.payload.mode == "custom":
+        return ev.payload.tilt_deg, ev.id
+    slope = local_slope_permille(topo, run, station)
+    deg = round(math.degrees(math.atan(slope / 1000)))
+    return max(-45, min(45, deg)), ev.id
+
+
 def _make_post(
     builder: GraphBuilder,
     kb: KnowledgeBase,
@@ -236,6 +254,7 @@ def _make_post(
     forced_sku: str | None = None,
     forced_mounting: str | None = None,
     override_nodes: list[str] | None = None,
+    tilt_deg: int = 0,
 ) -> Post:
     """Create a post; every selection resolved from knowledge BEFORE the decision
     node is recorded — elements are never mutated afterwards (critic finding 4)."""
@@ -256,12 +275,13 @@ def _make_post(
     post = Post(
         id=post_id, run_ref=run_ref, station_mm=station, kind=kind,  # type: ignore[arg-type]
         reinforced=reinforced, mounting=mounting, sku=sku,  # type: ignore[arg-type]
-        ground_z_mm=ground_z_mm, pinned=pinned,
+        ground_z_mm=ground_z_mm, tilt_deg=tilt_deg, pinned=pinned,
     )
     builder.add(
         "structural", "place_post",
         payload={"station_mm": station, "kind": kind, "surface": surface,
-                 "mounting": mounting, "sku": sku},
+                 "mounting": mounting, "sku": sku,
+                 **({"tilt_deg": tilt_deg} if tilt_deg else {})},
         scope_refs=[post.id],
         inputs=inputs + (override_nodes or []),
         governed_by=governed + (reinforcement_refs or []) + sku_refs,
@@ -553,6 +573,7 @@ def _generate_run(
                     payload={"override_id": mov.id, "station_mm": station},
                 ).id
             )
+        tilt_deg, tilt_ev = (0, None) if kind == "gate" else _post_tilt_at(topo, run, station)
         post = _make_post(
             builder, kb,
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
@@ -565,6 +586,7 @@ def _generate_run(
             pinned=pinned,
             forced_sku=forced_sku, forced_mounting=forced_mounting,
             override_nodes=override_nodes,
+            tilt_deg=tilt_deg,
         )
         strategy.posts.append(post)
 
@@ -637,6 +659,24 @@ def _generate_run(
         governed_by=vertical_refs,
         defeated=vertical_defeated,
     )
+
+    tilt_ev_check, _, _ = _interval_at(topo, run, length // 2, "post_tilt")
+    if (tilt_ev_check is not None and tilt_ev_check.payload.mode != "plumb"
+            and vertical == "stepped"):
+        t_node = builder.add(
+            "conflict", "tilted_stepped",
+            payload={"run_id": run.id, "mode": tilt_ev_check.payload.mode},
+        )
+        strategy.warnings.append(
+            StrategyWarning(
+                code="tilted_stepped", severity="warning",
+                message=f"Section {run.id} combines tilted posts with stepped panels "
+                        "— stepped panels sit level and normally pair with plumb "
+                        "posts; check the design intent.",
+                decision_ref=t_node.id,
+                params={"run_id": run.id, "mode": tilt_ev_check.payload.mode},
+            )
+        )
 
     fv_nodes: dict[str, str] = {}  # override id -> decision node id
 
@@ -864,6 +904,7 @@ def _generate_run(
                         payload={"override_id": mov.id, "station_mm": s},
                     ).id
                 )
+            tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
             post = _make_post(
                 builder, kb,
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
@@ -872,6 +913,7 @@ def _generate_run(
                 inputs=[layout_node.id],
                 forced_sku=forced_sku, forced_mounting=forced_mounting,
                 override_nodes=override_nodes,
+                tilt_deg=tilt_deg,
             )
             strategy.posts.append(post)
 
@@ -923,6 +965,10 @@ def _check_post_lengths(
         if not adjacent:
             continue
         exposed = max(top_of(sp) for sp in adjacent) - post.ground_z_mm
+        if post.tilt_deg:
+            import math
+
+            exposed = round(exposed / math.cos(math.radians(post.tilt_deg)))
         required = exposed + embed
         product = catalog.products.get(post.sku)
         available = (product.attrs.get("length_mm") if product else None)

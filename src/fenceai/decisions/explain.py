@@ -57,6 +57,11 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Runs meeting at node {node_id} disagree on base surface ({surfaces}); "
             "'{chosen}' was used."
         ),
+        "tilted_stepped": (
+            "Section {run_id} combines tilted posts ({mode}) with stepped panels — "
+            "check the design intent."
+        ),
+        "place_post_tilt": " Post tilted {tilt_deg}° from vertical.",
         "excessive_step": (
             "Step of {step_mm} mm exceeds the buildable maximum of {max_mm} mm — "
             "needs an engineered solution."
@@ -117,6 +122,11 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "קטעים שנפגשים בצומת {node_id} חלוקים לגבי משטח הבסיס ({surfaces}); "
             "נעשה שימוש ב-'{chosen}'."
         ),
+        "tilted_stepped": (
+            "הקטע {run_id} משלב עמודים נטויים ({mode}) עם פאנלים מדורגים — "
+            "בדקו את כוונת התכנון."
+        ),
+        "place_post_tilt": " העמוד נטוי {tilt_deg}° מהאנך.",
         "excessive_step": (
             'מדרגה של {step_mm} מ"מ חורגת מהמקסימום הניתן לביצוע ({max_mm} מ"מ) — '
             "נדרש פתרון הנדסי."
@@ -165,6 +175,8 @@ def explain_node(graph: DecisionGraph, node: DecisionNode, lang: str = "en") -> 
                 station_mm=p.get("station_mm"), kind=p.get("kind"),
                 mounting=p.get("mounting"), sku=p.get("sku"), surface=p.get("surface"),
             )
+            if p.get("tilt_deg"):
+                base += t["place_post_tilt"].format(tilt_deg=p["tilt_deg"])
         case "layout_spans":
             alt = p.get("alternatives") or []
             base = t["layout_spans"].format(segment=p.get("segment"), widths=p.get("widths"))
@@ -211,6 +223,8 @@ def explain_node(graph: DecisionGraph, node: DecisionNode, lang: str = "en") -> 
                 node_id=p.get("node_id"), surfaces=", ".join(p.get("surfaces", [])),
                 chosen=p.get("chosen"),
             )
+        case "tilted_stepped":
+            base = t["tilted_stepped"].format(run_id=p.get("run_id"), mode=p.get("mode"))
         case "excessive_step":
             base = t["excessive_step"].format(step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
         case "excessive_gap":

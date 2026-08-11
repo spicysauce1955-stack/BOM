@@ -100,6 +100,7 @@ const EVENT_LABEL_KEYS = {
   base_top: "events.base_top",
   elevation_sample: "events.elevation",
   height_intent: "events.height",
+  post_tilt: "events.post_tilt",
 };
 
 function eventLabel(payload) {
@@ -113,6 +114,9 @@ function eventLabel(payload) {
     return `${name} · z=<span class="num">${esc(payload.z_mm)}</span>`;
   if (payload.kind === "height_intent")
     return `${name} · <span class="num">${payload.height_mm}</span> mm`;
+  if (payload.kind === "post_tilt")
+    return `${name} · ${t("tilt." + payload.mode)}${payload.mode === "custom"
+      ? ` (<span class="num">${payload.tilt_deg}</span>°)` : ""}`;
   return name;
 }
 

@@ -560,10 +560,16 @@ function renderResult(chain) {
       const x = xOf(gsOf(entry, station));
       const y0 = yOf(post.ground_z_mm);
       const y1 = yOf(post.ground_z_mm + DEFAULT_POST_MM);
-      el("line", { x1: x, y1: y0, x2: x, y2: y1,
+      // tilted posts lean in the profile: horizontal offset = height * tan(tilt)
+      const lean = post.tilt_deg
+        ? (xOf(gsOf(entry, station) + Math.round(
+            DEFAULT_POST_MM * Math.tan(post.tilt_deg * Math.PI / 180)
+              * (entry.reversed ? -1 : 1))) - x)
+        : 0;
+      el("line", { x1: x, y1: y0, x2: x + lean, y2: y1,
         class: `profile-post${sel === post.id ? " selected" : ""}`,
         "data-id": post.id }, g);
-      const hit = el("line", { x1: x, y1: y0, x2: x, y2: y1,
+      const hit = el("line", { x1: x, y1: y0, x2: x + lean, y2: y1,
         class: "profile-post-hit", "data-id": post.id }, g);
       el("title", {}, hit).textContent = `${post.id}\n${post.sku} (${post.kind}, ${post.mounting})`;
       hit.addEventListener("click", () => {

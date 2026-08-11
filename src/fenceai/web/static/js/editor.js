@@ -415,11 +415,21 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
       html += `<label>${t("popover.kit")}<input id="pop-kit" value="GATE-KIT-1000"></label>`;
     }
   } else if (tool === "base") {
+    const currentTilt = run.interval_events.find((iv) => iv.payload.kind === "post_tilt");
+    const tiltMode = currentTilt?.payload.mode || "plumb";
     html += `<label>${t("popover.surface")}<select id="pop-surface">
       <option value="soil">${t("surface.soil")}</option>
       <option value="concrete">${t("surface.concrete")}</option>
       <option value="masonry_wall">${t("surface.masonry_wall")}</option>
     </select></label>`;
+    html += `<label>${t("popover.post_tilt")}<select id="pop-tilt">
+      <option value="plumb"${tiltMode === "plumb" ? " selected" : ""}>${t("tilt.plumb")}</option>
+      <option value="perpendicular"${tiltMode === "perpendicular" ? " selected" : ""}>${t("tilt.perpendicular")}</option>
+      <option value="custom"${tiltMode === "custom" ? " selected" : ""}>${t("tilt.custom")}</option>
+    </select></label>
+    <label id="pop-tilt-deg-row"${tiltMode === "custom" ? "" : " hidden"}>${t("popover.tilt_deg")}
+      <input id="pop-tilt-deg" type="number" min="-45" max="45"
+        value="${currentTilt?.payload.tilt_deg ?? 15}"></label>`;
   } else if (tool === "ground") {
     html += numField("popover.z", "pop-z", 0);
   } else if (tool === "height") {
@@ -450,12 +460,21 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
         kit_sku: document.getElementById("pop-kit").value.trim() || null,
       }, station);
     } else if (tool === "base") {
-      // one base per section: replace any existing base interval, whole run
+      // one base + one post-orientation per section: replace, whole run
       run.interval_events = run.interval_events.filter(
-        (iv) => iv.payload.kind !== "base");
+        (iv) => iv.payload.kind !== "base" && iv.payload.kind !== "post_tilt");
       addIntervalEvent(runId, {
         kind: "base", surface: document.getElementById("pop-surface").value,
       }, 0, runLength(run));
+      const tiltMode = document.getElementById("pop-tilt").value;
+      if (tiltMode !== "plumb") {
+        addIntervalEvent(runId, {
+          kind: "post_tilt", mode: tiltMode,
+          tilt_deg: tiltMode === "custom"
+            ? Math.max(-45, Math.min(45, Math.round(+document.getElementById("pop-tilt-deg").value || 0)))
+            : 0,
+        }, 0, runLength(run));
+      }
     } else if (tool === "ground") {
       addPointEvent(runId, {
         kind: "elevation_sample",
@@ -482,6 +501,9 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
     ev.stopPropagation();
     if (ev.key === "Escape") closePopover();
     else if (ev.key === "Enter") { ev.preventDefault(); save(); }
+  });
+  popover.querySelector("#pop-tilt")?.addEventListener("change", (ev) => {
+    document.getElementById("pop-tilt-deg-row").hidden = ev.target.value !== "custom";
   });
   popover.querySelector("#pop-cancel").addEventListener("click", closePopover);
   popover.querySelector("#pop-save").addEventListener("click", save);

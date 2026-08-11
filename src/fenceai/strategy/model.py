@@ -19,6 +19,7 @@ class Post(BaseModel):
     mounting: Literal["ground", "masonry"] = "ground"
     sku: str = ""
     ground_z_mm: Mm = 0
+    tilt_deg: int = 0  # degrees from vertical; 0 = plumb (the default and the norm)
     pinned: bool = False
 
 

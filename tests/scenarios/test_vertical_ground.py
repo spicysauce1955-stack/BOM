@@ -6,7 +6,7 @@ from __future__ import annotations
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import ElevationSamplePayload, Node, Run, Topology
 from fenceai.topology.station import ground_step_stations, ground_z, max_slope_permille
-from tests.conftest import add_point_event, straight_topology
+from tests.conftest import add_interval_event, add_point_event, straight_topology
 
 
 def cliff_topology(drop=2000):
@@ -167,3 +167,72 @@ def test_plumb_max_height_checked_when_rule_exists(knowledge, catalog):
     flagged = [w for w in r2.strategy.warnings if w.code == "max_height_exceeded"]
     assert len(flagged) == len(r2.strategy.spans)  # 1800 + 250 step = 2050 > 2000
     assert all(w.params["height_mm"] == 2050 and w.severity == "error" for w in flagged)
+
+
+def tilted_section(mode="perpendicular", deg=0, slope_z=1000):
+    from fenceai.topology.model import PostTiltPayload
+
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
+    add_point_event(topo, "run1", "z1", 6000, ElevationSamplePayload(z_mm=slope_z))
+    add_interval_event(topo, "run1", "tilt", 0, 6000,
+                       PostTiltPayload(mode=mode, tilt_deg=deg))
+    return topo
+
+
+def test_plumb_is_the_default(knowledge, catalog):
+    result = generate(straight_topology(6000), knowledge, catalog)
+    assert all(p.tilt_deg == 0 for p in result.strategy.posts)
+
+
+def test_perpendicular_posts_follow_the_slope(knowledge, catalog):
+    from tests.conftest import add_interval_event as _  # noqa: F401
+
+    result = generate(tilted_section("perpendicular"), knowledge, catalog)
+    s = result.strategy
+    line_posts = [p for p in s.posts if p.kind in ("line", "transition")]
+    # 1000/6000 gradient = 9.46 degrees -> 9
+    assert line_posts and all(p.tilt_deg == 9 for p in line_posts)
+    # node (end/corner) posts stay plumb — braced plumb even in tilted fences
+    assert all(p.tilt_deg == 0 for p in s.posts if p.run_ref.startswith("node:"))
+    # tilted + stepped mismatch surfaced (slope > 15% forces stepped mode)
+    assert any(w.code == "tilted_stepped" for w in s.warnings)
+    # decision payload carries the tilt
+    d = result.graph.nodes_for_element(line_posts[0].id)[0]
+    assert d.payload["tilt_deg"] == 9
+
+
+def test_custom_tilt_and_length_consequence(knowledge, catalog):
+    """A 30-degree lean makes the post axis longer: exposed/cos(30) + embed."""
+    result = generate(tilted_section("custom", deg=30), knowledge, catalog)
+    s = result.strategy
+    line_posts = [p for p in s.posts if p.kind == "line"]
+    assert all(p.tilt_deg == 30 for p in line_posts)
+    lengths = [w for w in s.warnings if w.code == "insufficient_post_length"]
+    assert lengths
+    # steepest case: exposed plumb 2050 -> axis 2367 + 600 = 2967 > 2600
+    assert max(w.params["required_mm"] for w in lengths) == 2967
+
+
+def test_gate_posts_stay_plumb_in_tilted_section(knowledge, catalog):
+    from fenceai.topology.model import GatePayload, PostTiltPayload
+
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "tilt", 0, 6000,
+                       PostTiltPayload(mode="custom", tilt_deg=20))
+    add_point_event(topo, "run1", "g", 2000, GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    result = generate(topo, knowledge, catalog)
+    gate_posts = [p for p in result.strategy.posts if p.kind == "gate"]
+    assert gate_posts and all(p.tilt_deg == 0 for p in gate_posts)  # gates hang plumb
+    line_posts = [p for p in result.strategy.posts if p.kind == "line"]
+    assert all(p.tilt_deg == 20 for p in line_posts)
+
+
+def test_tilt_clamped_at_45():
+    import pytest
+    from pydantic import ValidationError
+
+    from fenceai.topology.model import PostTiltPayload
+
+    with pytest.raises(ValidationError):
+        PostTiltPayload(mode="custom", tilt_deg=60)

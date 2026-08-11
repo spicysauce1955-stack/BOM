@@ -275,5 +275,12 @@
   "warning.excessive_gap": "הפאנל המדורג {element} משאיר מרווח של {gap_mm} מ\"מ מתחתיו (המגבלה {max_mm} מ\"מ)",
   "warning.max_height_exceeded": "{element} מגיע לגובה אנכי של {height_mm} מ\"מ בקצה הנמוך — מעל המגבלה של {max_mm} מ\"מ",
   "warning.gate_on_slope": "השער {element} יושב על שיפוע של {slope_permille}‰ (המגבלה {max_permille}‰) — יש לפלס את הקרקע כדי שהשער ייפתח",
-  "warning.insufficient_post_length": "העמוד {element} דורש {required_mm} מ\"מ אך {sku} באורך {available_mm} מ\"מ בלבד — יש לבחור עמוד ארוך יותר"
+  "warning.insufficient_post_length": "העמוד {element} דורש {required_mm} מ\"מ אך {sku} באורך {available_mm} מ\"מ בלבד — יש לבחור עמוד ארוך יותר",
+  "warning.tilted_stepped": "הקטע {run_id} משלב עמודים נטויים ({mode}) עם פאנלים מדורגים — פאנלים מדורגים מתאימים בדרך כלל לעמודים אנכיים; בדקו את התכנון",
+  "popover.post_tilt": "כיוון העמודים",
+  "tilt.plumb": "אנכי לחלוטין (ברירת מחדל)",
+  "tilt.perpendicular": "ניצב לקרקע",
+  "tilt.custom": "זווית מותאמת…",
+  "popover.tilt_deg": "נטייה (מעלות)",
+  "events.post_tilt": "כיוון העמודים"
 }

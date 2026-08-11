@@ -128,10 +128,15 @@ CandidateIntent { id, kind: height_intent|top_line|post_request|material_prefere
 Only `confirmed` intents feed generation (they materialize as events/knowledge with
 provenance back to the record + annotation).
 
-## The plumb assumption (2026-08-11)
+## Post orientation: plumb by default, tilt supported (2026-08-11)
 
-Posts are always PLUMB — vertical to earth, never perpendicular to sloped ground
-(construction reality). Sloped/vertical terrain is absorbed by panels (raked or
+Posts are PLUMB by default — vertical to earth (construction reality). A section
+may opt into tilted posts via a `post_tilt` interval event: `perpendicular`
+(derived from the local ground gradient, clamped ±45°) or `custom` (explicit
+degrees). Gate posts and node (corner/end) posts always stay plumb — gates must
+hang plumb to swing, corners are braced plumb. Tilt lengthens the post axis
+(exposed/cos θ in the length check) and combining tilt with stepped panels is
+surfaced as a design-intent warning (tilted_stepped). Sloped/vertical terrain is absorbed by panels (raked or
 stepped), never by tilting structure. Modeled consequences, all rule-driven:
 downhill post length checks (K-POST-EMBED + catalog `length_mm`), stepped-panel
 gaps (K-MAX-GAP), plumb max-height at the downhill end (`max_fence_height_mm`

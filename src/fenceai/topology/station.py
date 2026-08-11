@@ -164,6 +164,18 @@ def ground_z(topo: Topology, run: Run, station_mm: Mm) -> Mm:
 
 
 
+def local_slope_permille(topo: Topology, run: Run, station_mm: Mm) -> int:
+    """SIGNED local ground gradient (permille) at a station — the slope of the
+    sample segment containing it (0 across a vertical step; a step is a
+    discontinuity, not a grade)."""
+    samples = ground_samples(topo, run)
+    s = max(0, min(station_mm, run_length(topo, run)))
+    for (s0, z0), (s1, z1) in zip(samples, samples[1:]):
+        if s0 <= s <= s1 and s1 > s0:
+            return round((z1 - z0) * 1000 / (s1 - s0))
+    return 0
+
+
 def ground_step_stations(
     topo: Topology, run: Run, min_step_mm: Mm
 ) -> list[tuple[Mm, Mm]]:
