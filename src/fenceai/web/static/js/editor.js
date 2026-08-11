@@ -4,8 +4,9 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import {
-  clearGroup, el, nodeById, pointAtStation, runById, runLength, runPoints,
-  snapPoint, stationAtPoint, stationOfAnchor, toMmRaw, toPx,
+  clearGroup, el, endpointNodeAt, GROUND_TOL_MM, groundSamplesFor, groundZAt,
+  nodeById, pointAtStation, runAtPoint, runById, runLength, runPoints, snapPoint,
+  stationAtPoint, stationOfAnchor, toMmRaw, toPx,
 } from "./geom.js";
 import { pushSnapshot, redo, undo } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
@@ -24,7 +25,6 @@ const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin"];
 const BASE_COLORS = { soil: "#a16207", concrete: "#64748b", masonry_wall: "#dc2626" };
 const POST_COLORS = { line: "#2563eb", end: "#1e293b", corner: "#1e293b",
   junction: "#1e293b", gate: "#0891b2", transition: "#dc2626" };
-const HOVER_RUN_MM = 400; // cursor-readout proximity
 
 export function initEditor() {
   setupCanvas();
@@ -72,6 +72,10 @@ function updateToolButtons() {
     const btn = document.getElementById(`tool-${tool}`);
     if (btn) btn.classList.toggle("active", state.tool === tool);
   }
+  // cursors are affordances: only the select tool opens the length editor, so
+  // only it may promise a text caret over a run label (style.css)
+  const svg = document.getElementById("canvas");
+  if (svg) svg.dataset.tool = state.tool;
 }
 
 function updateStatus(cursor) {
@@ -110,6 +114,24 @@ function svgCoords(ev) {
   return toMmRaw(x, y);
 }
 
+// ONE answer per pixel, shared by the status readout and by every click: nearest
+// run by real distance (geom.runAtPoint), and only when nothing is in range does
+// the element under the pointer get a say — a decorated element (fat hit band,
+// strategy overlay) may reach past the geometry but never contradict it.
+// Before this, hover looped runs in array order while clicks took SVG paint
+// order, so the corner of an L answered two different runs (persona-lab B4).
+function runHitAt(ev) {
+  if (!state.project) return null;
+  const [mx, my] = svgCoords(ev);
+  const geo = runAtPoint(mx, my);
+  if (geo) return geo;
+  const tagged = ev.target.closest && ev.target.closest("[data-run]");
+  const run = tagged && runById(tagged.dataset.run);
+  if (!run) return null;
+  const { station, dist } = stationAtPoint(run, mx, my);
+  return { run, station, dist };
+}
+
 function setupCanvas() {
   const svg = document.getElementById("canvas");
   // empty-canvas CTA layer (created here, not in index.html: editor-owned DOM);
@@ -128,19 +150,17 @@ function setupCanvas() {
       clearLengthBuffer(); // typed buffer resets after each placed dot
       renderDraft();
     } else if (state.tool === "select") {
-      const hit = ev.target.closest && ev.target.closest(".run-hit");
-      if (hit) setSelection({ runId: hit.dataset.run });
+      // resolved geometrically, so the strategy overlay drawn over a run (span
+      // lines sit on the run's own line when it is vertical) can no longer
+      // swallow the selection click — the real cause of "dragging does nothing"
+      const hit = runHitAt(ev);
+      if (hit) setSelection({ runId: hit.run.id });
       else if (!ev.target.closest("#g-overlay") && !ev.target.closest("#g-handles"))
         setSelection({});
     } else if (EVENT_TOOLS.includes(state.tool)) {
-      const hit = ev.target.closest && ev.target.closest(".run-hit");
+      const hit = runHitAt(ev);
       closePopover();
-      if (hit) {
-        const run = runById(hit.dataset.run);
-        const [mx, my] = svgCoords(ev);
-        const station = stationAtPoint(run, mx, my).station;
-        openEventPopover(state.tool, run.id, station, ev.clientX, ev.clientY);
-      }
+      if (hit) openEventPopover(state.tool, hit.run.id, hit.station, ev.clientX, ev.clientY);
     }
   });
 
@@ -245,18 +265,12 @@ function onPointerMove(ev) {
     lastDrawMouse = [mx, my]; // remembered aim for typed-length commits
     renderRubberBand(mx, my, ev.altKey);
   }
-  // live cursor readout when hovering a run
-  let cursor = null;
-  if (state.project) {
-    for (const run of state.project.topology.runs) {
-      const hit = stationAtPoint(run, mx, my);
-      if (hit.dist <= HOVER_RUN_MM) {
-        cursor = { station_mm: hit.station, x_mm: Math.round(mx), y_mm: Math.round(my) };
-        break;
-      }
-    }
-  }
-  updateStatus(cursor);
+  // live cursor readout — the SAME resolver the click uses, so the station the
+  // status bar prints is the station the click records
+  const hit = runHitAt(ev);
+  updateStatus(hit
+    ? { station_mm: hit.station, x_mm: Math.round(mx), y_mm: Math.round(my) }
+    : null);
 }
 
 // ---------- select tool: drag / insert / delete ----------
@@ -378,6 +392,8 @@ function gateKitProducts(products) {
   );
   return Object.values(products).filter((p) => {
     if (kitComponents.has(p.sku)) return false;
+    // declaring an opening width IS declaring yourself a gate product
+    if (declaredOpening(p) !== null) return true;
     if ((p.attrs || {}).category === "gate") return true;
     if (/GATE/i.test(p.sku)) return true;
     if (p.consumption?.kind === "assembly_kit") {
@@ -388,10 +404,16 @@ function gateKitProducts(products) {
   });
 }
 
-// width encoded in the product (e.g. GATE-KIT-1000, BAR-GATE-1168) — sku first
-function widthFromProduct(p) {
-  const m = /\b(\d{3,4})\b/.exec(p.sku || "") || /\b(\d{3,4})\b/.exec(p.name || "");
-  return m ? +m[1] : null;
+// The opening a product DECLARES it fits — catalog DATA, exactly like posts'
+// attrs.length_mm and exactly what the generator reads (KIT_OPENING_ATTR in
+// strategy/generator.py). A sku is an opaque id: "GATE-KIT-1000" is one
+// catalog's naming accident and "BAR-GATE-1168" carries a leaf size, so parsing
+// digits out of either invents a width for somebody else's catalog. A product
+// that declares nothing is never second-guessed here, as in the generator.
+const KIT_OPENING_ATTR = "opening_width_mm";
+function declaredOpening(p) {
+  const v = p && (p.attrs || {})[KIT_OPENING_ATTR];
+  return Number.isFinite(v) ? v : null;
 }
 
 async function openEventPopover(tool, runId, station, clientX, clientY) {
@@ -403,20 +425,31 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
   let gateKits = [], defaultKit = null;
   if (tool === "gate") {
     gateKits = gateKitProducts(await loadCatalogProducts());
-    defaultKit = gateKits.find((p) => p.sku === "GATE-KIT-1000") || gateKits[0] || null;
+    defaultKit = gateKits[0] || null;   // catalog order; no sku is special
   }
-  // length fields carry mm in, display units out (units.js is the only converter)
+  // length fields carry mm in, display units out (units.js is the only converter).
+  // A null value opens the field EMPTY — save() then refuses it — which is how a
+  // figure nobody stated stays unstated instead of becoming a plausible default.
   const numField = (key, id, valueMm) =>
     `<label>${tu(key)}<input id="${id}" type="number" step="${inputStep()}"
-      value="${toDisplayValue(valueMm)}"></label>`;
+      value="${valueMm === null ? "" : toDisplayValue(valueMm)}"></label>`;
   const fieldMm = (id) => toMm(document.getElementById(id).value);
-  // base applies to the whole section: no station in the header, no range fields
+  // ground at a run END is the elevation of the SHARED corner node, not of one
+  // leg: recorded run-locally, the two legs of an L disagree about the same
+  // point and a climb gets priced as level ground (persona-lab B4)
+  const groundNode = tool === "ground" ? endpointNodeAt(run, station) : null;
+  // the header names what will actually be written: the corner node and ITS
+  // station, never the pixel that happened to be under the cursor
+  const shownStation = groundNode ? (station <= L / 2 ? 0 : L) : station;
+  // base and height apply to the whole section: no station in the header
+  const wholeRun = tool === "base" || tool === "height";
   let html = `<h4>${t("tool." + tool)}</h4>
-    <div class="meta"><bdi>${esc(runId)}</bdi>${tool === "base" ? ""
-      : ` · ${t("popover.station")} <span class="num">${esc(fmtLen(station))}</span>`}</div>`;
+    <div class="meta"><bdi>${esc(groundNode ? groundNode.id : runId)}</bdi>${wholeRun ? ""
+      : ` · ${t("popover.station")} <span class="num">${esc(fmtLen(shownStation))}</span>`}</div>`;
   if (tool === "gate") {
-    html += numField("popover.width", "pop-width",
-      (defaultKit && widthFromProduct(defaultKit)) || 1000);
+    // the opening the user is building: seeded from the kit's declared width when
+    // the catalog states one, left blank when it does not
+    html += numField("popover.width", "pop-width", declaredOpening(defaultKit));
     if (gateKits.length) {
       // options cannot hold nested markup: dir="auto" + an LRM before the price
       // keep the €-figure readable in RTL (in lieu of a .num span)
@@ -426,7 +459,8 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
         + ` — ‎€${(p.price_cents / 100).toFixed(2)}</option>`).join("")
         + `</select></label>`;
     } else {
-      html += `<label>${t("popover.kit")}<input id="pop-kit" value="GATE-KIT-1000"></label>`;
+      // no catalog reached us: free text, and no sku invented on the user's behalf
+      html += `<label>${t("popover.kit")}<input id="pop-kit" value=""></label>`;
     }
   } else if (tool === "base") {
     const currentTilt = run.interval_events.find((iv) => iv.payload.kind === "post_tilt");
@@ -445,11 +479,19 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
       <input id="pop-tilt-deg" type="number" min="-45" max="45"
         value="${currentTilt?.payload.tilt_deg ?? 15}"></label>`;
   } else if (tool === "ground") {
-    html += numField("popover.z", "pop-z", 0);
+    // seed the elevation that is already there (node z / interpolated ground),
+    // never a bare 0 that looks like an answer
+    html += numField("popover.z", "pop-z", groundNode
+      ? (groundNode.z_mm ?? 0)
+      : groundZAt(groundSamplesFor(run, L), station));
   } else if (tool === "height") {
-    html += numField("popover.start", "pop-start", station);
-    html += numField("popover.end", "pop-end", L);
+    // the whole section, like the base tool: seeding start from the clicked
+    // station left half a fence at the wrong height, with nothing to notice.
+    // Height leads — it is the tool's question, so it is what the auto-focus
+    // selects and what a typed number followed by Enter answers.
     html += numField("popover.height", "pop-height", 1800);
+    html += numField("popover.start", "pop-start", 0);
+    html += numField("popover.end", "pop-end", L);
   } else if (tool === "pin") {
     html += `<div class="meta">${t("popover.pin_hint")}</div>`;
   }
@@ -503,9 +545,24 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
         }, 0, runLength(run));
       }
     } else if (tool === "ground") {
-      addPointEvent(runId, {
-        kind: "elevation_sample", z_mm: values["pop-z"],
-      }, station);
+      if (groundNode) {
+        groundNode.z_mm = values["pop-z"];
+        // an endpoint sample on ANY leg overrides the node for that leg only —
+        // clear those, or the corner keeps two elevations (backend
+        // ground_samples(): a sample within GROUND_TOL_MM of an end wins)
+        for (const r of state.project.topology.runs) {
+          const at = r.start_node_id === groundNode.id ? 0
+            : r.end_node_id === groundNode.id ? runLength(r) : null;
+          if (at === null) continue;
+          r.point_events = r.point_events.filter((pe) =>
+            pe.payload.kind !== "elevation_sample"
+            || Math.abs(stationOfAnchor(r, pe.anchor) - at) > GROUND_TOL_MM);
+        }
+      } else {
+        addPointEvent(runId, {
+          kind: "elevation_sample", z_mm: values["pop-z"],
+        }, station);
+      }
     } else if (tool === "height") {
       addIntervalEvent(runId, {
         kind: "height_intent", height_mm: values["pop-height"], source: "user",
@@ -533,12 +590,15 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
   // kit choice drives the width field when the product encodes one
   const kitSel = popover.querySelector("select#pop-kit");
   if (kitSel) kitSel.addEventListener("change", () => {
-    const p = gateKits.find((g) => g.sku === kitSel.value);
-    const w = p && widthFromProduct(p);   // product widths are mm, like the catalog
-    if (w) popover.querySelector("#pop-width").value = toDisplayValue(w);
+    const w = declaredOpening(gateKits.find((g) => g.sku === kitSel.value));
+    // a kit that declares no opening leaves the user's figure alone
+    if (w !== null) popover.querySelector("#pop-width").value = toDisplayValue(w);
   });
+  // focus AND select: a caret parked at position 0 of a number field turns a
+  // typed 1000 into 10000 — ten metres, silently saveable (openLengthInput does
+  // the same, and every field this builds is pre-filled)
   const first = popover.querySelector("input, select, button");
-  if (first) first.focus();
+  if (first) { first.focus(); first.select?.(); }
   // blur = pointer down anywhere outside cancels (registered after this click)
   setTimeout(() => document.addEventListener("pointerdown", onOutsidePointer, true), 0);
 }
@@ -893,6 +953,10 @@ function renderTopology() {
     label.textContent = `${run.id} (${fmtLen(runLength(run))})`;
     el("title", {}, label).textContent = t("editor.length_tooltip");
     label.addEventListener("click", (ev) => {
+      // the length editor belongs to the select tool. Unguarded, the height tool
+      // shrank a 6 m run to 1800 mm because the label ate the click meant for the
+      // run — every other tool must see the canvas click it aimed at.
+      if (state.tool !== "select") return;
       ev.stopPropagation();
       openLengthInput(run.id);
     });
@@ -935,8 +999,11 @@ function renderOverlay() {
     if (!p0 || !p1) continue;
     const color = span.vertical === "stepped" ? "#7c3aed"
       : span.vertical === "raked" ? "#059669" : "#93c5fd";
+    // data-run: an overlay line lies ON its run when the run is vertical, so it
+    // must be able to name the run it decorates instead of eating the click
     const line = el("line", { x1: p0[0], y1: p0[1] - 8, x2: p1[0], y2: p1[1] - 8,
-      stroke: color, "stroke-width": 6, opacity: 0.75, cursor: "pointer" }, g);
+      stroke: color, "stroke-width": 6, opacity: 0.75, cursor: "pointer",
+      "data-run": span.run_ref }, g);
     line.addEventListener("click", () =>
       inspect(span.id, "inspect.span",
         { width_mm: span.width_mm, height_mm: span.height_mm, mode: span.vertical }));
@@ -946,7 +1013,8 @@ function renderOverlay() {
     const p1 = toPx(pointAtStation(gate.run_ref, gate.end_station_mm));
     if (!p0 || !p1) continue;
     const line = el("line", { x1: p0[0], y1: p0[1] - 8, x2: p1[0], y2: p1[1] - 8,
-      stroke: "#0891b2", "stroke-width": 6, "stroke-dasharray": "4 4", cursor: "pointer" }, g);
+      stroke: "#0891b2", "stroke-width": 6, "stroke-dasharray": "4 4",
+      cursor: "pointer", "data-run": gate.run_ref }, g);
     line.addEventListener("click", () => inspect(gate.id, "inspect.gate", { kit: gate.kit_sku }));
   }
   for (const post of s.posts) {

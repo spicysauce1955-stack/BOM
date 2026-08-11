@@ -72,6 +72,37 @@ export function stationAtPoint(run, xMm, yMm) {
   return best;
 }
 
+// Pointer tolerance for "this pixel belongs to that run", in world mm. It mirrors
+// HALF of .run-hit's stroke-width (style.css) so the band whose cursor a user can
+// see, the status readout and every click agree on one answer.
+export const RUN_HIT_PX = 8;
+export const RUN_HIT_MM = Math.round(RUN_HIT_PX / SCALE); // 178 mm
+
+// THE run resolver: nearest run to a world point, or null beyond tolMm. Paint
+// order must never decide which run a pixel belongs to — that is what made the
+// corner of an L record a slope on the wrong leg (persona-lab B4). Distances are
+// geometric, so an end-cap cannot swallow a neighbour's stations; exact ties fall
+// to the run that comes first in topology order, deterministically.
+export function runAtPoint(xMm, yMm, tolMm = RUN_HIT_MM) {
+  let best = null;
+  for (const run of state.project?.topology.runs || []) {
+    const hit = stationAtPoint(run, xMm, yMm);
+    if (hit.dist <= tolMm && (best === null || hit.dist < best.dist))
+      best = { run, station: hit.station, dist: hit.dist };
+  }
+  return best;
+}
+
+// The endpoint NODE a station falls on, or null for an interior station. A run
+// end is a shared corner: its elevation belongs to the node, not to one leg.
+export function endpointNodeAt(run, station, tolMm = RUN_HIT_MM) {
+  const L = runLength(run);
+  const tol = Math.min(tolMm, Math.max(Math.floor(L / 2), 0));
+  if (station <= tol) return nodeById(run.start_node_id);
+  if (station >= L - tol) return nodeById(run.end_node_id);
+  return null;
+}
+
 export function nearestNode(xMm, yMm, radiusMm, excludeId) {
   let best = null, bestD = radiusMm;
   for (const n of state.project.topology.nodes) {
@@ -145,6 +176,45 @@ export function stationOfAnchor(run, anchor) {
     ? Math.min(anchor.offset_mm, segLen)
     : Math.round((anchor.offset_mm * segLen) / Math.max(anchor.seg_len_at_authoring_mm, 1));
   return lens.slice(0, i).reduce((a, b) => a + b, 0) + offset;
+}
+
+// ---------- elevation model (mirrors backend ground_samples()) ----------
+export const GROUND_TOL_MM = 1; // NUMERIC_TOLERANCE_MM (units.py)
+
+// [{station, z, ev?, node?}] sorted by station: NODE elevations anchor the
+// endpoints — a shared corner is single-valued fence-wide — with interior
+// elevation_sample events between. An explicit event within GROUND_TOL_MM of an
+// endpoint overrides the node value (backwards compatible with event-only runs).
+export function groundSamplesFor(run, L = runLength(run)) {
+  const events = run.point_events
+    .filter((ev) => ev.payload.kind === "elevation_sample")
+    .map((ev) => ({
+      ev, station: Math.min(stationOfAnchor(run, ev.anchor), L), z: ev.payload.z_mm,
+    }))
+    .sort((a, b) => a.station - b.station);
+  const samples = [...events];
+  if (!events.some((e) => e.station <= GROUND_TOL_MM)) {
+    const n = nodeById(run.start_node_id);
+    samples.unshift({ node: n, station: 0, z: n?.z_mm ?? 0 });
+  }
+  if (!events.some((e) => Math.abs(e.station - L) <= GROUND_TOL_MM)) {
+    const n = nodeById(run.end_node_id);
+    samples.push({ node: n, station: L, z: n?.z_mm ?? 0 });
+  }
+  return samples.sort((a, b) => a.station - b.station);
+}
+
+// piecewise-linear ground, matching backend ground_z() (endpoints always present)
+export function groundZAt(samples, station) {
+  const last = samples[samples.length - 1];
+  const s = Math.max(samples[0].station, Math.min(station, last.station));
+  for (let i = 0; i + 1 < samples.length; i++) {
+    const a = samples[i], b = samples[i + 1];
+    if (a.station <= s && s <= b.station)
+      return b.station === a.station
+        ? a.z : Math.round(a.z + ((b.z - a.z) * (s - a.station)) / (b.station - a.station));
+  }
+  return last.z;
 }
 
 // ---------- SVG helpers ----------

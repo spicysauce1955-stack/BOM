@@ -104,9 +104,14 @@ th { background: #eef2f6; }
 #canvas { direction: ltr; } /* the plan canvas is never mirrored (spec §4) */
 
 /* ---------- select/draw editing grammar (Task 7) ---------- */
+/* half of stroke-width must stay in sync with RUN_HIT_PX in geom.js: that is the
+   band a click resolves against. BUTT, never round — a round cap turned the last
+   run's end into a disc over its neighbour's final stations (persona-lab B4). */
 .run-hit { stroke: transparent; stroke-width: 16; fill: none; cursor: pointer;
-  pointer-events: stroke; stroke-linecap: round; stroke-linejoin: round; }
-.run-label { cursor: text; }
+  pointer-events: stroke; stroke-linecap: butt; stroke-linejoin: round; }
+/* only the select tool opens the length editor — the caret is its promise */
+.run-label { cursor: default; }
+#canvas[data-tool="select"] .run-label { cursor: text; }
 .handle { fill: #fff; stroke: #2563eb; stroke-width: 2; cursor: move; }
 .handle.selected { fill: #2563eb; }
 .ghost { fill: #fff; stroke: #94a3b8; stroke-width: 1.5; opacity: 0.85; cursor: copy; }

@@ -6,7 +6,10 @@
 // NEVER mirrored in RTL (spec §3; #profile-svg is direction:ltr in CSS).
 
 import { esc } from "./api.js";
-import { clearGroup, el, nodeById, runById, runLength, runPoints, stationOfAnchor } from "./geom.js";
+import {
+  clearGroup, el, endpointNodeAt, groundSamplesFor, groundZAt, nodeById, runById,
+  runLength, runPoints, stationOfAnchor,
+} from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
@@ -22,7 +25,6 @@ const SY_BASE = 0.01;        // px per mm of elevation at 1x exaggeration
 const Z_SNAP = 10;           // mm snap for vertical edits
 const DEFAULT_POST_MM = 1800;
 const GAP_MM = 600;          // visual gap before a disconnected section
-const TOL_MM = 1;            // NUMERIC_TOLERANCE_MM (units.py)
 const STEP_SNAP_PX = 12;     // dragging a top dot within this of a neighbour snaps
                              // its pos to the neighbour's — that's how a STEP is made
 const HINT_LIFT_PX = 6;      // dashed creation-hint line sits this far above ground
@@ -90,41 +92,8 @@ function buildChain() {
 // run-local station -> global station
 const gsOf = (entry, s) => entry.offset + (entry.reversed ? entry.L - s : s);
 
-// ---------- elevation model (mirrors backend ground_samples()) ----------
-// [{station, z, ev? , node?}] sorted by station: node elevations anchor the
-// endpoints; interior elevation_sample events between; an explicit event
-// within TOL_MM of an endpoint overrides the node value.
-function groundSamplesFor(run, L) {
-  const events = run.point_events
-    .filter((ev) => ev.payload.kind === "elevation_sample")
-    .map((ev) => ({
-      ev, station: Math.min(stationOfAnchor(run, ev.anchor), L), z: ev.payload.z_mm,
-    }))
-    .sort((a, b) => a.station - b.station);
-  const samples = [...events];
-  if (!events.some((e) => e.station <= TOL_MM)) {
-    const n = nodeById(run.start_node_id);
-    samples.unshift({ node: n, station: 0, z: n?.z_mm ?? 0 });
-  }
-  if (!events.some((e) => Math.abs(e.station - L) <= TOL_MM)) {
-    const n = nodeById(run.end_node_id);
-    samples.push({ node: n, station: L, z: n?.z_mm ?? 0 });
-  }
-  return samples.sort((a, b) => a.station - b.station);
-}
-
-// piecewise-linear ground, matching backend ground_z() (endpoints always present)
-function groundZAt(samples, station) {
-  const last = samples[samples.length - 1];
-  const s = Math.max(samples[0].station, Math.min(station, last.station));
-  for (let i = 0; i + 1 < samples.length; i++) {
-    const a = samples[i], b = samples[i + 1];
-    if (a.station <= s && s <= b.station)
-      return b.station === a.station
-        ? a.z : Math.round(a.z + ((b.z - a.z) * (s - a.station)) / (b.station - a.station));
-  }
-  return last.z;
-}
+// the elevation model itself lives in geom.js (groundSamplesFor / groundZAt) —
+// the plan editor authors against the same samples this panel draws
 
 function wallProfiles(run, L) {
   return run.interval_events
@@ -686,8 +655,13 @@ function setupSvg() {
       const local = Math.max(0, Math.min(
         entry.reversed ? entry.offset + entry.L - gs : gs - entry.offset, entry.L));
       const z = snapZ(groundZAt(entry.samples, local));
+      // a section END is the shared corner node, which already has a handle and
+      // a single z: a run-local sample there would override the node for THIS
+      // leg only, and the two legs would part company at the same point
+      const node = endpointNodeAt(entry.run, Math.round(local));
       pushSnapshot("profile-add-sample");
-      addPointEvent(entry.run.id, { kind: "elevation_sample", z_mm: z }, local);
+      if (node) node.z_mm = z;
+      else addPointEvent(entry.run.id, { kind: "elevation_sample", z_mm: z }, local);
       saveTopology();
     } else if (cls.contains("profile-top-hint-hit")) {
       // create a base_top spanning the whole section, level at the clicked height

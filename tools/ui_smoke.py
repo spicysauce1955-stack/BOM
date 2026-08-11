@@ -32,6 +32,26 @@ def check(name: str, ok: bool) -> None:
     print(("PASS " if ok else "FAIL ") + name)
 
 
+def hover(c, x: float, y: float) -> None:
+    """Aim without clicking — the status readout follows the pointer, not clicks."""
+    c.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+    time.sleep(0.25)
+
+
+def type_text(c, text: str) -> None:
+    """Type into the focused field. Cdp.key() carries no `text`, so Chrome fires
+    the keydown but inserts nothing — useless for checking what a field holds."""
+    for ch in text:
+        vk = ord(ch.upper())
+        code = f"Digit{ch}" if ch.isdigit() else f"Key{ch.upper()}"
+        c.cmd("Input.dispatchKeyEvent", type="keyDown", key=ch, code=code, text=ch,
+              windowsVirtualKeyCode=vk, nativeVirtualKeyCode=vk)
+        c.cmd("Input.dispatchKeyEvent", type="keyUp", key=ch, code=code,
+              windowsVirtualKeyCode=vk, nativeVirtualKeyCode=vk)
+        time.sleep(0.05)
+    time.sleep(0.2)
+
+
 def main() -> int:
     # a stale server on our port would silently serve old code/data — abort loudly
     try:
@@ -117,6 +137,18 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(0.5)
         has_popover = c.js("!!document.querySelector('.popover')")
         check("gate popover opens", has_popover)
+        # the offered opening is the kit's DECLARED width (catalog attrs), never
+        # digits parsed out of its sku — another catalog's sku carries other
+        # numbers entirely (tools/catalogs/barrette.json: BAR-GATE-1168)
+        declared = c.js("""
+fetch('/api/catalog').then(r => r.json()).then(cat => {
+  const sku = document.getElementById('pop-kit')?.value;
+  const p = sku && cat.products[sku];
+  return p ? ((p.attrs || {}).opening_width_mm ?? null) : null;
+})""")
+        width_field = c.js("document.getElementById('pop-width')?.value")
+        check("the gate width offered is the kit's declared opening",
+              declared is not None and str(declared) == (width_field or ""))
         if has_popover:
             c.js("document.getElementById('pop-save').click(); 'saved'")
             time.sleep(1)
@@ -416,6 +448,62 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
   .then(r => r.json()).then(p => p.topology.runs.length)""")
         check("clear wipes persisted topology", n_runs3 == 0)
         check("clear wipes the draft layer too", draft_left == 0)
+
+        # --- the corner of an L: one answer per pixel (persona-lab B4) --------
+        # An L is TWO runs. The readout used to loop runs in array order while
+        # the click used SVG paint order, so the second leg's round end-cap
+        # swallowed the first leg's last ~200 mm: clicking there recorded the
+        # event on the wrong leg, and the first leg's final station could not be
+        # reached by any event tool.
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.canvas_px(0, 0))
+        c.click(*c.canvas_px(6000, 0))
+        c.click(*c.canvas_px(6000, 4000))
+        c.key("Enter")
+        time.sleep(1.2)
+        legs = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => p.topology.runs.map(r => r.id))""")
+        check("an L is drawn as two runs", len(legs or []) == 2)
+        first_leg = (legs or [""])[0]
+        # 126 mm short of the corner: inside the second leg's painted band, but
+        # geometrically on the first leg — and at the corner itself
+        stations = []
+        for offset in (126, 0):
+            c.click(*c.element_center("#tool-gate"))
+            # WHOLE pixels: CDP keeps sub-pixel coordinates on mouseMoved but not
+            # on mousePressed, and half a pixel is 12 mm on this canvas — the
+            # check is about hover vs click, not about CDP's rounding
+            x, y = (int(v) for v in c.canvas_px(6000 - offset, 0))
+            hover(c, x, y)
+            c.click(x, y)
+            time.sleep(0.5)
+            meta = c.js("document.querySelector('.popover .meta')?.textContent || ''")
+            num = c.js("document.querySelector('.popover .meta .num')?.textContent || ''")
+            readout = c.js("document.getElementById('statusbar').textContent || ''")
+            stations.append((meta, "".join(ch for ch in (num or "") if ch.isdigit()), readout))
+            c.js("document.getElementById('pop-cancel')?.click(); 'ok'")
+            time.sleep(0.2)
+        check("a click by the corner resolves to the leg the pointer is on",
+              all(first_leg and first_leg in m for m, _, _ in stations))
+        check("the first leg's final station is reachable",
+              all(s.isdigit() and int(s) > 5500 for _, s, _ in stations))
+        check("the status readout names the station the click records",
+              all(st in hov for _, st, hov in stations))
+
+        # --- an auto-focused field is SELECTED, not just focused --------------
+        # a caret parked at position 0 of a pre-filled number field turned a
+        # typed 1000 into 10000 — ten metres, saveable without a murmur
+        c.click(*c.element_center("#tool-gate"))
+        c.click(*c.canvas_px(3000, 0))
+        time.sleep(0.5)
+        prefilled = c.js("document.getElementById('pop-width')?.value")
+        type_text(c, "1234")
+        check("typing into the auto-focused popover field replaces its value",
+              bool(prefilled) and c.js("document.getElementById('pop-width').value") == "1234")
+        c.js("document.getElementById('pop-cancel')?.click(); 'ok'")
+        c.click(*c.element_center("#btn-clear"))
+        time.sleep(1)
 
         # --- locale: Hebrew is the default; toggle flips to English -----------
         dir0 = c.js("document.documentElement.dir")
