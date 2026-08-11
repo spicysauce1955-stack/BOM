@@ -66,7 +66,28 @@ with Advanced-JSON toggle, inventory table editor. 220 pytest + 27/27 smoke,
 272-key he/en parity. Research report menu retained for next rounds (#5-#10:
 adaptive UI, wizard spine, dimension pad, spatial warnings, segment table, aerial).
 
-## Persona lab (2026-08-11) — HARNESS COMPLETE, FIRST RUN DONE
+## Persona lab RUN 2 (2026-08-11) — COMPLETE, supersedes run 1
+Run 1's study was wrong: personas came from market research, not the architecture, so the
+central user (the expert correcting proposals, foundation §9) was never simulated and S11–S14
+went untested. Run 2 uses five roles from the architecture, each doing a real job twice, with
+the status bar visible, a `move` verb, 60 actions (look free), no checklists, no quit framing,
+and taxonomy assigned by the refuter instead of the persona.
+Report: `docs/reviews/persona-lab-run2-2026-08-11.md`. 31 confirmed / 13 refuted / 3 positives.
+**Works, verified:** immutable accepted quotes + supersede; impact preview across the portfolio;
+cut plans and typed lengths. `fulfillment` finished both jobs (site 2 in six actions).
+**Severity-4 blockers:** gate kit ignores opening width (`generator.py:431` — a 3500 mm gate
+priced as GATE-KIT-1000, accepted against a customer, and the decision graph attributes the SKU
+to a rule); rule `scope` accepted then dropped (`ctx["scope"] = {}` at generator.py 131/182/406/941
+— restricted approval and every stub-proposed candidate are no-ops); the expert loop is inert
+end-to-end (obstacle/foundation payloads exist but nothing authors them — S12 ⇄ code disagreement;
+`ai/stub.py:116` matches the English "foundation" only; `AddNote` has no consumers); status-bar
+station vs click hit-test disagree on an L (`.run-hit` round cap ≈178 mm disc at the corner) so a
+6 m climb is priced level. Cheapest real fix: `editor.js:541` needs `.select()` (3 personas,
+`1000` → `10000` reaches the DB).
+Eight harness defects found and fixed across both runs; one known-unfixed (native `<select>`
+needs keyboard driving). 346 pytest + 44/44 smoke.
+
+## Persona lab (2026-08-11) — RUN 1, SUPERSEDED (study design was wrong)
 `tools/persona_lab/` — six real-role personas (5 he + 1 en control, from Israeli fence-trade
 research) drive the live app over CDP perceiving only rendered UI (visible labels, opaque
 handles, no ids/API/DB/repo). Independent refuters reproduce every finding and assign severity.
