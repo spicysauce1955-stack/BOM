@@ -66,6 +66,22 @@ with Advanced-JSON toggle, inventory table editor. 220 pytest + 27/27 smoke,
 272-key he/en parity. Research report menu retained for next rounds (#5-#10:
 adaptive UI, wizard spine, dimension pad, spatial warnings, segment table, aerial).
 
+## Persona-lab run 2 backend fixes: B1/B2/B3 (2026-08-11) — COMPLETE
+Four defects, TDD, one commit each. **Rule scope now binds** — `bind_scope()` derives
+dimensions generically from generation facts (`project_id` run-wide; `surface`/`context`
+at the post-level slots), so restricted approvals and stub-proposed candidates can fire and
+specificity finally breaks ties; the impact preview binds each case's project. **A gate kit
+must fit its opening** — fit is catalog DATA (`Product.attrs["opening_width_mm"]`, like
+`length_mm` on posts), never parsed from a SKU: mismatch → `gate_kit_width_mismatch`, no
+`kit_sku` → selected from the catalog by declared width, nothing fits → `no_gate_kit` and no
+BOM line. **Gate-kit provenance is the gate event**, not K-GATE-REINF (which governs only the
+post upgrade); `governed_by` = "this rule decided this value" is now written down.
+**The stub proposer reads יסוד as well as "foundation"**, and promotion drops the
+"(candidate)" marker in every language.
+Refused as hardcoding: nothing — the two blocked dimensions (`series`, soil type) need a
+topology-model field, and gate-kit width needed a catalog attribute, which is data, not code.
+382 pytest + 49/49 smoke.
+
 ## Persona lab RUN 2 (2026-08-11) — COMPLETE, supersedes run 1
 Run 1's study was wrong: personas came from market research, not the architecture, so the
 central user (the expert correcting proposals, foundation §9) was never simulated and S11–S14
