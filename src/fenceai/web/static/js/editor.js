@@ -15,6 +15,7 @@ import {
   addIntervalEvent, addPointEvent, generateStrategy, on, saveTopology,
   setSelection, setTool, state,
 } from "./state.js";
+import { tagOf } from "./structure-data.js";
 import {
   currentUnit, enumWord, fmt, fmtLen, inputStep, parseTypedLength, toDisplayValue,
   toMm, tu, unitParams,
@@ -43,6 +44,8 @@ export function initEditor() {
     closePopover();          // its fields hold values in the OLD unit
     renderAllCanvas(); renderHandles(); updateStatus(); updateLengthChip();
   });
+  on("structure-loaded", renderOverlay);   // the tags the schedule gave us
+  on("fit-view", fitView);                 // the print sheet asks before it prints
   updateStatus();
 }
 
@@ -1030,6 +1033,11 @@ function renderOverlay() {
     line.addEventListener("click", () =>
       inspect(span.id, "inspect.span",
         { width_mm: span.width_mm, height_mm: span.height_mm, mode: span.vertical }));
+    const bayTag = tagOf(span.id);
+    if (bayTag)
+      el("text", { x: (p0[0] + p1[0]) / 2, y: (p0[1] + p1[1]) / 2 + 14, "font-size": 9,
+        "text-anchor": "middle", class: "elem-tag bay", "pointer-events": "none" }, g)
+        .textContent = bayTag;
   }
   for (const gate of s.gates) {
     const p0 = toPx(pointAtStation(gate.run_ref, gate.start_station_mm));
@@ -1056,6 +1064,10 @@ function renderOverlay() {
       "stroke-width": post.pinned ? 3 : 2, cursor: "pointer" }, g);
     el("title", {}, c).textContent =
       `${post.id}\n${post.sku} (${enumWord(post.kind)}, ${enumWord(post.mounting)})`;
+    const postTag = tagOf(post.id);
+    if (postTag)
+      el("text", { x: p[0] + 7, y: p[1] - 7, "font-size": 9, class: "elem-tag",
+        "pointer-events": "none" }, g).textContent = postTag;
     c.addEventListener("click", () =>
       inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm }));
   }

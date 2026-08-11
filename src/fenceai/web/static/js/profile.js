@@ -17,15 +17,18 @@ import { addIntervalEvent, addPointEvent, on, saveTopology, setSelection, state 
 import {
   enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu, unitLabel,
 } from "./units.js";
+import { sectionOf, tagOf } from "./structure-data.js";
 import {
   STEP_RISE_MM, enforceLocks, flatPoints, levelPoints, lockOf, matchEnds, setLock,
   topZAt, withStep,
 } from "./base-top.js";
 
 // viewBox geometry (preserveAspectRatio=none stretches to the container width)
-const W = 900, H = 180;
+const W = 900, H = 200;
 const PAD = 40;              // inline start/end padding, px (viewBox units)
-const BASE = H - 30;         // y of z==zMin (plan: BASE = height-30)
+const BASE = H - 50;         // y of z==zMin; the 50 below carries ticks + dimensions
+const DIM_Y = BASE + 30;     // chained centre-to-centre dimension string
+const DIM_TOTAL_Y = BASE + 43;  // one overall dimension under it
 const TOP_PAD = 12;          // px kept clear above the tallest element
 const SY_BASE = 0.01;        // px per mm of elevation at 1x exaggeration
 const Z_SNAP = 10;           // mm snap for vertical edits
@@ -83,6 +86,7 @@ export function initProfile() {
   on("selection-changed", render);
   on("locale-changed", () => { closeWallPopover(); render(); });
   on("units-changed", () => { closeWallPopover(); render(); });
+  on("structure-loaded", render);   // tags and dimensions come from the schedule
   render();
 }
 
@@ -279,7 +283,8 @@ const zOfY = (y) => Math.round(view.zMin + (BASE - y) / view.sy);
 const snapZ = (z) => Math.round(z / Z_SNAP) * Z_SNAP;
 
 // ---------- rendering ----------
-const GROUPS = ["p-grid", "p-result", "p-ground", "p-wall", "p-intent", "p-edit", "p-labels"];
+const GROUPS = ["p-grid", "p-result", "p-ground", "p-wall", "p-intent", "p-edit",
+  "p-dims", "p-labels"];
 
 function ensureGroups() {
   const svg = document.getElementById("profile-svg");
@@ -317,6 +322,7 @@ function render() {
   renderGround(chain);
   renderTops(chain);
   renderIntent(chain);
+  renderDimensions(chain);
   renderBaseBar(runById(focusedRunId()));
 }
 
@@ -571,6 +577,52 @@ function renderGrid(chain) {
   }
 }
 
+// AIA-minimal dimensioning: ONE chained string of centre-to-centre bay dimensions
+// plus one overall dimension per section. The closing bay carries the site
+// tolerance, so it is the one marked — every other dimension is exact by
+// construction and the crew knows where the slack lives.
+function renderDimensions(chain) {
+  const g = clearGroup("p-dims");
+  for (const entry of chain) {
+    const section = sectionOf(entry.run.id);
+    if (!section || section.setting_out.length < 2) continue;
+    const stations = section.setting_out.map((st) => st.station_mm);
+    const xAt = (s) => xOf(gsOf(entry, s));
+    // the CLOSING bay absorbs the tape: a crew sets out from the start, so
+    // whatever error accumulates lands in the last bay, not in a middle one
+    const closing = stations.length - 2;
+
+    for (let i = 0; i + 1 < stations.length; i++) {
+      const a = xAt(stations[i]), b = xAt(stations[i + 1]);
+      const [x0, x1] = a <= b ? [a, b] : [b, a];
+      const span = stations[i + 1] - stations[i];
+      el("line", { x1: x0, y1: DIM_Y, x2: x1, y2: DIM_Y, class: "profile-dim" }, g);
+      for (const x of [x0, x1])
+        el("line", { x1: x, y1: DIM_Y - 4, x2: x, y2: DIM_Y + 4, class: "profile-dim-tick" }, g);
+      if (x1 - x0 > 26) {
+        const label = el("text", { x: (x0 + x1) / 2, y: DIM_Y - 5, "text-anchor": "middle",
+          class: `profile-dim-label num${i === closing ? " closing" : ""}` }, g);
+        label.textContent = fmt(span) + (i === closing && stations.length > 2 ? " *" : "");
+        if (i === closing && stations.length > 2)
+          el("title", {}, label).textContent = t("profile.closing_bay");
+      }
+    }
+    // overall: the one dimension the crew checks the whole run against
+    const first = xAt(stations[0]), last = xAt(stations[stations.length - 1]);
+    const [ox0, ox1] = first <= last ? [first, last] : [last, first];
+    el("line", { x1: ox0, y1: DIM_TOTAL_Y, x2: ox1, y2: DIM_TOTAL_Y,
+      class: "profile-dim total" }, g);
+    for (const x of [ox0, ox1])
+      el("line", { x1: x, y1: DIM_TOTAL_Y - 4, x2: x, y2: DIM_TOTAL_Y + 4,
+        class: "profile-dim-tick" }, g);
+    el("text", { x: (ox0 + ox1) / 2, y: DIM_TOTAL_Y - 4, "text-anchor": "middle",
+      class: "profile-dim-label total num" }, g).textContent = fmtLen(section.length_mm);
+    if (stations.length > 2)
+      el("text", { x: ox1, y: DIM_TOTAL_Y + 6, "text-anchor": "end",
+        class: "profile-dim-legend" }, g).textContent = t("profile.closing_legend");
+  }
+}
+
 function renderGround(chain) {
   const g = clearGroup("p-ground");
   const edit = clearGroup("p-edit");
@@ -756,6 +808,12 @@ function renderResult(chain) {
         `profile-panel ${sp.vertical}${sel === sp.id ? " selected" : ""}`);
       shape.dataset.id = sp.id;
       el("title", {}, shape).textContent = `${sp.id} (${enumWord(sp.vertical)}, ${fmtLen(h)})`;
+      const bayTag = tagOf(sp.id);
+      if (bayTag) {
+        const bottom = sp.vertical === "stepped" ? Math.max(bz0, bz1) : bz0;
+        el("text", { x: (x0 + x1) / 2, y: yOf(bottom + h / 2), "text-anchor": "middle",
+          class: "elem-tag", "pointer-events": "none" }, g).textContent = bayTag;
+      }
       shape.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: sp.id });
         inspect(sp.id, "inspect.span",
@@ -809,6 +867,10 @@ function renderResult(chain) {
         class: "profile-post-hit", "data-id": post.id }, g);
       el("title", {}, hit).textContent =
         `${post.id}\n${post.sku} (${enumWord(post.kind)}, ${enumWord(post.mounting)})`;
+      const postTag = tagOf(post.id);
+      if (postTag)
+        el("text", { x: x + lean, y: y1 - 4, "text-anchor": "middle", class: "elem-tag",
+          "pointer-events": "none" }, g).textContent = postTag;
       hit.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: post.id });
         inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm });

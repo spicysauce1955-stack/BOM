@@ -2,7 +2,7 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import { currentLocale, t } from "./i18n.js";
-import { on, reloadProject, state } from "./state.js";
+import { emit, on, reloadProject, state } from "./state.js";
 import { fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitLabel } from "./units.js";
 
 // ---------- small DOM helpers (builder rows are DOM-built, no innerHTML) ----------
@@ -53,6 +53,7 @@ export function initTabs() {
       if (btn.dataset.tab === "knowledge") renderKnowledge();
       if (btn.dataset.tab === "review") renderCandidates();
       if (btn.dataset.tab === "bom") renderBom();
+      emit("tab-changed", btn.dataset.tab);   // other tabs own their own rendering
     }));
 
   document.getElementById("btn-add-ann").addEventListener("click", async () => {

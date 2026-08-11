@@ -24,6 +24,7 @@
     <button data-tab="annotations" data-i18n="tabs.annotations">Annotations</button>
     <button data-tab="knowledge" data-i18n="tabs.knowledge">Knowledge</button>
     <button data-tab="review" data-i18n="tabs.review">Review queue</button>
+    <button data-tab="structure" data-i18n="tabs.structure">Structure</button>
     <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
     <button data-tab="inventory" data-i18n="tabs.inventory">Inventory</button>
   </nav>
@@ -86,7 +87,7 @@
             </div>
             <div id="profile-base-bar" class="profile-base-bar"></div>
             <div id="profile-placeholder" class="meta"></div>
-            <svg id="profile-svg" viewBox="0 0 900 180" preserveAspectRatio="none"></svg>
+            <svg id="profile-svg" viewBox="0 0 900 200" preserveAspectRatio="none"></svg>
           </div>
         </div>
         <aside class="side-col">
@@ -113,6 +114,24 @@
         <button id="btn-add-ann" data-i18n="common.add">Add</button>
       </div>
       <div id="annotation-list"></div>
+    </section>
+
+    <!-- ============ structure tab ============ -->
+    <section id="tab-structure" class="tab">
+      <div id="print-title" class="print-title"></div>
+      <div class="panel" id="structure-head">
+        <h3 data-i18n="structure.title">Structure</h3>
+        <div class="toolbar">
+          <label><span data-i18n="structure.detail">Detail</span>
+            <select id="structure-detail">
+              <option value="installer" data-i18n="structure.detail.installer">Installer</option>
+              <option value="customer" data-i18n="structure.detail.customer">Customer</option>
+            </select></label>
+          <button id="btn-structure-print" data-i18n="structure.print">🖨 Print sheet</button>
+        </div>
+        <div id="structure-totals"></div>
+      </div>
+      <div id="structure-body"></div>
     </section>
 
     <!-- ============ knowledge tab ============ -->

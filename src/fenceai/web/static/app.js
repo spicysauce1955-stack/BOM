@@ -11,6 +11,8 @@ import { initProfile } from "./js/profile.js";
 import {
   createProject, loadProjects, on, openProject, state,
 } from "./js/state.js";
+import { initStructureData } from "./js/structure-data.js";
+import { initStructure } from "./js/structure.js";
 import { initTabs } from "./js/tabs.js";
 import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
@@ -58,6 +60,8 @@ async function main() {
   initEditor();
   initInspector();
   initTabs();
+  initStructureData();
+  initStructure();
   initProfile();
   initChecklist();
   setupHeader();

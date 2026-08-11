@@ -227,6 +227,136 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("the scale names its unit and the exaggeration",
               'מ"מ' in (axis_unit or "") and "×" in (axis_unit or ""))
 
+        # --- structure tab: setting out, bays, and what each consists of ------
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(1.5)
+        struct = c.js("document.getElementById('structure-body').textContent")
+        check("the structure tab lists setting out and bays",
+              all(w in (struct or "") for w in ["מקטע A", "P1", "B1", "סימון בשטח"]))
+        rows = c.js("document.querySelectorAll('#structure-body tr[data-element]').length")
+        check("every element has a row", (rows or 0) >= 8)
+        # the stations must be the ones the API reports, in order
+        stations = c.js("""
+[...document.querySelectorAll('#structure-body table')][0]
+  ? [...document.querySelectorAll('#structure-body tr[data-element]')]
+      .slice(0, 5).map(tr => tr.cells[1].textContent.trim())
+  : null""")
+        check("stations read as running distances from the section start",
+              stations and stations[0] == "0"
+              and stations == sorted(stations, key=lambda v: float(v)))
+        # a bay says what it is made of, with the cut length and the bar
+        parts_text = c.js("""
+[...document.querySelectorAll('#structure-body tr[data-element]')]
+  .map(tr => tr.textContent).join(' | ')""")
+        check("a bay lists its rails with the cut length and the bar",
+              "RAIL-3000" in (parts_text or "") and "חתך" in (parts_text or "")
+              and "#1" in (parts_text or ""))
+        check("consumables are itemised on the installer sheet",
+              "SCREW-S10" in (parts_text or "") and "CONC-25" in (parts_text or ""))
+        # clicking a row selects that element and explains it
+        c.js("""
+{
+  const row = [...document.querySelectorAll('#structure-body tr[data-element]')]
+    .find(tr => tr.dataset.element.startsWith('span@'));
+  row.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+}
+'ok'""")
+        time.sleep(1.2)
+        check("clicking a row selects the element and explains it",
+              bool(c.js("!!document.querySelector('#structure-body tr.selected')"))
+              and "מפתח" in (c.js("document.getElementById('inspector-body').textContent") or ""))
+        c.shot("12-structure-installer.png")
+        # tags on the drawings must be the SAME tags as in the schedule
+        tag_match = c.js("""
+(() => {
+  const row = [...document.querySelectorAll('#structure-body tr[data-element]')]
+    .find(tr => tr.dataset.element.startsWith('span@'));
+  if (!row) return null;
+  const tag = row.cells[0].textContent.trim();
+  const id = row.dataset.element;
+  document.querySelector('#tabs button[data-tab="canvas"]').click();
+  const drawn = [...document.querySelectorAll('#g-overlay text.elem-tag')]
+    .map(t => t.textContent);
+  const profileTags = [...document.querySelectorAll('#p-result text.elem-tag')]
+    .map(t => t.textContent);
+  document.querySelector('#tabs button[data-tab="structure"]').click();
+  return { tag, id, drawn, profileTags };
+})()""")
+        check("the plan canvas labels elements with the schedule's tags",
+              tag_match and tag_match["tag"] in tag_match["drawn"])
+        check("the side view uses the same tags",
+              tag_match and tag_match["tag"] in tag_match["profileTags"])
+        # the customer sheet describes fixings instead of counting them
+        c.js("""
+{
+  const sel = document.getElementById('structure-detail');
+  sel.value = 'customer';
+  sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.8)
+        customer = c.js("document.getElementById('structure-body').textContent")
+        check("the customer sheet names materials but not screw counts",
+              "POST-S" in (customer or "") and "SCREW-S10" not in (customer or "")
+              and "CONC-25" not in (customer or ""))
+        c.shot("12-structure-customer.png")
+        c.js("""
+{
+  const sel = document.getElementById('structure-detail');
+  sel.value = 'installer';
+  sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.5)
+        # the printable sheet: drawings AND schedules, no chrome. Chrome can render
+        # the print media without printing, so the stylesheet is testable.
+        # zoom the plan away from the fence, then print: the sheet must frame it
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.3)
+        cx, cy = c.canvas_px(1000, 0)
+        c.cmd("Input.dispatchMouseEvent", type="mouseWheel", x=cx, y=cy, deltaX=0, deltaY=600)
+        time.sleep(0.4)
+        vb_zoomed = c.js("document.getElementById('canvas').getAttribute('viewBox')")
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(0.5)
+        c.click(*c.element_center("#btn-structure-print"))
+        time.sleep(0.8)
+        vb_printed = c.js("document.getElementById('canvas').getAttribute('viewBox')")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        c.click(*c.element_center("#btn-fit"))
+        time.sleep(0.4)
+        vb_fit = c.js("document.getElementById('canvas').getAttribute('viewBox')")
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(0.5)
+        check("printing frames the plan on the fence first",
+              vb_printed != vb_zoomed and vb_printed == vb_fit)
+        c.cmd("Emulation.setEmulatedMedia", media="print")
+        time.sleep(0.5)
+        printed = c.js("""
+(() => {
+  const vis = (sel) => { const el = document.querySelector(sel);
+    return el ? getComputedStyle(el).display : null; };
+  return { header: vis('header'), tabs: vis('nav#tabs'), toolbar: vis('#toolbar'),
+           side: vis('.side-col'), canvasTab: vis('#tab-canvas'),
+           structureTab: vis('#tab-structure'), canvas: vis('svg#canvas'),
+           profile: vis('#profile-svg'), title: vis('.print-title'),
+           titleText: document.getElementById('print-title').textContent };
+})()""")
+        c.shot("13-print-sheet.png")
+        c.cmd("Emulation.setEmulatedMedia", media="")
+        check("printing drops the chrome",
+              printed["header"] == "none" and printed["tabs"] == "none"
+              and printed["toolbar"] == "none" and printed["side"] == "none")
+        check("the sheet carries both drawings and the schedules",
+              printed["canvasTab"] == "block" and printed["structureTab"] == "block"
+              and printed["canvas"] not in (None, "none")
+              and printed["profile"] not in (None, "none"))
+        check("the sheet has a title block naming the job and when it was printed",
+              printed["title"] == "block" and "smoke" in (printed["titleText"] or "")
+              and "הודפס" in (printed["titleText"] or ""))
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.3)
+
         # --- quotes: snapshot, freeze, accept ---------------------------------
         # save-quote opens an inline label form (no window.prompt anymore)
         c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
@@ -494,6 +624,17 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
   .map(d => d.textContent).join(' | ')""")
         check("switching back to mm shows the same length in mm",
               "2100" in (event_row or ""))
+
+        # dimension string: chained bay dimensions + one overall per section
+        dims = c.js("""
+(() => {
+  const labels = [...document.querySelectorAll('#p-dims text')].map(t => t.textContent);
+  return { count: document.querySelectorAll('#p-dims line').length, labels };
+})()""")
+        check("the side view carries a chained dimension string",
+              (dims["count"] or 0) >= 6
+              and sum("*" in l for l in dims["labels"]) == 2   # one closing bay per section
+              and any('מ"מ' in l for l in dims["labels"]))   # the overall dimension
 
         # --- side view: scope switch + base-top actions -----------------------
         c.click(*c.element_center("#btn-units"))   # drive this block in cm

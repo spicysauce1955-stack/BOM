@@ -99,9 +99,9 @@ th { background: #eef2f6; }
 .profile-header button:first-of-type { margin-inline-start: auto; }
 #profile.collapsed #profile-svg, #profile.collapsed #profile-placeholder,
 #profile.collapsed .profile-base-bar { display: none; }
-#profile-svg { width: 100%; height: 180px; direction: ltr; /* never mirrored */ }
+#profile-svg { width: 100%; height: 200px; direction: ltr; /* never mirrored */ }
 /* one section fills the panel: same drawing, far bigger drag targets */
-#profile.focused #profile-svg { height: 280px; }
+#profile.focused #profile-svg { height: 300px; }
 #profile-scope, #profile-section { font-size: 12px; padding: 2px 4px;
   border: 1px solid #b9c2cd; border-radius: 4px; max-inline-size: 190px; }
 
@@ -286,3 +286,53 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .strategy-summary .summary-line.meta { display: block; color: #64748b; font-size: 12px; }
 .strategy-summary .stat b { font-size: 15px; margin-inline-end: 3px; }
 .strategy-summary a { color: #2563eb; }
+
+/* ---------- structure tab: setting out, bays, and what each consists of ---- */
+.structure-section h4 { margin: 10px 0 4px; font-size: 13px; }
+.structure-section h4 .meta { font-weight: 400; font-size: 12px; }
+.structure-table { font-size: 12px; }
+.structure-table td, .structure-table th { padding: 4px 6px; vertical-align: top; }
+.structure-table tr[data-element] { cursor: pointer; }
+.structure-table tr[data-element]:hover { background: #f1f5f9; }
+.structure-table tr.selected { background: #dbeafe; }
+.structure-table .part { white-space: nowrap; }
+.customer-materials { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-block: 4px;
+  font-size: 12px; }
+#structure-totals .summary-line { display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: baseline; }
+#structure-totals .stat b { font-size: 15px; margin-inline-end: 3px; }
+
+/* schedule tags on the drawings, and the side view's dimension string */
+.elem-tag { fill: #1d4ed8; font-weight: 600; }
+.profile-dim { stroke: #94a3b8; stroke-width: 1; }
+.profile-dim.total { stroke: #475569; }
+.profile-dim-tick { stroke: #94a3b8; stroke-width: 1; }
+.profile-dim-label { font-size: 9px; fill: #475569; }
+.profile-dim-label.total { font-size: 9px; fill: #1d2733; font-weight: 600; }
+.profile-dim-label.closing { fill: #b45309; }
+.profile-dim-legend { font-size: 8px; fill: #b45309; }
+
+/* ---------- the printable sheet: drawings + schedules, no chrome ---------- */
+.print-title { display: none; }
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+  body { background: #fff; }
+  header, nav#tabs, #toolbar, .side-col, #statusbar, #warnings, #checklist,
+  #draft-actions, .profile-header, .profile-base-bar, #structure-head .toolbar,
+  #strategy-summary a, .canvas-col > .toolbar { display: none !important; }
+  /* the sheet is the drawings AND the schedules, whichever tab is on screen */
+  .tab { display: none !important; }
+  #tab-canvas, #tab-structure { display: block !important; }
+  #tab-canvas .canvas-row { display: block; }
+  .canvas-col { max-width: none; }
+  svg#canvas { height: 300px; border: 1px solid #cbd5e1; break-inside: avoid; }
+  #profile-svg { height: 230px; }
+  #profile, .panel { border: none; box-shadow: none; padding: 0; margin-block: 4px; }
+  .structure-section { break-inside: avoid; margin-block-start: 8px; }
+  .structure-table { font-size: 10px; }
+  .structure-table tr[data-element]:hover, .structure-table tr.selected { background: none; }
+  .print-title { display: block; border-block-end: 1px solid #1d2733; margin-block-end: 6px; }
+  .print-title-row { display: flex; gap: 14px; align-items: baseline; font-size: 12px; }
+  .print-title-row b { font-size: 15px; }
+}
+.elem-tag.bay { fill: #2563eb; font-weight: 500; }
