@@ -66,6 +66,30 @@ with Advanced-JSON toggle, inventory table editor. 220 pytest + 27/27 smoke,
 272-key he/en parity. Research report menu retained for next rounds (#5-#10:
 adaptive UI, wizard spine, dimension pad, spatial warnings, segment table, aerial).
 
+## Persona-lab run 2 batch A: frontend + fulfillment (2026-08-11) — COMPLETE
+**One resolver decides which run a pointer means** (`geom.runAtPoint`): hover used array
+order, clicks used SVG paint order, and `.run-hit`'s round cap put a 178 mm disc over the
+neighbouring leg — the status bar said one station and the click recorded another, so a
+climb was authored on the wrong leg and priced level, and the first leg's last 200 mm were
+unreachable. Linecap is butt; the strategy overlay can no longer swallow a click. A ground
+click at a run end writes the shared node's z, so two legs cannot contradict each other
+about one corner. `.run-label` opens the length editor only for the select tool; popover
+fields select on focus (`1000` had been reaching the DB as `10000`); the height popover
+spans the whole run; the gate picker reads `attrs.opening_width_mm` instead of parsing a SKU.
+**Cut plans are certified honestly**: added a counting lower bound, so `lower_bound =
+max(lp, counting)` and a provably optimal plan is no longer called "heuristic" — and no
+solver vocabulary reaches a BOM line (two S07 assertions had encoded the defect; the doc
+never promised the certificate, so the code was wrong). **The rule editor no longer traps
+you** — the escape hatch was gated on parsing the broken JSON. Impact failures, api.js
+alerts and the inventory back-label now honour `code + params`; projected remnants render.
+Documented rather than papered over: package overage is never projected, and inventory has
+no warehouse scope, so offcuts cannot reach the next job.
+382 pytest + 50/50 smoke.
+
+Note for archaeology: commit `0c100a6` ("bind rule scope") also carries `cutplan.py`,
+`test_cutplan.py` and `test_locale_bundles.py` changes from a concurrent agent, swept in by
+a `git add -A`. Nothing was lost; the message is just narrower than the diff.
+
 ## Persona-lab run 2 backend fixes: B1/B2/B3 (2026-08-11) — COMPLETE
 Four defects, TDD, one commit each. **Rule scope now binds** — `bind_scope()` derives
 dimensions generically from generation facts (`project_id` run-wide; `surface`/`context`
