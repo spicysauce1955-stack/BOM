@@ -23,12 +23,12 @@ def test_ports_never_collide_across_the_roster():
     assert len(set(flat)) == len(flat)
 
 
-def test_roster_is_the_six_from_the_spec():
+def test_roster_is_the_five_from_the_spec():
     from persona_lab import stack
 
     assert stack.PERSONAS == [
-        "kablan-gderot", "estimator", "sales-rep",
-        "procurement", "measurer", "export-engineer-en",
+        "expert", "knowledge-owner", "topology-author",
+        "fulfillment", "approver",
     ]
 
 
@@ -38,9 +38,9 @@ def booted(tmp_path):
 
     if not shutil.which("google-chrome"):
         pytest.skip("google-chrome not available")
-    run_dir = tmp_path / "kablan-gderot"
+    run_dir = tmp_path / "expert"
     run_dir.mkdir()
-    session = stack.start("kablan-gderot", 0, run_dir)
+    session = stack.start("expert", 0, run_dir)
     yield stack, run_dir, session
     stack.stop(run_dir)
 
@@ -57,7 +57,7 @@ def test_stack_serves_the_app_and_records_its_session(booted):
 
     on_disk = json.loads((run_dir / "session.json").read_text())
     assert on_disk["ws_url"].startswith("ws://")
-    assert on_disk["persona"] == "kablan-gderot"
+    assert on_disk["persona"] == "expert"
     assert Path(on_disk["db"]).exists()
 
 

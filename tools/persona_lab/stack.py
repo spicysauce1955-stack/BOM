@@ -23,9 +23,12 @@ from cdp import Cdp  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 
+# Roles, taken from the architecture rather than from market research: the
+# expert correcting proposals in context is the product's central user
+# (foundation §9), and every role below maps onto golden scenarios that exist.
 PERSONAS = [
-    "kablan-gderot", "estimator", "sales-rep",
-    "procurement", "measurer", "export-engineer-en",
+    "expert", "knowledge-owner", "topology-author",
+    "fulfillment", "approver",
 ]
 
 
