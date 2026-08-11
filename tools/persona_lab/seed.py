@@ -14,13 +14,19 @@ from __future__ import annotations
 import json
 import urllib.request
 
-# Four jobs a fencing company would plausibly have on the books: a straight run,
-# an L with a corner, a climb, and a stretch sitting on a built wall.
+# The jobs the run-2 briefs refer to by name, in the state the briefs describe.
+# `accepted` is what makes a job "delivered": the knowledge owner must be able
+# to see that a rule change would move it, and the approver needs a baseline to
+# diff against. Jobs still in planning are deliberately left un-accepted.
 PORTFOLIO = [
-    ("גדר רחוב הזית 3", [(0, 0, 0), (12000, 0, 0)], None),
-    ("גדר מגרש 12 — גבעת האלה", [(0, 0, 0), (6000, 0, 1000), (6000, 3000, 1000)], None),
-    ("גדר מושב ניר גלים", [(0, 0, 0), (14600, 0, 0)], None),
-    ("גדר רחוב הגפן 8", [(0, 0, 0), (7000, 0, 0)], "masonry_wall"),
+    # named in the knowledge-owner brief: 5 m section, still in planning
+    ("גדר רחוב הזית 3", [(0, 0, 0), (5000, 0, 0)], None, False),
+    # named in the knowledge-owner brief: 22 m, accepted and delivered
+    ("גדר שדרות הדקל", [(0, 0, 0), (22000, 0, 0)], None, True),
+    ("גדר מגרש 12 — גבעת האלה", [(0, 0, 0), (6000, 0, 1000), (6000, 3000, 1000)],
+     None, True),
+    ("גדר מושב ניר גלים", [(0, 0, 0), (14600, 0, 0)], None, False),
+    ("גדר רחוב הגפן 8", [(0, 0, 0), (7000, 0, 0)], "masonry_wall", False),
 ]
 
 
@@ -55,23 +61,27 @@ def _topology(points: list[tuple[int, int, int]], surface: str | None) -> dict:
     return {"nodes": nodes, "runs": runs}
 
 
-def seed(port: int, *, accept_quotes: bool = True) -> list[dict]:
-    """Create the portfolio, generate a strategy for each, and accept a quote.
+def seed(port: int) -> list[dict]:
+    """Create the portfolio, generate a strategy for each, quote the delivered
+    ones and accept those quotes.
 
     An accepted quote is what makes a later change legible as a delta — without
-    one there is no baseline to have moved away from.
+    one there is no baseline to have moved away from. Jobs still in planning
+    carry no accepted quote, which is exactly the distinction the knowledge
+    owner has to be able to act on.
     """
     made = []
-    for name, points, surface in PORTFOLIO:
+    for name, points, surface, accepted in PORTFOLIO:
         project = _post(port, "/api/projects", {"name": name})
         _post(port, f"/api/projects/{project['id']}/topology",
               _topology(points, surface), method="PUT")
         generated = _post(port, f"/api/projects/{project['id']}/generate")
         run_id = generated["result"]["run"]["id"]
-        entry = {"project_id": project["id"], "name": name, "run_id": run_id}
-        if accept_quotes:
+        entry = {"project_id": project["id"], "name": name, "run_id": run_id,
+                 "accepted": accepted}
+        if accepted:
             quote = _post(port, f"/api/runs/{run_id}/quote",
-                          {"label": f"הצעה ראשונה — {name}", "author": "seed"})
+                          {"label": f"הצעה ללקוח — {name}", "author": "seed"})
             _post(port, f"/api/quotes/{quote['id']}/accept")
             entry["quote_id"] = quote["id"]
         made.append(entry)

@@ -38,7 +38,20 @@ def test_every_portfolio_project_generates_and_is_quoted(seeded):
     assert len(made) == len(seed_portfolio())
     for entry in made:
         assert entry["run_id"]
-        assert entry["quote_id"]
+    # only the delivered jobs carry an accepted quote — that distinction is
+    # the whole point for the knowledge owner
+    assert [e["name"] for e in made if e.get("quote_id")] == [
+        "גדר שדרות הדקל", "גדר מגרש 12 — גבעת האלה"]
+
+
+def test_the_briefs_named_jobs_exist(seeded):
+    """The briefs name jobs by street. If the portfolio does not contain them,
+    a persona hunts for something absent and we record a fake dead end."""
+    _session, made = seeded
+    names = {e["name"] for e in made}
+
+    assert "גדר רחוב הזית 3" in names
+    assert "גדר שדרות הדקל" in names
 
 
 def test_the_portfolio_is_visible_to_the_app(seeded):
@@ -55,8 +68,9 @@ def test_the_portfolio_is_visible_to_the_app(seeded):
 def test_accepted_quotes_give_a_baseline_to_diff_against(seeded):
     session, made = seeded
 
+    delivered = next(e for e in made if e.get("quote_id"))
     quotes = json.load(urllib.request.urlopen(
-        f"http://localhost:{session['port']}/api/projects/{made[0]['project_id']}/quotes",
+        f"http://localhost:{session['port']}/api/projects/{delivered['project_id']}/quotes",
         timeout=10))
 
     assert any(q["status"] == "accepted" for q in quotes)
