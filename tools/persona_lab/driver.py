@@ -54,6 +54,8 @@ class Driver:
             origin=f"http://localhost:{session['cdp_port']}",
         )
         self.mid = 0
+        self.dialogs: list[str] = []
+        self._cmd("Page.enable")
 
     def _cmd(self, method: str, **params):
         self.mid += 1
@@ -61,9 +63,26 @@ class Driver:
         deadline = time.time() + 25
         while time.time() < deadline:
             msg = json.loads(self.ws.recv())
+            # A native alert() blocks the renderer, so every later CDP call
+            # times out and the tab reads as frozen — the app is fine, a real
+            # user just clicks OK. Answer it here and keep the text: the
+            # message ("saved") is often the only feedback the UI gives.
+            if msg.get("method") == "Page.javascriptDialogOpening":
+                params_ = msg.get("params", {})
+                self.dialogs.append(params_.get("message", ""))
+                self.mid += 1
+                self.ws.send(json.dumps({
+                    "id": self.mid, "method": "Page.handleJavaScriptDialog",
+                    "params": {"accept": True},
+                }))
+                continue
             if msg.get("id") == self.mid:
                 return msg.get("result", msg)
         raise TimeoutError(method)
+
+    def take_dialogs(self) -> list[str]:
+        seen, self.dialogs = self.dialogs, []
+        return seen
 
     def _eval(self, expr: str):
         r = self._cmd("Runtime.evaluate", expression=expr,
@@ -96,7 +115,10 @@ class Driver:
         data = self._cmd("Page.captureScreenshot", format="jpeg", quality=60)["data"]
         path = shots / shot_name
         path.write_bytes(base64.b64decode(data))
-        return str(path), outline_mod.render(items)
+        text = outline_mod.render(items)
+        for message in self.take_dialogs():
+            text = f'dialog (dismissed): "{message}"\n' + text
+        return str(path), text
 
     def click(self, target) -> None:
         x, y = self._point(target)
@@ -166,8 +188,9 @@ class Driver:
         time.sleep(0.4)
 
     def scroll(self, dy: int) -> None:
+        point = self._eval(outline_mod.SCROLL_POINT_JS) or [4, 500]
         self._cmd("Input.dispatchMouseEvent", type="mouseWheel",
-                  x=700, y=500, deltaX=0, deltaY=dy)
+                  x=point[0], y=point[1], deltaX=0, deltaY=dy)
         time.sleep(0.3)
 
     def wait(self, seconds: float) -> None:

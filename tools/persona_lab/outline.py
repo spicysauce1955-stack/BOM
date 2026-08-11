@@ -73,6 +73,22 @@ OUTLINE_JS = """
 })()
 """ % _COLLECT
 
+SCROLL_POINT_JS = """
+(() => {
+  // The plan and profile SVGs preventDefault() the wheel to zoom, by design.
+  // A wheel dispatched at a fixed centre point always lands on one of them,
+  // so the page never scrolls and the app reads as frozen. Aim off-canvas.
+  const svgs = [...document.querySelectorAll('svg')].map(e => e.getBoundingClientRect());
+  const W = innerWidth, H = innerHeight;
+  const clear = (x, y) => !svgs.some(
+    (r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
+  for (const y of [H * 0.5, H * 0.25, H * 0.75, H * 0.1])
+    for (const x of [4, W - 4, W * 0.5])
+      if (clear(x, y)) return [Math.round(x), Math.round(y)];
+  return [4, Math.round(H * 0.5)];
+})()
+"""
+
 POINT_JS = """
 (() => {
 %s

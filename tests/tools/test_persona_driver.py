@@ -5,6 +5,7 @@ or internal state."""
 from __future__ import annotations
 
 import shutil
+import time
 import sys
 from pathlib import Path
 
@@ -122,3 +123,34 @@ def test_clicking_a_handle_scrolls_it_into_view(drv):
     x, y = drv._point(handle)
 
     assert y >= 0, f"handle resolved off-viewport at y={y}"
+
+
+def test_scroll_avoids_the_canvas(drv):
+    """The plan SVG preventDefault()s the wheel to zoom. A wheel aimed at a
+    fixed centre always lands on it, the page never moves, and the app reads
+    as frozen — which is exactly what one persona reported."""
+    drv.look("13.jpg")
+    point = drv._eval(__import__("persona_lab.outline", fromlist=["x"]).SCROLL_POINT_JS)
+    inside = drv._eval("""
+(() => {
+  const p = %r;
+  return [...document.querySelectorAll('svg')].some((e) => {
+    const r = e.getBoundingClientRect();
+    return p[0] >= r.left && p[0] <= r.right && p[1] >= r.top && p[1] <= r.bottom;
+  });
+})()""" % (point,))
+
+    assert inside is False, f"scroll point {point} lands on a canvas"
+
+
+def test_a_native_alert_does_not_wedge_the_tab(drv):
+    """12 alert() call sites exist, one on a SUCCESSFUL save. Unanswered, it
+    blocks the renderer and every later CDP call times out."""
+    drv.look("14.jpg")
+    drv._eval("setTimeout(() => alert('נשמר'), 0); 1")
+    time.sleep(0.5)
+
+    _shot, text = drv.look("15.jpg")
+
+    assert 'dialog (dismissed): "נשמר"' in text
+    assert drv._eval("1 + 1") == 2, "renderer still blocked after the alert"
