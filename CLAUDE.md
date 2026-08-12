@@ -44,6 +44,10 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
 - **No AI inside deterministic computation** — AI sits behind the ports in `fenceai/ai/`;
   the stub keeps the whole system working offline (it understands the demo vocabulary in
   English AND Hebrew; keep it capped — it must not become a second rule engine).
+- **Read models are derived, never stored** (`fenceai/report/`): the structure sheet is a
+  pure function of `(topology, strategy, requirements, bom)` whose parts come from
+  INVERTING pegs — it must never recompute a quantity, and it refuses to lay a run out
+  over a topology it was not generated from (409 `topology_changed`).
 - User-visible warnings/critiques carry `code + params` (English `message` is fallback only);
   a new code needs `warning.<code>`/`critique.<code>` entries in BOTH locale bundles —
   `tests/web/test_locale_bundles.py` enforces this.
