@@ -15,7 +15,7 @@ from typing import Literal, get_args
 
 from pydantic import BaseModel
 
-from fenceai.catalog.model import Catalog
+from fenceai.catalog.model import Catalog, purchase_price_cents
 from fenceai.core.units import Cents, Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.cutplan import CutPiece, RemnantStock, plan_cuts
@@ -283,7 +283,7 @@ def _candidate_cost(sku: str, lines: list[RequirementLine], catalog, inventory) 
     product = catalog.products[sku]
     sem = product.consumption
     if sem.kind != "divisible_linear":
-        return product.price_cents * sum(l.engineering_qty for l in lines)
+        return purchase_price_cents(product) * sum(l.engineering_qty for l in lines)
     pieces = [
         CutPiece(length_mm=l.cut_length_mm, requirement_id=l.id)
         for l in lines for _ in range(l.engineering_qty)
@@ -295,7 +295,7 @@ def _candidate_cost(sku: str, lines: list[RequirementLine], catalog, inventory) 
         if i.kind == "remnant" and i.length_mm
     ]
     plan = plan_cuts(sku, sem, pieces, remnants)
-    return plan.new_bar_count * product.price_cents
+    return plan.new_bar_count * purchase_price_cents(product)
 
 
 def _waste(sku: str, lines, catalog, inventory) -> int:
