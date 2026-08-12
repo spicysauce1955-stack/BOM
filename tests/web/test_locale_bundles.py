@@ -139,10 +139,36 @@ def test_warning_renderer_converts_its_dynamic_key_params():
     """Warnings/critiques are localized by a COMPUTED key (`warning.${code}`), so
     the call-site guards above are blind to them — the one thing that keeps their
     `{u}` and their millimetres honest is localizedByCode passing params through
-    unitParams()."""
-    src = (STATIC / "js" / "editor.js").read_text()
-    fn = src[src.index("function localizedByCode"):src.index("function renderWarnings")]
+    unitParams().
+
+    It lives in `warnings.js` because three panels render the same shape (the
+    editor's strategy warnings, the BOM tab's supply warnings, the structure
+    sheet's); a copy per tab is how one of them would quietly stop converting."""
+    src = (STATIC / "js" / "warnings.js").read_text()
+    fn = src[src.index("export function localizedByCode"):
+             src.index("function labelledParams")]
     assert "unitParams(" in fn, "warning params must be unit-converted and carry {u}"
+
+
+def test_only_one_module_localizes_a_warning_by_code():
+    """A second copy of the code->sentence mapping is how the BOM tab and the
+    editor come to disagree about what `no_feasible_item` says."""
+    js_dir = STATIC / "js"
+    definers = [
+        p.name for p in [*js_dir.glob("*.js"), STATIC / "app.js"]
+        if "function localizedByCode" in p.read_text()
+    ]
+    assert definers == ["warnings.js"], definers
+
+
+def test_the_supply_gap_is_rendered_on_both_the_bom_and_structure_tabs():
+    """`Bom.warnings`, `StructureReport.warnings` and `StructureReport.unresolved`
+    were populated by the API and read by NO JS, so a bay with a part nothing can
+    supply produced a BOM and a setting-out sheet that were silently short a line
+    — and `warning.no_eligible_item` was an unreachable string in both bundles."""
+    for name in ("tabs.js", "structure.js"):
+        src = (STATIC / "js" / name).read_text()
+        assert "supplyProblemsHtml(" in src, name
 
 
 def test_no_empty_translations():

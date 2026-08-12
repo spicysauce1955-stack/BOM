@@ -16,6 +16,7 @@ import { inspect } from "./inspector.js";
 import { emit, on, setSelection, state } from "./state.js";
 import { getReport, isStale, loadStructure, staleKind } from "./structure-data.js";
 import { enumWord, fmt, fmtLen, tu, unitLabel } from "./units.js";
+import { supplyProblemsHtml } from "./warnings.js";
 
 let detail = "installer";
 
@@ -66,9 +67,14 @@ function render() {
   }
   renderPrintTitle(report);
   totals.innerHTML = renderTotals(report.totals);
-  body.innerHTML = report.sections
-    .map((s) => (detail === "customer" ? customerSection(s) : installerSection(s)))
-    .join("");
+  // A part nothing can supply is missing from every bay row below — this sheet
+  // goes to site, so it says so at the top rather than quietly listing a bay
+  // one rail short. The tags are already indexed here, so the sentence names
+  // the bay ("A/B3"), not the element id.
+  body.innerHTML = supplyProblemsHtml(report.warnings, report.unresolved)
+    + report.sections
+      .map((s) => (detail === "customer" ? customerSection(s) : installerSection(s)))
+      .join("");
   for (const row of body.querySelectorAll("[data-element]")) {
     row.addEventListener("click", () => {
       const runId = row.dataset.run;

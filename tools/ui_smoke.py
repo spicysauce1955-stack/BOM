@@ -1129,6 +1129,60 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.click(*c.element_center("#btn-clear"))
         time.sleep(1)
 
+        # --- a part nothing can supply is SAID, on both money views -----------
+        # Two calls a user can make from the catalog and knowledge editors (an
+        # 800 mm stock length, and a rail DefaultComponent aiming at it) used to
+        # make a saved run permanently unreadable: /bom, /structure and /quote
+        # all answered 400 with a raw English sentence out of the cut planner.
+        # The structure tab matched none of its known refusal reasons and said
+        # "generate a strategy to see how it is laid out" — false, there IS
+        # structure — and the BOM tab threw into an unhandled rejection and
+        # rendered nothing (which the "no uncaught page errors" check below
+        # would have caught, had anything in this suite ever reached the state).
+        c.js("""
+(async () => {
+  await fetch('/api/catalog/products', {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sku: 'RAIL-SHORT', name: 'Short rail',
+      consumption: {kind: 'divisible_linear', purchase_length_mm: 800},
+      price_cents: 1000})});
+  await fetch('/api/knowledge', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({object_id: 'K-RAIL-SHORT', type: 'fact',
+      title: 'short rail default',
+      actions: [{kind: 'default_component', role: 'rail', sku: 'RAIL-SHORT'}]})});
+  return 'ok';
+})()""")
+        c.js("document.getElementById('new-project-name').value = 'unsupplied'; 'ok'")
+        c.click(*c.element_center("#btn-new-project"))
+        time.sleep(1.5)
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.canvas_px(0, 0))
+        c.click(*c.canvas_px(6000, 0))
+        c.key("Enter")
+        time.sleep(1.2)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(3)
+        c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
+        time.sleep(2)
+        bom_text = c.js("document.getElementById('bom-body').textContent") or ""
+        check("the BOM tab names the part it cannot supply, localized",
+              "no_feasible_item" in bom_text and "RAIL-SHORT" in bom_text
+              and "לספק" in bom_text)
+        check("the BOM tab still prices what it CAN supply beside the gap",
+              (c.js("document.querySelectorAll('#bom-body table').length") or 0) >= 2)
+        c.shot("15-bom-unsupplied.png")
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(2)
+        struct_text = c.js("document.getElementById('structure-body').textContent") or ""
+        check("the structure sheet says the bay cannot be supplied, not 'generate a strategy'",
+              "לספק" in struct_text and "חשבו אסטרטגיה" not in struct_text)
+        check("the supply warning names the BAY, not a raw element id",
+              "A/B1" in struct_text and "span@run" not in struct_text)
+        c.shot("16-structure-unsupplied.png")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.5)
+
         # --- locale: Hebrew is the default; toggle flips to English -----------
         dir0 = c.js("document.documentElement.dir")
         check("Hebrew RTL is the default", dir0 == "rtl")

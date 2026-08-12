@@ -4,6 +4,7 @@ import { apiGet, apiSend, esc } from "./api.js";
 import { currentLocale, t } from "./i18n.js";
 import { emit, on, reloadProject, state } from "./state.js";
 import { fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitLabel } from "./units.js";
+import { supplyProblemsHtml } from "./warnings.js";
 
 // ---------- small DOM helpers (builder rows are DOM-built, no innerHTML) ----------
 function el(tag, attrs = {}, ...children) {
@@ -271,6 +272,11 @@ async function renderBom() {
         <button id="btn-quote-cancel">${t("common.cancel")}</button>
       </span>
     </div>`
+    // ABOVE the priced table, because it changes how that table must be read:
+    // an unresolved line is a part the fence needs and the total does not
+    // include. `bom.warnings` and `unresolved` were populated by the API and
+    // rendered by nothing, so the BOM was silently short a line.
+    + supplyProblemsHtml(data.bom.warnings, data.unresolved)
     + quotesHtml(quotes)
     + bomHtml(data.bom, products);
   const quoteForm = document.getElementById("quote-label-form");

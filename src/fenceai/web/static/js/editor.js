@@ -18,8 +18,9 @@ import {
 import { tagOf } from "./structure-data.js";
 import {
   currentUnit, enumWord, fmt, fmtLen, inputStep, parseTypedLength, toDisplayValue,
-  toMm, tu, unitParams,
+  toMm, tu,
 } from "./units.js";
+import { localizedByCode, warningRowHtml } from "./warnings.js";
 
 const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin"];
 
@@ -1073,19 +1074,6 @@ function renderOverlay() {
   }
 }
 
-// Localize a warning/critique by code: t("<prefix>.<code>", params) with each param
-// bidi-isolated (<bdi>); falls back to the server's English text when no key exists.
-// Backend params are mm — unitParams converts every `*_mm` and supplies {u}.
-function localizedByCode(prefix, code, params, fallback) {
-  const key = `${prefix}.${code}`;
-  const template = t(key);  // no params: placeholders stay intact for wrapped interpolation
-  if (template === key) return esc(fallback ?? code);
-  let s = esc(template);
-  for (const [k, v] of Object.entries(unitParams(params || {})))
-    s = s.replaceAll(`{${k}}`, `<bdi>${esc(String(v))}</bdi>`);
-  return s;
-}
-
 // What did the button actually produce? The overlay draws it and the BOM prices
 // it, but neither says it in words — so the strategy read as "something happened".
 function renderStrategySummary() {
@@ -1143,12 +1131,11 @@ function renderWarnings() {
   const div = document.getElementById("warnings");
   div.innerHTML = "";
   if (!state.result) return;
-  for (const w of state.result.strategy.warnings) {
-    const d = document.createElement("div");
-    d.className = `warning ${w.severity}`;
-    d.innerHTML = `⚠ [<span class="sku">${esc(w.code)}</span>] ${localizedByCode("warning", w.code, w.params, w.message)}`;
-    div.appendChild(d);
-  }
+  // the same row the BOM and structure tabs render for a supply warning — one
+  // shape, so a warning does not read differently depending on which tab it is
+  // seen from
+  for (const w of state.result.strategy.warnings)
+    div.insertAdjacentHTML("beforeend", warningRowHtml(w));
   for (const c of state.critique || []) {
     const d = document.createElement("div");
     d.className = "warning";
