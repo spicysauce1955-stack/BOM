@@ -15,8 +15,8 @@
 
 import { esc } from "./api.js";
 import { t } from "./i18n.js";
-import { tagOf } from "./structure-data.js";
-import { fmtLen, unitParams } from "./units.js";
+import { CONSUMABLE_ROLES, tagOf } from "./structure-data.js";
+import { fmtLen, roleWord, unitParams } from "./units.js";
 
 // Localize a warning/critique by code: t("<prefix>.<code>", params) with each
 // param bidi-isolated (<bdi>); falls back to the server's English text when no
@@ -41,9 +41,19 @@ export function localizedByCode(prefix, code, params, fallback) {
 const label = (elementId) => tagOf(elementId) || elementId;
 
 function labelledParams(warning) {
+  const p = { ...(warning.params || {}) };
   const refs = warning.element_refs || [];
-  if (!refs.length) return warning.params;
-  return { ...warning.params, pegs: refs.map(label).join(", ") };
+  if (refs.length) p.pegs = refs.map(label).join(", ");
+  if ("slot_key" in p) {
+    // The slot says WHICH rail of the panel this is, which is worth saying when
+    // a panel has a top and a bottom one — and is noise when it does not.
+    // M-LEGACY has a single rail slot whose key IS the role, so the sentence
+    // read "rail in rail". The suffix is a locale string, not punctuation glued
+    // on here, so a language that brackets differently still can.
+    p.slot = p.slot_key && p.slot_key !== p.role
+      ? t("supply.slot_suffix", { slot_key: p.slot_key }) : "";
+  }
+  return p;
 }
 
 export function warningRowHtml(warning) {
@@ -53,22 +63,37 @@ export function warningRowHtml(warning) {
     + `⚠ [<span class="sku">${esc(warning.code)}</span>] ${body}</div>`;
 }
 
+const isConsumable = (role) => CONSUMABLE_ROLES.has(role);
+
 // The whole "this part has no supplier" story, as one panel: why, and which
 // lines are consequently missing from the numbers beside it. Empty string when
 // there is nothing to say, so a caller can concatenate it unconditionally.
-export function supplyProblemsHtml(warnings, unresolved) {
-  const list = warnings || [];
-  const lines = unresolved || [];
-  if (!list.length && !lines.length) return "";
-  let html = `<div class="panel"><h3>${esc(t("supply.title"))}</h3>`
+//
+// `customer: true` follows the customer sheet's rule rather than opting out of
+// it: fixings and concrete are DESCRIBED, never itemised, so an unsuppliable
+// screw becomes "some fixings cannot be supplied" instead of "screw · 96" on a
+// proposal. The customer is still told; they are not told the screw count.
+export function supplyProblemsHtml(warnings, unresolved, { customer = false } = {}) {
+  const all = warnings || [];
+  const allLines = unresolved || [];
+  if (!all.length && !allLines.length) return "";
+
+  const list = customer ? all.filter((w) => !isConsumable(w.params?.role)) : all;
+  const lines = customer ? allLines.filter((l) => !isConsumable(l.role)) : allLines;
+  const hiddenConsumables = customer
+    && (all.length !== list.length || allLines.length !== lines.length);
+
+  let html = `<div class="panel supply-problems"><h3>${esc(t("supply.title"))}</h3>`
     + `<div class="meta">${esc(t("supply.hint"))}</div>`;
   for (const w of list) html += warningRowHtml(w);
+  if (hiddenConsumables)
+    html += `<div class="warning">${esc(t("supply.consumables_unsupplied"))}</div>`;
   if (lines.length) {
     html += `<table><tr><th>${esc(t("supply.part"))}</th>`
       + `<th>${esc(t("supply.qty"))}</th><th>${esc(t("supply.needs"))}</th>`
       + `<th>${esc(t("supply.where"))}</th></tr>`;
     for (const line of lines) {
-      html += `<tr><td>${esc(line.role)}`
+      html += `<tr><td>${esc(roleWord(line.role))}`
         // the slot names WHICH rail of the panel this is; M-LEGACY has one, and
         // its key is the role, so printing both read "rail rail"
         + (line.slot_key && line.slot_key !== line.role
@@ -77,7 +102,8 @@ export function supplyProblemsHtml(warnings, unresolved) {
         + `<td class="num">${line.cut_length_mm ? esc(fmtLen(line.cut_length_mm)) : ""}</td>`
         + `<td><bdi class="meta">${esc((line.pegs || []).map(label).join(", "))}</bdi></td></tr>`;
     }
-    html += `</table><div class="meta">${esc(t("supply.quote_blocked"))}</div>`;
+    html += `</table>`;
   }
+  if (!customer) html += `<div class="meta">${esc(t("supply.quote_blocked"))}</div>`;
   return html + "</div>";
 }

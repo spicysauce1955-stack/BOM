@@ -79,6 +79,17 @@ export function enumWord(value) {
   return word === key ? value : word;   // unknown value: show it raw, never blank
 }
 
+// What a requirement IS — post | cap | concrete | rail | screw | infill | spacer |
+// gate_kit (`demand/derive.py:RequirementLine.role`). Its own lexicon rather than
+// a few more `enum.*` keys, because the two vocabularies COLLIDE: `concrete` is a
+// base surface AND a role, and "the slab it stands on" is not "the bag you pour".
+// Same mechanism as enumWord, one namespace along.
+export function roleWord(value) {
+  const key = `role.${value}`;
+  const word = t(key);
+  return word === key ? value : word;   // unknown role: show it raw, never blank
+}
+
 // Display params for a template: every `*_mm` param converts to the display unit,
 // enum params become words in the current language, and `{u}` carries the unit
 // label — so a locale string writes "{width_mm} {u}" once and works in both units.
@@ -86,6 +97,9 @@ export function unitParams(params = {}) {
   const out = { u: unitLabel() };
   for (const [k, v] of Object.entries(params)) {
     if (k.endsWith("_mm")) out[k] = toDisplayValue(v);
+    // supply warnings put the role in the middle of a Hebrew sentence, so a raw
+    // "rail" there is untranslated English in a Hebrew-first UI
+    else if (k === "role") out[k] = roleWord(v);
     else if (ENUM_PARAMS.has(k)) {
       // backend warning params arrive pre-joined ("soil, masonry_wall") — map each
       out[k] = Array.isArray(v) ? v.map(enumWord).join(", ")
