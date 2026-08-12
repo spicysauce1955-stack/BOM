@@ -87,13 +87,22 @@ def resolve_supply(
 
         pending.append(line)
 
+    # Group by the full eligibility SIGNATURE — sku, priority and approval —
+    # not just the set of usable skus. Two lines can be eligible for the same
+    # skus but disagree about which one they prefer (opposite priority
+    # order); grouping on sku alone would merge them and answer both with
+    # whichever line happened to be lines[0], silently misreporting the
+    # other's decision. Same sku set + same priorities + same approvals is
+    # still "one demand", so it is still answered once.
     groups: dict[tuple, list[RequirementLine]] = {}
     for line in pending:
-        key = tuple(sorted(m.sku for m in _usable(line.eligibility.members, approvals)))
+        usable_members = _usable(line.eligibility.members, approvals)
+        key = tuple(sorted((m.sku, m.priority, m.approval) for m in usable_members))
         groups.setdefault(key, []).append(line)
 
     for key, lines in sorted(groups.items()):
-        usable = [m for m in lines[0].eligibility.members if m.sku in key]
+        usable = [m for m in lines[0].eligibility.members
+                  if (m.sku, m.priority, m.approval) in key]
         chosen = _choose(usable, lines, catalog, inventory, preset)
         for line in lines:
             line.sku = chosen.sku
@@ -134,6 +143,10 @@ def _candidate_cost(sku: str, lines: list[RequirementLine], catalog, inventory) 
 
 
 def _waste(sku: str, lines, catalog, inventory) -> int:
+    """Only ever called for a candidate `_choose` already proved feasible
+    (see `_choose`'s `feasible` filter) — a sku that costs `_INFEASIBLE` (a
+    piece too long for the stock, or missing from the catalog entirely) never
+    reaches here, so `plan_cuts` never sees a piece it would raise on."""
     product = catalog.products[sku]
     sem = product.consumption
     if sem.kind != "divisible_linear":
@@ -146,14 +159,38 @@ def _waste(sku: str, lines, catalog, inventory) -> int:
 
 def _choose(usable, lines, catalog, inventory, preset):
     """One member: no decision. More than one: the choice is coupled to the cut
-    plan — stock lengths cannot be ranked without planning the cuts (Task 8)."""
+    plan — stock lengths cannot be ranked without planning the cuts (Task 8).
+
+    Feasibility is resolved FIRST and filters the field before any other tier
+    runs: an unusable candidate (piece longer than its stock, or a sku absent
+    from the catalog) must lose gracefully under every preset, never win on
+    priority, and never reach a later tier's helper (`_waste`) with a sku it
+    can't plan for. Filtering here — rather than folding `_INFEASIBLE` into
+    the rank tuple — makes it structurally impossible for a third tier added
+    later to forget this guard: whatever it does, it only ever sees skus
+    already proven buildable.
+    """
     if len(usable) == 1:
         return usable[0]
 
-    def rank(m):
-        cost = _candidate_cost(m.sku, lines, catalog, inventory)
-        if preset == "honour_priority":
-            return (m.priority, cost, _waste(m.sku, lines, catalog, inventory), m.sku)
-        return (cost, _waste(m.sku, lines, catalog, inventory), m.priority, m.sku)
+    costs = {m.sku: _candidate_cost(m.sku, lines, catalog, inventory) for m in usable}
+    feasible = [m for m in usable if costs[m.sku] < _INFEASIBLE]
+    if not feasible:
+        # every candidate is unusable — no good answer exists; fall back to
+        # the full field so the ordinary tie-break still yields a stable,
+        # deterministic pick rather than an exception. `rank` below still
+        # never calls `_waste` on one of these, since none has a cost under
+        # `_INFEASIBLE`.
+        feasible = usable
 
-    return min(usable, key=rank)
+    def rank(m):
+        cost = costs[m.sku]
+        # `_waste` plans real cuts for `sku` — only safe once `_candidate_cost`
+        # has already proved the sku buildable; an infeasible candidate (only
+        # reachable via the all-infeasible fallback above) gets no waste tier.
+        waste = _waste(m.sku, lines, catalog, inventory) if cost < _INFEASIBLE else 0
+        if preset == "honour_priority":
+            return (m.priority, cost, waste, m.sku)
+        return (cost, waste, m.priority, m.sku)
+
+    return min(feasible, key=rank)

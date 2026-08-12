@@ -4,6 +4,7 @@ the line simply gains its SKU; with more than one, the choice is cost-driven
 resolve — stock lengths that cannot be ranked by nominal length alone)."""
 
 from fenceai.catalog.demo import demo_catalog
+from fenceai.catalog.model import Catalog, DivisibleLinear, Product
 from fenceai.demand.derive import RequirementLine
 from fenceai.fencemodel.model import Eligibility, EligibleItem
 from fenceai.fulfillment.supply import resolve_supply
@@ -129,3 +130,82 @@ def test_a_blank_sku_can_never_reach_requirements_even_in_a_mixed_batch():
     assert [w.code for w in out.warnings] == [
         "no_eligible_item", "substitute_needs_approval",
     ]
+
+
+# --- fix round 1: infeasible candidates must lose gracefully, never crash ----
+
+_FEASIBILITY_CATALOG = Catalog.of(
+    Product(sku="GOOD", name="Good rail",
+            consumption=DivisibleLinear(purchase_length_mm=3000, kerf_mm=3),
+            price_cents=1000),
+    Product(sku="SHORT", name="Too-short rail",
+            consumption=DivisibleLinear(purchase_length_mm=1000, kerf_mm=3),
+            price_cents=500),
+)
+
+
+def test_a_too_short_candidate_loses_without_crashing():
+    """SHORT (1000 mm stock) cannot hold a 1500 mm piece at all: 1500+3=1503 >
+    1000+3=1003. That candidate must rank last (infinite cost), not blow up
+    plan_cuts/_waste with a piece it was never built to hold. GOOD (3000 mm)
+    needs 1 bar for the single 1500 mm cut: 1 * 1000c = 1000c."""
+    line = _line(engineering_qty=1, eligibility=Eligibility(members=[
+        EligibleItem(sku="GOOD", priority=1),
+        EligibleItem(sku="SHORT", priority=2),
+    ]))
+    out = resolve_supply([line], _FEASIBILITY_CATALOG, preset="least_cost")
+    assert out.requirements[0].sku == "GOOD"
+    assert out.decisions[0]["chosen"] == "GOOD"
+    assert out.decisions[0]["rejected"] == ["SHORT"]
+
+
+def test_a_candidate_missing_from_the_catalog_loses_without_crashing():
+    """GHOST names a sku the catalog has never heard of — an authoring gap,
+    not a code path that should ever raise KeyError out of resolve_supply."""
+    line = _line(engineering_qty=1, eligibility=Eligibility(members=[
+        EligibleItem(sku="GOOD", priority=1),
+        EligibleItem(sku="GHOST", priority=2),
+    ]))
+    out = resolve_supply([line], _FEASIBILITY_CATALOG, preset="least_cost")
+    assert out.requirements[0].sku == "GOOD"
+    assert out.decisions[0]["chosen"] == "GOOD"
+    assert out.decisions[0]["rejected"] == ["GHOST"]
+
+
+# --- fix round 1: grouping must not drop a line's own priority -------------
+
+_TWO_RAILS_CATALOG = Catalog.of(
+    Product(sku="RAIL-3000", name="Rail stock 3000",
+            consumption=DivisibleLinear(purchase_length_mm=3000, kerf_mm=3),
+            price_cents=1800),
+    Product(sku="RAIL-3050", name="Rail stock 3050",
+            consumption=DivisibleLinear(purchase_length_mm=3050, kerf_mm=3),
+            price_cents=1850),
+)
+
+
+def test_two_lines_with_opposite_priority_order_each_get_their_own_choice():
+    """Both lines are eligible for the same two skus, but line1 prefers
+    RAIL-3000 first and line2 prefers RAIL-3050 first — opposite priority
+    orders, so they are different demands and must land in different groups.
+    Grouping on the sku set alone would merge them and answer both with
+    whichever line happened to be first, misreporting the other's decision
+    in the graph that IS the explanation."""
+    line1 = _line(id="req0001", eligibility=Eligibility(members=[
+        EligibleItem(sku="RAIL-3000", priority=1),
+        EligibleItem(sku="RAIL-3050", priority=2),
+    ]))
+    line2 = _line(id="req0002", eligibility=Eligibility(members=[
+        EligibleItem(sku="RAIL-3000", priority=2),
+        EligibleItem(sku="RAIL-3050", priority=1),
+    ]))
+    out = resolve_supply([line1, line2], _TWO_RAILS_CATALOG, preset="honour_priority")
+
+    by_id = {r.id: r.sku for r in out.requirements}
+    assert by_id == {"req0001": "RAIL-3000", "req0002": "RAIL-3050"}
+
+    decisions = {d["requirement_id"]: d for d in out.decisions}
+    assert decisions["req0001"]["chosen"] == "RAIL-3000"
+    assert decisions["req0001"]["rejected"] == ["RAIL-3050"]
+    assert decisions["req0002"]["chosen"] == "RAIL-3050"
+    assert decisions["req0002"]["rejected"] == ["RAIL-3000"]
