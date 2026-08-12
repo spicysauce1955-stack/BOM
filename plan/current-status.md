@@ -1,7 +1,8 @@
 # Current status
 
-Updated: 2026-08-12 — V1 complete; fence models phase 1 landed, and W1/W2 of
-`specs/2026-08-12-panel-authoring-design.md` gave the model a UI (W3–W6 remain)
+Updated: 2026-08-12 — V1 complete; fence models phase 1 landed, and
+`specs/2026-08-12-panel-authoring-design.md` W1/W2/W3/W5 plus most of W6 are in
+(W4 authoring UI in flight; the elevation renderer and phase 3 remain)
 
 - [x] Research (4 parallel researcher reports, synthesis, ADRs 0001–0010)
 - [x] Architecture (docs/architecture/*, golden scenarios S01–S14 defined)
@@ -381,3 +382,63 @@ model is offered NOT SELECTABLE rather than hidden) · 126 golden scenarios (unc
 **W3–W6 remain**: variants and option axes (`_unsupported_features`), authoring (edit, add,
 duplicate, vary), the elevation drawing beside the slot table, and the `select_supply`
 explanation.
+
+## Panel authoring W3/W5/W6 — the model resolves, explains and is checked (2026-08-12) — COMPLETE
+Four features stopped being refusals. **Variants** resolve per BAY (a condition reads the
+panel's own height, and a level top over a slope gives every bay of one segment a different
+one); precedence is authored order, first satisfied wins, and the node records `failed`
+(evaluated, not satisfied) separately from `not_reached` (authored after the winner, never
+asked) because recording the second as failures would put an unchecked claim in the graph.
+No `defeated` edge — a variant is product structure evaluated outside the knowledge
+evaluator — and a test asserts the absence so nobody re-adds it for symmetry.
+**Option axes** NARROW a slot's eligibility to the member `sku_by_option` names, keeping its
+priority and approval, so a colour cannot smuggle in a product the slot disallows.
+**`height_support`** aggregates per section, not per bay. **`layout_policy`** contributions
+enter the same evaluator scoped `series=<model_id>`, each at ITS OWN authority — lumping a
+manufacturer's max span with a nominal width buys either an unbeatable preference or a
+beatable safety limit. Two stay refused with stated reasons: `Axis.available_when` (an axis
+is answered before a bay exists) and any contribution outside `SERIES_SCOPED_PARAMS`.
+
+**`select_supply` closed the phase-2 blocker** `docs/v1-known-limitations.md` recorded.
+`SupplyDecision` carries every candidate's PLANNED cost and waste (infeasible ⇒ `None`, never
+zero, which would read as "free"), and `decisions/supply.py` derives the node at READ time —
+selection is coupled to the cut plan and runs in fulfillment, which has no graph builder and
+does not acquire one. The stored document is never rewritten; two tests pin that. The
+sentence names the runner-up and the gap, because "cheaper than the others" is not an
+explanation. Mutation-verified.
+
+**Pricing by the running metre** (`LinearPrice`), the way the market quotes bar stock. A rate
+AUTHORS the purchase price of a whole bar; per-m² and per-band are absent because `fulfill()`
+emits one line per SKU and they need grouping per `(sku, price_basis, size)` first.
+`purchase_price_cents()` is the single read and the one rounding point. A rate-priced product
+may not also carry a flat price.
+
+**The panel is drawn.** `report/elevation.py` turns a ResolvedPanel into rectangles, on the
+preview and on every structure bay. Derived, never stored; computed on the server, not
+mirrored in JS. `placement_positions` spreads `distributed` INCLUSIVE of both ends — two
+rails is a top rail and a bottom rail — and is the one rounding point for placement. The one
+undeclared number (a frame member's face height, product data the catalog lacks) is flagged
+`declared=False` rather than passed off as measured.
+
+**Panel safety**: `clear_gap_exceeded` measured against `max(gaps_mm)` — a rounded 23 would
+pass a 23 mm limit while several real openings measured 24, the sphere test defeated by a
+return type — plus `rail_separation_insufficient` (anti-ladder) and
+`pattern_residual_large`. **The tier decides the consequence**: the same check raises
+`GenerationFailure` under a `hard_constraint` and warns otherwise, so a jurisdiction pack
+stops a job with no code change. The demo seeds them as `company_rule` because every number
+in it is US/AU/UK. Codes are written as `code="..."` literals in a record rather than dict
+keys, because the locale guard scans for that literal — found while writing it.
+
+**`catalog_hash` narrowed** (second closed limitation): `catalog_skus` records what a run
+named — chosen SKUs, every eligibility RIVAL, kit components transitively — so adding an
+unrelated product no longer 409s every prior run, while repricing one it bought still does.
+Safe only because eligibility is frozen into the run.
+
+**`exact_span_mm`** implemented: a model that ships in one size tiles its section in that
+size, reports the odd bay rather than absorbing it, and is still clamped by the hard maximum.
+
+777 pytest · 126 golden scenarios unchanged · 116/116 smoke.
+
+**Remaining:** W4's authoring UI; an SVG renderer for the elevation the backend now serves;
+`excess=trim_last` (blocked on the same 2D-cutting non-goal as sheet infill) and
+`extension_clip`; `InfillSpec.supply=assembly`; phase 3 arc-flow over multiple stock lengths.
