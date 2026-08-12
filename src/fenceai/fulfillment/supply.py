@@ -47,6 +47,46 @@ def _usable(members, approvals: set[str]) -> list:
     return [m for m in members if m.approval == "auto" or m.sku in approvals]
 
 
+def _element_params(line: RequirementLine) -> dict[str, str | int]:
+    """The part of a warning that says WHICH element it is about.
+
+    `role` + `slot_key` alone name a KIND of part, not an instance: every bay of
+    a 60-bay fence resolves the same rail slot, so sixty identical sentences
+    named no bay between them. The requirement's pegs are the strategy element
+    ids that asked for it, which is the same handle `report/structure.py` inverts
+    to put a part on a bay row — so a reader (and the structure tab, which can
+    map an element id to its bay tag) can tell one from another."""
+    return {"pegs": ", ".join(line.pegs)}
+
+
+def _piece_too_long(sku: str, lines: list[RequirementLine], catalog: Catalog) -> bool:
+    """This product exists, and one of these pieces is longer than its stock.
+
+    The same comparison `plan_cuts` makes before it raises — kerf cancels on both
+    sides (`piece + kerf > stock + kerf`), so it is simply `piece > stock`. An
+    unknown sku is NOT a length problem and is not reported as one: `fulfill()`
+    has its own defined answer for it (a flagged, zero-priced line)."""
+    product = catalog.products.get(sku)
+    if product is None:
+        return False
+    sem = product.consumption
+    if sem.kind != "divisible_linear":
+        return False
+    return any(
+        line.cut_length_mm > sem.purchase_length_mm
+        for line in lines
+        if line.cut_length_mm is not None
+    )
+
+
+def _can_supply(sku: str, lines: list[RequirementLine], catalog: Catalog) -> bool:
+    """Can this candidate supply these lines AT ALL — the gate every candidate
+    passes before it can be chosen, whatever the preset and however many rivals
+    it has. Pure catalog + geometry: no cut plan is built, so it is cheap enough
+    to apply to a one-member group."""
+    return sku in catalog.products and not _piece_too_long(sku, lines, catalog)
+
+
 def _name_product(line: RequirementLine, sku: str, catalog: Catalog) -> None:
     """Give a line its product — and, in the SAME statement, the unit that
     product is counted in.
@@ -59,6 +99,23 @@ def _name_product(line: RequirementLine, sku: str, catalog: Catalog) -> None:
     """
     line.sku = sku
     line.unit = engineering_unit_for(catalog, sku)
+
+
+def _infeasible_warning(line: RequirementLine, skus: list[str]) -> StrategyWarning:
+    """"There are candidates, and not one of them fits" — distinct from
+    `no_eligible_item` ("there are no candidates at all"), because the two send
+    the reader to different places: one to the model's eligibility, the other to
+    the catalog's stock lengths."""
+    joined = ", ".join(skus)
+    return StrategyWarning(
+        code="no_feasible_item", severity="error",
+        message=f"No product can supply {line.role} ({line.slot_key}) for "
+                f"{', '.join(line.pegs) or 'this fence'}: none of {joined} fits "
+                "the required piece.",
+        params={"role": line.role, "slot_key": line.slot_key, "skus": joined,
+                **_element_params(line)},
+        element_refs=list(line.pegs),
+    )
 
 
 def resolve_supply(
@@ -89,6 +146,19 @@ def resolve_supply(
     for req in requirements:
         line = req.model_copy(deep=True)   # never mutate the caller's lines
         if line.sku:
+            # An authored sku skips the choice — there is nothing to choose — but
+            # not the feasibility gate: `fulfill()` hands a too-long piece
+            # straight to `plan_cuts`, which raises a raw English sentence that
+            # became a 400 on /bom, /structure AND /quote with no code, no
+            # params and no locale entry. No line in the shipped demand carries
+            # both a sku and a cut length today, so this guard fires for nothing
+            # that exists — it is here so the invariant "fulfill() never sees a
+            # piece longer than its stock" holds for every path into it, not
+            # just the resolved one.
+            if _piece_too_long(line.sku, [line], catalog):
+                out.warnings.append(_infeasible_warning(line, [line.sku]))
+                out.unresolved.append(line)
+                continue
             _name_product(line, line.sku, catalog)
             out.requirements.append(line)
             continue
@@ -97,7 +167,9 @@ def resolve_supply(
             out.warnings.append(StrategyWarning(
                 code="no_eligible_item", severity="error",
                 message=f"No product is eligible to supply {line.role}.",
-                params={"role": line.role, "slot_key": line.slot_key},
+                params={"role": line.role, "slot_key": line.slot_key,
+                        **_element_params(line)},
+                element_refs=list(line.pegs),
             ))
             out.unresolved.append(line)
             continue
@@ -109,7 +181,9 @@ def resolve_supply(
                 message=f"Only a suggest-only product fits {line.role}; "
                         "it needs approval before it can be used.",
                 params={"role": line.role, "slot_key": line.slot_key,
-                        "sku": line.eligibility.members[0].sku},
+                        "sku": line.eligibility.members[0].sku,
+                        **_element_params(line)},
+                element_refs=list(line.pegs),
             ))
             out.unresolved.append(line)
             continue
@@ -140,18 +214,14 @@ def resolve_supply(
             # piece — after which fulfill() raised ValueError from OUTSIDE the
             # routes' try/except, i.e. a 500 where the sibling "no eligible item"
             # case gets a 400. A silent wrong answer followed by a crash is two
-            # bugs, not a fallback. It is the same fact as an empty eligibility
-            # set — nothing here can supply this part — so it is reported the
-            # same way, with the candidates that were tried in `params`.
+            # bugs, not a fallback. Nothing here can supply this part, which is
+            # NEARLY the same fact as an empty eligibility set — near enough to
+            # take the same path, far enough to deserve its own code: "nothing is
+            # eligible" and "the eligible items are all too short" are different
+            # things to go fix, and one code for both left the reader guessing.
             for line in lines:
-                out.warnings.append(StrategyWarning(
-                    code="no_eligible_item", severity="error",
-                    message=f"No eligible product can supply {line.role}: none of "
-                            f"{', '.join(m.sku for m in usable)} can be cut to the "
-                            "required piece.",
-                    params={"role": line.role, "slot_key": line.slot_key,
-                            "skus": ", ".join(m.sku for m in usable)},
-                ))
+                out.warnings.append(
+                    _infeasible_warning(line, [m.sku for m in usable]))
                 out.unresolved.append(line)
             continue
         for line in lines:
@@ -169,9 +239,9 @@ def resolve_supply(
 def _candidate_cost(sku: str, lines: list[RequirementLine], catalog, inventory) -> int:
     """Cents to buy this candidate for these lines, by actually planning the cuts.
     A candidate the planner cannot use at all costs infinitely."""
-    product = catalog.products.get(sku)
-    if product is None:
+    if not _can_supply(sku, lines, catalog):
         return _INFEASIBLE
+    product = catalog.products[sku]
     sem = product.consumption
     if sem.kind != "divisible_linear":
         return product.price_cents * sum(l.engineering_qty for l in lines)
@@ -180,9 +250,6 @@ def _candidate_cost(sku: str, lines: list[RequirementLine], catalog, inventory) 
         for l in lines for _ in range(l.engineering_qty)
         if l.cut_length_mm is not None
     ]
-    if any(p.length_mm + sem.kerf_mm > sem.purchase_length_mm + sem.kerf_mm
-           for p in pieces):
-        return _INFEASIBLE
     remnants = [
         RemnantStock(inventory_item_id=i.id, length_mm=i.length_mm)
         for i in (inventory or Inventory()).for_sku(sku)
@@ -208,37 +275,41 @@ def _waste(sku: str, lines, catalog, inventory) -> int:
 
 
 def _choose(usable, lines, catalog, inventory, preset) -> "EligibleItem | None":
-    """One member: no decision. More than one: the choice is coupled to the cut
-    plan — stock lengths cannot be ranked without planning the cuts (Task 8).
-    `None` means every candidate was infeasible and there is no answer to give.
-
-    The single-member path deliberately does NOT check feasibility: with one
-    candidate there is no choice to make, and fulfill() already has a defined
-    answer for each way that one product can fall short — an unknown sku becomes
-    a flagged zero-priced line, and a piece longer than its stock becomes a
-    ValueError the routes now convert to a 400. Adding a feasibility gate here
-    would reroute the unknown-product case away from that flagged line.
+    """One FEASIBLE member: no decision. More than one: the choice is coupled to
+    the cut plan — stock lengths cannot be ranked without planning the cuts
+    (Task 8). `None` means every candidate was infeasible and there is no answer.
 
     Feasibility is resolved FIRST and filters the field before any other tier
-    runs: an unusable candidate (piece longer than its stock, or a sku absent
-    from the catalog) must lose gracefully under every preset, never win on
-    priority, and never reach a later tier's helper (`_waste`) with a sku it
-    can't plan for. Filtering here — rather than folding `_INFEASIBLE` into
-    the rank tuple — makes it structurally impossible for a third tier added
-    later to forget this guard: whatever it does, it only ever sees skus
-    already proven buildable.
-    """
-    if len(usable) == 1:
-        return usable[0]
+    runs, AND BEFORE the count of candidates is looked at. It used to be skipped
+    for a one-member group, on the reasoning that with one candidate there is no
+    choice to make and `fulfill()` has a defined answer for each way one product
+    can fall short. It does not: a piece longer than the stock reached
+    `plan_cuts`, which raises a raw English sentence, and that sentence became a
+    400 on /bom, /structure and /quote at once — a saved run made permanently
+    unreadable through the catalog and knowledge editors alone, with the
+    structure tab then rendering "generate a strategy to see how it is laid out",
+    which is false. "Nothing can supply this" is the same fact whether one
+    candidate failed or five did, so it takes the same path either way.
 
-    costs = {m.sku: _candidate_cost(m.sku, lines, catalog, inventory) for m in usable}
-    feasible = [m for m in usable if costs[m.sku] < _INFEASIBLE]
+    An unusable candidate (piece longer than its stock, or a sku absent from the
+    catalog) must lose gracefully under every preset, never win on priority, and
+    never reach a later tier's helper (`_waste`) with a sku it can't plan for.
+    Filtering here — rather than folding `_INFEASIBLE` into the rank tuple —
+    makes it structurally impossible for a third tier added later to forget this
+    guard: whatever it does, it only ever sees skus already proven buildable.
+    """
+    feasible = [m for m in usable if _can_supply(m.sku, lines, catalog)]
     if not feasible:
         # No candidate can supply this part. Answering anyway would be a wrong
         # answer with nobody told, so there is no answer — the caller reports it
-        # as `no_eligible_item` + an `unresolved` line, exactly as it reports an
-        # empty eligibility set.
+        # as `no_feasible_item` + an `unresolved` line, alongside the way it
+        # reports an empty eligibility set.
         return None
+    if len(feasible) == 1:
+        return feasible[0]
+
+    # only now, with a real choice to make, is it worth planning cuts per candidate
+    costs = {m.sku: _candidate_cost(m.sku, lines, catalog, inventory) for m in feasible}
 
     def rank(m):
         cost = costs[m.sku]

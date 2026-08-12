@@ -391,6 +391,33 @@ def test_generation_failure_is_422(client):
     assert "max_span" in r.json()["detail"]
 
 
+def test_a_phantom_sku_refuses_generation_with_a_code_not_a_bare_sentence(client):
+    """A DefaultComponent's sku is a free-text field in the knowledge editor, so
+    "the fence model names a product nobody stocks" is a USER error, not an
+    authoring one. It used to answer `422 "generation failed: ..."`, which
+    `api.js` renders as the generic "the action failed (422)" — telling a Hebrew
+    reader neither which SKU nor that a SKU is the problem, after losing the
+    strategy they were working on. It carries code + params now, like a
+    ReadRefused, and names the SKU it could not find."""
+    pid = make_project(client, name="phantom-sku")
+    put_straight_topology(client, pid)
+    assert client.post("/api/knowledge", json={
+        "object_id": "K-RAIL-GHOST", "type": "fact", "title": "rail nobody stocks",
+        "actions": [{"kind": "default_component", "role": "rail",
+                     "sku": "NOT-IN-CATALOG"}],
+    }).status_code == 200
+
+    r = client.post(f"/api/projects/{pid}/generate")
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "fence_model_unknown_sku"
+    assert detail["params"]["skus"] == "NOT-IN-CATALOG"
+    assert detail["params"]["n"] == 1
+    assert "M-LEGACY" in detail["params"]["model_ref"]
+    # the English sentence stays as the diagnostic fallback, never the only content
+    assert "NOT-IN-CATALOG" in detail["message"]
+
+
 def test_knowledge_impact_preview(client):
     pid = make_project(client, name="impact-demo")
     put_straight_topology(client, pid)
@@ -513,6 +540,65 @@ def test_unresolved_supply_is_visible_on_working_views_and_refused_on_a_quote(cl
     body = quote_resp.json()["detail"]
     assert body["code"] == "unresolved_supply"
     assert body["unresolved"][0]["role"] == "rail"
+
+
+def test_a_rail_default_pointing_at_short_stock_reads_as_unsupplied(client):
+    """Gap 1, reproduced through the product's own editors — no forced state.
+
+    Two calls a user can make from the UI (a catalog product with an 800 mm
+    stock length, and a DefaultComponent aiming the rail role at it) used to make
+    a saved run PERMANENTLY unreadable: generation succeeded, then /bom,
+    /structure and /quote all answered
+    `400 {"detail": "piece 1500 mm exceeds stock length 800 mm for RAIL-SHORT"}`
+    — a raw English sentence out of `plan_cuts` with no code, no params and no
+    locale entry. The structure tab matched none of its known refusal reasons and
+    rendered `structure.empty` ("Generate a strategy to see how it is laid out"),
+    which is false; the BOM tab threw into an unhandled rejection.
+
+    `resolve_supply` now applies its feasibility gate to a one-member group, so
+    the two working views answer 200 and SAY the rail cannot be supplied, and the
+    quote — the one commercial document — refuses with a code it already owns."""
+    pid = make_project(client, name="short-stock-rail")
+    put_straight_topology(client, pid)
+    assert client.put("/api/catalog/products", json={
+        "sku": "RAIL-SHORT", "name": "Short rail",
+        "consumption": {"kind": "divisible_linear", "purchase_length_mm": 800},
+        "price_cents": 1000,
+    }).status_code == 200
+    assert client.post("/api/knowledge", json={
+        "object_id": "K-RAIL-SHORT", "type": "fact", "title": "short rail default",
+        "actions": [{"kind": "default_component", "role": "rail",
+                     "sku": "RAIL-SHORT"}],
+    }).status_code == 200
+
+    gen = client.post(f"/api/projects/{pid}/generate")
+    assert gen.status_code == 200
+    run_id = gen.json()["result"]["run"]["id"]
+
+    bom_resp = client.get(f"/api/runs/{run_id}/bom")
+    assert bom_resp.status_code == 200, bom_resp.text
+    bom_doc = bom_resp.json()
+    assert [r["role"] for r in bom_doc["unresolved"]] == ["rail"] * 4
+    warnings = bom_doc["bom"]["warnings"]
+    assert {w["code"] for w in warnings} == {"no_feasible_item"}
+    # the candidate that was tried, and WHICH bay asked — one warning per bay
+    # naming no bay is what a 60-bay fence used to produce
+    assert warnings[0]["params"]["skus"] == "RAIL-SHORT"
+    assert {w["params"]["pegs"] for w in warnings} == {
+        s["id"] for s in gen.json()["result"]["strategy"]["spans"]}
+    assert all(w["element_refs"] for w in warnings)
+    # and nothing named RAIL-SHORT was priced as if it could be cut
+    assert "RAIL-SHORT" not in [line["sku"] for line in bom_doc["bom"]["lines"]]
+
+    structure_resp = client.get(f"/api/runs/{run_id}/structure")
+    assert structure_resp.status_code == 200, structure_resp.text
+    structure_doc = structure_resp.json()
+    assert {w["code"] for w in structure_doc["warnings"]} == {"no_feasible_item"}
+    assert [r["role"] for r in structure_doc["unresolved"]] == ["rail"] * 4
+
+    quote_resp = client.post(f"/api/runs/{run_id}/quote", json={})
+    assert quote_resp.status_code == 400
+    assert quote_resp.json()["detail"]["code"] == "unresolved_supply"
 
 
 def _run_with_an_unsuppliable_rail(client) -> str:

@@ -233,3 +233,56 @@ def test_trim_last_and_extension_clip_are_refused_because_they_behave_as_truncat
         )))
         errs = validate_model(model, demo_catalog())
         assert any(excess in e and "not yet supported" in e for e in errs), excess
+
+
+def test_an_assembly_infill_is_refused_because_resolve_panel_buys_the_parts():
+    """`supply="assembly"` means the infill is BOUGHT as one pre-made unit rather
+    than as N members. `resolve_panel` unconditionally emits a component slot per
+    member and nothing reads the field, so authoring it passed validation and
+    silently produced a different set of purchased SKUs. It was classified as
+    geometry-only in the first pass; it is not geometry, it is the BOM."""
+    from fenceai.fencemodel.model import InfillSpec, Member
+
+    model = _model(PanelSpec(infill=InfillSpec(
+        orientation="vertical", supply="assembly",
+        pattern=[Member(key="slat", width_mm=90, gap_after_mm=20,
+                        requirement=PartRequirement(
+                            role="infill", qty=1, length_rule="centre_to_centre",
+                            eligibility=Eligibility(members=[
+                                EligibleItem(sku="RAIL-3000")])))],
+    )))
+    errs = validate_model(model, demo_catalog())
+    assert any("supply=" in e and "not yet supported" in e for e in errs), errs
+
+
+def test_the_default_components_infill_supply_is_not_flagged():
+    """The rejection must be of the UNBUILT value, not of the field existing —
+    or every infill model in phase 2 starts life invalid."""
+    from fenceai.fencemodel.model import InfillSpec, Member
+
+    model = _model(PanelSpec(infill=InfillSpec(
+        orientation="vertical",
+        pattern=[Member(key="slat", width_mm=90, gap_after_mm=20,
+                        requirement=PartRequirement(
+                            role="infill", qty=1, length_rule="centre_to_centre",
+                            eligibility=Eligibility(members=[
+                                EligibleItem(sku="RAIL-3000")])))],
+    )))
+    assert validate_model(model, demo_catalog()) == []
+
+
+def test_a_named_eligibility_group_is_refused_because_it_could_change_the_answer():
+    """`resolve_supply` groups by the members' (sku, priority, approval)
+    signature and never reads `Eligibility.group`. That is not cosmetic:
+    grouping decides which lines are costed TOGETHER, and cut planning is not
+    additive, so it decides which product wins. See
+    test_grouping_changes_which_product_wins in tests/fulfillment/test_supply.py
+    for the measurement."""
+    req = PartRequirement(
+        role="rail", qty=2, length_rule="centre_to_centre",
+        eligibility=Eligibility(
+            group="rails", members=[EligibleItem(sku="RAIL-3000", priority=1)]),
+    )
+    errs = validate_model(_model(PanelSpec(frame=[_slot(requirement=req)])),
+                          demo_catalog())
+    assert any("Eligibility.group" in e and "not yet supported" in e for e in errs)

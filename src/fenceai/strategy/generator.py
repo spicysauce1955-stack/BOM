@@ -21,7 +21,7 @@ from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
-from fenceai.fencemodel.model import FenceModel
+from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import PanelContext, resolve_panel
 from fenceai.knowledge.evaluator import (
     Resolution,
@@ -492,6 +492,68 @@ def _generate_node_posts(
 
 # --- per-run generation --------------------------------------------------------
 
+def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
+    """The production caller `validate_model` did not have.
+
+    Models are only ever built by `legacy_model()`, which bypassed validation
+    entirely, so every load-time gate on the fence-model branch — the unbuilt
+    feature refusals, the per-member advance bound, the SKU and length checks —
+    was enforced by tests alone. That is tolerable while exactly one built-in
+    model exists and becomes load-bearing the moment a model can be authored;
+    a gate with no caller is a gate that has never run against real data.
+
+    A `GenerationFailure`, not a warning, and not a `StrategyWarning` on the
+    strategy. Every error this returns means the panel that WOULD be built is
+    not the panel that was authored:
+
+      * an unbuilt feature (variants, option axes, `Eligibility.group`,
+        `InfillSpec.supply`, …) is ignored by `resolve_panel`, so the run is
+        silently a different fence — the precise failure mode `_unsupported_
+        features` exists to prevent, and surfacing it as a survivable note
+        would reinstate it with a yellow triangle instead of a green light;
+      * a member whose net advance is not positive makes `fit_pattern` loop
+        forever, so there is no answer to soften;
+      * an eligible sku absent from the catalog, or one that cannot supply the
+        length its slot asks for, makes the BOM name a product that cannot do
+        the job.
+
+    None of those is survivable, which is exactly the line `GenerationFailure`
+    draws against a Conflict (`core/errors.py`, knowledge-system.md). The route
+    already maps it to 422.
+
+    Cost: O(model) — slots x eligibility members, plus axes x values, with
+    catalog access by dict lookup only. It does not touch the topology, so it
+    does not grow with the fence: it runs once per topology RUN (the model is
+    chosen per run, because a `fence_model` event will eventually pick a
+    different one per section), never once per span. Measured on this machine:
+    2.1 us for `M-LEGACY` against 0.85 ms for a four-bay `generate()` (0.24%),
+    and 0.04% of a 60-bay one, where it is still a single call. No caching
+    needed — and a cache keyed on a model that `legacy_model()` rebuilds per
+    call would cost more than the check it skipped.
+    """
+    errors = validate_model(model, catalog)
+    if not errors:
+        return
+    # The failure a USER can cause gets a code its locale bundle can render: a
+    # DefaultComponent's sku is a free-text field, and "the action failed (422)"
+    # names neither the sku nor the fact that a sku is the problem — while the
+    # strategy the user was working on is gone. The remaining errors are English
+    # authoring text for someone editing a model, which no route can do yet.
+    missing = unknown_skus(model, catalog)
+    if missing:
+        raise GenerationFailure(
+            f"fence model {model.ref} names {len(missing)} sku(s) the catalog does "
+            f"not stock: {', '.join(missing)}",
+            code="fence_model_unknown_sku",
+            skus=", ".join(missing), model_ref=model.ref, n=len(missing),
+        )
+    raise GenerationFailure(
+        f"fence model {model.ref} cannot be used: " + "; ".join(errors),
+        code="fence_model_invalid",
+        model_ref=model.ref, errors="; ".join(errors), n=len(errors),
+    )
+
+
 def _generate_run(
     topo: Topology,
     run: Run,
@@ -524,6 +586,7 @@ def _generate_run(
         rail_sku=demand_skus.get("rail_sku", "RAIL-3000"),
         screw_sku=demand_skus.get("screw_sku", "SCREW-S10"),
     )
+    _validate_resolved_model(model, catalog)
     models_used.append(model)
 
     # -- hard span parameter ---------------------------------------------------

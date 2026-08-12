@@ -38,6 +38,9 @@ determinism is covered twice and genuinely; LLM isolation is clean; `fit.py`'s
 The process allows one fix wave and one scoped re-review. These two survived it and are
 surfaced rather than silently carried.
 
+**Both are now CLOSED on `fix/fence-model-open-findings`, together with the two things
+the "one thing worth knowing" section below named. See "How they were closed".**
+
 - **A saved run can become permanently unreadable through the UI alone, with a false
   message.** Point a rail's `DefaultComponent` at a stock shorter than the cut and every
   read route returns a raw English 400 from the cut planner. The structure tab matches
@@ -53,6 +56,91 @@ surfaced rather than silently carried.
   slots and nothing reads the field, so authoring it silently produces a different set of
   purchased SKUs. It fails the criterion the G fix set for itself. Zero impact today — no
   shipped model sets it — but it is exactly the defect class G exists to close.
+
+## How they were closed (2026-08-12, `fix/fence-model-open-findings`)
+
+**The unreadable run.** The prescribed fix — a coded `ReadRefused` wrapping the planner's
+failure — was NOT taken, because it treats the symptom. `resolve_supply` already knew how
+to say "nothing can supply this"; it simply did not ask when an eligibility group had one
+member, on the reasoning that with one candidate there is no choice to make. There is no
+choice, but there is still a question. Feasibility is now filtered *before* the candidate
+count is looked at, so `fulfill()` can never receive a piece longer than its stock and the
+400 has no way to occur. The authored-sku path (posts, caps, gate kits) takes the same
+guard, so the invariant holds for every door into `fulfill()` rather than for one of them.
+Reproduced before and after through the two API calls the re-reviewer used: 400/400/400 →
+200 /bom, 200 /structure, and a `unresolved_supply` 400 on /quote, which is the coded
+refusal that endpoint already owned.
+
+Feasibility became a catalog+geometry predicate rather than a cut plan, so applying it to
+one-member groups costs nothing; cuts are planned only when two or more feasible candidates
+must actually be ranked.
+
+**The signal nobody rendered.** `Bom.warnings`, `StructureReport.warnings` and
+`StructureReport.unresolved` were computed by the API and read by no JS, so fixing the 400
+would have produced a BOM and a setting-out sheet that were each silently a line short.
+`js/warnings.js` now owns the one `code + params` → sentence path (moved out of
+`editor.js`, which was the only renderer), and both money views render a "parts that cannot
+be supplied" panel above their numbers. Warnings carry the requirement's pegs in `params`
+and `element_refs`; the structure report already indexes an element id to its tag, so the
+sentence names the bay (`A/B3`) rather than repeating itself once per bay with no bay in
+it. `no_eligible_item` (nothing is a candidate) and the new `no_feasible_item` (candidates
+were tried, none fits) are separate codes because they send the reader to different places
+— the model, or the catalog.
+
+**`InfillSpec.supply`** is rejected by name. So is **`Eligibility.group`**, which the same
+review flagged as a suspicion: verified unread anywhere in `src/` or `tests/`, and verified
+to matter — cut planning is not additive, so grouping decides the answer. Two lines
+(1500 mm, 1000 mm) over BIG (3000 mm @ 1000c) and SMALL (1600 mm @ 600c) resolve to BIG as
+one group and to SMALL as two. Pinned as `test_grouping_changes_which_product_wins`.
+
+**`validate_model` has a production caller**: `generate()` validates the model it resolved
+and raises `GenerationFailure` (422) if it does not pass, because every error the function
+returns means the panel that would be built is not the panel that was authored. Measured at
+2.1 us against a 0.85 ms four-bay `generate()`, once per topology run and never per span,
+so no caching. Its first run found a real hole: `tests/strategy/test_gate_kit.py`'s catalog
+was missing the rail and screw its panels were eligible for, unnoticed because those tests
+never read a BOM.
+
+## Second review of the closing round, and what it found
+
+**One of the new smoke checks was vacuous, and it was the one proving the bay-naming
+feature.** It read `#structure-body` whole and asserted `"A/B1" in text` — which the
+ordinary bays table already prints. The reviewer deleted `supplyProblemsHtml` from
+`structure.js` and the check still passed. Every assertion in that block now reads the
+`.supply-problems` panel by class, and the bay-naming one reads the warning ROWS inside it;
+re-verified by the same deletion, which now fails four checks.
+
+**The Hebrew sentence printed raw English identifiers.** `{role}` was interpolated into the
+middle of Hebrew prose and the Part column printed `esc(line.role)`, so the headline
+sentence on two money views read `אף מוצר אינו יכול לספק rail`. There is now a `role.*`
+lexicon in both bundles with a `roleWord()` beside `enumWord()` — a separate namespace
+rather than more `enum.*` keys, because the two vocabularies collide: `concrete` is a base
+surface AND a role, and the slab is not the bag. `{slot_key}` is suppressed in the sentence
+when it equals `{role}` (M-LEGACY's one rail slot is keyed `rail`, so it read "rail in
+rail"), via a `supply.slot_suffix` locale string rather than punctuation glued on in JS.
+
+**The 422 told the user nothing, and also threw.** `f"generation failed: {e}"` rendered as
+the generic *"the action failed (422)"*, so a user who mistyped a SKU in a knowledge rule
+lost their strategy and was told neither which SKU nor that a SKU was the problem — the
+same defect class wave H existed to remove, which this round had newly routed a
+user-authorable input into. `GenerationFailure` now carries optional `code + params` on the
+same contract as `ReadRefused`; `fence_model_unknown_sku` names the SKUs (computed
+structurally by `unknown_skus()`, never by parsing validation strings) and
+`fence_model_invalid` covers the authoring cases no route can reach yet. `api.js` renders
+any `error.<code>` a refusal names rather than only `unresolved_supply`. Separately,
+`btn-generate` passed an async function straight to `addEventListener`, so every refused
+generation was also an unhandled rejection.
+
+**The customer sheet was getting an itemised parts table.** The panel was prepended outside
+the `detail === "customer"` branch and did not filter `CONSUMABLE_ROLES`, so an
+unsuppliable screw would print "screw · 96" on a proposal. It now follows the sheet's own
+rule — named materials are listed, fixings and concrete collapse to one sentence.
+
+**And the false-message CLASS is closed, not just its cause.** `structure-data.js` mapped
+any unrecognised failure to `staleReason = null`, which means "no attempt yet", so the tab
+said *"generate a strategy to see how it is laid out"* about a run that had been generated
+and could not be read. The gap-1 400 reached it through that door; the door is now shut —
+an unrecognised refusal is `"unknown"` and names its code.
 
 ## Parked deliberately, with triggers in `v1-known-limitations.md`
 
@@ -72,6 +160,8 @@ the first thing phase 2 must close.
 refusals, A's per-member bound, the SKU and length checks — is enforced by tests only,
 until a model-loading route exists. Pre-existing rather than introduced here, but it means
 those gates protect phase-2 authors, not today's users.
+
+*Closed: `generate()` is that caller — see "How they were closed" above.*
 
 ## Note on method
 

@@ -14,12 +14,13 @@ import { esc } from "./api.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { emit, on, setSelection, state } from "./state.js";
-import { getReport, isStale, loadStructure, staleKind } from "./structure-data.js";
+import {
+  CONSUMABLE_ROLES, getReport, isStale, loadStructure, staleCode, staleKind,
+} from "./structure-data.js";
 import { enumWord, fmt, fmtLen, tu, unitLabel } from "./units.js";
+import { supplyProblemsHtml } from "./warnings.js";
 
 let detail = "installer";
-
-const CONSUMABLE_ROLES = new Set(["screw", "concrete"]);   // described, not itemised
 
 export function initStructure() {
   const sel = document.getElementById("structure-detail");
@@ -57,18 +58,29 @@ function render() {
   const report = getReport();
   if (!report) {
     totals.innerHTML = "";
+    // "no structure yet" is true for EXACTLY one of these: no run. Every other
+    // branch is a run that exists and cannot be laid out, and saying "generate a
+    // strategy" about it is a lie the user cannot act on.
     const emptyKey = !isStale() ? "structure.empty"
       : staleKind() === "catalog" ? "structure.catalog_changed"
       : staleKind() === "predates" ? "error.run_predates_fence_model"
+      : staleKind() === "unknown" ? "structure.unreadable"
       : "structure.stale";
-    body.innerHTML = `<div class="panel meta">${esc(t(emptyKey))}</div>`;
+    body.innerHTML = `<div class="panel meta">${
+      esc(t(emptyKey, { code: staleCode() }))}</div>`;
     return;
   }
   renderPrintTitle(report);
   totals.innerHTML = renderTotals(report.totals);
-  body.innerHTML = report.sections
-    .map((s) => (detail === "customer" ? customerSection(s) : installerSection(s)))
-    .join("");
+  // A part nothing can supply is missing from every bay row below — this sheet
+  // goes to site, so it says so at the top rather than quietly listing a bay
+  // one rail short. The tags are already indexed here, so the sentence names
+  // the bay ("A/B3"), not the element id.
+  body.innerHTML = supplyProblemsHtml(report.warnings, report.unresolved,
+                                      { customer: detail === "customer" })
+    + report.sections
+      .map((s) => (detail === "customer" ? customerSection(s) : installerSection(s)))
+      .join("");
   for (const row of body.querySelectorAll("[data-element]")) {
     row.addEventListener("click", () => {
       const runId = row.dataset.run;

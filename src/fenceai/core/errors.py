@@ -9,11 +9,28 @@ class GenerationFailure(FenceAiError):
     """A hard constraint cannot be satisfied and no authorized exception exists.
 
     Distinct from a Conflict (which is surfaced but survivable) — see knowledge-system.md.
+
+    `code` + `params` are OPTIONAL and carry the same contract as `ReadRefused`:
+    when present, the route sends them instead of the English sentence and the
+    reader's locale bundle renders `error.<code>`. They are set for the failures
+    a USER can cause from the editors — a knowledge rule naming a SKU nobody
+    stocks is the whole strategy refused, and "the action failed (422)" tells
+    that user neither which SKU nor that a SKU is even the problem. A failure
+    only an author of internal data can cause stays a plain sentence.
     """
 
-    def __init__(self, message: str, *, constraint_refs: list[str] | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        constraint_refs: list[str] | None = None,
+        code: str | None = None,
+        **params: str | int,
+    ):
         super().__init__(message)
         self.constraint_refs = constraint_refs or []
+        self.code = code
+        self.params: dict[str, str | int] = params
 
 
 class InvalidTopology(FenceAiError):

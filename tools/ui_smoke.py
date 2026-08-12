@@ -1129,6 +1129,99 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.click(*c.element_center("#btn-clear"))
         time.sleep(1)
 
+        # --- a part nothing can supply is SAID, on both money views -----------
+        # Two calls a user can make from the catalog and knowledge editors (an
+        # 800 mm stock length, and a rail DefaultComponent aiming at it) used to
+        # make a saved run permanently unreadable: /bom, /structure and /quote
+        # all answered 400 with a raw English sentence out of the cut planner.
+        # The structure tab matched none of its known refusal reasons and said
+        # "generate a strategy to see how it is laid out" — false, there IS
+        # structure — and the BOM tab threw into an unhandled rejection and
+        # rendered nothing (which the "no uncaught page errors" check below
+        # would have caught, had anything in this suite ever reached the state).
+        c.js("""
+(async () => {
+  await fetch('/api/catalog/products', {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sku: 'RAIL-SHORT', name: 'Short rail',
+      consumption: {kind: 'divisible_linear', purchase_length_mm: 800},
+      price_cents: 1000})});
+  await fetch('/api/knowledge', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({object_id: 'K-RAIL-SHORT', type: 'fact',
+      title: 'short rail default',
+      actions: [{kind: 'default_component', role: 'rail', sku: 'RAIL-SHORT'}]})});
+  return 'ok';
+})()""")
+        c.js("document.getElementById('new-project-name').value = 'unsupplied'; 'ok'")
+        c.click(*c.element_center("#btn-new-project"))
+        time.sleep(1.5)
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.canvas_px(0, 0))
+        c.click(*c.canvas_px(6000, 0))
+        c.key("Enter")
+        time.sleep(1.2)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(3)
+        c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
+        time.sleep(2)
+        # EVERY assertion below reads the supply-problems PANEL, never the page.
+        # The first version of the bay-naming check read `#structure-body` whole
+        # and passed with the panel deleted, because the ordinary bays table
+        # prints "A/B1" too — a check that proved the feature was there by
+        # finding something else.
+        bom_panel = c.js(
+            "document.querySelector('#bom-body .supply-problems')?.textContent || ''")
+        check("the BOM tab names the part it cannot supply, localized",
+              "no_feasible_item" in bom_panel and "RAIL-SHORT" in bom_panel
+              and "לספק" in bom_panel)
+        check("the BOM tab still prices what it CAN supply beside the gap",
+              (c.js("document.querySelectorAll('#bom-body table').length") or 0) >= 2)
+        c.shot("15-bom-unsupplied.png")
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(2)
+        struct_text = c.js("document.getElementById('structure-body').textContent") or ""
+        struct_panel = c.js(
+            "document.querySelector('#structure-body .supply-problems')?.textContent || ''")
+        check("the structure sheet says the bay cannot be supplied, not 'generate a strategy'",
+              "לספק" in struct_panel and "חשבו אסטרטגיה" not in struct_text)
+        warning_rows = c.js("""
+[...document.querySelectorAll('#structure-body .supply-problems .warning')]
+  .map(n => n.textContent).join(' | ')""") or ""
+        check("the supply WARNING ROW names the bay, not a raw element id",
+              "A/B1" in warning_rows and "span@run" not in warning_rows)
+        check("the warning row reads the role as a word, not a raw English id",
+              "מסילה" in warning_rows and " rail" not in warning_rows)
+        c.shot("16-structure-unsupplied.png")
+
+        # The customer sheet must still SAY a part cannot be supplied. That it
+        # describes rather than itemises an unsuppliable CONSUMABLE cannot be
+        # checked from here — no UI path makes a screw or concrete unsuppliable
+        # (fixings carry no cut length, so the feasibility gate never rejects
+        # one), and a check for an absent screw would pass with the filter
+        # deleted. tests/web/test_supply_panel_module.py covers that half in node.
+        c.js("""
+{
+  const sel = document.getElementById('structure-detail');
+  sel.value = 'customer'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1)
+        customer_panel = c.js(
+            "document.querySelector('#structure-body .supply-problems')?.textContent || ''")
+        check("the customer sheet still says a part cannot be supplied",
+              "לספק" in customer_panel and "A/B1" in customer_panel)
+        c.shot("17-structure-customer-unsupplied.png")
+        c.js("""
+{
+  const sel = document.getElementById('structure-detail');
+  sel.value = 'installer'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.5)
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.5)
+
         # --- locale: Hebrew is the default; toggle flips to English -----------
         dir0 = c.js("document.documentElement.dir")
         check("Hebrew RTL is the default", dir0 == "rtl")

@@ -29,9 +29,21 @@ WARNING_CODES = [
     "no_gate_kit",
     "gate_past_run_end",
     "no_eligible_item",
+    "no_feasible_item",
     "substitute_needs_approval",
 ]
 CRITIQUE_CODES = ["narrow_span"]
+
+# Codes rendered as `error.<code>` rather than `warning.<code>`: a refusal, not a
+# note on an answer. `core.errors.ReadRefused` (a stored run that cannot be read)
+# and the `GenerationFailure` variants that carry a code — the failures a USER
+# can cause from the editors, which must not fall through to the client's
+# generic "the action failed (422)".
+REFUSAL_CODES = [
+    "run_predates_fence_model",
+    "fence_model_unknown_sku",
+    "fence_model_invalid",
+]
 
 
 def _bundles():
@@ -57,8 +69,14 @@ def test_every_backend_code_has_locale_entries():
 
 
 def test_backend_code_list_is_current():
-    """If a new warning/critique code appears in the backend, this test forces the
-    author to add locale entries (and update the lists above)."""
+    """If a new code appears in the backend, this test forces the author to put it
+    in exactly one of the three lists above — and each list's own test then forces
+    the matching entries into BOTH bundles.
+
+    One scan over every emitting file rather than one per kind: `code="x"` reads
+    the same whether it is a StrategyWarning, a ReadRefused or a GenerationFailure,
+    and a regex that tried to tell them apart would be the thing that quietly
+    stopped matching."""
     import re
 
     src = Path(__file__).resolve().parents[2] / "src" / "fenceai"
@@ -67,12 +85,15 @@ def test_backend_code_list_is_current():
         src / "ai" / "stub.py",
         src / "fulfillment" / "supply.py",
         src / "fencemodel" / "resolve.py",
+        src / "demand" / "derive.py",
     ]
     emitted: set[str] = set()
     for path in scanned:
         emitted |= set(re.findall(r'code="([a-z_]+)"', path.read_text()))
     emitted.discard("generic")  # CritiqueNote default, never emitted explicitly
-    assert emitted == set(WARNING_CODES) | set(CRITIQUE_CODES), emitted
+    known = set(WARNING_CODES) | set(CRITIQUE_CODES) | set(REFUSAL_CODES)
+    assert emitted == known, {"unlisted": sorted(emitted - known),
+                              "listed_but_gone": sorted(known - emitted)}
 
 
 UNIT_LITERAL_ALLOWED = {
@@ -138,10 +159,36 @@ def test_warning_renderer_converts_its_dynamic_key_params():
     """Warnings/critiques are localized by a COMPUTED key (`warning.${code}`), so
     the call-site guards above are blind to them — the one thing that keeps their
     `{u}` and their millimetres honest is localizedByCode passing params through
-    unitParams()."""
-    src = (STATIC / "js" / "editor.js").read_text()
-    fn = src[src.index("function localizedByCode"):src.index("function renderWarnings")]
+    unitParams().
+
+    It lives in `warnings.js` because three panels render the same shape (the
+    editor's strategy warnings, the BOM tab's supply warnings, the structure
+    sheet's); a copy per tab is how one of them would quietly stop converting."""
+    src = (STATIC / "js" / "warnings.js").read_text()
+    fn = src[src.index("export function localizedByCode"):
+             src.index("function labelledParams")]
     assert "unitParams(" in fn, "warning params must be unit-converted and carry {u}"
+
+
+def test_only_one_module_localizes_a_warning_by_code():
+    """A second copy of the code->sentence mapping is how the BOM tab and the
+    editor come to disagree about what `no_feasible_item` says."""
+    js_dir = STATIC / "js"
+    definers = [
+        p.name for p in [*js_dir.glob("*.js"), STATIC / "app.js"]
+        if "function localizedByCode" in p.read_text()
+    ]
+    assert definers == ["warnings.js"], definers
+
+
+def test_the_supply_gap_is_rendered_on_both_the_bom_and_structure_tabs():
+    """`Bom.warnings`, `StructureReport.warnings` and `StructureReport.unresolved`
+    were populated by the API and read by NO JS, so a bay with a part nothing can
+    supply produced a BOM and a setting-out sheet that were silently short a line
+    — and `warning.no_eligible_item` was an unreachable string in both bundles."""
+    for name in ("tabs.js", "structure.js"):
+        src = (STATIC / "js" / name).read_text()
+        assert "supplyProblemsHtml(" in src, name
 
 
 def test_no_empty_translations():
@@ -251,24 +298,56 @@ def test_impact_failure_code_list_is_current():
     assert emitted == set(IMPACT_FAILURE_CODES), emitted
 
 
-# core.errors.ReadRefused: a stored run that cannot be read, as code + params.
-# These surfaced as raw English ValueError text in a Hebrew-first UI (and, on the
-# structure tab, as "no structure yet" — which is false: there IS structure, it
-# just cannot be read without regenerating).
-READ_REFUSAL_CODES = ["run_predates_fence_model"]
-
-
-def test_read_refusal_codes_have_locale_entries():
+# core.errors.ReadRefused / GenerationFailure: a run that cannot be read, or a
+# generation that refused, as code + params. These surfaced as raw English text in
+# a Hebrew-first UI (and, on the structure tab, as "no structure yet" — which is
+# false: there IS structure, it just cannot be read without regenerating). The
+# list itself is kept current by test_backend_code_list_is_current above.
+def test_refusal_codes_have_locale_entries():
     en, he = _bundles()
-    for code in READ_REFUSAL_CODES:
+    for code in REFUSAL_CODES:
         assert f"error.{code}" in en and f"error.{code}" in he, code
 
 
-def test_read_refusal_code_list_is_current():
-    import re
+def test_a_coded_refusal_is_not_swallowed_by_the_generic_failure_sentence():
+    """`api.js` shows one alert for every failed POST/PUT. A 422 that names
+    itself must render its own sentence, or a user who mistyped a SKU is told
+    only "the action failed (422)" — after losing the strategy."""
+    src = (STATIC / "js" / "api.js").read_text()
+    fn = src[src.index("function errorAlertText"):]
+    assert "`error.${detail.code}`" in fn
 
-    src = Path(__file__).resolve().parents[2] / "src" / "fenceai"
-    emitted: set[str] = set()
-    for path in [src / "demand" / "derive.py"]:
-        emitted |= set(re.findall(r'code="([a-z_]+)"', path.read_text()))
-    assert emitted == set(READ_REFUSAL_CODES), emitted
+
+# The role vocabulary (demand/derive.py: RequirementLine.role) is rendered INSIDE
+# a Hebrew sentence by the supply warnings, so a raw "rail" there is untranslated
+# English. `enum.*` is the wrong namespace for it: `concrete` is a base surface
+# AND a role, and the slab is not the bag.
+ROLE_VOCABULARY = ["post", "cap", "concrete", "rail", "screw", "infill", "spacer",
+                   "gate_kit"]
+
+
+def test_every_role_has_a_word_in_both_bundles():
+    en, he = _bundles()
+    missing = sorted(f"{lang}:{r}" for lang, table in (("en", en), ("he", he))
+                     for r in ROLE_VOCABULARY if f"role.{r}" not in table)
+    assert not missing, missing
+
+
+def test_every_role_a_real_generation_emits_is_in_that_vocabulary():
+    """The static list above cannot go stale silently: whatever the generator
+    plus `derive_requirements` actually produce must be in it."""
+    from fenceai.catalog.demo import demo_catalog
+    from fenceai.demand.derive import derive_requirements
+    from fenceai.knowledge.demo import demo_knowledge
+    from fenceai.strategy.generator import generate
+    from fenceai.topology.model import GatePayload
+    from tests.conftest import add_point_event, straight_topology
+
+    topo = straight_topology(20000)
+    add_point_event(topo, "run1", "ev1", 2000,
+                    GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    catalog = demo_catalog()
+    result = generate(topo, demo_knowledge(), catalog)
+    roles = {r.role for r in derive_requirements(result.strategy, catalog,
+                                                 result.run.demand_skus)}
+    assert roles and roles <= set(ROLE_VOCABULARY), sorted(roles - set(ROLE_VOCABULARY))

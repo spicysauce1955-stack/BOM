@@ -13,8 +13,10 @@ from __future__ import annotations
 from fenceai.catalog.model import (
     AssemblyKit,
     Catalog,
+    DivisibleLinear,
     IndivisibleDiscrete,
     KitComponent,
+    PackagedDiscrete,
     Product,
 )
 from fenceai.decisions.explain import explain_node
@@ -54,12 +56,24 @@ def test_kit_that_fits_raises_nothing(knowledge, catalog):
 
 
 def _catalog_with(kit: Product) -> Catalog:
+    """A gate-focused catalog — plus the rail and screw the PANELS need.
+
+    Those two were missing, and nothing noticed: these tests read the strategy
+    and the decision graph, never the BOM, so a panel eligible for a product
+    this catalog did not stock went unremarked. `generate()` now validates the
+    resolved fence model against the catalog it was handed, which is exactly the
+    kind of hole that gate exists to find — the fixture was incomplete, the
+    behaviour under test was not."""
     return Catalog.of(
         Product(sku="POST-S", name="post", consumption=IndivisibleDiscrete(),
                 price_cents=2500, attrs={"length_mm": 2600}),
         Product(sku="POST-S-HD", name="hd post", consumption=IndivisibleDiscrete(),
                 price_cents=4200, attrs={"length_mm": 2600}),
         Product(sku="LEAF", name="leaf", consumption=IndivisibleDiscrete(), price_cents=1),
+        Product(sku="RAIL-3000", name="rail", price_cents=1800,
+                consumption=DivisibleLinear(purchase_length_mm=3000)),
+        Product(sku="SCREW-S10", name="screws", price_cents=450,
+                consumption=PackagedDiscrete(qty_per_package=20)),
         kit,
     )
 

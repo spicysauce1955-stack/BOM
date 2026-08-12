@@ -304,6 +304,48 @@ the resolved `demand_skus`) now fail. Two vacuous tests deleted/replaced. 555 py
 (+46) · 126 golden scenarios (+18) · 101/101 smoke. Dispositions and the fix wave:
 .superpowers/sdd/2026-08-12-fence-model-phase1/fix-wave-report.md.
 
+## Fence models phase 1 — closing the open findings (2026-08-12) — COMPLETE
+The four gaps `docs/reviews/fence-model-phase1-review.md` left open (two "Open", one
+"worth knowing", one raised there as a suspicion) are closed on
+`fix/fence-model-open-findings`; that document's new "How they were closed" section is the
+record. **A saved run could be made permanently unreadable through the UI alone** — an
+800 mm rail stock plus a `DefaultComponent` aimed at it, two API calls — after which /bom,
+/structure and /quote all returned a raw English 400 from the cut planner and the structure
+tab said *"generate a strategy to see how it is laid out"*, which is false. Not fixed by
+catching the planner: `resolve_supply` skipped its feasibility gate for a ONE-member group,
+so the gate now runs before the candidate count is looked at (and on the authored-sku path
+too), and `fulfill()` cannot be handed a piece longer than its stock by any route.
+Feasibility became a catalog+geometry predicate instead of a cut plan, so it is free at
+group size one. **The gap was then computed, localized and rendered nowhere** —
+`Bom.warnings`, `StructureReport.warnings`/`unresolved` were read by no JS at all, so the
+200 would have been a BOM silently one line short; `js/warnings.js` now owns the single
+`code + params` → sentence path and both money views render it, naming the BAY via the
+structure report's tags. `no_feasible_item` splits "candidates were tried and none fits"
+from `no_eligible_item`'s "nothing is a candidate". **`InfillSpec.supply` and
+`Eligibility.group`** join the rejected-feature table — `group` after verifying both that
+nothing reads it and that it would change the chosen SKU (grouping decides which lines are
+costed together, and cut planning is not additive). **`validate_model` gained its
+production caller**: `generate()` validates the resolved model, `GenerationFailure`/422 if
+it fails, 2.1 us against a 0.85 ms four-bay generation, once per topology run — no caching.
+That gate found a real hole on its first run (a test catalog missing the rail its panels
+were eligible for). Compatibility-gate fixtures untouched.
+
+A second review of that round found five more, all fixed. **One of the new smoke checks was
+vacuous** — it read the whole structure body for `A/B1`, which the ordinary bays table
+already prints, so it passed with the feature deleted; every assertion is now scoped to the
+`.supply-problems` panel and the bay-naming one to the warning rows inside it (re-verified
+by deletion). **The Hebrew sentence printed raw English identifiers**: a `role.*` lexicon
+and a `roleWord()` beside `enumWord()` — its own namespace, because `concrete` is both a
+base surface and a role — plus `{slot_key}` suppressed when it equals `{role}`. **The 422
+told the user nothing and also threw**: `GenerationFailure` carries optional `code + params`
+like `ReadRefused`, `fence_model_unknown_sku` names the SKU a knowledge rule got wrong,
+`api.js` renders any `error.<code>`, and `btn-generate` no longer hands an async function
+to `addEventListener`. **The customer sheet was getting an itemised screw count** — the
+panel now follows that sheet's own describe-don't-itemise rule. **And the false "generate a
+strategy" message's CLASS is closed**, not just this round's cause: an unrecognised refusal
+in `structure-data.js` was mapped to "no attempt yet", and is now `"unknown"` naming its
+code. 585 pytest (+30) · 126 golden scenarios (unchanged) · 107/107 smoke (+6).
+
 **Phases 2 and 3 remain.** Phase 2: `M-SLAT`, variants, option axes, the pricing union,
 the elevation read model, the panel warning codes, and multi-member eligibility selected by
 running the FFD planner per candidate — plus the `select_supply` decision node, without

@@ -254,7 +254,10 @@ def test_all_candidates_infeasible_is_reported_not_silently_picked():
     assert out.requirements == []                      # never a silent pick
     assert [r.id for r in out.unresolved] == ["req0001"]
     assert out.unresolved[0].sku == ""                 # and never a blank sku downstream
-    assert [w.code for w in out.warnings] == ["no_eligible_item"]
+    # `no_feasible_item`, NOT `no_eligible_item`: there were candidates and they
+    # were tried. One code for both cases sent the reader to the fence model when
+    # the thing to go fix was the catalog's stock length.
+    assert [w.code for w in out.warnings] == ["no_feasible_item"]
     assert out.warnings[0].severity == "error"
     assert out.warnings[0].params["role"] == "rail"
     assert out.warnings[0].params["skus"] == "SHORT-A, SHORT-B"
@@ -270,6 +273,67 @@ def test_all_candidates_infeasible_never_reaches_fulfill():
         EligibleItem(sku="SHORT-A"), EligibleItem(sku="SHORT-B")]))
     out = resolve_supply([line], catalog)
     assert fulfill(out.requirements, catalog).lines == []
+
+
+def test_a_lone_infeasible_candidate_is_refused_exactly_like_a_field_of_them():
+    """The gap-1 defect, at the unit that owns it.
+
+    `_choose` used to return the single member without asking whether it could
+    supply anything, on the reasoning that with one candidate there is no choice
+    to make. The line then reached `fulfill()`, `plan_cuts` raised
+    "piece 1500 mm exceeds stock length 1000 mm for SHORT-A", and /bom,
+    /structure and /quote all answered 400 with that raw English sentence — no
+    code, no params, no locale entry. Reachable through the catalog and
+    knowledge editors alone (see tests/api/test_api.py::
+    test_a_rail_default_pointing_at_short_stock_reads_as_unsupplied)."""
+    line = _line(engineering_qty=1, eligibility=Eligibility(
+        members=[EligibleItem(sku="SHORT-A")]))
+    out = resolve_supply([line], _short_stock_catalog())
+
+    assert out.requirements == []
+    assert [r.id for r in out.unresolved] == ["req0001"]
+    assert [w.code for w in out.warnings] == ["no_feasible_item"]
+    assert out.warnings[0].params["skus"] == "SHORT-A"
+
+
+def test_a_lone_infeasible_candidate_never_reaches_fulfill():
+    """The invariant the fix exists for, asserted against the function that used
+    to raise: fulfill() is handed nothing it cannot build."""
+    from fenceai.fulfillment.fulfill import fulfill
+
+    catalog = _short_stock_catalog()
+    line = _line(engineering_qty=1, eligibility=Eligibility(
+        members=[EligibleItem(sku="SHORT-A")]))
+    out = resolve_supply([line], catalog)
+    assert fulfill(out.requirements, catalog).lines == []   # no ValueError
+
+
+def test_an_authored_sku_too_short_for_its_cut_is_refused_too():
+    """A line arriving WITH a sku skips the choice — there is nothing to choose —
+    but not the feasibility gate, or the same raw 400 comes back through a
+    different door. No shipped demand line carries both a sku and a cut length,
+    so this path is guarded rather than observed."""
+    line = _line(sku="SHORT-A", engineering_qty=1, eligibility=Eligibility())
+    out = resolve_supply([line], _short_stock_catalog())
+
+    assert out.requirements == []
+    assert [w.code for w in out.warnings] == ["no_feasible_item"]
+    assert [r.id for r in out.unresolved] == ["req0001"]
+
+
+def test_an_authored_sku_absent_from_the_catalog_is_still_the_flagged_bom_line():
+    """The feasibility gate must not swallow the OTHER way a product falls short.
+    An unknown sku is not a length problem: fulfill() prices it at zero and flags
+    it, which is how a post pointing at a deleted product still shows up."""
+    from fenceai.fulfillment.fulfill import fulfill
+
+    catalog = _short_stock_catalog()
+    line = _line(sku="GHOST-1", engineering_qty=1, cut_length_mm=None,
+                 role="post", slot_key="", eligibility=Eligibility())
+    out = resolve_supply([line], catalog)
+    assert out.unresolved == [] and out.warnings == []
+    assert fulfill(out.requirements, catalog).lines[0].notes == [
+        "unknown product — not in catalog"]
 
 
 def test_one_feasible_candidate_among_infeasible_ones_still_wins():
@@ -305,3 +369,39 @@ def test_the_resolved_unit_is_the_one_fulfill_will_stamp_on_the_bom_line():
                  eligibility=Eligibility(members=[EligibleItem(sku="POST-S")]))
     resolved = resolve_supply([line], catalog).requirements[0]
     assert resolved.sku == "POST-S" and resolved.unit == "each"
+
+
+# ---- grouping is not bookkeeping: it decides the answer ----------------------
+
+def test_grouping_changes_which_product_wins():
+    """The measurement behind `validate_model` refusing `Eligibility.group`.
+
+    Cut planning is not additive, so which lines are costed TOGETHER decides
+    which product is cheapest. Two lines (1500 mm and 1000 mm) over BIG (3000 mm
+    stock @ 1000c) and SMALL (1600 mm stock @ 600c): as one group BIG wins (both
+    pieces share one bar for 1000c, against two SMALL bars for 1200c); split in
+    two, SMALL wins each (600c against 1000c).
+
+    `resolve_supply` groups by the members' (sku, priority, approval) signature
+    and never reads `Eligibility.group`, so an authored group name would neither
+    join nor separate the lines it names — and this is the difference it would
+    have made."""
+    catalog = Catalog.of(
+        Product(sku="BIG", name="3 m bar", price_cents=1000,
+                consumption=DivisibleLinear(purchase_length_mm=3000)),
+        Product(sku="SMALL", name="1.6 m bar", price_cents=600,
+                consumption=DivisibleLinear(purchase_length_mm=1600)),
+    )
+    members = [EligibleItem(sku="BIG", priority=1), EligibleItem(sku="SMALL", priority=2)]
+
+    def line(n, cut):
+        return _line(id=f"req000{n}", engineering_qty=1, cut_length_mm=cut,
+                     slot_key=f"rail{n}",
+                     eligibility=Eligibility(members=[m.model_copy() for m in members]))
+
+    a, b = line(1, 1500), line(2, 1000)
+    one_group = resolve_supply([a, b], catalog)
+    assert [r.sku for r in one_group.requirements] == ["BIG", "BIG"]
+
+    apart = [resolve_supply([a], catalog), resolve_supply([b], catalog)]
+    assert [r.sku for out in apart for r in out.requirements] == ["SMALL", "SMALL"]

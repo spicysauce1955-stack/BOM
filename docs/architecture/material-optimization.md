@@ -82,10 +82,37 @@ company chasing margin want opposite answers:
 | 4 | member priority | waste |
 | 5 | deterministic sku order | deterministic sku order |
 
-Feasibility is resolved *before* tier 2 and filters the field: a candidate whose piece is
-longer than its stock, or whose sku is not in the catalog, loses under every preset rather
-than winning on priority. When **no** candidate is feasible there is no answer — the line is
-reported as `no_eligible_item` and routed to `unresolved`, never silently picked.
+Feasibility is resolved *before* tier 2 **and before the number of candidates is looked
+at**: a candidate whose piece is longer than its stock, or whose sku is not in the catalog,
+loses under every preset rather than winning on priority, and a group with exactly one
+member is no exception. It used to be — with one candidate there is no choice to make, so
+the gate was skipped — and the line then reached `plan_cuts`, which raises, which is how a
+saved run became permanently unreadable behind a raw English 400 on `/bom`, `/structure`
+and `/quote` at once. There is no choice at group size one, but there is still a question.
+
+When **no** candidate is feasible there is no answer — the line is routed to `unresolved`
+and reported, never silently picked. Two codes, because they send the reader to different
+places to go fix it:
+
+| Code | Means | Go look at |
+|---|---|---|
+| `no_eligible_item` | the eligibility set is empty — nothing is a candidate | the fence model |
+| `no_feasible_item` | candidates were tried and not one fits | the catalog's stock lengths |
+
+Both carry the requirement's pegs, in `params` (for the sentence) and `element_refs` (for
+the reader that can map an element id to a bay tag). `role` + `slot_key` alone name a KIND
+of part, so a 60-bay fence emitted sixty identical warnings naming no bay between them.
+
+Feasibility is a catalog + geometry predicate — `sku in catalog` and `piece <= stock`, the
+same comparison `plan_cuts` makes before it raises — and NOT a cut plan. That is what makes
+it affordable at group size one; cuts are planned only when two or more feasible candidates
+have to be ranked against each other.
+
+An authored sku (a post, a cap, a gate kit — a line that arrives already naming its
+product) skips the choice, because there is nothing to choose, but takes the same
+feasibility guard. No shipped demand line carries both a sku and a cut length, so that
+guard fires for nothing today; it is there so "`fulfill()` never sees a piece longer than
+its stock" is a property of every path into `fulfill()` rather than of one of them.
 
 The preset name is resolved at generation, recorded on `GenerationRun.objective_preset`,
 included in the run-id digest, and passed to `resolve_supply()` explicitly. It is stored as
@@ -104,3 +131,5 @@ tiers, which are computed by planning the cuts rather than counted nominally.)*
 - Every BOM line pegs to ≥1 requirement; every requirement to ≥1 element.
 - Remnant below threshold never re-enters inventory as reusable.
 - Same demand + inventory + policy ⇒ byte-identical plan.
+- `fulfill()` never receives a requirement whose piece exceeds its product's stock, at any
+  group size and by any path — `resolve_supply` routes it to `unresolved` first.
