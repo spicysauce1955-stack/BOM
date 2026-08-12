@@ -242,8 +242,17 @@ function lineName(products, line) {
 async function renderBom() {
   const div = document.getElementById("bom-body");
   if (!state.result) { div.innerHTML = `<em>${t("bom.generate_first")}</em>`; return; }
-  const [data, products, quotes] = await Promise.all([
-    apiGet(`/api/runs/${state.result.run.id}/bom`),
+  let data;
+  try {
+    data = await apiGet(`/api/runs/${state.result.run.id}/bom`);
+  } catch (err) {
+    // 409: the catalog moved since this run was generated — a real state, not a
+    // failure (same shape as structure-data.js's topology_changed handling)
+    if (!String(err?.message || "").includes("catalog_changed")) throw err;
+    div.innerHTML = `<div class="panel meta">${esc(t("bom.catalog_changed"))}</div>`;
+    return;
+  }
+  const [products, quotes] = await Promise.all([
     loadCatalogProducts(),
     apiGet(`/api/projects/${state.projectId}/quotes`).catch(() => []),
   ]);

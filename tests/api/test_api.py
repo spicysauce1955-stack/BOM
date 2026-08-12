@@ -333,6 +333,22 @@ def test_bom_reports_inventory_hash(client):
     assert any(e["action"] == "fulfill" for e in client.get("/api/audit").json())
 
 
+def test_bom_refuses_a_run_read_against_a_different_catalog(client):
+    """Stamping is not checking. /bom recomputes against today's catalog, so it
+    must refuse rather than quietly serve a different answer (task 10)."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    product = client.get("/api/catalog").json()["products"]["RAIL-3000"]
+    product["price_cents"] = 9999
+    client.put("/api/catalog/products", json=product)
+
+    response = client.get(f"/api/runs/{run_id}/bom")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "catalog_changed"
+
+
 def test_generation_failure_is_422(client):
     pid = make_project(client)
     put_straight_topology(client, pid)
@@ -592,3 +608,19 @@ def test_structure_refuses_a_run_that_no_longer_matches_the_drawing(client):
     fresh = client.get(f"/api/runs/{again['run']['id']}/structure")
     assert fresh.status_code == 200
     assert fresh.json()["sections"][0]["length_mm"] == 9000
+
+
+def test_structure_refuses_a_run_read_against_a_different_catalog(client):
+    """Stamping is not checking. /structure recomputes against today's catalog,
+    so it must refuse rather than quietly serve a different answer."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    product = client.get("/api/catalog").json()["products"]["RAIL-3000"]
+    product["price_cents"] = 9999
+    client.put("/api/catalog/products", json=product)
+
+    response = client.get(f"/api/runs/{run_id}/structure")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "catalog_changed"

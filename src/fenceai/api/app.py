@@ -136,6 +136,22 @@ def _run(run_id: str):
     return r
 
 
+def _fresh_catalog(result):
+    """A stored run re-read against a different catalog would re-resolve supply
+    and name a different product with nobody told (structure review A2). Stamping
+    inventory_hash on the response is not the same as checking it — this is the
+    check: refuse rather than silently reprice/resupply a run's read views."""
+    catalog = state.store.load_catalog()
+    current = hashlib.sha256(catalog.model_dump_json().encode()).hexdigest()[:16]
+    if result.run.catalog_hash and current != result.run.catalog_hash:
+        raise HTTPException(409, {
+            "code": "catalog_changed",
+            "run_catalog_hash": result.run.catalog_hash,
+            "current_catalog_hash": current,
+        })
+    return catalog
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "interpreter": state.interpreter.interpreter_id}
@@ -278,7 +294,7 @@ def get_run(run_id: str):
 @app.get("/api/runs/{run_id}/bom")
 def get_bom(run_id: str):
     result = _run(run_id)
-    catalog = state.store.load_catalog()
+    catalog = _fresh_catalog(result)
     inventory = state.store.load_inventory(result.run.project_id)
     try:
         requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
@@ -315,7 +331,7 @@ def get_structure(run_id: str):
             "run_topology_revision": result.run.topology_revision,
             "project_topology_revision": project.topology.revision,
         })
-    catalog = state.store.load_catalog()
+    catalog = _fresh_catalog(result)
     inventory = state.store.load_inventory(result.run.project_id)
     try:
         requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)

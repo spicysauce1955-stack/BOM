@@ -13,7 +13,9 @@ let runId = null;       // the run it belongs to
 let inFlight = null;
 let inFlightFor = null; // the run id that fetch was started for
 let tags = new Map();   // element id -> tag, built once per report
-let stale = false;      // the run exists but no longer matches the drawing (409)
+// why the last attempt found nothing (409s are real states, not failures):
+// "topology" (the drawing moved) | "catalog" (products changed) | null (no attempt yet)
+let staleReason = null;
 
 export function getReport() {
   return report;
@@ -22,7 +24,7 @@ export function getReport() {
 export async function loadStructure() {
   const wanted = state.result?.run?.id || null;
   if (!wanted) {
-    report = null; runId = null; tags = new Map(); stale = false;
+    report = null; runId = null; tags = new Map(); staleReason = null;
     emit("structure-loaded", null); return null;
   }
   if (runId === wanted && report) return report;
@@ -33,13 +35,15 @@ export async function loadStructure() {
   inFlight = apiGet(`/api/runs/${wanted}/structure`)
     .then((doc) => {
       if (state.result?.run?.id !== wanted) return null;   // the run moved on
-      report = doc; runId = wanted; tags = indexTags(doc); stale = false;
+      report = doc; runId = wanted; tags = indexTags(doc); staleReason = null;
       return doc;
     })
     .catch((err) => {
       report = null; runId = null; tags = new Map();
-      // 409: the run no longer matches the drawing — a real state, not a failure
-      stale = String(err?.message || "").includes("topology_changed");
+      // 409: the run no longer matches something it was read against
+      const msg = String(err?.message || "");
+      staleReason = msg.includes("catalog_changed") ? "catalog"
+        : msg.includes("topology_changed") ? "topology" : null;
       return null;
     })
     .finally(() => { inFlight = null; inFlightFor = null; });
@@ -48,9 +52,14 @@ export async function loadStructure() {
   return doc;
 }
 
-// true when the last attempt found a run that no longer matches the topology
+// true when the last attempt found a run that could not be read as-is
 export function isStale() {
-  return stale;
+  return staleReason !== null;
+}
+
+// "topology" | "catalog" | null — which mismatch made the last attempt stale
+export function staleKind() {
+  return staleReason;
 }
 
 function indexTags(doc) {

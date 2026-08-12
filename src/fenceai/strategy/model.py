@@ -92,6 +92,12 @@ class GenerationRun(BaseModel):
     # (DefaultComponent roles rail/screw/concrete/cap) — consumed by derive_requirements
     demand_skus: dict[str, str] = {}
     objective_preset: str = "least_cost"  # which supply-resolution preset resolve_supply uses
+    # the fence models this run actually drew from (id, version) — part of what
+    # "generated from" means, so it belongs in the run id (run identity, task 10)
+    model_snapshot: list[tuple[str, int]] = []
+    # catalog content hash at generation time — /bom and /structure refuse to
+    # re-read a stored run against a catalog that no longer matches it
+    catalog_hash: str = ""
     created_at: str = ""
 
 

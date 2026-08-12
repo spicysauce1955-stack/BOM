@@ -14,7 +14,7 @@ import { esc } from "./api.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { emit, on, setSelection, state } from "./state.js";
-import { getReport, isStale, loadStructure } from "./structure-data.js";
+import { getReport, isStale, loadStructure, staleKind } from "./structure-data.js";
 import { enumWord, fmt, fmtLen, tu, unitLabel } from "./units.js";
 
 let detail = "installer";
@@ -57,8 +57,9 @@ function render() {
   const report = getReport();
   if (!report) {
     totals.innerHTML = "";
-    body.innerHTML = `<div class="panel meta">${
-      esc(t(isStale() ? "structure.stale" : "structure.empty"))}</div>`;
+    const emptyKey = !isStale() ? "structure.empty"
+      : staleKind() === "catalog" ? "structure.catalog_changed" : "structure.stale";
+    body.innerHTML = `<div class="panel meta">${esc(t(emptyKey))}</div>`;
     return;
   }
   renderPrintTitle(report);

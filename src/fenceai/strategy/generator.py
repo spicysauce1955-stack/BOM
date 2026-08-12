@@ -21,6 +21,7 @@ from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
+from fenceai.fencemodel.model import FenceModel
 from fenceai.fencemodel.resolve import PanelContext, resolve_panel
 from fenceai.knowledge.evaluator import (
     Resolution,
@@ -113,10 +114,14 @@ def generate(
     _generate_node_posts(
         topology, knowledge, scope, catalog, overrides, builder, strategy, applied
     )
+    # every fence model actually drawn from, across all runs — part of the run id
+    # (a model swap changes what the run means even though the digest's other
+    # inputs are untouched)
+    models_used: list[FenceModel] = []
     for run in topology.runs:
         _generate_run(
             topology, run, knowledge, scope, catalog, overrides, policy,
-            builder, strategy, applied, demand_skus,
+            builder, strategy, applied, demand_skus, models_used,
         )
 
     _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
@@ -144,10 +149,21 @@ def generate(
         policy=policy,
         demand_skus=demand_skus,
     )
+    # anything that changes what the run MEANS belongs in the digest, or
+    # INSERT OR IGNORE (store/db.py) serves a stale document under a reused id:
+    # - model_snapshot: which fence model(s)/versions the run actually drew from
+    # - catalog_hash: the catalog content the run resolved products against
+    # - objective_preset: which supply-resolution preset a later /bom read will use
+    run_meta.model_snapshot = sorted({(m.id, m.version) for m in models_used})
+    run_meta.catalog_hash = hashlib.sha256(
+        catalog.model_dump_json().encode()).hexdigest()[:16]
+    run_meta.objective_preset = policy.get("objective_preset", "least_cost")
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
             [topology.model_dump(), run_meta.knowledge_snapshot,
-             [o.model_dump() for o in overrides], policy],
+             [o.model_dump() for o in overrides], policy,
+             run_meta.model_snapshot, run_meta.catalog_hash,
+             run_meta.objective_preset],
             sort_keys=True, default=str,
         ).encode()
     ).hexdigest()[:12]
@@ -477,6 +493,7 @@ def _generate_run(
     strategy: Strategy,
     applied: set[str],
     demand_skus: dict[str, str],
+    models_used: list[FenceModel],
 ) -> None:
     length = run_length(topo, run)
     slope_permille = max_slope_permille(topo, run)
@@ -496,6 +513,7 @@ def _generate_run(
         rail_sku=demand_skus.get("rail_sku", "RAIL-3000"),
         screw_sku=demand_skus.get("screw_sku", "SCREW-S10"),
     )
+    models_used.append(model)
 
     # -- hard span parameter ---------------------------------------------------
     res = resolve_param(kb, ctx, "max_span_mm")
