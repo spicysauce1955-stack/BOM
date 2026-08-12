@@ -369,3 +369,39 @@ def test_the_resolved_unit_is_the_one_fulfill_will_stamp_on_the_bom_line():
                  eligibility=Eligibility(members=[EligibleItem(sku="POST-S")]))
     resolved = resolve_supply([line], catalog).requirements[0]
     assert resolved.sku == "POST-S" and resolved.unit == "each"
+
+
+# ---- grouping is not bookkeeping: it decides the answer ----------------------
+
+def test_grouping_changes_which_product_wins():
+    """The measurement behind `validate_model` refusing `Eligibility.group`.
+
+    Cut planning is not additive, so which lines are costed TOGETHER decides
+    which product is cheapest. Two lines (1500 mm and 1000 mm) over BIG (3000 mm
+    stock @ 1000c) and SMALL (1600 mm stock @ 600c): as one group BIG wins (both
+    pieces share one bar for 1000c, against two SMALL bars for 1200c); split in
+    two, SMALL wins each (600c against 1000c).
+
+    `resolve_supply` groups by the members' (sku, priority, approval) signature
+    and never reads `Eligibility.group`, so an authored group name would neither
+    join nor separate the lines it names — and this is the difference it would
+    have made."""
+    catalog = Catalog.of(
+        Product(sku="BIG", name="3 m bar", price_cents=1000,
+                consumption=DivisibleLinear(purchase_length_mm=3000)),
+        Product(sku="SMALL", name="1.6 m bar", price_cents=600,
+                consumption=DivisibleLinear(purchase_length_mm=1600)),
+    )
+    members = [EligibleItem(sku="BIG", priority=1), EligibleItem(sku="SMALL", priority=2)]
+
+    def line(n, cut):
+        return _line(id=f"req000{n}", engineering_qty=1, cut_length_mm=cut,
+                     slot_key=f"rail{n}",
+                     eligibility=Eligibility(members=[m.model_copy() for m in members]))
+
+    a, b = line(1, 1500), line(2, 1000)
+    one_group = resolve_supply([a, b], catalog)
+    assert [r.sku for r in one_group.requirements] == ["BIG", "BIG"]
+
+    apart = [resolve_supply([a], catalog), resolve_supply([b], catalog)]
+    assert [r.sku for out in apart for r in out.requirements] == ["SMALL", "SMALL"]

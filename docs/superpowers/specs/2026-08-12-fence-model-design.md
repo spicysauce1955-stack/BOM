@@ -622,7 +622,8 @@ New codes, each needing `warning.<code>` in **both** locale bundles:
 | Code | When |
 |---|---|
 | `height_not_supported` | height outside a `Discrete` model's ladder |
-| `no_eligible_item` | no member of an eligibility group can supply the requirement |
+| `no_eligible_item` | the eligibility group is empty — nothing is a candidate at all |
+| `no_feasible_item` | candidates were tried and not one fits (typically: every stock length is shorter than the piece). Distinct from `no_eligible_item` because the two send the reader to different places — the model, or the catalog |
 | `substitute_needs_approval` | only a `suggest_only` member fits, and no approval override exists |
 | `clear_gap_exceeded` | resolved gap exceeds `max_clear_gap_mm` for the context |
 | `rail_separation_insufficient` | anti-ladder rule violated |

@@ -286,7 +286,37 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                 f"excess={spec.infill.excess!r} is {_UNSUPPORTED}: fit_pattern "
                 "treats it exactly as 'truncate', which is a different BOM"
             )
+        if spec.infill and spec.infill.supply != "components":
+            # Classified as geometry-only in the first pass and therefore left
+            # out of this table. It is not geometry: "assembly" means the infill
+            # is BOUGHT as one pre-made unit rather than as N members, and
+            # `resolve_panel` unconditionally emits a component slot per member.
+            # Nothing reads the field, so authoring it passes validation and
+            # silently produces a different set of purchased SKUs — the exact
+            # defect class this table exists to close.
+            errors.append(
+                f"infill supply={spec.infill.supply!r} is {_UNSUPPORTED}: "
+                "resolve_panel always emits per-member component slots, so the "
+                "panel would be bought as its parts rather than as one unit"
+            )
         for key, req in _requirements(spec):
+            if req.eligibility.group is not None:
+                # Never read: `resolve_supply` groups by the (sku, priority,
+                # approval) SIGNATURE of the usable members and by nothing else.
+                # This is not cosmetic — grouping decides which lines are costed
+                # together, and cut planning is not additive, so it decides the
+                # answer. Measured: two lines (1500 mm and 1000 mm) over BIG
+                # (3000 mm @ 1000c) and SMALL (1600 mm @ 600c) resolve to BIG as
+                # one group (one bar, 1000c, beating two SMALL bars at 1200c) and
+                # to SMALL as two groups (600c each). An honoured `group` would
+                # have picked the other product.
+                errors.append(
+                    f"slot {key}: Eligibility.group is {_UNSUPPORTED}: supply "
+                    "resolution groups by the members' (sku, priority, approval) "
+                    "signature and never reads this, so a named group would "
+                    "neither join nor separate the lines it names — and grouping "
+                    "decides which product is chosen"
+                )
             if req.eligibility.predicate is not None:
                 errors.append(
                     f"slot {key}: Eligibility.predicate is {_UNSUPPORTED}: it is "
