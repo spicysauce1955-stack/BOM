@@ -101,6 +101,29 @@ def demo_knowledge() -> KnowledgeBase:
                 title_i18n={"he": 'כשירות ביצוע: מדרגה בודדת לא תעלה על 600 מ"מ'},
                 actions=[SetParam(param="max_panel_step_mm", value=600)],
             ),
+            # --- panel safety -------------------------------------------------
+            # SEED DATA, and foreign seed data at that. Every number below is
+            # US/AU/UK (the 100 mm sphere test on openings; the anti-ladder rule
+            # putting a middle rail 1143 mm clear of the bottom one) and Israeli
+            # standards have not been researched. They are `company_rule`, i.e.
+            # ADVISORY, for exactly that reason — the mechanism is
+            # jurisdiction-agnostic and a jurisdiction pack reseeds them as
+            # `hard_constraint`, at which point the SAME checks stop a job
+            # instead of noting it. Replacing the numbers is a data change.
+            KnowledgeVersion(
+                object_id="K-CLEAR-GAP", version=1, type="company_rule",
+                title="A gap between panel members may not exceed 100 mm (sphere test)",
+                title_i18n={"he": 'מרווח בין שלבי הפאנל לא יעלה על 100 מ"מ (מבחן הכדור)'},
+                actions=[SetParam(param="max_clear_gap_mm", value=100)],
+                attributed_to="foreign-standard-seed",
+            ),
+            KnowledgeVersion(
+                object_id="K-ANTI-LADDER", version=1, type="company_rule",
+                title="The rail above the bottom one sits at least 1143 mm up (anti-climb)",
+                title_i18n={"he": 'המסילה שמעל התחתונה נמצאת לפחות 1143 מ"מ מעליה (מניעת טיפוס)'},
+                actions=[SetParam(param="min_rail_separation_mm", value=1143)],
+                attributed_to="foreign-standard-seed",
+            ),
             KnowledgeVersion(
                 object_id="K-POST-EMBED", version=1, type="fact",
                 title="Posts are embedded 600 mm below ground (plumb)",

@@ -1442,6 +1442,9 @@ def _generate_run(
             governed_by=sm.quantity_refs,
         )
 
+    _check_panel_safety(kb, run, scope, strategy, builder, resolved, spans_by_model,
+                        {s.id: s for s in strategy.spans})
+
     for model_ref, offenders in unsupported_heights.items():
         # the DISTINCT heights: the reader has to change a height or a model, and
         # "1400 mm, 1400 mm, 1400 mm" says nothing "1400 mm" does not
@@ -1473,6 +1476,122 @@ def _generate_run(
                         "min_mm": heights[0], "max_mm": heights[-1]},
             )
         )
+
+
+# The panel checks, and the ONE knowledge param each is governed by. Every gap a
+# fence model introduces is regulated somewhere — the 100 mm sphere test on
+# openings, the anti-ladder rule keeping a middle rail clear of the bottom one —
+# and the numbers are jurisdictional, so they live in knowledge and not here.
+#
+# Written as records with `code="..."` spelled out rather than as a dict keyed by
+# the code, because the locale-bundle guard scans these files for exactly that
+# literal: a code that only ever existed as a dict key or a loop variable would
+# ship untranslated with the test green, which is the failure that guard exists
+# to prevent.
+@dataclass(frozen=True)
+class _PanelLimit:
+    code: str
+    param: str
+
+
+_PANEL_LIMITS = (
+    _PanelLimit(code="clear_gap_exceeded", param="max_clear_gap_mm"),
+    _PanelLimit(code="rail_separation_insufficient", param="min_rail_separation_mm"),
+    _PanelLimit(code="pattern_residual_large", param="max_pattern_residual_mm"),
+)
+
+
+def _check_panel_safety(
+    kb: KnowledgeBase,
+    run: Run,
+    scope: dict[str, str],
+    strategy: Strategy,
+    builder: GraphBuilder,
+    resolved: dict,
+    spans_by_model: dict,
+    spans: dict[str, Span],
+) -> None:
+    """Panel gaps and rail spacing, against the limits knowledge holds.
+
+    **The tier decides the consequence, not the check.** ADR-0005 is explicit
+    that a violated hard constraint is a generation failure, and that is what the
+    max-span check already does. It would be incoherent for a 1801 mm span to be
+    fatal while a 130 mm child-head gap is a note. So the same check raises
+    `GenerationFailure` when the governing knowledge object is a
+    `hard_constraint` and warns otherwise — the demo seeds these as
+    `company_rule` precisely because the numbers in it are US/AU/UK and Israeli
+    standards have not been researched. A jurisdiction pack seeds them as
+    `hard_constraint` and they stop a job, with no code change.
+
+    Aggregated per section like `height_not_supported`, and for the same reason:
+    a systemic gap on a 60-bay fence is one thing to go fix, not sixty.
+    """
+    for key, span_ids in spans_by_model.items():
+        sm = resolved[key]
+        ctx = {"scope": bind_scope(scope, {"series": sm.model.id}),
+               "run": {"length_mm": 0, "slope_permille": 0}}
+        for limit_rule in _PANEL_LIMITS:
+            code, param = limit_rule.code, limit_rule.param
+            res = resolve_param(kb, ctx, param)
+            if res.winner is None:
+                continue  # no rule, no check — a limit nobody stated is not zero
+            limit = next(a.value for a in res.winner.actions if a.kind == "set_param")
+            offenders = [
+                (worst, sid) for sid in span_ids
+                if (worst := _panel_offence(code, spans[sid], limit)) is not None
+            ]
+            if not offenders:
+                continue
+            worst = (min if code == "rail_separation_insufficient" else max)(
+                value for value, _ in offenders)
+            affected = sorted(sid for _, sid in offenders)
+            params = {"element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
+                      "value_mm": worst, "limit_mm": limit, "n": len(affected)}
+            if res.winner.version.type == "hard_constraint":
+                raise GenerationFailure(
+                    f"{code} in section {run.id}: {worst} mm against a limit of "
+                    f"{limit} mm, in {len(affected)} bay(s)",
+                    code=code, constraint_refs=[res.winner.version.ref], **params,
+                )
+            node = builder.add(
+                "conflict", code, payload=dict(params), scope_refs=affected,
+                governed_by=[res.winner.version.ref],
+            )
+            strategy.warnings.append(StrategyWarning(
+                code=code, severity="warning",
+                message=f"{code} in section {run.id}: {worst} mm against a limit "
+                        f"of {limit} mm, in {len(affected)} bay(s).",
+                element_refs=affected, decision_ref=node.id, params=params,
+            ))
+
+
+def _panel_offence(code: str, span: Span, limit: Mm) -> Mm | None:
+    """The offending measurement for this check on this bay, or None if it passes."""
+    if span.panel is None:
+        return None
+    if code == "clear_gap_exceeded":
+        # against max(gaps_mm), never one rounded average. Clear width 2000,
+        # member 100, gap 20 gives 17 gaps sharing 400 mm: 24 mm six times and
+        # 23 mm eleven times. A single rounded 23 would pass a 23 mm limit while
+        # six real openings exceeded it — the sphere test defeated by a return
+        # type, which is why fit_pattern returns a list.
+        gaps = [g for slot in span.panel.slots if slot.fit for g in slot.fit.gaps_mm]
+        worst = max(gaps, default=0)
+        return worst if worst > limit else None
+    if code == "rail_separation_insufficient":
+        # the anti-ladder rule: the rail above the bottom one must be far enough
+        # up that a child cannot climb the two. Only meaningful with three or
+        # more rails; two rails are the top and the bottom of the frame.
+        for slot in span.panel.slots:
+            if slot.orientation == "horizontal" and len(slot.positions_mm) >= 3:
+                rungs = sorted(slot.positions_mm)
+                gap = rungs[1] - rungs[0]
+                if gap < limit:
+                    return gap
+        return None
+    residuals = [slot.fit.residual_mm for slot in span.panel.slots if slot.fit]
+    worst = max(residuals, default=0)
+    return worst if worst > limit else None
 
 
 def _check_post_lengths(

@@ -32,6 +32,9 @@ WARNING_CODES = [
     "no_feasible_item",
     "substitute_needs_approval",
     "height_not_supported",
+    "clear_gap_exceeded",
+    "rail_separation_insufficient",
+    "pattern_residual_large",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 

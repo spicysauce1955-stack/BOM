@@ -142,6 +142,18 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Step of {step_mm} {u} exceeds the buildable maximum of {max_mm} {u} — "
             "needs an engineered solution."
         ),
+        "clear_gap_exceeded": (
+            "A gap of {value_mm} {u} in section {run_id} exceeds the {limit_mm} {u} "
+            "limit, in {n} bay(s)."
+        ),
+        "rail_separation_insufficient": (
+            "In section {run_id} the rail above the bottom one sits {value_mm} {u} up, "
+            "under the {limit_mm} {u} anti-climb limit, in {n} bay(s)."
+        ),
+        "pattern_residual_large": (
+            "Section {run_id} leaves {value_mm} {u} of the pattern unfilled, over the "
+            "{limit_mm} {u} tolerance, in {n} bay(s)."
+        ),
         "excessive_gap": (
             "Stepped span leaves a {gap_mm} {u} gap underneath (limit {max_mm} {u})."
         ),
@@ -243,6 +255,18 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "excessive_step": (
             'מדרגה של {step_mm} {u} חורגת מהמקסימום הניתן לביצוע ({max_mm} {u}) — '
             "נדרש פתרון הנדסי."
+        ),
+        "clear_gap_exceeded": (
+            "מרווח של {value_mm} {u} בקטע {run_id} חורג מהמגבלה של {limit_mm} {u}, "
+            "ב-{n} מפתחים."
+        ),
+        "rail_separation_insufficient": (
+            "בקטע {run_id} המסילה שמעל התחתונה נמצאת {value_mm} {u} מעליה, מתחת "
+            "למגבלת מניעת הטיפוס של {limit_mm} {u}, ב-{n} מפתחים."
+        ),
+        "pattern_residual_large": (
+            "בקטע {run_id} נותרו {value_mm} {u} לא ממולאים בתבנית, מעל הסבולת של "
+            "{limit_mm} {u}, ב-{n} מפתחים."
         ),
         "excessive_gap": (
             'הפאנל המדורג משאיר מרווח של {gap_mm} {u} מתחתיו (המגבלה {max_mm} {u}).'
@@ -430,6 +454,11 @@ def explain_node(
             base = _fmt(t, "excessive_step", lang, units, step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
         case "excessive_gap":
             base = _fmt(t, "excessive_gap", lang, units, gap_mm=p.get("gap_mm"), max_mm=p.get("max_mm"))
+        case "clear_gap_exceeded" | "rail_separation_insufficient" | "pattern_residual_large":
+            # one shape for the three panel-limit checks: they differ in which
+            # measurement they take, not in what they have to say about it
+            base = _fmt(t, node.action, lang, units, run_id=p.get("run_id"),
+                value_mm=p.get("value_mm"), limit_mm=p.get("limit_mm"), n=p.get("n"))
         case "max_height_exceeded":
             base = _fmt(t, "max_height_exceeded", lang, units,
                 height_mm=p.get("height_mm"), max_mm=p.get("max_mm"))
