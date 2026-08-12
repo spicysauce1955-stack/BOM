@@ -77,6 +77,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " Height reduced by the wall top ({wall_top_mm} {u}, event {wall_event})."
         ),
         "create_span_step": " Steps {step_mm} {u} against the grade.",
+        "resolve_panel": "Panel {model_ref} built from {slots}.",
         "choose_vertical_mode": "Vertical mode '{mode}' chosen at {slope_permille}‰ grade.",
         "resolve_max_span": "Maximum span resolved to {value_mm} {u}.",
         "resolve_span_quantities": (
@@ -156,6 +157,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " הגובה הופחת בשל ראש הקיר ({wall_top_mm} {u}, אירוע {wall_event})."
         ),
         "create_span_step": " מדורג ב-{step_mm} {u} כנגד השיפוע.",
+        "resolve_panel": "הפאנל {model_ref} נבנה מ-{slots}.",
         "choose_vertical_mode": "נבחר מצב אנכי '{mode}' בשיפוע {slope_permille}‰.",
         "resolve_max_span": "המפתח המרבי נקבע ל-{value_mm} {u}.",
         "resolve_span_quantities": (
@@ -278,6 +280,10 @@ def explain_node(
                 )
             if "step_mm" in p:
                 base += _fmt(t, "create_span_step", lang, units, step_mm=p["step_mm"])
+        case "resolve_panel":
+            slots = ", ".join(f"{s['qty']} {s['role']}" for s in p.get("slots", []))
+            base = _fmt(t, "resolve_panel", lang, units,
+                model_ref=p.get("model_ref"), slots=slots)
         case "choose_vertical_mode":
             base = _fmt(t, "choose_vertical_mode", lang, units,
                 mode=p.get("mode"), slope_permille=p.get("slope_permille")

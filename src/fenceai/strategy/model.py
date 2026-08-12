@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from fenceai.core.units import Mm
 from fenceai.decisions.graph import DecisionGraph
+from fenceai.fencemodel.resolve import ResolvedPanel
 
 
 class Post(BaseModel):
@@ -42,6 +43,10 @@ class Span(BaseModel):
     rail_count: int = 2
     screws_count: int = 8  # resolved from knowledge during generation (K-SCREWS)
     rail_cut_basis: Literal["width", "slope"] = "width"
+    # What this bay is made of, resolved from the fence model at generation.
+    # rail_count/screws_count stay until a migration back-fills `panel` onto
+    # stored runs: a run re-read without either would silently default to 2.
+    panel: ResolvedPanel | None = None
 
 
 class Gate(BaseModel):

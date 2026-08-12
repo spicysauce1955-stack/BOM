@@ -20,6 +20,8 @@ from fenceai.catalog.model import Catalog
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
+from fenceai.fencemodel.demo import legacy_model
+from fenceai.fencemodel.resolve import PanelContext, resolve_panel
 from fenceai.knowledge.evaluator import (
     Resolution,
     preference_firings,
@@ -114,7 +116,7 @@ def generate(
     for run in topology.runs:
         _generate_run(
             topology, run, knowledge, scope, catalog, overrides, policy,
-            builder, strategy, applied,
+            builder, strategy, applied, demand_skus,
         )
 
     _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
@@ -474,6 +476,7 @@ def _generate_run(
     builder: GraphBuilder,
     strategy: Strategy,
     applied: set[str],
+    demand_skus: dict[str, str],
 ) -> None:
     length = run_length(topo, run)
     slope_permille = max_slope_permille(topo, run)
@@ -485,6 +488,14 @@ def _generate_run(
         "scope": bind_scope(scope),
         "run": {"length_mm": length, "slope_permille": slope_permille},
     }
+
+    # M-LEGACY until a fence_model event exists to pick another; its eligibility
+    # is seeded from the run's resolved demand skus (resolved once in generate(),
+    # never re-resolved here) so a DefaultComponent change still reaches the BOM.
+    model = legacy_model(
+        rail_sku=demand_skus.get("rail_sku", "RAIL-3000"),
+        screw_sku=demand_skus.get("screw_sku", "SCREW-S10"),
+    )
 
     # -- hard span parameter ---------------------------------------------------
     res = resolve_param(kb, ctx, "max_span_mm")
@@ -937,6 +948,20 @@ def _generate_run(
                 screws_count=screws_per_span,
                 rail_cut_basis="slope" if v_mode == "raked" else "width",
             )
+            span.panel = resolve_panel(
+                model.default_spec,
+                PanelContext(
+                    centre_width_mm=width,
+                    clear_width_mm=width,  # face widths arrive in phase 2
+                    height_mm=height,
+                    vertical=v_mode,
+                    length_basis=span.rail_cut_basis,
+                    slope_len_mm=span.slope_len_mm,
+                    params={"rails_per_span": rails_per_span,
+                            "screws_per_span": screws_per_span},
+                ),
+                model_ref=model.ref,
+            )
             strategy.spans.append(span)
             span_ids.append(span.id)
             builder.add(
@@ -951,6 +976,13 @@ def _generate_run(
                 scope_refs=[span.id],
                 inputs=[layout_node.id] + ([fv_node] if fv_node else []),
                 governed_by=governed,
+            )
+            builder.add(
+                "structural", "resolve_panel",
+                payload={"model_ref": model.ref,
+                         "slots": [{"key": s.slot_key, "role": s.role, "qty": s.qty}
+                                   for s in span.panel.slots]},
+                scope_refs=[span.id], inputs=[layout_node.id],
             )
             if width > max_span:
                 raise GenerationFailure(
