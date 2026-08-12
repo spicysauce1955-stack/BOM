@@ -314,6 +314,7 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .structure-table tr[data-element]:hover { background: #f1f5f9; }
 .structure-table tr.selected { background: #dbeafe; }
 .structure-table .part { white-space: nowrap; }
+.structure-table .part.selected { background: #dbeafe; border-radius: 3px; }
 .customer-materials { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-block: 4px;
   font-size: 12px; }
 #structure-totals .summary-line { display: flex; flex-wrap: wrap; gap: 10px;
@@ -329,6 +330,43 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .profile-dim-label.total { font-size: 9px; fill: #1d2733; font-weight: 600; }
 .profile-dim-label.closing { fill: #b45309; }
 .profile-dim-legend { font-size: 8px; fill: #b45309; }
+
+/* ---------- the panel elevation (js/elevation.js) -------------------------
+   Paint lives here rather than in the renderer, and it is keyed by ROLE from a
+   closed set — a sku-driven or swatch-driven `fill` is a style context that
+   esc() does not make safe, so no server string ever reaches a colour. */
+/* the drawing is bounded by its HEIGHT (a bay is wider than it is tall, but not
+   by much), so a full-width box would be mostly empty either side of it */
+#panel-elevation-draw, #structure-elevation-draw { max-inline-size: 660px;
+  margin-inline: auto; }
+.elevation-svg { inline-size: 100%; block-size: auto; max-block-size: 420px;
+  direction: ltr; /* never mirrored: mirroring reverses slat order vs the plan */ }
+.elevation-svg.elev-clickable .elev-member { cursor: pointer; }
+.elev-opening { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.5; }
+.elev-member { fill: #cbd5e1; stroke: #475569; stroke-width: 1; }
+.elev-member.elev-infill { fill: #d7dee7; }
+.elev-member.elev-rail { fill: #a8b4c4; }
+.elev-member.elev-post, .elev-member.elev-cap { fill: #94a3b8; }
+.elev-member.elev-spacer, .elev-member.elev-gate_kit { fill: #e2e8f0; }
+/* a face size the catalog does not carry: drawn to a nominal, and SAID to be */
+.elev-nominal { stroke-dasharray: 7 5; }
+.elev-member.elev-nominal { fill-opacity: 0.45; }
+.elev-member.selected { stroke: #2563eb; stroke-width: 2.5; fill: #dbeafe; }
+.elev-member:hover { stroke: #2563eb; }
+/* hidden edges: what is behind still reads as a member, per drawing convention */
+.elev-edges rect { fill: none; stroke: #475569; stroke-width: 0.8; opacity: 0.45;
+  pointer-events: none; }
+.elev-dim line { stroke: #94a3b8; stroke-width: 1; }
+.elev-dim line.elev-leader { stroke: #cbd5e1; stroke-dasharray: 4 4; }
+.elev-dim-label { font-size: 20px; fill: #475569; }
+/* the drawing and the priced table select together, in both directions */
+#panel-parts tr[data-slot] { cursor: pointer; }
+#panel-parts tr[data-slot]:hover { background: #f1f5f9; }
+#panel-parts tr[data-slot].selected { background: #dbeafe; }
+.elevation-note { color: #64748b; font-size: 12px; }
+.elevation-note .elev-swatch { display: inline-block; inline-size: 20px;
+  block-size: 10px; border: 1px dashed #475569; background: #cbd5e1;
+  opacity: 0.55; margin-inline-end: 4px; vertical-align: baseline; }
 
 /* ---------- the printable sheet: drawings + schedules, no chrome ---------- */
 .print-title { display: none; }
