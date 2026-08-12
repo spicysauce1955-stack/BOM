@@ -608,3 +608,44 @@ clamps them inside the opening, so a two-rail panel draws its rails flush with t
 bottom edges rather than inset — correct per the spec, and it reads oddly. (3) Fixings have
 no extent, so a panel whose model is only fixings draws nothing; the renderer returns null
 and the caller says so.
+
+## The panel, drawn (2026-08-13) — COMPLETE
+`js/elevation.js` renders the `PanelElevation` the backend has been serving since W2 and
+nothing read. One renderer, two callers: the Panel tab above its priced table, and the
+Structure tab for the selected bay through the existing `structure-data.js` cache (no
+second fetch — a second fetch is exactly the stale-run bug finding A7 closed). It owns no
+geometry, only the panel→SVG axis flip; duplicating the fit maths in JS is what the read
+model exists to prevent.
+
+Clicking a drawn member selects its part row and clicking a row raises its members — the
+browser check the fence-model spec asked for and that had never been implemented, and the
+only way to see a rail on a slat panel, since the slats are genuinely in front of it.
+Nominal faces (`declared: false` — a rail's face height is product data the catalog does
+not carry) draw dashed and say so. Colours key off a closed role set in CSS; no sku,
+swatch or server string reaches `fill`. The SVG joins the plan canvas and the profile in
+never being mirrored — asserted in Hebrew AND English by screen position, not by
+stylesheet.
+
+Two read-model awkwardnesses it found are closed: `slot_kind`/`kind` say whether a member
+came from the frame or the infill (a vertical frame slot and a vertical infill slot were
+the same shape on the wire, so the renderer had to confirm its gap dimension geometrically
+rather than index the list it was handed), and `face_offset_mm` rides along so a shadowbox
+can be drawn at its real depth rather than as two layers.
+
+## Authoring gaps closed (2026-08-13) — COMPLETE
+The four the authoring round reported rather than patched. A slot with **no eligible
+product** published cleanly and then reported `no_eligible_item` on every bay of every job
+built to it — refused at authoring, where the author can still say what belongs there. One
+**already-broken project** 500'd the whole portfolio impact preview, at the moment a user
+most needs an answer; it is now a `baseline_failed` row, not counted as affected because
+the change did not break it. **Two drafts** disagreed: `listing()` reported the highest and
+the save took the first. And an **abandoned draft stayed for ever** — DELETE discards one,
+refused in the STORE for a published version, because an immutable document any route
+could delete is not immutable.
+
+The locale guard scanned five files for `code="x"` only, so every code a ROUTE emits was
+invisible twice over. It now scans `api/app.py` and both spellings, and immediately caught
+four codes shipping untranslated — including two 409s a user meets whenever they edit a
+catalog or a drawing.
+
+863 pytest · 145 golden scenarios · 137/137 smoke.
