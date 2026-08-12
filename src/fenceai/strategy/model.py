@@ -91,6 +91,7 @@ class GenerationRun(BaseModel):
     # demand product selection resolved from knowledge at generation time
     # (DefaultComponent roles rail/screw/concrete/cap) — consumed by derive_requirements
     demand_skus: dict[str, str] = {}
+    objective_preset: str = "least_cost"  # which supply-resolution preset resolve_supply uses
     created_at: str = ""
 
 

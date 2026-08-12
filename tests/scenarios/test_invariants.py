@@ -8,6 +8,7 @@ from fenceai.catalog.demo import demo_catalog
 from fenceai.core.errors import GenerationFailure
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
+from fenceai.fulfillment.supply import resolve_supply
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeBase
 from fenceai.strategy.generator import generate
@@ -67,6 +68,7 @@ def spine(request):
     knowledge, catalog = demo_knowledge(), demo_catalog()
     result = generate(topo, knowledge, catalog, overrides=overrides)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
     return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge)
 
@@ -77,6 +79,7 @@ def rerun(spine):
     _, _, _, catalog, (topo, overrides, inventory, knowledge) = spine
     result = generate(topo, knowledge, catalog, overrides=overrides)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
     return result, reqs, bom
 
@@ -173,6 +176,7 @@ def test_coverage_and_cap_quantities_plain():
     knowledge, catalog = demo_knowledge(), demo_catalog()
     result = generate(straight_topology(6000), knowledge, catalog)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog).requirements
     bom = fulfill(reqs, catalog)
     caps = next(l for l in bom.lines if l.sku == "POST-CAP")
     assert caps.engineering_qty == 5 and caps.purchase_qty == 5

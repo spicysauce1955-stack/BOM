@@ -17,6 +17,7 @@ from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import Cents
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, fulfill
+from fenceai.fulfillment.supply import resolve_supply
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.strategy.generator import generate
 from fenceai.strategy.model import Strategy
@@ -136,10 +137,11 @@ def _spine(topology, kb, catalog, overrides, inventory, project_id=""):
     # project_id is a bound scope dimension during generation — a project-scoped
     # rule must behave in the preview exactly as it will in the real run
     result = generate(topology, kb, catalog, overrides=overrides, project_id=project_id)
-    bom = fulfill(
-        derive_requirements(result.strategy, catalog, result.run.demand_skus),
-        catalog, inventory,
-    )
+    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    requirements = resolve_supply(
+        requirements, catalog, inventory, preset=result.run.objective_preset
+    ).requirements
+    bom = fulfill(requirements, catalog, inventory)
     return result.strategy, bom
 
 

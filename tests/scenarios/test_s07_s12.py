@@ -5,6 +5,7 @@ from __future__ import annotations
 from fenceai.ai.stub import StubProposer
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
+from fenceai.fulfillment.supply import resolve_supply
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.strategy.generator import generate
@@ -16,6 +17,7 @@ from tests.conftest import add_point_event, straight_topology
 def _spine(topo, knowledge, catalog, inventory=None, overrides=None):
     result = generate(topo, knowledge, catalog, overrides=overrides)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
     return result, reqs, bom
 

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
+from fenceai.fencemodel.model import Eligibility
 from fenceai.strategy.model import Strategy
 
 DEMAND_POLICY_DEFAULTS = {
@@ -25,7 +26,7 @@ DEMAND_POLICY_DEFAULTS = {
 
 class RequirementLine(BaseModel):
     id: str
-    sku: str
+    sku: str = ""          # RESOLVED by fulfillment from `eligibility`, not authored
     engineering_qty: int
     unit: str  # "each" | "cut" | "application"
     cut_length_mm: Mm | None = None
@@ -34,7 +35,14 @@ class RequirementLine(BaseModel):
     # what this line IS, structurally. Presentation depends on it — a customer
     # proposal names posts and panels but describes fixings and concrete rather
     # than itemising them — and guessing that from a SKU string would be a lie.
-    role: str = ""  # post | cap | concrete | rail | screw | gate_kit
+    role: str = ""  # post | cap | concrete | rail | screw | infill | gate_kit
+    slot_key: str = ""     # sub-element identity: which part of the panel this is
+    eligibility: Eligibility = Eligibility()
+
+
+# Which engineering unit a role is counted in. A cut length makes a line a "cut";
+# everything else is counted in eaches.
+_UNIT_BY_ROLE = {"rail": "cut", "infill": "cut"}
 
 
 def derive_requirements(
@@ -60,12 +68,18 @@ def derive_requirements(
             add(policy["concrete_sku"], 1, "application", [post.id], role="concrete")
 
     for span in strategy.spans:
-        cut_len = span.slope_len_mm if span.rail_cut_basis == "slope" else span.width_mm
-        add(
-            policy["rail_sku"], span.rail_count, "cut", [span.id],
-            cut_length_mm=cut_len, length_basis=span.rail_cut_basis, role="rail",
-        )
-        add(policy["screw_sku"], span.screws_count, "each", [span.id], role="screw")
+        if span.panel is None:
+            raise ValueError(
+                f"span {span.id} has no panel — regenerate the run; "
+                "stored runs from before the fence-model change are read with "
+                "their legacy fields intact"
+            )
+        for slot in span.panel.slots:
+            add(
+                "", slot.qty, _UNIT_BY_ROLE.get(slot.role, "each"), [span.id],
+                cut_length_mm=slot.length_mm, length_basis=slot.length_basis,
+                role=slot.role, slot_key=slot.slot_key, eligibility=slot.eligibility,
+            )
 
     for gate in strategy.gates:
         if gate.kit_sku:  # no kit fits this opening — the strategy already said so

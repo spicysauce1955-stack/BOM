@@ -30,6 +30,7 @@ from fenceai.decisions.explain import explain_element
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, fulfill
 from fenceai.fulfillment.quote import Quote
+from fenceai.fulfillment.supply import resolve_supply
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion
 from fenceai.learning.impact import (
@@ -279,8 +280,15 @@ def get_bom(run_id: str):
     result = _run(run_id)
     catalog = state.store.load_catalog()
     inventory = state.store.load_inventory(result.run.project_id)
-    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    try:
+        requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    resolution = resolve_supply(requirements, catalog, inventory,
+                                preset=result.run.objective_preset)
+    requirements = resolution.requirements
     bom = fulfill(requirements, catalog, inventory)
+    bom.warnings = resolution.warnings
     # the BOM is what a customer gets quoted on: record which inventory state
     # produced it so a later recomputation is distinguishable (final review, #5)
     inventory_hash = hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16]
@@ -305,8 +313,15 @@ def get_structure(run_id: str):
         })
     catalog = state.store.load_catalog()
     inventory = state.store.load_inventory(result.run.project_id)
-    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    try:
+        requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    resolution = resolve_supply(requirements, catalog, inventory,
+                                preset=result.run.objective_preset)
+    requirements = resolution.requirements
     bom = fulfill(requirements, catalog, inventory)
+    bom.warnings = resolution.warnings
     report = build_structure(project.topology, result.strategy, requirements, bom,
                              run_id=run_id)
     # The layout is a function of the run alone, but the PARTS name the bars a
@@ -330,8 +345,15 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     result = _run(run_id)
     catalog = state.store.load_catalog()
     inventory = state.store.load_inventory(result.run.project_id)
-    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    try:
+        requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    resolution = resolve_supply(requirements, catalog, inventory,
+                                preset=result.run.objective_preset)
+    requirements = resolution.requirements
     bom = fulfill(requirements, catalog, inventory)
+    bom.warnings = resolution.warnings
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
         label=body.label,

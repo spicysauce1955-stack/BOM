@@ -14,6 +14,7 @@ from fenceai.catalog.model import Catalog
 from fenceai.core.units import Cents, Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.cutplan import CutPiece, CutPlan, RemnantStock, plan_cuts
+from fenceai.strategy.model import StrategyWarning
 
 
 class InventoryItem(BaseModel):
@@ -59,6 +60,7 @@ class Bom(BaseModel):
     allocations: list[Allocation] = []
     projected_remnants: list[InventoryItem] = []
     total_cents: Cents = 0
+    warnings: list[StrategyWarning] = []
 
 
 def fulfill(
