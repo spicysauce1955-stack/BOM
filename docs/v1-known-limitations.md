@@ -22,6 +22,28 @@ Deliberate deferrals and honest weaknesses, with the trigger that should revisit
 - **Cut-plan optimality**: FFD + LP bound; when the bound is not met the plan is
   flagged, not escalated. Trigger: real jobs where FFD misses (then CP-SAT extra,
   ADR-0007).
+- **Layout is blind to the cut plan.** The two never speak, so nobody is told when a
+  small layout change would buy far less material. S07 is the standing example: two
+  1500 mm bays need four 3 m bars (1500+3+1500 > 3000, so one rail per bar and a
+  1497 mm offcut each — 12 m of stock for 6 m of rail), while 1498 mm bays fit two per
+  bar, and three 1000 mm bays need six rails but only **three** bars. More rails, less
+  aluminium, one more post. The planner already computes the waste and `layout_segment`
+  already emits a rejected alternative; nothing joins them up. This is an *advisory*,
+  never an automatic relayout — span width is the user's design decision, and material
+  cost is one input to it. Trigger: the first job where a customer is quoted materially
+  more than a neighbouring layout would have cost.
+- **No workshop model.** The system knows what a fence is made of but not what the shop
+  can *do* to make it — the operations available (cut, drill, splice, weld, bend,
+  coat), their rules (max handled length, minimum offcut, which joins are permitted
+  where), their costs (setup plus per-unit) and their consequences. Today the one piece
+  of process knowledge in the system, `DivisibleLinear.kerf_mm`, sits on the *product*,
+  when a kerf is a property of the **saw**. Until this exists, "fabricate it" can never
+  be an alternative to "buy it", labour is invisible in every comparison, and a rule
+  like "we never splice a rail under 2 m" has nowhere to live. Trigger: the first
+  decision that turns on shop capability rather than on catalogue contents — most
+  likely a made-to-measure panel the shop could either buy or build. See the extension
+  seam in `docs/superpowers/specs/2026-08-12-fence-model-design.md`, which is written so
+  this can be added without reworking eligibility.
 - ~~Impact analysis is per-run only~~ **Done (2026-08-10)**: cross-project rule impact
   preview (`POST /api/knowledge/preview-impact`, `POST /api/candidates/{id}/{v}/preview`
   + UI buttons in the review queue and knowledge editor) — regenerate-and-diff across

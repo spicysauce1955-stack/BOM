@@ -725,6 +725,43 @@ literature (Belov & Scheithauer 2002; Bertolini et al. 2023), which is our varia
 - Elevation read model geometry, and a browser check that clicking a drawn slat selects its
   part row.
 
+## Extension seam: the workshop
+
+Not built here. Recorded because the shape of eligibility decides whether it can be added
+later without rework, and it can be — if phases 1–2 respect four constraints.
+
+The missing concept is what the **shop can do**: the operations available (cut, drill,
+splice, weld, bend, coat), the rules governing them ("we never splice a rail under 2 m",
+maximum handled length, minimum usable offcut), their costs (setup plus per-unit) and their
+consequences. Manufacturing calls this a routing or a bill of operations; the configuration
+literature calls it a generic Bill of Functions, Materials and Operations. Today the system's
+only piece of process knowledge is `DivisibleLinear.kerf_mm`, which sits on the product when
+a kerf is a property of the saw.
+
+Once it exists, **"fabricate it" becomes a third answer alongside "buy it ready-made" and
+"cut it from stock"** — which is precisely an eligibility member. That is the whole reason
+this seam is cheap, and the four constraints that keep it cheap:
+
+1. **`Eligibility.members` is a discriminated union, not a list of SKUs.** Phase 1 ships one
+   variant, `CatalogItem`. A later `FabricatedRoute` variant carries an operation list rather
+   than a single SKU. No code outside the resolver may read `member.sku` directly — it asks
+   the resolver what a member yields.
+2. **A `PartRequirement` stays functional** — role, length, quantity — and never names a
+   product. Already true, and it is what lets an operation satisfy the same requirement a
+   purchase would.
+3. **Selection stays a named lexicographic preset** (ADR-0007), so labour and machine time
+   enter as an additional tier or an additional term in the cost tier, not as a rewrite of
+   the objective.
+4. **Selection decision nodes record the route chosen and the routes rejected**, not "the SKU
+   chosen". A new route type then appears in the existing explanation without a new node
+   kind, and the structure sheet can say "fabricated: 2 cuts + 1 splice" in the same place it
+   says "POLE-3000 ⟲inv_rem1".
+
+The related advisory — telling a user that a 3 mm change in span width would halve their rail
+bill — is recorded in `docs/v1-known-limitations.md` with its trigger. It belongs to the same
+future: both are cases of the system reasoning about *how* something gets made rather than
+only what it is made of.
+
 ## Out of scope, stated plainly
 
 - **2D sheet and mesh infill.** Welded mesh and sheet panels must be `ready_made` or a
