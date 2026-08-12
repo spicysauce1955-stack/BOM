@@ -978,6 +978,49 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
               and all(len({t.split(" ")[0] for t in tags}) == 1
                       for tags in shared_tags["shared"]))
         c.shot("14-structure-multi.png")
+
+        # editing the catalog invalidates a stored run's read views the same way
+        # editing the drawing does: /structure must refuse (409 catalog_changed)
+        # rather than silently reprice against a different catalog (task 10)
+        orig_price = c.js("""
+(async () => {
+  const cat = await (await fetch('/api/catalog')).json();
+  const product = cat.products['RAIL-3000'];
+  const orig = product.price_cents;
+  product.price_cents = 9999;
+  await fetch('/api/catalog/products', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(product),
+  });
+  return orig;
+})()""")
+        c.js("""
+{
+  const sel = document.getElementById('project-select');
+  sel.dispatchEvent(new Event('change'));   // reload: re-reads the (now stale) run
+}
+'ok'""")
+        time.sleep(2)
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(1.5)
+        catalog_stale_text = c.js("document.getElementById('structure-body').textContent")
+        check("a catalog edit makes the structure tab refuse, not reprice silently",
+              "הקטלוג השתנה" in (catalog_stale_text or ""))
+        check("a catalog-stale structure leaves no tags on the drawing",
+              (c.js("document.querySelectorAll('#g-overlay text.elem-tag').length") or 0) == 0)
+        # restore the price — throwaway DB, but keep behaviour predictable for
+        # whatever runs later in this session
+        c.js(f"""
+(async () => {{
+  const cat = await (await fetch('/api/catalog')).json();
+  const product = cat.products['RAIL-3000'];
+  product.price_cents = {orig_price};
+  await fetch('/api/catalog/products', {{
+    method: 'PUT', headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify(product),
+  }});
+  return 'restored';
+}})()""")
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
 

@@ -6,8 +6,7 @@ import pytest
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.core.ids import new_id
-from fenceai.demand.derive import derive_requirements
-from fenceai.fulfillment.fulfill import fulfill
+from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.fulfillment.quote import Quote
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.store.db import Store
@@ -18,12 +17,16 @@ from tests.conftest import straight_topology
 def make_quote(project_id="p1", label="") -> Quote:
     catalog = demo_catalog()
     result = generate(straight_topology(6000), demo_knowledge(), catalog)
-    reqs = derive_requirements(result.strategy, catalog)
-    bom = fulfill(reqs, catalog)
+    # the real pipeline, not derive+fulfill by hand: skipping resolve_supply
+    # leaves every panel line with a blank sku, which fulfill() now refuses
+    priced = price_strategy(result.strategy, catalog,
+                            demand_skus=result.run.demand_skus)
     return Quote(
         id=new_id("quote"), project_id=project_id, run_id=result.run.id, label=label,
         knowledge_snapshot_hash=result.run.snapshot_hash,
-        requirements=reqs, bom=bom, total_cents=bom.total_cents,
+        catalog_hash=result.run.catalog_hash,
+        requirements=priced.requirements, bom=priced.bom,
+        total_cents=priced.bom.total_cents,
     )
 
 

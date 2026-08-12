@@ -8,10 +8,11 @@ from fenceai.catalog.demo import demo_catalog
 from fenceai.core.errors import GenerationFailure
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
+from fenceai.fulfillment.supply import resolve_supply
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeBase
 from fenceai.strategy.generator import generate
-from fenceai.strategy.overrides import Override, PinPost
+from fenceai.strategy.overrides import ForceVertical, Override, PinPost
 from fenceai.topology.model import (
     BasePayload,
     ElevationSamplePayload,
@@ -36,6 +37,17 @@ def _fixtures():
     gated = straight_topology(5000)
     add_point_event(gated, "run1", "gate", 2000, GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
 
+    # A RAKED run. The suite had none: the demo KB carries an unscoped
+    # PreferVertical(stepped) (K-STEP-SLOPE), so every sloped fixture above
+    # resolves to stepped and `grep -rn raked tests/` found nothing. Raked is
+    # the only mode that puts a span on `rail_cut_basis="slope"`, so the
+    # slope-length branch in fencemodel/resolve.py was reachable by no test at
+    # all — deleting it left the suite green while rails were cut to plan width
+    # instead of slope length.
+    raked = straight_topology(6000)
+    add_point_event(raked, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
+    add_point_event(raked, "run1", "z1", 6000, ElevationSamplePayload(z_mm=1000))
+
     lshape = Topology(
         nodes=[
             Node(id="n1", x_mm=0, y_mm=0),
@@ -50,6 +62,13 @@ def _fixtures():
     return {
         "plain": (plain, [], None),
         "slope": (slope, [], None),
+        "raked": (
+            raked,
+            [Override(id="ov_rake", run_id="run1",
+                      directive=ForceVertical(start_station_mm=0, end_station_mm=6000,
+                                              mode="raked"))],
+            None,
+        ),
         "mixed_base": (mixed, [], None),
         "gated": (gated, [], None),
         "lshape": (lshape, [], None),
@@ -67,6 +86,7 @@ def spine(request):
     knowledge, catalog = demo_knowledge(), demo_catalog()
     result = generate(topo, knowledge, catalog, overrides=overrides)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
     return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge)
 
@@ -77,6 +97,7 @@ def rerun(spine):
     _, _, _, catalog, (topo, overrides, inventory, knowledge) = spine
     result = generate(topo, knowledge, catalog, overrides=overrides)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
     return result, reqs, bom
 
@@ -173,6 +194,7 @@ def test_coverage_and_cap_quantities_plain():
     knowledge, catalog = demo_knowledge(), demo_catalog()
     result = generate(straight_topology(6000), knowledge, catalog)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog).requirements
     bom = fulfill(reqs, catalog)
     caps = next(l for l in bom.lines if l.sku == "POST-CAP")
     assert caps.engineering_qty == 5 and caps.purchase_qty == 5

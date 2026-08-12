@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from fenceai.core.units import Mm
 from fenceai.decisions.graph import DecisionGraph
+from fenceai.fencemodel.resolve import ResolvedPanel
 
 
 class Post(BaseModel):
@@ -42,6 +43,10 @@ class Span(BaseModel):
     rail_count: int = 2
     screws_count: int = 8  # resolved from knowledge during generation (K-SCREWS)
     rail_cut_basis: Literal["width", "slope"] = "width"
+    # What this bay is made of, resolved from the fence model at generation.
+    # rail_count/screws_count stay until a migration back-fills `panel` onto
+    # stored runs: a run re-read without either would silently default to 2.
+    panel: ResolvedPanel | None = None
 
 
 class Gate(BaseModel):
@@ -86,6 +91,13 @@ class GenerationRun(BaseModel):
     # demand product selection resolved from knowledge at generation time
     # (DefaultComponent roles rail/screw/concrete/cap) — consumed by derive_requirements
     demand_skus: dict[str, str] = {}
+    objective_preset: str = "least_cost"  # which supply-resolution preset resolve_supply uses
+    # the fence models this run actually drew from (id, version) — part of what
+    # "generated from" means, so it belongs in the run id (run identity, task 10)
+    model_snapshot: list[tuple[str, int]] = []
+    # catalog content hash at generation time — /bom and /structure refuse to
+    # re-read a stored run against a catalog that no longer matches it
+    catalog_hash: str = ""
     created_at: str = ""
 
 

@@ -12,7 +12,9 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
+from fenceai.core.errors import ReadRefused
 from fenceai.core.units import Mm
+from fenceai.fencemodel.model import Eligibility
 from fenceai.strategy.model import Strategy
 
 DEMAND_POLICY_DEFAULTS = {
@@ -25,16 +27,26 @@ DEMAND_POLICY_DEFAULTS = {
 
 class RequirementLine(BaseModel):
     id: str
-    sku: str
+    sku: str = ""          # RESOLVED by fulfillment from `eligibility`, not authored
     engineering_qty: int
-    unit: str  # "each" | "cut" | "application"
+    # "each" | "cut" | "application" — RESOLVED by resolve_supply from the chosen
+    # product's Consumption, in the same statement that sets `sku`, and never
+    # authored here. The parts ledger balances asked-vs-purchased per
+    # (sku, unit) with the purchased side reading BomLine.engineering_unit, so a
+    # unit demand GUESSES can disagree with what fulfill() actually did and
+    # report one demand as unassigned and from-stock at once. Demand guessed it
+    # three ways (beside the sku, from `role`, from `length_mm is not None`) and
+    # was wrong each time; it does not guess any more.
+    unit: str = ""
     cut_length_mm: Mm | None = None
     length_basis: str | None = None  # "width" | "slope" (Research A pitfall 4)
     pegs: list[str] = []  # strategy element ids
     # what this line IS, structurally. Presentation depends on it — a customer
     # proposal names posts and panels but describes fixings and concrete rather
     # than itemising them — and guessing that from a SKU string would be a lie.
-    role: str = ""  # post | cap | concrete | rail | screw | gate_kit
+    role: str = ""  # post | cap | concrete | rail | screw | infill | gate_kit
+    slot_key: str = ""     # sub-element identity: which part of the panel this is
+    eligibility: Eligibility = Eligibility()
 
 
 def derive_requirements(
@@ -46,29 +58,49 @@ def derive_requirements(
     lines: list[RequirementLine] = []
     n = 0
 
-    def add(sku: str, qty: int, unit: str, pegs: list[str], **kw) -> None:  # noqa: D401
+    def add(sku: str, qty: int, pegs: list[str], **kw) -> None:  # noqa: D401
         nonlocal n
         n += 1
         lines.append(
-            RequirementLine(id=f"req{n:04d}", sku=sku, engineering_qty=qty, unit=unit, pegs=pegs, **kw)
+            RequirementLine(id=f"req{n:04d}", sku=sku, engineering_qty=qty, pegs=pegs, **kw)
         )
 
     for post in strategy.posts:
-        add(post.sku, 1, "each", [post.id], role="post")
-        add(policy["cap_sku"], 1, "each", [post.id], role="cap")
+        add(post.sku, 1, [post.id], role="post")
+        add(policy["cap_sku"], 1, [post.id], role="cap")
         if post.mounting == "ground":
-            add(policy["concrete_sku"], 1, "application", [post.id], role="concrete")
+            add(policy["concrete_sku"], 1, [post.id], role="concrete")
 
     for span in strategy.spans:
-        cut_len = span.slope_len_mm if span.rail_cut_basis == "slope" else span.width_mm
-        add(
-            policy["rail_sku"], span.rail_count, "cut", [span.id],
-            cut_length_mm=cut_len, length_basis=span.rail_cut_basis, role="rail",
-        )
-        add(policy["screw_sku"], span.screws_count, "each", [span.id], role="screw")
+        if span.panel is None:
+            # A run stored before the fence-model change has rail_count and
+            # screws_count but no panel. Falling back to those would make demand
+            # disagree with what the run recorded, so the read is refused — but
+            # as code + params, because "no structure yet" (what the tab said
+            # while this surfaced as a raw English ValueError) is false: there
+            # IS structure, it just cannot be read without regenerating.
+            raise ReadRefused(
+                code="run_predates_fence_model",
+                message=f"span {span.id} has no panel — regenerate the run; "
+                        "stored runs from before the fence-model change are read "
+                        "with their legacy fields intact",
+                span_id=span.id,
+            )
+        for slot in span.panel.slots:
+            # No unit here. A slot's cut length says the part is cut TO a length,
+            # not that its product is bought BY the metre: an indivisible post
+            # carrying attrs.length_mm is explicitly allowed to back a
+            # length_rule slot (validate_model._can_supply_length) and is still
+            # counted in eaches. Only the chosen product knows, and the product
+            # is not chosen yet — resolve_supply stamps the unit when it is.
+            add(
+                "", slot.qty, [span.id],
+                cut_length_mm=slot.length_mm, length_basis=slot.length_basis,
+                role=slot.role, slot_key=slot.slot_key, eligibility=slot.eligibility,
+            )
 
     for gate in strategy.gates:
         if gate.kit_sku:  # no kit fits this opening — the strategy already said so
-            add(gate.kit_sku, 1, "each", [gate.id], role="gate_kit")
+            add(gate.kit_sku, 1, [gate.id], role="gate_kit")
 
     return lines

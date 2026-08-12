@@ -22,6 +22,86 @@ Deliberate deferrals and honest weaknesses, with the trigger that should revisit
 - **Cut-plan optimality**: FFD + LP bound; when the bound is not met the plan is
   flagged, not escalated. Trigger: real jobs where FFD misses (then CP-SAT extra,
   ADR-0007).
+- **Layout is blind to the cut plan.** The two never speak, so nobody is told when a
+  small layout change would buy far less material. S07 is the standing example: two
+  1500 mm bays need four 3 m bars (1500+3+1500 > 3000, so one rail per bar and a
+  1497 mm offcut each — 12 m of stock for 6 m of rail), while 1498 mm bays fit two per
+  bar, and three 1000 mm bays need six rails but only **three** bars. More rails, less
+  aluminium, one more post. The planner already computes the waste and `layout_segment`
+  already emits a rejected alternative; nothing joins them up. This is an *advisory*,
+  never an automatic relayout — span width is the user's design decision, and material
+  cost is one input to it. Trigger: the first job where a customer is quoted materially
+  more than a neighbouring layout would have cost.
+- **No workshop model.** The system knows what a fence is made of but not what the shop
+  can *do* to make it — the operations available (cut, drill, splice, weld, bend,
+  coat), their rules (max handled length, minimum offcut, which joins are permitted
+  where), their costs (setup plus per-unit) and their consequences. Today the one piece
+  of process knowledge in the system, `DivisibleLinear.kerf_mm`, sits on the *product*,
+  when a kerf is a property of the **saw**. Until this exists, "fabricate it" can never
+  be an alternative to "buy it", labour is invisible in every comparison, and a rule
+  like "we never splice a rail under 2 m" has nowhere to live. Trigger: the first
+  decision that turns on shop capability rather than on catalogue contents — most
+  likely a made-to-measure panel the shop could either buy or build. See the extension
+  seam in `docs/superpowers/specs/2026-08-12-fence-model-design.md`, which is written so
+  this can be added without reworking eligibility.
+### Fence models, phase 1 (2026-08-12)
+
+Four things this phase deliberately parked. Each is a real weakness, not a rough edge;
+each is recorded with the trigger that should end the deferral.
+
+- **A chosen SKU has no traceable explanation once a group has more than one member.**
+  `resolve_supply` records its reasoning — chosen, rejected, preset, per requirement —
+  in `SupplyResolution.decisions`, and **nothing consumes it**: it reaches no
+  decision-graph node, so `/explain` cannot say why POLE-3000 was bought instead of
+  POLE-2000. Today the only shipped model is `M-LEGACY`, whose every eligibility group
+  has exactly one member, so there is nothing to explain and the gap is invisible. The
+  moment a model ships a multi-member group, the system will be making a priced choice
+  it cannot account for — which contradicts foundation §15's "the decision graph is the
+  explanation" for exactly the decision most worth explaining. The fix is a
+  `select_supply` node per group, but it cannot be added at generation time (selection
+  is coupled to the cut plan and runs in fulfillment, which has no graph builder), so it
+  needs a decision on where a fulfilment-time node lives. **Trigger:** the first model
+  with two or more eligible members for one slot — i.e. the first line of phase 2.
+
+- **`catalog_hash` is whole-catalog, so any product edit permanently 409s every prior
+  run.** `/bom` and `/structure` compare the stamped hash against a hash of the entire
+  catalog document, so changing one product's price — or adding an unrelated SKU — makes
+  every previously generated run unreadable until it is regenerated. The refusal is
+  correct in kind (stamping is not checking, and re-resolving supply against a moved
+  catalog would silently change what a stored run meant) but far too broad in scope: it
+  cannot tell "the product this run bought got cheaper" from "somebody added a gate kit".
+  The narrow version hashes only the products a run actually resolved, which is
+  computable — the requirement lines name them — but changes what the run-id digest
+  covers, so it is a design change rather than a tweak. Versioning the catalog properly
+  is the other answer and is a bigger one. **Trigger:** the first user who edits a
+  catalog price and finds their existing quotes' working views all refuse.
+
+- **`model_snapshot` is `(id, version)`, not a content hash — and `legacy_model()` mints
+  materially different models under one ref.** The field exists to keep the run-id digest
+  honest when a model changes; it records `("M-LEGACY", 1)`. But `legacy_model()` takes
+  the knowledge-resolved `rail_sku`/`screw_sku`, so `M-LEGACY@v1` denotes a different
+  panel depending on the knowledge base — and a model edited without bumping its version
+  is invisible to the digest entirely. Both cases reproduce exactly the `INSERT OR
+  IGNORE` collision the field was added to close: same run id, new meaning, and
+  `/api/runs/{id}/bom` serving the old stored document for ever. It is survivable today
+  only because the demand skus are *also* inputs to the digest via the knowledge
+  snapshot, so the M-LEGACY case happens to be covered by a different input — an
+  accident, not a guarantee. **Trigger:** the first editable model (phase 2 makes models
+  data the user can change), or the first built-in model parameterised by anything the
+  knowledge snapshot does not already cover.
+
+- **Runs generated before this branch cannot be read at all.** A stored run has no
+  `Span.panel`, `derive_requirements` refuses, and `/bom`, `/structure` and `/quote` all
+  return 400 `run_predates_fence_model`. This is the right refusal — the alternative is
+  falling back to `rail_count`/`screws_count` and quietly disagreeing with what the run
+  recorded — but it means the fence-model branch is a hard break for existing data, and
+  regenerating produces a *new* run id, so links to the old one stay dead. The refusal at
+  least says so properly now: it carries `code + params` with entries in both locale
+  bundles, and the structure tab names it instead of showing "no structure yet", which
+  was false (there is structure; it cannot be laid out). **Trigger:** a deployment with
+  stored runs that matter — at which point the answer is the migration the spec already
+  specifies, back-filling `panel` onto stored runs before the legacy fields are removed.
+
 - ~~Impact analysis is per-run only~~ **Done (2026-08-10)**: cross-project rule impact
   preview (`POST /api/knowledge/preview-impact`, `POST /api/candidates/{id}/{v}/preview`
   + UI buttons in the review queue and knowledge editor) — regenerate-and-diff across

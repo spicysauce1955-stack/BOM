@@ -1,0 +1,817 @@
+{
+  "bom": {
+    "allocations": [],
+    "cut_plans": {
+      "RAIL-3000": {
+        "bars": [
+          {
+            "kerf_total_mm": 6,
+            "leftover_mm": 326,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1334,
+                "requirement_id": "req0023"
+              },
+              {
+                "length_mm": 1334,
+                "requirement_id": "req0023"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 6,
+            "leftover_mm": 328,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1333,
+                "requirement_id": "req0025"
+              },
+              {
+                "length_mm": 1333,
+                "requirement_id": "req0025"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 6,
+            "leftover_mm": 328,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1333,
+                "requirement_id": "req0027"
+              },
+              {
+                "length_mm": 1333,
+                "requirement_id": "req0027"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 6,
+            "leftover_mm": 994,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1000,
+                "requirement_id": "req0019"
+              },
+              {
+                "length_mm": 1000,
+                "requirement_id": "req0019"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 6,
+            "leftover_mm": 994,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1000,
+                "requirement_id": "req0021"
+              },
+              {
+                "length_mm": 1000,
+                "requirement_id": "req0021"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          }
+        ],
+        "certified_optimal": true,
+        "lower_bound": 5,
+        "lp_lower_bound": 5,
+        "new_bar_count": 5,
+        "sku": "RAIL-3000",
+        "waste_mm": 0
+      }
+    },
+    "lines": [
+      {
+        "engineering_qty": 6,
+        "engineering_unit": "application",
+        "name": "Concrete bag 25 kg",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0003",
+          "req0006",
+          "req0009",
+          "req0012",
+          "req0015",
+          "req0018"
+        ],
+        "purchase_qty": 3,
+        "purchase_unit": "bag",
+        "sku": "CONC-25",
+        "total_cents": 2400,
+        "unit_price_cents": 800
+      },
+      {
+        "engineering_qty": 6,
+        "engineering_unit": "each",
+        "name": "Post cap",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0002",
+          "req0005",
+          "req0008",
+          "req0011",
+          "req0014",
+          "req0017"
+        ],
+        "purchase_qty": 6,
+        "purchase_unit": "each",
+        "sku": "POST-CAP",
+        "total_cents": 1800,
+        "unit_price_cents": 300
+      },
+      {
+        "engineering_qty": 6,
+        "engineering_unit": "each",
+        "name": "Ground post (soil)",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0001",
+          "req0004",
+          "req0007",
+          "req0010",
+          "req0013",
+          "req0016"
+        ],
+        "purchase_qty": 6,
+        "purchase_unit": "each",
+        "sku": "POST-S",
+        "total_cents": 15000,
+        "unit_price_cents": 2500
+      },
+      {
+        "engineering_qty": 10,
+        "engineering_unit": "cut",
+        "name": "Rail stock 3000 mm",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0019",
+          "req0021",
+          "req0023",
+          "req0025",
+          "req0027"
+        ],
+        "purchase_qty": 5,
+        "purchase_unit": "bar",
+        "sku": "RAIL-3000",
+        "total_cents": 9000,
+        "unit_price_cents": 1800
+      },
+      {
+        "engineering_qty": 40,
+        "engineering_unit": "each",
+        "name": "Screw S10 (box of 20)",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0020",
+          "req0022",
+          "req0024",
+          "req0026",
+          "req0028"
+        ],
+        "purchase_qty": 2,
+        "purchase_unit": "box of 20",
+        "sku": "SCREW-S10",
+        "total_cents": 900,
+        "unit_price_cents": 450
+      }
+    ],
+    "projected_remnants": [
+      {
+        "id": "remnant:RAIL-3000:1",
+        "kind": "remnant",
+        "length_mm": 326,
+        "qty": 1,
+        "sku": "RAIL-3000"
+      },
+      {
+        "id": "remnant:RAIL-3000:2",
+        "kind": "remnant",
+        "length_mm": 328,
+        "qty": 1,
+        "sku": "RAIL-3000"
+      },
+      {
+        "id": "remnant:RAIL-3000:3",
+        "kind": "remnant",
+        "length_mm": 328,
+        "qty": 1,
+        "sku": "RAIL-3000"
+      },
+      {
+        "id": "remnant:RAIL-3000:4",
+        "kind": "remnant",
+        "length_mm": 994,
+        "qty": 1,
+        "sku": "RAIL-3000"
+      },
+      {
+        "id": "remnant:RAIL-3000:5",
+        "kind": "remnant",
+        "length_mm": 994,
+        "qty": 1,
+        "sku": "RAIL-3000"
+      }
+    ],
+    "total_cents": 29100,
+    "warnings": []
+  },
+  "requirements": [
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0001",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n1"
+      ],
+      "role": "post",
+      "sku": "POST-S",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0002",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n1"
+      ],
+      "role": "cap",
+      "sku": "POST-CAP",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0003",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n1"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0004",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n2"
+      ],
+      "role": "post",
+      "sku": "POST-S",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0005",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n2"
+      ],
+      "role": "cap",
+      "sku": "POST-CAP",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0006",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n2"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0007",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:2000"
+      ],
+      "role": "post",
+      "sku": "POST-S",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0008",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:2000"
+      ],
+      "role": "cap",
+      "sku": "POST-CAP",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0009",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:2000"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0010",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:1000"
+      ],
+      "role": "post",
+      "sku": "POST-S",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0011",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:1000"
+      ],
+      "role": "cap",
+      "sku": "POST-CAP",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0012",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:1000"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0013",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:3334"
+      ],
+      "role": "post",
+      "sku": "POST-S",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0014",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:3334"
+      ],
+      "role": "cap",
+      "sku": "POST-CAP",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0015",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:3334"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0016",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:4667"
+      ],
+      "role": "post",
+      "sku": "POST-S",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0017",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:4667"
+      ],
+      "role": "cap",
+      "sku": "POST-CAP",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0018",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:4667"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": 1000,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0019",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:0-1000"
+      ],
+      "role": "rail",
+      "sku": "RAIL-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1000,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0021",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:1000-2000"
+      ],
+      "role": "rail",
+      "sku": "RAIL-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1334,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0023",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:2000-3334"
+      ],
+      "role": "rail",
+      "sku": "RAIL-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1333,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0025",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:3334-4667"
+      ],
+      "role": "rail",
+      "sku": "RAIL-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1333,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0027",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:4667-6000"
+      ],
+      "role": "rail",
+      "sku": "RAIL-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SCREW-S10"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 8,
+      "id": "req0020",
+      "length_basis": null,
+      "pegs": [
+        "span@run1:0-1000"
+      ],
+      "role": "screw",
+      "sku": "SCREW-S10",
+      "slot_key": "screw",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SCREW-S10"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 8,
+      "id": "req0022",
+      "length_basis": null,
+      "pegs": [
+        "span@run1:1000-2000"
+      ],
+      "role": "screw",
+      "sku": "SCREW-S10",
+      "slot_key": "screw",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SCREW-S10"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 8,
+      "id": "req0024",
+      "length_basis": null,
+      "pegs": [
+        "span@run1:2000-3334"
+      ],
+      "role": "screw",
+      "sku": "SCREW-S10",
+      "slot_key": "screw",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SCREW-S10"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 8,
+      "id": "req0026",
+      "length_basis": null,
+      "pegs": [
+        "span@run1:3334-4667"
+      ],
+      "role": "screw",
+      "sku": "SCREW-S10",
+      "slot_key": "screw",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SCREW-S10"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 8,
+      "id": "req0028",
+      "length_basis": null,
+      "pegs": [
+        "span@run1:4667-6000"
+      ],
+      "role": "screw",
+      "sku": "SCREW-S10",
+      "slot_key": "screw",
+      "unit": "each"
+    }
+  ]
+}

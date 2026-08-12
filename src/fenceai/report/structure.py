@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from fenceai.core.units import Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.fulfill import Bom
-from fenceai.strategy.model import Strategy
+from fenceai.strategy.model import Strategy, StrategyWarning
 from fenceai.topology.model import Topology
 from fenceai.topology.station import run_length
 
@@ -36,6 +36,7 @@ class Part(BaseModel):
     qty: int
     unit: str  # "each" | "cut" | "application"
     role: str = ""  # post | cap | concrete | rail | screw | gate_kit (see derive.py)
+    slot_key: str = ""  # sub-element identity: which part of the panel this is
     cut_length_mm: Mm | None = None
     length_basis: str | None = None  # "width" | "slope"
     from_bars: list[str] = []  # cut-plan bar provenance ("new #2", an inventory id)
@@ -136,6 +137,16 @@ class StructureReport(BaseModel):
     # which inventory snapshot the cut-piece provenance was read against; the
     # layout never depends on it, the `from_bars` of a part does
     inventory_hash: str = ""
+    # supply-resolution warnings (no_eligible_item, substitute_needs_approval, ...),
+    # stamped by the caller exactly as inventory_hash is — build_structure() itself
+    # stays a pure function of (topology, strategy, requirements, bom) and does not
+    # compute these; a bay with a part nothing can supply must not go silent here.
+    warnings: list[StrategyWarning] = []
+    # the lines resolve_supply could not name a product for — stamped alongside
+    # `warnings` for the same reason: routing them out of `requirements` (so a
+    # blank sku can never reach fulfill()/the ledger) must not make them
+    # disappear from what this view reports.
+    unresolved: list[RequirementLine] = []
 
 
 # --- parts, by inverting the pegs -------------------------------------------
@@ -174,6 +185,7 @@ def _parts_by_element(requirements: list[RequirementLine], bom: Bom) -> _Ledger:
     for req in requirements:
         part = Part(
             sku=req.sku, qty=req.engineering_qty, unit=req.unit, role=req.role,
+            slot_key=req.slot_key,
             cut_length_mm=req.cut_length_mm, length_basis=req.length_basis,
             from_bars=bars.get(req.id, []),
         )
@@ -217,7 +229,7 @@ def _merge_parts(parts: list[Part]) -> list[Part]:
     """One line per (sku, unit, cut length): two rails of the same cut read as 2, not 1+1."""
     merged: dict[tuple, Part] = {}
     for p in parts:
-        key = (p.sku, p.unit, p.role, p.cut_length_mm, p.length_basis)
+        key = (p.sku, p.unit, p.role, p.slot_key, p.cut_length_mm, p.length_basis)
         if key in merged:
             merged[key].qty += p.qty
             merged[key].from_bars = merged[key].from_bars + p.from_bars

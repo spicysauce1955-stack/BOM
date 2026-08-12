@@ -205,6 +205,7 @@
   "bom.projected_remnants": "שאריות לשימוש חוזר שהתוכנית משאירה",
   "bom.projected_remnants_hint": "תחזית להצעה הזו — השאריות אינן נוספות אוטומטית למלאי שלכם.",
   "bom.remnant_count": "יחידות",
+  "bom.catalog_changed": "הקטלוג השתנה מאז חישוב הריצה — לחצו ⚙ חישוב אסטרטגיה כדי לתמחר מחדש.",
   "inventory.title": "מלאי",
   "inventory.save": "שמירת מלאי",
   "inventory.saved": "המלאי נשמר",
@@ -264,6 +265,7 @@
   "quote.view": "צפייה",
   "quote.snapshot_banner": "הצעת מחיר שמורה “{label}” — מסמך קפוא, לא כתב הכמויות החי",
   "quote.back_live": "→ חזרה לכתב הכמויות החי",
+  "quote.unresolved_supply": "לא ניתן לשמור את ההצעה — ל-{n} חלקים אין ספק; בדקו את לשונית כתב הכמויות לפרטים.",
   "impact.vs_accepted": "מול הצעה מאושרת: {delta}€",
   "checklist.title": "איך מתחילים",
   "checklist.dismiss": "הסתרה",
@@ -407,10 +409,14 @@
   "profile.closing_bay": "המפתח הסוגר — מסמנים מתחילת המקטע, ולכן סטיית המדידה מצטברת לכאן.",
   "profile.closing_legend": "* מפתח סוגר",
   "structure.printed": "הודפס {at}",
+  "error.run_predates_fence_model": "הריצה הזו חושבה לפני שהיו דגמי גדר, ולכן אי אפשר לקרוא את המבנה שלה — לחצו ⚙ חישוב אסטרטגיה כדי לחשב אותה מחדש.",
   "structure.stale": "השרטוט השתנה מאז חישוב האסטרטגיה — לחצו ⚙ חישוב אסטרטגיה כדי לפרוס את החדש.",
+  "structure.catalog_changed": "הקטלוג השתנה מאז חישוב הריצה — לחצו ⚙ חישוב אסטרטגיה כדי לפרוס מחדש.",
   "structure.from_stock": "מסופק מהמלאי (לא נרכש בשורה, עדיין נלקט במחסן):",
   "structure.shared_from": "(משותף עם {tag})",
   "profile.bay_dim": "מפתח, ממרכז למרכז",
   "profile.gate_dim": "פתח שער — זה חייב להיות מדויק",
-  "warning.gate_past_run_end": "השער בתחנה {station_mm} {u} מבקש {asked_mm} {u} אך נותרו במקטע {available_mm} {u} בלבד — הזיזו אותו או הקטינו אותו."
+  "warning.gate_past_run_end": "השער בתחנה {station_mm} {u} מבקש {asked_mm} {u} אך נותרו במקטע {available_mm} {u} בלבד — הזיזו אותו או הקטינו אותו.",
+  "warning.no_eligible_item": "אין מוצר זמין שיכול לספק {role} ב-{slot_key}",
+  "warning.substitute_needs_approval": "{sku} הוא תחליף מוצע עבור {role} ודורש אישור לפני שימוש"
 }

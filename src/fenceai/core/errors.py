@@ -18,3 +18,19 @@ class GenerationFailure(FenceAiError):
 
 class InvalidTopology(FenceAiError):
     pass
+
+
+class ReadRefused(FenceAiError, ValueError):
+    """A stored run cannot be read, as `code + params` rather than a sentence.
+
+    User-visible text is rendered from the code by the reader's locale bundle
+    (`error.<code>`); the message is the raw engine string, a diagnostic
+    fallback only — never the thing a Hebrew reader is shown. Subclasses
+    ValueError so the existing `except ValueError` at every read site keeps
+    catching it, and so a caller that does not care about the code is unchanged.
+    """
+
+    def __init__(self, code: str, message: str, **params: str | int):
+        super().__init__(message)
+        self.code = code
+        self.params: dict[str, str | int] = params

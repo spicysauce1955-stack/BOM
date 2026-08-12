@@ -333,6 +333,54 @@ def test_bom_reports_inventory_hash(client):
     assert any(e["action"] == "fulfill" for e in client.get("/api/audit").json())
 
 
+def test_bom_refuses_a_run_read_against_a_different_catalog(client):
+    """Stamping is not checking. /bom recomputes against today's catalog, so it
+    must refuse rather than quietly serve a different answer (task 10)."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    product = client.get("/api/catalog").json()["products"]["RAIL-3000"]
+    product["price_cents"] = 9999
+    client.put("/api/catalog/products", json=product)
+
+    response = client.get(f"/api/runs/{run_id}/bom")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "catalog_changed"
+
+
+def test_quote_refuses_a_run_read_against_a_different_catalog(client):
+    """The divergence four copies of one pipeline actually caused.
+
+    `create_quote` called `state.store.load_catalog()` directly while /bom and
+    /structure went through `_fresh_catalog`, so the ONE endpoint that freezes an
+    immutable commercial document was the only one exempt from the staleness
+    check — verified before the fix as BOM 409, structure 409, quote 200. All
+    four sites now share one helper, so a quote cannot be the odd one out."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    product = client.get("/api/catalog").json()["products"]["RAIL-3000"]
+    product["price_cents"] = 9999
+    client.put("/api/catalog/products", json=product)
+
+    response = client.post(f"/api/runs/{run_id}/quote", json={})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "catalog_changed"
+
+
+def test_a_quote_records_the_catalog_that_priced_it(client):
+    """Provenance beside knowledge_snapshot_hash: the two inputs that decide
+    what the customer was quoted."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    quote = client.post(f"/api/runs/{run['run']['id']}/quote", json={}).json()
+    assert quote["catalog_hash"]
+    assert quote["catalog_hash"] == run["run"]["catalog_hash"]
+
+
 def test_generation_failure_is_422(client):
     pid = make_project(client)
     put_straight_topology(client, pid)
@@ -419,6 +467,188 @@ def test_quote_snapshot_flow(client):
     assert client.get("/api/quotes/none").status_code == 404
 
 
+def test_unresolved_supply_is_visible_on_working_views_and_refused_on_a_quote(client):
+    """No fence model in the demo catalog currently produces an unresolvable slot
+    (every eligibility group has exactly one auto-approved member), so this test
+    forces the state directly: persist a run whose panel has had a slot's
+    eligibility emptied out, exactly what `resolve_supply` sees as
+    `no_eligible_item`. /bom and /structure are working views and must still
+    report the gap rather than going silent; a quote is a commercial document and
+    must refuse rather than freeze one that's silently missing a part."""
+    from fenceai.api.app import state
+    from fenceai.fencemodel.model import Eligibility
+
+    pid = make_project(client, name="unresolvable")
+    put_straight_topology(client, pid)
+    run = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = run["run"]["id"]
+
+    result = state.store.load_run(run_id)
+    slot = result.strategy.spans[0].panel.slots[0]
+    assert slot.role == "rail"
+    slot.eligibility = Eligibility()  # no member can supply it
+    # generation_runs is append-only (ADR-0004: a run is immutable once
+    # generated) — save_run() INSERT OR IGNOREs, so a second call is a no-op.
+    # Overwrite the row directly; this is a test-only way to force the state,
+    # not a path the product exposes.
+    state.store._conn.execute(
+        "UPDATE generation_runs SET doc=? WHERE id=?",
+        (result.model_dump_json(), run_id),
+    )
+    state.store._conn.commit()
+
+    bom_doc = client.get(f"/api/runs/{run_id}/bom").json()
+    assert bom_doc["unresolved"], "the emptied-out slot must surface, not vanish"
+    assert bom_doc["unresolved"][0]["role"] == "rail"
+    assert bom_doc["unresolved"][0]["sku"] == ""
+    assert bom_doc["bom"]["warnings"][0]["code"] == "no_eligible_item"
+
+    structure_doc = client.get(f"/api/runs/{run_id}/structure").json()
+    assert structure_doc["unresolved"]
+    assert structure_doc["unresolved"][0]["role"] == "rail"
+    assert structure_doc["warnings"][0]["code"] == "no_eligible_item"
+
+    quote_resp = client.post(f"/api/runs/{run_id}/quote", json={})
+    assert quote_resp.status_code == 400
+    body = quote_resp.json()["detail"]
+    assert body["code"] == "unresolved_supply"
+    assert body["unresolved"][0]["role"] == "rail"
+
+
+def _run_with_an_unsuppliable_rail(client) -> str:
+    """A persisted run whose first rail slot has no eligible member.
+
+    Forced directly, because no fence model in the demo catalog produces an
+    unresolvable slot — every eligibility group has exactly one auto-approved
+    member. Mirrors the setup in
+    test_unresolved_supply_is_visible_on_working_views_and_refused_on_a_quote.
+    """
+    from fenceai.api.app import state
+    from fenceai.fencemodel.model import Eligibility
+
+    pid = make_project(client, name="blank-sku-guard")
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+    result = state.store.load_run(run_id)
+    result.strategy.spans[0].panel.slots[0].eligibility = Eligibility()
+    state.store._conn.execute(
+        "UPDATE generation_runs SET doc=? WHERE id=?",
+        (result.model_dump_json(), run_id),
+    )
+    state.store._conn.commit()
+    return run_id
+
+
+def test_no_blank_sku_ever_appears_in_a_bom_response(client):
+    """The "no blank SKU reaches the ledger" guarantee used to rest on caller
+    discipline that nothing enforced: a reviewer reintroduced the defect at all
+    three routes with a three-word edit (`priced.requirements +
+    priced.unresolved`) and got zero failures. `fulfill()` now refuses a blank
+    sku outright, and these assertions cover what fulfill() never sees — the
+    lines the RESPONSE puts under `requirements`."""
+    run_id = _run_with_an_unsuppliable_rail(client)
+    doc = client.get(f"/api/runs/{run_id}/bom").json()
+
+    assert doc["unresolved"], "the gap must be reported, not hidden"
+    assert all(r["sku"] for r in doc["requirements"]), \
+        "an unresolved line must never be folded back into `requirements`"
+    assert all(l["sku"] for l in doc["bom"]["lines"])
+
+
+def test_no_blank_sku_ever_appears_on_the_structure_sheet(client):
+    """A blank sku in the ledger reports one demand as unassigned AND from stock
+    at once and prints an empty SKU column on a document that goes to site."""
+    run_id = _run_with_an_unsuppliable_rail(client)
+    doc = client.get(f"/api/runs/{run_id}/structure").json()
+
+    assert doc["unresolved"], "the gap must be reported, not hidden"
+    totals = doc["totals"]
+    for bucket in ("per_sku", "unassigned", "from_stock"):
+        assert all(t["sku"] for t in totals[bucket]), (bucket, totals[bucket])
+    for section in doc["sections"]:
+        for bay in section["bays"]:
+            assert all(p["sku"] for p in bay["parts"]), bay["tag"]
+        for station in section["setting_out"]:
+            assert all(p["sku"] for p in station["parts"]), station["tag"]
+
+
+def test_fulfill_refuses_a_blank_sku_rather_than_trusting_its_caller(client):
+    """The guarantee is structural now, not a convention. This is the unit-level
+    statement of it; the two route tests above cover the response shapes
+    fulfill() never gets to see."""
+    import pytest
+
+    from fenceai.catalog.demo import demo_catalog
+    from fenceai.demand.derive import RequirementLine
+    from fenceai.fulfillment.fulfill import fulfill
+
+    with pytest.raises(ValueError, match="no sku"):
+        fulfill([RequirementLine(id="req0001", engineering_qty=2, unit="cut",
+                                 cut_length_mm=1500, role="rail")], demo_catalog())
+
+
+def test_a_run_generated_before_fence_models_refuses_with_a_code_not_english(client):
+    """v1-known-limitations (4): runs stored before this branch cannot be read.
+    That is a real, permanent state — but it surfaced as a raw English
+    ValueError sentence in a Hebrew-first UI, and on the structure tab as "no
+    structure yet", which is false. It carries `code + params` now, with entries
+    in both locale bundles."""
+    from fenceai.api.app import state
+
+    pid = make_project(client, name="legacy-run")
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+    result = state.store.load_run(run_id)
+    for span in result.strategy.spans:
+        span.panel = None                       # what a pre-branch run looks like
+    state.store._conn.execute(
+        "UPDATE generation_runs SET doc=? WHERE id=?",
+        (result.model_dump_json(), run_id),
+    )
+    state.store._conn.commit()
+
+    for path in (f"/api/runs/{run_id}/bom", f"/api/runs/{run_id}/structure"):
+        response = client.get(path)
+        assert response.status_code == 400, path
+        detail = response.json()["detail"]
+        assert detail["code"] == "run_predates_fence_model", path
+        assert detail["params"]["span_id"].startswith("span@"), path
+
+    quote = client.post(f"/api/runs/{run_id}/quote", json={})
+    assert quote.status_code == 400
+    assert quote.json()["detail"]["code"] == "run_predates_fence_model"
+
+
+def test_a_run_with_an_unrecognised_preset_refuses_rather_than_repricing_silently(client):
+    """objective_preset is stored as a plain str, so a run generated under an
+    older DEFAULT_POLICY (or any bad data) can carry a value outside
+    fulfillment.supply.Preset. resolve_supply now refuses it loudly instead of
+    resolve_supply._choose silently treating it as least-cost (task 10 fix
+    round 1, finding 3) — this proves the refusal reaches the HTTP layer as a
+    clean 400, not an unhandled 500."""
+    from fenceai.api.app import state
+
+    pid = make_project(client, name="bad-preset")
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    result = state.store.load_run(run_id)
+    result.run.objective_preset = "fewest_new_stock"   # the vestigial, unimplemented name
+    state.store._conn.execute(
+        "UPDATE generation_runs SET doc=? WHERE id=?",
+        (result.model_dump_json(), run_id),
+    )
+    state.store._conn.commit()
+
+    bom_resp = client.get(f"/api/runs/{run_id}/bom")
+    assert bom_resp.status_code == 400
+    assert "fewest_new_stock" in bom_resp.json()["detail"]
+
+    structure_resp = client.get(f"/api/runs/{run_id}/structure")
+    assert structure_resp.status_code == 400
+    assert "fewest_new_stock" in structure_resp.json()["detail"]
+
+
 def test_impact_preview_reports_vs_accepted_quote(client):
     pid = make_project(client, name="quoted")
     put_straight_topology(client, pid)
@@ -461,6 +691,7 @@ def test_structure_endpoint_lays_out_the_run(client):
     doc = client.get(f"/api/runs/{run_id}/structure").json()
 
     assert doc["run_id"] == run_id
+    assert doc["warnings"] == []  # additive field; empty in the normal, resolved case
     section = doc["sections"][0]
     assert section["tag"] == "A"
     assert [s["tag"] for s in section["setting_out"]][:2] == ["A/P1", "A/P2"]
@@ -502,6 +733,15 @@ def test_structure_endpoint_404s_on_an_unknown_run(client):
     assert client.get("/api/runs/nope/structure").status_code == 404
 
 
+# test_structure_surfaces_supply_resolution_warnings was deleted here: it
+# assigned `report.warnings` and then asserted the value it had just assigned,
+# which tests Pydantic, not this system. Its only non-vacuous line was the
+# empty-by-default check, and the behaviour it claimed to cover — the ROUTE
+# stamping resolution warnings onto the report — is genuinely covered by
+# test_unresolved_supply_is_visible_on_working_views_and_refused_on_a_quote,
+# which drives it through /structure with a real unresolvable slot.
+
+
 def test_structure_refuses_a_run_that_no_longer_matches_the_drawing(client):
     """Laying a stored strategy over an edited topology invents stations for posts
     nobody placed — and that document is what goes to site."""
@@ -521,3 +761,19 @@ def test_structure_refuses_a_run_that_no_longer_matches_the_drawing(client):
     fresh = client.get(f"/api/runs/{again['run']['id']}/structure")
     assert fresh.status_code == 200
     assert fresh.json()["sections"][0]["length_mm"] == 9000
+
+
+def test_structure_refuses_a_run_read_against_a_different_catalog(client):
+    """Stamping is not checking. /structure recomputes against today's catalog,
+    so it must refuse rather than quietly serve a different answer."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    product = client.get("/api/catalog").json()["products"]["RAIL-3000"]
+    product["price_cents"] = 9999
+    client.put("/api/catalog/products", json=product)
+
+    response = client.get(f"/api/runs/{run_id}/structure")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "catalog_changed"

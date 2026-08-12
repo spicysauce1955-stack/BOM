@@ -15,8 +15,8 @@ from pydantic import BaseModel
 from fenceai.catalog.model import Catalog
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import Cents
-from fenceai.demand.derive import derive_requirements
-from fenceai.fulfillment.fulfill import Inventory, fulfill
+from fenceai.fulfillment.fulfill import Inventory
+from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.strategy.generator import generate
 from fenceai.strategy.model import Strategy
@@ -136,11 +136,14 @@ def _spine(topology, kb, catalog, overrides, inventory, project_id=""):
     # project_id is a bound scope dimension during generation — a project-scoped
     # rule must behave in the preview exactly as it will in the real run
     result = generate(topology, kb, catalog, overrides=overrides, project_id=project_id)
-    bom = fulfill(
-        derive_requirements(result.strategy, catalog, result.run.demand_skus),
-        catalog, inventory,
+    # the SAME pipeline the read routes run, not a fourth hand-rolled copy of it:
+    # a preview that priced a job differently from /bom would be worse than no
+    # preview at all
+    priced = price_strategy(
+        result.strategy, catalog, inventory,
+        demand_skus=result.run.demand_skus, preset=result.run.objective_preset,
     )
-    return result.strategy, bom
+    return result.strategy, priced.bom
 
 
 def preview_impact(

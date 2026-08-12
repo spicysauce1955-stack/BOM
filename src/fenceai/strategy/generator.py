@@ -20,6 +20,9 @@ from fenceai.catalog.model import Catalog
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
+from fenceai.fencemodel.demo import legacy_model
+from fenceai.fencemodel.model import FenceModel
+from fenceai.fencemodel.resolve import PanelContext, resolve_panel
 from fenceai.knowledge.evaluator import (
     Resolution,
     preference_firings,
@@ -54,7 +57,15 @@ from fenceai.topology.station import (
     run_length,
 )
 
-DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "fewest_new_stock"}
+# "fewest_new_stock" here (pre-ADR-0007) predates fulfillment/supply.py's Preset
+# vocabulary (`Literal["least_cost", "honour_priority"]`, added later in
+# 7c73ec6) and was never wired to a tier those two presets implement — it named
+# a cut-planning tier-list concept (material-optimization.md), not a
+# resolve_supply preset. It only ever "worked" because `_choose` silently
+# treated any unrecognised preset as least-cost. Now that resolve_supply
+# refuses an unrecognised preset loudly (task 10 fix round 1, finding 3), the
+# honest default is the vocabulary's own default, not the vestigial name.
+DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_cost"}
 
 # The catalog attribute by which a product declares the opening width it fits.
 # Fit is DATA, like Product.attrs["length_mm"] for posts: a SKU is an opaque id and
@@ -111,10 +122,14 @@ def generate(
     _generate_node_posts(
         topology, knowledge, scope, catalog, overrides, builder, strategy, applied
     )
+    # every fence model actually drawn from, across all runs — part of the run id
+    # (a model swap changes what the run means even though the digest's other
+    # inputs are untouched)
+    models_used: list[FenceModel] = []
     for run in topology.runs:
         _generate_run(
             topology, run, knowledge, scope, catalog, overrides, policy,
-            builder, strategy, applied,
+            builder, strategy, applied, demand_skus, models_used,
         )
 
     _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
@@ -142,10 +157,24 @@ def generate(
         policy=policy,
         demand_skus=demand_skus,
     )
+    # anything that changes what the run MEANS belongs in the digest, or
+    # INSERT OR IGNORE (store/db.py) serves a stale document under a reused id:
+    # - model_snapshot: which fence model(s)/versions the run actually drew from
+    # - catalog_hash: the catalog content the run resolved products against
+    # - objective_preset: which supply-resolution preset a later /bom read will use
+    run_meta.model_snapshot = sorted({(m.id, m.version) for m in models_used})
+    run_meta.catalog_hash = hashlib.sha256(
+        catalog.model_dump_json().encode()).hexdigest()[:16]
+    # `policy` was already merged with DEFAULT_POLICY above, so the key always
+    # exists — a `.get(..., "least_cost")` fallback here could never fire; direct
+    # indexing says so instead of implying a fallback that is dead on arrival.
+    run_meta.objective_preset = policy["objective_preset"]
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
             [topology.model_dump(), run_meta.knowledge_snapshot,
-             [o.model_dump() for o in overrides], policy],
+             [o.model_dump() for o in overrides], policy,
+             run_meta.model_snapshot, run_meta.catalog_hash,
+             run_meta.objective_preset],
             sort_keys=True, default=str,
         ).encode()
     ).hexdigest()[:12]
@@ -474,6 +503,8 @@ def _generate_run(
     builder: GraphBuilder,
     strategy: Strategy,
     applied: set[str],
+    demand_skus: dict[str, str],
+    models_used: list[FenceModel],
 ) -> None:
     length = run_length(topo, run)
     slope_permille = max_slope_permille(topo, run)
@@ -485,6 +516,15 @@ def _generate_run(
         "scope": bind_scope(scope),
         "run": {"length_mm": length, "slope_permille": slope_permille},
     }
+
+    # M-LEGACY until a fence_model event exists to pick another; its eligibility
+    # is seeded from the run's resolved demand skus (resolved once in generate(),
+    # never re-resolved here) so a DefaultComponent change still reaches the BOM.
+    model = legacy_model(
+        rail_sku=demand_skus.get("rail_sku", "RAIL-3000"),
+        screw_sku=demand_skus.get("screw_sku", "SCREW-S10"),
+    )
+    models_used.append(model)
 
     # -- hard span parameter ---------------------------------------------------
     res = resolve_param(kb, ctx, "max_span_mm")
@@ -937,6 +977,20 @@ def _generate_run(
                 screws_count=screws_per_span,
                 rail_cut_basis="slope" if v_mode == "raked" else "width",
             )
+            span.panel = resolve_panel(
+                model.default_spec,
+                PanelContext(
+                    centre_width_mm=width,
+                    clear_width_mm=width,  # face widths arrive in phase 2
+                    height_mm=height,
+                    vertical=v_mode,
+                    length_basis=span.rail_cut_basis,
+                    slope_len_mm=span.slope_len_mm,
+                    params={"rails_per_span": rails_per_span,
+                            "screws_per_span": screws_per_span},
+                ),
+                model_ref=model.ref,
+            )
             strategy.spans.append(span)
             span_ids.append(span.id)
             builder.add(
@@ -951,6 +1005,13 @@ def _generate_run(
                 scope_refs=[span.id],
                 inputs=[layout_node.id] + ([fv_node] if fv_node else []),
                 governed_by=governed,
+            )
+            builder.add(
+                "structural", "resolve_panel",
+                payload={"model_ref": model.ref,
+                         "slots": [{"key": s.slot_key, "role": s.role, "qty": s.qty}
+                                   for s in span.panel.slots]},
+                scope_refs=[span.id], inputs=[layout_node.id],
             )
             if width > max_span:
                 raise GenerationFailure(

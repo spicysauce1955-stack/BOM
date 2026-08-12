@@ -10,6 +10,7 @@ from __future__ import annotations
 from fenceai.catalog.demo import demo_catalog
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
+from fenceai.fulfillment.supply import resolve_supply
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.report.structure import build_structure
 from fenceai.strategy.generator import generate
@@ -23,6 +24,7 @@ def _report(topo, inventory: Inventory | None = None, run_id: str = "run-x"):
     catalog = demo_catalog()
     result = generate(topo, demo_knowledge(), catalog)
     requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    requirements = resolve_supply(requirements, catalog, inventory).requirements
     bom = fulfill(requirements, catalog, inventory)
     report = build_structure(topo, result.strategy, requirements, bom, run_id=run_id)
     return report, result, requirements, bom
@@ -282,6 +284,7 @@ def test_the_report_is_a_pure_function_of_its_inputs():
     catalog = demo_catalog()
     result = generate(topo, demo_knowledge(), catalog)
     requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    requirements = resolve_supply(requirements, catalog).requirements
     bom = fulfill(requirements, catalog)
     first = build_structure(topo, result.strategy, requirements, bom, run_id="r")
     second = build_structure(topo, result.strategy, requirements, bom, run_id="r")
@@ -295,6 +298,7 @@ def test_the_report_does_not_alias_the_strategy():
     catalog = demo_catalog()
     result = generate(topo, demo_knowledge(), catalog)
     requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    requirements = resolve_supply(requirements, catalog).requirements
     bom = fulfill(requirements, catalog)
     report = build_structure(topo, result.strategy, requirements, bom)
     before = report.model_dump_json()

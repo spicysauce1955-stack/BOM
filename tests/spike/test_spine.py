@@ -10,6 +10,7 @@ from fenceai.catalog.model import DivisibleLinear
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.cutplan import CutPiece, plan_cuts
 from fenceai.fulfillment.fulfill import fulfill
+from fenceai.fulfillment.supply import resolve_supply
 from fenceai.strategy.generator import generate
 from tests.conftest import straight_topology
 
@@ -78,6 +79,7 @@ def test_s08_package_rounding(knowledge, catalog):
     topo = straight_topology(9600)  # ceil(9600/1800) = 6 spans of 1600 -> 48 screws
     result = generate(topo, knowledge, catalog)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog).requirements
     screws = sum(r.engineering_qty for r in reqs if r.sku == "SCREW-S10")
     assert screws == 48
 
@@ -92,6 +94,7 @@ def test_s08_demand_exactly_at_package_boundary(knowledge, catalog):
     topo = straight_topology(9000)  # 5 spans of 1800 -> 40 screws = exactly 2 boxes
     result = generate(topo, knowledge, catalog)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog).requirements
     assert sum(r.engineering_qty for r in reqs if r.sku == "SCREW-S10") == 40
     bom = fulfill(reqs, catalog)
     line = next(l for l in bom.lines if l.sku == "SCREW-S10")
@@ -103,6 +106,7 @@ def test_full_spine_traceability(knowledge, catalog):
     topo = straight_topology(6000)
     result = generate(topo, knowledge, catalog)
     reqs = derive_requirements(result.strategy, catalog)
+    reqs = resolve_supply(reqs, catalog).requirements
     bom = fulfill(reqs, catalog)
 
     req_by_id = {r.id: r for r in reqs}
@@ -134,5 +138,7 @@ def test_determinism_double_run(knowledge, catalog):
     reqs1 = derive_requirements(r1.strategy, catalog)
     reqs2 = derive_requirements(r2.strategy, catalog)
     assert [r.model_dump() for r in reqs1] == [r.model_dump() for r in reqs2]
+    reqs1 = resolve_supply(reqs1, catalog).requirements
+    reqs2 = resolve_supply(reqs2, catalog).requirements
     bom1, bom2 = fulfill(reqs1, catalog), fulfill(reqs2, catalog)
     assert bom1.model_dump() == bom2.model_dump()

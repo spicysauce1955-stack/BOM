@@ -28,6 +28,11 @@ class Quote(BaseModel):
     status: Literal["draft", "accepted", "superseded"] = "draft"
     inventory_hash: str = ""
     knowledge_snapshot_hash: str = ""
+    # the catalog content the run resolved products and prices against. Provenance
+    # for the frozen document, beside the knowledge snapshot: the quote itself is
+    # already immutable (requirements and bom are persisted in full), so this
+    # records what it MEANT, it does not guard it.
+    catalog_hash: str = ""
     requirements: list[RequirementLine] = []
     bom: Bom
     total_cents: Cents = 0

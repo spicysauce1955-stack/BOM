@@ -14,6 +14,7 @@ from fenceai.catalog.model import Catalog
 from fenceai.core.units import Cents, Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.cutplan import CutPiece, CutPlan, RemnantStock, plan_cuts
+from fenceai.strategy.model import StrategyWarning
 
 
 class InventoryItem(BaseModel):
@@ -59,6 +60,37 @@ class Bom(BaseModel):
     allocations: list[Allocation] = []
     projected_remnants: list[InventoryItem] = []
     total_cents: Cents = 0
+    warnings: list[StrategyWarning] = []
+
+
+def engineering_unit_for(catalog: Catalog, sku: str) -> str:
+    """The unit a SKU's demand is COUNTED in — a function of the product's
+    `Consumption` and of nothing else.
+
+    The parts ledger balances per `(sku, unit)`: it keys the ASKED side on
+    `RequirementLine.unit` and the PURCHASED side on `BomLine.engineering_unit`
+    (`report/structure.py`). Those must be the same string or one demand reports
+    as unassigned AND from-stock at once — the exact failure the ledger's
+    two-directional property was built to catch, satisfied vacuously.
+
+    Demand guessed this unit three times (authored beside the sku, then from
+    `role`, then from `length_mm is not None`) and was wrong each time: an
+    indivisible product carrying `attrs.length_mm` is explicitly blessed by
+    `validate_model._can_supply_length` to back a `length_rule` slot, so it has
+    a cut length and is still bought and counted in eaches. This function is the
+    one answer both sides read, so they cannot disagree by construction.
+    """
+    product = catalog.products.get(sku)
+    if product is None:
+        # fulfill() prices an unknown sku as a flagged zero-cost line counted in
+        # eaches; the asked side has to say the same or the ledger splits.
+        return "each"
+    sem = product.consumption
+    if sem.kind == "divisible_linear":
+        return "cut"
+    if sem.kind in ("packaged_discrete", "coverage_based"):
+        return sem.engineering_unit
+    return "each"  # indivisible_discrete, assembly_kit
 
 
 def fulfill(
@@ -70,12 +102,30 @@ def fulfill(
     bom = Bom()
     by_sku: dict[str, list[RequirementLine]] = {}
     for r in requirements:
+        if not r.sku:
+            # A SKU-free line makes every ledger key ("", unit), so one demand
+            # reports as unassigned AND from stock at once, prints a blank SKU
+            # column on the setting-out sheet, and satisfies the both-directions
+            # property vacuously while being maximally wrong (spec §"The
+            # resolved SKU has to flow back"). resolve_supply already routes
+            # unresolvable lines to `unresolved` — but that guarantee rested on
+            # caller discipline nothing enforced, and a reviewer reintroduced
+            # the defect at all three routes with a three-word edit and got zero
+            # failures. It is enforced here now, where it cannot be bypassed.
+            raise ValueError(
+                f"requirement {r.id} ({r.role or 'unknown role'}) reached fulfill() "
+                "with no sku — resolve_supply must name a product or route the "
+                "line to `unresolved`; a blank sku splits the parts ledger"
+            )
         by_sku.setdefault(r.sku, []).append(r)
 
     for sku in sorted(by_sku):
         reqs = by_sku[sku]
         product = catalog.products.get(sku)
         pegs = [r.id for r in reqs]
+        # ONE source for the engineering unit, shared with the asked side of the
+        # parts ledger via resolve_supply — see engineering_unit_for().
+        unit = engineering_unit_for(catalog, sku)
         if product is None:
             # unknown SKU: priced at zero and flagged — never a deep KeyError and
             # never a silent drop (critic finding 15)
@@ -84,7 +134,7 @@ def fulfill(
                 BomLine(
                     sku=sku, name=f"UNKNOWN: {sku}", purchase_qty=demand,
                     purchase_unit="each", engineering_qty=demand,
-                    engineering_unit="each", unit_price_cents=0, total_cents=0,
+                    engineering_unit=unit, unit_price_cents=0, total_cents=0,
                     pegs=pegs, notes=["unknown product — not in catalog"],
                 )
             )
@@ -128,7 +178,7 @@ def fulfill(
                 bom.lines.append(
                     _line(
                         product, plan.new_bar_count, "bar",
-                        engineering_qty=len(pieces), engineering_unit="cut",
+                        engineering_qty=len(pieces), engineering_unit=unit,
                         pegs=pegs,
                     )
                 )
@@ -150,7 +200,7 @@ def fulfill(
                 bom.lines.append(
                     _line(
                         product, packages, f"box of {sem.qty_per_package}",
-                        engineering_qty=demand, engineering_unit=sem.engineering_unit,
+                        engineering_qty=demand, engineering_unit=unit,
                         overage=packages * sem.qty_per_package - net, pegs=pegs,
                     )
                 )
@@ -163,7 +213,7 @@ def fulfill(
                 bom.lines.append(
                     _line(
                         product, purchase, sem.purchase_unit,
-                        engineering_qty=applications, engineering_unit=sem.engineering_unit,
+                        engineering_qty=applications, engineering_unit=unit,
                         pegs=pegs,
                     )
                 )
@@ -192,7 +242,7 @@ def fulfill(
                 bom.lines.append(
                     _line(
                         product, net, "each", engineering_qty=demand,
-                        engineering_unit="each", pegs=pegs, notes=notes,
+                        engineering_unit=unit, pegs=pegs, notes=notes,
                     )
                 )
 
