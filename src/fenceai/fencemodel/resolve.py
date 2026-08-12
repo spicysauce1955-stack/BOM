@@ -75,6 +75,17 @@ def select_variant(model: FenceModel, ctx: PanelContext) -> tuple[PanelSpec, int
 def _length_for(req: PartRequirement, ctx: PanelContext) -> Mm | None:
     if req.length_rule is None:
         return None
+    if req.length_rule == "panel_height":
+        # A member spanning the panel's full height — a picket, a slat, a baluster.
+        # Constant in every vertical mode: a raked bay's top follows the grade and
+        # its bottom follows the ground, so the two datums stay parallel, and a
+        # stepped bay is a rectangle. Only a member constrained to a frame slot
+        # (base_ref/top_ref) can vary along the bay, and that is not resolved yet.
+        #
+        # The slope factor below deliberately does NOT apply: it corrects a
+        # HORIZONTAL member for running along the grade, and a vertical member
+        # does not run along the grade at all.
+        return ctx.height_mm
     if req.length_rule == "clear_between_posts":
         base = ctx.clear_width_mm
     elif req.length_rule == "overlap":

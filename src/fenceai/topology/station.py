@@ -10,6 +10,7 @@ import math
 
 from fenceai.core.errors import InvalidTopology
 from fenceai.core.units import NUMERIC_TOLERANCE_MM, Mm, dist_mm
+from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.topology.model import Anchor, Run, Topology
 
 CORNER_ANGLE_DEG = 15.0  # turn angle above which a vertex is a structural corner
@@ -288,6 +289,50 @@ def base_top_step_stations(
                 if 0 < station < total:
                     steps.append((station, b.z_mm - a.z_mm, ev.id))
     return sorted(steps)
+
+
+def fence_model_at(topo: Topology, run: Run, station_mm: Mm) -> FenceModelChoice | None:
+    """The fence model chosen at a station, or None to fall back to the project
+    default. Half-open [start, end) exactly as base_surface_at, so the answer does
+    not depend on which order the events were authored in."""
+    total = run_length(topo, run)
+    for ev in run.interval_events:
+        if ev.payload.kind == "fence_model":
+            s0 = anchor_station(topo, run, ev.start_anchor)
+            s1 = anchor_station(topo, run, ev.end_anchor)
+            end_inclusive = s1 >= total
+            if s0 <= station_mm < s1 or (end_inclusive and station_mm == s1):
+                return FenceModelChoice(
+                    model_id=ev.payload.model_id,
+                    version_pin=ev.payload.version_pin,
+                    options=dict(ev.payload.options),
+                )
+    return None
+
+
+def fence_model_transition_stations(topo: Topology, run: Run) -> list[Mm]:
+    """Interior stations where the fence model changes — structural boundaries.
+
+    Without these the layout is free to put a bay across the change: a 5000 mm run
+    carrying one model to 2500 and another beyond lays out 1667/1667/1666, and the
+    middle bay samples its properties at mid = 2500, silently becoming one model's
+    panel at the place where the fence visibly becomes the other's."""
+    bounds: set[Mm] = set()
+    total = run_length(topo, run)
+    for ev in run.interval_events:
+        if ev.payload.kind == "fence_model":
+            for s in (
+                anchor_station(topo, run, ev.start_anchor),
+                anchor_station(topo, run, ev.end_anchor),
+            ):
+                if 0 < s < total:
+                    bounds.add(s)
+
+    def key_at(s: Mm):
+        choice = fence_model_at(topo, run, s)
+        return choice.key() if choice else None
+
+    return sorted(s for s in bounds if key_at(s - 1) != key_at(s + 1))
 
 
 def base_transition_stations(topo: Topology, run: Run) -> list[Mm]:

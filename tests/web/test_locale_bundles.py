@@ -43,6 +43,7 @@ REFUSAL_CODES = [
     "run_predates_fence_model",
     "fence_model_unknown_sku",
     "fence_model_invalid",
+    "fence_model_not_found",
 ]
 
 

@@ -24,7 +24,7 @@ from fenceai.knowledge.ast import Expr
 
 _SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-LengthRule = Literal["clear_between_posts", "centre_to_centre", "overlap"]
+LengthRule = Literal["clear_between_posts", "centre_to_centre", "overlap", "panel_height"]
 
 
 # --- what a part IS, and which items may supply it ---------------------------
@@ -406,6 +406,19 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                     errors.append(
                         f"slot {key}: {sku} cannot supply a length "
                         f"(not divisible, no attrs.length_mm)"
+                    )
+                elif (req.length_rule is None
+                      and catalog.products[sku].consumption.kind == "divisible_linear"):
+                    # The inverse of the check above, and it fails FAR more
+                    # quietly. A divisible product asked for with no cut length
+                    # plans no bars, so the BOM carries no line for it at all and
+                    # the parts ledger reads the gap as demand covered from stock
+                    # — a panel that silently costs nothing rather than a panel
+                    # that visibly costs the wrong amount. Caught at authoring,
+                    # where the author can still say what length they meant.
+                    errors.append(
+                        f"slot {key}: {sku} is bought by the length but the slot "
+                        f"declares no length_rule, so nothing would be cut or priced"
                     )
             if req.option_axis and req.option_axis not in axis_keys:
                 errors.append(f"slot {key}: option_axis {req.option_axis} is not declared")

@@ -27,6 +27,9 @@ from fenceai.catalog.model import Catalog, Product
 from fenceai.core.errors import GenerationFailure, ReadRefused
 from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
+from fenceai.fencemodel.library import ModelListing
+from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
+from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.fulfillment.pipeline import PricedRun, price_strategy
 from fenceai.fulfillment.quote import Quote
@@ -300,6 +303,8 @@ def generate_route(project_id: str):
         result = generate(
             project.topology, kb, catalog,
             overrides=project.overrides, policy=project.policy, project_id=project.id,
+            models=state.store.fence_model_library(),
+            default_model=project.fence_model,
         )
     except GenerationFailure as e:
         # code + params when the failure carries them, exactly as the read routes
@@ -618,6 +623,125 @@ def retire_knowledge(object_id: str, version: int, author: str = "user"):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"retired": f"{object_id}@v{version}"}
+
+
+# -- fence models -----------------------------------------------------------------
+
+def _model_errors(model: FenceModel) -> dict | None:
+    """Load-time validation as the API reports it: `code + params`, so a Hebrew
+    UI renders a sentence rather than English authoring text. The unknown-sku case
+    gets its own code because it is the one a user causes by typing, and it names
+    what they typed."""
+    errors = validate_model(model, state.store.load_catalog())
+    if not errors:
+        return None
+    missing = unknown_skus(model, state.store.load_catalog())
+    if missing:
+        return {"code": "fence_model_unknown_sku",
+                "params": {"skus": ", ".join(missing), "model_ref": model.ref,
+                           "n": len(missing)},
+                "errors": errors}
+    return {"code": "fence_model_invalid",
+            "params": {"model_ref": model.ref, "errors": "; ".join(errors),
+                       "n": len(errors)},
+            "errors": errors}
+
+
+@app.get("/api/fence-models")
+def list_fence_models() -> list[ModelListing]:
+    return state.store.fence_model_library().listing()
+
+
+@app.get("/api/fence-models/{model_id}/{version}")
+def get_fence_model(model_id: str, version: int) -> FenceModel:
+    model = state.store.load_fence_model(model_id, version)
+    if model is None:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    return model
+
+
+@app.post("/api/fence-models")
+def create_fence_model(model: FenceModel, author: str = "user"):
+    """A new model always arrives as a draft at the next free version.
+
+    A draft may be saved INVALID, and its errors are returned rather than
+    refused. Authoring is iterative — a panel half-built is invalid by
+    definition, and a save that refuses until the whole thing is coherent is a
+    save nobody can use. The gate is `publish`, and `_validate_resolved_model`
+    still refuses to GENERATE from an invalid model, so an invalid draft can
+    never quietly become a fence.
+    """
+    draft = model.model_copy(update={
+        "version": state.store.next_fence_model_version(model.id),
+        "status": "draft",
+    })
+    state.store.save_fence_model(draft, actor=author)
+    return {"model": draft, "invalid": _model_errors(draft)}
+
+
+@app.put("/api/fence-models/{model_id}/draft")
+def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"):
+    library = state.store.fence_model_library()
+    existing = next(
+        (m for m in library.models if m.id == model_id and m.status == "draft"), None
+    )
+    version = existing.version if existing else state.store.next_fence_model_version(model_id)
+    draft = model.model_copy(update={"id": model_id, "version": version, "status": "draft"})
+    try:
+        state.store.save_fence_model(draft, actor=author)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"model": draft, "invalid": _model_errors(draft)}
+
+
+@app.post("/api/fence-models/{model_id}/{version}/publish")
+def publish_fence_model(model_id: str, version: int, author: str = "user"):
+    """Freeze a draft. This is the gate a draft save deliberately is not: from
+    here the document is immutable and projects may select it."""
+    model = state.store.load_fence_model(model_id, version)
+    if model is None:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    if model.status != "draft":
+        raise HTTPException(409, f"{model.ref} is not a draft")
+    invalid = _model_errors(model)
+    if invalid:
+        raise HTTPException(422, invalid)
+    state.store.set_fence_model_status(model_id, version, "active", actor=author)
+    return state.store.load_fence_model(model_id, version)
+
+
+@app.post("/api/fence-models/{model_id}/{version}/status")
+def set_fence_model_status(
+    model_id: str, version: int, status: Literal["active", "retired"],
+    author: str = "user",
+):
+    try:
+        state.store.set_fence_model_status(model_id, version, status, actor=author)
+    except KeyError:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return state.store.load_fence_model(model_id, version)
+
+
+@app.put("/api/projects/{project_id}/fence-model")
+def put_project_fence_model(project_id: str, choice: FenceModelChoice | None = None) -> Project:
+    """The project's default model. Refused at the boundary rather than at
+    generation: a typo that only fails when someone presses Generate has already
+    cost them the strategy they were working on."""
+    project = _project(project_id)
+    if choice is not None:
+        if state.store.fence_model_library().resolve(
+                choice.model_id, choice.version_pin) is None:
+            raise HTTPException(422, {
+                "code": "fence_model_not_found",
+                "params": {"model_id": choice.model_id,
+                           "version_pin": choice.version_pin
+                           if choice.version_pin is not None else ""},
+            })
+    project.fence_model = choice
+    state.store.save_project(project)
+    return project
 
 
 # -- catalog & inventory ----------------------------------------------------------

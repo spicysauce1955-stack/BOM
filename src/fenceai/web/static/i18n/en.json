@@ -432,6 +432,7 @@
   "structure.unreadable": "This run cannot be read ({code}). There IS structure — regenerate the strategy, or fix what that code names.",
   "error.fence_model_unknown_sku": "No strategy was generated: the catalog has no product called {skus}. Fix the SKU in the knowledge rule that selects it, then generate again.",
   "error.fence_model_invalid": "No strategy was generated: fence model {model_ref} cannot be used ({n} problem(s)). {errors}",
+  "error.fence_model_not_found": "No strategy was generated: fence model {model_id} is not available — it does not exist, or no version of it is published. Choose another model for this project or section.",
   "role.post": "post",
   "role.cap": "post cap",
   "role.concrete": "concrete",

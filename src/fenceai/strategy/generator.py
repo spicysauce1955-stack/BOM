@@ -15,14 +15,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
+from fenceai.fencemodel.library import FenceModelLibrary, content_hash
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import PanelContext, resolve_panel
+from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.evaluator import (
     Resolution,
     preference_firings,
@@ -36,6 +39,7 @@ from fenceai.strategy.model import (
     Gate,
     GenerationResult,
     GenerationRun,
+    ModelUse,
     Post,
     Span,
     Strategy,
@@ -49,6 +53,8 @@ from fenceai.topology.station import (
     base_top_at,
     base_top_step_stations,
     base_transition_stations,
+    fence_model_at,
+    fence_model_transition_stations,
     ground_step_stations,
     local_slope_permille,
     corner_stations,
@@ -102,8 +108,11 @@ def generate(
     overrides: list[Override] | None = None,
     policy: dict | None = None,
     project_id: str = "",
+    models: FenceModelLibrary | None = None,
+    default_model: FenceModelChoice | None = None,
 ) -> GenerationResult:
     overrides = overrides or []
+    models = models or FenceModelLibrary()
     policy = {**DEFAULT_POLICY, **(policy or {})}
     builder = GraphBuilder()
     strategy = Strategy(id="strategy")
@@ -125,11 +134,12 @@ def generate(
     # every fence model actually drawn from, across all runs — part of the run id
     # (a model swap changes what the run means even though the digest's other
     # inputs are untouched)
-    models_used: list[FenceModel] = []
+    models_used: list[ModelUse] = []
     for run in topology.runs:
         _generate_run(
             topology, run, knowledge, scope, catalog, overrides, policy,
             builder, strategy, applied, demand_skus, models_used,
+            models, default_model,
         )
 
     _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
@@ -162,7 +172,9 @@ def generate(
     # - model_snapshot: which fence model(s)/versions the run actually drew from
     # - catalog_hash: the catalog content the run resolved products against
     # - objective_preset: which supply-resolution preset a later /bom read will use
-    run_meta.model_snapshot = sorted({(m.id, m.version) for m in models_used})
+    run_meta.model_snapshot = sorted(
+        {u.sort_key(): u for u in models_used}.values(), key=ModelUse.sort_key
+    )
     run_meta.catalog_hash = hashlib.sha256(
         catalog.model_dump_json().encode()).hexdigest()[:16]
     # `policy` was already merged with DEFAULT_POLICY above, so the key always
@@ -173,7 +185,7 @@ def generate(
         json.dumps(
             [topology.model_dump(), run_meta.knowledge_snapshot,
              [o.model_dump() for o in overrides], policy,
-             run_meta.model_snapshot, run_meta.catalog_hash,
+             [u.model_dump() for u in run_meta.model_snapshot], run_meta.catalog_hash,
              run_meta.objective_preset],
             sort_keys=True, default=str,
         ).encode()
@@ -523,9 +535,9 @@ def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
 
     Cost: O(model) — slots x eligibility members, plus axes x values, with
     catalog access by dict lookup only. It does not touch the topology, so it
-    does not grow with the fence: it runs once per topology RUN (the model is
-    chosen per run, because a `fence_model` event will eventually pick a
-    different one per section), never once per span. Measured on this machine:
+    does not grow with the fence: it runs once per distinct model CHOICE on a run
+    (memoised in `segment_model`), never once per segment and never once per
+    span — a run built entirely to one model validates once. Measured on this machine:
     2.1 us for `M-LEGACY` against 0.85 ms for a four-bay `generate()` (0.24%),
     and 0.04% of a 60-bay one, where it is still a single call. No caching
     needed — and a cache keyed on a model that `legacy_model()` rebuilds per
@@ -554,6 +566,65 @@ def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
     )
 
 
+@dataclass(frozen=True)
+class _SegmentModel:
+    """A model choice, resolved once and reused by every segment that makes it."""
+
+    model: FenceModel
+    use: ModelUse
+    select_node_id: str
+    max_span: Mm
+    max_span_ref: str
+    firing_node_id: str
+    rails_per_span: int
+    screws_per_span: int
+    quantity_refs: list[str]
+
+
+LEGACY_MODEL_ID = "M-LEGACY"
+
+
+def _pick_model(
+    library: FenceModelLibrary,
+    choice: FenceModelChoice | None,
+    default_choice: FenceModelChoice | None,
+    demand_skus: dict[str, str],
+) -> tuple[FenceModel, str]:
+    """(model, where the choice came from) for one stretch of fence.
+
+    An interval event beats the project default, which beats the built-in
+    compatibility model — the same precedence base and height already use.
+
+    M-LEGACY is a deliberate exception and the only one: it is rebuilt from the
+    run's resolved demand skus rather than served from the library, because its
+    eligibility exists to carry whatever `DefaultComponent` knowledge resolved to.
+    A stored M-LEGACY document naming RAIL-3000 would quietly outrank a rule that
+    changed the rail — the failure this seam exists to prevent. Every other model
+    names its own products, which is the whole point of authoring one.
+    """
+    effective = choice or default_choice
+    source = "event" if choice else ("project" if default_choice else "builtin")
+    legacy = lambda: legacy_model(  # noqa: E731
+        rail_sku=demand_skus.get("rail_sku", "RAIL-3000"),
+        screw_sku=demand_skus.get("screw_sku", "SCREW-S10"),
+    )
+    if effective is None:
+        return legacy(), source
+    if effective.model_id == LEGACY_MODEL_ID:
+        return legacy(), source
+    model = library.resolve(effective.model_id, effective.version_pin)
+    if model is None:
+        pinned = "" if effective.version_pin is None else f"@v{effective.version_pin}"
+        raise GenerationFailure(
+            f"fence model {effective.model_id}{pinned} is not available: it does not "
+            "exist, or no version of it is active",
+            code="fence_model_not_found",
+            model_id=effective.model_id,
+            version_pin=effective.version_pin if effective.version_pin is not None else "",
+        )
+    return model, source
+
+
 def _generate_run(
     topo: Topology,
     run: Run,
@@ -566,7 +637,9 @@ def _generate_run(
     strategy: Strategy,
     applied: set[str],
     demand_skus: dict[str, str],
-    models_used: list[FenceModel],
+    models_used: list[ModelUse],
+    library: FenceModelLibrary,
+    default_model: FenceModelChoice | None,
 ) -> None:
     length = run_length(topo, run)
     slope_permille = max_slope_permille(topo, run)
@@ -579,32 +652,83 @@ def _generate_run(
         "run": {"length_mm": length, "slope_permille": slope_permille},
     }
 
-    # M-LEGACY until a fence_model event exists to pick another; its eligibility
-    # is seeded from the run's resolved demand skus (resolved once in generate(),
-    # never re-resolved here) so a DefaultComponent change still reaches the BOM.
-    model = legacy_model(
-        rail_sku=demand_skus.get("rail_sku", "RAIL-3000"),
-        screw_sku=demand_skus.get("screw_sku", "SCREW-S10"),
-    )
-    _validate_resolved_model(model, catalog)
-    models_used.append(model)
+    # -- the model, and everything scoped to it --------------------------------
+    # A fence_model interval event may change the model partway along the run, so
+    # the model — and the numbers resolved under its `series` scope — belong to a
+    # SEGMENT, not to the run. Memoised on the choice: with no event and no project
+    # default there is exactly one choice, hence one validation, one select_model
+    # node and one resolve_max_span node, which is what every run had before a
+    # model could be chosen at all.
+    #
+    # Resolution is lazy, on first use by a segment. Resolving eagerly would emit a
+    # select_model node and count a model in the run's snapshot for a model that no
+    # bay is built to — the graph is the explanation, and it must not describe a
+    # choice the fence never made.
+    resolved: dict[tuple | None, _SegmentModel] = {}
 
-    # -- hard span parameter ---------------------------------------------------
-    res = resolve_param(kb, ctx, "max_span_mm")
-    if res.winner is None:
-        raise GenerationFailure(f"no max_span_mm knowledge applies to run {run.id}")
-    max_span: Mm = next(a.value for a in res.winner.actions if a.kind == "set_param")
-    max_span_ref = res.winner.version.ref
-    firing_node = builder.add(
-        "rule_firing", "resolve_max_span",
-        payload={"param": "max_span_mm", "value": max_span},
-        inputs=[run_fact.id],
-        governed_by=[max_span_ref],
-        # a defeated edge cites the LOSING version (decision-model.md); the loser
-        # is any firing whose defeated_by is non-empty
-        defeated=[f.version.ref for f in res.firings if f.defeated_by],
-    )
-    _surface_conflicts(res.conflicts, builder, strategy)
+    def segment_model(choice: FenceModelChoice | None) -> _SegmentModel:
+        key = choice.key() if choice else None
+        cached = resolved.get(key)
+        if cached is not None:
+            return cached
+
+        # the EFFECTIVE choice, because the options belong to whichever choice
+        # actually applied — reading them off the interval event alone silently
+        # drops every option a project default carried
+        effective = choice or default_model
+        options = dict(effective.options) if effective else {}
+        model, source = _pick_model(library, choice, default_model, demand_skus)
+        _validate_resolved_model(model, catalog)
+        # `series` is the dimension a knowledge rule needs to say "spans exactly
+        # 1800 on that product line" — blocked until a model id was a fact of
+        # generation (plan/current-status.md, the two blocked dimensions).
+        seg_ctx = {
+            "scope": bind_scope(scope, {"series": model.id}),
+            "run": ctx["run"],
+        }
+        select_node = builder.add(
+            "selection", "select_model",
+            payload={"model_ref": model.ref, "source": source,
+                     "options": options},
+            inputs=[run_fact.id],
+        )
+
+        res = resolve_param(kb, seg_ctx, "max_span_mm")
+        if res.winner is None:
+            raise GenerationFailure(f"no max_span_mm knowledge applies to run {run.id}")
+        max_span_mm: Mm = next(a.value for a in res.winner.actions if a.kind == "set_param")
+        firing = builder.add(
+            "rule_firing", "resolve_max_span",
+            payload={"param": "max_span_mm", "value": max_span_mm},
+            inputs=[run_fact.id, select_node.id],
+            governed_by=[res.winner.version.ref],
+            # a defeated edge cites the LOSING version (decision-model.md); the loser
+            # is any firing whose defeated_by is non-empty
+            defeated=[f.version.ref for f in res.firings if f.defeated_by],
+        )
+        _surface_conflicts(res.conflicts, builder, strategy)
+
+        rails, rails_refs = _resolve_quantity(kb, seg_ctx, "rails_per_span", 2)
+        screws, screws_refs = _resolve_quantity(kb, seg_ctx, "screws_per_span", 8)
+
+        sm = _SegmentModel(
+            model=model,
+            use=ModelUse(
+                model_id=model.id, version=model.version,
+                content_hash=content_hash(model),
+                options=options,
+            ),
+            select_node_id=select_node.id,
+            max_span=max_span_mm,
+            max_span_ref=res.winner.version.ref,
+            firing_node_id=firing.id,
+            rails_per_span=rails,
+            screws_per_span=screws,
+            quantity_refs=rails_refs + screws_refs,
+        )
+        resolved[key] = sm
+        models_used.append(sm.use)
+        return sm
 
     # -- gates -----------------------------------------------------------------
     gates: list[tuple[Mm, Mm, str, str]] = []
@@ -722,6 +846,9 @@ def _generate_run(
         if gate_slope_res.winner else None)
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
     fixed |= gate_edges | step_stations
+    # a model change is a structural boundary for the same reason a base transition
+    # is: a bay may not straddle the place where the fence becomes a different fence
+    fixed |= set(fence_model_transition_stations(topo, run))
     fixed_sorted = sorted(fixed)
 
     reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope)
@@ -948,8 +1075,9 @@ def _generate_run(
         return vertical, None
 
     # -- span quantities (resolved here so demand needs no knowledge access) ---
-    rails_per_span, rails_refs = _resolve_quantity(kb, ctx, "rails_per_span", 2)
-    screws_per_span, screws_refs = _resolve_quantity(kb, ctx, "screws_per_span", 8)
+    # (rails_per_span / screws_per_span moved into segment_model: they are resolved
+    # under the segment's model scope, so a rule may say "three rails on that
+    # product line" — see the `series` binding there)
 
     # -- layout preferences: resolved, conflicts surfaced (S13) ----------------
     prefs = preference_firings(
@@ -986,17 +1114,26 @@ def _generate_run(
 
     gate_intervals = [(gs, ge) for gs, ge, _, _ in gates]
     span_ids: list[str] = []
+    # spans grouped by the model they were built to, so resolve_span_quantities
+    # scopes to the bays its numbers actually governed
+    spans_by_model: dict[tuple | None, list[str]] = {}
     for seg_start, seg_end in zip(fixed_sorted, fixed_sorted[1:]):
         if any(gs <= seg_start and seg_end <= ge for gs, ge in gate_intervals):
             continue
         seg_len = seg_end - seg_start
         if seg_len <= 0:
             continue
+        # model stations are boundary stations, so the whole segment is one model's
+        # and its mid-point is a safe place to ask which
+        choice = fence_model_at(topo, run, (seg_start + seg_end) // 2)
+        sm = segment_model(choice)
+        model = sm.model
+        rails_per_span, screws_per_span = sm.rails_per_span, sm.screws_per_span
         layout = layout_segment(
-            seg_len, max_span,
+            seg_len, sm.max_span,
             prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
         )
-        governed = [max_span_ref] + ([layout_pref_ref] if layout_pref_ref else [])
+        governed = [sm.max_span_ref] + ([layout_pref_ref] if layout_pref_ref else [])
         layout_node = builder.add(
             "structural", "layout_spans",
             payload={
@@ -1008,7 +1145,7 @@ def _generate_run(
                     if layout.rejected_alternative else []
                 ),
             },
-            inputs=[run_fact.id, firing_node.id, vertical_node.id],
+            inputs=[run_fact.id, sm.firing_node_id, vertical_node.id],
             governed_by=governed,
         )
         stations = boundaries(seg_start, layout.widths)
@@ -1056,6 +1193,7 @@ def _generate_run(
             )
             strategy.spans.append(span)
             span_ids.append(span.id)
+            spans_by_model.setdefault(choice.key() if choice else None, []).append(span.id)
             builder.add(
                 "structural", "create_span",
                 payload={
@@ -1074,12 +1212,12 @@ def _generate_run(
                 payload={"model_ref": model.ref,
                          "slots": [{"key": s.slot_key, "role": s.role, "qty": s.qty}
                                    for s in span.panel.slots]},
-                scope_refs=[span.id], inputs=[layout_node.id],
+                scope_refs=[span.id], inputs=[layout_node.id, sm.select_node_id],
             )
-            if width > max_span:
+            if width > sm.max_span:
                 raise GenerationFailure(
-                    f"span {span.id} width {width} exceeds hard max {max_span}",
-                    constraint_refs=[max_span_ref],
+                    f"span {span.id} width {width} exceeds hard max {sm.max_span}",
+                    constraint_refs=[sm.max_span_ref],
                 )
             if v_mode == "stepped" and max_gap is not None and 0 < abs(gz1 - gz0) <= max_step \
                     and abs(gz1 - gz0) > max_gap:
@@ -1192,13 +1330,19 @@ def _generate_run(
             )
             strategy.posts.append(post)
 
-    if span_ids:
+    # one node per model actually built to, scoped to that model's bays — the
+    # numbers differ per model as soon as a rule is scoped to `series`, and a
+    # single run-wide node would then attribute one model's rail count to the
+    # other model's bays
+    for key, ids in spans_by_model.items():
+        sm = resolved[key]
         builder.add(
             "quantity", "resolve_span_quantities",
-            payload={"rails_per_span": rails_per_span, "screws_per_span": screws_per_span},
-            scope_refs=span_ids,
-            inputs=[run_fact.id],
-            governed_by=rails_refs + screws_refs,
+            payload={"rails_per_span": sm.rails_per_span,
+                     "screws_per_span": sm.screws_per_span},
+            scope_refs=ids,
+            inputs=[run_fact.id, sm.select_node_id],
+            governed_by=sm.quantity_refs,
         )
 
 

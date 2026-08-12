@@ -77,6 +77,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " Height reduced by the wall top ({wall_top_mm} {u}, event {wall_event})."
         ),
         "create_span_step": " Steps {step_mm} {u} against the grade.",
+        # one key per provenance, the same shape select_gate_kit uses: where a
+        # choice came from is a different sentence, not a word slotted into one
+        "select_model_event": "Built to fence model {model_ref}, set by a section event.",
+        "select_model_project": "Built to fence model {model_ref}, the project's default.",
+        "select_model_builtin": "Built to fence model {model_ref}, the built-in default.",
+        "select_model_options": " Options: {options}.",
         "resolve_panel": "Panel {model_ref} built from {slots}.",
         "choose_vertical_mode": "Vertical mode '{mode}' chosen at {slope_permille}‰ grade.",
         "resolve_max_span": "Maximum span resolved to {value_mm} {u}.",
@@ -157,6 +163,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " הגובה הופחת בשל ראש הקיר ({wall_top_mm} {u}, אירוע {wall_event})."
         ),
         "create_span_step": " מדורג ב-{step_mm} {u} כנגד השיפוע.",
+        "select_model_event": "נבנה לפי דגם הגדר {model_ref}, שנקבע באירוע קטע.",
+        "select_model_project": "נבנה לפי דגם הגדר {model_ref}, ברירת המחדל של הפרויקט.",
+        "select_model_builtin": "נבנה לפי דגם הגדר {model_ref}, ברירת המחדל המובנית.",
+        "select_model_options": " אפשרויות: {options}.",
         "resolve_panel": "הפאנל {model_ref} נבנה מ-{slots}.",
         "choose_vertical_mode": "נבחר מצב אנכי '{mode}' בשיפוע {slope_permille}‰.",
         "resolve_max_span": "המפתח המרבי נקבע ל-{value_mm} {u}.",
@@ -280,6 +290,13 @@ def explain_node(
                 )
             if "step_mm" in p:
                 base += _fmt(t, "create_span_step", lang, units, step_mm=p["step_mm"])
+        case "select_model":
+            base = _fmt(t, f"select_model_{p.get('source', 'builtin')}", lang, units,
+                model_ref=p.get("model_ref"))
+            options = p.get("options") or {}
+            if options:
+                base += _fmt(t, "select_model_options", lang, units,
+                    options=", ".join(f"{k}={v}" for k, v in sorted(options.items())))
         case "resolve_panel":
             slots = ", ".join(f"{s['qty']} {s['role']}" for s in p.get("slots", []))
             base = _fmt(t, "resolve_panel", lang, units,
