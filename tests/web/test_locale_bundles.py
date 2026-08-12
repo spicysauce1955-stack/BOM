@@ -29,6 +29,7 @@ WARNING_CODES = [
     "no_gate_kit",
     "gate_past_run_end",
     "no_eligible_item",
+    "no_feasible_item",
     "substitute_needs_approval",
 ]
 CRITIQUE_CODES = ["narrow_span"]
