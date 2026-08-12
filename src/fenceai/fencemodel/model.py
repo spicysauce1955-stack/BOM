@@ -234,6 +234,7 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
     errors, not user-facing warnings, so they carry no code+params."""
     errors: list[str] = []
     axis_keys = {a.key for a in model.option_axes}
+    axis_values = {a.key: {v.key for v in a.values} for a in model.option_axes}
 
     for axis in model.option_axes:
         for value in axis.values:
@@ -267,5 +268,14 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                     errors.append(
                         f"slot {key}: option {req.option_axis}={value} names {sku}, "
                         f"which is not an eligible member"
+                    )
+                # Only checked once the axis itself resolves: an unknown
+                # option_axis is already reported above, and flagging every
+                # one of its values on top of that would be cascading noise,
+                # not a new fact.
+                if req.option_axis in axis_keys and value not in axis_values[req.option_axis]:
+                    errors.append(
+                        f"slot {key}: sku_by_option key {value!r} is not a "
+                        f"declared value of axis {req.option_axis}"
                     )
     return errors

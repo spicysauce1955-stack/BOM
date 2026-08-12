@@ -62,6 +62,29 @@ def test_sku_by_option_must_name_an_eligible_member():
     assert any("frame_finish" in e and "POST-S" in e for e in errs)
 
 
+def test_sku_by_option_key_must_be_a_declared_axis_value():
+    """The flip side of the eligible-member check: an option VALUE that no
+    `OptionValue` declares can never be selected, so it narrows nothing — the
+    same dangling-reference error the eligible-sku and option_axis checks
+    already catch."""
+    from fenceai.fencemodel.model import Axis, OptionValue
+
+    req = PartRequirement(
+        role="rail", qty=2, length_rule="centre_to_centre",
+        option_axis="frame_finish", sku_by_option={"TYPO_VALUE": "RAIL-3000"},
+        eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000", priority=1)]),
+    )
+    model = FenceModel(
+        id="M-TEST", version=1, name_i18n={"en": "Test"},
+        default_spec=PanelSpec(frame=[_slot(requirement=req)]),
+        option_axes=[Axis(key="frame_finish", kind="enum", values=[
+            OptionValue(key="black", label_i18n={"en": "Black"}),
+        ])],
+    )
+    errs = validate_model(model, demo_catalog())
+    assert any("frame_finish" in e and "TYPO_VALUE" in e for e in errs)
+
+
 def test_duplicate_slot_keys_are_rejected():
     """slot_key is an override anchor dimension; two slots sharing one key would
     make an override ambiguous."""
