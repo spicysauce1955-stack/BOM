@@ -64,8 +64,14 @@ def fit_pattern(
     usable = axis_len_mm - 2 * edge_margin_mm
     count = _count_members(usable, member_widths_mm, gaps_after_mm)
     if count == 0:
-        return FitResult(0, [], edge_margin_mm, edge_margin_mm,
-                         max(axis_len_mm, 0), None)
+        # Margins alone can already claim the whole axis (or more, on a short
+        # or negative one) — clamp each to half of what the axis actually has
+        # rather than reporting the requested margin AND a residual that
+        # double-counts the same millimetres. Deriving residual as the
+        # remainder (never a separate max()) keeps the two sides equal by
+        # construction, for every axis length including zero and negative.
+        start = end = min(edge_margin_mm, max(axis_len_mm, 0) // 2)
+        return FitResult(0, [], start, end, axis_len_mm - start - end, None)
 
     widths_used = sum(member_widths_mm[i % len(member_widths_mm)] for i in range(count))
     nominal = [gaps_after_mm[i % len(gaps_after_mm)] for i in range(count - 1)]
