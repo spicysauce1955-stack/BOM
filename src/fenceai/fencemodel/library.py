@@ -33,11 +33,20 @@ class ModelListing(BaseModel):
     `active_version` is what a project picking this model without a pin would
     get — `None` when nothing is published, which is how a draft-only model
     reads as not yet selectable instead of disappearing from the list.
+
+    `draft_version` and `versions` exist for the EDITOR rather than the chooser.
+    "Edit this model" must open the draft that already exists instead of opening
+    a second one, and "duplicate from a version" must offer the versions there
+    are; with only `has_draft` the client would have to guess a version number,
+    and `active_version + 1` is a guess that is wrong the moment a version above
+    the active one was retired.
     """
 
     id: str
     active_version: int | None
+    draft_version: int | None = None
     has_draft: bool
+    versions: list[int] = []
     name_i18n: dict[str, str] = {}
     status: Literal["draft", "active", "retired"]
 
@@ -75,10 +84,15 @@ class FenceModelLibrary(BaseModel):
             # get, falling back to the newest one there is, so the row never
             # describes a document nobody can select.
             shown = active or max(versions, key=lambda m: m.version)
+            # The HIGHEST draft, so a library that somehow carries two of them
+            # names the one a new save would land on rather than an older one.
+            draft = max((m.version for m in versions if m.status == "draft"), default=None)
             rows.append(ModelListing(
                 id=model_id,
                 active_version=active.version if active else None,
-                has_draft=any(m.status == "draft" for m in versions),
+                draft_version=draft,
+                versions=sorted(m.version for m in versions),
+                has_draft=draft is not None,
                 name_i18n=shown.name_i18n,
                 status=shown.status,
             ))

@@ -2,7 +2,8 @@
 // Draw (snapped dots, rubber band, typed lengths) — plan Tasks 6-8.
 // The canvas is never mirrored in RTL (spec §4).
 
-import { apiGet, apiSend, esc } from "./api.js";
+import { apiSend, esc } from "./api.js";
+import { loadCatalogProducts } from "./builder-ui.js";
 import { isSelectable, loadModelListing, modelOptionLabel } from "./fence-models.js";
 import {
   clearGroup, el, endpointNodeAt, GROUND_TOL_MM, groundSamplesFor, groundZAt,
@@ -406,14 +407,12 @@ function onOutsidePointer(ev) {
   if (popover && !popover.contains(ev.target)) closePopover();
 }
 
-// ---------- gate kit catalog (fetched once, cached like tabs.js does) ----------
-let catalogPromise = null;
-function loadCatalogProducts() {
-  catalogPromise ??= apiGet("/api/catalog")
-    .then((c) => c.products || {})
-    .catch(() => { catalogPromise = null; return {}; }); // retry on next open
-  return catalogPromise;
-}
+// ---------- gate kit catalog ----------
+// The cache lives in builder-ui.js, shared with the rule builder and the model
+// editor. It used to live here AND there, with different failure behaviour on
+// each side: this copy retried after a failed fetch and the other cached the
+// empty catalog forever, so the same lost request left the gate picker working
+// and the SKU pickers permanently blank.
 
 function gateKitProducts(products) {
   // components of assembly kits (gate leaves, hinge sets...) are parts, not

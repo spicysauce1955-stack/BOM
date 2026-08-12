@@ -74,6 +74,9 @@ def test_listing_reports_a_draft_beside_the_active_version():
     (row,) = lib.listing()
     assert row.active_version == 1
     assert row.has_draft is True
+    # the editor opens THIS version rather than guessing active+1
+    assert row.draft_version == 2
+    assert row.versions == [1, 2]
     assert row.status == "active"
     assert row.name_i18n == {"en": "First", "he": "ראשון"}   # the version a chooser gets
 
@@ -86,8 +89,37 @@ def test_listing_still_shows_a_model_with_no_active_version():
     (row,) = lib.listing()
     assert row.active_version is None            # nothing to choose
     assert row.has_draft is True
+    assert row.draft_version == 2
+    assert row.versions == [1, 2]
     assert row.status == "draft"
     assert row.name_i18n == {"en": "Unpublished"}
+
+
+def test_the_draft_version_is_the_drafts_own_number_not_a_guess():
+    """The reason the field exists. A retired version ABOVE the active one makes
+    `active_version + 1` name a version that is not the draft — and `max(versions)`
+    name it too — so the editor would open the wrong document, or none.
+
+    Constructed so that BOTH wrong implementations fail: active v1, draft v3,
+    retired v4."""
+    lib = FenceModelLibrary(models=[
+        model("M-A", 1, "active"), model("M-A", 3, "draft"), model("M-A", 4, "retired"),
+    ])
+    (row,) = lib.listing()
+    assert row.active_version == 1
+    assert row.draft_version == 3      # not 2 (active + 1), and not 4 (max)
+    assert row.versions == [1, 3, 4]
+
+
+def test_two_drafts_report_the_one_a_new_save_would_land_on():
+    """`next_fence_model_version` counts from MAX, so a library that somehow
+    carries two drafts must name the higher one — the lower is a document a save
+    would never reach."""
+    lib = FenceModelLibrary(models=[
+        model("M-A", 1, "active"), model("M-A", 2, "draft"), model("M-A", 3, "draft"),
+    ])
+    (row,) = lib.listing()
+    assert row.draft_version == 3
 
 
 def test_content_hash_is_stable_across_dumps():

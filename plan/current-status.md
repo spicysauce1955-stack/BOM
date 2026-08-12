@@ -1,7 +1,8 @@
 # Current status
 
-Updated: 2026-08-12 — V1 complete; fence models phase 1 landed, and W1/W2 of
-`specs/2026-08-12-panel-authoring-design.md` gave the model a UI (W3–W6 remain)
+Updated: 2026-08-12 — V1 complete; fence models phase 1 landed, and W1–W4 of
+`specs/2026-08-12-panel-authoring-design.md` gave the model a UI and an editor
+(W5–W6 remain)
 
 - [x] Research (4 parallel researcher reports, synthesis, ADRs 0001–0010)
 - [x] Architecture (docs/architecture/*, golden scenarios S01–S14 defined)
@@ -378,6 +379,73 @@ a node suite for the library naming rules the browser cannot reach: a draft-only
 model is offered NOT SELECTABLE rather than hidden) · 126 golden scenarios (unchanged) ·
 116/116 smoke (+9).
 
-**W3–W6 remain**: variants and option axes (`_unsupported_features`), authoring (edit, add,
-duplicate, vary), the elevation drawing beside the slot table, and the `select_supply`
-explanation.
+## Panel authoring W4 — the model becomes editable (2026-08-12) — COMPLETE
+Spec §W4. The rest of the user's question: *"what if the user wants to edit, change or add a
+panel? variant?"* W1–W3 made models persisted, versioned, selectable data with a working
+preview and left the **only** way to author one a hand-written JSON POST — so the structure
+that decides every material, size and price below it was editable by everyone except the
+expert who owns it. A **Models tab** (`js/model-editor.js`, ~1200 lines, owning nothing
+outside `#tab-models`) now edits frame slots, infill patterns, fixings, eligibility, option
+axes and variants as sentence-style rows over the live document, with the rule builder's
+Advanced-JSON escape hatch whose exit is never gated on the JSON being valid.
+
+Lifecycle as the spec demands it: "Edit" on a published version opens a **deep copy** whose
+first save lands a draft at the next free version, so an active version — the one an
+accepted quote was priced against — is never mutated; publish is the gate, and its 422
+renders from `code + params` under a Hebrew heading rather than as the engine's English
+authoring text; retire and duplicate sit beside them. **Impact is shown before the change**
+(foundation §11): the same `renderImpactReport` the knowledge tab uses, now moved to
+`js/impact.js` because a third caller is where two copies start disagreeing.
+
+**It also closed a latent 500 that it made routine.** `Store` holds ONE
+`sqlite3.Connection` opened `check_same_thread=False`, and FastAPI serves sync endpoints from
+a threadpool — so overlapping requests interleaved statements on one connection. The browser
+suite caught it as `GET /inventory` answering 500 while a draft was being saved; reproduced
+standalone at **48 failures in ~540 overlapping requests**. The silent half is worse: half of
+`Store`'s methods are read-then-write sequences, and another thread's `commit()` landing
+inside one commits a transaction nobody finished. `Store` is now `@_serialized` — a
+re-entrant lock around every public method, because a per-thread connection would give every
+`Store(":memory:")` test its own empty database. Pinned by `tests/store/test_concurrent_access.py`,
+which drives real threads and fails on the unguarded class. ADR-0008 records both the fix and
+what it does NOT cover: route-level read-then-write is still a TOCTOU window.
+
+**The review caught the design wrong first, and the wrong version was plausible.** The editor
+originally debounce-saved every 250 ms, because the only preview route priced a STORED
+document — from which it followed that a live preview and a save-on-demand editor could not
+both exist. But the model id is a save key: typing "M-SLAT" one character at a time left
+`M@v1`, `M-@v1`, `M-S@v1` … behind as permanent library rows (there is no delete route) and
+landed the half-built document as a new draft version of the shipped M-SLAT, which is then
+what "Edit" opens for everybody. And the constraint was never real — `preview-impact` had
+taken an unsaved document in its body since W3, and `preview_panel` was always a pure function
+of a `FenceModel` object. So W4 adds `POST /api/fence-models/preview` taking `{model, bay}`:
+an edit re-prices and does nothing else, Save and Publish are the only writes, and the id is
+refused in the field if the library already holds it. **The lesson worth keeping: when a
+client design is justified by "the API only offers X", check whether X is a property of the
+system or of one route signature.**
+
+Three more decisions worth keeping.
+**`gap_after_mm` has no `min`**: a negative gap is an overlap, and board-on-board and
+shadowbox are exactly that; the bound belongs on the member's net advance, where
+`validate_model` already puts it. **The selects offer only what the resolver honours** —
+`excess` narrowed to `truncate|space`, and `Axis.kind` narrowed to `enum` with a new
+`_unsupported_features` entry refusing `numeric`, since nothing reads that field and an
+authoring surface is what turns a silently-ignored field into a wrong answer. And the two
+catalog caches (`tabs.js` and `editor.js`) became one in `js/builder-ui.js` — they had
+different failure behaviour, so one lost request left the gate picker working and every SKU
+picker permanently blank. `ModelListing` gained `draft_version`/`versions` so "Edit" reopens
+the draft that exists instead of guessing `active + 1`, which is wrong the moment a version
+above the active one is retired.
+
+743 pytest (+22: a node suite that builds the documents the "+ Add" buttons build and lets
+pydantic and `validate_model` judge them — the discriminator on every eligibility member, a
+variant's starting condition as valid `Expr`, a deep draft copy, the swatch pattern, and the
+editor's vocabularies pinned against `model.py`'s in BOTH directions, and the id-collision
+truth table over all four session kinds — plus four threading tests that fail on the
+unguarded store) · 126 golden scenarios (unchanged) · 127/127 smoke (+11), including that
+authoring writes NOTHING until asked, that an unsaved model is priced anyway, that the
+published model's STORED SPEC carries the rows (an empty model publishes, so listing metadata
+alone proves nothing), that the Advanced-JSON box lets go with broken JSON in it, that a
+length typed in cm stores millimetres, and that a wider slat gap fits fewer slats.
+
+**W5–W6 remain**: the `select_supply` explanation and multi-member groups, the pricing union,
+the elevation drawing beside the slot table, and the phase-2/3 tail.

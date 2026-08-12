@@ -257,6 +257,11 @@ def _can_supply_length(catalog: Catalog, sku: str) -> bool:
 # `Axis.available_when`, and a `layout_policy` contribution to a param no model
 # scope reaches. What is left after that is real: `Eligibility.group` and
 # `.predicate`, `excess=trim_last|extension_clip`, and `infill supply=assembly`.
+#
+# W4 ADDED one, `Axis.kind != "enum"` — the table works in both directions. A
+# field can sit here unnoticed while only demo data writes it and become a
+# wrong answer the moment an editor puts it in front of an author, which is
+# exactly what an authoring wave is for finding.
 _UNSUPPORTED = "not yet supported (phase 2)"
 
 # The params a `layout_policy` contribution may name, because these are the ones
@@ -278,6 +283,21 @@ def _unsupported_features(model: FenceModel) -> list[str]:
     """Features the schema accepts that `resolve_panel` does not honour."""
     errors: list[str] = []
     for axis in model.option_axes:
+        if axis.kind != "enum":
+            # Nothing reads `Axis.kind`. `_chosen_option` narrows by looking the
+            # answer up in `sku_by_option` — `str(ctx.options[axis])` against the
+            # keys of the axis's own `values` — so a `numeric` axis is answered
+            # out of a hand-listed enumeration, and only the numbers someone
+            # thought to list can be given. "1000, 1200 or 1800" is a different
+            # question from "a height", and the field says the second while the
+            # resolver asks the first. Harmless while only demo data declared
+            # axes; W4 puts it in front of an author.
+            errors.append(
+                f"axis {axis.key}: kind={axis.kind!r} is {_UNSUPPORTED}: nothing "
+                "reads Axis.kind and resolution answers every axis from its "
+                "declared `values`, so this would behave as an enum of whatever "
+                "values were listed"
+            )
         if axis.available_when is not None:
             # The one part of the axis feature W3 left unbuilt, and narrowed to
             # the field rather than left on the whole feature: an axis is

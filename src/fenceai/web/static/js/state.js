@@ -20,7 +20,7 @@ export const state = {
 
 // events: "project-loaded","topology-changed","result-changed",
 //         "selection-changed","locale-changed","units-changed","tool-changed",
-//         "tab-changed","structure-loaded","fit-view"
+//         "tab-changed","structure-loaded","fit-view","fence-models-changed"
 const bus = new EventTarget();
 export function on(event, fn) { bus.addEventListener(event, (e) => fn(e.detail)); }
 export function emit(event, detail) { bus.dispatchEvent(new CustomEvent(event, { detail })); }

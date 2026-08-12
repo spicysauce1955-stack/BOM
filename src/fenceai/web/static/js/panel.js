@@ -69,6 +69,15 @@ export function initPanel() {
     renderModelRow();
     if (panelTabActive()) renderPicker();
   });
+  // Someone authored, published or retired a model in the Models tab. The
+  // listing this picker renders is a cache, so without this a model published
+  // one tab over stays invisible here until a page reload — and a retired one
+  // stays offered.
+  on("fence-models-changed", async () => {
+    await ensureListing();
+    renderModelRow();
+    if (panelTabActive()) { renderPicker(); schedulePreview(0); }
+  });
   on("locale-changed", () => {
     renderModelRow();
     if (panelTabActive()) { renderPicker(); renderPreview(); }

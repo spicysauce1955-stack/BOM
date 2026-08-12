@@ -313,6 +313,42 @@ gains model-version cases — pure regenerate-and-diff, as the knowledge case al
 the publish button shows "this would affect N of your projects" with per-project BOM deltas,
 including deltas against **accepted quotes**, which the existing impact code already reports.
 
+### What the implementation had to settle
+
+**The preview prices the document in the editor, and the editor writes nothing until asked.**
+This was got wrong first and is recorded because the wrong version was *plausible*: the only
+preview route took `(id, version)` and priced a STORED document, from which it followed that
+a live preview and a save-on-demand editor could not both exist — so the editor debounce-saved
+every 250 ms, on the grounds that a draft is designed to accept an invalid document
+(`create_fence_model`: "a panel half-built is invalid by definition").
+
+That reasoning is a category error, and the review said so: the permission to STORE an
+incoherent document is not a permission to store one the user never asked to store. The cost
+was not hypothetical either — the model id is a save key, so typing "M-SLAT" one character at
+a time left `M@v1`, `M-@v1`, `M-S@v1` … as permanent library rows (there is no delete route)
+and landed the half-built document as a new draft version of the shipped M-SLAT.
+
+The constraint was never real: `preview-impact` had taken an unsaved document in its body
+since W3, and `preview_panel` was always a pure function of a `FenceModel` object. So W4 adds
+`POST /api/fence-models/preview`, which takes `{model, bay}`. An edit re-prices and nothing
+else; Save and Publish are the only writes. **The general lesson: when a client design is
+justified by "the API only offers X", check whether X is a property of the system or of one
+route signature.**
+
+**`ModelListing` gained `draft_version` and `versions`.** "Edit this model" must reopen the
+draft that exists rather than opening a second one, and `has_draft` alone forces the client
+to guess its number. `active_version + 1` is the obvious guess and it is wrong whenever a
+version above the active one was retired — so the listing says which version the draft IS,
+and which versions there are to duplicate from.
+
+**The condition of a variant is the only AST surface, and it stays a JSON box** with the hint
+naming the fields the bay supplies (`panel.width_mm`, `panel.height_mm`, `panel.vertical`).
+
+**Authoring made an in-process race routine, so W4 also closed it.** The editor writes every
+250 ms while the user keeps browsing; `Store` shared ONE `sqlite3.Connection` across FastAPI's
+threadpool, and overlapping requests interleaved statements on it — 48 failures in ~540
+concurrent requests, and a 500 the browser suite caught. See ADR-0008's consequences.
+
 ---
 
 ## W5 — Supply choice explained, and pricing

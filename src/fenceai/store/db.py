@@ -7,8 +7,11 @@ may change, via a dedicated method that audits the transition).
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 from fenceai.fencemodel.demo import demo_models
@@ -48,8 +51,72 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _serialized(cls):
+    """One connection, one caller at a time — enforced for every public method.
+
+    FastAPI runs sync endpoints in a threadpool, so one process serves several
+    requests at once through the SINGLE `sqlite3.Connection` this store opens
+    with `check_same_thread=False`. That connection is not safe for interleaved
+    statements, and the damage is not only a 500: half of these methods are
+    read-then-write sequences (`set_fence_model_status` SELECTs the document
+    then UPDATEs it, `accept_quote` supersedes then inserts), and another
+    thread's `commit()` landing in the middle of one commits a transaction
+    nobody finished.
+
+    Measured before this existed: 48 failures in ~540 overlapping requests, and
+    a browser session that 500'd on `GET /inventory` while a fence-model draft
+    was being saved. It was found by a client that briefly saved on a 250 ms
+    debounce; that client no longer does, but the hazard was never the client's
+    — any two overlapping requests reach it, and the model editor merely made
+    the odds routine enough to catch.
+
+    A connection per THREAD is not the alternative: every test constructs
+    `Store(":memory:")`, where per-thread connections mean per-thread
+    DATABASES, and the suite would be testing empty ones. So the invariant is
+    serialization, and it lives here rather than as a `with self._lock` to be
+    remembered at each of ~35 call sites — the one that gets forgotten is the
+    one that corrupts a transaction. Re-entrant, because public methods call
+    each other (`__init__` -> `seed_fence_models` -> `save_fence_model`).
+
+    SCOPE: this makes each store CALL atomic, not each route. A route that reads
+    and then writes through two calls (`publish_fence_model` loads, checks the
+    status and sets it; `put_fence_model_draft` reads the library, computes the
+    next version and saves) is still a TOCTOU window. Closing that needs a
+    transaction spanning the sequence, which is a different change; ADR-0008
+    says so rather than letting this docstring imply more than it delivers.
+    """
+    for name, member in list(vars(cls).items()):
+        if name.startswith("_"):
+            continue
+        if not inspect.isfunction(member):
+            # Refused rather than skipped. A `property` is not callable, so a
+            # filter on `callable` would leave it UNGUARDED with nothing
+            # failing; a `staticmethod` IS callable and would be wrapped and
+            # handed a bogus `self`. Both are silent, and this decorator only
+            # protects what it can see.
+            if callable(member) or isinstance(member, (property, staticmethod, classmethod)):
+                raise TypeError(
+                    f"{cls.__name__}.{name} is a {type(member).__name__}, which "
+                    "@_serialized cannot guard — give it a leading underscore or "
+                    "widen the decorator deliberately"
+                )
+            continue    # plain class attributes (_STATUS_TRANSITIONS and friends)
+
+        def guard(fn):
+            @functools.wraps(fn)
+            def wrapper(self, *args, **kwargs):
+                with self._lock:
+                    return fn(self, *args, **kwargs)
+            return wrapper
+
+        setattr(cls, name, guard(member))
+    return cls
+
+
+@_serialized
 class Store:
     def __init__(self, path: str = ":memory:"):
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript("PRAGMA journal_mode=WAL;" + _SCHEMA)
         self._conn.commit()
