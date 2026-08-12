@@ -604,6 +604,10 @@ class _SegmentModel:
     rails_per_span: int
     screws_per_span: int
     quantity_refs: list[str]
+    # a manufactured bay width, when the model's line ships as pre-assembled
+    # panels: not a preference, so it does not compete with one
+    exact_span: Mm | None = None
+    exact_span_ref: str | None = None
 
 
 LEGACY_MODEL_ID = "M-LEGACY"
@@ -777,6 +781,16 @@ def _generate_run(
         )
         _surface_conflicts(res.conflicts, builder, strategy)
 
+        # a manufactured bay width, if this model's line has one. Resolved under
+        # the same segment scope as the rest, so a model contributes it through
+        # `layout_policy` rather than through a private channel.
+        exact_res = resolve_param(seg_kb, seg_ctx, "exact_span_mm")
+        exact_span = exact_span_ref = None
+        if exact_res.winner is not None:
+            exact_span = next(a.value for a in exact_res.winner.actions
+                              if a.kind == "set_param")
+            exact_span_ref = exact_res.winner.version.ref
+
         rails, rails_refs = _resolve_quantity(seg_kb, seg_ctx, "rails_per_span", 2)
         screws, screws_refs = _resolve_quantity(seg_kb, seg_ctx, "screws_per_span", 8)
 
@@ -795,6 +809,7 @@ def _generate_run(
             rails_per_span=rails,
             screws_per_span=screws,
             quantity_refs=rails_refs + screws_refs,
+            exact_span=exact_span, exact_span_ref=exact_span_ref,
         )
         resolved[key] = sm
         models_used.append(sm.use)
@@ -1209,8 +1224,11 @@ def _generate_run(
         layout = layout_segment(
             seg_len, sm.max_span,
             prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
+            exact_mm=sm.exact_span,
         )
         governed = [sm.max_span_ref] + ([layout_pref_ref] if layout_pref_ref else [])
+        if layout.remainder_mm is not None:
+            _span_not_exact(builder, strategy, run, seg_start, seg_end, sm, layout)
         layout_node = builder.add(
             "structural", "layout_spans",
             payload={
@@ -1510,6 +1528,30 @@ def _generate_run(
 # literal: a code that only ever existed as a dict key or a loop variable would
 # ship untranslated with the test green, which is the failure that guard exists
 # to prevent.
+def _span_not_exact(builder, strategy, run, seg_start, seg_end, sm, layout) -> None:
+    """A manufactured-width model met a segment that is not a whole multiple.
+
+    Reported rather than absorbed: stretching every bay to make it come out even
+    would put a pre-assembled panel in a bay it does not fit, which is the exact
+    failure an exact width exists to prevent. A model that cannot tolerate a
+    remainder at all contributes `exact_span_mm` as a hard_constraint, and the
+    span_not_exact check is then the caller's cue to fail — not this warning's.
+    """
+    params = {"element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
+              "segment_mm": seg_end - seg_start, "exact_mm": sm.exact_span,
+              "remainder_mm": layout.remainder_mm}
+    node = builder.add(
+        "conflict", "span_not_exact", payload=dict(params),
+        governed_by=[sm.exact_span_ref] if sm.exact_span_ref else [],
+    )
+    strategy.warnings.append(StrategyWarning(
+        code="span_not_exact", severity="warning",
+        message=f"Section {run.id} does not divide into {sm.exact_span} mm bays: "
+                f"{layout.remainder_mm} mm is left over as an odd bay.",
+        decision_ref=node.id, params=params,
+    ))
+
+
 @dataclass(frozen=True)
 class _PanelLimit:
     code: str

@@ -485,5 +485,6 @@
   "panel.unsupplied_title": "Parts of this panel that cannot be supplied",
   "panel.unsupplied_hint": "These parts are missing from the priced table below — this panel is short of them, and the total does not include them.",
   "panel.warnings_title": "Warnings about this panel",
-  "panel.this_panel": "this panel"
+  "panel.this_panel": "this panel",
+  "warning.span_not_exact": "Section {run_id} does not divide into {exact_mm} {u} bays: {remainder_mm} {u} is left over as an odd bay — model {model_ref} is made in one size"
 }

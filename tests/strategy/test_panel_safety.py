@@ -160,3 +160,49 @@ def test_the_default_spreading_pattern_leaves_no_residual_to_report():
     kb = demo_knowledge()
     kb.versions.append(limit("max_pattern_residual_mm", 5))
     assert "pattern_residual_large" not in codes(run(kb))
+
+
+# --- a manufactured bay width --------------------------------------------------
+
+def test_an_exact_width_tiles_the_segment_and_reports_the_odd_bay():
+    """For a model that ships as a pre-assembled panel, span width is not the
+    layout's to choose — an off-size bay has no panel to put in it. The remainder
+    is REPORTED rather than absorbed: stretching every bay to make it come out
+    even would put a panel in a bay it does not fit."""
+    kb = demo_knowledge()
+    kb.versions.append(limit("exact_span_mm", 1500))
+    result = run(kb, length=5000)
+
+    widths = sorted(s.width_mm for s in result.strategy.spans)
+    assert widths == [500, 1500, 1500, 1500]
+    warning = next(w for w in result.strategy.warnings if w.code == "span_not_exact")
+    assert warning.params["remainder_mm"] == 500
+    assert warning.params["exact_mm"] == 1500
+
+
+def test_a_segment_that_divides_exactly_reports_nothing():
+    kb = demo_knowledge()
+    kb.versions.append(limit("exact_span_mm", 1500))
+    result = run(kb, length=4500)
+    assert [s.width_mm for s in result.strategy.spans] == [1500, 1500, 1500]
+    assert "span_not_exact" not in codes(result)
+
+
+def test_an_exact_width_beats_the_free_layout_and_records_what_it_gave_up():
+    """Not a preference competing with one: it says the bays are a manufactured
+    size, so it wins outright — and the layout it displaced is on the node."""
+    kb = demo_knowledge()
+    kb.versions.append(limit("exact_span_mm", 1500))
+    result = run(kb, length=5000)
+    node = next(n for n in result.graph.nodes if n.action == "layout_spans")
+    assert node.payload["widths"] == [1500, 1500, 1500, 500]
+    assert node.payload["alternatives"], "the free layout is not recorded"
+
+
+def test_an_exact_width_is_still_clamped_by_the_hard_maximum():
+    """A manufacturer's maximum span is a hard constraint; a panel size cannot
+    talk past it."""
+    kb = demo_knowledge()
+    kb.versions.append(limit("exact_span_mm", 5000))   # over the 1800 demo maximum
+    result = run(kb, length=5000)
+    assert max(s.width_mm for s in result.strategy.spans) <= 1800

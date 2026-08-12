@@ -12,6 +12,9 @@ from fenceai.core.units import Mm
 class LayoutResult:
     widths: list[Mm]
     rejected_alternative: list[Mm] | None  # e.g. nominal-width layout demoted by K-EQUAL
+    # the odd bay an exact-width model could not tile away, in mm. None when the
+    # layout is free, or when the segment divided exactly.
+    remainder_mm: Mm | None = None
 
 
 def equal_layout(length_mm: Mm, max_span_mm: Mm) -> list[Mm]:
@@ -34,6 +37,30 @@ def nominal_layout(length_mm: Mm, nominal_mm: Mm) -> list[Mm]:
     return widths or [length_mm]
 
 
+def exact_layout(length_mm: Mm, exact_mm: Mm) -> tuple[list[Mm], Mm | None]:
+    """Tile a segment with bays of EXACTLY this width, plus whatever is left.
+
+    For a model that ships as a pre-assembled panel, span width is not the
+    layout's to choose: an off-size bay has no panel to put in it. The segment
+    rarely divides exactly, so the honest answer is `floor(L / exact)` exact bays
+    and one remainder bay, with the remainder REPORTED — a layout that silently
+    stretched every bay to make it come out even would put panels in bays they do
+    not fit. A model that cannot tolerate a remainder says so as a
+    `hard_constraint` contribution, and generation fails instead.
+    """
+    if length_mm <= 0 or exact_mm <= 0:
+        return [], None
+    n_full, rem = divmod(length_mm, exact_mm)
+    if not n_full:
+        # the segment is shorter than one panel: it IS the remainder, and
+        # pretending otherwise would produce a zero-bay section
+        return [length_mm], length_mm
+    widths = [exact_mm] * n_full
+    if rem:
+        widths.append(rem)
+    return widths, (rem or None)
+
+
 def layout_segment(
     length_mm: Mm,
     max_span_mm: Mm,
@@ -41,10 +68,23 @@ def layout_segment(
     prefer_equal: bool = True,
     min_span_mm: Mm | None = None,
     nominal_mm: Mm | None = None,
+    exact_mm: Mm | None = None,
 ) -> LayoutResult:
     """Lay out one free segment. Equal-width preferred layout, recording the nominal
     alternative when it differs (decision-graph alternatives, scenario S02).
-    nominal_mm defaults to max_span_mm and is always clamped to the hard maximum."""
+    nominal_mm defaults to max_span_mm and is always clamped to the hard maximum.
+
+    `exact_mm` is not a preference and does not compete with one: it says the bays
+    are a manufactured size, so it wins outright and the free-layout alternative
+    is recorded as what was given up."""
+    if exact_mm:
+        widths, remainder = exact_layout(length_mm, min(exact_mm, max_span_mm))
+        free = equal_layout(length_mm, max_span_mm)
+        return LayoutResult(
+            widths=widths,
+            rejected_alternative=free if free != widths else None,
+            remainder_mm=remainder,
+        )
     nominal_width = min(nominal_mm or max_span_mm, max_span_mm)
     equal = equal_layout(length_mm, max_span_mm)
     nominal = nominal_layout(length_mm, nominal_width)

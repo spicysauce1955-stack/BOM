@@ -35,6 +35,7 @@ WARNING_CODES = [
     "clear_gap_exceeded",
     "rail_separation_insufficient",
     "pattern_residual_large",
+    "span_not_exact",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 

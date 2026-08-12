@@ -154,6 +154,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Section {run_id} leaves {value_mm} {u} of the pattern unfilled, over the "
             "{limit_mm} {u} tolerance, in {n} bay(s)."
         ),
+        "span_not_exact": (
+            "Section {run_id} does not divide into {exact_mm} {u} bays: "
+            "{remainder_mm} {u} is left over as an odd bay."
+        ),
         "excessive_gap": (
             "Stepped span leaves a {gap_mm} {u} gap underneath (limit {max_mm} {u})."
         ),
@@ -267,6 +271,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "pattern_residual_large": (
             "בקטע {run_id} נותרו {value_mm} {u} לא ממולאים בתבנית, מעל הסבולת של "
             "{limit_mm} {u}, ב-{n} מפתחים."
+        ),
+        "span_not_exact": (
+            "קטע {run_id} אינו מתחלק למפתחים של {exact_mm} {u}: נותרו "
+            "{remainder_mm} {u} כמפתח חריג."
         ),
         "excessive_gap": (
             'הפאנל המדורג משאיר מרווח של {gap_mm} {u} מתחתיו (המגבלה {max_mm} {u}).'
@@ -454,6 +462,9 @@ def explain_node(
             base = _fmt(t, "excessive_step", lang, units, step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
         case "excessive_gap":
             base = _fmt(t, "excessive_gap", lang, units, gap_mm=p.get("gap_mm"), max_mm=p.get("max_mm"))
+        case "span_not_exact":
+            base = _fmt(t, "span_not_exact", lang, units, run_id=p.get("run_id"),
+                exact_mm=p.get("exact_mm"), remainder_mm=p.get("remainder_mm"))
         case "clear_gap_exceeded" | "rail_separation_insufficient" | "pattern_residual_large":
             # one shape for the three panel-limit checks: they differ in which
             # measurement they take, not in what they have to say about it

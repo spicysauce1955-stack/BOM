@@ -271,7 +271,9 @@ _UNSUPPORTED = "not yet supported (phase 2)"
 # the corresponding resolution inside the segment loop, in the same change;
 # `tests/strategy/test_panel_features.py` pins each member by contributing it
 # and watching the fence move.
-SERIES_SCOPED_PARAMS = frozenset({"max_span_mm", "rails_per_span", "screws_per_span"})
+SERIES_SCOPED_PARAMS = frozenset(
+    {"max_span_mm", "rails_per_span", "screws_per_span", "exact_span_mm"}
+)
 
 
 def _unsupported_features(model: FenceModel) -> list[str]:
