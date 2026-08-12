@@ -54,6 +54,10 @@ class ImpactCase(BaseModel):
     # from the one it is built to reports the delta of two changes at once, and
     # attributes both to the rule being previewed
     fence_model: FenceModelChoice | None = None
+    # and its policy, for the same reason: `objective_preset` decides which
+    # product supply resolution buys, so previewing under DEFAULT_POLICY reports
+    # a delta the real run would never produce
+    policy: dict = {}
 
 
 class ProjectImpact(BaseModel):
@@ -141,11 +145,11 @@ def _failure(e: GenerationFailure) -> ImpactFailure:
 
 
 def _spine(topology, kb, catalog, overrides, inventory, project_id="",
-           models=None, default_model=None):
+           models=None, default_model=None, policy=None):
     # project_id is a bound scope dimension during generation — a project-scoped
     # rule must behave in the preview exactly as it will in the real run
     result = generate(topology, kb, catalog, overrides=overrides, project_id=project_id,
-                      models=models, default_model=default_model)
+                      models=models, default_model=default_model, policy=policy)
     # the SAME pipeline the read routes run, not a fourth hand-rolled copy of it:
     # a preview that priced a job differently from /bom would be worse than no
     # preview at all
@@ -237,13 +241,13 @@ def _preview(
         impact = ProjectImpact(project_id=case.project_id, project_name=case.project_name)
         strategy_before, bom_before = _spine(
             case.topology, kb_before, catalog, case.overrides, case.inventory,
-            case.project_id, library_before, case.fence_model,
+            case.project_id, library_before, case.fence_model, case.policy,
         )
         impact.bom_before_cents = bom_before.total_cents
         try:
             strategy_after, bom_after = _spine(
                 case.topology, kb_after, catalog, case.overrides, case.inventory,
-                case.project_id, library_after, case.fence_model,
+                case.project_id, library_after, case.fence_model, case.policy,
             )
         except GenerationFailure as e:
             impact.generation_failure = _failure(e)

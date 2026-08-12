@@ -27,6 +27,25 @@ class FitResult:
     residual_mm: Mm              # unallocated axis length after members+gaps+margins
     rejected_alternative: list[Mm] | None  # the gap list the other excess policy gives
 
+    @property
+    def openings_mm(self) -> list[Mm]:
+        """EVERY opening across the axis, not only those between members.
+
+        The sphere test measures a hole, and it does not care whether the hole is
+        between two slats or between a slat and a post. `gaps_mm` alone misses
+        both edge margins and the residual — and those are exactly where the
+        slack goes: `center` justification folds the whole residual into the two
+        margins and zeroes `residual_mm`, so a 2000 mm opening with 300 mm
+        members and a `truncate` excess stands with two 150 mm holes against the
+        posts while every between-member gap reads 50 mm.
+
+        `start` and `spread_to_fit` leave the residual at the far end, so it
+        belongs to the end margin; `end` and `center` already folded it in and
+        zeroed it. Either way, adding it to the end margin is exact.
+        """
+        return [self.edge_margin_start_mm, *self.gaps_mm,
+                self.edge_margin_end_mm + self.residual_mm]
+
 
 def _cycle_advance_mm(widths: list[Mm], gaps: list[Mm]) -> Mm:
     """How far one FULL repeat of the pattern moves along the axis.

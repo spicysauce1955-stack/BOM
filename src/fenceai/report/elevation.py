@@ -117,24 +117,13 @@ def _infill(slot: ResolvedSlot, width_mm: Mm, height_mm: Mm, nominal: Mm):
     """
     fit = slot.fit
     assert fit is not None
-    width = slot.member_width_mm or nominal
-    cycle = _cycle_widths(slot, width)
+    cycle = slot.cycle_widths_mm or [slot.member_width_mm or nominal]
     cursor = fit.edge_margin_start_mm
     for i in range(fit.count):
-        member_width = cycle[i % len(cycle)] if cycle else width
-        if i % max(len(cycle), 1) == slot.pattern_index:
+        member_width = cycle[i % len(cycle)]
+        if i % len(cycle) == slot.pattern_index:
             yield _rect(slot, i, cursor, member_width, width_mm, height_mm)
         cursor += member_width + (fit.gaps_mm[i] if i < len(fit.gaps_mm) else 0)
-
-
-def _cycle_widths(slot: ResolvedSlot, width: Mm) -> list[Mm]:
-    """A slot knows only its OWN width, and the walk needs every member of the
-    cycle. With one member per pattern — every shipped model, and every model the
-    editor can currently author — the cycle IS this member. A multi-member
-    pattern needs the widths threaded through from the spec; until then the walk
-    is exact for the single-member case and this is where that shows.
-    """
-    return [width] * (slot.pattern_index + 1)
 
 
 def _rect(slot, i, cursor, member_width, width_mm, height_mm) -> ElevationMember:

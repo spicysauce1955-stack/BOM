@@ -486,5 +486,6 @@
   "panel.unsupplied_hint": "These parts are missing from the priced table below — this panel is short of them, and the total does not include them.",
   "panel.warnings_title": "Warnings about this panel",
   "panel.this_panel": "this panel",
-  "warning.span_not_exact": "Section {run_id} does not divide into {exact_mm} {u} bays: {remainder_mm} {u} is left over as an odd bay — model {model_ref} is made in one size"
+  "warning.span_not_exact": "Section {run_id} does not divide into {exact_mm} {u} bays: {remainder_mm} {u} is left over as an odd bay — model {model_ref} is made in one size",
+  "warning.exact_span_over_max": "Model {model_ref} is made in {exact_mm} {u} bays, wider than the {max_mm} {u} maximum span — section {run_id} was laid out freely instead"
 }

@@ -57,6 +57,12 @@ class ResolvedSlot(BaseModel):
     thickness_mm: Mm | None = None   # face height in elevation; None = undeclared
     face_offset_mm: int = 0          # + front / - back, for shadowbox
     pattern_index: int = 0           # which member of the repeating cycle
+    # every member of the cycle, in order. A slot knows its own width, but a
+    # position depends on everything BEFORE it — a two-member pattern's second
+    # member sits where it does because of the first one's width and gap — so the
+    # whole cycle has to travel with each slot or the walk cannot be exact.
+    cycle_widths_mm: list[Mm] = []
+    cycle_gaps_mm: list[Mm] = []     # the AUTHORED gaps; the fitted ones are on `fit`
     # which option answer narrowed this slot's eligibility, if one did. Recorded
     # rather than re-derived: the generator writes the `select_product` node from
     # it, and a second pass matching skus back to axes would be a second, quietly
@@ -265,6 +271,7 @@ def resolve_panel(
             eligibility=eligibility,
             option_axis=option_axis, option_value=option_value,
             orientation=frame_slot.orientation,
+            thickness_mm=frame_slot.thickness_mm or None,
             positions_mm=placement_positions(frame_slot.placement, count, span),
         ))
 
@@ -295,21 +302,31 @@ def resolve_panel(
                 option_axis=option_axis, option_value=option_value,
                 orientation=spec.infill.orientation,
                 member_width_mm=member.width_mm,
+                cycle_widths_mm=[m.width_mm for m in spec.infill.pattern],
+                cycle_gaps_mm=[m.gap_after_mm for m in spec.infill.pattern],
                 thickness_mm=member.thickness_mm or None,
                 face_offset_mm=member.face_offset_mm,
                 pattern_index=offset,
             ))
 
     frame_count = sum(s.qty for s in slots if s.fit is None)
+    # Two different counts, and conflating them over-orders. `member_count` is
+    # PARTS: a member with `qty=2` is two physical pieces at one position (a
+    # batten pair, a board front and back), and each of them takes its own screw
+    # and makes its own crossing. `placed_count` is POSITIONS along the axis,
+    # which is what the fit produced — and a gap is between two positions, not
+    # between two pieces that share one. With `qty=2` the two differ by a factor.
     member_count = sum(s.qty for s in slots if s.fit is not None)
+    placed_count = next((s.fit.count for s in slots if s.fit is not None), 0)
     for rule in spec.fixings:
         per = _qty(rule.qty_per_basis, rule.qty_param, ctx)
         basis = {
             "per_panel": 1,
             "per_frame_member": frame_count,
             "per_member": member_count,
-            "per_end_member": min(member_count, 2),
-            "per_gap": max(member_count - 1, 0),
+            # first and last ALONG THE AXIS: a placement question
+            "per_end_member": min(placed_count, 2),
+            "per_gap": max(placed_count - 1, 0),
             "per_member_crossing": member_count * frame_count,
         }[rule.basis]
         if not basis:

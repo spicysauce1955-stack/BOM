@@ -86,8 +86,13 @@ class Bay(BaseModel):
     elevation: PanelElevation | None = None
 
 
-def _elevation_for(span, bay_tag: str) -> PanelElevation | None:
+def _elevation_for(span, bay_tag: str, resolved_sku: dict) -> PanelElevation | None:
     """The bay drawn, from its own resolved panel.
+
+    `resolved_sku` fills in what `ResolvedSlot.sku` never carries — supply names
+    the product on the REQUIREMENT, not on the slot — so this read model says the
+    same thing here as it does on the preview. One shape with two truths is how a
+    client ends up branching on which endpoint it came from.
 
     Clear width is the centre-to-centre width until products carry a face width
     (`attrs.face_width_mm`), which is the same approximation `resolve_panel` is
@@ -96,7 +101,10 @@ def _elevation_for(span, bay_tag: str) -> PanelElevation | None:
     """
     if span.panel is None:
         return None
-    return panel_elevation(span.panel, span.width_mm, span.height_mm,
+    drawn = span.panel.model_copy(deep=True)
+    for slot in drawn.slots:
+        slot.sku = resolved_sku.get((span.id, slot.slot_key), "")
+    return panel_elevation(drawn, span.width_mm, span.height_mm,
                            span_id=span.id, bay_tag=bay_tag)
 
 
@@ -304,6 +312,13 @@ def build_structure(
     """Pure: the same inputs always produce the same report."""
     ledger = _parts_by_element(requirements, bom)
     parts = ledger.per_element
+    # (element, slot) -> the product supply chose for it. Keyed on both because a
+    # slot key is only unique WITHIN a panel: every bay resolves "rail".
+    resolved_sku = {
+        (peg, line.slot_key): line.sku
+        for line in requirements if line.slot_key
+        for peg in line.pegs
+    }
     report = StructureReport(run_id=run_id)
     heights: list[Mm] = []
     element_tag: dict[str, str] = {}   # element id -> its ONE tag
@@ -366,7 +381,7 @@ def build_structure(
                 bottom_z_start_mm=span.bottom_z_start_mm,
                 bottom_z_end_mm=span.bottom_z_end_mm,
                 parts=_merge_parts(parts.get(span.id, [])),
-                elevation=_elevation_for(span, f"{section.tag}/B{n}"),
+                elevation=_elevation_for(span, f"{section.tag}/B{n}", resolved_sku),
             ))
 
         for n, gate in enumerate(

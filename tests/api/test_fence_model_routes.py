@@ -318,3 +318,65 @@ def test_two_models_can_be_compared_at_the_same_bay(client):
     slat = client.post("/api/fence-models/M-SLAT/1/preview", json=body).json()
     assert slat["total_cents"] > legacy["total_cents"]
     assert len(slat["parts"]) > len(legacy["parts"])
+
+
+# --- the numbers, concretely --------------------------------------------------
+
+def test_a_generated_slat_run_buys_a_hand_derived_number_of_bars(client):
+    """A CONCRETE quantity, not a membership check. Asserting only that SLAT-100
+    appears, with a self-consistent asked==bought beside it, leaves both sides
+    free to move together — a demand that over-orders every infill line by one
+    passed every existing assertion here.
+
+    6000 mm run, 1800 mm max span => 4 bays of 1500 mm.
+    Each bay: clear width 1500, slats 100 wide with a 20 gap =>
+      n such that 100n + 20(n-1) <= 1500  =>  120n <= 1520  =>  n = 12.
+    So 4 x 12 = 48 slats, each cut to the 1800 mm panel height.
+    SLAT-100 is 6000 mm stock at a 3 mm kerf: a piece costs 1803 against a
+    6003 capacity, so 3 per bar (5409) and not 4 (7212) => ceil(48/3) = 16 bars.
+    """
+    pid = make_project(client)
+    put_straight_topology(client, pid, length=6000)
+    client.put(f"/api/projects/{pid}/fence-model", json={"model_id": "M-SLAT"})
+    result = client.post(f"/api/projects/{pid}/generate").json()["result"]
+
+    assert [s["width_mm"] for s in result["strategy"]["spans"]] == [1500] * 4
+
+    body = client.get(f"/api/runs/{result['run']['id']}/bom").json()
+    slat_lines = [r for r in body["requirements"] if r["sku"] == "SLAT-100"]
+    assert sum(r["engineering_qty"] for r in slat_lines) == 48
+    assert {r["cut_length_mm"] for r in slat_lines} == {1800}
+
+    line = next(x for x in body["bom"]["lines"] if x["sku"] == "SLAT-100")
+    assert line["engineering_qty"] == 48
+    assert line["purchase_qty"] == 16
+
+
+def test_editing_a_model_cannot_move_a_stored_runs_bom(client):
+    """The reproducibility property, on the model side. A stored run's panel is
+    frozen into its strategy, so publishing a v2 must leave every earlier job
+    priced exactly as it was quoted — the catalog side of this is covered
+    separately, and this half rested on nothing."""
+    model = draft_body("M-FROZEN")
+    created = client.post("/api/fence-models", json=model).json()["model"]
+    client.post(f"/api/fence-models/M-FROZEN/{created['version']}/publish")
+
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    client.put(f"/api/projects/{pid}/fence-model", json={"model_id": "M-FROZEN"})
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+    before = client.get(f"/api/runs/{run_id}/bom").json()
+
+    changed = draft_body("M-FROZEN")
+    changed["default_spec"]["frame"][0]["placement"]["count"] = 5
+    v2 = client.put("/api/fence-models/M-FROZEN/draft", json=changed).json()["model"]
+    assert client.post(
+        f"/api/fence-models/M-FROZEN/{v2['version']}/publish").status_code == 200
+
+    after = client.get(f"/api/runs/{run_id}/bom").json()
+    assert after == before, "publishing a new model version repriced a stored run"
+
+    # and a NEW run does pick the new version up, or the freeze would just be a
+    # feature that never works
+    fresh = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    assert fresh["strategy"]["spans"][0]["panel"]["slots"][0]["qty"] == 5

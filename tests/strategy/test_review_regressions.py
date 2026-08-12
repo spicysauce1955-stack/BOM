@@ -1,0 +1,272 @@
+"""The defects the architecture review of the panel waves found.
+
+Each test names the failure it prevents. Several of these passed a green suite
+before the review, which is the point of writing them down.
+"""
+
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from fenceai.api.app import app
+from fenceai.catalog.demo import demo_catalog
+from fenceai.core.errors import GenerationFailure
+from fenceai.fencemodel.demo import M_SLAT, slat_model
+from fenceai.fencemodel.fit import fit_pattern
+from fenceai.fencemodel.library import FenceModelLibrary
+from fenceai.fencemodel.model import Member, PartRequirement, Eligibility, EligibleItem
+from fenceai.fencemodel.preview import PreviewRequest, preview_panel
+from fenceai.fencemodel.resolve import PanelContext, resolve_panel
+from fenceai.fencemodel.selection import FenceModelChoice
+from fenceai.knowledge.demo import demo_knowledge
+from fenceai.knowledge.model import KnowledgeVersion, SetParam
+from fenceai.report.elevation import panel_elevation
+from fenceai.strategy.generator import generate
+from fenceai.strategy.layout import layout_segment
+from tests.conftest import straight_topology
+
+
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("FENCEAI_AI", "stub")
+    with TestClient(app) as c:
+        yield c
+
+
+# --- BLOCKER 1: two projects collided on one run id ---------------------------
+
+def test_two_projects_with_the_same_fence_do_not_share_a_run_id():
+    """`project_id` is bound as a scope dimension, so a project-scoped rule
+    changes the fence without changing any other digest input. Colliding ids +
+    INSERT OR IGNORE meant the second project's user pressed Generate, saw their
+    own answer, and every later read served the FIRST project's fence."""
+    topo, catalog = straight_topology(6000), demo_catalog()
+    kb = demo_knowledge()
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-PROJ", version=1, type="company_rule", title="3 rails for A",
+        scope={"project_id": "proj_a"},
+        actions=[SetParam(param="rails_per_span", value=3)]))
+
+    a = generate(topo, kb, catalog, project_id="proj_a")
+    b = generate(topo, kb, catalog, project_id="proj_b")
+
+    assert a.strategy.spans[0].rail_count == 3
+    assert b.strategy.spans[0].rail_count == 2
+    assert a.run.id != b.run.id, "two different fences under one id"
+
+
+def test_the_same_project_regenerated_keeps_its_id():
+    """The digest must still be a content address, not a nonce."""
+    topo, kb, catalog = straight_topology(6000), demo_knowledge(), demo_catalog()
+    assert generate(topo, kb, catalog, project_id="p").run.id == \
+        generate(topo, kb, catalog, project_id="p").run.id
+
+
+def test_two_projects_both_keep_their_run(client):
+    pids = [client.post("/api/projects", json={"name": n}).json()["id"]
+            for n in ("A", "B")]
+    for pid in pids:
+        client.put(f"/api/projects/{pid}/topology", json={
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 6000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]})
+        client.post(f"/api/projects/{pid}/generate")
+    for pid in pids:
+        assert client.get(f"/api/projects/{pid}/runs").json(), f"{pid} lost its run"
+
+
+# --- BLOCKER 2: the M-LEGACY seam ignored the library and the pin -------------
+
+def test_the_compatibility_model_id_cannot_be_authored(client):
+    """Its eligibility is rebuilt per run from resolved demand SKUs, so a
+    published v2 would be offered by the picker, priced by the preview and
+    reported on by the impact preview — and then ignored at generation."""
+    body = {"id": "M-LEGACY", "version": 1, "name_i18n": {"en": "x", "he": "x"},
+            "default_spec": {"frame": []}}
+    r = client.post("/api/fence-models", json=body)
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "fence_model_reserved"
+    assert client.put("/api/fence-models/M-LEGACY/draft",
+                      json=body).status_code == 409
+
+
+def test_a_pin_to_a_legacy_version_that_cannot_exist_is_refused():
+    """Silently falling back to v1 is how the picker, the preview and the fence
+    end up disagreeing."""
+    with pytest.raises(GenerationFailure) as exc:
+        generate(straight_topology(3000), demo_knowledge(), demo_catalog(),
+                 models=FenceModelLibrary(models=[M_SLAT]),
+                 default_model=FenceModelChoice(model_id="M-LEGACY", version_pin=2))
+    assert exc.value.code == "fence_model_not_found"
+
+
+def test_pinning_the_legacy_version_that_does_exist_still_works():
+    result = generate(straight_topology(3000), demo_knowledge(), demo_catalog(),
+                      default_model=FenceModelChoice(model_id="M-LEGACY", version_pin=1))
+    assert result.strategy.spans[0].panel.model_ref == "M-LEGACY@v1"
+
+
+# --- MAJOR 3: a multi-member pattern drew a wrong picture ---------------------
+
+def two_member_model():
+    model = slat_model().model_copy(deep=True)
+    narrow = Member(
+        key="narrow", width_mm=50, gap_after_mm=20,
+        requirement=PartRequirement(
+            role="infill", qty=1, length_rule="panel_height",
+            eligibility=Eligibility(members=[EligibleItem(sku="SLAT-100")])),
+    )
+    model.default_spec.infill.pattern[0].width_mm = 200
+    model.default_spec.infill.pattern.append(narrow)
+    return model
+
+
+def test_a_two_member_pattern_draws_exactly_what_it_bought():
+    """The walk needs EVERY member of the cycle, because a position depends on
+    everything before it. Approximating the cycle as this member repeated drew
+    thirteen wide slats where seven were bought, running clean out of the panel."""
+    ctx = PanelContext(centre_width_mm=2000, clear_width_mm=2000, height_mm=1800)
+    panel = resolve_panel(two_member_model().default_spec, ctx)
+    elevation = panel_elevation(panel, 2000, 1800)
+
+    for slot in panel.slots:
+        if slot.fit is None:
+            continue
+        drawn = [m for m in elevation.members if m.slot_key == slot.slot_key]
+        assert len(drawn) == slot.qty, f"{slot.slot_key}: drew {len(drawn)}, bought {slot.qty}"
+
+    infill = sorted((m for m in elevation.members if m.role == "infill"),
+                    key=lambda m: m.x_mm)
+    assert infill[-1].x_mm + infill[-1].w_mm <= 2000, "a member runs out of the panel"
+    for a, b in zip(infill, infill[1:]):
+        assert b.x_mm >= a.x_mm + a.w_mm, "two members occupy the same millimetres"
+    assert {m.w_mm for m in infill} == {200, 50}, "both member widths must be drawn"
+
+
+# --- MAJOR 4: the sphere test missed the openings against the posts -----------
+
+def test_the_openings_include_the_two_against_the_posts():
+    """A hole is a hole whether it is between two slats or between a slat and a
+    post. `center` justification folds the whole residual into the margins and
+    zeroes `residual_mm`, so measuring gaps alone saw nothing."""
+    fit = fit_pattern(2000, [300], [50], justification="center",
+                      excess="truncate", edge_margin_mm=0)
+    assert max(fit.gaps_mm) == 50, "the between-member gaps look innocent"
+    assert max(fit.openings_mm) > 100, "and the real openings do not"
+    assert sum(fit.openings_mm) + 300 * fit.count == 2000, "the openings must tile the axis"
+
+
+def test_a_truncated_residual_at_the_far_end_is_an_opening_too():
+    fit = fit_pattern(2000, [300], [50], justification="start",
+                      excess="truncate", edge_margin_mm=0)
+    assert fit.residual_mm > 100
+    assert max(fit.openings_mm) == fit.residual_mm
+
+
+def test_a_gap_against_a_post_trips_the_sphere_test():
+    model = slat_model().model_copy(deep=True)
+    model.default_spec.infill.justification = "center"
+    model.default_spec.infill.excess = "truncate"
+    model.default_spec.infill.pattern[0].width_mm = 300
+    model.default_spec.infill.pattern[0].gap_after_mm = 50
+    result = generate(
+        straight_topology(5000), demo_knowledge(), demo_catalog(),
+        models=FenceModelLibrary(models=[model]),
+        default_model=FenceModelChoice(model_id="M-SLAT"),
+    )
+    assert "clear_gap_exceeded" in [w.code for w in result.strategy.warnings]
+
+
+# --- MAJOR 5: an exact width lost to a min() with nothing recorded ------------
+
+def test_an_exact_width_over_the_maximum_is_a_conflict_not_a_clamp():
+    """Clamping produced bays of NEITHER width and then reported the width nobody
+    used. Two rules of different kinds, both stated: that is a conflict."""
+    result = layout_segment(5000, 1800, exact_mm=2400)
+    assert result.exact_over_max
+    assert result.remainder_mm is None
+    assert max(result.widths) <= 1800
+
+
+def test_the_conflict_reaches_the_user_citing_both_rules():
+    kb = demo_knowledge()
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-EXACT", version=1, type="company_rule", title="2400 bays",
+        scope={"series": "M-SLAT"},
+        actions=[SetParam(param="exact_span_mm", value=2400)]))
+    result = generate(
+        straight_topology(5000), kb, demo_catalog(),
+        models=FenceModelLibrary(models=[M_SLAT]),
+        default_model=FenceModelChoice(model_id="M-SLAT"))
+
+    warning = next(w for w in result.strategy.warnings
+                   if w.code == "exact_span_over_max")
+    assert warning.params["exact_mm"] == 2400 and warning.params["max_mm"] == 1800
+    assert "span_not_exact" not in [w.code for w in result.strategy.warnings], \
+        "the remainder warning would report a width nobody used"
+    node = next(n for n in result.graph.nodes if n.action == "exact_span_over_max")
+    refs = {e.knowledge_ref for e in result.graph.in_edges(node.id)}
+    assert len(refs) == 2, f"a conflict must cite both contenders, cited {refs}"
+
+
+# --- MAJOR 7: the preview's money column double-counted -----------------------
+
+def test_the_preview_rows_sum_to_the_total_when_two_slots_share_a_product():
+    """A frame with named top and bottom rail slots is the ordinary case, and
+    `fulfill()` emits one line per SKU. Handing that line to both rows made the
+    visible column add to twice the total printed beneath it."""
+    model = slat_model().model_copy(deep=True)
+    frame = model.default_spec.frame[0]
+    top = frame.model_copy(deep=True, update={"key": "rail_top"})
+    bottom = frame.model_copy(deep=True, update={"key": "rail_bottom"})
+    model.default_spec.frame = [top, bottom]
+
+    preview = preview_panel(model, PreviewRequest(height_mm=1800, width_mm=2500),
+                            demo_catalog())
+    rows = {p.slot_key: p for p in preview.parts}
+    assert {"rail_top", "rail_bottom"} <= set(rows)
+    assert sum(p.total_cents for p in preview.parts) == preview.total_cents
+    assert rows["rail_top"].shares_sku_with == ["rail_bottom"]
+    # the bar count belongs to one row: half a bar bought is not a thing
+    assert rows["rail_bottom"].purchase_qty == 0
+
+
+def test_the_ordinary_one_slot_per_product_panel_is_unchanged():
+    preview = preview_panel(M_SLAT, PreviewRequest(height_mm=1800, width_mm=2500),
+                            demo_catalog())
+    assert sum(p.total_cents for p in preview.parts) == preview.total_cents
+    assert all(p.shares_sku_with == [] for p in preview.parts)
+    assert all(p.purchase_qty > 0 for p in preview.parts)
+
+
+# --- MINOR 12/13: honesty of the two read models ------------------------------
+
+def test_the_preview_reports_that_the_model_it_drew_is_invalid():
+    """A model using an unbuilt feature previewed as though the feature worked —
+    exactly what the unsupported-feature table exists to prevent."""
+    model = slat_model().model_copy(deep=True)
+    model.default_spec.infill.supply = "assembly"     # still refused at load
+    preview = preview_panel(model, PreviewRequest(), demo_catalog())
+    assert preview.invalid, "the preview claims a model generation would refuse"
+    assert preview.parts, "and still shows what it can"
+
+
+def test_the_bay_drawing_names_its_products_like_the_preview_does(client):
+    """One read model with two truths is how a client ends up branching on which
+    endpoint it came from."""
+    pid = client.post("/api/projects", json={"name": "drawn"}).json()["id"]
+    client.put(f"/api/projects/{pid}/topology", json={
+        "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                  {"id": "n2", "x_mm": 3000, "y_mm": 0}],
+        "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]})
+    client.put(f"/api/projects/{pid}/fence-model", json={"model_id": "M-SLAT"})
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    report = client.get(f"/api/runs/{run_id}/structure").json()
+    members = [m for section in report["sections"] for bay in section["bays"]
+               for m in bay["elevation"]["members"]]
+    assert members
+    slats = [m for m in members if m["slot_key"] == "slat"]
+    assert slats and all(m["sku"] == "SLAT-100" for m in slats)

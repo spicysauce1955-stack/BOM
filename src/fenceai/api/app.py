@@ -50,7 +50,7 @@ from fenceai.project.intents import confirm_intent
 from fenceai.project.model import Annotation, Project
 from fenceai.report.structure import build_structure
 from fenceai.store.db import Store
-from fenceai.strategy.generator import generate
+from fenceai.strategy.generator import LEGACY_MODEL_ID, generate
 from fenceai.strategy.overrides import Override
 from fenceai.topology.model import Topology
 
@@ -600,7 +600,7 @@ def _impact_cases() -> list[ImpactCase]:
             project_id=p.id, project_name=p.name, topology=p.topology,
             overrides=p.overrides, inventory=state.store.load_inventory(p.id),
             accepted_quote_cents=accepted.total_cents if accepted else None,
-            fence_model=p.fence_model,
+            fence_model=p.fence_model, policy=p.policy,
         ))
     return cases
 
@@ -667,6 +667,23 @@ def _model_errors(model: FenceModel) -> dict | None:
             "errors": errors}
 
 
+def _reserved(model_id: str) -> None:
+    """M-LEGACY is the compatibility path, not a model anybody authors.
+
+    Its eligibility is rebuilt per run from the resolved demand SKUs, because a
+    stored document naming RAIL-3000 would quietly outrank a DefaultComponent
+    rule that changed the rail — so a published v2 would be offered by the
+    picker, priced by the preview and reported on by the impact preview, and then
+    ignored at generation. One version, for ever, enforced where a version could
+    otherwise be minted.
+    """
+    if model_id == LEGACY_MODEL_ID:
+        raise HTTPException(409, {
+            "code": "fence_model_reserved",
+            "params": {"model_id": model_id},
+        })
+
+
 @app.get("/api/fence-models")
 def list_fence_models() -> list[ModelListing]:
     return state.store.fence_model_library().listing()
@@ -691,6 +708,7 @@ def create_fence_model(model: FenceModel, author: str = "user"):
     still refuses to GENERATE from an invalid model, so an invalid draft can
     never quietly become a fence.
     """
+    _reserved(model.id)
     draft = model.model_copy(update={
         "version": state.store.next_fence_model_version(model.id),
         "status": "draft",
@@ -701,6 +719,7 @@ def create_fence_model(model: FenceModel, author: str = "user"):
 
 @app.put("/api/fence-models/{model_id}/draft")
 def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"):
+    _reserved(model_id)
     library = state.store.fence_model_library()
     existing = next(
         (m for m in library.models if m.id == model_id and m.status == "draft"), None

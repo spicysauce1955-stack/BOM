@@ -23,8 +23,8 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
-from fenceai.core.units import Mm
-from fenceai.fencemodel.model import FenceModel
+from fenceai.core.units import Cents, Mm
+from fenceai.fencemodel.model import FenceModel, validate_model
 from fenceai.fencemodel.resolve import PanelContext, ResolvedPanel, resolve_panel, select_variant
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.report.elevation import PanelElevation, panel_elevation
@@ -61,6 +61,10 @@ class PreviewPart(BaseModel):
     unit: str = ""
     eligible_skus: list[str] = []
     sku: str = ""
+    # the other slots this product is bought for, if any. `purchase_qty` and the
+    # unit price sit on the first of them only — half a bar bought is not a
+    # thing, and the money is apportioned across the rows so they still total.
+    shares_sku_with: list[str] = []
     unit_price_cents: int = 0
     purchase_qty: int = 0
     total_cents: int = 0
@@ -81,6 +85,12 @@ class PanelPreview(BaseModel):
     # /bom reports them; a panel one part short must not preview as complete
     unsupplied: list[PreviewPart] = []
     warnings: list[StrategyWarning] = []
+    # what `validate_model` says about this document. NOT a refusal — a draft
+    # being edited is invalid by definition and still worth looking at — but a
+    # model using an unbuilt feature previews as though the feature worked, which
+    # is precisely what `_unsupported_features` exists to prevent. Reported, so
+    # the surface that shows the panel can say the panel is not the whole story.
+    invalid: list[str] = []
     total_cents: int = 0
 
 
@@ -115,8 +125,7 @@ def preview_panel(
     # stock on hand is a property of a project, not of a model
     priced = price_strategy(Strategy(id="preview", spans=[span]), catalog, preset=preset)
 
-    by_sku = {line.sku: line for line in priced.bom.lines}
-    parts = [_part(line, by_sku.get(line.sku)) for line in priced.requirements]
+    parts = _priced_parts(priced)
     # the drawing names the products the preview resolved, so a colour swatch and
     # a price belong to the same rectangle
     resolved_sku = {line.slot_key: line.sku for line in priced.requirements}
@@ -134,8 +143,61 @@ def preview_panel(
         parts=parts,
         unsupplied=[_part(line, None) for line in priced.unresolved],
         warnings=priced.warnings,
+        invalid=validate_model(model, catalog),
         total_cents=priced.bom.total_cents,
     )
+
+
+def _priced_parts(priced) -> list[PreviewPart]:
+    """Rows that SUM to the panel total.
+
+    `fulfill()` emits one BOM line per SKU, so a frame with named top and bottom
+    rail slots produces two requirements answered by one line. Handing that line
+    to both rows made the visible column add up to twice the total shown beneath
+    it — on the one surface built so a person can compare what two models cost,
+    and against this phase's own stated property that the parts and the BOM agree
+    in both directions.
+
+    The line is apportioned across its requirements by engineering quantity, with
+    the remainder on the first row so the rows still total exactly (integer
+    cents, one rounding, no drift). `purchase_qty` and `unit_price_cents` stay on
+    the FIRST row only: half a bar bought is not a thing, and repeating the whole
+    count on every row is the same double-count in another column.
+    """
+    lines = {line.sku: line for line in priced.bom.lines}
+    per_sku: dict[str, list] = {}
+    for line in priced.requirements:
+        per_sku.setdefault(line.sku, []).append(line)
+
+    out: list[PreviewPart] = []
+    for line in priced.requirements:
+        siblings = per_sku[line.sku]
+        bom_line = lines.get(line.sku)
+        first = siblings[0] is line
+        share = _apportion(bom_line.total_cents if bom_line else 0,
+                           [s.engineering_qty for s in siblings])
+        out.append(PreviewPart(
+            slot_key=line.slot_key, role=line.role, qty=line.engineering_qty,
+            length_mm=line.cut_length_mm, unit=line.unit,
+            eligible_skus=[m.sku for m in line.eligibility.members],
+            sku=line.sku,
+            shares_sku_with=[s.slot_key for s in siblings if s is not line],
+            unit_price_cents=(bom_line.unit_price_cents if bom_line and first else 0),
+            purchase_qty=(bom_line.purchase_qty if bom_line and first else 0),
+            total_cents=share[siblings.index(line)],
+        ))
+    return out
+
+
+def _apportion(total: Cents, weights: list[int]) -> list[Cents]:
+    """Split an integer total by weight, remainder to the first — so the parts
+    sum to the whole exactly, for every input including a zero total."""
+    if not weights or sum(weights) <= 0:
+        return [total if i == 0 else 0 for i in range(len(weights))]
+    denominator = sum(weights)
+    shares = [(total * w) // denominator for w in weights]
+    shares[0] += total - sum(shares)
+    return shares
 
 
 def _part(line, bom_line) -> PreviewPart:

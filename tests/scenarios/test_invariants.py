@@ -21,7 +21,13 @@ from fenceai.topology.model import (
     Run,
     Topology,
 )
+from fenceai.fencemodel.demo import demo_models
+from fenceai.fencemodel.library import FenceModelLibrary
+from fenceai.fencemodel.selection import FenceModelChoice
 from tests.conftest import add_interval_event, add_point_event, straight_topology
+
+LIBRARY = FenceModelLibrary(models=list(demo_models().values()))
+SLAT = FenceModelChoice(model_id="M-SLAT")
 
 
 def _fixtures():
@@ -59,9 +65,29 @@ def _fixtures():
             Run(id="runB", start_node_id="n2", end_node_id="n3"),
         ],
     )
+    # SLAT fixtures. Every shape above is M-LEGACY — two rails and eight screws —
+    # so the whole infill path (a fitted pattern, a spread residual, per-crossing
+    # fixings, a member cut to the panel height) sat outside this battery. Proved
+    # by mutation: dropping infill lines from `BomLine.pegs` left the suite green
+    # while the BOM -> requirement -> element -> decision chain was broken. The
+    # raked one matters separately — it is the only mode that puts a span on
+    # `rail_cut_basis="slope"` WITH members that must NOT follow the grade.
+    slat_plain = straight_topology(6000)
+    slat_raked = straight_topology(6000)
+    add_point_event(slat_raked, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
+    add_point_event(slat_raked, "run1", "z1", 6000, ElevationSamplePayload(z_mm=1000))
+
     return {
         "plain": (plain, [], None),
         "slope": (slope, [], None),
+        "slat": (slat_plain, [], None, SLAT),
+        "slat_raked": (
+            slat_raked,
+            [Override(id="ov_rake", run_id="run1",
+                      directive=ForceVertical(start_station_mm=0, end_station_mm=6000,
+                                              mode="raked"))],
+            None, SLAT,
+        ),
         "raked": (
             raked,
             [Override(id="ov_rake", run_id="run1",
@@ -82,20 +108,23 @@ def _fixtures():
 
 @pytest.fixture(params=list(_fixtures()))
 def spine(request):
-    topo, overrides, inventory = _fixtures()[request.param]
+    topo, overrides, inventory, *model = _fixtures()[request.param]
+    choice = model[0] if model else None
     knowledge, catalog = demo_knowledge(), demo_catalog()
-    result = generate(topo, knowledge, catalog, overrides=overrides)
+    result = generate(topo, knowledge, catalog, overrides=overrides,
+                      models=LIBRARY, default_model=choice)
     reqs = derive_requirements(result.strategy, catalog)
     reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
-    return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge)
+    return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge, choice)
 
 
 @pytest.fixture()
 def rerun(spine):
     """Regenerate the whole spine from the same inputs (real determinism check)."""
-    _, _, _, catalog, (topo, overrides, inventory, knowledge) = spine
-    result = generate(topo, knowledge, catalog, overrides=overrides)
+    _, _, _, catalog, (topo, overrides, inventory, knowledge, choice) = spine
+    result = generate(topo, knowledge, catalog, overrides=overrides,
+                      models=LIBRARY, default_model=choice)
     reqs = derive_requirements(result.strategy, catalog)
     reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)

@@ -15,6 +15,9 @@ class LayoutResult:
     # the odd bay an exact-width model could not tile away, in mm. None when the
     # layout is free, or when the segment divided exactly.
     remainder_mm: Mm | None = None
+    # the model asked for bays wider than the hard maximum allows: unusable, so
+    # the free layout stands and the caller reports the conflict
+    exact_over_max: bool = False
 
 
 def equal_layout(length_mm: Mm, max_span_mm: Mm) -> list[Mm]:
@@ -77,8 +80,18 @@ def layout_segment(
     `exact_mm` is not a preference and does not compete with one: it says the bays
     are a manufactured size, so it wins outright and the free-layout alternative
     is recorded as what was given up."""
+    if exact_mm and exact_mm > max_span_mm:
+        # A manufactured width wider than the hard maximum is a CONFLICT between
+        # two things of different kinds, and the caller surfaces it as one.
+        # Clamping it here would silently produce bays of neither width, and then
+        # report the width nobody used — S13's shape exactly, resolved by
+        # arithmetic instead of by the conflict machinery.
+        return LayoutResult(
+            widths=equal_layout(length_mm, max_span_mm),
+            rejected_alternative=None, exact_over_max=True,
+        )
     if exact_mm:
-        widths, remainder = exact_layout(length_mm, min(exact_mm, max_span_mm))
+        widths, remainder = exact_layout(length_mm, exact_mm)
         free = equal_layout(length_mm, max_span_mm)
         return LayoutResult(
             widths=widths,

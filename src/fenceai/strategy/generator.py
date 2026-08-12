@@ -185,7 +185,13 @@ def generate(
     run_meta.objective_preset = policy["objective_preset"]
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
-            [topology.model_dump(), run_meta.knowledge_snapshot,
+            # project_id is BOUND AS A SCOPE DIMENSION (bind_scope, above), so a
+            # project-scoped rule changes the fence without changing any other
+            # digest input. Two projects with the same topology then collide, and
+            # `save_run`'s INSERT OR IGNORE drops the second silently: its user
+            # presses Generate, sees their own answer in the response, and every
+            # later read serves the other project's fence.
+            [project_id, topology.model_dump(), run_meta.knowledge_snapshot,
              [o.model_dump() for o in overrides], policy,
              [u.model_dump() for u in run_meta.model_snapshot], run_meta.catalog_hash,
              run_meta.objective_preset],
@@ -611,6 +617,7 @@ class _SegmentModel:
 
 
 LEGACY_MODEL_ID = "M-LEGACY"
+LEGACY_MODEL_VERSION = 1
 
 
 def _policy_knowledge(model: FenceModel) -> list[KnowledgeVersion]:
@@ -676,6 +683,19 @@ def _pick_model(
     if effective is None:
         return legacy(), source
     if effective.model_id == LEGACY_MODEL_ID:
+        # M-LEGACY has exactly one version, for ever: the route reserves the id
+        # (`_reserved`), so nothing can publish a v2 the picker would offer and
+        # this seam would then ignore. A pin naming any other version is a
+        # refusal rather than a silent fallback — accepting it here is how the
+        # picker, the preview and the impact report end up agreeing on a model
+        # generation refuses to build.
+        if effective.version_pin not in (None, LEGACY_MODEL_VERSION):
+            raise GenerationFailure(
+                f"fence model {LEGACY_MODEL_ID}@v{effective.version_pin} does not "
+                f"exist: the compatibility model has only v{LEGACY_MODEL_VERSION}",
+                code="fence_model_not_found",
+                model_id=LEGACY_MODEL_ID, version_pin=effective.version_pin,
+            )
         return legacy(), source
     model = library.resolve(effective.model_id, effective.version_pin)
     if model is None:
@@ -1227,7 +1247,9 @@ def _generate_run(
             exact_mm=sm.exact_span,
         )
         governed = [sm.max_span_ref] + ([layout_pref_ref] if layout_pref_ref else [])
-        if layout.remainder_mm is not None:
+        if layout.exact_over_max:
+            _exact_over_max(builder, strategy, run, sm)
+        elif layout.remainder_mm is not None:
             _span_not_exact(builder, strategy, run, seg_start, seg_end, sm, layout)
         layout_node = builder.add(
             "structural", "layout_spans",
@@ -1483,7 +1505,7 @@ def _generate_run(
         )
 
     _check_panel_safety(kb, run, scope, strategy, builder, resolved, spans_by_model,
-                        {s.id: s for s in strategy.spans})
+                        {s.id: s for s in strategy.spans}, ctx["run"])
 
     for model_ref, offenders in unsupported_heights.items():
         # the DISTINCT heights: the reader has to change a height or a model, and
@@ -1528,6 +1550,30 @@ def _generate_run(
 # literal: a code that only ever existed as a dict key or a loop variable would
 # ship untranslated with the test green, which is the failure that guard exists
 # to prevent.
+def _exact_over_max(builder, strategy, run, sm) -> None:
+    """A model's manufactured bay width is wider than the hard maximum span.
+
+    Two rules of different kinds, both stated, neither able to give way: the
+    panel does not exist in a narrower size and the maximum is a hard constraint.
+    Surfaced as a conflict citing BOTH refs, which is what S13 requires and what
+    a `min()` in the layout would have hidden — bays of neither width, reported
+    as the width nobody used.
+    """
+    params = {"element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
+              "exact_mm": sm.exact_span, "max_mm": sm.max_span}
+    node = builder.add(
+        "conflict", "exact_span_over_max", payload=dict(params),
+        governed_by=[r for r in (sm.exact_span_ref, sm.max_span_ref) if r],
+    )
+    strategy.warnings.append(StrategyWarning(
+        code="exact_span_over_max", severity="error",
+        message=f"Model {sm.model.ref} is made in {sm.exact_span} mm bays, wider "
+                f"than the {sm.max_span} mm maximum span — section {run.id} was "
+                "laid out freely instead.",
+        decision_ref=node.id, params=params,
+    ))
+
+
 def _span_not_exact(builder, strategy, run, seg_start, seg_end, sm, layout) -> None:
     """A manufactured-width model met a segment that is not a whole multiple.
 
@@ -1574,6 +1620,7 @@ def _check_panel_safety(
     resolved: dict,
     spans_by_model: dict,
     spans: dict[str, Span],
+    run_facts: dict,
 ) -> None:
     """Panel gaps and rail spacing, against the limits knowledge holds.
 
@@ -1592,8 +1639,11 @@ def _check_panel_safety(
     """
     for key, span_ids in spans_by_model.items():
         sm = resolved[key]
+        # the run's REAL facts, not invented zeros: a limit conditioned on run
+        # length or grade would otherwise resolve against a fence that does not
+        # exist — and this context can raise, when the winner is a hard constraint
         ctx = {"scope": bind_scope(scope, {"series": sm.model.id}),
-               "run": {"length_mm": 0, "slope_permille": 0}}
+               "run": dict(run_facts)}
         for limit_rule in _PANEL_LIMITS:
             code, param = limit_rule.code, limit_rule.param
             res = resolve_param(kb, ctx, param)
@@ -1634,13 +1684,14 @@ def _panel_offence(code: str, span: Span, limit: Mm) -> Mm | None:
     if span.panel is None:
         return None
     if code == "clear_gap_exceeded":
-        # against max(gaps_mm), never one rounded average. Clear width 2000,
-        # member 100, gap 20 gives 17 gaps sharing 400 mm: 24 mm six times and
-        # 23 mm eleven times. A single rounded 23 would pass a 23 mm limit while
-        # six real openings exceeded it — the sphere test defeated by a return
-        # type, which is why fit_pattern returns a list.
-        gaps = [g for slot in span.panel.slots if slot.fit for g in slot.fit.gaps_mm]
-        worst = max(gaps, default=0)
+        # against max(openings_mm), never one rounded average and never the
+        # between-member gaps alone. A fit spreads its residual a millimetre at a
+        # time, so a single rounded value would pass a limit several real
+        # openings exceeded — and `center` justification puts the whole residual
+        # against the POSTS, where `gaps_mm` cannot see it at all.
+        openings = [o for slot in span.panel.slots if slot.fit
+                    for o in slot.fit.openings_mm]
+        worst = max(openings, default=0)
         return worst if worst > limit else None
     if code == "rail_separation_insufficient":
         # the anti-ladder rule: the rail above the bottom one must be far enough

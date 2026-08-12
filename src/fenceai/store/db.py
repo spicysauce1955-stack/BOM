@@ -7,8 +7,10 @@ may change, via a dedicated method that audits the transition).
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 from fenceai.fencemodel.demo import demo_models
@@ -50,6 +52,16 @@ def _now() -> str:
 
 class Store:
     def __init__(self, path: str = ":memory:"):
+        # ONE connection shared by every request thread, so every method that
+        # touches it must hold `_lock` (see the wrapping at the foot of this
+        # module). `check_same_thread=False` only silences sqlite3's guard; it
+        # does not make the connection safe. FastAPI runs sync endpoints in a
+        # threadpool, so two overlapping fetches interleaved statements on one
+        # cursor and raised `InterfaceError: bad parameter or other API misuse`
+        # straight out of a route — a real 500 in the browser that NO pytest test
+        # can see, because TestClient serialises requests. The browser smoke
+        # suite is the only detector, and it caught it.
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript("PRAGMA journal_mode=WAL;" + _SCHEMA)
         self._conn.commit()
@@ -433,3 +445,23 @@ class Store:
             {"seq": r[0], "at": r[1], "actor": r[2], "action": r[3], "ref": r[4]}
             for r in rows
         ]
+
+
+def _synchronized(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
+# Every method, wrapped once, rather than a `with self._lock:` in thirty-seven
+# bodies. The lock is held for the WHOLE call, not per statement, because several
+# methods read and then write (`next_version`, `replace_active_version`,
+# `save_fence_model`'s immutability check) and a per-statement lock would make
+# those safe from corruption and still wrong. Doing it here also covers the next
+# method somebody adds: the failure mode is stochastic and invisible to pytest,
+# so "remember to take the lock" is not a policy that can hold.
+for _name, _attr in list(vars(Store).items()):
+    if callable(_attr) and not _name.startswith("__"):
+        setattr(Store, _name, _synchronized(_attr))

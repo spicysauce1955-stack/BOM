@@ -112,6 +112,10 @@ class FrameSlot(BaseModel):
     key: str
     orientation: Literal["horizontal", "vertical"]
     placement: Placement
+    # the member's face height as it is SEEN — its depth in elevation. 0 means
+    # undeclared, and the elevation read model says so (`declared=False`) rather
+    # than drawing a nominal band that reads as measured.
+    thickness_mm: Mm = 0
     requirement: PartRequirement
 
 
@@ -271,9 +275,12 @@ _UNSUPPORTED = "not yet supported (phase 2)"
 # the corresponding resolution inside the segment loop, in the same change;
 # `tests/strategy/test_panel_features.py` pins each member by contributing it
 # and watching the fence move.
-SERIES_SCOPED_PARAMS = frozenset(
-    {"max_span_mm", "rails_per_span", "screws_per_span", "exact_span_mm"}
-)
+SERIES_SCOPED_PARAMS = frozenset({
+    "max_span_mm", "rails_per_span", "screws_per_span", "exact_span_mm",
+    # resolved under the same segment scope by `_check_panel_safety`, so a
+    # product line may declare its own gap tolerance and rail spacing
+    "max_clear_gap_mm", "min_rail_separation_mm", "max_pattern_residual_mm",
+})
 
 
 def _unsupported_features(model: FenceModel) -> list[str]:

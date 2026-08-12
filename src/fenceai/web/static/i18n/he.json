@@ -486,5 +486,6 @@
   "panel.unsupplied_hint": "החלקים האלה חסרים בטבלה המתומחרת שלמטה — הפאנל הזה חסר אותם, והסכום אינו כולל אותם.",
   "panel.warnings_title": "אזהרות על הפאנל הזה",
   "panel.this_panel": "הפאנל הזה",
-  "warning.span_not_exact": "קטע {run_id} אינו מתחלק למפתחים של {exact_mm} {u}: נותרו {remainder_mm} {u} כמפתח חריג — דגם {model_ref} מיוצר במידה אחת"
+  "warning.span_not_exact": "קטע {run_id} אינו מתחלק למפתחים של {exact_mm} {u}: נותרו {remainder_mm} {u} כמפתח חריג — דגם {model_ref} מיוצר במידה אחת",
+  "warning.exact_span_over_max": "דגם {model_ref} מיוצר במפתחים של {exact_mm} {u}, רחבים מהמפתח המרבי {max_mm} {u} — קטע {run_id} נפרס באופן חופשי במקום"
 }

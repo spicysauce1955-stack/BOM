@@ -158,6 +158,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Section {run_id} does not divide into {exact_mm} {u} bays: "
             "{remainder_mm} {u} is left over as an odd bay."
         ),
+        "exact_span_over_max": (
+            "Model {model_ref} is made in {exact_mm} {u} bays, wider than the "
+            "{max_mm} {u} maximum span; section {run_id} was laid out freely."
+        ),
         "excessive_gap": (
             "Stepped span leaves a {gap_mm} {u} gap underneath (limit {max_mm} {u})."
         ),
@@ -275,6 +279,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "span_not_exact": (
             "קטע {run_id} אינו מתחלק למפתחים של {exact_mm} {u}: נותרו "
             "{remainder_mm} {u} כמפתח חריג."
+        ),
+        "exact_span_over_max": (
+            "דגם {model_ref} מיוצר במפתחים של {exact_mm} {u}, רחבים מהמפתח המרבי "
+            "{max_mm} {u}; קטע {run_id} נפרס באופן חופשי."
         ),
         "excessive_gap": (
             'הפאנל המדורג משאיר מרווח של {gap_mm} {u} מתחתיו (המגבלה {max_mm} {u}).'
@@ -462,6 +470,10 @@ def explain_node(
             base = _fmt(t, "excessive_step", lang, units, step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
         case "excessive_gap":
             base = _fmt(t, "excessive_gap", lang, units, gap_mm=p.get("gap_mm"), max_mm=p.get("max_mm"))
+        case "exact_span_over_max":
+            base = _fmt(t, "exact_span_over_max", lang, units, run_id=p.get("run_id"),
+                model_ref=p.get("model_ref"), exact_mm=p.get("exact_mm"),
+                max_mm=p.get("max_mm"))
         case "span_not_exact":
             base = _fmt(t, "span_not_exact", lang, units, run_id=p.get("run_id"),
                 exact_mm=p.get("exact_mm"), remainder_mm=p.get("remainder_mm"))
