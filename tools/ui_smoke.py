@@ -430,6 +430,125 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
 
+        # --- the Panel tab: choose a model, and SEE the panel before generating -
+        # The user's complaint this answers: "I don't see an option to see the
+        # Panel spec and choose a model before the strategy." `variant` and
+        # `preset` had zero hits in the whole frontend, and the only product
+        # choice anywhere was the gate kit picker — the model that decides every
+        # material, size and structure below it was unreachable from the UI.
+        project_id = c.js("document.getElementById('project-select').value")
+        c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
+        time.sleep(1.5)
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-SLAT'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.5)
+        slat = c.js("""
+(() => {
+  const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')];
+  return {
+    slots: rows.map(r => r.dataset.slot),
+    priced: rows.filter(r => /€\\d/.test(r.textContent)).length,
+    total: document.getElementById('panel-total')?.textContent || '',
+    head: document.querySelector('#panel-parts h3')?.textContent || '',
+  };
+})()""")
+        # a picker that shows a name and a price but no parts is a dropdown; the
+        # point of the tab is what one panel is MADE of
+        check("the Panel tab prices a parts table for M-SLAT",
+              slat["slots"] == ["rail", "screw", "slat"]
+              and slat["priced"] == 3 and "M-SLAT@v1" in slat["head"]
+              and "€" in slat["total"])
+        # the panel is priced from the model, not from a fixed shape: M-LEGACY's
+        # two-slot panel and M-SLAT's three-slot one must not render the same
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-LEGACY'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.5)
+        legacy = c.js("""
+(() => {
+  const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')];
+  return {slots: rows.map(r => r.dataset.slot),
+          total: document.getElementById('panel-total')?.textContent || ''};
+})()""")
+        check("switching the model changes the parts and the price",
+              legacy["slots"] == ["rail", "screw"]
+              and legacy["total"] != slat["total"])
+        # the panel is a length surface like every other: it reads in the display
+        # unit, and the stored/API figures stay int mm
+        length_mm = c.js("""
+[...document.querySelectorAll('#panel-parts tr[data-slot]')][0].cells[3].textContent.trim()""")
+        c.click(*c.element_center("#btn-units"))
+        time.sleep(1.5)
+        length_cm = c.js("""
+[...document.querySelectorAll('#panel-parts tr[data-slot]')][0].cells[3].textContent.trim()""")
+        width_field_cm = c.js("document.getElementById('panel-width').value")
+        header_cm = c.js("""
+[...document.querySelectorAll('#panel-parts th')][3].textContent""")
+        check("the panel's lengths and fields read in cm when the unit is cm",
+              float(length_cm) == float(length_mm) / 10 and width_field_cm == "250"
+              and 'ס"מ' in (header_cm or ""))
+        c.shot("18-panel-cm.png")
+        c.click(*c.element_center("#btn-units"))   # back to mm
+        time.sleep(1)
+        # "use for this project" is a NON-topology mutation: it must persist on
+        # the project and survive a reload, or the answer to "what is this fence
+        # built from" lasts only as long as the tab is open
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-SLAT'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.2)
+        c.click(*c.element_center("#btn-panel-use"))
+        time.sleep(1.5)
+        c.shot("19-panel-slat.png")
+        c.js("location.reload(); 'ok'")
+        time.sleep(5)
+        c.js(f"""
+{{
+  const sel = document.getElementById('project-select');
+  if (sel.value !== {project_id!r}) {{
+    sel.value = {project_id!r}; sel.dispatchEvent(new Event('change'));
+  }}
+}}
+'ok'""")
+        time.sleep(2.5)
+        stored_model = c.js(f"""
+fetch('/api/projects/{project_id}').then(r => r.json())
+  .then(p => (p.fence_model || {{}}).model_id || null)""")
+        aside = c.js("document.getElementById('model-row')?.textContent || ''")
+        check("the project's chosen model persists across a reload",
+              stored_model == "M-SLAT")
+        # and it is legible from the DRAWING: "what is this fence built from"
+        # must not require opening another tab
+        check("the canvas aside names the project's model, localized",
+              "פאנל שלבים" in aside and "M-SLAT" in aside
+              and "Slat panel" not in aside)
+        c.shot("20-panel-aside.png")
+        # Clearing is the other half of choosing, and it returns this project to
+        # the legacy panel — which is what every check after this one was written
+        # against, so the model choice must not leak into them.
+        c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
+        time.sleep(1.5)
+        c.click(*c.element_center("#btn-panel-clear"))
+        time.sleep(1.5)
+        cleared = c.js(f"""
+fetch('/api/projects/{project_id}').then(r => r.json())
+  .then(p => p.fence_model === null)""")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.5)
+        aside_cleared = c.js("document.getElementById('model-row')?.textContent || ''")
+        check("clearing the model returns the project to the legacy panel",
+              cleared is True and "M-SLAT" not in aside_cleared)
+
         # --- zoom / pan / fit --------------------------------------------------
         vb0 = c.js("document.getElementById('canvas').getAttribute('viewBox')")
         cx, cy = c.canvas_px(3000, 0)
@@ -1126,6 +1245,45 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("typing into the auto-focused popover field replaces its value",
               bool(prefilled) and c.js("document.getElementById('pop-width').value") == "1234")
         c.js("document.getElementById('pop-cancel')?.click(); 'ok'")
+
+        # --- the model changes partway along, like base and height do ---------
+        # A whole fence is not always one fence. `fence_model` is an interval
+        # event on the run, authored through the same popover as height intent,
+        # and the generator makes its edges structural boundaries so no bay
+        # straddles the place the fence visibly becomes a different fence.
+        c.click(*c.element_center("#tool-model"))
+        c.click(*c.canvas_px(3000, 0))
+        time.sleep(0.6)
+        model_options = c.js("""
+[...(document.getElementById('pop-model')?.options || [])].map(o => o.value)""")
+        check("the model tool offers the published models",
+              sorted(model_options or []) == ["M-LEGACY", "M-SLAT"])
+        c.js("""
+{
+  document.getElementById('pop-model').value = 'M-SLAT';
+  document.getElementById('pop-end').value = '3000';
+}
+'ok'""")
+        c.js("document.getElementById('pop-save').click(); 'saved'")
+        time.sleep(1.5)
+        model_ev = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => {
+    const run = p.topology.runs[0];
+    return run.interval_events.filter(e => e.payload.kind === 'fence_model')
+      .map(e => e.payload);
+  })""")
+        check("the model tool writes ONE fence_model interval event",
+              len(model_ev or []) == 1 and model_ev[0]["model_id"] == "M-SLAT"
+              and model_ev[0]["version_pin"] is None)
+        # the stations are read back through the event list, which resolves the
+        # segment-local anchor — never by reading anchor.offset_mm as a station
+        events_text = c.js("document.getElementById('run-events')?.textContent || ''")
+        check("the run's event list names the model event and its stretch, localized",
+              "דגם גדר" in events_text and "M-SLAT" in events_text
+              and "0–3000" in events_text)
+        c.shot("21-model-event.png")
+
         c.click(*c.element_center("#btn-clear"))
         time.sleep(1)
 

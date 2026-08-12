@@ -8,7 +8,11 @@ export async function apiGet(url) {
   return r.json();
 }
 
-export async function apiSend(method, url, body) {
+// `quiet`: report the failure by throwing only. A POST the USER pressed a button
+// for owes them a dialog; a POST fired by a debounced field as they type (the
+// panel preview) owes them silence — an alert per keystroke is not an error
+// report, it is a trap. The console line is written either way.
+export async function apiSend(method, url, body, { quiet = false } = {}) {
   const r = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -19,7 +23,7 @@ export async function apiSend(method, url, body) {
     // the user gets a localized sentence; the request line and the server's
     // English body are diagnostics and belong in the console, not in a dialog
     console.error(`${method} ${url} failed:\n${text}`);
-    alert(errorAlertText(text, r.status));
+    if (!quiet) alert(errorAlertText(text, r.status));
     throw new Error(text);
   }
   return r.json();

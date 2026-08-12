@@ -7,6 +7,7 @@ import { initEditor } from "./js/editor.js";
 import { currentLocale, initI18n, setLocale, t } from "./js/i18n.js";
 import { canRedo, canUndo, redo, undo } from "./js/history.js";
 import { initInspector } from "./js/inspector.js";
+import { initPanel } from "./js/panel.js";
 import { initProfile } from "./js/profile.js";
 import {
   createProject, loadProjects, on, openProject, state,
@@ -60,6 +61,7 @@ async function main() {
   initEditor();
   initInspector();
   initTabs();
+  initPanel();
   initStructureData();
   initStructure();
   initProfile();
