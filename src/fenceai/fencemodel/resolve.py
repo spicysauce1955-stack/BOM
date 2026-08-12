@@ -51,6 +51,12 @@ class ResolvedSlot(BaseModel):
     # derived, never stored). Storing a list of rectangles would freeze one
     # drawing into the run and make the panel's picture a thing that could
     # disagree with the panel's numbers.
+    # frame | infill | fixing. On the wire a vertical FRAME slot and a vertical
+    # INFILL slot are the same shape, so a client had to guess which one a
+    # `gaps_mm` list belonged to — the elevation renderer confirmed its gap
+    # dimension geometrically rather than by indexing, which is guesswork
+    # dressed as arithmetic. Said outright instead.
+    slot_kind: str = ""
     orientation: str = ""            # horizontal | vertical, in the panel's frame
     positions_mm: list[Mm] = []      # frame slots: where along the cross axis
     member_width_mm: Mm | None = None   # infill: the member's own width
@@ -267,6 +273,7 @@ def resolve_panel(
                 else ctx.clear_width_mm)
         slots.append(ResolvedSlot(
             slot_key=frame_slot.key, role=req.role, qty=count * req.qty,
+            slot_kind="frame",
             length_mm=_length_for(req, ctx), length_basis=ctx.length_basis,
             eligibility=eligibility,
             option_axis=option_axis, option_value=option_value,
@@ -295,7 +302,7 @@ def resolve_panel(
                 member.requirement, ctx)
             slots.append(ResolvedSlot(
                 slot_key=member.key, role=member.requirement.role,
-                qty=n * member.requirement.qty,
+                slot_kind="infill", qty=n * member.requirement.qty,
                 length_mm=_length_for(member.requirement, ctx),
                 length_basis=ctx.length_basis,
                 eligibility=eligibility, fit=fit,
@@ -333,7 +340,8 @@ def resolve_panel(
             continue
         eligibility, option_axis, option_value = _chosen_option(rule.requirement, ctx)
         slots.append(ResolvedSlot(
-            slot_key=rule.key, role=rule.requirement.role, qty=per * basis,
+            slot_key=rule.key, role=rule.requirement.role, slot_kind="fixing",
+            qty=per * basis,
             eligibility=eligibility,
             option_axis=option_axis, option_value=option_value,
         ))

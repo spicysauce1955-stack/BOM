@@ -147,3 +147,30 @@ def test_the_preview_hands_back_a_drawing_that_names_its_products():
     assert slats and all(m.sku == "SLAT-100" for m in slats)
     part = next(p for p in preview.parts if p.slot_key == "slat")
     assert len(slats) == part.qty, "the drawing shows a different count from the price"
+
+
+# --- what the wire says about itself ------------------------------------------
+
+def test_every_drawn_member_says_which_half_of_the_panel_drew_it():
+    """A vertical FRAME slot and a vertical INFILL slot are the same shape on the
+    wire, so a client had to guess which one a `gaps_mm` list belonged to — and
+    the renderer confirmed its gap dimension geometrically rather than by
+    indexing, which is guesswork dressed as arithmetic."""
+    elevation = elevation_of(M_SLAT)
+    kinds = {m.slot_key: m.kind for m in elevation.members}
+    assert kinds["rail"] == "frame"
+    assert kinds["slat"] == "infill"
+    assert all(m.kind for m in elevation.members), "a member with no kind is a guess"
+
+
+def test_a_shadowbox_member_carries_its_depth_not_just_its_side():
+    """`face` alone says which side; a shadowbox has a DEPTH, and a client that
+    can only order two layers cannot draw one at its real offset."""
+    model = M_SLAT.model_copy(deep=True)
+    model.default_spec.infill.pattern[0].face_offset_mm = -18
+    ctx = BAY
+    elevation = panel_elevation(resolve_panel(model.default_spec, ctx),
+                               ctx.clear_width_mm, ctx.height_mm)
+    slats = [m for m in elevation.members if m.slot_key == "slat"]
+    assert slats and all(m.face == "back" for m in slats)
+    assert all(m.face_offset_mm == -18 for m in slats)
