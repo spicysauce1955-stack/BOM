@@ -44,16 +44,17 @@ from fenceai.catalog.demo import demo_catalog
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.strategy.generator import generate
-from tests.scenarios.test_invariants import _fixtures
+from tests.scenarios.test_invariants import LIBRARY, _fixtures
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "compatibility_gate"
 
 
 def _spine(name: str) -> dict:
     """One fixture, all the way to a priced BOM, as plain JSON-ready data."""
-    topo, overrides, inventory = _fixtures()[name]
+    topo, overrides, inventory, *model = _fixtures()[name]
     catalog = demo_catalog()
-    result = generate(topo, demo_knowledge(), catalog, overrides=overrides)
+    result = generate(topo, demo_knowledge(), catalog, overrides=overrides,
+                      models=LIBRARY, default_model=model[0] if model else None)
     priced = price_strategy(result.strategy, catalog, inventory,
                             demand_skus=result.run.demand_skus,
                             preset=result.run.objective_preset)
@@ -77,7 +78,7 @@ def test_the_gate_covers_a_raked_span():
     """A pin that pins nothing is worse than no pin. The slope-length branch is
     only reachable through a raked span, so assert one exists in the fixtures
     rather than trusting the fixture list to keep containing it."""
-    topo, overrides, _ = _fixtures()["raked"]
+    topo, overrides, *_ = _fixtures()["raked"]
     result = generate(topo, demo_knowledge(), demo_catalog(), overrides=overrides)
     spans = result.strategy.spans
     assert spans and all(s.vertical == "raked" for s in spans)
@@ -87,6 +88,25 @@ def test_the_gate_covers_a_raked_span():
     for span in spans:
         rail = next(s for s in span.panel.slots if s.role == "rail")
         assert rail.length_mm == span.slope_len_mm > span.width_mm
+
+
+def test_the_gate_covers_a_fitted_infill_panel():
+    """The same argument as the raked span, for the feature this phase is about.
+    Every other fixture is M-LEGACY — two rails and eight screws — so a change to
+    the fit, the residual spreading or the per-crossing fixing count moved
+    nothing any golden file was watching."""
+    topo, overrides, _, choice = _fixtures()["slat"]
+    result = generate(topo, demo_knowledge(), demo_catalog(), overrides=overrides,
+                      models=LIBRARY, default_model=choice)
+    spans = result.strategy.spans
+    assert spans
+    for span in spans:
+        infill = [s for s in span.panel.slots if s.role == "infill"]
+        assert infill and infill[0].fit is not None, "no fitted pattern to pin"
+        assert infill[0].qty > 5, "a pattern of one or two members pins little"
+        # the gaps are SPREAD, which is the arithmetic a golden file protects
+        gaps = infill[0].fit.gaps_mm
+        assert max(gaps) - min(gaps) <= 1 and len(set(gaps)) > 1
 
 
 def test_every_fixture_has_a_committed_gate_file():

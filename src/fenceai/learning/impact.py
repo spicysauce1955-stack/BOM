@@ -16,6 +16,9 @@ from fenceai.catalog.model import Catalog
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import Cents
 from fenceai.fulfillment.fulfill import Inventory
+from fenceai.fencemodel.library import FenceModelLibrary
+from fenceai.fencemodel.model import FenceModel
+from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.strategy.generator import generate
@@ -46,6 +49,15 @@ class ImpactCase(BaseModel):
     overrides: list[Override] = []
     inventory: Inventory = Inventory()
     accepted_quote_cents: Cents | None = None  # latest accepted quote, if any
+    # the project's default model, for the same reason project_id is bound as a
+    # scope dimension: a preview that regenerates a job under a DIFFERENT model
+    # from the one it is built to reports the delta of two changes at once, and
+    # attributes both to the rule being previewed
+    fence_model: FenceModelChoice | None = None
+    # and its policy, for the same reason: `objective_preset` decides which
+    # product supply resolution buys, so previewing under DEFAULT_POLICY reports
+    # a delta the real run would never produce
+    policy: dict = {}
 
 
 class ProjectImpact(BaseModel):
@@ -132,10 +144,12 @@ def _failure(e: GenerationFailure) -> ImpactFailure:
     return ImpactFailure(code="generation_failed", message=str(e))
 
 
-def _spine(topology, kb, catalog, overrides, inventory, project_id=""):
+def _spine(topology, kb, catalog, overrides, inventory, project_id="",
+           models=None, default_model=None, policy=None):
     # project_id is a bound scope dimension during generation — a project-scoped
     # rule must behave in the preview exactly as it will in the real run
-    result = generate(topology, kb, catalog, overrides=overrides, project_id=project_id)
+    result = generate(topology, kb, catalog, overrides=overrides, project_id=project_id,
+                      models=models, default_model=default_model, policy=policy)
     # the SAME pipeline the read routes run, not a fourth hand-rolled copy of it:
     # a preview that priced a job differently from /bom would be worse than no
     # preview at all
@@ -146,29 +160,94 @@ def _spine(topology, kb, catalog, overrides, inventory, project_id=""):
     return result.strategy, priced.bom
 
 
+def hypothetical_library(
+    library: FenceModelLibrary, hypothetical: FenceModel
+) -> FenceModelLibrary:
+    """The library as it would be with this model version published.
+
+    Any currently active version of the same model id is retired, mirroring what
+    publishing does — otherwise `latest_active` could still return the old one and
+    the preview would report no change. A version PINNED by a project is left
+    reachable by `resolve`, which is the whole point of a pin: those projects
+    correctly show no impact.
+    """
+    models = [
+        m.model_copy(update={"status": "retired"})
+        if m.id == hypothetical.id and m.status == "active" else m
+        for m in library.models
+    ]
+    models = [m for m in models
+              if not (m.id == hypothetical.id and m.version == hypothetical.version)]
+    models.append(hypothetical.model_copy(update={"status": "active"}))
+    return FenceModelLibrary(models=models)
+
+
+def preview_model_impact(
+    hypothetical: FenceModel,
+    library: FenceModelLibrary,
+    kb: KnowledgeBase,
+    catalog: Catalog,
+    cases: list[ImpactCase],
+) -> ImpactReport:
+    """"This change would affect N of your projects", for a fence model.
+
+    `FenceModel` is catalog-side rather than a knowledge object, so it inherits
+    none of knowledge's versioning, review and preview machinery for free —
+    and editing a model's slat gap is a portfolio-wide change that foundation
+    §11 requires to be exposed BEFORE it is made. Same regenerate-and-diff, with
+    the library swapped instead of the knowledge base.
+    """
+    return _preview(
+        hypothetical.ref, kb, kb, catalog, cases,
+        library, hypothetical_library(library, hypothetical),
+    )
+
+
 def preview_impact(
     hypothetical: KnowledgeVersion,
     kb: KnowledgeBase,
     catalog: Catalog,
     cases: list[ImpactCase],
+    library: FenceModelLibrary | None = None,
 ) -> ImpactReport:
     """Regenerate every case under (current KB) vs (KB with the hypothetical
     version active) and report per-project diffs. Deterministic; read-only."""
-    kb_after = hypothetical_kb(kb, hypothetical)
-    report = ImpactReport(hypothetical_ref=hypothetical.ref)
+    library = library or FenceModelLibrary()
+    return _preview(
+        hypothetical.ref, kb, hypothetical_kb(kb, hypothetical), catalog, cases,
+        library, library,
+    )
+
+
+def _preview(
+    ref: str,
+    kb_before: KnowledgeBase,
+    kb_after: KnowledgeBase,
+    catalog: Catalog,
+    cases: list[ImpactCase],
+    library_before: FenceModelLibrary,
+    library_after: FenceModelLibrary,
+) -> ImpactReport:
+    """One regenerate-and-diff, whichever of the two inputs is the hypothesis.
+
+    Knowledge and models are both things a change to which silently reprices
+    every open job, and both must be previewable the same way; two copies of this
+    loop would be two chances for one of them to answer differently."""
+    report = ImpactReport(hypothetical_ref=ref)
     for case in cases:
         if not case.topology.runs:
             continue  # nothing to compare on an empty project
         report.projects_checked += 1
         impact = ProjectImpact(project_id=case.project_id, project_name=case.project_name)
         strategy_before, bom_before = _spine(
-            case.topology, kb, catalog, case.overrides, case.inventory, case.project_id
+            case.topology, kb_before, catalog, case.overrides, case.inventory,
+            case.project_id, library_before, case.fence_model, case.policy,
         )
         impact.bom_before_cents = bom_before.total_cents
         try:
             strategy_after, bom_after = _spine(
                 case.topology, kb_after, catalog, case.overrides, case.inventory,
-                case.project_id,
+                case.project_id, library_after, case.fence_model, case.policy,
             )
         except GenerationFailure as e:
             impact.generation_failure = _failure(e)

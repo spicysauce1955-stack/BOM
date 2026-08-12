@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from fenceai.core.units import Mm
 from fenceai.decisions.graph import DecisionGraph
@@ -80,6 +80,32 @@ class Strategy(BaseModel):
         )
 
 
+class ModelUse(BaseModel):
+    """One fence model, as this run actually drew from it.
+
+    `content_hash` is here because `(id, version)` is not enough: a draft version's
+    document may be edited in place under a fixed ref, so without the hash a model
+    edit leaves the run-id digest untouched and `INSERT OR IGNORE` serves the old
+    stored document under a reused id — two views of one run disagreeing forever.
+    `options` are in for the same reason: pick a different colour and the SKUs
+    beneath it change.
+
+    `source` is deliberately NOT here. Where a choice came from (an interval event,
+    the project default, the built-in fallback) is provenance, and provenance lives
+    in the decision graph. On the run it would only split the digest between two
+    runs that build the identical fence.
+    """
+
+    model_id: str
+    version: int
+    content_hash: str = ""
+    options: dict[str, str | int] = {}
+
+    def sort_key(self) -> tuple:
+        return (self.model_id, self.version, self.content_hash,
+                tuple(sorted((k, str(v)) for k, v in self.options.items())))
+
+
 class GenerationRun(BaseModel):
     id: str
     project_id: str = ""
@@ -92,13 +118,36 @@ class GenerationRun(BaseModel):
     # (DefaultComponent roles rail/screw/concrete/cap) — consumed by derive_requirements
     demand_skus: dict[str, str] = {}
     objective_preset: str = "least_cost"  # which supply-resolution preset resolve_supply uses
-    # the fence models this run actually drew from (id, version) — part of what
-    # "generated from" means, so it belongs in the run id (run identity, task 10)
-    model_snapshot: list[tuple[str, int]] = []
+    # the fence models this run actually drew from — part of what "generated from"
+    # means, so it belongs in the run id (run identity, task 10)
+    model_snapshot: list[ModelUse] = []
     # catalog content hash at generation time — /bom and /structure refuse to
     # re-read a stored run against a catalog that no longer matches it
     catalog_hash: str = ""
+    # the products this run actually named — what `catalog_hash` covers. Empty
+    # means "hashed over the whole catalog", which is how a run stamped before
+    # the hash was narrowed still reads: its stored hash is only comparable
+    # against the same broad computation.
+    catalog_skus: list[str] = []
     created_at: str = ""
+
+    @field_validator("model_snapshot", mode="before")
+    @classmethod
+    def _upgrade_model_snapshot(cls, v):
+        """Runs are stored as whole JSON documents and re-read with
+        model_validate_json, so a shape change makes every earlier run unreadable
+        rather than merely out of date. `model_snapshot` shipped as [(id, version)];
+        a 2-element sequence is read as one, with an empty content hash meaning
+        "generated before content was hashed" — never a hash that could collide
+        with a real one."""
+        if not isinstance(v, list):
+            return v
+        return [
+            {"model_id": item[0], "version": item[1]}
+            if isinstance(item, (list, tuple)) and len(item) == 2
+            else item
+            for item in v
+        ]
 
 
 class GenerationResult(BaseModel):

@@ -138,6 +138,35 @@ def test_select_variant_skips_a_condition_that_raises_missing_field():
     assert index == 1
 
 
+def test_choose_variant_reports_the_losers_and_the_ones_never_asked():
+    """The two groups are different facts: a condition that was evaluated and
+    failed lost, while a variant after the winner was never evaluated at all."""
+    from fenceai.fencemodel.resolve import choose_variant
+
+    model = FenceModel(
+        id="basic", version=1, default_spec=PanelSpec(),
+        variants=[Variant(condition=MISSING_FIELD, spec=TALLER),
+                  Variant(condition=WIDTH_9999, spec=TALLER),
+                  Variant(condition=WIDTH_1500, spec=LEGACY),
+                  Variant(condition=HEIGHT_1800, spec=TALLER)],
+    )
+    choice = choose_variant(model, _ctx())
+    assert (choice.index, choice.failed, choice.not_reached) == (2, [0, 1], [3])
+    assert choice.spec == LEGACY
+
+
+def test_choose_variant_reports_every_variant_as_failed_when_none_applies():
+    from fenceai.fencemodel.resolve import choose_variant
+
+    model = FenceModel(
+        id="basic", version=1, default_spec=LEGACY,
+        variants=[Variant(condition=MISSING_FIELD, spec=TALLER),
+                  Variant(condition=WIDTH_9999, spec=TALLER)],
+    )
+    choice = choose_variant(model, _ctx())
+    assert (choice.index, choice.failed, choice.not_reached) == (None, [0, 1], [])
+
+
 def test_select_variant_returns_default_when_every_variant_is_inapplicable():
     model = FenceModel(
         id="basic", version=1, default_spec=LEGACY,
@@ -145,6 +174,110 @@ def test_select_variant_returns_default_when_every_variant_is_inapplicable():
                   Variant(condition=WIDTH_9999, spec=TALLER)],
     )
     assert select_variant(model, _ctx()) == (LEGACY, None)
+
+
+def test_height_support_continuous_bounds_and_step():
+    """A ladder expressed as a step, which is what a model with a 100 mm size
+    range means: 1250 is inside the band and still not a height you can order."""
+    from fenceai.fencemodel.model import Continuous
+    from fenceai.fencemodel.resolve import height_supported
+
+    band = Continuous(min_mm=1000, max_mm=2000, step_mm=100)
+    assert height_supported(band, 1000)
+    assert height_supported(band, 1500)
+    assert height_supported(band, 2000)
+    assert not height_supported(band, 999)
+    assert not height_supported(band, 2001)
+    assert not height_supported(band, 1250)
+
+
+def test_height_support_continuous_with_no_step_accepts_every_height_in_band():
+    from fenceai.fencemodel.model import Continuous
+    from fenceai.fencemodel.resolve import height_supported
+
+    band = Continuous(min_mm=0, max_mm=10_000)
+    assert height_supported(band, 1723)
+    # a step of 0 is not a division by zero waiting in a warning path: it means
+    # the model stated no step at all
+    assert height_supported(Continuous(min_mm=0, max_mm=10_000, step_mm=0), 1723)
+
+
+def test_height_support_discrete_is_the_ladder_and_nothing_between_it():
+    from fenceai.fencemodel.model import Discrete
+    from fenceai.fencemodel.resolve import height_supported
+
+    ladder = Discrete(heights_mm=[1000, 1200, 1800])
+    assert height_supported(ladder, 1200)
+    assert not height_supported(ladder, 1201)
+    # an EMPTY ladder supports nothing, and says so rather than supporting
+    # everything: a model that lists no heights has not been finished
+    assert not height_supported(Discrete(heights_mm=[]), 1800)
+
+
+def _optioned(sku_by_option: dict[str, str]) -> PanelSpec:
+    """LEGACY's rail slot, bound to an axis and offering two members."""
+    spec = LEGACY.model_copy(deep=True)
+    req = spec.frame[0].requirement
+    req.option_axis = "frame_finish"
+    req.sku_by_option = dict(sku_by_option)
+    req.eligibility = Eligibility(members=[
+        EligibleItem(sku="RAIL-3000", priority=1),
+        EligibleItem(sku="RAIL-ALT", priority=2),
+    ])
+    return spec
+
+
+def test_an_option_value_narrows_eligibility_to_the_member_it_names():
+    """It NARROWS: the named sku must already be a member (enforced at load), so
+    a colour choice can never smuggle in a product the slot disallows."""
+    spec = _optioned({"black": "RAIL-3000", "grey": "RAIL-ALT"})
+    slot = resolve_panel(spec, _ctx(options={"frame_finish": "grey"})).slots[0]
+    assert [m.sku for m in slot.eligibility.members] == ["RAIL-ALT"]
+    assert slot.option_axis == "frame_finish" and slot.option_value == "grey"
+
+
+def test_the_narrowed_member_keeps_its_authored_priority_and_approval():
+    """Narrowing removes candidates; it does not rewrite the survivor. A member
+    marked suggest_only must still need approval after a colour is chosen."""
+    spec = _optioned({"grey": "RAIL-ALT"})
+    spec.frame[0].requirement.eligibility.members[1].approval = "suggest_only"
+    slot = resolve_panel(spec, _ctx(options={"frame_finish": "grey"})).slots[0]
+    assert [(m.sku, m.priority, m.approval) for m in slot.eligibility.members] == [
+        ("RAIL-ALT", 2, "suggest_only")]
+
+
+def test_an_unanswered_axis_leaves_the_slot_with_its_whole_set():
+    spec = _optioned({"black": "RAIL-3000", "grey": "RAIL-ALT"})
+    slot = resolve_panel(spec, _ctx(options={})).slots[0]
+    assert [m.sku for m in slot.eligibility.members] == ["RAIL-3000", "RAIL-ALT"]
+    assert slot.option_axis is None
+
+
+def test_an_option_value_the_slot_says_nothing_about_narrows_nothing():
+    """`sku_by_option` is per SLOT: an axis may govern the rails and say nothing
+    about the screws, and the value chosen for it must not empty the screw slot."""
+    spec = _optioned({"black": "RAIL-3000"})
+    slot = resolve_panel(spec, _ctx(options={"frame_finish": "grey"})).slots[0]
+    assert [m.sku for m in slot.eligibility.members] == ["RAIL-3000", "RAIL-ALT"]
+    assert slot.option_axis is None
+
+
+def test_a_numeric_option_value_matches_its_string_key():
+    """`FenceModelChoice.options` is `str | int` while `sku_by_option` is keyed by
+    the axis value's key, which is a string. 20 and "20" are the same answer."""
+    spec = _optioned({"20": "RAIL-ALT"})
+    slot = resolve_panel(spec, _ctx(options={"frame_finish": 20})).slots[0]
+    assert [m.sku for m in slot.eligibility.members] == ["RAIL-ALT"]
+    assert slot.option_value == "20"
+
+
+def test_narrowing_does_not_mutate_the_authored_model():
+    """`resolve_panel` is pure: the model is reused by the next bay and by the
+    next run, so a narrowed slot must be a new object."""
+    spec = _optioned({"grey": "RAIL-ALT"})
+    resolve_panel(spec, _ctx(options={"frame_finish": "grey"}))
+    assert [m.sku for m in spec.frame[0].requirement.eligibility.members] == [
+        "RAIL-3000", "RAIL-ALT"]
 
 
 def test_select_variant_and_resolve_panel_pin_together():

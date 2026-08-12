@@ -430,6 +430,125 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
 
+        # --- the Panel tab: choose a model, and SEE the panel before generating -
+        # The user's complaint this answers: "I don't see an option to see the
+        # Panel spec and choose a model before the strategy." `variant` and
+        # `preset` had zero hits in the whole frontend, and the only product
+        # choice anywhere was the gate kit picker — the model that decides every
+        # material, size and structure below it was unreachable from the UI.
+        project_id = c.js("document.getElementById('project-select').value")
+        c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
+        time.sleep(1.5)
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-SLAT'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.5)
+        slat = c.js("""
+(() => {
+  const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')];
+  return {
+    slots: rows.map(r => r.dataset.slot),
+    priced: rows.filter(r => /€\\d/.test(r.textContent)).length,
+    total: document.getElementById('panel-total')?.textContent || '',
+    head: document.querySelector('#panel-parts h3')?.textContent || '',
+  };
+})()""")
+        # a picker that shows a name and a price but no parts is a dropdown; the
+        # point of the tab is what one panel is MADE of
+        check("the Panel tab prices a parts table for M-SLAT",
+              slat["slots"] == ["rail", "screw", "slat"]
+              and slat["priced"] == 3 and "M-SLAT@v1" in slat["head"]
+              and "€" in slat["total"])
+        # the panel is priced from the model, not from a fixed shape: M-LEGACY's
+        # two-slot panel and M-SLAT's three-slot one must not render the same
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-LEGACY'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.5)
+        legacy = c.js("""
+(() => {
+  const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')];
+  return {slots: rows.map(r => r.dataset.slot),
+          total: document.getElementById('panel-total')?.textContent || ''};
+})()""")
+        check("switching the model changes the parts and the price",
+              legacy["slots"] == ["rail", "screw"]
+              and legacy["total"] != slat["total"])
+        # the panel is a length surface like every other: it reads in the display
+        # unit, and the stored/API figures stay int mm
+        length_mm = c.js("""
+[...document.querySelectorAll('#panel-parts tr[data-slot]')][0].cells[3].textContent.trim()""")
+        c.click(*c.element_center("#btn-units"))
+        time.sleep(1.5)
+        length_cm = c.js("""
+[...document.querySelectorAll('#panel-parts tr[data-slot]')][0].cells[3].textContent.trim()""")
+        width_field_cm = c.js("document.getElementById('panel-width').value")
+        header_cm = c.js("""
+[...document.querySelectorAll('#panel-parts th')][3].textContent""")
+        check("the panel's lengths and fields read in cm when the unit is cm",
+              float(length_cm) == float(length_mm) / 10 and width_field_cm == "250"
+              and 'ס"מ' in (header_cm or ""))
+        c.shot("18-panel-cm.png")
+        c.click(*c.element_center("#btn-units"))   # back to mm
+        time.sleep(1)
+        # "use for this project" is a NON-topology mutation: it must persist on
+        # the project and survive a reload, or the answer to "what is this fence
+        # built from" lasts only as long as the tab is open
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-SLAT'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.2)
+        c.click(*c.element_center("#btn-panel-use"))
+        time.sleep(1.5)
+        c.shot("19-panel-slat.png")
+        c.js("location.reload(); 'ok'")
+        time.sleep(5)
+        c.js(f"""
+{{
+  const sel = document.getElementById('project-select');
+  if (sel.value !== {project_id!r}) {{
+    sel.value = {project_id!r}; sel.dispatchEvent(new Event('change'));
+  }}
+}}
+'ok'""")
+        time.sleep(2.5)
+        stored_model = c.js(f"""
+fetch('/api/projects/{project_id}').then(r => r.json())
+  .then(p => (p.fence_model || {{}}).model_id || null)""")
+        aside = c.js("document.getElementById('model-row')?.textContent || ''")
+        check("the project's chosen model persists across a reload",
+              stored_model == "M-SLAT")
+        # and it is legible from the DRAWING: "what is this fence built from"
+        # must not require opening another tab
+        check("the canvas aside names the project's model, localized",
+              "פאנל שלבים" in aside and "M-SLAT" in aside
+              and "Slat panel" not in aside)
+        c.shot("20-panel-aside.png")
+        # Clearing is the other half of choosing, and it returns this project to
+        # the legacy panel — which is what every check after this one was written
+        # against, so the model choice must not leak into them.
+        c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
+        time.sleep(1.5)
+        c.click(*c.element_center("#btn-panel-clear"))
+        time.sleep(1.5)
+        cleared = c.js(f"""
+fetch('/api/projects/{project_id}').then(r => r.json())
+  .then(p => p.fence_model === null)""")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.5)
+        aside_cleared = c.js("document.getElementById('model-row')?.textContent || ''")
+        check("clearing the model returns the project to the legacy panel",
+              cleared is True and "M-SLAT" not in aside_cleared)
+
         # --- zoom / pan / fit --------------------------------------------------
         vb0 = c.js("document.getElementById('canvas').getAttribute('viewBox')")
         cx, cy = c.canvas_px(3000, 0)
@@ -1126,6 +1245,45 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("typing into the auto-focused popover field replaces its value",
               bool(prefilled) and c.js("document.getElementById('pop-width').value") == "1234")
         c.js("document.getElementById('pop-cancel')?.click(); 'ok'")
+
+        # --- the model changes partway along, like base and height do ---------
+        # A whole fence is not always one fence. `fence_model` is an interval
+        # event on the run, authored through the same popover as height intent,
+        # and the generator makes its edges structural boundaries so no bay
+        # straddles the place the fence visibly becomes a different fence.
+        c.click(*c.element_center("#tool-model"))
+        c.click(*c.canvas_px(3000, 0))
+        time.sleep(0.6)
+        model_options = c.js("""
+[...(document.getElementById('pop-model')?.options || [])].map(o => o.value)""")
+        check("the model tool offers the published models",
+              sorted(model_options or []) == ["M-LEGACY", "M-SLAT"])
+        c.js("""
+{
+  document.getElementById('pop-model').value = 'M-SLAT';
+  document.getElementById('pop-end').value = '3000';
+}
+'ok'""")
+        c.js("document.getElementById('pop-save').click(); 'saved'")
+        time.sleep(1.5)
+        model_ev = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => {
+    const run = p.topology.runs[0];
+    return run.interval_events.filter(e => e.payload.kind === 'fence_model')
+      .map(e => e.payload);
+  })""")
+        check("the model tool writes ONE fence_model interval event",
+              len(model_ev or []) == 1 and model_ev[0]["model_id"] == "M-SLAT"
+              and model_ev[0]["version_pin"] is None)
+        # the stations are read back through the event list, which resolves the
+        # segment-local anchor — never by reading anchor.offset_mm as a station
+        events_text = c.js("document.getElementById('run-events')?.textContent || ''")
+        check("the run's event list names the model event and its stretch, localized",
+              "דגם גדר" in events_text and "M-SLAT" in events_text
+              and "0–3000" in events_text)
+        c.shot("21-model-event.png")
+
         c.click(*c.element_center("#btn-clear"))
         time.sleep(1)
 
@@ -1219,6 +1377,323 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 }
 'ok'""")
         time.sleep(0.5)
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.5)
+
+        # --- the Models tab: authoring a fence model ---------------------------
+        # The user's complaint this answers: "what if the user wants to edit,
+        # change or add a panel? variant?" W1-W3 made models persisted,
+        # versioned, selectable data with a working preview, and left the ONLY
+        # way to author one a hand-written JSON POST — so the structure that
+        # decides every material, size and price below it was editable by
+        # everyone except the expert who owns it.
+        #
+        # The fixture first: a project that USES M-SLAT, because "editing a
+        # model's slat gap is a portfolio-wide change" is only demonstrable
+        # against a portfolio that has one. M-LEGACY would not do — the
+        # compatibility path is SYNTHESIZED per run (generator.py:652) and never
+        # read from the library, so editing it changes nothing.
+        c.js("document.getElementById('new-project-name').value = 'models'; 'ok'")
+        c.click(*c.element_center("#btn-new-project"))
+        time.sleep(1.5)
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.canvas_px(0, 0))
+        c.click(*c.canvas_px(6000, 0))
+        c.key("Enter")
+        time.sleep(1.2)
+        c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
+        time.sleep(1.5)
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-SLAT'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.2)
+        c.click(*c.element_center("#btn-panel-use"))
+        time.sleep(1.5)
+
+        c.js("document.querySelector('#tabs button[data-tab=\"models\"]').click(); 'ok'")
+        time.sleep(1.5)
+        c.click(*c.element_center("#btn-model-new"))
+        time.sleep(0.8)
+        # name it, then build the smallest publishable panel out of the rows:
+        # one rail slot, cut centre-to-centre, supplied by RAIL-3000
+        c.js("""
+{
+  const id = document.querySelector('#model-head [data-f="id"]');
+  id.value = 'M-SMOKE'; id.dispatchEvent(new Event('input'));
+  const name = document.querySelector('#model-head [data-f="name"]');
+  name.value = 'דגם בדיקה'; name.dispatchEvent(new Event('input'));
+}
+'ok'""")
+        time.sleep(1.0)
+        c.click(*c.element_center("#btn-model-add-slot"))
+        time.sleep(0.6)
+        c.js("""
+{
+  const g = document.querySelector('#model-frame [data-slot-row="0"]');
+  const key = g.querySelector('[data-f="key"]');
+  key.value = 'rail'; key.dispatchEvent(new Event('input'));
+  const rule = g.querySelector('[data-f="length_rule"]');
+  rule.value = 'centre_to_centre'; rule.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.8)
+        c.js("""
+document.querySelector('#model-frame [data-slot-row="0"] [data-act="add-eligible"]').click();
+'ok'""")
+        time.sleep(0.6)
+        c.js("""
+{
+  const sel = document.querySelector(
+    '#model-frame [data-slot-row="0"] [data-eligible-row="0"] [data-f="sku"]');
+  sel.value = 'RAIL-3000'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.0)
+        # NOTHING is written until Save is pressed: the preview prices the
+        # document in the body, so an editor that is being typed into does not
+        # mint library rows — least of all one per character of a model id.
+        before_save = c.js("""
+fetch('/api/fence-models').then(r => r.json()).then(l => l.map(x => x.id).join(','))""") or ""
+        check("editing writes nothing until the author asks",
+              "M-SMOKE" not in before_save and "M-NEW" not in before_save)
+        priced_unsaved = c.js(
+            "document.getElementById('model-preview-total')?.textContent || ''")
+        check("an unsaved model is priced anyway",
+              "€" in priced_unsaved and priced_unsaved.strip() != "")
+        c.shot("21-models-editor.png")
+        c.click(*c.element_center("#btn-model-publish"))
+        time.sleep(2.5)
+        smoke_row = c.js("""
+fetch('/api/fence-models').then(r => r.json())
+  .then(l => l.find(x => x.id === 'M-SMOKE') || null)""")
+        # Read the STORED SPEC, not just the listing metadata. An empty model
+        # publishes perfectly well (`validate_model` requires no slots), so a
+        # check on `active_version` alone passes with every row-level write in
+        # this block silently doing nothing — the "found something else" trap
+        # this suite has been caught by before.
+        stored = c.js("""
+fetch('/api/fence-models/M-SMOKE/1').then(r => r.json()).then(m => {
+  const slot = (m.default_spec.frame || [])[0];
+  return slot ? {key: slot.key, rule: slot.requirement.length_rule,
+                 members: slot.requirement.eligibility.members} : null;
+})""")
+        check("a model authored from the rows publishes, with the rows in it",
+              bool(smoke_row) and smoke_row["active_version"] == 1
+              and smoke_row["status"] == "active"
+              and stored and stored["key"] == "rail"
+              and stored["rule"] == "centre_to_centre"
+              and stored["members"] == [{"kind": "catalog_item", "sku": "RAIL-3000",
+                                         "priority": 1, "approval": "auto"}])
+        # publishing changes which models are SELECTABLE, and the picker's
+        # listing is a cache — without an invalidation it keeps the old library
+        c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
+        time.sleep(1.5)
+        picker_options = c.js("""
+[...document.querySelectorAll('#panel-model option')]
+  .map(o => o.value + (o.disabled ? ':disabled' : '')).join(',')""") or ""
+        check("a model published one tab over is offered by the Panel picker",
+              "M-SMOKE" in picker_options and "M-SMOKE:disabled" not in picker_options)
+        c.js("document.querySelector('#tabs button[data-tab=\"models\"]').click(); 'ok'")
+        time.sleep(1.2)
+
+        # --- editing a published version never touches it ----------------------
+        # A run stamps (id, version, content hash) and an accepted quote was
+        # priced against that document. "Edit" therefore opens a COPY, and the
+        # first save lands it at the next free version.
+        c.js("""
+document.querySelector('#model-list [data-model="M-SMOKE"] [data-act="edit"]').click();
+'ok'""")
+        time.sleep(1.5)
+        # The Advanced-JSON escape hatch, exercised with BROKEN json, because
+        # the rule is that the exit is never gated on the thing that is broken
+        # (`tabs.js:93-95`, learned when the rule editor trapped users behind a
+        # stray comma). `window.confirm` is stubbed true at the top of this run.
+        c.click(*c.element_center("#btn-model-advanced"))
+        time.sleep(0.6)
+        c.js("""
+{
+  const ta = document.getElementById('model-json');
+  ta.value = '{"id": "M-SMOKE", oops';
+}
+'ok'""")
+        c.click(*c.element_center("#btn-model-advanced"))
+        time.sleep(1.0)
+        escaped = c.js("""
+({
+  editor_shown: !document.getElementById('model-editor').hidden,
+  json_hidden: document.getElementById('model-json').hidden,
+  rows: document.querySelectorAll('#model-frame [data-slot-row]').length,
+})""")
+        check("the Advanced-JSON exit is never gated on the JSON being valid",
+              escaped["editor_shown"] is True and escaped["json_hidden"] is True
+              and escaped["rows"] >= 1)
+
+        # A length surface reads and writes in the DISPLAY unit while storage
+        # stays int mm. Typing 25 in cm must store 250, not 25 — the 10x bug
+        # this suite already pins for a freehand knowledge param.
+        c.click(*c.element_center("#btn-units"))
+        time.sleep(1.2)
+        c.js("""
+{
+  document.getElementById('btn-model-toggle-infill').click();
+}
+'ok'""")
+        time.sleep(0.8)
+        c.js("""
+{
+  const w = document.querySelector('#model-infill [data-member-row="0"] [data-f="width_mm"]');
+  w.value = '25'; w.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.8)
+        c.click(*c.element_center("#btn-model-save"))
+        time.sleep(2.0)
+        cm_width = c.js("""
+fetch('/api/fence-models/M-SMOKE/2').then(r => r.json())
+  .then(m => m.default_spec.infill.pattern[0].width_mm)""")
+        cm_field = c.js("""
+document.querySelector('#model-infill [data-member-row="0"] [data-f="width_mm"]')?.value""")
+        check("a length typed in cm is stored as millimetres and reads back in cm",
+              cm_width == 250 and str(cm_field) == "25")
+        c.click(*c.element_center("#btn-units"))    # back to mm for what follows
+        time.sleep(1.2)
+        # and remove the infill again, so the invalid-publish check below fails
+        # for the ONE reason it names
+        c.js("document.getElementById('btn-model-toggle-infill').click(); 'ok'")
+        time.sleep(0.8)
+        # drop the length rule while a DIVISIBLE product supplies the slot: the
+        # slot would be neither cut nor priced, which validate_model refuses
+        c.js("""
+{
+  const rule = document.querySelector(
+    '#model-frame [data-slot-row="0"] [data-f="length_rule"]');
+  rule.value = ''; rule.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.8)
+        c.click(*c.element_center("#btn-model-save"))
+        time.sleep(2.0)
+        after_edit = c.js("""
+Promise.all([
+  fetch('/api/fence-models').then(r => r.json()),
+  fetch('/api/fence-models/M-SMOKE/1').then(r => r.json()),
+]).then(([listing, v1]) => ({
+  row: listing.find(x => x.id === 'M-SMOKE'),
+  v1_rule: v1.default_spec.frame[0].requirement.length_rule,
+  v1_status: v1.status,
+}))""")
+        check("editing a published model opens a NEW draft version and leaves v1 alone",
+              after_edit["row"]["draft_version"] == 2
+              and after_edit["row"]["active_version"] == 1
+              and after_edit["v1_rule"] == "centre_to_centre"
+              and after_edit["v1_status"] == "active")
+
+        # --- the publish gate refuses, in Hebrew, and publishes nothing --------
+        # A draft may be SAVED invalid — authoring is iterative and a save that
+        # refuses until the whole panel is coherent is a save nobody can use.
+        # Publish is the gate, and its 422 carries code + params so the refusal
+        # is a Hebrew sentence rather than the engine's English authoring text.
+        c.click(*c.element_center("#btn-model-publish"))
+        time.sleep(2.5)
+        refusal = c.js("document.getElementById('model-errors')?.textContent || ''")
+        still = c.js("""
+fetch('/api/fence-models').then(r => r.json())
+  .then(l => l.find(x => x.id === 'M-SMOKE'))""")
+        check("publishing an invalid model is refused in Hebrew and publishes nothing",
+              "לא פורסם" in refusal and "RAIL-3000" in refusal
+              and still["active_version"] == 1 and still["draft_version"] == 2)
+        c.shot("22-models-publish-refused.png")
+
+        # --- a model edit is priced, and its portfolio impact shown BEFORE it --
+        # Foundation §11: a portfolio-wide change is exposed before it is made.
+        # Editing M-SLAT's slat gap is exactly that — it re-fits every bay of
+        # every project built to it.
+        c.js("""
+document.querySelector('#model-list [data-model="M-SLAT"] [data-act="edit"]').click();
+'ok'""")
+        time.sleep(1.5)
+        c.js("""
+{
+  const gap = document.querySelector(
+    '#model-infill [data-member-row="0"] [data-f="gap_after_mm"]');
+  gap.value = '60'; gap.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(2.0)      # the debounced re-price
+        total_60 = c.js(
+            "document.getElementById('model-preview-total')?.textContent || ''")
+        slats_60 = c.js("""
+document.querySelector('#model-parts tr[data-slot="slat"] td:nth-child(3)')
+  ?.textContent.trim() || ''""")
+        c.click(*c.element_center("#btn-model-impact"))
+        time.sleep(5)
+        impact_text = c.js(
+            "document.getElementById('model-impact-out')?.textContent || ''")
+        impact_rows = c.js(
+            "document.querySelectorAll('#model-impact-out .impact-row').length") or 0
+        slat_row = c.js("""
+fetch('/api/fence-models').then(r => r.json())
+  .then(l => l.find(x => x.id === 'M-SLAT'))""")
+        # BEFORE it is made, and before it is even stored: the impact is asked of
+        # the document in the editor, so M-SLAT must still be untouched at v1
+        # with no draft version at all.
+        check("the impact of a model edit is reported before it is published",
+              impact_rows >= 1 and "models" in impact_text
+              and "אף פרויקט לא ישתנה" not in impact_text
+              and slat_row["active_version"] == 1
+              and slat_row["draft_version"] is None)
+        c.shot("23-models-impact.png")
+
+        # --- the preview beside the editor follows the spec --------------------
+        # A preview that does not move when the spec does is worse than none: it
+        # is a priced picture of a panel the author is no longer editing. 100 mm
+        # slats at a 300 mm gap fit far fewer times across the same bay.
+        c.js("""
+{
+  const gap = document.querySelector(
+    '#model-infill [data-member-row="0"] [data-f="gap_after_mm"]');
+  gap.value = '300'; gap.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(2.5)
+        total_300 = c.js(
+            "document.getElementById('model-preview-total')?.textContent || ''")
+        slats_300 = c.js("""
+document.querySelector('#model-parts tr[data-slot="slat"] td:nth-child(3)')
+  ?.textContent.trim() || ''""")
+        # "it changed" is not the claim — a re-render changes a string. The
+        # claim is arithmetic: a wider gap fits FEWER slats across the same bay.
+        check("the live preview re-prices the panel when a spec field changes",
+              "€" in total_60 and "€" in total_300 and total_60 != total_300
+              and slats_60.isdigit() and slats_300.isdigit()
+              and int(slats_60) > int(slats_300) > 0)
+        c.shot("24-models-preview.png")
+
+        # --- retire: the one destructive transition in the library -------------
+        # It removes a model from every picker in the app, and nothing in the UI
+        # puts it back.
+        c.click(*c.element_center("#btn-model-close"))
+        time.sleep(0.8)
+        c.js("""
+document.querySelector('#model-list [data-model="M-SMOKE"] [data-act="retire"]').click();
+'ok'""")
+        time.sleep(2.0)
+        retired_row = c.js("""
+fetch('/api/fence-models').then(r => r.json())
+  .then(l => l.find(x => x.id === 'M-SMOKE'))""")
+        c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
+        time.sleep(1.5)
+        after_retire = c.js("""
+[...document.querySelectorAll('#panel-model option')]
+  .map(o => o.value + (o.disabled ? ':disabled' : '')).join(',')""") or ""
+        check("retiring a model takes it out of every picker without hiding it",
+              retired_row["active_version"] is None
+              and "M-SMOKE:disabled" in after_retire)
+        c.js("document.querySelector('#tabs button[data-tab=\"models\"]').click(); 'ok'")
+        time.sleep(1.0)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.5)
 

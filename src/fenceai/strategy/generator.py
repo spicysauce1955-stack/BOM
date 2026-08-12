@@ -15,14 +15,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 
-from fenceai.catalog.model import Catalog
+from fenceai.catalog.model import Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
+from fenceai.fencemodel.library import FenceModelLibrary, content_hash
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
-from fenceai.fencemodel.resolve import PanelContext, resolve_panel
+from fenceai.fencemodel.resolve import (
+    PanelContext, choose_variant, height_supported, resolve_panel,
+)
+from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.evaluator import (
     Resolution,
     preference_firings,
@@ -30,12 +35,13 @@ from fenceai.knowledge.evaluator import (
     resolve_actions,
     resolve_param,
 )
-from fenceai.knowledge.model import KnowledgeBase
+from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
 from fenceai.strategy.layout import boundaries, layout_segment
 from fenceai.strategy.model import (
     Gate,
     GenerationResult,
     GenerationRun,
+    ModelUse,
     Post,
     Span,
     Strategy,
@@ -49,6 +55,8 @@ from fenceai.topology.station import (
     base_top_at,
     base_top_step_stations,
     base_transition_stations,
+    fence_model_at,
+    fence_model_transition_stations,
     ground_step_stations,
     local_slope_permille,
     corner_stations,
@@ -102,8 +110,11 @@ def generate(
     overrides: list[Override] | None = None,
     policy: dict | None = None,
     project_id: str = "",
+    models: FenceModelLibrary | None = None,
+    default_model: FenceModelChoice | None = None,
 ) -> GenerationResult:
     overrides = overrides or []
+    models = models or FenceModelLibrary()
     policy = {**DEFAULT_POLICY, **(policy or {})}
     builder = GraphBuilder()
     strategy = Strategy(id="strategy")
@@ -125,11 +136,12 @@ def generate(
     # every fence model actually drawn from, across all runs — part of the run id
     # (a model swap changes what the run means even though the digest's other
     # inputs are untouched)
-    models_used: list[FenceModel] = []
+    models_used: list[ModelUse] = []
     for run in topology.runs:
         _generate_run(
             topology, run, knowledge, scope, catalog, overrides, policy,
             builder, strategy, applied, demand_skus, models_used,
+            models, default_model,
         )
 
     _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
@@ -162,18 +174,26 @@ def generate(
     # - model_snapshot: which fence model(s)/versions the run actually drew from
     # - catalog_hash: the catalog content the run resolved products against
     # - objective_preset: which supply-resolution preset a later /bom read will use
-    run_meta.model_snapshot = sorted({(m.id, m.version) for m in models_used})
-    run_meta.catalog_hash = hashlib.sha256(
-        catalog.model_dump_json().encode()).hexdigest()[:16]
+    run_meta.model_snapshot = sorted(
+        {u.sort_key(): u for u in models_used}.values(), key=ModelUse.sort_key
+    )
+    run_meta.catalog_skus = _skus_used(strategy, demand_skus)
+    run_meta.catalog_hash = catalog_hash(catalog, run_meta.catalog_skus)
     # `policy` was already merged with DEFAULT_POLICY above, so the key always
     # exists — a `.get(..., "least_cost")` fallback here could never fire; direct
     # indexing says so instead of implying a fallback that is dead on arrival.
     run_meta.objective_preset = policy["objective_preset"]
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
-            [topology.model_dump(), run_meta.knowledge_snapshot,
+            # project_id is BOUND AS A SCOPE DIMENSION (bind_scope, above), so a
+            # project-scoped rule changes the fence without changing any other
+            # digest input. Two projects with the same topology then collide, and
+            # `save_run`'s INSERT OR IGNORE drops the second silently: its user
+            # presses Generate, sees their own answer in the response, and every
+            # later read serves the other project's fence.
+            [project_id, topology.model_dump(), run_meta.knowledge_snapshot,
              [o.model_dump() for o in overrides], policy,
-             run_meta.model_snapshot, run_meta.catalog_hash,
+             [u.model_dump() for u in run_meta.model_snapshot], run_meta.catalog_hash,
              run_meta.objective_preset],
             sort_keys=True, default=str,
         ).encode()
@@ -184,6 +204,28 @@ def generate(
 
 
 # --- knowledge-resolved selection helpers -----------------------------------
+
+def _skus_used(strategy: Strategy, demand_skus: dict[str, str]) -> list[str]:
+    """Every product this run named, from the run itself rather than from a list
+    someone has to remember to extend.
+
+    Eligibility MEMBERS, not just the chosen sku: the choice among them is made
+    at read time by `resolve_supply`, so a run depends on the content of every
+    candidate it may still pick — a rival's price changing is exactly a reason
+    for the stored answer to be re-checked rather than silently kept.
+    """
+    skus = {p.sku for p in strategy.posts if p.sku}
+    skus |= {g.kit_sku for g in strategy.gates if g.kit_sku}
+    skus |= set(demand_skus.values())
+    for span in strategy.spans:
+        if span.panel is None:
+            continue
+        for slot in span.panel.slots:
+            skus |= {m.sku for m in slot.eligibility.members}
+            if slot.sku:
+                skus.add(slot.sku)
+    return sorted(skus)
+
 
 def bind_scope(*bindings: dict) -> dict[str, str]:
     """Bind evaluation-scope dimensions from the facts of this generation.
@@ -506,7 +548,7 @@ def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
     strategy. Every error this returns means the panel that WOULD be built is
     not the panel that was authored:
 
-      * an unbuilt feature (variants, option axes, `Eligibility.group`,
+      * an unbuilt feature (`Eligibility.group`, `Eligibility.predicate`,
         `InfillSpec.supply`, …) is ignored by `resolve_panel`, so the run is
         silently a different fence — the precise failure mode `_unsupported_
         features` exists to prevent, and surfacing it as a survivable note
@@ -523,9 +565,9 @@ def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
 
     Cost: O(model) — slots x eligibility members, plus axes x values, with
     catalog access by dict lookup only. It does not touch the topology, so it
-    does not grow with the fence: it runs once per topology RUN (the model is
-    chosen per run, because a `fence_model` event will eventually pick a
-    different one per section), never once per span. Measured on this machine:
+    does not grow with the fence: it runs once per distinct model CHOICE on a run
+    (memoised in `segment_model`), never once per segment and never once per
+    span — a run built entirely to one model validates once. Measured on this machine:
     2.1 us for `M-LEGACY` against 0.85 ms for a four-bay `generate()` (0.24%),
     and 0.04% of a 60-bay one, where it is still a single call. No caching
     needed — and a cache keyed on a model that `legacy_model()` rebuilds per
@@ -554,6 +596,120 @@ def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
     )
 
 
+@dataclass(frozen=True)
+class _SegmentModel:
+    """A model choice, resolved once and reused by every segment that makes it."""
+
+    model: FenceModel
+    use: ModelUse
+    options: dict[str, str | int]
+    select_node_id: str
+    max_span: Mm
+    max_span_ref: str
+    firing_node_id: str
+    rails_per_span: int
+    screws_per_span: int
+    quantity_refs: list[str]
+    # a manufactured bay width, when the model's line ships as pre-assembled
+    # panels: not a preference, so it does not compete with one
+    exact_span: Mm | None = None
+    exact_span_ref: str | None = None
+
+
+LEGACY_MODEL_ID = "M-LEGACY"
+LEGACY_MODEL_VERSION = 1
+
+
+def _policy_knowledge(model: FenceModel) -> list[KnowledgeVersion]:
+    """A model's `layout_policy` as knowledge versions scoped to its own series.
+
+    The model gets NO private channel into the generator (fence-model spec §"Two
+    touch points"): what it asks of the span layout enters the same evaluator as
+    a company rule, resolves by the same tiers, and loses out loud when it loses.
+
+    Authority is per CONTRIBUTION, never per model, and that is the whole reason
+    the contribution carries its own `knowledge_type`: `DEFAULT_AUTHORITY` puts
+    hard_constraint at 1 and company_rule at 3, so emitting a manufacturer's
+    maximum span and a nominal panel width at one authority makes exactly one of
+    them wrong — an unbeatable preference, or a beatable safety limit.
+
+    The ref reads `M-SLAT#max_span_mm@v1`: a knowledge-shaped id that cannot
+    collide with an authored knowledge object, so a `governed_by` edge citing one
+    is legible as "the model asked for this" rather than as a rule someone could
+    go and edit. These versions are never stored — the run's model snapshot
+    (id, version, content hash) is what makes them reproducible.
+    """
+    return [
+        KnowledgeVersion(
+            object_id=f"{model.id}#{c.param}",
+            version=model.version,
+            type=c.knowledge_type,
+            authority=c.authority,
+            scope={"series": model.id},
+            actions=[SetParam(param=c.param, value=c.value)],
+            title=f"{model.ref} model policy: {c.param} = {c.value}",
+            title_i18n={"he": f"מדיניות הדגם {model.ref}: {c.param} = {c.value}"},
+            attributed_to="fence_model",
+            derived_from=[model.ref],
+        )
+        for c in model.layout_policy
+    ]
+
+
+def _pick_model(
+    library: FenceModelLibrary,
+    choice: FenceModelChoice | None,
+    default_choice: FenceModelChoice | None,
+    demand_skus: dict[str, str],
+) -> tuple[FenceModel, str]:
+    """(model, where the choice came from) for one stretch of fence.
+
+    An interval event beats the project default, which beats the built-in
+    compatibility model — the same precedence base and height already use.
+
+    M-LEGACY is a deliberate exception and the only one: it is rebuilt from the
+    run's resolved demand skus rather than served from the library, because its
+    eligibility exists to carry whatever `DefaultComponent` knowledge resolved to.
+    A stored M-LEGACY document naming RAIL-3000 would quietly outrank a rule that
+    changed the rail — the failure this seam exists to prevent. Every other model
+    names its own products, which is the whole point of authoring one.
+    """
+    effective = choice or default_choice
+    source = "event" if choice else ("project" if default_choice else "builtin")
+    legacy = lambda: legacy_model(  # noqa: E731
+        rail_sku=demand_skus.get("rail_sku", "RAIL-3000"),
+        screw_sku=demand_skus.get("screw_sku", "SCREW-S10"),
+    )
+    if effective is None:
+        return legacy(), source
+    if effective.model_id == LEGACY_MODEL_ID:
+        # M-LEGACY has exactly one version, for ever: the route reserves the id
+        # (`_reserved`), so nothing can publish a v2 the picker would offer and
+        # this seam would then ignore. A pin naming any other version is a
+        # refusal rather than a silent fallback — accepting it here is how the
+        # picker, the preview and the impact report end up agreeing on a model
+        # generation refuses to build.
+        if effective.version_pin not in (None, LEGACY_MODEL_VERSION):
+            raise GenerationFailure(
+                f"fence model {LEGACY_MODEL_ID}@v{effective.version_pin} does not "
+                f"exist: the compatibility model has only v{LEGACY_MODEL_VERSION}",
+                code="fence_model_not_found",
+                model_id=LEGACY_MODEL_ID, version_pin=effective.version_pin,
+            )
+        return legacy(), source
+    model = library.resolve(effective.model_id, effective.version_pin)
+    if model is None:
+        pinned = "" if effective.version_pin is None else f"@v{effective.version_pin}"
+        raise GenerationFailure(
+            f"fence model {effective.model_id}{pinned} is not available: it does not "
+            "exist, or no version of it is active",
+            code="fence_model_not_found",
+            model_id=effective.model_id,
+            version_pin=effective.version_pin if effective.version_pin is not None else "",
+        )
+    return model, source
+
+
 def _generate_run(
     topo: Topology,
     run: Run,
@@ -566,7 +722,9 @@ def _generate_run(
     strategy: Strategy,
     applied: set[str],
     demand_skus: dict[str, str],
-    models_used: list[FenceModel],
+    models_used: list[ModelUse],
+    library: FenceModelLibrary,
+    default_model: FenceModelChoice | None,
 ) -> None:
     length = run_length(topo, run)
     slope_permille = max_slope_permille(topo, run)
@@ -579,32 +737,103 @@ def _generate_run(
         "run": {"length_mm": length, "slope_permille": slope_permille},
     }
 
-    # M-LEGACY until a fence_model event exists to pick another; its eligibility
-    # is seeded from the run's resolved demand skus (resolved once in generate(),
-    # never re-resolved here) so a DefaultComponent change still reaches the BOM.
-    model = legacy_model(
-        rail_sku=demand_skus.get("rail_sku", "RAIL-3000"),
-        screw_sku=demand_skus.get("screw_sku", "SCREW-S10"),
-    )
-    _validate_resolved_model(model, catalog)
-    models_used.append(model)
+    # -- the model, and everything scoped to it --------------------------------
+    # A fence_model interval event may change the model partway along the run, so
+    # the model — and the numbers resolved under its `series` scope — belong to a
+    # SEGMENT, not to the run. Memoised on the choice: with no event and no project
+    # default there is exactly one choice, hence one validation, one select_model
+    # node and one resolve_max_span node, which is what every run had before a
+    # model could be chosen at all.
+    #
+    # Resolution is lazy, on first use by a segment. Resolving eagerly would emit a
+    # select_model node and count a model in the run's snapshot for a model that no
+    # bay is built to — the graph is the explanation, and it must not describe a
+    # choice the fence never made.
+    resolved: dict[tuple | None, _SegmentModel] = {}
 
-    # -- hard span parameter ---------------------------------------------------
-    res = resolve_param(kb, ctx, "max_span_mm")
-    if res.winner is None:
-        raise GenerationFailure(f"no max_span_mm knowledge applies to run {run.id}")
-    max_span: Mm = next(a.value for a in res.winner.actions if a.kind == "set_param")
-    max_span_ref = res.winner.version.ref
-    firing_node = builder.add(
-        "rule_firing", "resolve_max_span",
-        payload={"param": "max_span_mm", "value": max_span},
-        inputs=[run_fact.id],
-        governed_by=[max_span_ref],
-        # a defeated edge cites the LOSING version (decision-model.md); the loser
-        # is any firing whose defeated_by is non-empty
-        defeated=[f.version.ref for f in res.firings if f.defeated_by],
-    )
-    _surface_conflicts(res.conflicts, builder, strategy)
+    def segment_model(choice: FenceModelChoice | None) -> _SegmentModel:
+        key = choice.key() if choice else None
+        cached = resolved.get(key)
+        if cached is not None:
+            return cached
+
+        # the EFFECTIVE choice, because the options belong to whichever choice
+        # actually applied — reading them off the interval event alone silently
+        # drops every option a project default carried
+        effective = choice or default_model
+        options = dict(effective.options) if effective else {}
+        model, source = _pick_model(library, choice, default_model, demand_skus)
+        _validate_resolved_model(model, catalog)
+        # `series` is the dimension a knowledge rule needs to say "spans exactly
+        # 1800 on that product line" — blocked until a model id was a fact of
+        # generation (plan/current-status.md, the two blocked dimensions).
+        seg_ctx = {
+            "scope": bind_scope(scope, {"series": model.id}),
+            "run": ctx["run"],
+        }
+        # The model's layout policy joins the knowledge BEFORE anything under
+        # this scope is resolved — a contribution added after `max_span_mm` had
+        # resolved would be a contribution that never applied. The run's own
+        # KnowledgeBase is never mutated (generate() does not touch its inputs):
+        # this is a per-segment view of it, so one model's asks cannot survive
+        # into the next segment's resolution.
+        seg_kb = (KnowledgeBase(versions=[*kb.versions, *_policy_knowledge(model)])
+                  if model.layout_policy else kb)
+        select_node = builder.add(
+            "selection", "select_model",
+            payload={"model_ref": model.ref, "source": source,
+                     "options": options},
+            inputs=[run_fact.id],
+        )
+
+        res = resolve_param(seg_kb, seg_ctx, "max_span_mm")
+        if res.winner is None:
+            raise GenerationFailure(f"no max_span_mm knowledge applies to run {run.id}")
+        max_span_mm: Mm = next(a.value for a in res.winner.actions if a.kind == "set_param")
+        firing = builder.add(
+            "rule_firing", "resolve_max_span",
+            payload={"param": "max_span_mm", "value": max_span_mm},
+            inputs=[run_fact.id, select_node.id],
+            governed_by=[res.winner.version.ref],
+            # a defeated edge cites the LOSING version (decision-model.md); the loser
+            # is any firing whose defeated_by is non-empty
+            defeated=[f.version.ref for f in res.firings if f.defeated_by],
+        )
+        _surface_conflicts(res.conflicts, builder, strategy)
+
+        # a manufactured bay width, if this model's line has one. Resolved under
+        # the same segment scope as the rest, so a model contributes it through
+        # `layout_policy` rather than through a private channel.
+        exact_res = resolve_param(seg_kb, seg_ctx, "exact_span_mm")
+        exact_span = exact_span_ref = None
+        if exact_res.winner is not None:
+            exact_span = next(a.value for a in exact_res.winner.actions
+                              if a.kind == "set_param")
+            exact_span_ref = exact_res.winner.version.ref
+
+        rails, rails_refs = _resolve_quantity(seg_kb, seg_ctx, "rails_per_span", 2)
+        screws, screws_refs = _resolve_quantity(seg_kb, seg_ctx, "screws_per_span", 8)
+
+        sm = _SegmentModel(
+            model=model,
+            use=ModelUse(
+                model_id=model.id, version=model.version,
+                content_hash=content_hash(model),
+                options=options,
+            ),
+            options=options,
+            select_node_id=select_node.id,
+            max_span=max_span_mm,
+            max_span_ref=res.winner.version.ref,
+            firing_node_id=firing.id,
+            rails_per_span=rails,
+            screws_per_span=screws,
+            quantity_refs=rails_refs + screws_refs,
+            exact_span=exact_span, exact_span_ref=exact_span_ref,
+        )
+        resolved[key] = sm
+        models_used.append(sm.use)
+        return sm
 
     # -- gates -----------------------------------------------------------------
     gates: list[tuple[Mm, Mm, str, str]] = []
@@ -722,6 +951,9 @@ def _generate_run(
         if gate_slope_res.winner else None)
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
     fixed |= gate_edges | step_stations
+    # a model change is a structural boundary for the same reason a base transition
+    # is: a bay may not straddle the place where the fence becomes a different fence
+    fixed |= set(fence_model_transition_stations(topo, run))
     fixed_sorted = sorted(fixed)
 
     reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope)
@@ -948,8 +1180,9 @@ def _generate_run(
         return vertical, None
 
     # -- span quantities (resolved here so demand needs no knowledge access) ---
-    rails_per_span, rails_refs = _resolve_quantity(kb, ctx, "rails_per_span", 2)
-    screws_per_span, screws_refs = _resolve_quantity(kb, ctx, "screws_per_span", 8)
+    # (rails_per_span / screws_per_span moved into segment_model: they are resolved
+    # under the segment's model scope, so a rule may say "three rails on that
+    # product line" — see the `series` binding there)
 
     # -- layout preferences: resolved, conflicts surfaced (S13) ----------------
     prefs = preference_firings(
@@ -986,17 +1219,38 @@ def _generate_run(
 
     gate_intervals = [(gs, ge) for gs, ge, _, _ in gates]
     span_ids: list[str] = []
+    # spans grouped by the model they were built to, so resolve_span_quantities
+    # scopes to the bays its numbers actually governed
+    spans_by_model: dict[tuple | None, list[str]] = {}
+    # bays whose height this section's model cannot be built at, collected for
+    # ONE warning per section rather than one per bay (fence-model spec
+    # §warnings): a level top over a slope gives every bay a different height
+    # (S06), so a discrete-height model would otherwise file a warning per bay
+    # and drown every other warning in the list. Keyed by model ref because two
+    # models may meet on one run and a message names the model it is about.
+    unsupported_heights: dict[str, list[tuple[Mm, str]]] = {}
     for seg_start, seg_end in zip(fixed_sorted, fixed_sorted[1:]):
         if any(gs <= seg_start and seg_end <= ge for gs, ge in gate_intervals):
             continue
         seg_len = seg_end - seg_start
         if seg_len <= 0:
             continue
+        # model stations are boundary stations, so the whole segment is one model's
+        # and its mid-point is a safe place to ask which
+        choice = fence_model_at(topo, run, (seg_start + seg_end) // 2)
+        sm = segment_model(choice)
+        model = sm.model
+        rails_per_span, screws_per_span = sm.rails_per_span, sm.screws_per_span
         layout = layout_segment(
-            seg_len, max_span,
+            seg_len, sm.max_span,
             prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
+            exact_mm=sm.exact_span,
         )
-        governed = [max_span_ref] + ([layout_pref_ref] if layout_pref_ref else [])
+        governed = [sm.max_span_ref] + ([layout_pref_ref] if layout_pref_ref else [])
+        if layout.exact_over_max:
+            _exact_over_max(builder, strategy, run, sm)
+        elif layout.remainder_mm is not None:
+            _span_not_exact(builder, strategy, run, seg_start, seg_end, sm, layout)
         layout_node = builder.add(
             "structural", "layout_spans",
             payload={
@@ -1008,7 +1262,7 @@ def _generate_run(
                     if layout.rejected_alternative else []
                 ),
             },
-            inputs=[run_fact.id, firing_node.id, vertical_node.id],
+            inputs=[run_fact.id, sm.firing_node_id, vertical_node.id],
             governed_by=governed,
         )
         stations = boundaries(seg_start, layout.widths)
@@ -1040,23 +1294,31 @@ def _generate_run(
                 screws_count=screws_per_span,
                 rail_cut_basis="slope" if v_mode == "raked" else "width",
             )
-            span.panel = resolve_panel(
-                model.default_spec,
-                PanelContext(
-                    centre_width_mm=width,
-                    clear_width_mm=width,  # face widths arrive in phase 2
-                    height_mm=height,
-                    vertical=v_mode,
-                    length_basis=span.rail_cut_basis,
-                    slope_len_mm=span.slope_len_mm,
-                    params={"rails_per_span": rails_per_span,
-                            "screws_per_span": screws_per_span},
-                ),
-                model_ref=model.ref,
+            panel_ctx = PanelContext(
+                centre_width_mm=width,
+                clear_width_mm=width,  # face widths arrive in phase 2
+                height_mm=height,
+                vertical=v_mode,
+                length_basis=span.rail_cut_basis,
+                slope_len_mm=span.slope_len_mm,
+                params={"rails_per_span": rails_per_span,
+                        "screws_per_span": screws_per_span},
+                options=sm.options,
             )
+            # per BAY, not per segment: a variant condition reads the panel's own
+            # height and vertical mode, and a level top over a slope gives every
+            # bay of one segment a different height (S06)
+            variant = choose_variant(model, panel_ctx)
+            span.panel = resolve_panel(
+                variant.spec, panel_ctx,
+                model_ref=model.ref, variant_index=variant.index,
+            )
+            if not height_supported(model.height_support, height):
+                unsupported_heights.setdefault(model.ref, []).append((height, span.id))
             strategy.spans.append(span)
             span_ids.append(span.id)
-            builder.add(
+            spans_by_model.setdefault(choice.key() if choice else None, []).append(span.id)
+            span_node = builder.add(
                 "structural", "create_span",
                 payload={
                     "width_mm": width, "vertical": v_mode, "height_mm": height,
@@ -1069,17 +1331,52 @@ def _generate_run(
                 inputs=[layout_node.id] + ([fv_node] if fv_node else []),
                 governed_by=governed,
             )
+            panel_inputs = [layout_node.id, sm.select_node_id]
+            if model.variants:
+                # NO `defeated` edge, and that is not an omission: a variant
+                # condition is evaluated outside the knowledge evaluator, so
+                # there is no losing knowledge VERSION to cite — a defeated edge
+                # cites the loser's ref (decision-model.md) and a variant has
+                # none. This node IS the trace. Emitted only when the model
+                # actually declares variants, so a run built to a single-spec
+                # model keeps the explanation it has today.
+                variant_node = builder.add(
+                    "selection", "select_variant",
+                    payload={"model_ref": model.ref,
+                             "variant_index": variant.index,
+                             "failed": variant.failed,
+                             "not_reached": variant.not_reached,
+                             "of": len(model.variants)},
+                    scope_refs=[span.id], inputs=[sm.select_node_id, span_node.id],
+                )
+                panel_inputs.append(variant_node.id)
+            for slot in span.panel.slots:
+                # one node per slot an option actually GOVERNED, not per slot:
+                # "why this product" is only a question where an answer changed
+                # the candidates, and a node per slot per bay would bury the
+                # ones that did
+                if slot.option_axis is None:
+                    continue
+                panel_inputs.append(builder.add(
+                    "selection", "select_product",
+                    payload={"slot": slot.slot_key, "axis": slot.option_axis,
+                             "value": slot.option_value,
+                             # exactly one member survives a narrowing, by
+                             # construction: it is the member the option named
+                             "sku": slot.eligibility.members[0].sku},
+                    scope_refs=[span.id], inputs=[sm.select_node_id, span_node.id],
+                ).id)
             builder.add(
                 "structural", "resolve_panel",
                 payload={"model_ref": model.ref,
                          "slots": [{"key": s.slot_key, "role": s.role, "qty": s.qty}
                                    for s in span.panel.slots]},
-                scope_refs=[span.id], inputs=[layout_node.id],
+                scope_refs=[span.id], inputs=panel_inputs,
             )
-            if width > max_span:
+            if width > sm.max_span:
                 raise GenerationFailure(
-                    f"span {span.id} width {width} exceeds hard max {max_span}",
-                    constraint_refs=[max_span_ref],
+                    f"span {span.id} width {width} exceeds hard max {sm.max_span}",
+                    constraint_refs=[sm.max_span_ref],
                 )
             if v_mode == "stepped" and max_gap is not None and 0 < abs(gz1 - gz0) <= max_step \
                     and abs(gz1 - gz0) > max_gap:
@@ -1192,15 +1489,224 @@ def _generate_run(
             )
             strategy.posts.append(post)
 
-    if span_ids:
+    # one node per model actually built to, scoped to that model's bays — the
+    # numbers differ per model as soon as a rule is scoped to `series`, and a
+    # single run-wide node would then attribute one model's rail count to the
+    # other model's bays
+    for key, ids in spans_by_model.items():
+        sm = resolved[key]
         builder.add(
             "quantity", "resolve_span_quantities",
-            payload={"rails_per_span": rails_per_span, "screws_per_span": screws_per_span},
-            scope_refs=span_ids,
-            inputs=[run_fact.id],
-            governed_by=rails_refs + screws_refs,
+            payload={"rails_per_span": sm.rails_per_span,
+                     "screws_per_span": sm.screws_per_span},
+            scope_refs=ids,
+            inputs=[run_fact.id, sm.select_node_id],
+            governed_by=sm.quantity_refs,
         )
 
+    _check_panel_safety(kb, run, scope, strategy, builder, resolved, spans_by_model,
+                        {s.id: s for s in strategy.spans}, ctx["run"])
+
+    for model_ref, offenders in unsupported_heights.items():
+        # the DISTINCT heights: the reader has to change a height or a model, and
+        # "1400 mm, 1400 mm, 1400 mm" says nothing "1400 mm" does not
+        heights = sorted({h for h, _ in offenders})
+        spans_affected = sorted(span_id for _, span_id in offenders)
+        node = builder.add(
+            "conflict", "height_not_supported",
+            payload={"model_ref": model_ref, "run_id": run.id,
+                     "heights_mm": heights, "n": len(heights)},
+            scope_refs=spans_affected,
+        )
+        strategy.warnings.append(
+            StrategyWarning(
+                code="height_not_supported", severity="warning",
+                message=f"Fence model {model_ref} does not support "
+                        f"{len(heights)} panel height(s) in section {run.id}: "
+                        + ", ".join(f"{h} mm" for h in heights),
+                element_refs=spans_affected, decision_ref=node.id,
+                # the offending heights themselves, pre-joined the way
+                # `contenders` and `surfaces` already are (a warning param is a
+                # `str | int`). The SENTENCE renders the range instead, because
+                # a joined string is the one thing `unitParams` cannot convert
+                # and a list of millimetres beside a "cm" label would be a lie;
+                # the decision node's payload keeps the real int list, which is
+                # what `/explain` renders in the reader's unit.
+                params={"model_ref": model_ref, "run_id": run.id,
+                        "heights_mm": ", ".join(str(h) for h in heights),
+                        "n": len(heights),
+                        "min_mm": heights[0], "max_mm": heights[-1]},
+            )
+        )
+
+
+# The panel checks, and the ONE knowledge param each is governed by. Every gap a
+# fence model introduces is regulated somewhere — the 100 mm sphere test on
+# openings, the anti-ladder rule keeping a middle rail clear of the bottom one —
+# and the numbers are jurisdictional, so they live in knowledge and not here.
+#
+# Written as records with `code="..."` spelled out rather than as a dict keyed by
+# the code, because the locale-bundle guard scans these files for exactly that
+# literal: a code that only ever existed as a dict key or a loop variable would
+# ship untranslated with the test green, which is the failure that guard exists
+# to prevent.
+def _exact_over_max(builder, strategy, run, sm) -> None:
+    """A model's manufactured bay width is wider than the hard maximum span.
+
+    Two rules of different kinds, both stated, neither able to give way: the
+    panel does not exist in a narrower size and the maximum is a hard constraint.
+    Surfaced as a conflict citing BOTH refs, which is what S13 requires and what
+    a `min()` in the layout would have hidden — bays of neither width, reported
+    as the width nobody used.
+    """
+    params = {"element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
+              "exact_mm": sm.exact_span, "max_mm": sm.max_span}
+    node = builder.add(
+        "conflict", "exact_span_over_max", payload=dict(params),
+        governed_by=[r for r in (sm.exact_span_ref, sm.max_span_ref) if r],
+    )
+    strategy.warnings.append(StrategyWarning(
+        code="exact_span_over_max", severity="error",
+        message=f"Model {sm.model.ref} is made in {sm.exact_span} mm bays, wider "
+                f"than the {sm.max_span} mm maximum span — section {run.id} was "
+                "laid out freely instead.",
+        decision_ref=node.id, params=params,
+    ))
+
+
+def _span_not_exact(builder, strategy, run, seg_start, seg_end, sm, layout) -> None:
+    """A manufactured-width model met a segment that is not a whole multiple.
+
+    Reported rather than absorbed: stretching every bay to make it come out even
+    would put a pre-assembled panel in a bay it does not fit, which is the exact
+    failure an exact width exists to prevent. A model that cannot tolerate a
+    remainder at all contributes `exact_span_mm` as a hard_constraint, and the
+    span_not_exact check is then the caller's cue to fail — not this warning's.
+    """
+    params = {"element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
+              "segment_mm": seg_end - seg_start, "exact_mm": sm.exact_span,
+              "remainder_mm": layout.remainder_mm}
+    node = builder.add(
+        "conflict", "span_not_exact", payload=dict(params),
+        governed_by=[sm.exact_span_ref] if sm.exact_span_ref else [],
+    )
+    strategy.warnings.append(StrategyWarning(
+        code="span_not_exact", severity="warning",
+        message=f"Section {run.id} does not divide into {sm.exact_span} mm bays: "
+                f"{layout.remainder_mm} mm is left over as an odd bay.",
+        decision_ref=node.id, params=params,
+    ))
+
+
+@dataclass(frozen=True)
+class _PanelLimit:
+    code: str
+    param: str
+
+
+_PANEL_LIMITS = (
+    _PanelLimit(code="clear_gap_exceeded", param="max_clear_gap_mm"),
+    _PanelLimit(code="rail_separation_insufficient", param="min_rail_separation_mm"),
+    _PanelLimit(code="pattern_residual_large", param="max_pattern_residual_mm"),
+)
+
+
+def _check_panel_safety(
+    kb: KnowledgeBase,
+    run: Run,
+    scope: dict[str, str],
+    strategy: Strategy,
+    builder: GraphBuilder,
+    resolved: dict,
+    spans_by_model: dict,
+    spans: dict[str, Span],
+    run_facts: dict,
+) -> None:
+    """Panel gaps and rail spacing, against the limits knowledge holds.
+
+    **The tier decides the consequence, not the check.** ADR-0005 is explicit
+    that a violated hard constraint is a generation failure, and that is what the
+    max-span check already does. It would be incoherent for a 1801 mm span to be
+    fatal while a 130 mm child-head gap is a note. So the same check raises
+    `GenerationFailure` when the governing knowledge object is a
+    `hard_constraint` and warns otherwise — the demo seeds these as
+    `company_rule` precisely because the numbers in it are US/AU/UK and Israeli
+    standards have not been researched. A jurisdiction pack seeds them as
+    `hard_constraint` and they stop a job, with no code change.
+
+    Aggregated per section like `height_not_supported`, and for the same reason:
+    a systemic gap on a 60-bay fence is one thing to go fix, not sixty.
+    """
+    for key, span_ids in spans_by_model.items():
+        sm = resolved[key]
+        # the run's REAL facts, not invented zeros: a limit conditioned on run
+        # length or grade would otherwise resolve against a fence that does not
+        # exist — and this context can raise, when the winner is a hard constraint
+        ctx = {"scope": bind_scope(scope, {"series": sm.model.id}),
+               "run": dict(run_facts)}
+        for limit_rule in _PANEL_LIMITS:
+            code, param = limit_rule.code, limit_rule.param
+            res = resolve_param(kb, ctx, param)
+            if res.winner is None:
+                continue  # no rule, no check — a limit nobody stated is not zero
+            limit = next(a.value for a in res.winner.actions if a.kind == "set_param")
+            offenders = [
+                (worst, sid) for sid in span_ids
+                if (worst := _panel_offence(code, spans[sid], limit)) is not None
+            ]
+            if not offenders:
+                continue
+            worst = (min if code == "rail_separation_insufficient" else max)(
+                value for value, _ in offenders)
+            affected = sorted(sid for _, sid in offenders)
+            params = {"element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
+                      "value_mm": worst, "limit_mm": limit, "n": len(affected)}
+            if res.winner.version.type == "hard_constraint":
+                raise GenerationFailure(
+                    f"{code} in section {run.id}: {worst} mm against a limit of "
+                    f"{limit} mm, in {len(affected)} bay(s)",
+                    code=code, constraint_refs=[res.winner.version.ref], **params,
+                )
+            node = builder.add(
+                "conflict", code, payload=dict(params), scope_refs=affected,
+                governed_by=[res.winner.version.ref],
+            )
+            strategy.warnings.append(StrategyWarning(
+                code=code, severity="warning",
+                message=f"{code} in section {run.id}: {worst} mm against a limit "
+                        f"of {limit} mm, in {len(affected)} bay(s).",
+                element_refs=affected, decision_ref=node.id, params=params,
+            ))
+
+
+def _panel_offence(code: str, span: Span, limit: Mm) -> Mm | None:
+    """The offending measurement for this check on this bay, or None if it passes."""
+    if span.panel is None:
+        return None
+    if code == "clear_gap_exceeded":
+        # against max(openings_mm), never one rounded average and never the
+        # between-member gaps alone. A fit spreads its residual a millimetre at a
+        # time, so a single rounded value would pass a limit several real
+        # openings exceeded — and `center` justification puts the whole residual
+        # against the POSTS, where `gaps_mm` cannot see it at all.
+        openings = [o for slot in span.panel.slots if slot.fit
+                    for o in slot.fit.openings_mm]
+        worst = max(openings, default=0)
+        return worst if worst > limit else None
+    if code == "rail_separation_insufficient":
+        # the anti-ladder rule: the rail above the bottom one must be far enough
+        # up that a child cannot climb the two. Only meaningful with three or
+        # more rails; two rails are the top and the bottom of the frame.
+        for slot in span.panel.slots:
+            if slot.orientation == "horizontal" and len(slot.positions_mm) >= 3:
+                rungs = sorted(slot.positions_mm)
+                gap = rungs[1] - rungs[0]
+                if gap < limit:
+                    return gap
+        return None
+    residuals = [slot.fit.residual_mm for slot in span.panel.slots if slot.fit]
+    worst = max(residuals, default=0)
+    return worst if worst > limit else None
 
 
 def _check_post_lengths(

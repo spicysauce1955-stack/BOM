@@ -25,6 +25,8 @@
     <button data-tab="knowledge" data-i18n="tabs.knowledge">Knowledge</button>
     <button data-tab="review" data-i18n="tabs.review">Review queue</button>
     <button data-tab="structure" data-i18n="tabs.structure">Structure</button>
+    <button data-tab="panel" data-i18n="tabs.panel">Panel</button>
+    <button data-tab="models" data-i18n="tabs.models">Models</button>
     <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
     <button data-tab="inventory" data-i18n="tabs.inventory">Inventory</button>
   </nav>
@@ -40,6 +42,7 @@
           <button id="tool-base" class="tool" data-i18n-title="tool.base" title="Base surface"><span class="t-icon">🧱</span><span class="t-label" data-i18n="toolbar.base">Base</span></button>
           <button id="tool-ground" class="tool" data-i18n-title="tool.ground" title="Ground elevation point"><span class="t-icon">⛰️</span><span class="t-label" data-i18n="toolbar.ground">Ground</span></button>
           <button id="tool-height" class="tool" data-i18n-title="tool.height" title="Height intent"><span class="t-icon">📏</span><span class="t-label" data-i18n="toolbar.height">Height</span></button>
+          <button id="tool-model" class="tool" data-i18n-title="tool.model" title="Fence model"><span class="t-icon">🧩</span><span class="t-label" data-i18n="toolbar.model">Model</span></button>
           <button id="tool-pin" class="tool" data-i18n-title="tool.pin" title="Pin post"><span class="t-icon">📍</span><span class="t-label" data-i18n="toolbar.pin">Pin</span></button>
           <div class="toolbar-spacer"></div>
           <button id="btn-undo" data-i18n-title="tool.undo" title="Undo (Ctrl+Z)"><span class="t-icon">↶</span><span class="t-label" data-i18n="toolbar.undo">Undo</span></button>
@@ -91,6 +94,9 @@
           </div>
         </div>
         <aside class="side-col">
+          <!-- what this fence is BUILT FROM, without leaving the drawing.
+               Owned by js/panel.js (the Panel tab owns the rest of the story). -->
+          <div class="panel" id="model-row"></div>
           <div class="panel">
             <h3 data-i18n="inspect.run_editing">Run editing</h3>
             <select id="run-select"></select>
@@ -169,6 +175,57 @@
         <button id="btn-propose" data-i18n="review.propose">Propose knowledge from corrections</button>
       </div>
       <div id="candidate-list"></div>
+    </section>
+
+    <!-- ============ panel tab ============
+         Both children are rendered entirely by js/panel.js: the height/width
+         labels carry the display unit, so they cannot be static data-i18n. -->
+    <section id="tab-panel" class="tab">
+      <div class="panel" id="panel-picker"></div>
+      <div id="panel-preview"></div>
+    </section>
+
+    <!-- ============ models tab ============
+         The fence model EDITOR. Rendered by js/model-editor.js, which owns
+         everything under this section and nothing outside it. The row lists are
+         DOM-built (they carry live listeners over the model document); only the
+         library, the status line and the preview are innerHTML. -->
+    <section id="tab-models" class="tab">
+      <div class="panel">
+        <h3 data-i18n="model.library">Fence models</h3>
+        <div id="model-list"></div>
+        <button id="btn-model-new" type="button" data-i18n="model.new">+ New model</button>
+      </div>
+      <div class="models-row">
+        <div class="panel" id="model-form" hidden>
+          <div id="model-head"></div>
+          <div id="model-editor">
+            <div id="model-spec-picker"></div>
+            <div id="model-frame"></div>
+            <div id="model-infill"></div>
+            <div id="model-fixings"></div>
+            <div id="model-axes"></div>
+          </div>
+          <!-- the escape hatch, in millimetres like every other raw-JSON box -->
+          <textarea id="model-json" dir="ltr" rows="16" cols="80" hidden></textarea>
+          <div class="toolbar">
+            <button id="btn-model-advanced" type="button" data-i18n="knowledge.builder.advanced">Advanced (JSON)</button>
+            <button id="btn-model-save" type="button" data-i18n="model.save_draft">Save draft</button>
+            <button id="btn-model-impact" type="button" data-i18n="impact.preview">Preview impact</button>
+            <button id="btn-model-publish" type="button" class="primary" data-i18n="model.publish">Publish</button>
+            <button id="btn-model-close" type="button" data-i18n="model.close">Close</button>
+          </div>
+          <div id="model-status" class="meta"></div>
+          <div id="model-errors"></div>
+          <div id="model-impact-out"></div>
+        </div>
+        <!-- two children on purpose: the bay fields keep their focus while the
+             priced body below them is replaced on every re-price -->
+        <div id="model-preview">
+          <div class="panel" id="model-preview-controls"></div>
+          <div id="model-preview-body"></div>
+        </div>
+      </div>
     </section>
 
     <!-- ============ bom tab ============ -->

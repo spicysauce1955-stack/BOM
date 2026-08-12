@@ -1,6 +1,11 @@
 # Current status
 
-Updated: 2026-08-12 — V1 complete; fence models phase 1 landed (phases 2–3 remain)
+Updated: 2026-08-13 — V1 complete; fence models phase 1 landed, and W1–W5 plus
+most of W6 of `specs/2026-08-12-panel-authoring-design.md` are in: a model is
+persisted, selectable, previewable, explainable and editable. Two review rounds
+(architecture + tests) dispositioned. Remaining: an SVG renderer for the
+elevation the backend already serves, `excess=trim_last`/`extension_clip`,
+`InfillSpec.supply=assembly`, and phase 3 arc-flow.
 
 - [x] Research (4 parallel researcher reports, synthesis, ADRs 0001–0010)
 - [x] Architecture (docs/architecture/*, golden scenarios S01–S14 defined)
@@ -351,3 +356,202 @@ the elevation read model, the panel warning codes, and multi-member eligibility 
 running the FFD planner per candidate — plus the `select_supply` decision node, without
 which a multi-member choice has no explanation (docs/v1-known-limitations.md). Phase 3:
 arc-flow over multiple stock lengths and sources with remnants, via OR-Tools.
+
+## Panel authoring W1/W2 — the model gets a UI (2026-08-12) — COMPLETE
+Spec docs/superpowers/specs/2026-08-12-panel-authoring-design.md. W1 and W2's backend
+landed on `feat/panel-authoring-w1` (persisted, versioned models; the `fence_model`
+interval event; `POST /api/fence-models/{id}/{v}/preview`); this is the surface, which was
+the whole complaint: *"I don't see an option to see the Panel spec and choose a model
+before the strategy."* Every clause of it was true of the frontend — `variant` and `preset`
+had **zero hits** across `web/static/`, and the only product choice anywhere in the app was
+the gate kit picker, so the thing that decides every material, size and structure below it
+was unreachable. Three surfaces now: a **Panel tab** between Structure and BOM (`js/panel.js`
+— a model picker over the library, height and bay width in the display unit, and one
+panel's parts priced from the preview endpoint, which drives the SAME `resolve_panel` →
+`derive_requirements` → `resolve_supply` pipeline a real bay does, so the preview cannot
+drift from the fence the user then gets); a **model row in the canvas aside**, so "what is
+this fence built from" is answerable without leaving the drawing; and a **`fence_model`
+event tool** on the rail, authored through the same popover as height intent. Three
+decisions worth keeping: `unsupplied` and `warnings` render ABOVE the priced table, because
+a panel one part short must not read as complete; `apiSend` grew a `quiet` option, because a
+debounced preview firing per keystroke owed the user silence rather than a dialog each time;
+and the event tool replaces any `fence_model` event overlapping the stretch it writes,
+because `fence_model_at` answers with the FIRST covering event — a stale one left behind
+would silently defeat the choice just made, with nothing on screen to see. 671 pytest (+7,
+a node suite for the library naming rules the browser cannot reach: a draft-only or retired
+model is offered NOT SELECTABLE rather than hidden) · 126 golden scenarios (unchanged) ·
+116/116 smoke (+9).
+
+**W3–W6 remain**: variants and option axes (`_unsupported_features`), authoring (edit, add,
+duplicate, vary), the elevation drawing beside the slot table, and the `select_supply`
+explanation.
+
+## Panel authoring W3/W5/W6 — the model resolves, explains and is checked (2026-08-12) — COMPLETE
+Four features stopped being refusals. **Variants** resolve per BAY (a condition reads the
+panel's own height, and a level top over a slope gives every bay of one segment a different
+one); precedence is authored order, first satisfied wins, and the node records `failed`
+(evaluated, not satisfied) separately from `not_reached` (authored after the winner, never
+asked) because recording the second as failures would put an unchecked claim in the graph.
+No `defeated` edge — a variant is product structure evaluated outside the knowledge
+evaluator — and a test asserts the absence so nobody re-adds it for symmetry.
+**Option axes** NARROW a slot's eligibility to the member `sku_by_option` names, keeping its
+priority and approval, so a colour cannot smuggle in a product the slot disallows.
+**`height_support`** aggregates per section, not per bay. **`layout_policy`** contributions
+enter the same evaluator scoped `series=<model_id>`, each at ITS OWN authority — lumping a
+manufacturer's max span with a nominal width buys either an unbeatable preference or a
+beatable safety limit. Two stay refused with stated reasons: `Axis.available_when` (an axis
+is answered before a bay exists) and any contribution outside `SERIES_SCOPED_PARAMS`.
+
+**`select_supply` closed the phase-2 blocker** `docs/v1-known-limitations.md` recorded.
+`SupplyDecision` carries every candidate's PLANNED cost and waste (infeasible ⇒ `None`, never
+zero, which would read as "free"), and `decisions/supply.py` derives the node at READ time —
+selection is coupled to the cut plan and runs in fulfillment, which has no graph builder and
+does not acquire one. The stored document is never rewritten; two tests pin that. The
+sentence names the runner-up and the gap, because "cheaper than the others" is not an
+explanation. Mutation-verified.
+
+**Pricing by the running metre** (`LinearPrice`), the way the market quotes bar stock. A rate
+AUTHORS the purchase price of a whole bar; per-m² and per-band are absent because `fulfill()`
+emits one line per SKU and they need grouping per `(sku, price_basis, size)` first.
+`purchase_price_cents()` is the single read and the one rounding point. A rate-priced product
+may not also carry a flat price.
+
+**The panel is drawn.** `report/elevation.py` turns a ResolvedPanel into rectangles, on the
+preview and on every structure bay. Derived, never stored; computed on the server, not
+mirrored in JS. `placement_positions` spreads `distributed` INCLUSIVE of both ends — two
+rails is a top rail and a bottom rail — and is the one rounding point for placement. The one
+undeclared number (a frame member's face height, product data the catalog lacks) is flagged
+`declared=False` rather than passed off as measured.
+
+**Panel safety**: `clear_gap_exceeded` measured against `max(gaps_mm)` — a rounded 23 would
+pass a 23 mm limit while several real openings measured 24, the sphere test defeated by a
+return type — plus `rail_separation_insufficient` (anti-ladder) and
+`pattern_residual_large`. **The tier decides the consequence**: the same check raises
+`GenerationFailure` under a `hard_constraint` and warns otherwise, so a jurisdiction pack
+stops a job with no code change. The demo seeds them as `company_rule` because every number
+in it is US/AU/UK. Codes are written as `code="..."` literals in a record rather than dict
+keys, because the locale guard scans for that literal — found while writing it.
+
+**`catalog_hash` narrowed** (second closed limitation): `catalog_skus` records what a run
+named — chosen SKUs, every eligibility RIVAL, kit components transitively — so adding an
+unrelated product no longer 409s every prior run, while repricing one it bought still does.
+Safe only because eligibility is frozen into the run.
+
+**`exact_span_mm`** implemented: a model that ships in one size tiles its section in that
+size, reports the odd bay rather than absorbing it, and is still clamped by the hard maximum.
+
+777 pytest · 126 golden scenarios unchanged · 116/116 smoke.
+
+**Remaining:** W4's authoring UI; an SVG renderer for the elevation the backend now serves;
+`excess=trim_last` (blocked on the same 2D-cutting non-goal as sheet infill) and
+`extension_clip`; `InfillSpec.supply=assembly`; phase 3 arc-flow over multiple stock lengths.
+## Panel authoring W4 — the model becomes editable (2026-08-12) — COMPLETE
+Spec §W4. The rest of the user's question: *"what if the user wants to edit, change or add a
+panel? variant?"* W1–W3 made models persisted, versioned, selectable data with a working
+preview and left the **only** way to author one a hand-written JSON POST — so the structure
+that decides every material, size and price below it was editable by everyone except the
+expert who owns it. A **Models tab** (`js/model-editor.js`, ~1200 lines, owning nothing
+outside `#tab-models`) now edits frame slots, infill patterns, fixings, eligibility, option
+axes and variants as sentence-style rows over the live document, with the rule builder's
+Advanced-JSON escape hatch whose exit is never gated on the JSON being valid.
+
+Lifecycle as the spec demands it: "Edit" on a published version opens a **deep copy** whose
+first save lands a draft at the next free version, so an active version — the one an
+accepted quote was priced against — is never mutated; publish is the gate, and its 422
+renders from `code + params` under a Hebrew heading rather than as the engine's English
+authoring text; retire and duplicate sit beside them. **Impact is shown before the change**
+(foundation §11): the same `renderImpactReport` the knowledge tab uses, now moved to
+`js/impact.js` because a third caller is where two copies start disagreeing.
+
+**It also closed a latent 500 that it made routine.** `Store` holds ONE
+`sqlite3.Connection` opened `check_same_thread=False`, and FastAPI serves sync endpoints from
+a threadpool — so overlapping requests interleaved statements on one connection. The browser
+suite caught it as `GET /inventory` answering 500 while a draft was being saved; reproduced
+standalone at **48 failures in ~540 overlapping requests**. The silent half is worse: half of
+`Store`'s methods are read-then-write sequences, and another thread's `commit()` landing
+inside one commits a transaction nobody finished. `Store` is now `@_serialized` — a
+re-entrant lock around every public method, because a per-thread connection would give every
+`Store(":memory:")` test its own empty database. Pinned by `tests/store/test_concurrent_access.py`,
+which drives real threads and fails on the unguarded class. ADR-0008 records both the fix and
+what it does NOT cover: route-level read-then-write is still a TOCTOU window.
+
+**The review caught the design wrong first, and the wrong version was plausible.** The editor
+originally debounce-saved every 250 ms, because the only preview route priced a STORED
+document — from which it followed that a live preview and a save-on-demand editor could not
+both exist. But the model id is a save key: typing "M-SLAT" one character at a time left
+`M@v1`, `M-@v1`, `M-S@v1` … behind as permanent library rows (there is no delete route) and
+landed the half-built document as a new draft version of the shipped M-SLAT, which is then
+what "Edit" opens for everybody. And the constraint was never real — `preview-impact` had
+taken an unsaved document in its body since W3, and `preview_panel` was always a pure function
+of a `FenceModel` object. So W4 adds `POST /api/fence-models/preview` taking `{model, bay}`:
+an edit re-prices and does nothing else, Save and Publish are the only writes, and the id is
+refused in the field if the library already holds it. **The lesson worth keeping: when a
+client design is justified by "the API only offers X", check whether X is a property of the
+system or of one route signature.**
+
+Three more decisions worth keeping.
+**`gap_after_mm` has no `min`**: a negative gap is an overlap, and board-on-board and
+shadowbox are exactly that; the bound belongs on the member's net advance, where
+`validate_model` already puts it. **The selects offer only what the resolver honours** —
+`excess` narrowed to `truncate|space`, and `Axis.kind` narrowed to `enum` with a new
+`_unsupported_features` entry refusing `numeric`, since nothing reads that field and an
+authoring surface is what turns a silently-ignored field into a wrong answer. And the two
+catalog caches (`tabs.js` and `editor.js`) became one in `js/builder-ui.js` — they had
+different failure behaviour, so one lost request left the gate picker working and every SKU
+picker permanently blank. `ModelListing` gained `draft_version`/`versions` so "Edit" reopens
+the draft that exists instead of guessing `active + 1`, which is wrong the moment a version
+above the active one is retired.
+
+743 pytest (+22: a node suite that builds the documents the "+ Add" buttons build and lets
+pydantic and `validate_model` judge them — the discriminator on every eligibility member, a
+variant's starting condition as valid `Expr`, a deep draft copy, the swatch pattern, and the
+editor's vocabularies pinned against `model.py`'s in BOTH directions, and the id-collision
+truth table over all four session kinds — plus four threading tests that fail on the
+unguarded store) · 126 golden scenarios (unchanged) · 127/127 smoke (+11), including that
+authoring writes NOTHING until asked, that an unsaved model is priced anyway, that the
+published model's STORED SPEC carries the rows (an empty model publishes, so listing metadata
+alone proves nothing), that the Advanced-JSON box lets go with broken JSON in it, that a
+length typed in cm stores millimetres, and that a wider slat gap fits fewer slats.
+
+**W5–W6 remain**: the `select_supply` explanation and multi-member groups, the pricing union,
+the elevation drawing beside the slot table, and the phase-2/3 tail.
+
+## Panel authoring — the two review rounds (2026-08-13) — COMPLETE
+architecture-critic (SOUND-WITH-FIXES) + test-reviewer (GAPS) over the whole branch.
+
+**Two blockers.** `project_id` was not in the run-id digest, and it is bound as a scope
+dimension — so two projects with the same topology and one project-scoped rule collided,
+and `INSERT OR IGNORE` dropped the second: its user pressed Generate, saw their own answer,
+and every later read served the other project's fence. And the M-LEGACY seam short-circuited
+before `library.resolve`, so a published v2 was offered by the picker, priced by the preview
+and reported on by the impact preview, then ignored at generation — the id is now reserved
+at the route.
+
+**A live 500 no pytest test can see.** `Store` shared one sqlite3 connection across
+FastAPI's threadpool with `check_same_thread=False` silencing the guard; two overlapping
+fetches interleaved statements and raised `InterfaceError` out of a route. `TestClient`
+serialises requests, so the browser smoke suite was the only detector — red here, green on
+main. Found independently by both the test review and the W4 agent. Every store method is
+serialised now, held for the WHOLE call because several read then write.
+
+**Three wrong answers behind a green suite.** The sphere test measured only the gaps
+BETWEEN members, and `center` justification folds the residual into the edge margins and
+zeroes it — so two 150 mm holes stood against the posts while every measured gap read 50.
+A multi-member pattern drew thirteen slats where seven were bought, running out of the
+panel. An exact bay width silently lost to a `min()` against the hard maximum, producing
+bays of neither width and reporting the width nobody used — now a conflict citing both.
+
+**And one the new tests found rather than the review**: `per_gap` counted PIECES, not
+positions, so a member with `qty=2` (a batten pair at one position) made a 12-position
+panel order 17 spacers.
+
+**Coverage.** The infill path was outside the invariant battery and the golden gate
+entirely — dropping infill lines from `BomLine.pegs` broke the BOM→requirement→element
+traceability invariant with a green suite. Two M-SLAT fixtures join both (the existing
+eight gate files are byte-identical, so the compatibility claim still holds), and that
+mutation now dies. Nine single-line pass-throughs in `resolve_panel` had no test at all —
+`edge_margin_mm`, `justification`, `face_offset_mm`, a member's own `qty`, a VERTICAL frame
+slot, `per_end_member`, `per_gap` — all pinned by one panel that uses the non-default value
+of every one of them.
+
+845 pytest · 145 golden scenarios · 127/127 smoke.

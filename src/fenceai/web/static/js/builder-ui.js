@@ -1,0 +1,83 @@
+// The shared parts of a sentence-style row editor: the small DOM builders, the
+// catalog cache the SKU picker reads, and the Advanced-JSON toggle.
+//
+// Two editors are built out of these — the knowledge rule builder (tabs.js) and
+// the fence model editor (model-editor.js) — and they must not each own a copy.
+// `skuSelect` is the reason: it is the ONE place that knows a product is shown
+// as "SKU — localized name", so a second copy is how the model editor keeps
+// showing English product names in Hebrew after the knowledge tab learned not
+// to. The catalog cache is here for the same reason, one level down: two caches
+// are two answers to "which products exist", and they diverge the moment one of
+// them is populated before a catalog edit and the other after.
+//
+// No DOM of its own: every function here builds detached nodes, or acts on ids
+// its CALLER owns. Same contract as fence-models.js.
+
+import { apiGet } from "./api.js";
+import { currentLocale, t } from "./i18n.js";
+import { tu } from "./units.js";
+
+export function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v === true ? "" : v);
+  }
+  node.append(...children);
+  return node;
+}
+
+export function option(value, label, selected) {
+  const o = el("option", { value, text: label });
+  if (selected) o.selected = true;
+  return o;
+}
+
+// small labelled field: <label><span class=meta>label</span> input</label>
+export const field = (labelKey, input) =>
+  el("label", { class: "builder-field" }, el("span", { class: "meta", text: tu(labelKey) }), input);
+
+export function productLabel(products, sku) {
+  const name = products[sku]?.name_i18n?.[currentLocale()] || products[sku]?.name;
+  return name ? `${sku} — ${name}` : sku;
+}
+
+// SKU <select> from the cached catalog (localized names); optional adds a "none" entry
+export function skuSelect(products, current, optional, onchange) {
+  const sel = el("select", { title: t(optional ? "knowledge.builder.sku_optional" : "knowledge.builder.sku") });
+  if (optional) sel.appendChild(option("", t("knowledge.builder.none"), !current));
+  const skus = Object.keys(products).sort();
+  for (const sku of skus) sel.appendChild(option(sku, productLabel(products, sku), current === sku));
+  if (current && !skus.includes(current)) sel.appendChild(option(current, current, true));
+  sel.addEventListener("change", () => onchange(sel.value || null));
+  return sel;
+}
+
+// BomLine carries only the English `name`; localized names live on the catalog
+// Product (`name_i18n`). Fetch the catalog once and map sku -> product.
+//
+// The PROMISE is cached, not the result: three surfaces warm this at load (the
+// gate popover, the rule builder, the model editor) and caching the result
+// alone lets two of them race into two fetches. A failure clears the cache so
+// the next opener retries — a cached `{}` is a catalog that stays empty for the
+// rest of the session because one request lost a network.
+let catalogPromise = null;
+export function loadCatalogProducts() {
+  catalogPromise ??= apiGet("/api/catalog")
+    .then((c) => c.products || {})
+    .catch(() => { catalogPromise = null; return {}; });
+  return catalogPromise;
+}
+
+// show/hide the structured editor vs. the raw-JSON textarea; the toggle button's
+// data-i18n key is swapped so applyStatic keeps it correct across locale changes.
+// `backKey` names the surface being returned to — the inventory tab has no rule
+// builder, and labelling its button "back to the rule builder" misled a persona.
+export function updateAdvancedUi(editorId, textareaId, btnId, open, backKey = "knowledge.builder.back") {
+  document.getElementById(editorId).hidden = open;
+  document.getElementById(textareaId).hidden = !open;
+  const btn = document.getElementById(btnId);
+  btn.dataset.i18n = open ? backKey : "knowledge.builder.advanced";
+  btn.textContent = t(btn.dataset.i18n);
+}

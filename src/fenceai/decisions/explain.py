@@ -21,7 +21,7 @@ _INPUT_FACT_ACTIONS = frozenset(
 # Display units: the graph always stores int mm (ADR-0002); prose may render them
 # in the reader's chosen unit, exactly like the UI (web/static/js/units.js).
 _UNIT_WORDS = {"en": {"mm": "mm", "cm": "cm"}, "he": {"mm": 'מ"מ', "cm": 'ס"מ'}}
-_LENGTH_LISTS = frozenset({"widths", "alt_widths"})
+_LENGTH_LISTS = frozenset({"widths", "alt_widths", "heights_mm"})
 
 # Enum VALUES that appear as words inside a sentence get translated; ids, SKUs and
 # knowledge refs never pass through here (they stay verbatim Latin in every
@@ -77,6 +77,35 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " Height reduced by the wall top ({wall_top_mm} {u}, event {wall_event})."
         ),
         "create_span_step": " Steps {step_mm} {u} against the grade.",
+        # one key per provenance, the same shape select_gate_kit uses: where a
+        # choice came from is a different sentence, not a word slotted into one
+        "select_model_event": "Built to fence model {model_ref}, set by a section event.",
+        "select_model_project": "Built to fence model {model_ref}, the project's default.",
+        "select_model_builtin": "Built to fence model {model_ref}, the built-in default.",
+        "select_model_options": " Options: {options}.",
+        # variant provenance is a different SENTENCE per outcome, not a word in
+        # one: "variant 2 of 3" and "no variant applied" share no shape
+        "select_variant": (
+            "Variant {variant_number} of {of} applies to this bay (model {model_ref})."
+        ),
+        "select_variant_default": (
+            "No variant of model {model_ref} applies to this bay; it is built to "
+            "the default panel."
+        ),
+        "select_variant_failed": " Conditions of variant(s) {failed} were not met.",
+        "select_variant_not_reached": (
+            " Variant(s) {not_reached} were not evaluated: the first satisfied "
+            "condition wins."
+        ),
+        "select_product": (
+            "Slot {slot} is narrowed to {sku} by option {axis} = {value}."
+        ),
+        "select_supply": (
+            "{chosen} supplies {slot}, chosen from {n} eligible products under "
+            "the '{preset}' objective."
+        ),
+        "select_supply_beat": " It costs {chosen_cents}c against {runner_up} at {runner_up_cents}c.",
+        "select_supply_unbuildable": " {unbuildable} cannot supply this part at all.",
         "resolve_panel": "Panel {model_ref} built from {slots}.",
         "choose_vertical_mode": "Vertical mode '{mode}' chosen at {slope_permille}‰ grade.",
         "resolve_max_span": "Maximum span resolved to {value_mm} {u}.",
@@ -113,6 +142,26 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Step of {step_mm} {u} exceeds the buildable maximum of {max_mm} {u} — "
             "needs an engineered solution."
         ),
+        "clear_gap_exceeded": (
+            "A gap of {value_mm} {u} in section {run_id} exceeds the {limit_mm} {u} "
+            "limit, in {n} bay(s)."
+        ),
+        "rail_separation_insufficient": (
+            "In section {run_id} the rail above the bottom one sits {value_mm} {u} up, "
+            "under the {limit_mm} {u} anti-climb limit, in {n} bay(s)."
+        ),
+        "pattern_residual_large": (
+            "Section {run_id} leaves {value_mm} {u} of the pattern unfilled, over the "
+            "{limit_mm} {u} tolerance, in {n} bay(s)."
+        ),
+        "span_not_exact": (
+            "Section {run_id} does not divide into {exact_mm} {u} bays: "
+            "{remainder_mm} {u} is left over as an odd bay."
+        ),
+        "exact_span_over_max": (
+            "Model {model_ref} is made in {exact_mm} {u} bays, wider than the "
+            "{max_mm} {u} maximum span; section {run_id} was laid out freely."
+        ),
         "excessive_gap": (
             "Stepped span leaves a {gap_mm} {u} gap underneath (limit {max_mm} {u})."
         ),
@@ -134,6 +183,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         ),
         "sliver_span": (
             "Span {span} is {width_mm} {u} — below the preferred minimum of {min_mm} {u}."
+        ),
+        "height_not_supported": (
+            "Fence model {model_ref} does not support {n} panel height(s) in "
+            "section {run_id}: {heights_mm} {u}."
         ),
         "override_applied": "User override {override_id} applied ({action}).",
         "input_fact": "Input fact: {action} {payload}.",
@@ -157,6 +210,26 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " הגובה הופחת בשל ראש הקיר ({wall_top_mm} {u}, אירוע {wall_event})."
         ),
         "create_span_step": " מדורג ב-{step_mm} {u} כנגד השיפוע.",
+        "select_model_event": "נבנה לפי דגם הגדר {model_ref}, שנקבע באירוע קטע.",
+        "select_model_project": "נבנה לפי דגם הגדר {model_ref}, ברירת המחדל של הפרויקט.",
+        "select_model_builtin": "נבנה לפי דגם הגדר {model_ref}, ברירת המחדל המובנית.",
+        "select_model_options": " אפשרויות: {options}.",
+        "select_variant": "וריאנט {variant_number} מתוך {of} חל על מפתח זה (דגם {model_ref}).",
+        "select_variant_default": (
+            "אף וריאנט של הדגם {model_ref} אינו חל על מפתח זה; הוא נבנה לפי פאנל "
+            "ברירת המחדל."
+        ),
+        "select_variant_failed": " התנאים של וריאנט {failed} לא התקיימו.",
+        "select_variant_not_reached": (
+            " וריאנט {not_reached} לא נבדק: הוריאנט הראשון שתנאו מתקיים הוא הקובע."
+        ),
+        "select_product": "הרכיב {slot} צומצם ל-{sku} לפי האפשרות {axis} = {value}.",
+        "select_supply": (
+            "{chosen} מספק את {slot}, ונבחר מתוך {n} מוצרים כשירים לפי יעד "
+            "ה-'{preset}'."
+        ),
+        "select_supply_beat": " עלותו {chosen_cents} סנט מול {runner_up} ב-{runner_up_cents} סנט.",
+        "select_supply_unbuildable": " {unbuildable} אינו יכול לספק את החלק הזה כלל.",
         "resolve_panel": "הפאנל {model_ref} נבנה מ-{slots}.",
         "choose_vertical_mode": "נבחר מצב אנכי '{mode}' בשיפוע {slope_permille}‰.",
         "resolve_max_span": "המפתח המרבי נקבע ל-{value_mm} {u}.",
@@ -191,6 +264,26 @@ TEMPLATES: dict[str, dict[str, str]] = {
             'מדרגה של {step_mm} {u} חורגת מהמקסימום הניתן לביצוע ({max_mm} {u}) — '
             "נדרש פתרון הנדסי."
         ),
+        "clear_gap_exceeded": (
+            "מרווח של {value_mm} {u} בקטע {run_id} חורג מהמגבלה של {limit_mm} {u}, "
+            "ב-{n} מפתחים."
+        ),
+        "rail_separation_insufficient": (
+            "בקטע {run_id} המסילה שמעל התחתונה נמצאת {value_mm} {u} מעליה, מתחת "
+            "למגבלת מניעת הטיפוס של {limit_mm} {u}, ב-{n} מפתחים."
+        ),
+        "pattern_residual_large": (
+            "בקטע {run_id} נותרו {value_mm} {u} לא ממולאים בתבנית, מעל הסבולת של "
+            "{limit_mm} {u}, ב-{n} מפתחים."
+        ),
+        "span_not_exact": (
+            "קטע {run_id} אינו מתחלק למפתחים של {exact_mm} {u}: נותרו "
+            "{remainder_mm} {u} כמפתח חריג."
+        ),
+        "exact_span_over_max": (
+            "דגם {model_ref} מיוצר במפתחים של {exact_mm} {u}, רחבים מהמפתח המרבי "
+            "{max_mm} {u}; קטע {run_id} נפרס באופן חופשי."
+        ),
         "excessive_gap": (
             'הפאנל המדורג משאיר מרווח של {gap_mm} {u} מתחתיו (המגבלה {max_mm} {u}).'
         ),
@@ -211,6 +304,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         ),
         "sliver_span": (
             "המפתח {span} הוא {width_mm} {u} — מתחת למינימום המועדף של {min_mm} {u}."
+        ),
+        "height_not_supported": (
+            "דגם הגדר {model_ref} אינו תומך ב-{n} מגובהי הפאנל בקטע {run_id}: "
+            "{heights_mm} {u}."
         ),
         "override_applied": "דריסת משתמש {override_id} הוחלה ({action}).",
         "input_fact": "עובדת קלט: {action} {payload}.",
@@ -234,10 +331,13 @@ def _fmt(t: dict[str, str], key: str, lang: str, units: str, **kw) -> str:
     SKUs, refs and raw payloads pass through untouched."""
     out = {}
     for k, v in kw.items():
-        if k.endswith("_mm"):
-            out[k] = _display(v, units)
-        elif k in _LENGTH_LISTS and isinstance(v, (list, tuple)):
+        # the list branch comes FIRST: a length list may also end in `_mm`
+        # (`heights_mm`), and `_display` on a list silently returns it in
+        # millimetres — which reads as centimetres beside a `{u}` saying cm
+        if k in _LENGTH_LISTS and isinstance(v, (list, tuple)):
             out[k] = [_display(x, units) for x in v]
+        elif k.endswith("_mm"):
+            out[k] = _display(v, units)
         elif k in _ENUM_PARAMS:
             out[k] = (", ".join(_word(x, lang) for x in v)
                       if isinstance(v, (list, tuple)) else _word(v, lang))
@@ -280,6 +380,51 @@ def explain_node(
                 )
             if "step_mm" in p:
                 base += _fmt(t, "create_span_step", lang, units, step_mm=p["step_mm"])
+        case "select_model":
+            base = _fmt(t, f"select_model_{p.get('source', 'builtin')}", lang, units,
+                model_ref=p.get("model_ref"))
+            options = p.get("options") or {}
+            if options:
+                base += _fmt(t, "select_model_options", lang, units,
+                    options=", ".join(f"{k}={v}" for k, v in sorted(options.items())))
+        case "select_variant":
+            index = p.get("variant_index")
+            if index is None:
+                base = _fmt(t, "select_variant_default", lang, units,
+                    model_ref=p.get("model_ref"))
+            else:
+                # 1-based in prose: "variant 0" is a programmer's answer to
+                # "which one of the three did we build?"
+                base = _fmt(t, "select_variant", lang, units,
+                    model_ref=p.get("model_ref"), variant_number=index + 1,
+                    of=p.get("of"))
+            if p.get("failed"):
+                base += _fmt(t, "select_variant_failed", lang, units,
+                    failed=", ".join(str(i + 1) for i in p["failed"]))
+            if p.get("not_reached"):
+                base += _fmt(t, "select_variant_not_reached", lang, units,
+                    not_reached=", ".join(str(i + 1) for i in p["not_reached"]))
+        case "select_supply":
+            candidates = p.get("candidates", [])
+            base = _fmt(t, "select_supply", lang, units,
+                chosen=p.get("chosen"), slot=p.get("slot_key") or p.get("role"),
+                n=len(candidates), preset=p.get("preset"))
+            # the runner-up is the evidence: "cheaper than the others" is not an
+            # explanation, "cheaper than THAT one, by this much" is
+            priced = [c for c in candidates if c.get("cost_cents") is not None]
+            winner = next((c for c in priced if c["sku"] == p.get("chosen")), None)
+            runner_up = next((c for c in priced if c["sku"] != p.get("chosen")), None)
+            if winner and runner_up:
+                base += _fmt(t, "select_supply_beat", lang, units,
+                    chosen_cents=winner["cost_cents"], runner_up=runner_up["sku"],
+                    runner_up_cents=runner_up["cost_cents"])
+            unbuildable = [c["sku"] for c in candidates if not c.get("feasible", True)]
+            if unbuildable:
+                base += _fmt(t, "select_supply_unbuildable", lang, units,
+                    unbuildable=", ".join(unbuildable))
+        case "select_product":
+            base = _fmt(t, "select_product", lang, units, slot=p.get("slot"),
+                sku=p.get("sku"), axis=p.get("axis"), value=p.get("value"))
         case "resolve_panel":
             slots = ", ".join(f"{s['qty']} {s['role']}" for s in p.get("slots", []))
             base = _fmt(t, "resolve_panel", lang, units,
@@ -325,6 +470,18 @@ def explain_node(
             base = _fmt(t, "excessive_step", lang, units, step_mm=p.get("step_mm"), max_mm=p.get("max_mm"))
         case "excessive_gap":
             base = _fmt(t, "excessive_gap", lang, units, gap_mm=p.get("gap_mm"), max_mm=p.get("max_mm"))
+        case "exact_span_over_max":
+            base = _fmt(t, "exact_span_over_max", lang, units, run_id=p.get("run_id"),
+                model_ref=p.get("model_ref"), exact_mm=p.get("exact_mm"),
+                max_mm=p.get("max_mm"))
+        case "span_not_exact":
+            base = _fmt(t, "span_not_exact", lang, units, run_id=p.get("run_id"),
+                exact_mm=p.get("exact_mm"), remainder_mm=p.get("remainder_mm"))
+        case "clear_gap_exceeded" | "rail_separation_insufficient" | "pattern_residual_large":
+            # one shape for the three panel-limit checks: they differ in which
+            # measurement they take, not in what they have to say about it
+            base = _fmt(t, node.action, lang, units, run_id=p.get("run_id"),
+                value_mm=p.get("value_mm"), limit_mm=p.get("limit_mm"), n=p.get("n"))
         case "max_height_exceeded":
             base = _fmt(t, "max_height_exceeded", lang, units,
                 height_mm=p.get("height_mm"), max_mm=p.get("max_mm"))
@@ -343,6 +500,10 @@ def explain_node(
             base = _fmt(t, "sliver_span", lang, units,
                 span=p.get("span"), width_mm=p.get("width_mm"), min_mm=p.get("min_mm")
             )
+        case "height_not_supported":
+            base = _fmt(t, "height_not_supported", lang, units,
+                model_ref=p.get("model_ref"), run_id=p.get("run_id"),
+                n=p.get("n"), heights_mm=p.get("heights_mm", []))
         case action if action in _OVERRIDE_ACTIONS:
             base = _fmt(t, "override_applied", lang, units,
                 override_id=p.get("override_id"), action=node.action

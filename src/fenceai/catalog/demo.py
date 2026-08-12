@@ -36,6 +36,22 @@ def demo_catalog() -> Catalog:
             price_cents=1800,
         ),
         Product(
+            sku="SLAT-100",
+            name="Slat 100 mm (6000 mm stock)",
+            name_i18n={"he": 'שלב 100 מ"מ (מוט 6000)'},
+            # 6 m is the stock length the profile actually arrives in, and it is
+            # chosen against the piece M-SLAT cuts from it rather than against a
+            # round number: `plan_cuts` charges every piece its kerf against
+            # (stock + kerf), so an 1800 mm slat costs 1803 and three of them
+            # (5409) fit 6003 where four (7212) do not. The 591 mm tail then
+            # clears min_reusable_remnant_mm, so a 20-slat bay plans seven bars
+            # with a reusable end on each rather than seven offcuts of scrap:
+            # this product exercises the remnant path instead of leaving it dead.
+            consumption=DivisibleLinear(purchase_length_mm=6000, kerf_mm=3,
+                                        min_reusable_remnant_mm=300),
+            price_cents=5400,
+        ),
+        Product(
             sku="SCREW-S10",
             name="Screw S10 (box of 20)",
             name_i18n={"he": "בורג S10 (קופסה של 20)"},

@@ -23,10 +23,15 @@ load_dotenv()  # .env in the working directory fills gaps; real env vars win
 from fenceai.ai.claude import build_interpreter  # noqa: E402
 from fenceai.ai.stub import StubCritic, StubProposer
 from fenceai.catalog.demo import demo_catalog
-from fenceai.catalog.model import Catalog, Product
+from fenceai.catalog.model import Catalog, Product, catalog_hash
 from fenceai.core.errors import GenerationFailure, ReadRefused
 from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
+from fenceai.decisions.supply import with_supply_decisions
+from fenceai.fencemodel.library import ModelListing
+from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
+from fenceai.fencemodel.preview import PanelPreview, PreviewRequest, preview_panel
+from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.fulfillment.pipeline import PricedRun, price_strategy
 from fenceai.fulfillment.quote import Quote
@@ -37,6 +42,7 @@ from fenceai.learning.impact import (
     ImpactReport,
     activated_copy,
     preview_impact,
+    preview_model_impact,
 )
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
@@ -44,7 +50,7 @@ from fenceai.project.intents import confirm_intent
 from fenceai.project.model import Annotation, Project
 from fenceai.report.structure import build_structure
 from fenceai.store.db import Store
-from fenceai.strategy.generator import generate
+from fenceai.strategy.generator import LEGACY_MODEL_ID, generate
 from fenceai.strategy.overrides import Override
 from fenceai.topology.model import Topology
 
@@ -141,7 +147,10 @@ def _fresh_catalog(result):
     inventory_hash on the response is not the same as checking it — this is the
     check: refuse rather than silently reprice/resupply a run's read views."""
     catalog = state.store.load_catalog()
-    current = hashlib.sha256(catalog.model_dump_json().encode()).hexdigest()[:16]
+    # over the SAME set the run stamped, or the comparison is between two
+    # different questions. An empty set means the run predates the narrowing and
+    # is only comparable against the whole-catalog hash it was stamped with.
+    current = catalog_hash(catalog, result.run.catalog_skus or None)
     if result.run.catalog_hash and current != result.run.catalog_hash:
         raise HTTPException(409, {
             "code": "catalog_changed",
@@ -300,6 +309,8 @@ def generate_route(project_id: str):
         result = generate(
             project.topology, kb, catalog,
             overrides=project.overrides, policy=project.policy, project_id=project.id,
+            models=state.store.fence_model_library(),
+            default_model=project.fence_model,
         )
     except GenerationFailure as e:
         # code + params when the failure carries them, exactly as the read routes
@@ -453,7 +464,20 @@ def explain(
     units: Literal["mm", "cm"] = "mm",   # display unit only; the graph stores mm
 ):
     result = _run(run_id)
-    lines = explain_element(result.graph, element_id, lang=lang, units=units)
+    # The supply choice is made in fulfillment, which has no graph builder, so
+    # its nodes are derived here from the same pipeline the money views run.
+    # Without this, /explain cannot say why one eligible product was bought
+    # instead of another — the decision most worth explaining.
+    graph = result.graph
+    try:
+        _, _, priced = _priced(result)
+    except HTTPException:
+        # a stale catalog or an unreadable run must not cost the reader the
+        # explanation of everything else in the graph
+        priced = None
+    if priced is not None:
+        graph = with_supply_decisions(graph, priced.decisions)
+    lines = explain_element(graph, element_id, lang=lang, units=units)
     if not lines:
         raise HTTPException(404, f"no decisions reference {element_id}")
     return {"element_id": element_id, "explanation": lines}
@@ -576,6 +600,7 @@ def _impact_cases() -> list[ImpactCase]:
             project_id=p.id, project_name=p.name, topology=p.topology,
             overrides=p.overrides, inventory=state.store.load_inventory(p.id),
             accepted_quote_cents=accepted.total_cents if accepted else None,
+            fence_model=p.fence_model, policy=p.policy,
         ))
     return cases
 
@@ -592,7 +617,7 @@ def preview_knowledge_impact(body: "KnowledgeCreate") -> ImpactReport:
         attributed_to=body.author, status="draft",
     )
     return preview_impact(hypo, state.store.knowledge_base(), state.store.load_catalog(),
-                          _impact_cases())
+                          _impact_cases(), state.store.fence_model_library())
 
 
 @app.post("/api/candidates/{object_id}/{version}/preview")
@@ -605,7 +630,7 @@ def preview_candidate_impact(object_id: str, version: int) -> ImpactReport:
     if cand is None or cand.status != "proposed":
         raise HTTPException(404, "candidate not found or not reviewable")
     return preview_impact(activated_copy(cand), kb, state.store.load_catalog(),
-                          _impact_cases())
+                          _impact_cases(), state.store.fence_model_library())
 
 
 
@@ -618,6 +643,209 @@ def retire_knowledge(object_id: str, version: int, author: str = "user"):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"retired": f"{object_id}@v{version}"}
+
+
+# -- fence models -----------------------------------------------------------------
+
+def _model_errors(model: FenceModel) -> dict | None:
+    """Load-time validation as the API reports it: `code + params`, so a Hebrew
+    UI renders a sentence rather than English authoring text. The unknown-sku case
+    gets its own code because it is the one a user causes by typing, and it names
+    what they typed."""
+    errors = validate_model(model, state.store.load_catalog())
+    if not errors:
+        return None
+    missing = unknown_skus(model, state.store.load_catalog())
+    if missing:
+        return {"code": "fence_model_unknown_sku",
+                "params": {"skus": ", ".join(missing), "model_ref": model.ref,
+                           "n": len(missing)},
+                "errors": errors}
+    return {"code": "fence_model_invalid",
+            "params": {"model_ref": model.ref, "errors": "; ".join(errors),
+                       "n": len(errors)},
+            "errors": errors}
+
+
+def _reserved(model_id: str) -> None:
+    """M-LEGACY is the compatibility path, not a model anybody authors.
+
+    Its eligibility is rebuilt per run from the resolved demand SKUs, because a
+    stored document naming RAIL-3000 would quietly outrank a DefaultComponent
+    rule that changed the rail — so a published v2 would be offered by the
+    picker, priced by the preview and reported on by the impact preview, and then
+    ignored at generation. One version, for ever, enforced where a version could
+    otherwise be minted.
+    """
+    if model_id == LEGACY_MODEL_ID:
+        raise HTTPException(409, {
+            "code": "fence_model_reserved",
+            "params": {"model_id": model_id},
+        })
+
+
+@app.get("/api/fence-models")
+def list_fence_models() -> list[ModelListing]:
+    return state.store.fence_model_library().listing()
+
+
+@app.get("/api/fence-models/{model_id}/{version}")
+def get_fence_model(model_id: str, version: int) -> FenceModel:
+    model = state.store.load_fence_model(model_id, version)
+    if model is None:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    return model
+
+
+@app.post("/api/fence-models")
+def create_fence_model(model: FenceModel, author: str = "user"):
+    """A new model always arrives as a draft at the next free version.
+
+    A draft may be saved INVALID, and its errors are returned rather than
+    refused. Authoring is iterative — a panel half-built is invalid by
+    definition, and a save that refuses until the whole thing is coherent is a
+    save nobody can use. The gate is `publish`, and `_validate_resolved_model`
+    still refuses to GENERATE from an invalid model, so an invalid draft can
+    never quietly become a fence.
+    """
+    _reserved(model.id)
+    draft = model.model_copy(update={
+        "version": state.store.next_fence_model_version(model.id),
+        "status": "draft",
+    })
+    state.store.save_fence_model(draft, actor=author)
+    return {"model": draft, "invalid": _model_errors(draft)}
+
+
+@app.put("/api/fence-models/{model_id}/draft")
+def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"):
+    _reserved(model_id)
+    library = state.store.fence_model_library()
+    existing = next(
+        (m for m in library.models if m.id == model_id and m.status == "draft"), None
+    )
+    version = existing.version if existing else state.store.next_fence_model_version(model_id)
+    draft = model.model_copy(update={"id": model_id, "version": version, "status": "draft"})
+    try:
+        state.store.save_fence_model(draft, actor=author)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"model": draft, "invalid": _model_errors(draft)}
+
+
+@app.post("/api/fence-models/{model_id}/preview-impact")
+def preview_fence_model_impact(model: FenceModel) -> ImpactReport:
+    """What would publishing this model version change, across all projects?
+
+    Editing a model's slat gap is a portfolio-wide change, and foundation §11
+    requires impact to be exposed before it. `FenceModel` is catalog-side rather
+    than a knowledge object, so it does not inherit /api/knowledge/preview-impact
+    for free — without this, the authoring feature would ship a change nobody
+    could preview.
+    """
+    return preview_model_impact(
+        model, state.store.fence_model_library(), state.store.knowledge_base(),
+        state.store.load_catalog(), _impact_cases(),
+    )
+
+
+@app.post("/api/fence-models/{model_id}/{version}/publish")
+def publish_fence_model(model_id: str, version: int, author: str = "user"):
+    """Freeze a draft. This is the gate a draft save deliberately is not: from
+    here the document is immutable and projects may select it."""
+    model = state.store.load_fence_model(model_id, version)
+    if model is None:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    if model.status != "draft":
+        raise HTTPException(409, f"{model.ref} is not a draft")
+    invalid = _model_errors(model)
+    if invalid:
+        raise HTTPException(422, invalid)
+    state.store.set_fence_model_status(model_id, version, "active", actor=author)
+    return state.store.load_fence_model(model_id, version)
+
+
+@app.post("/api/fence-models/{model_id}/{version}/status")
+def set_fence_model_status(
+    model_id: str, version: int, status: Literal["active", "retired"],
+    author: str = "user",
+):
+    try:
+        state.store.set_fence_model_status(model_id, version, status, actor=author)
+    except KeyError:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return state.store.load_fence_model(model_id, version)
+
+
+def _preview_or_refuse(model: FenceModel, bay: PreviewRequest) -> PanelPreview:
+    try:
+        return preview_panel(model, bay, state.store.load_catalog())
+    except ReadRefused as e:
+        raise HTTPException(400, {"code": e.code, "params": e.params, "message": str(e)})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class DocumentPreviewRequest(BaseModel):
+    """A model that need not exist yet, and the bay to imagine it into."""
+
+    model: FenceModel
+    bay: PreviewRequest = PreviewRequest()
+
+
+@app.post("/api/fence-models/preview")
+def preview_fence_model_document(body: DocumentPreviewRequest) -> PanelPreview:
+    """What one panel of THIS DOCUMENT is made of — stored or not.
+
+    The editor's reason for existing. `preview_panel` was always a pure function
+    of a `FenceModel` object; only the route below insisted on a store lookup, and
+    that accident of signature is what made a live preview and a save-on-demand
+    editor look mutually exclusive. It is not a real constraint: the impact
+    preview two routes up has taken an unsaved document in its body since W3.
+
+    Charging a keystroke to the database to see its effect is the alternative,
+    and it is a bad one — it writes a library row per typed character of a model
+    id, an audit row per pause, and it turns "a draft may be saved invalid" (a
+    permission about CONTENT) into a licence to save when the user did not ask.
+    Stores nothing, is not quotable, and refuses nothing a draft may hold.
+    """
+    return _preview_or_refuse(body.model, body.bay)
+
+
+@app.post("/api/fence-models/{model_id}/{version}/preview")
+def preview_fence_model(model_id: str, version: int, body: PreviewRequest) -> PanelPreview:
+    """What one panel of this STORED model is made of, at this height and width.
+
+    Deliberately available BEFORE a project has a topology, and for a version
+    that is still a draft: the point is to see what a model builds while deciding
+    whether to build it. It stores nothing and it is not quotable.
+    """
+    model = state.store.load_fence_model(model_id, version)
+    if model is None:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    return _preview_or_refuse(model, body)
+
+
+@app.put("/api/projects/{project_id}/fence-model")
+def put_project_fence_model(project_id: str, choice: FenceModelChoice | None = None) -> Project:
+    """The project's default model. Refused at the boundary rather than at
+    generation: a typo that only fails when someone presses Generate has already
+    cost them the strategy they were working on."""
+    project = _project(project_id)
+    if choice is not None:
+        if state.store.fence_model_library().resolve(
+                choice.model_id, choice.version_pin) is None:
+            raise HTTPException(422, {
+                "code": "fence_model_not_found",
+                "params": {"model_id": choice.model_id,
+                           "version_pin": choice.version_pin
+                           if choice.version_pin is not None else ""},
+            })
+    project.fence_model = choice
+    state.store.save_project(project)
+    return project
 
 
 # -- catalog & inventory ----------------------------------------------------------

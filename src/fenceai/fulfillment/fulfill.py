@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from fenceai.catalog.model import Catalog
+from fenceai.catalog.model import Catalog, purchase_price_cents
 from fenceai.core.units import Cents, Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.cutplan import CutPiece, CutPlan, RemnantStock, plan_cuts
@@ -265,7 +265,7 @@ def _line(
         sku=product.sku, name=product.name,
         purchase_qty=purchase_qty, purchase_unit=purchase_unit,
         engineering_qty=engineering_qty, engineering_unit=engineering_unit,
-        unit_price_cents=product.price_cents,
-        total_cents=product.price_cents * purchase_qty,
+        unit_price_cents=purchase_price_cents(product),
+        total_cents=purchase_price_cents(product) * purchase_qty,
         overage_qty=overage, pegs=pegs, notes=notes or [],
     )

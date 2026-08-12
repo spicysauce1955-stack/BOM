@@ -7,10 +7,16 @@ may change, via a dedicated method that audits the transition).
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
+from fenceai.fencemodel.demo import demo_models
+from fenceai.fencemodel.library import FenceModelLibrary
+from fenceai.fencemodel.model import FenceModel
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.learning.model import Correction
@@ -22,6 +28,9 @@ CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, doc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS knowledge_versions (
     object_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
     doc TEXT NOT NULL, PRIMARY KEY (object_id, version));
+CREATE TABLE IF NOT EXISTS fence_models (
+    model_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
+    doc TEXT NOT NULL, PRIMARY KEY (model_id, version));
 CREATE TABLE IF NOT EXISTS generation_runs (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, created_at TEXT NOT NULL,
     doc TEXT NOT NULL);
@@ -42,11 +51,83 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _serialized(cls):
+    """One connection, one caller at a time — enforced for every public method.
+
+    FastAPI runs sync endpoints in a threadpool, so one process serves several
+    requests at once through the SINGLE `sqlite3.Connection` this store opens
+    with `check_same_thread=False`. That connection is not safe for interleaved
+    statements, and the damage is not only a 500: half of these methods are
+    read-then-write sequences (`set_fence_model_status` SELECTs the document
+    then UPDATEs it, `accept_quote` supersedes then inserts), and another
+    thread's `commit()` landing in the middle of one commits a transaction
+    nobody finished.
+
+    Measured before this existed: 48 failures in ~540 overlapping requests, and
+    a browser session that 500'd on `GET /inventory` while a fence-model draft
+    was being saved. It was found by a client that briefly saved on a 250 ms
+    debounce; that client no longer does, but the hazard was never the client's
+    — any two overlapping requests reach it, and the model editor merely made
+    the odds routine enough to catch.
+
+    A connection per THREAD is not the alternative: every test constructs
+    `Store(":memory:")`, where per-thread connections mean per-thread
+    DATABASES, and the suite would be testing empty ones. So the invariant is
+    serialization, and it lives here rather than as a `with self._lock` to be
+    remembered at each of ~35 call sites — the one that gets forgotten is the
+    one that corrupts a transaction. Re-entrant, because public methods call
+    each other (`__init__` -> `seed_fence_models` -> `save_fence_model`).
+
+    SCOPE: this makes each store CALL atomic, not each route. A route that reads
+    and then writes through two calls (`publish_fence_model` loads, checks the
+    status and sets it; `put_fence_model_draft` reads the library, computes the
+    next version and saves) is still a TOCTOU window. Closing that needs a
+    transaction spanning the sequence, which is a different change; ADR-0008
+    says so rather than letting this docstring imply more than it delivers.
+    """
+    for name, member in list(vars(cls).items()):
+        if name.startswith("_"):
+            continue
+        if not inspect.isfunction(member):
+            # Refused rather than skipped. A `property` is not callable, so a
+            # filter on `callable` would leave it UNGUARDED with nothing
+            # failing; a `staticmethod` IS callable and would be wrapped and
+            # handed a bogus `self`. Both are silent, and this decorator only
+            # protects what it can see.
+            if callable(member) or isinstance(member, (property, staticmethod, classmethod)):
+                raise TypeError(
+                    f"{cls.__name__}.{name} is a {type(member).__name__}, which "
+                    "@_serialized cannot guard — give it a leading underscore or "
+                    "widen the decorator deliberately"
+                )
+            continue    # plain class attributes (_STATUS_TRANSITIONS and friends)
+
+        def guard(fn):
+            @functools.wraps(fn)
+            def wrapper(self, *args, **kwargs):
+                with self._lock:
+                    return fn(self, *args, **kwargs)
+            return wrapper
+
+        setattr(cls, name, guard(member))
+    return cls
+
+
+@_serialized
 class Store:
     def __init__(self, path: str = ":memory:"):
+        # `check_same_thread=False` only silences sqlite3's guard; it does not
+        # make the connection safe. FastAPI runs sync endpoints in a threadpool,
+        # so two overlapping fetches interleaved statements on one cursor and
+        # raised `InterfaceError: bad parameter or other API misuse` straight out
+        # of a route — a real 500 in the browser that NO pytest test can see,
+        # because TestClient serialises requests. The browser smoke suite was the
+        # only detector, and it was red here while green on main.
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript("PRAGMA journal_mode=WAL;" + _SCHEMA)
         self._conn.commit()
+        self.seed_fence_models()
 
     def close(self) -> None:
         self._conn.close()
@@ -172,6 +253,97 @@ class Store:
             "SELECT MAX(version) FROM knowledge_versions WHERE object_id=?", (object_id,)
         ).fetchone()
         return (row[0] or 0) + 1
+
+    # -- fence models (drafts mutable, published versions frozen) ---------------
+
+    _FENCE_MODEL_STATUSES = ("draft", "active", "retired")
+
+    def save_fence_model(self, model: FenceModel, actor: str = "system") -> None:
+        """A draft may be rewritten in place — that is what makes authoring
+        bearable. Anything published is frozen: a run stamps `(id, version)` and
+        re-reading it must give back the panel that run priced. The refusal
+        belongs here and not in a route, because it is the invariant, not a
+        validation of one caller."""
+        row = self._conn.execute(
+            "SELECT status FROM fence_models WHERE model_id=? AND version=?",
+            (model.id, model.version),
+        ).fetchone()
+        if row is not None and row[0] != "draft":
+            raise ValueError(
+                f"{model.ref} is {row[0]}; its content is immutable "
+                "(publish a new version, or change only its status)"
+            )
+        self._conn.execute(
+            "INSERT INTO fence_models (model_id, version, status, doc) VALUES (?,?,?,?) "
+            "ON CONFLICT(model_id, version) DO UPDATE SET "
+            "status=excluded.status, doc=excluded.doc",
+            (model.id, model.version, model.status, model.model_dump_json()),
+        )
+        self._audit(actor, "save_fence_model", model.ref)
+        self._conn.commit()
+
+    def load_fence_model(self, model_id: str, version: int) -> FenceModel | None:
+        row = self._conn.execute(
+            "SELECT doc FROM fence_models WHERE model_id=? AND version=?",
+            (model_id, version),
+        ).fetchone()
+        return FenceModel.model_validate_json(row[0]) if row else None
+
+    def fence_model_library(self) -> FenceModelLibrary:
+        rows = self._conn.execute(
+            "SELECT doc FROM fence_models ORDER BY model_id, version"
+        ).fetchall()
+        return FenceModelLibrary(models=[FenceModel.model_validate_json(r[0]) for r in rows])
+
+    def set_fence_model_status(
+        self, model_id: str, version: int, status: str, actor: str = "system"
+    ) -> None:
+        """The only mutation a published model allows. The status lives on the
+        document as well as on the row, so both are rewritten together —
+        resolution reads documents, and a doc lagging its row would let a
+        retired model keep resolving as the latest active one."""
+        if status not in self._FENCE_MODEL_STATUSES:
+            raise ValueError(f"unknown fence model status {status!r}")
+        model = self.load_fence_model(model_id, version)
+        if model is None:
+            raise KeyError(f"{model_id}@v{version}")
+        model.status = status  # type: ignore[assignment]
+        model = FenceModel.model_validate(model.model_dump())  # re-validate the Literal
+        self._conn.execute(
+            "UPDATE fence_models SET status=?, doc=? WHERE model_id=? AND version=?",
+            (status, model.model_dump_json(), model_id, version),
+        )
+        self._audit(actor, f"fence_model_status:{status}", model.ref)
+        self._conn.commit()
+
+    def next_fence_model_version(self, model_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT MAX(version) FROM fence_models WHERE model_id=?", (model_id,)
+        ).fetchone()
+        return (row[0] or 0) + 1
+
+    def seed_fence_models(self, actor: str = "seed") -> None:
+        """A fresh database is never empty, so the compatibility path is data
+        rather than a special case in the generator. Keyed on (id, version) and
+        never an overwrite: reopening a store must leave an expert's edits, and
+        a retirement, exactly as they were found."""
+        for model in demo_models().values():
+            present = self._conn.execute(
+                "SELECT 1 FROM fence_models WHERE model_id=? AND version=?",
+                (model.id, model.version),
+            ).fetchone()
+            if present:
+                continue
+            # Seeded active whatever the built-in says, since a seeded model
+            # nobody could select would be worse than no seed at all — and the
+            # column follows the document, never the other way round.
+            seeded = model.model_copy(update={"status": "active"})
+            self._conn.execute(
+                "INSERT INTO fence_models (model_id, version, status, doc) VALUES (?,?,?,?)",
+                (seeded.id, seeded.version, seeded.status, seeded.model_dump_json()),
+            )
+            self._audit(actor, "seed_fence_model", seeded.ref)
+        self._conn.commit()
 
     # -- generation runs (append-only) -----------------------------------------
 

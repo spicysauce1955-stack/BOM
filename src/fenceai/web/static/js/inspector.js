@@ -118,6 +118,7 @@ const EVENT_LABEL_KEYS = {
   elevation_sample: "events.elevation",
   height_intent: "events.height",
   post_tilt: "events.post_tilt",
+  fence_model: "events.fence_model",
 };
 
 function eventLabel(payload) {
@@ -131,6 +132,10 @@ function eventLabel(payload) {
     return `${name} · z=<span class="num">${esc(fmtLen(payload.z_mm))}</span>`;
   if (payload.kind === "height_intent")
     return `${name} · <span class="num">${esc(fmtLen(payload.height_mm))}</span>`;
+  // the id, not the localized name: this list renders synchronously off the
+  // topology, and the id is the durable handle a stale listing cannot mistranslate
+  if (payload.kind === "fence_model")
+    return `${name} · <bdi class="sku">${esc(payload.model_id)}</bdi>`;
   if (payload.kind === "post_tilt")
     return `${name} · ${t("tilt." + payload.mode)}${payload.mode === "custom"
       ? ` (<span class="num">${payload.tilt_deg}</span>°)` : ""}`;

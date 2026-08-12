@@ -11,6 +11,7 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, Field, model_validator
 
 from fenceai.core.units import Mm
+from fenceai.fencemodel.selection import FenceModelChoice
 
 
 class Node(BaseModel):
@@ -132,6 +133,18 @@ class BaseTopPoint(BaseModel):
     lock: Literal["level", "step"] | None = None
 
 
+class FenceModelPayload(FenceModelChoice):
+    """Which fence model this stretch is built to — an interval event, because a
+    fence changes model partway along exactly as it changes base or height.
+
+    A model change is a STRUCTURAL boundary: the generator adds these stations to
+    the fixed set, so no bay ever straddles the place where the fence visibly
+    changes (spans sample their properties at the mid-point, which would otherwise
+    hand one model's panel to a bay that is half another's)."""
+
+    kind: Literal["fence_model"] = "fence_model"
+
+
 class BaseTopPayload(BaseModel):
     """General top profile for wall/concrete bases: slopes, steps, or both, as a
     point sequence (sections-model addendum). wall_profile remains the 2-point
@@ -142,7 +155,7 @@ class BaseTopPayload(BaseModel):
 
 
 IntervalPayload = Annotated[
-    Union[BasePayload, HeightIntentPayload, TopLinePayload, WallProfilePayload, BaseTopPayload, PostTiltPayload],
+    Union[BasePayload, HeightIntentPayload, TopLinePayload, WallProfilePayload, BaseTopPayload, PostTiltPayload, FenceModelPayload],
     Field(discriminator="kind"),
 ]
 

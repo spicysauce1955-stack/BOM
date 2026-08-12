@@ -51,7 +51,8 @@ def test_a_length_requirement_needs_a_member_that_can_supply_a_length():
 
 def test_sku_by_option_must_name_an_eligible_member():
     """An option value can NARROW eligibility; it can never smuggle in a product
-    the slot does not allow."""
+    the slot does not allow. Still refused now that options RESOLVE: this is the
+    check that makes "narrows, never bypasses" true rather than aspirational."""
     req = PartRequirement(
         role="rail", qty=2, length_rule="centre_to_centre",
         option_axis="frame_finish", sku_by_option={"black": "POST-S"},
@@ -148,10 +149,10 @@ def test_an_ordinary_overlap_is_still_accepted():
 
 # ---- validated-then-ignored features (fix wave, finding G) -------------------
 
-def test_variants_are_refused_because_the_resolver_never_selects_one():
-    """The generator passes model.default_spec straight to resolve_panel, so a
-    variant condition is never evaluated. Accepting the model would build every
-    bay to the default with nobody told."""
+def test_a_model_with_variants_validates_clean_now_that_they_resolve():
+    """Turned on in W3: `choose_variant` is called per bay by the generator, so a
+    variant condition is evaluated rather than ignored. The entry that refused
+    this left `_unsupported_features` in the same change."""
     from fenceai.knowledge.ast import Cmp, FieldRef, Lit
     from fenceai.fencemodel.model import Variant
 
@@ -160,27 +161,67 @@ def test_variants_are_refused_because_the_resolver_never_selects_one():
         condition=Cmp(cmp="<", left=FieldRef(path="panel.height_mm"), right=Lit(value=1200)),
         spec=PanelSpec(frame=[_slot()]),
     )]
-    errs = validate_model(model, demo_catalog())
-    assert any("variants are not yet supported" in e for e in errs)
+    assert validate_model(model, demo_catalog()) == []
 
 
-def test_option_axes_are_refused_because_panelcontext_options_is_never_read():
+def test_a_variants_own_spec_is_validated_like_the_default_one():
+    """A variant spec reaches `resolve_panel` exactly as `default_spec` does, so
+    an unstocked sku inside one is the same wrong BOM."""
+    from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+    from fenceai.fencemodel.model import Variant
+
+    req = PartRequirement(
+        role="rail", qty=2, length_rule="centre_to_centre",
+        eligibility=Eligibility(members=[EligibleItem(sku="NOPE", priority=1)]),
+    )
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.variants = [Variant(
+        condition=Cmp(cmp="<", left=FieldRef(path="panel.height_mm"), right=Lit(value=1200)),
+        spec=PanelSpec(frame=[_slot(requirement=req)]),
+    )]
+    assert any("NOPE" in e for e in validate_model(model, demo_catalog()))
+
+
+def test_option_axes_validate_clean_now_that_a_chosen_value_is_read():
     from fenceai.fencemodel.model import Axis, OptionValue
 
-    model = _model(PanelSpec(frame=[_slot()]))
+    req = PartRequirement(
+        role="rail", qty=2, length_rule="centre_to_centre",
+        option_axis="finish", sku_by_option={"black": "RAIL-3000"},
+        eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000", priority=1)]),
+    )
+    model = _model(PanelSpec(frame=[_slot(requirement=req)]))
     model.option_axes = [Axis(key="finish", kind="enum",
                               values=[OptionValue(key="black", swatch="#101010")])]
+    assert validate_model(model, demo_catalog()) == []
+
+
+def test_an_axis_with_available_when_is_still_refused():
+    """The one part of the axis feature W3 did NOT build: nothing evaluates
+    `available_when`, so an axis that is supposed to disappear would still be
+    answerable and the answer would still narrow a slot."""
+    from fenceai.fencemodel.model import Axis, OptionValue
+    from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.option_axes = [Axis(
+        key="finish", kind="enum", values=[OptionValue(key="black")],
+        available_when=Cmp(cmp=">", left=FieldRef(path="panel.height_mm"),
+                           right=Lit(value=1200)),
+    )]
     errs = validate_model(model, demo_catalog())
-    assert any("option_axes are not yet supported" in e for e in errs)
+    assert any("available_when" in e and "not yet supported" in e for e in errs)
 
 
-def test_a_restricted_height_support_is_refused_because_it_is_never_checked():
+def test_a_restricted_height_support_validates_clean_now_that_it_is_checked():
+    """Generation compares each bay's height against the ladder and reports the
+    ones it cannot build, per section — so declaring a ladder is no longer an
+    ask that goes nowhere."""
     from fenceai.fencemodel.model import Discrete
 
     model = _model(PanelSpec(frame=[_slot()]))
     model.height_support = Discrete(heights_mm=[1000, 1200])
-    errs = validate_model(model, demo_catalog())
-    assert any("height_support" in e and "not yet supported" in e for e in errs)
+    assert validate_model(model, demo_catalog()) == []
 
 
 def test_the_permissive_default_height_support_is_not_flagged():
@@ -189,14 +230,33 @@ def test_the_permissive_default_height_support_is_not_flagged():
     assert validate_model(_model(PanelSpec(frame=[_slot()])), demo_catalog()) == []
 
 
-def test_a_layout_policy_is_refused_because_nothing_contributes_it():
+def test_a_layout_policy_over_series_scoped_params_validates_clean():
+    """Each contribution becomes a knowledge version scoped to `series=<model>`,
+    resolved by the same evaluator as everything else."""
+    from fenceai.fencemodel.model import PolicyContribution
+
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.layout_policy = [
+        PolicyContribution(param="max_span_mm", value=1500,
+                           knowledge_type="hard_constraint"),
+        PolicyContribution(param="rails_per_span", value=3,
+                           knowledge_type="preference"),
+    ]
+    assert validate_model(model, demo_catalog()) == []
+
+
+def test_a_contribution_to_a_param_no_model_scope_reaches_is_refused():
+    """`post_embed_mm` is resolved once for the whole topology, from a scope with
+    no `series` bound. A contribution naming it would enter the evaluator and
+    match nothing — accepted, emitted, and silently without effect, which is the
+    exact shape this table exists to refuse."""
     from fenceai.fencemodel.model import PolicyContribution
 
     model = _model(PanelSpec(frame=[_slot()]))
     model.layout_policy = [PolicyContribution(
-        param="max_span_mm", value=1500, knowledge_type="hard_constraint")]
+        param="post_embed_mm", value=900, knowledge_type="hard_constraint")]
     errs = validate_model(model, demo_catalog())
-    assert any("layout_policy" in e and "not yet supported" in e for e in errs)
+    assert any("post_embed_mm" in e and "not yet supported" in e for e in errs)
 
 
 def test_an_eligibility_predicate_is_refused_because_it_is_never_evaluated():

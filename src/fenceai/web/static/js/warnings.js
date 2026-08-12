@@ -40,10 +40,17 @@ export function localizedByCode(prefix, code, params, fallback) {
 // which is still an answer to "which one", where there was none.
 const label = (elementId) => tagOf(elementId) || elementId;
 
-function labelledParams(warning) {
+// `pegs`: what to call the place the warning is about, when the caller knows
+// better than the element ids do. A panel PREVIEW is computed over a synthetic
+// one-bay strategy (`fencemodel/preview.py` PREVIEW_SPAN_ID), so its warnings
+// carry `span@preview:0-0` — a made-up id, printed at the reader as if it named
+// something on their drawing. The caller substitutes "this panel"; every other
+// caller keeps the real pegs.
+function labelledParams(warning, pegs) {
   const p = { ...(warning.params || {}) };
   const refs = warning.element_refs || [];
-  if (refs.length) p.pegs = refs.map(label).join(", ");
+  if (pegs) p.pegs = pegs;
+  else if (refs.length) p.pegs = refs.map(label).join(", ");
   if ("slot_key" in p) {
     // The slot says WHICH rail of the panel this is, which is worth saying when
     // a panel has a top and a bottom one — and is noise when it does not.
@@ -56,9 +63,9 @@ function labelledParams(warning) {
   return p;
 }
 
-export function warningRowHtml(warning) {
+export function warningRowHtml(warning, { pegs = null } = {}) {
   const body = localizedByCode(
-    "warning", warning.code, labelledParams(warning), warning.message);
+    "warning", warning.code, labelledParams(warning, pegs), warning.message);
   return `<div class="warning ${esc(warning.severity || "warning")}">`
     + `⚠ [<span class="sku">${esc(warning.code)}</span>] ${body}</div>`;
 }

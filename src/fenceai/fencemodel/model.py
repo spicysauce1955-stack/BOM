@@ -4,11 +4,13 @@ Immutable versions, like knowledge objects (ADR-0006): a run stamps the model
 versions it resolved, so editing a model cannot change what an old run meant.
 
 The model owns product STRUCTURE. Numbers that can conflict — max span, rail
-count, embedment — stay knowledge. The DESIGN for that is `LayoutPolicy`: the
-model states them as knowledge-shaped contributions and the existing evaluator
-resolves them with everything else. That is phase 2 — nothing reads
-`layout_policy` today, so `validate_model` refuses a model that sets one rather
-than accepting an ask that would go nowhere.
+count, embedment — stay knowledge. `LayoutPolicy` is how the two meet: the model
+states them as knowledge-shaped contributions scoped to `series=<model_id>` and
+the existing evaluator resolves them with everything else, at each
+contribution's OWN authority. The model gets no private channel into the
+generator, and `validate_model` still refuses a contribution to a param that
+generation resolves before any model is chosen (`SERIES_SCOPED_PARAMS`), because
+that one really would go nowhere.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from fenceai.knowledge.ast import Expr
 
 _SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-LengthRule = Literal["clear_between_posts", "centre_to_centre", "overlap"]
+LengthRule = Literal["clear_between_posts", "centre_to_centre", "overlap", "panel_height"]
 
 
 # --- what a part IS, and which items may supply it ---------------------------
@@ -110,6 +112,10 @@ class FrameSlot(BaseModel):
     key: str
     orientation: Literal["horizontal", "vertical"]
     placement: Placement
+    # the member's face height as it is SEEN — its depth in elevation. 0 means
+    # undeclared, and the elevation read model says so (`declared=False`) rather
+    # than drawing a nominal band that reads as measured.
+    thickness_mm: Mm = 0
     requirement: PartRequirement
 
 
@@ -167,15 +173,15 @@ class Axis(BaseModel):
 
 
 class PolicyContribution(BaseModel):
-    """The model's ask of the span layout — DESIGNED to be emitted as knowledge
-    rather than read directly, with authority PER CONTRIBUTION: a manufacturer
-    maximum span is a hard constraint, a nominal width is a preference, and one
-    authority for the whole policy would make one of the two wrong.
+    """The model's ask of the span layout, emitted as knowledge rather than read
+    directly (`strategy/generator.py::_policy_knowledge`), with authority PER
+    CONTRIBUTION: a manufacturer maximum span is a hard constraint, a nominal
+    width is a preference, and one authority for the whole policy would make one
+    of the two wrong — an unbeatable preference, or a beatable safety limit.
 
-    NOT BUILT in phase 1: nothing turns a contribution into a knowledge version
-    and the evaluator never sees one. `validate_model` therefore rejects a model
-    carrying a `layout_policy`, rather than accepting a max span that would be
-    silently ignored by the layout it was written to constrain."""
+    `param` is limited to `SERIES_SCOPED_PARAMS`: the params generation resolves
+    under the model's own scope, and therefore the ones a contribution can
+    actually reach."""
 
     param: str
     value: int
@@ -239,46 +245,92 @@ def _can_supply_length(catalog: Catalog, sku: str) -> bool:
     return isinstance(product.attrs.get("length_mm"), int)
 
 
-# Phase 1 resolves a PanelSpec and nothing more. Several schema fields are
-# already expressible — the spec designs them, phase 2 builds them — and
-# `resolve_panel` silently ignores every one of them today. Accepting such a
-# model at load and then ignoring the field at resolve is not a deferral, it is
-# a wrong answer with a green light: the author asks for three rails below
-# 1200 mm, validation says "fine", and every bay is built to `default_spec`
-# with nothing reported. So a model that USES an unbuilt feature is refused
-# here, by name. Deleting an entry from this table is how phase 2 turns each
-# feature on — and the resolver change and the entry's removal are then the
-# same commit.
+# Several schema fields are expressible ahead of the resolver that reads them —
+# the spec designs them, a later wave builds them — and resolution silently
+# ignores every one of them until it does. Accepting such a model at load and
+# then ignoring the field is not a deferral, it is a wrong answer with a green
+# light: the author asks for the infill to be BOUGHT as one pre-made unit,
+# validation says "fine", and the panel is bought as its parts with nothing
+# reported. So a model that USES an unbuilt feature is refused here, by name.
+# Deleting an entry from this table is how a wave turns each feature on — and
+# the resolver change and the entry's removal are then the same commit.
+#
+# W3 emptied four of these entries (variants, option axes, height support,
+# layout policy) and kept two NARROWED ones, because narrowing an entry to the
+# part that is genuinely unbuilt is the same discipline as deleting it: an
+# `Axis.available_when`, and a `layout_policy` contribution to a param no model
+# scope reaches. What is left after that is real: `Eligibility.group` and
+# `.predicate`, `excess=trim_last|extension_clip`, and `infill supply=assembly`.
+#
+# W4 ADDED one, `Axis.kind != "enum"` — the table works in both directions. A
+# field can sit here unnoticed while only demo data writes it and become a
+# wrong answer the moment an editor puts it in front of an author, which is
+# exactly what an authoring wave is for finding.
 _UNSUPPORTED = "not yet supported (phase 2)"
 
-_PERMISSIVE_HEIGHT_SUPPORT = Continuous(min_mm=0, max_mm=10_000, step_mm=1)
+# The params a `layout_policy` contribution may name, because these are the ones
+# generation resolves under the model's own `series` scope — inside the segment
+# loop, AFTER the model is known (`strategy/generator.py::segment_model`).
+# Everything else in the fence is resolved once for the whole topology, before
+# any model has been chosen: `post_embed_mm` is resolved in `_check_post_lengths`
+# and `max_panel_step_mm`, `max_panel_gap_mm` and friends per RUN, all of them
+# from a scope with no `series` bound. A contribution naming one of those would
+# be accepted, emitted, and matched by nothing — a model asking for a deeper
+# footing and getting the company's, silently. Widening this set means moving
+# the corresponding resolution inside the segment loop, in the same change;
+# `tests/strategy/test_panel_features.py` pins each member by contributing it
+# and watching the fence move.
+SERIES_SCOPED_PARAMS = frozenset({
+    "max_span_mm", "rails_per_span", "screws_per_span", "exact_span_mm",
+    # resolved under the same segment scope by `_check_panel_safety`, so a
+    # product line may declare its own gap tolerance and rail spacing
+    "max_clear_gap_mm", "min_rail_separation_mm", "max_pattern_residual_mm",
+})
 
 
 def _unsupported_features(model: FenceModel) -> list[str]:
     """Features the schema accepts that `resolve_panel` does not honour."""
     errors: list[str] = []
-    if model.variants:
-        errors.append(
-            f"variants are {_UNSUPPORTED}: the generator resolves default_spec "
-            "directly and select_variant has no production caller, so a variant "
-            "condition would never be evaluated"
-        )
-    if model.option_axes:
-        errors.append(
-            f"option_axes are {_UNSUPPORTED}: PanelContext.options is never read, "
-            "so an option value could not narrow eligibility or pick a product"
-        )
-    if model.layout_policy:
-        errors.append(
-            f"layout_policy is {_UNSUPPORTED}: nothing emits its contributions "
-            "into the knowledge evaluator, so the span layout would not see them"
-        )
-    if model.height_support != _PERMISSIVE_HEIGHT_SUPPORT:
-        errors.append(
-            f"a restricted height_support is {_UNSUPPORTED}: resolution never "
-            "checks the panel height against it, so an unquotable height would "
-            "be built silently instead of raising height_not_supported"
-        )
+    for axis in model.option_axes:
+        if axis.kind != "enum":
+            # Nothing reads `Axis.kind`. `_chosen_option` narrows by looking the
+            # answer up in `sku_by_option` — `str(ctx.options[axis])` against the
+            # keys of the axis's own `values` — so a `numeric` axis is answered
+            # out of a hand-listed enumeration, and only the numbers someone
+            # thought to list can be given. "1000, 1200 or 1800" is a different
+            # question from "a height", and the field says the second while the
+            # resolver asks the first. Harmless while only demo data declared
+            # axes; W4 puts it in front of an author.
+            errors.append(
+                f"axis {axis.key}: kind={axis.kind!r} is {_UNSUPPORTED}: nothing "
+                "reads Axis.kind and resolution answers every axis from its "
+                "declared `values`, so this would behave as an enum of whatever "
+                "values were listed"
+            )
+        if axis.available_when is not None:
+            # The one part of the axis feature W3 left unbuilt, and narrowed to
+            # the field rather than left on the whole feature: an axis is
+            # answered by whoever chose the model — a project default or an
+            # interval event — long before a bay exists, so `available_when`
+            # cannot be evaluated at resolution against the panel it would need
+            # to read, and there is no surface yet that could hide the question.
+            # An accepted-but-ignored one would let a model declare "this axis
+            # only applies below 1200" and then narrow a 1800 mm bay by it.
+            errors.append(
+                f"axis {axis.key}: available_when is {_UNSUPPORTED}: nothing "
+                "evaluates it, so the axis would stay answerable — and its "
+                "answer would still narrow a slot — where the model says it "
+                "does not apply"
+            )
+    for contribution in model.layout_policy:
+        if contribution.param not in SERIES_SCOPED_PARAMS:
+            errors.append(
+                f"layout_policy param {contribution.param!r} is {_UNSUPPORTED}: "
+                "generation resolves it before any model is chosen, from a scope "
+                "with no `series` bound, so this contribution would enter the "
+                "evaluator and match nothing. Supported today: "
+                + ", ".join(sorted(SERIES_SCOPED_PARAMS))
+            )
 
     for spec in [model.default_spec, *(v.spec for v in model.variants)]:
         if spec.infill and spec.infill.excess in ("trim_last", "extension_clip"):
@@ -322,12 +374,6 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                     f"slot {key}: Eligibility.predicate is {_UNSUPPORTED}: it is "
                     "never evaluated and never frozen into the run's snapshot, so "
                     "it would neither add nor remove a candidate"
-                )
-            if req.option_axis is not None or req.sku_by_option:
-                errors.append(
-                    f"slot {key}: option_axis/sku_by_option are {_UNSUPPORTED}: "
-                    "the chosen option value is never read at resolution, so the "
-                    "slot would silently keep its full eligibility set"
                 )
     return errors
 
@@ -406,6 +452,19 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                     errors.append(
                         f"slot {key}: {sku} cannot supply a length "
                         f"(not divisible, no attrs.length_mm)"
+                    )
+                elif (req.length_rule is None
+                      and catalog.products[sku].consumption.kind == "divisible_linear"):
+                    # The inverse of the check above, and it fails FAR more
+                    # quietly. A divisible product asked for with no cut length
+                    # plans no bars, so the BOM carries no line for it at all and
+                    # the parts ledger reads the gap as demand covered from stock
+                    # — a panel that silently costs nothing rather than a panel
+                    # that visibly costs the wrong amount. Caught at authoring,
+                    # where the author can still say what length they meant.
+                    errors.append(
+                        f"slot {key}: {sku} is bought by the length but the slot "
+                        f"declares no length_rule, so nothing would be cut or priced"
                     )
             if req.option_axis and req.option_axis not in axis_keys:
                 errors.append(f"slot {key}: option_axis {req.option_axis} is not declared")
