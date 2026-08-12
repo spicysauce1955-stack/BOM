@@ -65,6 +65,10 @@ class ProjectImpact(BaseModel):
     project_name: str = ""
     changed: bool = False
     generation_failure: ImpactFailure | None = None  # hypothetical KB cannot generate
+    # the project could not generate BEFORE the change either, so there is no
+    # delta to report and this row is not evidence about the change. Distinct
+    # from `generation_failure` alone, which means the change broke it.
+    baseline_failed: bool = False
     posts_added: int = 0
     posts_removed: int = 0
     posts_modified: int = 0  # same station, different sku/kind/mounting/reinforced
@@ -239,10 +243,23 @@ def _preview(
             continue  # nothing to compare on an empty project
         report.projects_checked += 1
         impact = ProjectImpact(project_id=case.project_id, project_name=case.project_name)
-        strategy_before, bom_before = _spine(
-            case.topology, kb_before, catalog, case.overrides, case.inventory,
-            case.project_id, library_before, case.fence_model, case.policy,
-        )
+        try:
+            strategy_before, bom_before = _spine(
+                case.topology, kb_before, catalog, case.overrides, case.inventory,
+                case.project_id, library_before, case.fence_model, case.policy,
+            )
+        except (GenerationFailure, ValueError) as e:
+            # The project cannot generate as it STANDS — a broken rule, a SKU
+            # somebody deleted. That is not this change's doing and there is no
+            # delta to report, but it must not take the portfolio preview down
+            # with it: one unbuildable job used to 500 the whole "what would this
+            # affect" answer, which is the moment a user most needs an answer.
+            impact.generation_failure = _failure(e) if isinstance(
+                e, GenerationFailure) else ImpactFailure(
+                    code="generation_failed", message=str(e))
+            impact.baseline_failed = True
+            report.impacts.append(impact)
+            continue
         impact.bom_before_cents = bom_before.total_cents
         try:
             strategy_after, bom_after = _spine(

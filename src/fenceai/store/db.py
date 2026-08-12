@@ -316,6 +316,24 @@ class Store:
         self._audit(actor, f"fence_model_status:{status}", model.ref)
         self._conn.commit()
 
+    def delete_fence_model_draft(
+        self, model_id: str, version: int, actor: str = "system"
+    ) -> None:
+        """Discard a draft. The refusal lives HERE, not in the route: an
+        immutable document that any route could delete is not immutable, and a
+        stored run or an accepted quote may name a published version."""
+        model = self.load_fence_model(model_id, version)
+        if model is None:
+            raise KeyError(f"{model_id}@v{version}")
+        if model.status != "draft":
+            raise ValueError(f"{model.ref} is {model.status}, not a draft")
+        self._conn.execute(
+            "DELETE FROM fence_models WHERE model_id=? AND version=?",
+            (model_id, version),
+        )
+        self._audit(actor, "fence_model_discard", model.ref)
+        self._conn.commit()
+
     def next_fence_model_version(self, model_id: str) -> int:
         row = self._conn.execute(
             "SELECT MAX(version) FROM fence_models WHERE model_id=?", (model_id,)

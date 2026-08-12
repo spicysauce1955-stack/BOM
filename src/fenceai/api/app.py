@@ -721,9 +721,12 @@ def create_fence_model(model: FenceModel, author: str = "user"):
 def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"):
     _reserved(model_id)
     library = state.store.fence_model_library()
-    existing = next(
-        (m for m in library.models if m.id == model_id and m.status == "draft"), None
-    )
+    # the HIGHEST draft, which is the one `listing()` reports and therefore the
+    # one the editor is showing. Taking the first would write the user's edits
+    # into a different version from the one on their screen whenever two drafts
+    # exist — the two disagreed, and the disagreement was silent.
+    drafts = [m for m in library.models if m.id == model_id and m.status == "draft"]
+    existing = max(drafts, key=lambda m: m.version, default=None)
     version = existing.version if existing else state.store.next_fence_model_version(model_id)
     draft = model.model_copy(update={"id": model_id, "version": version, "status": "draft"})
     try:
@@ -747,6 +750,29 @@ def preview_fence_model_impact(model: FenceModel) -> ImpactReport:
         model, state.store.fence_model_library(), state.store.knowledge_base(),
         state.store.load_catalog(), _impact_cases(),
     )
+
+
+@app.delete("/api/fence-models/{model_id}/{version}")
+def discard_fence_model_draft(model_id: str, version: int, author: str = "user"):
+    """Throw a draft away. ONLY a draft.
+
+    Without this, every abandoned attempt stayed in the library for ever — and
+    the editor's first design saved on every keystroke, so a half-typed id left a
+    row behind for each character. A published version is never deletable: a
+    stored run or an accepted quote may name it, and deleting one would make an
+    immutable commercial document refer to nothing.
+    """
+    _reserved(model_id)
+    model = state.store.load_fence_model(model_id, version)
+    if model is None:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    if model.status != "draft":
+        raise HTTPException(409, {
+            "code": "fence_model_not_a_draft",
+            "params": {"model_ref": model.ref, "status": model.status},
+        })
+    state.store.delete_fence_model_draft(model_id, version, actor=author)
+    return {"discarded": model.ref}
 
 
 @app.post("/api/fence-models/{model_id}/{version}/publish")
