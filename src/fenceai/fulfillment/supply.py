@@ -11,7 +11,7 @@ the cuts. Lexicographic tiers with named presets (ADR-0007), never raw weights.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel
 
@@ -22,6 +22,9 @@ from fenceai.fulfillment.fulfill import Inventory
 from fenceai.strategy.model import StrategyWarning
 
 Preset = Literal["least_cost", "honour_priority"]
+# introspected from the Literal itself so the runtime check and the type can
+# never drift apart (task 10 fix round 1, finding 3)
+_PRESETS: frozenset[str] = frozenset(get_args(Preset))
 
 _INFEASIBLE = 2**62
 
@@ -51,6 +54,17 @@ def resolve_supply(
     preset: Preset = "least_cost",
     approvals: set[str] | None = None,
 ) -> SupplyResolution:
+    # `preset` arrives here as a plain str (GenerationRun.objective_preset is
+    # unvalidated at rest — a stored run can carry any string), and `_choose`
+    # below branches only on "honour_priority" — every OTHER value used to fall
+    # through as least-cost with nobody told. That silent fallback is exactly
+    # the failure mode this checks for: an unrecognised preset is a loud error
+    # at the one boundary every caller (get_bom, get_structure, create_quote,
+    # impact preview) funnels through, not a quiet reinterpretation.
+    if preset not in _PRESETS:
+        raise ValueError(
+            f"unknown objective preset {preset!r}; expected one of {sorted(_PRESETS)}"
+        )
     approvals = approvals or set()
     out = SupplyResolution()
 

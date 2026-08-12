@@ -483,6 +483,36 @@ def test_unresolved_supply_is_visible_on_working_views_and_refused_on_a_quote(cl
     assert body["unresolved"][0]["role"] == "rail"
 
 
+def test_a_run_with_an_unrecognised_preset_refuses_rather_than_repricing_silently(client):
+    """objective_preset is stored as a plain str, so a run generated under an
+    older DEFAULT_POLICY (or any bad data) can carry a value outside
+    fulfillment.supply.Preset. resolve_supply now refuses it loudly instead of
+    resolve_supply._choose silently treating it as least-cost (task 10 fix
+    round 1, finding 3) — this proves the refusal reaches the HTTP layer as a
+    clean 400, not an unhandled 500."""
+    from fenceai.api.app import state
+
+    pid = make_project(client, name="bad-preset")
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    result = state.store.load_run(run_id)
+    result.run.objective_preset = "fewest_new_stock"   # the vestigial, unimplemented name
+    state.store._conn.execute(
+        "UPDATE generation_runs SET doc=? WHERE id=?",
+        (result.model_dump_json(), run_id),
+    )
+    state.store._conn.commit()
+
+    bom_resp = client.get(f"/api/runs/{run_id}/bom")
+    assert bom_resp.status_code == 400
+    assert "fewest_new_stock" in bom_resp.json()["detail"]
+
+    structure_resp = client.get(f"/api/runs/{run_id}/structure")
+    assert structure_resp.status_code == 400
+    assert "fewest_new_stock" in structure_resp.json()["detail"]
+
+
 def test_impact_preview_reports_vs_accepted_quote(client):
     pid = make_project(client, name="quoted")
     put_straight_topology(client, pid)

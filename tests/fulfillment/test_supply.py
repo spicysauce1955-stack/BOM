@@ -3,6 +3,8 @@ the line simply gains its SKU; with more than one, the choice is cost-driven
 (S15 in tests/scenarios covers the case that actually needs a cut plan to
 resolve — stock lengths that cannot be ranked by nominal length alone)."""
 
+import pytest
+
 from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import Catalog, DivisibleLinear, Product
 from fenceai.demand.derive import RequirementLine
@@ -27,6 +29,16 @@ def test_a_line_that_already_names_a_sku_is_left_alone():
     """Posts, caps and concrete never go through eligibility."""
     line = _line(sku="POST-S", eligibility=Eligibility(), role="post", slot_key="")
     assert resolve_supply([line], demo_catalog()).requirements[0].sku == "POST-S"
+
+
+def test_an_unrecognised_preset_is_a_loud_error_not_a_silent_least_cost():
+    """GenerationRun.objective_preset is stored as a plain str, so a stored run
+    (or a typo) can carry a value outside Preset's Literal. `_choose` branches
+    only on "honour_priority", so treating anything else as least-cost — the
+    behaviour before this fix — would silently reinterpret garbage input as a
+    real preset instead of refusing it."""
+    with pytest.raises(ValueError, match="fewest_new_stock"):
+        resolve_supply([_line()], demo_catalog(), preset="fewest_new_stock")
 
 
 def test_an_empty_eligibility_warns_rather_than_guessing():

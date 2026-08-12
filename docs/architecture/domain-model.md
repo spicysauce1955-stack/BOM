@@ -90,7 +90,9 @@ KnowledgeVersion { object_id, version, type: fact|hard_constraint|company_rule|p
 
 ```
 GenerationRun { id, project_id, topology_revision, knowledge_snapshot: [(object_id, version)],
-                snapshot_hash, overrides_applied: [id], policy, created_at }
+                snapshot_hash, overrides_applied: [id], policy, demand_skus: {role: sku},
+                objective_preset, model_snapshot: [(model_id, version)], catalog_hash,
+                created_at }
 Strategy      { id, run_id, status: proposed|accepted|superseded,
                 posts[], spans[], gates[], warnings[] }
 Post  { id, run_ref (topology run id | node id), station_mm?, kind: end|corner|line|gate|junction,
@@ -102,6 +104,13 @@ Span  { id, run_ref, start_station_mm, end_station_mm, width_mm (plan),
 Gate  { id, run_ref, start_station_mm, end_station_mm, kit_sku }
 Warning { code, severity, message, element_refs[], decision_ref? }
 ```
+
+`GenerationRun.id` is content-addressed over topology, knowledge_snapshot, overrides, policy,
+model_snapshot, catalog_hash and objective_preset — anything that changes what the run
+*means* has to be in that list, or `INSERT OR IGNORE` (append-only runs table) would serve a
+stale stored document under a reused id. `catalog_hash` is also checked (not just stamped) on
+every later read: `/bom` and `/structure` refuse with 409 `catalog_changed` if today's catalog
+no longer matches it.
 
 Element IDs are content-addressed within a run (`post@{run}:{station}`) so regenerated
 identical elements keep identical IDs; overrides never reference them anyway (anchors only).

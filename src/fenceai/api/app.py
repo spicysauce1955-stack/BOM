@@ -298,10 +298,10 @@ def get_bom(run_id: str):
     inventory = state.store.load_inventory(result.run.project_id)
     try:
         requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+        resolution = resolve_supply(requirements, catalog, inventory,
+                                    preset=result.run.objective_preset)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    resolution = resolve_supply(requirements, catalog, inventory,
-                                preset=result.run.objective_preset)
     requirements = resolution.requirements
     bom = fulfill(requirements, catalog, inventory)
     bom.warnings = resolution.warnings
@@ -335,10 +335,10 @@ def get_structure(run_id: str):
     inventory = state.store.load_inventory(result.run.project_id)
     try:
         requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+        resolution = resolve_supply(requirements, catalog, inventory,
+                                    preset=result.run.objective_preset)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    resolution = resolve_supply(requirements, catalog, inventory,
-                                preset=result.run.objective_preset)
     requirements = resolution.requirements
     bom = fulfill(requirements, catalog, inventory)
     bom.warnings = resolution.warnings
@@ -372,10 +372,10 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     inventory = state.store.load_inventory(result.run.project_id)
     try:
         requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+        resolution = resolve_supply(requirements, catalog, inventory,
+                                    preset=result.run.objective_preset)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    resolution = resolve_supply(requirements, catalog, inventory,
-                                preset=result.run.objective_preset)
     if resolution.unresolved:
         # An immutable commercial document must not silently price a job that's
         # missing a part — refuse rather than freeze a quote that under-prices it

@@ -40,7 +40,10 @@ Overrides ───────────────┘
 
 Every stage is a pure function over explicit inputs; persistence happens between stages, not
 inside them. A `GenerationRun` record captures inputs' identity (topology revision, knowledge
-snapshot hash, overrides, policy) so any strategy is reproducible.
+snapshot hash, overrides, policy, the fence model(s) used, catalog content hash, objective
+preset) so any strategy is reproducible; the run id is a content hash over that identity, and
+a later `/bom`/`/structure` read refuses (409 `catalog_changed`) rather than silently
+recomputing against a catalog that no longer matches it.
 
 ## API surface (V1)
 

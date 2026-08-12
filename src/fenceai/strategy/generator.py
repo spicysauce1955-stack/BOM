@@ -57,7 +57,15 @@ from fenceai.topology.station import (
     run_length,
 )
 
-DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "fewest_new_stock"}
+# "fewest_new_stock" here (pre-ADR-0007) predates fulfillment/supply.py's Preset
+# vocabulary (`Literal["least_cost", "honour_priority"]`, added later in
+# 7c73ec6) and was never wired to a tier those two presets implement — it named
+# a cut-planning tier-list concept (material-optimization.md), not a
+# resolve_supply preset. It only ever "worked" because `_choose` silently
+# treated any unrecognised preset as least-cost. Now that resolve_supply
+# refuses an unrecognised preset loudly (task 10 fix round 1, finding 3), the
+# honest default is the vocabulary's own default, not the vestigial name.
+DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_cost"}
 
 # The catalog attribute by which a product declares the opening width it fits.
 # Fit is DATA, like Product.attrs["length_mm"] for posts: a SKU is an opaque id and
@@ -157,7 +165,10 @@ def generate(
     run_meta.model_snapshot = sorted({(m.id, m.version) for m in models_used})
     run_meta.catalog_hash = hashlib.sha256(
         catalog.model_dump_json().encode()).hexdigest()[:16]
-    run_meta.objective_preset = policy.get("objective_preset", "least_cost")
+    # `policy` was already merged with DEFAULT_POLICY above, so the key always
+    # exists — a `.get(..., "least_cost")` fallback here could never fire; direct
+    # indexing says so instead of implying a fallback that is dead on arrival.
+    run_meta.objective_preset = policy["objective_preset"]
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
             [topology.model_dump(), run_meta.knowledge_snapshot,
