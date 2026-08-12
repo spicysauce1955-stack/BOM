@@ -1,11 +1,11 @@
 # Current status
 
-Updated: 2026-08-12 — V1 complete; fence models phase 1 landed, and
-`specs/2026-08-12-panel-authoring-design.md` W1/W2/W3/W5 plus most of W6 are in
-(W4 authoring UI in flight; the elevation renderer and phase 3 remain)
-Updated: 2026-08-12 — V1 complete; fence models phase 1 landed, and W1–W4 of
-`specs/2026-08-12-panel-authoring-design.md` gave the model a UI and an editor
-(W5–W6 remain)
+Updated: 2026-08-13 — V1 complete; fence models phase 1 landed, and W1–W5 plus
+most of W6 of `specs/2026-08-12-panel-authoring-design.md` are in: a model is
+persisted, selectable, previewable, explainable and editable. Two review rounds
+(architecture + tests) dispositioned. Remaining: an SVG renderer for the
+elevation the backend already serves, `excess=trim_last`/`extension_clip`,
+`InfillSpec.supply=assembly`, and phase 3 arc-flow.
 
 - [x] Research (4 parallel researcher reports, synthesis, ADRs 0001–0010)
 - [x] Architecture (docs/architecture/*, golden scenarios S01–S14 defined)
@@ -515,3 +515,43 @@ length typed in cm stores millimetres, and that a wider slat gap fits fewer slat
 
 **W5–W6 remain**: the `select_supply` explanation and multi-member groups, the pricing union,
 the elevation drawing beside the slot table, and the phase-2/3 tail.
+
+## Panel authoring — the two review rounds (2026-08-13) — COMPLETE
+architecture-critic (SOUND-WITH-FIXES) + test-reviewer (GAPS) over the whole branch.
+
+**Two blockers.** `project_id` was not in the run-id digest, and it is bound as a scope
+dimension — so two projects with the same topology and one project-scoped rule collided,
+and `INSERT OR IGNORE` dropped the second: its user pressed Generate, saw their own answer,
+and every later read served the other project's fence. And the M-LEGACY seam short-circuited
+before `library.resolve`, so a published v2 was offered by the picker, priced by the preview
+and reported on by the impact preview, then ignored at generation — the id is now reserved
+at the route.
+
+**A live 500 no pytest test can see.** `Store` shared one sqlite3 connection across
+FastAPI's threadpool with `check_same_thread=False` silencing the guard; two overlapping
+fetches interleaved statements and raised `InterfaceError` out of a route. `TestClient`
+serialises requests, so the browser smoke suite was the only detector — red here, green on
+main. Found independently by both the test review and the W4 agent. Every store method is
+serialised now, held for the WHOLE call because several read then write.
+
+**Three wrong answers behind a green suite.** The sphere test measured only the gaps
+BETWEEN members, and `center` justification folds the residual into the edge margins and
+zeroes it — so two 150 mm holes stood against the posts while every measured gap read 50.
+A multi-member pattern drew thirteen slats where seven were bought, running out of the
+panel. An exact bay width silently lost to a `min()` against the hard maximum, producing
+bays of neither width and reporting the width nobody used — now a conflict citing both.
+
+**And one the new tests found rather than the review**: `per_gap` counted PIECES, not
+positions, so a member with `qty=2` (a batten pair at one position) made a 12-position
+panel order 17 spacers.
+
+**Coverage.** The infill path was outside the invariant battery and the golden gate
+entirely — dropping infill lines from `BomLine.pegs` broke the BOM→requirement→element
+traceability invariant with a green suite. Two M-SLAT fixtures join both (the existing
+eight gate files are byte-identical, so the compatibility claim still holds), and that
+mutation now dies. Nine single-line pass-throughs in `resolve_panel` had no test at all —
+`edge_margin_mm`, `justification`, `face_offset_mm`, a member's own `qty`, a VERTICAL frame
+slot, `per_end_member`, `per_gap` — all pinned by one panel that uses the non-default value
+of every one of them.
+
+845 pytest · 145 golden scenarios · 127/127 smoke.
