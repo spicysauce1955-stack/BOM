@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from fenceai.core.units import Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.fulfill import Bom
-from fenceai.strategy.model import Strategy
+from fenceai.strategy.model import Strategy, StrategyWarning
 from fenceai.topology.model import Topology
 from fenceai.topology.station import run_length
 
@@ -136,6 +136,11 @@ class StructureReport(BaseModel):
     # which inventory snapshot the cut-piece provenance was read against; the
     # layout never depends on it, the `from_bars` of a part does
     inventory_hash: str = ""
+    # supply-resolution warnings (no_eligible_item, substitute_needs_approval, ...),
+    # stamped by the caller exactly as inventory_hash is — build_structure() itself
+    # stays a pure function of (topology, strategy, requirements, bom) and does not
+    # compute these; a bay with a part nothing can supply must not go silent here.
+    warnings: list[StrategyWarning] = []
 
 
 # --- parts, by inverting the pegs -------------------------------------------

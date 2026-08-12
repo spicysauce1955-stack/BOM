@@ -329,6 +329,10 @@ def get_structure(run_id: str):
     # Stamp it, exactly as /bom does, so two sheets that differ are explainable.
     report.inventory_hash = hashlib.sha256(
         inventory.model_dump_json().encode()).hexdigest()[:16]
+    # A bay with a part nothing can supply must still say so on the setting-out
+    # sheet, not just on /bom — stamped the same way as inventory_hash, since
+    # build_structure() itself stays a pure function of its four inputs.
+    report.warnings = resolution.warnings
     return report
 
 

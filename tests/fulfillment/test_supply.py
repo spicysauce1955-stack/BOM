@@ -28,7 +28,8 @@ def test_a_line_that_already_names_a_sku_is_left_alone():
 
 def test_an_empty_eligibility_warns_rather_than_guessing():
     out = resolve_supply([_line(eligibility=Eligibility())], demo_catalog())
-    assert out.requirements[0].sku == ""
+    assert out.requirements == []            # never a blank-sku line in `requirements`
+    assert out.unresolved[0].sku == ""
     assert [w.code for w in out.warnings] == ["no_eligible_item"]
     assert out.warnings[0].params["role"] == "rail"
 
@@ -37,7 +38,8 @@ def test_a_suggest_only_member_is_not_used_without_approval():
     line = _line(eligibility=Eligibility(
         members=[EligibleItem(sku="RAIL-3000", approval="suggest_only")]))
     out = resolve_supply([line], demo_catalog())
-    assert out.requirements[0].sku == ""
+    assert out.requirements == []
+    assert out.unresolved[0].sku == ""
     assert [w.code for w in out.warnings] == ["substitute_needs_approval"]
 
 
@@ -94,3 +96,30 @@ def test_an_approved_suggest_only_member_is_used():
     out = resolve_supply([line], demo_catalog(), approvals={"RAIL-3000"})
     assert out.requirements[0].sku == "RAIL-3000"
     assert out.warnings == []
+
+
+def test_a_blank_sku_can_never_reach_requirements_even_in_a_mixed_batch():
+    """The invariant fulfill() and the parts ledger depend on: no caller can hand a
+    blank-sku line to fulfill() by forgetting to filter, because resolve_supply
+    never puts one in `requirements` to begin with — resolvable and unresolvable
+    lines are sorted into two different lists, structurally, not by convention."""
+    resolvable = _line(id="req0001")
+    no_item = _line(id="req0002", eligibility=Eligibility())
+    needs_approval = _line(id="req0003", eligibility=Eligibility(
+        members=[EligibleItem(sku="RAIL-3000", approval="suggest_only")]))
+    already_named = _line(id="req0004", sku="POST-S", eligibility=Eligibility(),
+                          role="post", slot_key="")
+
+    out = resolve_supply([resolvable, no_item, needs_approval, already_named], demo_catalog())
+
+    assert {r.sku for r in out.requirements} == {"RAIL-3000", "POST-S"}
+    assert all(r.sku for r in out.requirements)   # the invariant: never blank here
+    assert {r.id for r in out.requirements} == {"req0001", "req0004"}
+
+    assert {r.id for r in out.unresolved} == {"req0002", "req0003"}
+    assert all(r.sku == "" for r in out.unresolved)
+
+    # one warning per unresolved line, in the same order the loop visited them
+    assert [w.code for w in out.warnings] == [
+        "no_eligible_item", "substitute_needs_approval",
+    ]

@@ -461,6 +461,7 @@ def test_structure_endpoint_lays_out_the_run(client):
     doc = client.get(f"/api/runs/{run_id}/structure").json()
 
     assert doc["run_id"] == run_id
+    assert doc["warnings"] == []  # additive field; empty in the normal, resolved case
     section = doc["sections"][0]
     assert section["tag"] == "A"
     assert [s["tag"] for s in section["setting_out"]][:2] == ["A/P1", "A/P2"]
@@ -500,6 +501,28 @@ def test_structure_stamps_the_inventory_it_read(client):
 
 def test_structure_endpoint_404s_on_an_unknown_run(client):
     assert client.get("/api/runs/nope/structure").status_code == 404
+
+
+def test_structure_surfaces_supply_resolution_warnings():
+    """A bay with a part nothing can supply must say so on the setting-out sheet,
+    not just on /bom — build_structure() doesn't compute warnings itself (it stays
+    a pure function of its four inputs), so the route stamps them the same way it
+    already stamps inventory_hash."""
+    from fenceai.fulfillment.fulfill import Bom
+    from fenceai.report.structure import build_structure
+    from fenceai.strategy.model import Strategy, StrategyWarning
+    from fenceai.topology.model import Topology
+
+    report = build_structure(
+        Topology(nodes=[], runs=[]), Strategy(id="s1"), [], Bom(), run_id="r1",
+    )
+    assert report.warnings == []  # empty by default — the normal, fully-resolved case
+    report.warnings = [StrategyWarning(
+        code="no_eligible_item", severity="error",
+        message="No product is eligible to supply rail.",
+        params={"role": "rail", "slot_key": "rail"},
+    )]
+    assert report.model_dump()["warnings"][0]["code"] == "no_eligible_item"
 
 
 def test_structure_refuses_a_run_that_no_longer_matches_the_drawing(client):

@@ -24,7 +24,15 @@ Preset = Literal["least_cost", "honour_priority"]
 
 
 class SupplyResolution(BaseModel):
+    # every line here has a real sku — the invariant fulfill() and the parts
+    # ledger both depend on is enforced HERE, structurally, not by caller
+    # discipline: a blank sku can never leave this module inside `requirements`.
     requirements: list[RequirementLine] = []
+    # lines that could not be resolved (no eligible item, or only suggest-only
+    # members without approval). Not discarded — each one has a matching entry
+    # in `warnings`, so nothing goes silent; a future caller is free to surface
+    # them (e.g. on the structure sheet) without risking them reaching fulfill().
+    unresolved: list[RequirementLine] = []
     warnings: list[StrategyWarning] = []
     decisions: list[dict] = []   # chosen + rejected, for the decision graph
 
@@ -45,14 +53,17 @@ def resolve_supply(
 
     for req in requirements:
         line = req.model_copy(deep=True)   # never mutate the caller's lines
-        if line.sku or not line.eligibility.members:
-            if not line.sku:
-                out.warnings.append(StrategyWarning(
-                    code="no_eligible_item", severity="error",
-                    message=f"No product is eligible to supply {line.role}.",
-                    params={"role": line.role, "slot_key": line.slot_key},
-                ))
+        if line.sku:
             out.requirements.append(line)
+            continue
+
+        if not line.eligibility.members:
+            out.warnings.append(StrategyWarning(
+                code="no_eligible_item", severity="error",
+                message=f"No product is eligible to supply {line.role}.",
+                params={"role": line.role, "slot_key": line.slot_key},
+            ))
+            out.unresolved.append(line)
             continue
 
         usable = _usable(line.eligibility.members, approvals)
@@ -64,7 +75,7 @@ def resolve_supply(
                 params={"role": line.role, "slot_key": line.slot_key,
                         "sku": line.eligibility.members[0].sku},
             ))
-            out.requirements.append(line)
+            out.unresolved.append(line)
             continue
 
         chosen = _choose(usable, line, catalog, inventory, preset)
