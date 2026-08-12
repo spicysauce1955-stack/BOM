@@ -283,6 +283,30 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
         check("clicking a row selects THAT element and explains THAT element",
               selected["rows"] == [picked] and selected["id"] == picked
               and "מפתח" in (selected["body"] or ""))
+        # …and that bay is DRAWN, from the report the schedule was built from.
+        # `Bay.elevation` rides along on the structure-data cache: a second fetch
+        # here would race the one already in flight for this run (that module's
+        # in-flight guard exists because a fetch belongs to the run it was
+        # STARTED for) and could label one drawing with another's schedule.
+        drawn_bay = c.js("""
+(() => {
+  const host = document.getElementById('structure-elevation');
+  const rects = [...host.querySelectorAll('.elev-member')];
+  const row = document.querySelector('#structure-body tr.selected');
+  return {
+    title: host.querySelector('h3')?.textContent || '',
+    tag: row ? row.cells[0].textContent.trim() : '',
+    rails: rects.filter(r => r.dataset.slot === 'rail').length,
+    total: rects.length,
+    row_rails: Number(row?.querySelector('.part[data-slot="rail"] .num')?.textContent || 0),
+    dir: getComputedStyle(host.querySelector('svg')).direction,
+  };
+})()""")
+        check("the structure tab draws the bay the schedule row selected",
+              drawn_bay["tag"] and drawn_bay["tag"] in drawn_bay["title"]
+              and drawn_bay["rails"] == drawn_bay["row_rails"] > 0
+              and drawn_bay["total"] == drawn_bay["rails"]
+              and drawn_bay["dir"] == "ltr")
         c.shot("12-structure-installer.png")
         # the schedule is a document: it must speak both languages and both units
         station_mm = c.js("""
@@ -462,6 +486,88 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
               slat["slots"] == ["rail", "screw", "slat"]
               and slat["priced"] == 3 and "M-SLAT@v1" in slat["head"]
               and "€" in slat["total"])
+
+        # --- and DRAWS it ------------------------------------------------------
+        # "See the panel" was this wave's headline and it shipped as a table of
+        # numbers: the backend computed a panel elevation that no JS ever read
+        # (`grep elevation js/` found only ground profiles). The drawing is the
+        # part that makes "the model affects the panel" legible at a glance.
+        drawn = c.js("""
+(() => {
+  const host = document.getElementById('panel-elevation');
+  const svg = host?.querySelector('svg');
+  const rects = [...(host?.querySelectorAll('.elev-member') || [])];
+  const slats = rects.filter(r => r.dataset.slot === 'slat');
+  const box = (r) => r.getBoundingClientRect();
+  return {
+    qty: Object.fromEntries([...document.querySelectorAll('#panel-parts tr[data-slot]')]
+      .map(r => [r.dataset.slot, Number(r.cells[2].textContent)])),
+    total: rects.length,
+    slats: slats.length,
+    rails: rects.filter(r => r.dataset.slot === 'rail').length,
+    nominal: rects.filter(r => r.classList.contains('elev-nominal')).length,
+    dir: svg ? getComputedStyle(svg).direction : '',
+    ascending: slats.every((r, i) => i === 0 || box(r).left > box(slats[i - 1]).left),
+    spread: slats.length ? Math.round(box(slats.at(-1)).left - box(slats[0]).left) : 0,
+    gaps: host?.querySelector('.elev-gaps')?.textContent || '',
+    text: host?.textContent || '',
+  };
+})()""")
+        # one rectangle per member the table says is BOUGHT — and screws, which
+        # are counted rather than drawn, add none: a dot per screw buries the panel
+        check("the Panel tab draws one rectangle per bought member for M-SLAT",
+              drawn["slats"] == drawn["qty"]["slat"] == 21
+              and drawn["rails"] == drawn["qty"]["rail"] == 2
+              and drawn["total"] == drawn["qty"]["slat"] + drawn["qty"]["rail"])
+        # the standing rule the plan canvas and the side view already live by.
+        # The page is in Hebrew here (the locale toggle is at the end of this
+        # run), so this is the RTL case: mirroring the drawing would reverse the
+        # slat order against the plan drawn one tab over.
+        check("the elevation is never mirrored, with the page in Hebrew RTL",
+              drawn["dir"] == "ltr" and drawn["ascending"] and drawn["spread"] > 100)
+        # a rail's face height is a nominal this read model invented (the catalog
+        # carries no face width): drawn dashed, and SAID to be, or the picture
+        # claims a precision nothing measured
+        check("the drawing says which face sizes are a nominal, not a measurement",
+              drawn["nominal"] == 2 and "מקווקו" in drawn["text"])
+        # gaps_mm is a LIST for a reason — the fitted gaps are the number the
+        # sphere test measures, and they belong beside the picture of them
+        check("the fitted gaps are stated beside the drawing, in the display unit",
+              "20 מרווחים" in drawn["gaps"] and 'מ"מ' in drawn["gaps"])
+
+        # the browser check the fence-model spec asked for and nothing implemented
+        c.click(*c.element_center("#panel-elevation .elev-member[data-slot='slat']"))
+        time.sleep(0.5)
+        picked = c.js("""
+(() => {
+  const lit = [...document.querySelectorAll('#panel-elevation .elev-member.selected')];
+  return {
+    rows: [...document.querySelectorAll('#panel-parts tr.selected')].map(r => r.dataset.slot),
+    slots: [...new Set(lit.map(r => r.dataset.slot))],
+    count: lit.length,
+  };
+})()""")
+        check("clicking a drawn member selects its part row",
+              picked["rows"] == ["slat"] and picked["slots"] == ["slat"]
+              and picked["count"] == 21)
+        c.shot("18a-panel-elevation.png")
+        # and back the other way — which is the ONLY way to see a rail on a slat
+        # panel, because the slats are genuinely in front of it
+        c.click(*c.element_center("#panel-parts tr[data-slot='rail']"))
+        time.sleep(0.4)
+        from_row = c.js("""
+(() => {
+  const rects = [...document.querySelectorAll('#panel-elevation .elev-member')];
+  const lit = rects.filter(r => r.classList.contains('selected'));
+  return {
+    slots: [...new Set(lit.map(r => r.dataset.slot))],
+    rows: [...document.querySelectorAll('#panel-parts tr.selected')].map(r => r.dataset.slot),
+    raised: lit.length > 0 && lit.every(r => rects.indexOf(r) >= rects.length - lit.length),
+  };
+})()""")
+        check("selecting a part row lights up its members, raised over the ones in front",
+              from_row["slots"] == ["rail"] and from_row["rows"] == ["rail"]
+              and from_row["raised"])
         # the panel is priced from the model, not from a fixed shape: M-LEGACY's
         # two-slot panel and M-SLAT's three-slot one must not render the same
         c.js("""
@@ -480,6 +586,19 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         check("switching the model changes the parts and the price",
               legacy["slots"] == ["rail", "screw"]
               and legacy["total"] != slat["total"])
+        legacy_drawn = c.js("""
+(() => {
+  const host = document.getElementById('panel-elevation');
+  const rects = [...host.querySelectorAll('.elev-member')];
+  return {total: rects.length,
+          slats: rects.filter(r => r.dataset.slot === 'slat').length,
+          gaps: host.querySelector('.elev-gaps')?.textContent || ''};
+})()""")
+        # the picture is of THIS model, not a generic fence: a legacy panel is
+        # two rails and nothing else, and it fits no gaps to report
+        check("switching the model redraws the panel, not only the price",
+              legacy_drawn["total"] == 2 and legacy_drawn["slats"] == 0
+              and legacy_drawn["gaps"] == "")
         # the panel is a length surface like every other: it reads in the display
         # unit, and the stored/API figures stay int mm
         length_mm = c.js("""
@@ -494,6 +613,12 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         check("the panel's lengths and fields read in cm when the unit is cm",
               float(length_cm) == float(length_mm) / 10 and width_field_cm == "250"
               and 'ס"מ' in (header_cm or ""))
+        # the drawing is a length surface too — its dimensions are rendered with
+        # tu(), so they follow the unit like every other figure on the page
+        dims_cm = c.js("""
+[...document.querySelectorAll('#panel-elevation .elev-dim-label')].map(t => t.textContent)""")
+        check("the drawing's overall dimensions read in the display unit",
+              set(dims_cm or []) == {'250 ס"מ', '180 ס"מ'})
         c.shot("18-panel-cm.png")
         c.click(*c.element_center("#btn-units"))   # back to mm
         time.sleep(1)
@@ -1715,6 +1840,39 @@ fetch('/api/fence-models').then(r => r.json())
         label_en = c.js("document.getElementById('btn-generate').textContent")
         check("toggle actually swaps strings", label_he != label_en and bool(label_en))
         c.shot("05-english-ltr.png")
+
+        # The elevation in the other language. "Never mirrored" has to hold in
+        # BOTH directions — a drawing that only happened to be left-to-right
+        # because the page was would pass the RTL check above by accident — and
+        # its labels are localized figures like every other length on the page.
+        c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
+        time.sleep(1.5)
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-SLAT'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.8)
+        en_drawn = c.js("""
+(() => {
+  const host = document.getElementById('panel-elevation');
+  const rects = [...host.querySelectorAll('.elev-member')];
+  const slats = rects.filter(r => r.dataset.slot === 'slat');
+  const box = (r) => r.getBoundingClientRect();
+  return {
+    slats: slats.length,
+    dims: [...host.querySelectorAll('.elev-dim-label')].map(t => t.textContent),
+    gaps: host.querySelector('.elev-gaps')?.textContent || '',
+    ascending: slats.length > 1
+      && slats.every((r, i) => i === 0 || box(r).left > box(slats[i - 1]).left),
+  };
+})()""")
+        check("the elevation reads the same way round in English, with English labels",
+              en_drawn["slats"] == 21 and en_drawn["ascending"]
+              and set(en_drawn["dims"]) == {"2500 mm", "1800 mm", "20 mm"}
+              and "20 gaps" in en_drawn["gaps"])
+        c.shot("05b-panel-elevation-en.png")
 
         check("no uncaught page errors", not c.page_errors)
         if c.page_errors:

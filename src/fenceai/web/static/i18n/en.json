@@ -486,6 +486,15 @@
   "panel.unsupplied_hint": "These parts are missing from the priced table below — this panel is short of them, and the total does not include them.",
   "panel.warnings_title": "Warnings about this panel",
   "panel.this_panel": "this panel",
+  "elevation.title": "The panel, drawn",
+  "elevation.bay_title": "Bay {tag}, drawn",
+  "elevation.none": "Choose a bay in the schedule to see it drawn.",
+  "elevation.empty": "This panel has no members to draw.",
+  "elevation.length": "{len_mm} {u}",
+  "elevation.gaps_one": "{n} gaps, each {gap_mm} {u}",
+  "elevation.gaps_range": "{n} gaps, {min_mm}–{max_mm} {u}",
+  "elevation.select_hint": "Click a piece to find its row.",
+  "elevation.nominal_note": "Dashed: the catalog carries no face size for this product, so its depth here is a nominal — it is not a measurement. The member widths, the gaps and the rail positions are.",
   "warning.span_not_exact": "Section {run_id} does not divide into {exact_mm} {u} bays: {remainder_mm} {u} is left over as an odd bay — model {model_ref} is made in one size",
   "warning.exact_span_over_max": "Model {model_ref} is made in {exact_mm} {u} bays, wider than the {max_mm} {u} maximum span — section {run_id} was laid out freely instead",
   "tabs.models": "Models",
@@ -611,5 +620,10 @@
   "model.unsaved_changes": "unsaved changes",
   "model.id_taken": "{id} already exists — saving under it would add a version to THAT model",
   "model.duplicate_from": "duplicate from this version",
-  "model.retire_version": "take version {version} out of use — it can no longer be chosen"
+  "model.retire_version": "take version {version} out of use — it can no longer be chosen",
+  "error.fence_model_not_a_draft": "{model_ref} is {status}, not a draft — a published version cannot be discarded, because a stored run or an accepted quote may name it",
+  "error.fence_model_reserved": "{model_id} is the built-in compatibility model and cannot be edited — its products follow your knowledge rules. Duplicate it under a new id to build on it.",
+  "error.catalog_changed": "The catalog changed since this strategy was computed, so its prices and cut plans can no longer be shown as they were. Generate again to price it against today's catalog.",
+  "error.topology_changed": "The drawing changed since this strategy was computed. Generate again to lay it out over the fence as it is now.",
+  "error.unresolved_supply": "This strategy has {n} part(s) no product can supply, so it cannot be frozen into a quote that would under-price the job."
 }

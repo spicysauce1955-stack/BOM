@@ -11,6 +11,7 @@
 // screws that were not used.
 
 import { esc } from "./api.js";
+import { gapLine, hasNominal, highlightSlot, renderElevation } from "./elevation.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { emit, on, setSelection, state } from "./state.js";
@@ -21,6 +22,9 @@ import { enumWord, fmt, fmtLen, tu, unitLabel } from "./units.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
 let detail = "installer";
+let drawnBayId = null;       // the bay the elevation is showing
+let elevationSvg = null;     // its drawing, so a clicked member can find its parts
+let elevationSlot = null;    // the slot the drawing and the parts agree on
 
 export function initStructure() {
   const sel = document.getElementById("structure-detail");
@@ -46,7 +50,7 @@ export function initStructure() {
   on("structure-loaded", render);
   on("locale-changed", render);
   on("units-changed", render);
-  on("selection-changed", highlight);
+  on("selection-changed", () => { highlight(); renderBayElevation(); });
 }
 
 // ---------- rendering ----------
@@ -78,9 +82,11 @@ function render() {
   // the bay ("A/B3"), not the element id.
   body.innerHTML = supplyProblemsHtml(report.warnings, report.unresolved,
                                       { customer: detail === "customer" })
+    + `<div class="panel" id="structure-elevation"></div>`
     + report.sections
       .map((s) => (detail === "customer" ? customerSection(s) : installerSection(s)))
       .join("");
+  renderBayElevation();
   for (const row of body.querySelectorAll("[data-element]")) {
     row.addEventListener("click", () => {
       const runId = row.dataset.run;
@@ -97,6 +103,77 @@ function highlight() {
   if (!body) return;
   for (const row of body.querySelectorAll("[data-element]"))
     row.classList.toggle("selected", row.dataset.element === state.selection.elementId);
+}
+
+// ---------- the selected bay, drawn ----------
+//
+// `Bay.elevation` rides along on the report this tab already holds — the
+// rectangles are read from the structure-data cache, never fetched again. A
+// second GET here would race the one in flight for the same run (see that
+// module's in-flight guard: a fetch belongs to the run it was STARTED for) and
+// could label one drawing with another run's schedule.
+
+function bayToDraw(report) {
+  const bays = report.sections.flatMap((s) => s.bays).filter((b) => b.elevation);
+  if (!bays.length) return null;
+  // the selection when it names a bay; otherwise the last bay drawn, so
+  // clicking a POST in the schedule does not silently change the drawing
+  return bays.find((b) => b.element_id === state.selection.elementId)
+    || bays.find((b) => b.element_id === drawnBayId)
+    || bays[0];
+}
+
+function renderBayElevation() {
+  const host = document.getElementById("structure-elevation");
+  if (!host) return;
+  elevationSvg = null;
+  const report = getReport();
+  const bay = report ? bayToDraw(report) : null;
+  if (!bay) {
+    // a run generated before fence models carries no elevation on its bays;
+    // `parts` still describes them, and the tables below already say so
+    drawnBayId = null;
+    host.innerHTML = `<div class="meta">${esc(t("elevation.none"))}</div>`;
+    return;
+  }
+  if (bay.element_id !== drawnBayId) elevationSlot = null;
+  drawnBayId = bay.element_id;
+  const gaps = gapLine(bay.elevation);
+  host.innerHTML = `<h3>${esc(t("elevation.bay_title", { tag: bay.tag }))}</h3>
+    <div id="structure-elevation-draw"></div>
+    <div class="meta">${esc(t("elevation.select_hint"))}${
+      gaps ? ` · <bdi class="elev-gaps">${esc(gaps)}</bdi>` : ""}</div>`
+    + (hasNominal(bay.elevation)
+      ? `<div class="elevation-note"><span class="elev-swatch"></span>${
+          esc(t("elevation.nominal_note"))}</div>`
+      : "");
+  const svg = renderElevation(bay.elevation, { onSelect: selectBaySlot });
+  const draw = host.querySelector("#structure-elevation-draw");
+  if (!svg) {
+    draw.innerHTML = `<div class="meta">${esc(t("elevation.empty"))}</div>`;
+    return;
+  }
+  draw.appendChild(svg);
+  elevationSvg = svg;
+  applyBaySlot();
+}
+
+function selectBaySlot(slotKey) {
+  elevationSlot = elevationSlot === slotKey ? null : slotKey;
+  applyBaySlot();
+}
+
+// which PART line a drawn member is: the bay's own row, not the whole sheet —
+// every bay of the same model has a "slat" line, and lighting them all up would
+// answer a question nobody asked
+function applyBaySlot() {
+  highlightSlot(elevationSvg, elevationSlot);
+  const body = document.getElementById("structure-body");
+  if (!body) return;
+  for (const part of body.querySelectorAll(".part[data-slot]"))
+    part.classList.toggle("selected",
+      elevationSlot !== null && part.dataset.slot === elevationSlot
+      && part.closest("[data-element]")?.dataset.element === drawnBayId);
 }
 
 // A drawing goes to site with a title block: whose job it is, what is on the
@@ -167,7 +244,10 @@ function partLine(part) {
     ? ` · ${esc(tu("structure.cut", { cut_mm: part.cut_length_mm }))}`
       + (part.length_basis ? ` <span class="meta">${esc(t("structure.basis." + part.length_basis))}</span>` : "")
     : "";
-  return `<div class="part"><span class="num">${esc(String(part.qty))}</span>×`
+  // the slot is what a rectangle on the elevation and a line in this cell have
+  // in common — it is how clicking the drawing finds the row
+  return `<div class="part" data-slot="${esc(part.slot_key || "")}">`
+    + `<span class="num">${esc(String(part.qty))}</span>×`
     + ` <span class="sku">${esc(part.sku)}</span>${cut}${bars}</div>`;
 }
 

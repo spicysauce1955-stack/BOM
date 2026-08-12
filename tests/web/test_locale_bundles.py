@@ -50,6 +50,13 @@ REFUSAL_CODES = [
     "fence_model_unknown_sku",
     "fence_model_invalid",
     "fence_model_not_found",
+    "fence_model_reserved",
+    "fence_model_not_a_draft",
+    # 409s the read paths raise when a stored run can no longer be served as it
+    # was generated. Refusals like the rest, and they were never listed.
+    "catalog_changed",
+    "topology_changed",
+    "unresolved_supply",
 ]
 
 
@@ -93,10 +100,16 @@ def test_backend_code_list_is_current():
         src / "fulfillment" / "supply.py",
         src / "fencemodel" / "resolve.py",
         src / "demand" / "derive.py",
+        # the ROUTES emit codes too, in HTTP detail bodies, and they were
+        # invisible to this guard twice over: the file was not scanned, and a
+        # route writes `"code": "x"` rather than `code="x"`. Both forms now.
+        src / "api" / "app.py",
     ]
     emitted: set[str] = set()
     for path in scanned:
-        emitted |= set(re.findall(r'code="([a-z_]+)"', path.read_text()))
+        text = path.read_text()
+        emitted |= set(re.findall(r'code="([a-z_]+)"', text))
+        emitted |= set(re.findall(r'"code":\s*"([a-z_]+)"', text))
     emitted.discard("generic")  # CritiqueNote default, never emitted explicitly
     known = set(WARNING_CODES) | set(CRITIQUE_CODES) | set(REFUSAL_CODES)
     assert emitted == known, {"unlisted": sorted(emitted - known),

@@ -45,7 +45,12 @@ class ElevationMember(BaseModel):
     w_mm: Mm
     h_mm: Mm
     declared: bool = True          # False = h_mm (or w_mm) is a nominal, not data
+    kind: str = ""                 # frame | infill — which half of the panel drew it
     face: Literal["front", "back"] = "front"
+    # how far off the panel's face this member sits (+ front, - back). `face`
+    # alone says which side; a shadowbox has a DEPTH, and a client that can only
+    # order two layers cannot draw one at its real offset.
+    face_offset_mm: int = 0
     sku: str = ""
 
 
@@ -97,14 +102,14 @@ def _frame(slot: ResolvedSlot, width_mm: Mm, height_mm: Mm, nominal: Mm):
             yield ElevationMember(
                 slot_key=slot.slot_key, role=slot.role, index=index,
                 x_mm=x, y_mm=0, w_mm=thickness, h_mm=height_mm,
-                declared=declared, sku=slot.sku,
+                declared=declared, kind="frame", sku=slot.sku,
             )
         else:
             y = _clamp(position - thickness // 2, 0, max(height_mm - thickness, 0))
             yield ElevationMember(
                 slot_key=slot.slot_key, role=slot.role, index=index,
                 x_mm=0, y_mm=y, w_mm=width_mm, h_mm=thickness,
-                declared=declared, sku=slot.sku,
+                declared=declared, kind="frame", sku=slot.sku,
             )
 
 
@@ -132,12 +137,14 @@ def _rect(slot, i, cursor, member_width, width_mm, height_mm) -> ElevationMember
         return ElevationMember(
             slot_key=slot.slot_key, role=slot.role, index=i,
             x_mm=cursor, y_mm=0, w_mm=member_width, h_mm=height_mm,
-            face=face, sku=slot.sku,
+            kind="infill", face=face, face_offset_mm=slot.face_offset_mm,
+            sku=slot.sku,
         )
     return ElevationMember(
         slot_key=slot.slot_key, role=slot.role, index=i,
         x_mm=0, y_mm=cursor, w_mm=width_mm, h_mm=member_width,
-        face=face, sku=slot.sku,
+        kind="infill", face=face, face_offset_mm=slot.face_offset_mm,
+        sku=slot.sku,
     )
 
 

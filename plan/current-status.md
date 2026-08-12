@@ -2,10 +2,10 @@
 
 Updated: 2026-08-13 — V1 complete; fence models phase 1 landed, and W1–W5 plus
 most of W6 of `specs/2026-08-12-panel-authoring-design.md` are in: a model is
-persisted, selectable, previewable, explainable and editable. Two review rounds
-(architecture + tests) dispositioned. Remaining: an SVG renderer for the
-elevation the backend already serves, `excess=trim_last`/`extension_clip`,
-`InfillSpec.supply=assembly`, and phase 3 arc-flow.
+persisted, selectable, previewable, explainable, editable and now DRAWN. Two
+review rounds (architecture + tests) dispositioned. Remaining:
+`excess=trim_last`/`extension_clip`, `InfillSpec.supply=assembly`, and phase 3
+arc-flow.
 
 - [x] Research (4 parallel researcher reports, synthesis, ADRs 0001–0010)
 - [x] Architecture (docs/architecture/*, golden scenarios S01–S14 defined)
@@ -555,3 +555,97 @@ slot, `per_end_member`, `per_gap` — all pinned by one panel that uses the non-
 of every one of them.
 
 845 pytest · 145 golden scenarios · 127/127 smoke.
+
+## The panel, drawn (2026-08-13) — COMPLETE
+Spec §"the same slots render the elevation", and the one browser check it names that nothing
+had implemented. `report/elevation.py` had computed a `PanelElevation` for every preview and
+every structure bay since phase 2 and **no JS read it** — `grep -rn elevation js/` returned
+ground profiles only. The headline of the wave was "see the panel" and it shipped as a table
+of numbers.
+
+`js/elevation.js` is one renderer with two callers: the Panel tab's preview and the Structure
+tab's selected bay. It does not fetch (both callers already hold the rectangles; the bay's
+ride along on the `structure-data.js` cache, whose in-flight guard exists precisely so one
+run's drawing cannot be labelled with another's schedule) and it computes no geometry. The
+ONE transform it owns is the axis flip — the panel frame puts y = 0 at the bottom of the
+opening, SVG grows downward — and `tests/web/test_elevation_module.py` checks it against the
+coordinates the real `panel_elevation` sends rather than a fixture that could keep passing
+after the read model changed its mind.
+
+**The gaps are dimensioned by lookup, never by measurement.** `gaps_mm[i]` is the gap after
+placed member `i` and a member carries that `i` as its index, so the figure is the server's.
+The wire does not say WHICH slot the fitted list belongs to (a frame slot and an infill slot
+are the same shape on the elevation), so the pair has to prove it: a gap is drawn only where
+two consecutive members already sit exactly the listed distance apart, and an unconfirmed
+pattern gets no dimension line rather than a number invented in the client.
+
+**Hidden edges.** A rail on a slat panel is genuinely behind the slats, so occlusion alone
+left a two-rail and a three-rail panel looking identical — the one comparison the drawing
+exists to make. Every member's outline is drawn over the infill (outlines only, no fill, and
+no extra rectangle to count), and selecting a slot RAISES its members, because SVG has no
+z-index and a highlight nobody can see is the same as no highlight.
+
+**Nothing server-authored reaches a colour.** Fill and edge come from the stylesheet keyed by
+a role from a closed set — never a sku, never a swatch. A member whose face height is the
+nominal the read model invented (`declared=False`) is dashed AND said to be, in both bundles,
+or the picture claims a precision the catalog does not have. The elevation joins the plan
+canvas and the side view in never being mirrored in RTL, verified in Hebrew by screen
+position, not by reading the stylesheet.
+
+854 pytest (+9 node) · 145 golden scenarios (unchanged) · 137/137 smoke (+10), including that
+the drawing carries one rectangle per member the priced table says is BOUGHT (screws are
+counted, not drawn), that switching the model redraws it and not only the price, that
+clicking a drawn slat selects its part row and a part row lights up its members, that the
+dimensions follow the display unit, and that the slats run left to right in Hebrew AND in
+English — a drawing that happened to be left-to-right because the page was would pass the
+RTL check by accident.
+
+**Awkward in the read model, found by drawing it.** (1) A client cannot tell an infill member
+from a frame member: `PanelElevation.gaps_mm` belongs to the fitted slot and nothing on the
+wire names it, which is why the gap dimension has to confirm itself geometrically. (2)
+`placement_positions` spreads distributed rails inclusive of both ends and `_frame` then
+clamps them inside the opening, so a two-rail panel draws its rails flush with the top and
+bottom edges rather than inset — correct per the spec, and it reads oddly. (3) Fixings have
+no extent, so a panel whose model is only fixings draws nothing; the renderer returns null
+and the caller says so.
+
+## The panel, drawn (2026-08-13) — COMPLETE
+`js/elevation.js` renders the `PanelElevation` the backend has been serving since W2 and
+nothing read. One renderer, two callers: the Panel tab above its priced table, and the
+Structure tab for the selected bay through the existing `structure-data.js` cache (no
+second fetch — a second fetch is exactly the stale-run bug finding A7 closed). It owns no
+geometry, only the panel→SVG axis flip; duplicating the fit maths in JS is what the read
+model exists to prevent.
+
+Clicking a drawn member selects its part row and clicking a row raises its members — the
+browser check the fence-model spec asked for and that had never been implemented, and the
+only way to see a rail on a slat panel, since the slats are genuinely in front of it.
+Nominal faces (`declared: false` — a rail's face height is product data the catalog does
+not carry) draw dashed and say so. Colours key off a closed role set in CSS; no sku,
+swatch or server string reaches `fill`. The SVG joins the plan canvas and the profile in
+never being mirrored — asserted in Hebrew AND English by screen position, not by
+stylesheet.
+
+Two read-model awkwardnesses it found are closed: `slot_kind`/`kind` say whether a member
+came from the frame or the infill (a vertical frame slot and a vertical infill slot were
+the same shape on the wire, so the renderer had to confirm its gap dimension geometrically
+rather than index the list it was handed), and `face_offset_mm` rides along so a shadowbox
+can be drawn at its real depth rather than as two layers.
+
+## Authoring gaps closed (2026-08-13) — COMPLETE
+The four the authoring round reported rather than patched. A slot with **no eligible
+product** published cleanly and then reported `no_eligible_item` on every bay of every job
+built to it — refused at authoring, where the author can still say what belongs there. One
+**already-broken project** 500'd the whole portfolio impact preview, at the moment a user
+most needs an answer; it is now a `baseline_failed` row, not counted as affected because
+the change did not break it. **Two drafts** disagreed: `listing()` reported the highest and
+the save took the first. And an **abandoned draft stayed for ever** — DELETE discards one,
+refused in the STORE for a published version, because an immutable document any route
+could delete is not immutable.
+
+The locale guard scanned five files for `code="x"` only, so every code a ROUTE emits was
+invisible twice over. It now scans `api/app.py` and both spellings, and immediately caught
+four codes shipping untranslated — including two 409s a user meets whenever they edit a
+catalog or a drawing.
+
+863 pytest · 145 golden scenarios · 137/137 smoke.

@@ -21,6 +21,7 @@
 // and this module writes nothing else.
 
 import { apiSend, esc } from "./api.js";
+import { gapLine, hasNominal, highlightSlot, renderElevation } from "./elevation.js";
 import { isSelectable, loadModelListing, modelName, modelOptionLabel, rowFor } from "./fence-models.js";
 import { t } from "./i18n.js";
 import { on, reloadProject, state } from "./state.js";
@@ -42,6 +43,8 @@ let preview = null;          // the last PanelPreview, or null before the first
 let previewError = null;     // a locale KEY, never a server sentence
 let pending = null;          // debounce timer
 let previewSeq = 0;          // only the newest request may paint
+let selectedSlot = null;     // the slot the drawing and the table agree on
+let elevationSvg = null;     // the last drawing, so the table can light it up
 
 const money = (cents) => `€${((cents || 0) / 100).toFixed(2)}`;
 
@@ -141,6 +144,9 @@ function renderPicker() {
   // a select change is one deliberate gesture, not a keystroke: price it now
   host.querySelector("#panel-model").addEventListener("change", (ev) => {
     modelId = ev.target.value;
+    // another model is another panel: a slot highlighted on the old one names
+    // nothing here, and carrying it over would light up a coincidence
+    selectedSlot = null;
     schedulePreview(0);
   });
   for (const [id, set] of [["panel-height", (mm) => { heightMm = mm; }],
@@ -225,7 +231,59 @@ function renderPreview() {
   // The gap FIRST, above the priced table, because it changes how that table
   // must be read: a panel one part short must not preview as complete, and the
   // total below it is the total of what CAN be supplied.
-  host.innerHTML = unsuppliedHtml() + warningsHtml() + partsHtml();
+  host.innerHTML = unsuppliedHtml() + warningsHtml() + elevationHtml() + partsHtml();
+  mountElevation();
+  for (const row of host.querySelectorAll("#panel-parts tr[data-slot]"))
+    row.addEventListener("click", () => selectSlot(row.dataset.slot));
+  applySlotSelection();
+}
+
+// ---------- the drawing ----------
+//
+// The rectangles come from the server (PanelPreview.elevation): this tab picks
+// where they go on the page and what the table does when one is clicked, and
+// computes no geometry of its own. The drawing sits ABOVE the priced table
+// because it is what the table is a list OF — "the Model affects the Panel" is a
+// claim you can check at a glance in a picture and only arithmetically in rows.
+
+function elevationHtml() {
+  const gaps = gapLine(preview.elevation);
+  return `<div class="panel" id="panel-elevation">
+    <h3>${esc(t("elevation.title"))}</h3>
+    <div id="panel-elevation-draw"></div>
+    <div class="meta">${esc(t("elevation.select_hint"))}${
+      gaps ? ` · <bdi class="elev-gaps">${esc(gaps)}</bdi>` : ""}</div>`
+    + (hasNominal(preview.elevation)
+      ? `<div class="elevation-note"><span class="elev-swatch"></span>${
+          esc(t("elevation.nominal_note"))}</div>`
+      : "")
+    + "</div>";
+}
+
+function mountElevation() {
+  elevationSvg = null;
+  const host = document.getElementById("panel-elevation-draw");
+  if (!host) return;
+  const svg = renderElevation(preview.elevation, { onSelect: selectSlot });
+  if (!svg) {
+    host.innerHTML = `<div class="meta">${esc(t("elevation.empty"))}</div>`;
+    return;
+  }
+  host.appendChild(svg);
+  elevationSvg = svg;
+}
+
+// Clicking the same slot twice clears it: a highlight with no way off is a
+// highlight the user has to re-render the tab to be rid of.
+function selectSlot(slotKey) {
+  selectedSlot = selectedSlot === slotKey ? null : slotKey;
+  applySlotSelection();
+}
+
+function applySlotSelection() {
+  for (const row of document.querySelectorAll("#panel-parts tr[data-slot]"))
+    row.classList.toggle("selected", row.dataset.slot === selectedSlot);
+  highlightSlot(elevationSvg, selectedSlot);
 }
 
 function partsHtml() {

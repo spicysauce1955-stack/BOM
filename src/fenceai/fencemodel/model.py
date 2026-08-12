@@ -445,6 +445,16 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
             seen.add(key)
         for key, req in reqs:
             skus = [m.sku for m in req.eligibility.members]
+            if not skus:
+                # A slot nothing can supply publishes cleanly and then reports
+                # `no_eligible_item` on every bay of every job built to it. The
+                # author is the only person who can say what belongs here, and
+                # the moment they can say it is now — not when an estimator finds
+                # a panel one part short in a quote.
+                errors.append(
+                    f"slot {key}: no eligible product, so nothing could ever "
+                    f"supply it"
+                )
             for sku in skus:
                 if sku not in catalog.products:
                     errors.append(f"slot {key}: eligible sku {sku} is not in the catalog")
