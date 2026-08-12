@@ -274,3 +274,47 @@ def test_the_structure_sheet_accounts_for_every_slat(client):
     asked = sum(p["qty"] for p in slat_parts)
     bought = next(t["qty"] for t in totals["per_sku"] if t["sku"] == "SLAT-100")
     assert asked == bought
+
+
+# --- seeing the panel before the strategy -------------------------------------
+
+def test_the_panel_previews_without_a_project_or_a_topology(client):
+    """The point of the endpoint: decide whether to build a model before drawing
+    anything. It stores nothing and it is not a run."""
+    before = client.get("/api/projects").json()
+    r = client.post("/api/fence-models/M-SLAT/1/preview",
+                    json={"height_mm": 1800, "width_mm": 2500})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    parts = {p["slot_key"]: p for p in body["parts"]}
+    assert set(parts) == {"rail", "slat", "screw"}
+    assert parts["slat"]["length_mm"] == 1800
+    assert parts["slat"]["sku"] == "SLAT-100"
+    assert body["total_cents"] > 0
+    assert body["model_ref"] == "M-SLAT@v1"
+    # nothing was persisted: no project appeared and no run was recorded
+    assert client.get("/api/projects").json() == before
+    assert all(not client.get(f"/api/projects/{p['id']}/runs").json() for p in before)
+
+
+def test_a_draft_can_be_previewed_before_it_is_published(client):
+    """Deciding whether a model is worth publishing is exactly when its panel
+    most needs looking at."""
+    created = client.post("/api/fence-models", json=draft_body()).json()["model"]
+    r = client.post(f"/api/fence-models/M-TEST/{created['version']}/preview",
+                    json={"height_mm": 1800, "width_mm": 1500})
+    assert r.status_code == 200, r.text
+    assert [p["slot_key"] for p in r.json()["parts"]] == ["rail"]
+
+
+def test_previewing_an_unknown_model_is_a_404(client):
+    assert client.post("/api/fence-models/M-NOPE/1/preview", json={}).status_code == 404
+
+
+def test_two_models_can_be_compared_at_the_same_bay(client):
+    """What a picker is for."""
+    body = {"height_mm": 1800, "width_mm": 2500}
+    legacy = client.post("/api/fence-models/M-LEGACY/1/preview", json=body).json()
+    slat = client.post("/api/fence-models/M-SLAT/1/preview", json=body).json()
+    assert slat["total_cents"] > legacy["total_cents"]
+    assert len(slat["parts"]) > len(legacy["parts"])

@@ -29,6 +29,7 @@ from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
 from fenceai.fencemodel.library import ModelListing
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
+from fenceai.fencemodel.preview import PanelPreview, PreviewRequest, preview_panel
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.fulfillment.pipeline import PricedRun, price_strategy
@@ -722,6 +723,25 @@ def set_fence_model_status(
     except ValueError as e:
         raise HTTPException(400, str(e))
     return state.store.load_fence_model(model_id, version)
+
+
+@app.post("/api/fence-models/{model_id}/{version}/preview")
+def preview_fence_model(model_id: str, version: int, body: PreviewRequest) -> PanelPreview:
+    """What one panel of this model is made of, at this height and width.
+
+    Deliberately available BEFORE a project has a topology, and for a version
+    that is still a draft: the point is to see what a model builds while deciding
+    whether to build it. It stores nothing and it is not quotable.
+    """
+    model = state.store.load_fence_model(model_id, version)
+    if model is None:
+        raise HTTPException(404, f"{model_id}@v{version} not found")
+    try:
+        return preview_panel(model, body, state.store.load_catalog())
+    except ReadRefused as e:
+        raise HTTPException(400, {"code": e.code, "params": e.params, "message": str(e)})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.put("/api/projects/{project_id}/fence-model")
