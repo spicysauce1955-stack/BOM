@@ -12,7 +12,8 @@ from pydantic import BaseModel
 from fenceai.core.units import Mm
 from fenceai.fencemodel.fit import FitResult, fit_pattern
 from fenceai.fencemodel.model import (
-    Distributed, Eligibility, FenceModel, HeightSupport, PanelSpec, PartRequirement,
+    Distributed, Eligibility, FenceModel, Fraction, FromBottom, FromTop,
+    HeightSupport, PanelSpec, PartRequirement,
 )
 from fenceai.knowledge.ast import MissingField, evaluate_expr
 
@@ -45,6 +46,17 @@ class ResolvedSlot(BaseModel):
     sku: str = ""                    # resolved by fulfillment, never here
     eligibility: Eligibility = Eligibility()
     fit: FitResult | None = None
+    # --- geometry PARAMETERS, never rectangles -------------------------------
+    # The elevation is a pure function of these (foundation §15: read models are
+    # derived, never stored). Storing a list of rectangles would freeze one
+    # drawing into the run and make the panel's picture a thing that could
+    # disagree with the panel's numbers.
+    orientation: str = ""            # horizontal | vertical, in the panel's frame
+    positions_mm: list[Mm] = []      # frame slots: where along the cross axis
+    member_width_mm: Mm | None = None   # infill: the member's own width
+    thickness_mm: Mm | None = None   # face height in elevation; None = undeclared
+    face_offset_mm: int = 0          # + front / - back, for shadowbox
+    pattern_index: int = 0           # which member of the repeating cycle
     # which option answer narrowed this slot's eligibility, if one did. Recorded
     # rather than re-derived: the generator writes the `select_product` node from
     # it, and a second pass matching skus back to axes would be a second, quietly
@@ -158,6 +170,35 @@ def _qty(count: int, param: str | None, ctx: PanelContext) -> int:
     return ctx.params.get(param, count) if param else count
 
 
+def placement_positions(placement, count: int, span_mm: Mm) -> list[Mm]:
+    """Where a frame slot's members sit along the axis it crosses.
+
+    `span_mm` is the panel height for a horizontal member and the clear width for
+    a vertical one. THE one rounding point for placement (ADR-0002): integer
+    division here, and nothing upstream or downstream rounds again — two
+    implementations differing by a millimetre would move a rail, and the fixing
+    count that depends on crossings with it.
+
+    `distributed` spreads INCLUSIVE of both ends, which is what a fence frame is:
+    two rails means a top rail and a bottom rail, not two rails floating in the
+    middle. A single distributed member centres, because there is no pair of ends
+    for it to be one of.
+    """
+    if isinstance(placement, FromBottom):
+        return [placement.offset_mm]
+    if isinstance(placement, FromTop):
+        return [span_mm - placement.offset_mm]
+    if isinstance(placement, Fraction):
+        return [(span_mm * placement.permille) // 1000]
+    low = placement.bottom_inset_mm
+    high = span_mm - placement.top_inset_mm
+    if count <= 0:
+        return []
+    if count == 1:
+        return [(low + high) // 2]
+    return [low + ((high - low) * i) // (count - 1) for i in range(count)]
+
+
 def _chosen_option(
     req: PartRequirement, ctx: PanelContext
 ) -> tuple[Eligibility, str | None, str | None]:
@@ -214,11 +255,17 @@ def resolve_panel(
         count = (_qty(frame_slot.placement.count, frame_slot.placement.count_param, ctx)
                  if isinstance(frame_slot.placement, Distributed) else 1)
         eligibility, option_axis, option_value = _chosen_option(req, ctx)
+        # a horizontal member is placed up the HEIGHT; a vertical one across the
+        # clear width
+        span = (ctx.height_mm if frame_slot.orientation == "horizontal"
+                else ctx.clear_width_mm)
         slots.append(ResolvedSlot(
             slot_key=frame_slot.key, role=req.role, qty=count * req.qty,
             length_mm=_length_for(req, ctx), length_basis=ctx.length_basis,
             eligibility=eligibility,
             option_axis=option_axis, option_value=option_value,
+            orientation=frame_slot.orientation,
+            positions_mm=placement_positions(frame_slot.placement, count, span),
         ))
 
     if spec.infill and spec.infill.pattern:
@@ -246,6 +293,11 @@ def resolve_panel(
                 length_basis=ctx.length_basis,
                 eligibility=eligibility, fit=fit,
                 option_axis=option_axis, option_value=option_value,
+                orientation=spec.infill.orientation,
+                member_width_mm=member.width_mm,
+                thickness_mm=member.thickness_mm or None,
+                face_offset_mm=member.face_offset_mm,
+                pattern_index=offset,
             ))
 
     frame_count = sum(s.qty for s in slots if s.fit is None)

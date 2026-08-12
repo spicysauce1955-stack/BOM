@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from fenceai.core.units import Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.fulfill import Bom
+from fenceai.report.elevation import PanelElevation, panel_elevation
 from fenceai.strategy.model import Strategy, StrategyWarning
 from fenceai.topology.model import Topology
 from fenceai.topology.station import run_length
@@ -79,6 +80,24 @@ class Bay(BaseModel):
     bottom_z_start_mm: Mm
     bottom_z_end_mm: Mm
     parts: list[Part] = []
+    # what this bay LOOKS like, derived from the same resolved slots its parts
+    # come from — so the drawing and the schedule cannot disagree. None for a run
+    # generated before panels existed, which `parts` already reports on.
+    elevation: PanelElevation | None = None
+
+
+def _elevation_for(span, bay_tag: str) -> PanelElevation | None:
+    """The bay drawn, from its own resolved panel.
+
+    Clear width is the centre-to-centre width until products carry a face width
+    (`attrs.face_width_mm`), which is the same approximation `resolve_panel` is
+    handed at generation — so the drawing and the cut lengths agree about the
+    opening even while both are waiting on the same catalog field.
+    """
+    if span.panel is None:
+        return None
+    return panel_elevation(span.panel, span.width_mm, span.height_mm,
+                           span_id=span.id, bay_tag=bay_tag)
 
 
 class GateRow(BaseModel):
@@ -347,6 +366,7 @@ def build_structure(
                 bottom_z_start_mm=span.bottom_z_start_mm,
                 bottom_z_end_mm=span.bottom_z_end_mm,
                 parts=_merge_parts(parts.get(span.id, [])),
+                elevation=_elevation_for(span, f"{section.tag}/B{n}"),
             ))
 
         for n, gate in enumerate(

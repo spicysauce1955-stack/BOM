@@ -27,6 +27,7 @@ from fenceai.core.units import Mm
 from fenceai.fencemodel.model import FenceModel
 from fenceai.fencemodel.resolve import PanelContext, ResolvedPanel, resolve_panel, select_variant
 from fenceai.fulfillment.pipeline import price_strategy
+from fenceai.report.elevation import PanelElevation, panel_elevation
 from fenceai.strategy.model import Span, Strategy, StrategyWarning
 
 PREVIEW_SPAN_ID = "span@preview:0-0"
@@ -72,6 +73,9 @@ class PanelPreview(BaseModel):
     width_mm: Mm
     clear_width_mm: Mm
     panel: ResolvedPanel
+    # the panel drawn — rectangles in the panel's own frame, so the client
+    # positions them and never computes them
+    elevation: PanelElevation = PanelElevation()
     parts: list[PreviewPart] = []
     # lines nothing eligible could supply — reported, never dropped, exactly as
     # /bom reports them; a panel one part short must not preview as complete
@@ -113,6 +117,12 @@ def preview_panel(
 
     by_sku = {line.sku: line for line in priced.bom.lines}
     parts = [_part(line, by_sku.get(line.sku)) for line in priced.requirements]
+    # the drawing names the products the preview resolved, so a colour swatch and
+    # a price belong to the same rectangle
+    resolved_sku = {line.slot_key: line.sku for line in priced.requirements}
+    drawn = panel.model_copy(deep=True)
+    for slot in drawn.slots:
+        slot.sku = resolved_sku.get(slot.slot_key, "")
     return PanelPreview(
         model_ref=model.ref,
         variant_index=variant_index,
@@ -120,6 +130,7 @@ def preview_panel(
         width_mm=request.width_mm,
         clear_width_mm=clear,
         panel=panel,
+        elevation=panel_elevation(drawn, clear, request.height_mm),
         parts=parts,
         unsupplied=[_part(line, None) for line in priced.unresolved],
         warnings=priced.warnings,
