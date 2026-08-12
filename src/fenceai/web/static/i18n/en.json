@@ -409,6 +409,7 @@
   "profile.closing_bay": "The closing bay — set out from the start, so any tape error lands here.",
   "profile.closing_legend": "* closing bay",
   "structure.printed": "printed {at}",
+  "error.run_predates_fence_model": "This run was computed before fence models existed, so its structure cannot be read — press ⚙ Generate strategy to compute it again.",
   "structure.stale": "The drawing has changed since this strategy was computed — press ⚙ Generate strategy to lay out the new one.",
   "structure.catalog_changed": "The catalog has changed since this run was generated — press ⚙ Generate strategy to lay it out again.",
   "structure.from_stock": "Met from stock (bought on no line, still picked in the yard):",

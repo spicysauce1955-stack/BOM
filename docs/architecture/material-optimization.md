@@ -6,14 +6,23 @@ Decisions: ADR-0007. Research: optimization-fulfillment.md.
 
 ## Demand derivation (`demand` module)
 
-Pure function `derive_requirements(strategy, catalog) -> [RequirementLine]`:
+Pure function `derive_requirements(strategy, catalog, demand_skus) -> [RequirementLine]`:
 - posts → 1 × post sku each (+ cap facts if rule says so) — pegs to post ids;
-- spans → `rail_count` rails cut to span slope-length (racked) or width (level/stepped)
-  — pegs carry `cut_length_mm`; screws per connection from knowledge facts;
+- spans → one line per **resolved panel slot** (`Span.panel`, from the fence model), each
+  carrying `slot_key` and the slot's `eligibility` — pegs carry `cut_length_mm`. Behind
+  `M-LEGACY` that is exactly the old two rails and eight screws. A span with no panel is a
+  run stored before fence models existed and is refused (`run_predates_fence_model`), never
+  silently back-filled from the legacy `rail_count`/`screws_count`;
 - soil posts → concrete coverage applications;
 - gates → kit sku (exploded later).
 Length basis (chord vs slope) is chosen per vertical mode and named in the line payload
 (Research A pitfall 4).
+
+A span line names **no sku and no unit**. Both are written by `resolve_supply` from the
+eligibility set and the chosen product's `Consumption`, in one statement — the parts ledger
+balances asked-vs-purchased per `(sku, unit)` and reads the purchased side from
+`BomLine.engineering_unit`, so a unit demand guessed for itself can disagree with what
+`fulfill()` did and report one demand as unassigned *and* from stock at once.
 
 ## Fulfillment pipeline (`fulfillment` module)
 
@@ -61,9 +70,32 @@ transitions when rules demand a boundary): `n = ceil(L / max_span)`, widths `L//
 citing the preference.
 
 ## Objectives
-Lexicographic tiers (policy presets): default `["fewest_new_stock", "prefer_remnant_use",
-"fewest_cuts"]`. Implemented as deterministic tie-break order in V1 planners; a tier list is
-part of `policy` and recorded in the GenerationRun.
+Lexicographic tiers with **named presets** (ADR-0007) — never a raw tier list and never
+user-facing weights. Two presets exist, because a company with an own-brand policy and a
+company chasing margin want opposite answers:
+
+| Tier | `least_cost` (default) | `honour_priority` |
+|---|---|---|
+| 1 | eligibility + approval policy (hard) | eligibility + approval policy (hard) |
+| 2 | purchase cost | member priority |
+| 3 | waste | purchase cost |
+| 4 | member priority | waste |
+| 5 | deterministic sku order | deterministic sku order |
+
+Feasibility is resolved *before* tier 2 and filters the field: a candidate whose piece is
+longer than its stock, or whose sku is not in the catalog, loses under every preset rather
+than winning on priority. When **no** candidate is feasible there is no answer — the line is
+reported as `no_eligible_item` and routed to `unresolved`, never silently picked.
+
+The preset name is resolved at generation, recorded on `GenerationRun.objective_preset`,
+included in the run-id digest, and passed to `resolve_supply()` explicitly. It is stored as
+a plain string, so an unrecognised value is a loud `ValueError` at that one boundary, not a
+quiet reinterpretation as the default.
+
+*(Earlier drafts of this document named a default of `["fewest_new_stock",
+"prefer_remnant_use", "fewest_cuts"]`. Those are not preset names and `resolve_supply` now
+raises on them; the tiers they described are folded into `least_cost`'s cost and waste
+tiers, which are computed by planning the cuts rather than counted nominally.)*
 
 ## Invariants (tested)
 - Σ(pieces + kerf) ≤ stock + kerf per bar; piece conservation (every demanded cut appears

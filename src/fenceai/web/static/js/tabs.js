@@ -247,9 +247,15 @@ async function renderBom() {
     data = await apiGet(`/api/runs/${state.result.run.id}/bom`);
   } catch (err) {
     // 409: the catalog moved since this run was generated — a real state, not a
-    // failure (same shape as structure-data.js's topology_changed handling)
-    if (!String(err?.message || "").includes("catalog_changed")) throw err;
-    div.innerHTML = `<div class="panel meta">${esc(t("bom.catalog_changed"))}</div>`;
+    // failure (same shape as structure-data.js's topology_changed handling).
+    // 400 run_predates_fence_model: likewise a nameable state, and localized by
+    // its code rather than shown as the engine's raw English sentence.
+    const msg = String(err?.message || "");
+    const key = msg.includes("catalog_changed") ? "bom.catalog_changed"
+      : msg.includes("run_predates_fence_model") ? "error.run_predates_fence_model"
+      : null;
+    if (!key) throw err;
+    div.innerHTML = `<div class="panel meta">${esc(t(key))}</div>`;
     return;
   }
   const [products, quotes] = await Promise.all([

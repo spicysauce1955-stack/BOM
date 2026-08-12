@@ -40,10 +40,14 @@ export async function loadStructure() {
     })
     .catch((err) => {
       report = null; runId = null; tags = new Map();
-      // 409: the run no longer matches something it was read against
+      // 409: the run no longer matches something it was read against.
+      // 400 run_predates_fence_model: the run is older than fence models, so it
+      // cannot be laid out at all — a real, nameable state, NOT "no structure
+      // yet", which is what an unrecognised failure falls back to saying.
       const msg = String(err?.message || "");
       staleReason = msg.includes("catalog_changed") ? "catalog"
-        : msg.includes("topology_changed") ? "topology" : null;
+        : msg.includes("topology_changed") ? "topology"
+        : msg.includes("run_predates_fence_model") ? "predates" : null;
       return null;
     })
     .finally(() => { inFlight = null; inFlightFor = null; });
@@ -57,7 +61,7 @@ export function isStale() {
   return staleReason !== null;
 }
 
-// "topology" | "catalog" | null — which mismatch made the last attempt stale
+// "topology" | "catalog" | "predates" | null — why the last attempt failed
 export function staleKind() {
   return staleReason;
 }

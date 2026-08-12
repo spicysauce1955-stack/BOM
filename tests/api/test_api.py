@@ -587,6 +587,38 @@ def test_fulfill_refuses_a_blank_sku_rather_than_trusting_its_caller(client):
                                  cut_length_mm=1500, role="rail")], demo_catalog())
 
 
+def test_a_run_generated_before_fence_models_refuses_with_a_code_not_english(client):
+    """v1-known-limitations (4): runs stored before this branch cannot be read.
+    That is a real, permanent state — but it surfaced as a raw English
+    ValueError sentence in a Hebrew-first UI, and on the structure tab as "no
+    structure yet", which is false. It carries `code + params` now, with entries
+    in both locale bundles."""
+    from fenceai.api.app import state
+
+    pid = make_project(client, name="legacy-run")
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+    result = state.store.load_run(run_id)
+    for span in result.strategy.spans:
+        span.panel = None                       # what a pre-branch run looks like
+    state.store._conn.execute(
+        "UPDATE generation_runs SET doc=? WHERE id=?",
+        (result.model_dump_json(), run_id),
+    )
+    state.store._conn.commit()
+
+    for path in (f"/api/runs/{run_id}/bom", f"/api/runs/{run_id}/structure"):
+        response = client.get(path)
+        assert response.status_code == 400, path
+        detail = response.json()["detail"]
+        assert detail["code"] == "run_predates_fence_model", path
+        assert detail["params"]["span_id"].startswith("span@"), path
+
+    quote = client.post(f"/api/runs/{run_id}/quote", json={})
+    assert quote.status_code == 400
+    assert quote.json()["detail"]["code"] == "run_predates_fence_model"
+
+
 def test_a_run_with_an_unrecognised_preset_refuses_rather_than_repricing_silently(client):
     """objective_preset is stored as a plain str, so a run generated under an
     older DEFAULT_POLICY (or any bad data) can carry a value outside

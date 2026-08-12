@@ -1,6 +1,6 @@
 # Current status
 
-Updated: 2026-08-09 — **V1 COMPLETE**
+Updated: 2026-08-12 — V1 complete; fence models phase 1 landed (phases 2–3 remain)
 
 - [x] Research (4 parallel researcher reports, synthesis, ADRs 0001–0010)
 - [x] Architecture (docs/architecture/*, golden scenarios S01–S14 defined)
@@ -260,3 +260,52 @@ a kit that cannot fit (new `gate_past_run_end` warning). Tests: four demonstrate
 labelled a post) now die; the vacuous `32 + 0 == 32` unassigned test became the real
 fitted-vs-bought relationship; browser checks assert identity rather than existence.
 440 pytest + 99/99 smoke. Dispositions: docs/reviews/structure-review-response.md.
+
+## Fence models, phase 1 (2026-08-12) — COMPLETE
+Spec docs/superpowers/specs/2026-08-12-fence-model-design.md (revised after adversarial
+review, 7 blockers / 8 major / 9 minor dispositioned); plan
+.../plans/2026-08-12-fence-model-phase1.md. The structure of a fence panel stops being two
+integers on `Span`. A new pure module `fenceai/fencemodel/` owns the schema (`model.py`
+with load-time `validate_model`), the 1-D pattern fit (`fit.py`), and per-span resolution
+(`resolve.py`); `Span.panel` carries a `ResolvedPanel`, `derive_requirements` expands its
+slots instead of reading `rail_count`/`screws_count`, and a new
+`fenceai/fulfillment/supply.py` resolves each line's ELIGIBILITY to a concrete SKU before
+`fulfill()` runs, so the parts ledger keeps keying on `(sku, unit)`. Choosing among eligible
+items is an objective coupled to the cut plan, not a lookup — named lexicographic presets
+(`least_cost`, `honour_priority`, ADR-0007), with feasibility filtered first. The run-id
+digest gains the model snapshot, the catalog hash and the preset, and `/bom`, `/structure`
+and `/quote` refuse a run re-read against a moved catalog (409 `catalog_changed`). All of it
+lands behind a built-in `M-LEGACY`, whose acceptance gate is that every existing shape
+produces identical requirement lines and an identical BOM.
+
+## Fence models phase 1 review round (2026-08-12) — COMPLETE
+architecture-critic (SOUND-WITH-FIXES) + whole-branch code review (WITH-FIXES) +
+test-reviewer (GAPS), converging on the same defects; all fixed in one wave.
+`fit_pattern` HUNG on a non-advancing pattern (`gap_after_mm` may be negative and nothing
+bounded it) — guarded in `fit.py` per pattern cycle and rejected per member in
+`validate_model`. Demand had guessed the parts-ledger unit three times and was still wrong
+(an indivisible product with `attrs.length_mm` legitimately backs a length slot, and is
+still bought in eaches — the same six items appeared in `unassigned` AND `from_stock`);
+demand now emits no unit at all and `resolve_supply` writes sku and unit together from the
+one function `fulfill()` uses. The four copy-pasted `derive → resolve → fulfill` sites
+became `fulfillment/pipeline.py`, which closed the divergence that duplication had already
+caused: `create_quote` loaded the catalog directly, so the one endpoint freezing an
+immutable commercial document was the only one exempt from the staleness check (BOM 409,
+structure 409, quote 200). `fulfill()` now REFUSES a blank sku instead of trusting its
+callers. All-candidates-infeasible was a silent pick followed by an unhandled 500; it is a
+`no_eligible_item` warning plus an `unresolved` line. Features validated at load and then
+ignored at resolve (`variants`, `option_axes`, `layout_policy`, `height_support`,
+`Eligibility.predicate`, `excess` of trim_last/extension_clip) are now REJECTED by
+`validate_model` rather than blessed and dropped — a deferral must not read as a working
+feature. The compatibility gate became a committed artifact (per-fixture requirement lines
++ BOM as JSON), and the fixture set gained the RAKED shape the suite entirely lacked: two
+mutations that previously left the suite green (deleting the slope-length branch; ignoring
+the resolved `demand_skus`) now fail. Two vacuous tests deleted/replaced. 555 pytest
+(+46) · 126 golden scenarios (+18) · 101/101 smoke. Dispositions and the fix wave:
+.superpowers/sdd/2026-08-12-fence-model-phase1/fix-wave-report.md.
+
+**Phases 2 and 3 remain.** Phase 2: `M-SLAT`, variants, option axes, the pricing union,
+the elevation read model, the panel warning codes, and multi-member eligibility selected by
+running the FFD planner per candidate — plus the `select_supply` decision node, without
+which a multi-member choice has no explanation (docs/v1-known-limitations.md). Phase 3:
+arc-flow over multiple stock lengths and sources with remnants, via OR-Tools.

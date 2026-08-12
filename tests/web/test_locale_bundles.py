@@ -249,3 +249,26 @@ def test_impact_failure_code_list_is_current():
     ).read_text()
     emitted = set(re.findall(r'code="([a-z_]+)"', src))
     assert emitted == set(IMPACT_FAILURE_CODES), emitted
+
+
+# core.errors.ReadRefused: a stored run that cannot be read, as code + params.
+# These surfaced as raw English ValueError text in a Hebrew-first UI (and, on the
+# structure tab, as "no structure yet" — which is false: there IS structure, it
+# just cannot be read without regenerating).
+READ_REFUSAL_CODES = ["run_predates_fence_model"]
+
+
+def test_read_refusal_codes_have_locale_entries():
+    en, he = _bundles()
+    for code in READ_REFUSAL_CODES:
+        assert f"error.{code}" in en and f"error.{code}" in he, code
+
+
+def test_read_refusal_code_list_is_current():
+    import re
+
+    src = Path(__file__).resolve().parents[2] / "src" / "fenceai"
+    emitted: set[str] = set()
+    for path in [src / "demand" / "derive.py"]:
+        emitted |= set(re.findall(r'code="([a-z_]+)"', path.read_text()))
+    assert emitted == set(READ_REFUSAL_CODES), emitted

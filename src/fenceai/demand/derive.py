@@ -80,10 +80,10 @@ def derive_requirements(
             # while this surfaced as a raw English ValueError) is false: there
             # IS structure, it just cannot be read without regenerating.
             raise ReadRefused(
-                "run_predates_fence_model",
-                f"span {span.id} has no panel — regenerate the run; "
-                "stored runs from before the fence-model change are read with "
-                "their legacy fields intact",
+                code="run_predates_fence_model",
+                message=f"span {span.id} has no panel — regenerate the run; "
+                        "stored runs from before the fence-model change are read "
+                        "with their legacy fields intact",
                 span_id=span.id,
             )
         for slot in span.panel.slots:

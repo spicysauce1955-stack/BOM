@@ -58,7 +58,9 @@ function render() {
   if (!report) {
     totals.innerHTML = "";
     const emptyKey = !isStale() ? "structure.empty"
-      : staleKind() === "catalog" ? "structure.catalog_changed" : "structure.stale";
+      : staleKind() === "catalog" ? "structure.catalog_changed"
+      : staleKind() === "predates" ? "error.run_predates_fence_model"
+      : "structure.stale";
     body.innerHTML = `<div class="panel meta">${esc(t(emptyKey))}</div>`;
     return;
   }
