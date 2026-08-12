@@ -41,6 +41,7 @@ from fenceai.learning.impact import (
     ImpactReport,
     activated_copy,
     preview_impact,
+    preview_model_impact,
 )
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
@@ -582,6 +583,7 @@ def _impact_cases() -> list[ImpactCase]:
             project_id=p.id, project_name=p.name, topology=p.topology,
             overrides=p.overrides, inventory=state.store.load_inventory(p.id),
             accepted_quote_cents=accepted.total_cents if accepted else None,
+            fence_model=p.fence_model,
         ))
     return cases
 
@@ -598,7 +600,7 @@ def preview_knowledge_impact(body: "KnowledgeCreate") -> ImpactReport:
         attributed_to=body.author, status="draft",
     )
     return preview_impact(hypo, state.store.knowledge_base(), state.store.load_catalog(),
-                          _impact_cases())
+                          _impact_cases(), state.store.fence_model_library())
 
 
 @app.post("/api/candidates/{object_id}/{version}/preview")
@@ -611,7 +613,7 @@ def preview_candidate_impact(object_id: str, version: int) -> ImpactReport:
     if cand is None or cand.status != "proposed":
         raise HTTPException(404, "candidate not found or not reviewable")
     return preview_impact(activated_copy(cand), kb, state.store.load_catalog(),
-                          _impact_cases())
+                          _impact_cases(), state.store.fence_model_library())
 
 
 
@@ -693,6 +695,22 @@ def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"model": draft, "invalid": _model_errors(draft)}
+
+
+@app.post("/api/fence-models/{model_id}/preview-impact")
+def preview_fence_model_impact(model: FenceModel) -> ImpactReport:
+    """What would publishing this model version change, across all projects?
+
+    Editing a model's slat gap is a portfolio-wide change, and foundation §11
+    requires impact to be exposed before it. `FenceModel` is catalog-side rather
+    than a knowledge object, so it does not inherit /api/knowledge/preview-impact
+    for free — without this, the authoring feature would ship a change nobody
+    could preview.
+    """
+    return preview_model_impact(
+        model, state.store.fence_model_library(), state.store.knowledge_base(),
+        state.store.load_catalog(), _impact_cases(),
+    )
 
 
 @app.post("/api/fence-models/{model_id}/{version}/publish")
