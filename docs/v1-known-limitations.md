@@ -49,19 +49,20 @@ Deliberate deferrals and honest weaknesses, with the trigger that should revisit
 Four things this phase deliberately parked. Each is a real weakness, not a rough edge;
 each is recorded with the trigger that should end the deferral.
 
-- **A chosen SKU has no traceable explanation once a group has more than one member.**
-  `resolve_supply` records its reasoning — chosen, rejected, preset, per requirement —
-  in `SupplyResolution.decisions`, and **nothing consumes it**: it reaches no
-  decision-graph node, so `/explain` cannot say why POLE-3000 was bought instead of
-  POLE-2000. Today the only shipped model is `M-LEGACY`, whose every eligibility group
-  has exactly one member, so there is nothing to explain and the gap is invisible. The
-  moment a model ships a multi-member group, the system will be making a priced choice
-  it cannot account for — which contradicts foundation §15's "the decision graph is the
-  explanation" for exactly the decision most worth explaining. The fix is a
-  `select_supply` node per group, but it cannot be added at generation time (selection
-  is coupled to the cut plan and runs in fulfillment, which has no graph builder), so it
-  needs a decision on where a fulfilment-time node lives. **Trigger:** the first model
-  with two or more eligible members for one slot — i.e. the first line of phase 2.
+- ~~**A chosen SKU has no traceable explanation once a group has more than one
+  member.**~~ **CLOSED 2026-08-12.** The trigger fired — models became authorable, so a
+  user can now create a multi-member group whenever they like. `SupplyDecision` is a
+  typed record carrying every candidate with its PLANNED cost and waste (an infeasible
+  one carries `None`, never a zero, which would read as "free"), and
+  `decisions/supply.py::with_supply_decisions` turns it into a `select_supply` node.
+  The question of "where a fulfilment-time node lives" is answered: **nowhere
+  persistent**. The nodes are DERIVED at read time from a pure function of
+  `(graph, decisions)`, exactly as `report/structure.py` derives the setting-out sheet,
+  so fulfillment never acquires a graph builder and the stored document is never
+  rewritten — `test_reading_a_run_never_mutates_its_graph` and
+  `test_the_stored_run_document_is_unchanged_by_being_explained` pin both halves. The
+  sentence names the runner-up and the gap ("RAIL-3050 … costs 3700c against RAIL-3000
+  at 4000c"), because "cheaper than the others" is not an explanation.
 
 - **`catalog_hash` is whole-catalog, so any product edit permanently 409s every prior
   run.** `/bom` and `/structure` compare the stamped hash against a hash of the entire

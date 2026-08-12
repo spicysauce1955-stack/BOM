@@ -100,6 +100,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "select_product": (
             "Slot {slot} is narrowed to {sku} by option {axis} = {value}."
         ),
+        "select_supply": (
+            "{chosen} supplies {slot}, chosen from {n} eligible products under "
+            "the '{preset}' objective."
+        ),
+        "select_supply_beat": " It costs {chosen_cents}c against {runner_up} at {runner_up_cents}c.",
+        "select_supply_unbuildable": " {unbuildable} cannot supply this part at all.",
         "resolve_panel": "Panel {model_ref} built from {slots}.",
         "choose_vertical_mode": "Vertical mode '{mode}' chosen at {slope_permille}‰ grade.",
         "resolve_max_span": "Maximum span resolved to {value_mm} {u}.",
@@ -198,6 +204,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " וריאנט {not_reached} לא נבדק: הוריאנט הראשון שתנאו מתקיים הוא הקובע."
         ),
         "select_product": "הרכיב {slot} צומצם ל-{sku} לפי האפשרות {axis} = {value}.",
+        "select_supply": (
+            "{chosen} מספק את {slot}, ונבחר מתוך {n} מוצרים כשירים לפי יעד "
+            "ה-'{preset}'."
+        ),
+        "select_supply_beat": " עלותו {chosen_cents} סנט מול {runner_up} ב-{runner_up_cents} סנט.",
+        "select_supply_unbuildable": " {unbuildable} אינו יכול לספק את החלק הזה כלל.",
         "resolve_panel": "הפאנל {model_ref} נבנה מ-{slots}.",
         "choose_vertical_mode": "נבחר מצב אנכי '{mode}' בשיפוע {slope_permille}‰.",
         "resolve_max_span": "המפתח המרבי נקבע ל-{value_mm} {u}.",
@@ -352,6 +364,24 @@ def explain_node(
             if p.get("not_reached"):
                 base += _fmt(t, "select_variant_not_reached", lang, units,
                     not_reached=", ".join(str(i + 1) for i in p["not_reached"]))
+        case "select_supply":
+            candidates = p.get("candidates", [])
+            base = _fmt(t, "select_supply", lang, units,
+                chosen=p.get("chosen"), slot=p.get("slot_key") or p.get("role"),
+                n=len(candidates), preset=p.get("preset"))
+            # the runner-up is the evidence: "cheaper than the others" is not an
+            # explanation, "cheaper than THAT one, by this much" is
+            priced = [c for c in candidates if c.get("cost_cents") is not None]
+            winner = next((c for c in priced if c["sku"] == p.get("chosen")), None)
+            runner_up = next((c for c in priced if c["sku"] != p.get("chosen")), None)
+            if winner and runner_up:
+                base += _fmt(t, "select_supply_beat", lang, units,
+                    chosen_cents=winner["cost_cents"], runner_up=runner_up["sku"],
+                    runner_up_cents=runner_up["cost_cents"])
+            unbuildable = [c["sku"] for c in candidates if not c.get("feasible", True)]
+            if unbuildable:
+                base += _fmt(t, "select_supply_unbuildable", lang, units,
+                    unbuildable=", ".join(unbuildable))
         case "select_product":
             base = _fmt(t, "select_product", lang, units, slot=p.get("slot"),
                 sku=p.get("sku"), axis=p.get("axis"), value=p.get("value"))

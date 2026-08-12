@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from fenceai.catalog.model import Catalog
 from fenceai.demand.derive import RequirementLine, derive_requirements
 from fenceai.fulfillment.fulfill import Bom, Inventory, fulfill
-from fenceai.fulfillment.supply import resolve_supply
+from fenceai.fulfillment.supply import SupplyDecision, resolve_supply
 from fenceai.strategy.model import Strategy, StrategyWarning
 
 
@@ -36,6 +36,11 @@ class PricedRun(BaseModel):
     # a document that under-prices the job.
     unresolved: list[RequirementLine] = []
     warnings: list[StrategyWarning] = []
+    # why each multi-candidate group resolved the way it did. Carried out of the
+    # pipeline because the decision-graph nodes for it are DERIVED at read time:
+    # selection is coupled to the cut plan and runs here, where there is no graph
+    # builder (`decisions/supply.py`).
+    decisions: list[SupplyDecision] = []
     bom: Bom
 
 
@@ -59,5 +64,6 @@ def price_strategy(
         requirements=resolution.requirements,
         unresolved=resolution.unresolved,
         warnings=resolution.warnings,
+        decisions=resolution.decisions,
         bom=bom,
     )

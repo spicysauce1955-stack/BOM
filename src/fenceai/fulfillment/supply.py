@@ -16,6 +16,7 @@ from typing import Literal, get_args
 from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
+from fenceai.core.units import Cents, Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.cutplan import CutPiece, RemnantStock, plan_cuts
 from fenceai.fulfillment.fulfill import Inventory, engineering_unit_for
@@ -29,6 +30,41 @@ _PRESETS: frozenset[str] = frozenset(get_args(Preset))
 _INFEASIBLE = 2**62
 
 
+class Candidate(BaseModel):
+    """One product that was in the running, and how it ranked.
+
+    `cost_cents` and `waste_mm` are None for an INFEASIBLE candidate rather than
+    zero or a sentinel: nothing was planned for it, and a zero there reads as
+    "free", which is the opposite of what happened."""
+
+    sku: str
+    priority: int
+    feasible: bool = True
+    cost_cents: Cents | None = None
+    waste_mm: Mm | None = None
+
+
+class SupplyDecision(BaseModel):
+    """Why one product was bought and the others were not.
+
+    One per eligibility GROUP, not per requirement line: a 40-slat panel answers
+    one demand once, and forty identical nodes would bury the explanation they
+    exist to give (the same rule `fit_pattern` follows — one node per span, never
+    one per member)."""
+
+    requirement_ids: list[str] = []
+    pegs: list[str] = []          # strategy element ids the group's lines peg to
+    slot_key: str = ""
+    role: str = ""
+    chosen: str = ""
+    preset: str = ""
+    candidates: list[Candidate] = []
+
+    @property
+    def rejected(self) -> list[str]:
+        return [c.sku for c in self.candidates if c.sku != self.chosen]
+
+
 class SupplyResolution(BaseModel):
     # every line here has a real sku — the invariant fulfill() and the parts
     # ledger both depend on is enforced HERE, structurally, not by caller
@@ -40,7 +76,7 @@ class SupplyResolution(BaseModel):
     # them (e.g. on the structure sheet) without risking them reaching fulfill().
     unresolved: list[RequirementLine] = []
     warnings: list[StrategyWarning] = []
-    decisions: list[dict] = []   # chosen + rejected, for the decision graph
+    decisions: list[SupplyDecision] = []
 
 
 def _usable(members, approvals: set[str]) -> list:
@@ -206,7 +242,7 @@ def resolve_supply(
     for key, lines in sorted(groups.items()):
         usable = [m for m in lines[0].eligibility.members
                   if (m.sku, m.priority, m.approval) in key]
-        chosen = _choose(usable, lines, catalog, inventory, preset)
+        chosen, candidates = _choose(usable, lines, catalog, inventory, preset)
         if chosen is None:
             # Every candidate is infeasible. This used to fall back to the full
             # field and pick one anyway: no warning, nothing in `unresolved`, and
@@ -227,12 +263,15 @@ def resolve_supply(
         for line in lines:
             _name_product(line, chosen.sku, catalog)
             out.requirements.append(line)
-            if len(usable) > 1:
-                out.decisions.append({
-                    "requirement_id": line.id, "slot_key": line.slot_key,
-                    "chosen": chosen.sku, "preset": preset,
-                    "rejected": [m.sku for m in usable if m.sku != chosen.sku],
-                })
+        if candidates:
+            # only when there was a real choice: `_choose` returns no candidates
+            # for a lone feasible member, because there is nothing to account for
+            out.decisions.append(SupplyDecision(
+                requirement_ids=[line.id for line in lines],
+                pegs=sorted({peg for line in lines for peg in line.pegs}),
+                slot_key=lines[0].slot_key, role=lines[0].role,
+                chosen=chosen.sku, preset=preset, candidates=candidates,
+            ))
     return out
 
 
@@ -299,14 +338,21 @@ def _choose(usable, lines, catalog, inventory, preset) -> "EligibleItem | None":
     guard: whatever it does, it only ever sees skus already proven buildable.
     """
     feasible = [m for m in usable if _can_supply(m.sku, lines, catalog)]
+    infeasible = [Candidate(sku=m.sku, priority=m.priority, feasible=False)
+                  for m in usable if m not in feasible]
     if not feasible:
         # No candidate can supply this part. Answering anyway would be a wrong
         # answer with nobody told, so there is no answer — the caller reports it
         # as `no_feasible_item` + an `unresolved` line, alongside the way it
         # reports an empty eligibility set.
-        return None
+        return None, infeasible
     if len(feasible) == 1:
-        return feasible[0]
+        # No RANKING to do, but if other candidates were considered and could not
+        # supply the part, that is still the answer to "why this one" — so they
+        # are recorded. No cost is planned for any of them: a cost here would
+        # imply a comparison that never happened.
+        lone = Candidate(sku=feasible[0].sku, priority=feasible[0].priority)
+        return feasible[0], ([lone, *infeasible] if infeasible else [])
 
     # only now, with a real choice to make, is it worth planning cuts per candidate
     costs = {m.sku: _candidate_cost(m.sku, lines, catalog, inventory) for m in feasible}
@@ -322,4 +368,11 @@ def _choose(usable, lines, catalog, inventory, preset) -> "EligibleItem | None":
             return (m.priority, cost, waste, m.sku)
         return (cost, waste, m.priority, m.sku)
 
-    return min(feasible, key=rank)
+    winner = min(feasible, key=rank)
+    ranked = [
+        Candidate(sku=m.sku, priority=m.priority, feasible=True,
+                  cost_cents=costs[m.sku],
+                  waste_mm=_waste(m.sku, lines, catalog, inventory))
+        for m in sorted(feasible, key=rank)
+    ]
+    return winner, ranked + infeasible

@@ -27,6 +27,7 @@ from fenceai.catalog.model import Catalog, Product
 from fenceai.core.errors import GenerationFailure, ReadRefused
 from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
+from fenceai.decisions.supply import with_supply_decisions
 from fenceai.fencemodel.library import ModelListing
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.preview import PanelPreview, PreviewRequest, preview_panel
@@ -460,7 +461,20 @@ def explain(
     units: Literal["mm", "cm"] = "mm",   # display unit only; the graph stores mm
 ):
     result = _run(run_id)
-    lines = explain_element(result.graph, element_id, lang=lang, units=units)
+    # The supply choice is made in fulfillment, which has no graph builder, so
+    # its nodes are derived here from the same pipeline the money views run.
+    # Without this, /explain cannot say why one eligible product was bought
+    # instead of another — the decision most worth explaining.
+    graph = result.graph
+    try:
+        _, _, priced = _priced(result)
+    except HTTPException:
+        # a stale catalog or an unreadable run must not cost the reader the
+        # explanation of everything else in the graph
+        priced = None
+    if priced is not None:
+        graph = with_supply_decisions(graph, priced.decisions)
+    lines = explain_element(graph, element_id, lang=lang, units=units)
     if not lines:
         raise HTTPException(404, f"no decisions reference {element_id}")
     return {"element_id": element_id, "explanation": lines}

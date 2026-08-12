@@ -99,11 +99,16 @@ def test_two_members_chosen_by_cost_records_a_decision():
     assert out.warnings == []
     assert len(out.decisions) == 1
     decision = out.decisions[0]
-    assert decision["requirement_id"] == "req0001"
-    assert decision["slot_key"] == "rail"
-    assert decision["chosen"] == "RAIL-3000"
-    assert decision["preset"] == "least_cost"
-    assert decision["rejected"] == ["POST-S"]
+    assert decision.requirement_ids == ["req0001"]
+    assert decision.slot_key == "rail"
+    assert decision.chosen == "RAIL-3000"
+    assert decision.preset == "least_cost"
+    assert decision.rejected == ["POST-S"]
+    # the evidence, not just the verdict: what each candidate would have cost is
+    # the answer to "why that one", and it is what /explain renders
+    ranked = {c.sku: c for c in decision.candidates}
+    assert ranked["RAIL-3000"].cost_cents < ranked["POST-S"].cost_cents
+    assert all(c.feasible for c in decision.candidates)
 
 
 def test_an_approved_suggest_only_member_is_used():
@@ -167,8 +172,12 @@ def test_a_too_short_candidate_loses_without_crashing():
     ]))
     out = resolve_supply([line], _FEASIBILITY_CATALOG, preset="least_cost")
     assert out.requirements[0].sku == "GOOD"
-    assert out.decisions[0]["chosen"] == "GOOD"
-    assert out.decisions[0]["rejected"] == ["SHORT"]
+    assert out.decisions[0].chosen == "GOOD"
+    assert out.decisions[0].rejected == ["SHORT"]
+    # and WHY it lost: a candidate that cannot supply the part is recorded as
+    # infeasible with no cost, not costed at zero, which would read as "free"
+    short = next(c for c in out.decisions[0].candidates if c.sku == "SHORT")
+    assert short.feasible is False and short.cost_cents is None
 
 
 def test_a_candidate_missing_from_the_catalog_loses_without_crashing():
@@ -180,8 +189,9 @@ def test_a_candidate_missing_from_the_catalog_loses_without_crashing():
     ]))
     out = resolve_supply([line], _FEASIBILITY_CATALOG, preset="least_cost")
     assert out.requirements[0].sku == "GOOD"
-    assert out.decisions[0]["chosen"] == "GOOD"
-    assert out.decisions[0]["rejected"] == ["GHOST"]
+    assert out.decisions[0].chosen == "GOOD"
+    assert out.decisions[0].rejected == ["GHOST"]
+    assert not next(c for c in out.decisions[0].candidates if c.sku == "GHOST").feasible
 
 
 # --- fix round 1: grouping must not drop a line's own priority -------------
@@ -216,11 +226,11 @@ def test_two_lines_with_opposite_priority_order_each_get_their_own_choice():
     by_id = {r.id: r.sku for r in out.requirements}
     assert by_id == {"req0001": "RAIL-3000", "req0002": "RAIL-3050"}
 
-    decisions = {d["requirement_id"]: d for d in out.decisions}
-    assert decisions["req0001"]["chosen"] == "RAIL-3000"
-    assert decisions["req0001"]["rejected"] == ["RAIL-3050"]
-    assert decisions["req0002"]["chosen"] == "RAIL-3050"
-    assert decisions["req0002"]["rejected"] == ["RAIL-3000"]
+    decisions = {d.requirement_ids[0]: d for d in out.decisions}
+    assert decisions["req0001"].chosen == "RAIL-3000"
+    assert decisions["req0001"].rejected == ["RAIL-3050"]
+    assert decisions["req0002"].chosen == "RAIL-3050"
+    assert decisions["req0002"].rejected == ["RAIL-3000"]
 
 
 # ---- when nothing fits at all (fix wave, finding D) --------------------------

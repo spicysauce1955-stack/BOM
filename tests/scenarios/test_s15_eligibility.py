@@ -50,8 +50,13 @@ def test_honour_priority_keeps_the_companys_first_choice_and_costs_more():
 
 def test_the_rejected_candidate_is_recorded_for_the_explanation():
     out = resolve_supply(_rails(4), CATALOG, preset="least_cost")
-    assert out.decisions and out.decisions[0]["chosen"] == "RAIL-3050"
-    assert out.decisions[0]["rejected"] == ["RAIL-3000"]
+    assert out.decisions and out.decisions[0].chosen == "RAIL-3050"
+    assert out.decisions[0].rejected == ["RAIL-3000"]
+    # the record has to be enough to ANSWER "why", not merely to name the winner:
+    # this is the scenario where nominal length cannot rank the two, so the
+    # planned cost of each is the whole argument
+    costs = {c.sku: c.cost_cents for c in out.decisions[0].candidates}
+    assert costs["RAIL-3050"] < costs["RAIL-3000"]
 
 
 def test_the_choice_is_the_same_for_every_line_of_one_group():
