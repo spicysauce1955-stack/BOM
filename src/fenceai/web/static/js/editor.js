@@ -65,7 +65,13 @@ function setupToolbar() {
     const btn = document.getElementById(`tool-${tool}`);
     if (btn) btn.addEventListener("click", () => { setTool(tool); updateStatus(); });
   }
-  document.getElementById("btn-generate").addEventListener("click", generateStrategy);
+  // `apiSend` has already shown the user a localized sentence and logged the
+  // server's body by the time it rethrows; passing the async function straight
+  // to addEventListener made every refused generation ALSO an unhandled
+  // rejection (which the smoke suite's page-error check counts).
+  document.getElementById("btn-generate").addEventListener("click", () => {
+    generateStrategy().catch(() => {});
+  });
   document.getElementById("btn-fit").addEventListener("click", fitView);
   document.getElementById("chk-overlay").addEventListener("change", renderOverlay);
   document.getElementById("btn-clear").addEventListener("click", clearTopology);

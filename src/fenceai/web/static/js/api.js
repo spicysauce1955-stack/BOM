@@ -40,6 +40,15 @@ function errorAlertText(bodyText, status) {
   if (detail?.code === "unresolved_supply") {
     return t("quote.unresolved_supply", { n: (detail.unresolved || []).length });
   }
+  // Any other refusal that names itself: `error.<code>` renders it with its own
+  // params. This is the same contract the read routes use for ReadRefused —
+  // without it a coded 422 (a fence model naming a SKU nobody stocks) still fell
+  // through to the generic sentence, which is the shape wave H set out to remove.
+  if (detail?.code) {
+    const key = `error.${detail.code}`;
+    const text = t(key, detail.params || {});
+    if (text !== key) return text;
+  }
   return t("api.request_failed", { status });
 }
 

@@ -21,7 +21,7 @@ from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
-from fenceai.fencemodel.model import FenceModel, validate_model
+from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import PanelContext, resolve_panel
 from fenceai.knowledge.evaluator import (
     Resolution,
@@ -532,10 +532,26 @@ def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
     call would cost more than the check it skipped.
     """
     errors = validate_model(model, catalog)
-    if errors:
+    if not errors:
+        return
+    # The failure a USER can cause gets a code its locale bundle can render: a
+    # DefaultComponent's sku is a free-text field, and "the action failed (422)"
+    # names neither the sku nor the fact that a sku is the problem — while the
+    # strategy the user was working on is gone. The remaining errors are English
+    # authoring text for someone editing a model, which no route can do yet.
+    missing = unknown_skus(model, catalog)
+    if missing:
         raise GenerationFailure(
-            f"fence model {model.ref} cannot be used: " + "; ".join(errors)
+            f"fence model {model.ref} names {len(missing)} sku(s) the catalog does "
+            f"not stock: {', '.join(missing)}",
+            code="fence_model_unknown_sku",
+            skus=", ".join(missing), model_ref=model.ref, n=len(missing),
         )
+    raise GenerationFailure(
+        f"fence model {model.ref} cannot be used: " + "; ".join(errors),
+        code="fence_model_invalid",
+        model_ref=model.ref, errors="; ".join(errors), n=len(errors),
+    )
 
 
 def _generate_run(

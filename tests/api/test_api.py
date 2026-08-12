@@ -391,6 +391,33 @@ def test_generation_failure_is_422(client):
     assert "max_span" in r.json()["detail"]
 
 
+def test_a_phantom_sku_refuses_generation_with_a_code_not_a_bare_sentence(client):
+    """A DefaultComponent's sku is a free-text field in the knowledge editor, so
+    "the fence model names a product nobody stocks" is a USER error, not an
+    authoring one. It used to answer `422 "generation failed: ..."`, which
+    `api.js` renders as the generic "the action failed (422)" — telling a Hebrew
+    reader neither which SKU nor that a SKU is the problem, after losing the
+    strategy they were working on. It carries code + params now, like a
+    ReadRefused, and names the SKU it could not find."""
+    pid = make_project(client, name="phantom-sku")
+    put_straight_topology(client, pid)
+    assert client.post("/api/knowledge", json={
+        "object_id": "K-RAIL-GHOST", "type": "fact", "title": "rail nobody stocks",
+        "actions": [{"kind": "default_component", "role": "rail",
+                     "sku": "NOT-IN-CATALOG"}],
+    }).status_code == 200
+
+    r = client.post(f"/api/projects/{pid}/generate")
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "fence_model_unknown_sku"
+    assert detail["params"]["skus"] == "NOT-IN-CATALOG"
+    assert detail["params"]["n"] == 1
+    assert "M-LEGACY" in detail["params"]["model_ref"]
+    # the English sentence stays as the diagnostic fallback, never the only content
+    assert "NOT-IN-CATALOG" in detail["message"]
+
+
 def test_knowledge_impact_preview(client):
     pid = make_project(client, name="impact-demo")
     put_straight_topology(client, pid)

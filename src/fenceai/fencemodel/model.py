@@ -332,6 +332,25 @@ def _unsupported_features(model: FenceModel) -> list[str]:
     return errors
 
 
+def unknown_skus(model: FenceModel, catalog: Catalog) -> list[str]:
+    """Eligible SKUs this catalog does not stock — the ONE validation failure a
+    user can cause without authoring a model.
+
+    `legacy_model()` seeds its eligibility from the run's resolved `demand_skus`,
+    which come from a knowledge `DefaultComponent` whose sku is a free-text
+    field in the editor. So this is the failure that needs a `code + params` a
+    Hebrew reader can act on; the rest of `validate_model`'s errors are English
+    authoring text for someone editing a model, and no route exists to do that
+    yet. Computed structurally, never by parsing those strings."""
+    return sorted({
+        m.sku
+        for spec in [model.default_spec, *(v.spec for v in model.variants)]
+        for _, req in _requirements(spec)
+        for m in req.eligibility.members
+        if m.sku not in catalog.products
+    })
+
+
 def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
     """Every reason this model cannot be used, as English strings for the author.
 

@@ -302,6 +302,15 @@ def generate_route(project_id: str):
             overrides=project.overrides, policy=project.policy, project_id=project.id,
         )
     except GenerationFailure as e:
+        # code + params when the failure carries them, exactly as the read routes
+        # do for ReadRefused: a 422 whose only content is an English sentence is
+        # rendered by the client as "the action failed (422)", which tells a user
+        # who mistyped a SKU neither which SKU nor that a SKU is the problem —
+        # after losing the strategy they were working on.
+        if e.code:
+            raise HTTPException(422, {
+                "code": e.code, "params": e.params, "message": str(e),
+            })
         raise HTTPException(422, f"generation failed: {e}")
     state.store.save_run(result)
     critique = state.critic.critique(result)
