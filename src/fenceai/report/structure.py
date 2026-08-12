@@ -36,6 +36,7 @@ class Part(BaseModel):
     qty: int
     unit: str  # "each" | "cut" | "application"
     role: str = ""  # post | cap | concrete | rail | screw | gate_kit (see derive.py)
+    slot_key: str = ""  # sub-element identity: which part of the panel this is
     cut_length_mm: Mm | None = None
     length_basis: str | None = None  # "width" | "slope"
     from_bars: list[str] = []  # cut-plan bar provenance ("new #2", an inventory id)
@@ -184,6 +185,7 @@ def _parts_by_element(requirements: list[RequirementLine], bom: Bom) -> _Ledger:
     for req in requirements:
         part = Part(
             sku=req.sku, qty=req.engineering_qty, unit=req.unit, role=req.role,
+            slot_key=req.slot_key,
             cut_length_mm=req.cut_length_mm, length_basis=req.length_basis,
             from_bars=bars.get(req.id, []),
         )
@@ -227,7 +229,7 @@ def _merge_parts(parts: list[Part]) -> list[Part]:
     """One line per (sku, unit, cut length): two rails of the same cut read as 2, not 1+1."""
     merged: dict[tuple, Part] = {}
     for p in parts:
-        key = (p.sku, p.unit, p.role, p.cut_length_mm, p.length_basis)
+        key = (p.sku, p.unit, p.role, p.slot_key, p.cut_length_mm, p.length_basis)
         if key in merged:
             merged[key].qty += p.qty
             merged[key].from_bars = merged[key].from_bars + p.from_bars
