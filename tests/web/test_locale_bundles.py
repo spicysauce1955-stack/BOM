@@ -28,6 +28,8 @@ WARNING_CODES = [
     "gate_kit_width_mismatch",
     "no_gate_kit",
     "gate_past_run_end",
+    "no_eligible_item",
+    "substitute_needs_approval",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 
@@ -59,14 +61,16 @@ def test_backend_code_list_is_current():
     author to add locale entries (and update the lists above)."""
     import re
 
-    generator = (
-        Path(__file__).resolve().parents[2] / "src" / "fenceai" / "strategy" / "generator.py"
-    ).read_text()
-    stub = (
-        Path(__file__).resolve().parents[2] / "src" / "fenceai" / "ai" / "stub.py"
-    ).read_text()
-    emitted = set(re.findall(r'code="([a-z_]+)"', generator))
-    emitted |= set(re.findall(r'code="([a-z_]+)"', stub))
+    src = Path(__file__).resolve().parents[2] / "src" / "fenceai"
+    scanned = [
+        src / "strategy" / "generator.py",
+        src / "ai" / "stub.py",
+        src / "fulfillment" / "supply.py",
+        src / "fencemodel" / "resolve.py",
+    ]
+    emitted: set[str] = set()
+    for path in scanned:
+        emitted |= set(re.findall(r'code="([a-z_]+)"', path.read_text()))
     emitted.discard("generic")  # CritiqueNote default, never emitted explicitly
     assert emitted == set(WARNING_CODES) | set(CRITIQUE_CODES), emitted
 

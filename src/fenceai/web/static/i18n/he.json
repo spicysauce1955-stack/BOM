@@ -412,5 +412,7 @@
   "structure.shared_from": "(משותף עם {tag})",
   "profile.bay_dim": "מפתח, ממרכז למרכז",
   "profile.gate_dim": "פתח שער — זה חייב להיות מדויק",
-  "warning.gate_past_run_end": "השער בתחנה {station_mm} {u} מבקש {asked_mm} {u} אך נותרו במקטע {available_mm} {u} בלבד — הזיזו אותו או הקטינו אותו."
+  "warning.gate_past_run_end": "השער בתחנה {station_mm} {u} מבקש {asked_mm} {u} אך נותרו במקטע {available_mm} {u} בלבד — הזיזו אותו או הקטינו אותו.",
+  "warning.no_eligible_item": "אין מוצר זמין שיכול לספק {role} ב-{slot_key}",
+  "warning.substitute_needs_approval": "{sku} הוא תחליף מוצע עבור {role} ודורש אישור לפני שימוש"
 }

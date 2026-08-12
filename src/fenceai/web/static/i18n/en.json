@@ -412,5 +412,7 @@
   "structure.shared_from": "(shared with {tag})",
   "profile.bay_dim": "Bay, centre to centre",
   "profile.gate_dim": "Gate opening — this one must be exact",
-  "warning.gate_past_run_end": "Gate at station {station_mm} {u} asks for {asked_mm} {u} but only {available_mm} {u} of the section remains — move it or shorten it."
+  "warning.gate_past_run_end": "Gate at station {station_mm} {u} asks for {asked_mm} {u} but only {available_mm} {u} of the section remains — move it or shorten it.",
+  "warning.no_eligible_item": "No product is eligible to supply {role} in {slot_key}",
+  "warning.substitute_needs_approval": "{sku} is a suggested substitute for {role} and needs approval before it can be used"
 }
