@@ -2,9 +2,11 @@
 needs no knowledge access because the params are already on the context."""
 
 from fenceai.fencemodel.model import (
-    Distributed, Eligibility, EligibleItem, FrameSlot, PanelSpec, PartRequirement,
+    Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
+    PartRequirement, Variant,
 )
-from fenceai.fencemodel.resolve import PanelContext, resolve_panel
+from fenceai.fencemodel.resolve import PanelContext, resolve_panel, select_variant
+from fenceai.knowledge.ast import Cmp, FieldRef, Lit
 
 RAIL = PartRequirement(
     role="rail", qty=1, length_rule="centre_to_centre",
@@ -14,6 +16,20 @@ LEGACY = PanelSpec(frame=[FrameSlot(
     key="rail", orientation="horizontal",
     placement=Distributed(count=2, count_param="rails_per_span"), requirement=RAIL,
 )])
+TALLER = PanelSpec(frame=[FrameSlot(
+    key="rail2", orientation="horizontal",
+    placement=Distributed(count=4, count_param="rails_per_span"), requirement=RAIL,
+)])
+
+# Real paths off PanelContext.condition_ctx(): {"panel": {"width_mm", "height_mm",
+# "vertical"}}. _ctx()'s defaults (centre_width_mm=1500, height_mm=1800) make
+# WIDTH_1500 and HEIGHT_1800 both true against the default context.
+WIDTH_1500 = Cmp(cmp="==", left=FieldRef(path="panel.width_mm"), right=Lit(value=1500))
+HEIGHT_1800 = Cmp(cmp="==", left=FieldRef(path="panel.height_mm"), right=Lit(value=1800))
+WIDTH_9999 = Cmp(cmp="==", left=FieldRef(path="panel.width_mm"), right=Lit(value=9999))
+# "panel.color" is not a key condition_ctx() ever populates, so this always
+# raises MissingField rather than evaluating to True or False.
+MISSING_FIELD = Cmp(cmp="==", left=FieldRef(path="panel.color"), right=Lit(value="red"))
 
 
 def _ctx(**kw) -> PanelContext:
@@ -78,3 +94,68 @@ def test_infill_slot_reports_its_fit_and_one_aggregate_quantity():
     assert slat.qty == slat.fit.count > 1
     assert len(panel.slots) == 1
     assert max(slat.fit.gaps_mm) - min(slat.fit.gaps_mm) <= 1
+
+
+def test_select_variant_with_no_variants_returns_the_default():
+    model = FenceModel(id="basic", version=1, default_spec=LEGACY)
+    assert select_variant(model, _ctx()) == (LEGACY, None)
+
+
+def test_select_variant_first_satisfied_condition_wins_in_authored_order():
+    """Both conditions are true against the default context; authored order
+    decides, not specificity — a bare Expr has no scope dict to count."""
+    model = FenceModel(
+        id="basic", version=1, default_spec=PanelSpec(),
+        variants=[Variant(condition=WIDTH_1500, spec=LEGACY),
+                  Variant(condition=HEIGHT_1800, spec=TALLER)],
+    )
+    spec, index = select_variant(model, _ctx())
+    assert spec == LEGACY
+    assert index == 0
+
+
+def test_select_variant_skips_an_unsatisfied_earlier_variant():
+    model = FenceModel(
+        id="basic", version=1, default_spec=PanelSpec(),
+        variants=[Variant(condition=WIDTH_9999, spec=LEGACY),
+                  Variant(condition=WIDTH_1500, spec=TALLER)],
+    )
+    spec, index = select_variant(model, _ctx())
+    assert spec == TALLER
+    assert index == 1
+
+
+def test_select_variant_skips_a_condition_that_raises_missing_field():
+    """A condition referencing a field the context never supplies is treated
+    as 'not applicable', not as satisfied."""
+    model = FenceModel(
+        id="basic", version=1, default_spec=PanelSpec(),
+        variants=[Variant(condition=MISSING_FIELD, spec=LEGACY),
+                  Variant(condition=WIDTH_1500, spec=TALLER)],
+    )
+    spec, index = select_variant(model, _ctx())
+    assert spec == TALLER
+    assert index == 1
+
+
+def test_select_variant_returns_default_when_every_variant_is_inapplicable():
+    model = FenceModel(
+        id="basic", version=1, default_spec=LEGACY,
+        variants=[Variant(condition=MISSING_FIELD, spec=TALLER),
+                  Variant(condition=WIDTH_9999, spec=TALLER)],
+    )
+    assert select_variant(model, _ctx()) == (LEGACY, None)
+
+
+def test_select_variant_and_resolve_panel_pin_together():
+    """The spec select_variant hands back is exactly what resolve_panel then
+    resolves against — the two functions are a pair, not just independently
+    correct."""
+    model = FenceModel(
+        id="basic", version=1, default_spec=PanelSpec(),
+        variants=[Variant(condition=WIDTH_1500, spec=LEGACY)],
+    )
+    ctx = _ctx()
+    spec, index = select_variant(model, ctx)
+    assert index == 0
+    assert resolve_panel(spec, ctx) == resolve_panel(LEGACY, ctx)
