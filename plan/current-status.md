@@ -344,7 +344,7 @@ to `addEventListener`. **The customer sheet was getting an itemised screw count*
 panel now follows that sheet's own describe-don't-itemise rule. **And the false "generate a
 strategy" message's CLASS is closed**, not just this round's cause: an unrecognised refusal
 in `structure-data.js` was mapped to "no attempt yet", and is now `"unknown"` naming its
-code. 580 pytest (+25) · 126 golden scenarios (unchanged) · 106/106 smoke (+5).
+code. 585 pytest (+30) · 126 golden scenarios (unchanged) · 107/107 smoke (+6).
 
 **Phases 2 and 3 remain.** Phase 2: `M-SLAT`, variants, option axes, the pricing union,
 the elevation read model, the panel warning codes, and multi-member eligibility selected by
