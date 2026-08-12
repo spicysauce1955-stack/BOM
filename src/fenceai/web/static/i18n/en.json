@@ -292,6 +292,7 @@
   "warning.tilted_stepped": "Section {run_id} combines tilted posts ({mode}) with stepped panels — stepped panels normally pair with plumb posts; check the design",
   "warning.gate_kit_width_mismatch": "Gate kit {sku} fits a {kit_width_mm} {u} opening but {element} is {opening_width_mm} {u} — the wrong gate would be priced",
   "warning.no_gate_kit": "No catalog product fits the {opening_width_mm} {u} opening of {element} — this gate cannot be priced",
+  "warning.height_not_supported": "Fence model {model_ref} is not made in {n} of the panel heights in section {run_id} (from {min_mm} {u} to {max_mm} {u}) — change the height or choose another model",
   "popover.post_tilt": "post orientation",
   "tilt.plumb": "plumb (default)",
   "tilt.perpendicular": "perpendicular to ground",

@@ -21,7 +21,7 @@ _INPUT_FACT_ACTIONS = frozenset(
 # Display units: the graph always stores int mm (ADR-0002); prose may render them
 # in the reader's chosen unit, exactly like the UI (web/static/js/units.js).
 _UNIT_WORDS = {"en": {"mm": "mm", "cm": "cm"}, "he": {"mm": 'מ"מ', "cm": 'ס"מ'}}
-_LENGTH_LISTS = frozenset({"widths", "alt_widths"})
+_LENGTH_LISTS = frozenset({"widths", "alt_widths", "heights_mm"})
 
 # Enum VALUES that appear as words inside a sentence get translated; ids, SKUs and
 # knowledge refs never pass through here (they stay verbatim Latin in every
@@ -83,6 +83,23 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "select_model_project": "Built to fence model {model_ref}, the project's default.",
         "select_model_builtin": "Built to fence model {model_ref}, the built-in default.",
         "select_model_options": " Options: {options}.",
+        # variant provenance is a different SENTENCE per outcome, not a word in
+        # one: "variant 2 of 3" and "no variant applied" share no shape
+        "select_variant": (
+            "Variant {variant_number} of {of} applies to this bay (model {model_ref})."
+        ),
+        "select_variant_default": (
+            "No variant of model {model_ref} applies to this bay; it is built to "
+            "the default panel."
+        ),
+        "select_variant_failed": " Conditions of variant(s) {failed} were not met.",
+        "select_variant_not_reached": (
+            " Variant(s) {not_reached} were not evaluated: the first satisfied "
+            "condition wins."
+        ),
+        "select_product": (
+            "Slot {slot} is narrowed to {sku} by option {axis} = {value}."
+        ),
         "resolve_panel": "Panel {model_ref} built from {slots}.",
         "choose_vertical_mode": "Vertical mode '{mode}' chosen at {slope_permille}‰ grade.",
         "resolve_max_span": "Maximum span resolved to {value_mm} {u}.",
@@ -141,6 +158,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "sliver_span": (
             "Span {span} is {width_mm} {u} — below the preferred minimum of {min_mm} {u}."
         ),
+        "height_not_supported": (
+            "Fence model {model_ref} does not support {n} panel height(s) in "
+            "section {run_id}: {heights_mm} {u}."
+        ),
         "override_applied": "User override {override_id} applied ({action}).",
         "input_fact": "Input fact: {action} {payload}.",
         "generic": "{action}: {payload}",
@@ -167,6 +188,16 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "select_model_project": "נבנה לפי דגם הגדר {model_ref}, ברירת המחדל של הפרויקט.",
         "select_model_builtin": "נבנה לפי דגם הגדר {model_ref}, ברירת המחדל המובנית.",
         "select_model_options": " אפשרויות: {options}.",
+        "select_variant": "וריאנט {variant_number} מתוך {of} חל על מפתח זה (דגם {model_ref}).",
+        "select_variant_default": (
+            "אף וריאנט של הדגם {model_ref} אינו חל על מפתח זה; הוא נבנה לפי פאנל "
+            "ברירת המחדל."
+        ),
+        "select_variant_failed": " התנאים של וריאנט {failed} לא התקיימו.",
+        "select_variant_not_reached": (
+            " וריאנט {not_reached} לא נבדק: הוריאנט הראשון שתנאו מתקיים הוא הקובע."
+        ),
+        "select_product": "הרכיב {slot} צומצם ל-{sku} לפי האפשרות {axis} = {value}.",
         "resolve_panel": "הפאנל {model_ref} נבנה מ-{slots}.",
         "choose_vertical_mode": "נבחר מצב אנכי '{mode}' בשיפוע {slope_permille}‰.",
         "resolve_max_span": "המפתח המרבי נקבע ל-{value_mm} {u}.",
@@ -222,6 +253,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "sliver_span": (
             "המפתח {span} הוא {width_mm} {u} — מתחת למינימום המועדף של {min_mm} {u}."
         ),
+        "height_not_supported": (
+            "דגם הגדר {model_ref} אינו תומך ב-{n} מגובהי הפאנל בקטע {run_id}: "
+            "{heights_mm} {u}."
+        ),
         "override_applied": "דריסת משתמש {override_id} הוחלה ({action}).",
         "input_fact": "עובדת קלט: {action} {payload}.",
         "generic": "{action}: {payload}",
@@ -244,10 +279,13 @@ def _fmt(t: dict[str, str], key: str, lang: str, units: str, **kw) -> str:
     SKUs, refs and raw payloads pass through untouched."""
     out = {}
     for k, v in kw.items():
-        if k.endswith("_mm"):
-            out[k] = _display(v, units)
-        elif k in _LENGTH_LISTS and isinstance(v, (list, tuple)):
+        # the list branch comes FIRST: a length list may also end in `_mm`
+        # (`heights_mm`), and `_display` on a list silently returns it in
+        # millimetres — which reads as centimetres beside a `{u}` saying cm
+        if k in _LENGTH_LISTS and isinstance(v, (list, tuple)):
             out[k] = [_display(x, units) for x in v]
+        elif k.endswith("_mm"):
+            out[k] = _display(v, units)
         elif k in _ENUM_PARAMS:
             out[k] = (", ".join(_word(x, lang) for x in v)
                       if isinstance(v, (list, tuple)) else _word(v, lang))
@@ -297,6 +335,26 @@ def explain_node(
             if options:
                 base += _fmt(t, "select_model_options", lang, units,
                     options=", ".join(f"{k}={v}" for k, v in sorted(options.items())))
+        case "select_variant":
+            index = p.get("variant_index")
+            if index is None:
+                base = _fmt(t, "select_variant_default", lang, units,
+                    model_ref=p.get("model_ref"))
+            else:
+                # 1-based in prose: "variant 0" is a programmer's answer to
+                # "which one of the three did we build?"
+                base = _fmt(t, "select_variant", lang, units,
+                    model_ref=p.get("model_ref"), variant_number=index + 1,
+                    of=p.get("of"))
+            if p.get("failed"):
+                base += _fmt(t, "select_variant_failed", lang, units,
+                    failed=", ".join(str(i + 1) for i in p["failed"]))
+            if p.get("not_reached"):
+                base += _fmt(t, "select_variant_not_reached", lang, units,
+                    not_reached=", ".join(str(i + 1) for i in p["not_reached"]))
+        case "select_product":
+            base = _fmt(t, "select_product", lang, units, slot=p.get("slot"),
+                sku=p.get("sku"), axis=p.get("axis"), value=p.get("value"))
         case "resolve_panel":
             slots = ", ".join(f"{s['qty']} {s['role']}" for s in p.get("slots", []))
             base = _fmt(t, "resolve_panel", lang, units,
@@ -360,6 +418,10 @@ def explain_node(
             base = _fmt(t, "sliver_span", lang, units,
                 span=p.get("span"), width_mm=p.get("width_mm"), min_mm=p.get("min_mm")
             )
+        case "height_not_supported":
+            base = _fmt(t, "height_not_supported", lang, units,
+                model_ref=p.get("model_ref"), run_id=p.get("run_id"),
+                n=p.get("n"), heights_mm=p.get("heights_mm", []))
         case action if action in _OVERRIDE_ACTIONS:
             base = _fmt(t, "override_applied", lang, units,
                 override_id=p.get("override_id"), action=node.action

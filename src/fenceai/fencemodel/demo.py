@@ -66,11 +66,12 @@ def slat_model(
     Parallel members would still multiply to a number, and the number would be a
     fiction.
 
-    Everything here is deliberately inside what `resolve_panel` honours today,
-    which is narrower than the schema: no variant by height, no gap axis, no
-    max-span contribution. `validate_model` refuses each of those by name, so
-    this model's shape is not a preference — a richer M-SLAT is a phase-2
-    document, arriving with the resolver that reads it.
+    It stays a plain panel — no variant by height, no colour axis, no max-span
+    contribution — even though the resolver now honours all three. That is a
+    choice about the DEMO, not a limit: this is the built-in a fresh database
+    seeds and the compatibility fixtures compare against, so it should stay the
+    simplest thing that exercises the infill path end to end. A model that shows
+    off variants and axes is one an author builds, which is the point.
     """
     return FenceModel(
         id="M-SLAT", version=1,

@@ -20,8 +20,9 @@ from pydantic import BaseModel
 class FenceModelChoice(BaseModel):
     model_id: str
     version_pin: int | None = None
-    # axis key -> chosen value. Inert until W3 reads PanelContext.options; carried
-    # from here on so a run generated today records what was asked for.
+    # axis key -> chosen value, answered here rather than per bay because the
+    # question ("what colour are the posts") is asked of whoever chose the model,
+    # long before the fence is divided into bays
     options: dict[str, str | int] = {}
 
     def key(self) -> tuple:

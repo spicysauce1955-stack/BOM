@@ -24,7 +24,9 @@ from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
-from fenceai.fencemodel.resolve import PanelContext, resolve_panel
+from fenceai.fencemodel.resolve import (
+    PanelContext, choose_variant, height_supported, resolve_panel,
+)
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.evaluator import (
     Resolution,
@@ -33,7 +35,7 @@ from fenceai.knowledge.evaluator import (
     resolve_actions,
     resolve_param,
 )
-from fenceai.knowledge.model import KnowledgeBase
+from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
 from fenceai.strategy.layout import boundaries, layout_segment
 from fenceai.strategy.model import (
     Gate,
@@ -518,7 +520,7 @@ def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
     strategy. Every error this returns means the panel that WOULD be built is
     not the panel that was authored:
 
-      * an unbuilt feature (variants, option axes, `Eligibility.group`,
+      * an unbuilt feature (`Eligibility.group`, `Eligibility.predicate`,
         `InfillSpec.supply`, …) is ignored by `resolve_panel`, so the run is
         silently a different fence — the precise failure mode `_unsupported_
         features` exists to prevent, and surfacing it as a survivable note
@@ -572,6 +574,7 @@ class _SegmentModel:
 
     model: FenceModel
     use: ModelUse
+    options: dict[str, str | int]
     select_node_id: str
     max_span: Mm
     max_span_ref: str
@@ -582,6 +585,42 @@ class _SegmentModel:
 
 
 LEGACY_MODEL_ID = "M-LEGACY"
+
+
+def _policy_knowledge(model: FenceModel) -> list[KnowledgeVersion]:
+    """A model's `layout_policy` as knowledge versions scoped to its own series.
+
+    The model gets NO private channel into the generator (fence-model spec §"Two
+    touch points"): what it asks of the span layout enters the same evaluator as
+    a company rule, resolves by the same tiers, and loses out loud when it loses.
+
+    Authority is per CONTRIBUTION, never per model, and that is the whole reason
+    the contribution carries its own `knowledge_type`: `DEFAULT_AUTHORITY` puts
+    hard_constraint at 1 and company_rule at 3, so emitting a manufacturer's
+    maximum span and a nominal panel width at one authority makes exactly one of
+    them wrong — an unbeatable preference, or a beatable safety limit.
+
+    The ref reads `M-SLAT#max_span_mm@v1`: a knowledge-shaped id that cannot
+    collide with an authored knowledge object, so a `governed_by` edge citing one
+    is legible as "the model asked for this" rather than as a rule someone could
+    go and edit. These versions are never stored — the run's model snapshot
+    (id, version, content hash) is what makes them reproducible.
+    """
+    return [
+        KnowledgeVersion(
+            object_id=f"{model.id}#{c.param}",
+            version=model.version,
+            type=c.knowledge_type,
+            authority=c.authority,
+            scope={"series": model.id},
+            actions=[SetParam(param=c.param, value=c.value)],
+            title=f"{model.ref} model policy: {c.param} = {c.value}",
+            title_i18n={"he": f"מדיניות הדגם {model.ref}: {c.param} = {c.value}"},
+            attributed_to="fence_model",
+            derived_from=[model.ref],
+        )
+        for c in model.layout_policy
+    ]
 
 
 def _pick_model(
@@ -686,6 +725,14 @@ def _generate_run(
             "scope": bind_scope(scope, {"series": model.id}),
             "run": ctx["run"],
         }
+        # The model's layout policy joins the knowledge BEFORE anything under
+        # this scope is resolved — a contribution added after `max_span_mm` had
+        # resolved would be a contribution that never applied. The run's own
+        # KnowledgeBase is never mutated (generate() does not touch its inputs):
+        # this is a per-segment view of it, so one model's asks cannot survive
+        # into the next segment's resolution.
+        seg_kb = (KnowledgeBase(versions=[*kb.versions, *_policy_knowledge(model)])
+                  if model.layout_policy else kb)
         select_node = builder.add(
             "selection", "select_model",
             payload={"model_ref": model.ref, "source": source,
@@ -693,7 +740,7 @@ def _generate_run(
             inputs=[run_fact.id],
         )
 
-        res = resolve_param(kb, seg_ctx, "max_span_mm")
+        res = resolve_param(seg_kb, seg_ctx, "max_span_mm")
         if res.winner is None:
             raise GenerationFailure(f"no max_span_mm knowledge applies to run {run.id}")
         max_span_mm: Mm = next(a.value for a in res.winner.actions if a.kind == "set_param")
@@ -708,8 +755,8 @@ def _generate_run(
         )
         _surface_conflicts(res.conflicts, builder, strategy)
 
-        rails, rails_refs = _resolve_quantity(kb, seg_ctx, "rails_per_span", 2)
-        screws, screws_refs = _resolve_quantity(kb, seg_ctx, "screws_per_span", 8)
+        rails, rails_refs = _resolve_quantity(seg_kb, seg_ctx, "rails_per_span", 2)
+        screws, screws_refs = _resolve_quantity(seg_kb, seg_ctx, "screws_per_span", 8)
 
         sm = _SegmentModel(
             model=model,
@@ -718,6 +765,7 @@ def _generate_run(
                 content_hash=content_hash(model),
                 options=options,
             ),
+            options=options,
             select_node_id=select_node.id,
             max_span=max_span_mm,
             max_span_ref=res.winner.version.ref,
@@ -1117,6 +1165,13 @@ def _generate_run(
     # spans grouped by the model they were built to, so resolve_span_quantities
     # scopes to the bays its numbers actually governed
     spans_by_model: dict[tuple | None, list[str]] = {}
+    # bays whose height this section's model cannot be built at, collected for
+    # ONE warning per section rather than one per bay (fence-model spec
+    # §warnings): a level top over a slope gives every bay a different height
+    # (S06), so a discrete-height model would otherwise file a warning per bay
+    # and drown every other warning in the list. Keyed by model ref because two
+    # models may meet on one run and a message names the model it is about.
+    unsupported_heights: dict[str, list[tuple[Mm, str]]] = {}
     for seg_start, seg_end in zip(fixed_sorted, fixed_sorted[1:]):
         if any(gs <= seg_start and seg_end <= ge for gs, ge in gate_intervals):
             continue
@@ -1177,24 +1232,31 @@ def _generate_run(
                 screws_count=screws_per_span,
                 rail_cut_basis="slope" if v_mode == "raked" else "width",
             )
-            span.panel = resolve_panel(
-                model.default_spec,
-                PanelContext(
-                    centre_width_mm=width,
-                    clear_width_mm=width,  # face widths arrive in phase 2
-                    height_mm=height,
-                    vertical=v_mode,
-                    length_basis=span.rail_cut_basis,
-                    slope_len_mm=span.slope_len_mm,
-                    params={"rails_per_span": rails_per_span,
-                            "screws_per_span": screws_per_span},
-                ),
-                model_ref=model.ref,
+            panel_ctx = PanelContext(
+                centre_width_mm=width,
+                clear_width_mm=width,  # face widths arrive in phase 2
+                height_mm=height,
+                vertical=v_mode,
+                length_basis=span.rail_cut_basis,
+                slope_len_mm=span.slope_len_mm,
+                params={"rails_per_span": rails_per_span,
+                        "screws_per_span": screws_per_span},
+                options=sm.options,
             )
+            # per BAY, not per segment: a variant condition reads the panel's own
+            # height and vertical mode, and a level top over a slope gives every
+            # bay of one segment a different height (S06)
+            variant = choose_variant(model, panel_ctx)
+            span.panel = resolve_panel(
+                variant.spec, panel_ctx,
+                model_ref=model.ref, variant_index=variant.index,
+            )
+            if not height_supported(model.height_support, height):
+                unsupported_heights.setdefault(model.ref, []).append((height, span.id))
             strategy.spans.append(span)
             span_ids.append(span.id)
             spans_by_model.setdefault(choice.key() if choice else None, []).append(span.id)
-            builder.add(
+            span_node = builder.add(
                 "structural", "create_span",
                 payload={
                     "width_mm": width, "vertical": v_mode, "height_mm": height,
@@ -1207,12 +1269,47 @@ def _generate_run(
                 inputs=[layout_node.id] + ([fv_node] if fv_node else []),
                 governed_by=governed,
             )
+            panel_inputs = [layout_node.id, sm.select_node_id]
+            if model.variants:
+                # NO `defeated` edge, and that is not an omission: a variant
+                # condition is evaluated outside the knowledge evaluator, so
+                # there is no losing knowledge VERSION to cite — a defeated edge
+                # cites the loser's ref (decision-model.md) and a variant has
+                # none. This node IS the trace. Emitted only when the model
+                # actually declares variants, so a run built to a single-spec
+                # model keeps the explanation it has today.
+                variant_node = builder.add(
+                    "selection", "select_variant",
+                    payload={"model_ref": model.ref,
+                             "variant_index": variant.index,
+                             "failed": variant.failed,
+                             "not_reached": variant.not_reached,
+                             "of": len(model.variants)},
+                    scope_refs=[span.id], inputs=[sm.select_node_id, span_node.id],
+                )
+                panel_inputs.append(variant_node.id)
+            for slot in span.panel.slots:
+                # one node per slot an option actually GOVERNED, not per slot:
+                # "why this product" is only a question where an answer changed
+                # the candidates, and a node per slot per bay would bury the
+                # ones that did
+                if slot.option_axis is None:
+                    continue
+                panel_inputs.append(builder.add(
+                    "selection", "select_product",
+                    payload={"slot": slot.slot_key, "axis": slot.option_axis,
+                             "value": slot.option_value,
+                             # exactly one member survives a narrowing, by
+                             # construction: it is the member the option named
+                             "sku": slot.eligibility.members[0].sku},
+                    scope_refs=[span.id], inputs=[sm.select_node_id, span_node.id],
+                ).id)
             builder.add(
                 "structural", "resolve_panel",
                 payload={"model_ref": model.ref,
                          "slots": [{"key": s.slot_key, "role": s.role, "qty": s.qty}
                                    for s in span.panel.slots]},
-                scope_refs=[span.id], inputs=[layout_node.id, sm.select_node_id],
+                scope_refs=[span.id], inputs=panel_inputs,
             )
             if width > sm.max_span:
                 raise GenerationFailure(
@@ -1345,6 +1442,37 @@ def _generate_run(
             governed_by=sm.quantity_refs,
         )
 
+    for model_ref, offenders in unsupported_heights.items():
+        # the DISTINCT heights: the reader has to change a height or a model, and
+        # "1400 mm, 1400 mm, 1400 mm" says nothing "1400 mm" does not
+        heights = sorted({h for h, _ in offenders})
+        spans_affected = sorted(span_id for _, span_id in offenders)
+        node = builder.add(
+            "conflict", "height_not_supported",
+            payload={"model_ref": model_ref, "run_id": run.id,
+                     "heights_mm": heights, "n": len(heights)},
+            scope_refs=spans_affected,
+        )
+        strategy.warnings.append(
+            StrategyWarning(
+                code="height_not_supported", severity="warning",
+                message=f"Fence model {model_ref} does not support "
+                        f"{len(heights)} panel height(s) in section {run.id}: "
+                        + ", ".join(f"{h} mm" for h in heights),
+                element_refs=spans_affected, decision_ref=node.id,
+                # the offending heights themselves, pre-joined the way
+                # `contenders` and `surfaces` already are (a warning param is a
+                # `str | int`). The SENTENCE renders the range instead, because
+                # a joined string is the one thing `unitParams` cannot convert
+                # and a list of millimetres beside a "cm" label would be a lie;
+                # the decision node's payload keeps the real int list, which is
+                # what `/explain` renders in the reader's unit.
+                params={"model_ref": model_ref, "run_id": run.id,
+                        "heights_mm": ", ".join(str(h) for h in heights),
+                        "n": len(heights),
+                        "min_mm": heights[0], "max_mm": heights[-1]},
+            )
+        )
 
 
 def _check_post_lengths(

@@ -31,6 +31,7 @@ WARNING_CODES = [
     "no_eligible_item",
     "no_feasible_item",
     "substitute_needs_approval",
+    "height_not_supported",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 
