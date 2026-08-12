@@ -64,7 +64,19 @@ each is recorded with the trigger that should end the deferral.
   sentence names the runner-up and the gap ("RAIL-3050 … costs 3700c against RAIL-3000
   at 4000c"), because "cheaper than the others" is not an explanation.
 
-- **`catalog_hash` is whole-catalog, so any product edit permanently 409s every prior
+- ~~**`catalog_hash` is whole-catalog, so any product edit permanently 409s every prior
+  run.**~~ **CLOSED 2026-08-12.** `GenerationRun.catalog_skus` records the products a run
+  actually named — chosen SKUs, every eligibility RIVAL (the choice among them is made at
+  read time, so a rival getting cheaper is exactly a reason to re-check), and an assembly
+  kit's components transitively — and `catalog_hash(catalog, skus)` covers only those.
+  Narrowing is safe precisely because eligibility is frozen into the run: a product that
+  did not exist when it was generated can never change what it means. Adding a gate kit
+  or repricing a product this job never bought no longer refuses; repricing one it did,
+  or changing a stock length it cut from, still does. A run stamped before the narrowing
+  has an empty `catalog_skus` and is still compared against the whole-catalog hash it was
+  stamped with, so no stored run changes meaning. The original text follows.
+
+  **`catalog_hash` is whole-catalog, so any product edit permanently 409s every prior
   run.** `/bom` and `/structure` compare the stamped hash against a hash of the entire
   catalog document, so changing one product's price — or adding an unrelated SKU — makes
   every previously generated run unreadable until it is regenerated. The refusal is

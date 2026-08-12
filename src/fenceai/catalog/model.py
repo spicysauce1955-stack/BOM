@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, model_validator
@@ -114,6 +116,45 @@ class Product(BaseModel):
                 f"length ({self.consumption.kind}), so a rate prices nothing"
             )
         return self
+
+
+def catalog_hash(catalog: "Catalog", skus: list[str] | None = None) -> str:
+    """A content hash of the products a run actually depends on.
+
+    `skus=None` hashes the whole catalog, which is what a run stamped before this
+    existed did — and which is far too broad: it cannot tell "the product this run
+    bought got cheaper" from "somebody added an unrelated gate kit", so ONE price
+    edit made every previously generated run's working views refuse.
+
+    Narrowing is safe precisely because eligibility is FROZEN into the run: the
+    members a stored run may choose among were recorded when it was generated, so
+    a product that did not exist then can never change what it means. What a run
+    does depend on is the content of the products it named — a price, a purchase
+    length, a kerf, a kit's component list — and those are exactly what this
+    covers. Assembly kits are expanded transitively, because a kit's components
+    are products a BOM line's notes read.
+    """
+    wanted = sorted(_expand_kits(catalog, set(skus))) if skus is not None \
+        else sorted(catalog.products)
+    payload = json.dumps(
+        [catalog.products[s].model_dump() for s in wanted if s in catalog.products],
+        sort_keys=True, default=str,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _expand_kits(catalog: "Catalog", skus: set[str]) -> set[str]:
+    out = set(skus)
+    stack = list(skus)
+    while stack:
+        product = catalog.products.get(stack.pop())
+        if product is None or not isinstance(product.consumption, AssemblyKit):
+            continue
+        for component in product.consumption.components:
+            if component.sku not in out:
+                out.add(component.sku)
+                stack.append(component.sku)
+    return out
 
 
 def purchase_price_cents(product: Product) -> Cents:

@@ -23,7 +23,7 @@ load_dotenv()  # .env in the working directory fills gaps; real env vars win
 from fenceai.ai.claude import build_interpreter  # noqa: E402
 from fenceai.ai.stub import StubCritic, StubProposer
 from fenceai.catalog.demo import demo_catalog
-from fenceai.catalog.model import Catalog, Product
+from fenceai.catalog.model import Catalog, Product, catalog_hash
 from fenceai.core.errors import GenerationFailure, ReadRefused
 from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
@@ -147,7 +147,10 @@ def _fresh_catalog(result):
     inventory_hash on the response is not the same as checking it — this is the
     check: refuse rather than silently reprice/resupply a run's read views."""
     catalog = state.store.load_catalog()
-    current = hashlib.sha256(catalog.model_dump_json().encode()).hexdigest()[:16]
+    # over the SAME set the run stamped, or the comparison is between two
+    # different questions. An empty set means the run predates the narrowing and
+    # is only comparable against the whole-catalog hash it was stamped with.
+    current = catalog_hash(catalog, result.run.catalog_skus or None)
     if result.run.catalog_hash and current != result.run.catalog_hash:
         raise HTTPException(409, {
             "code": "catalog_changed",

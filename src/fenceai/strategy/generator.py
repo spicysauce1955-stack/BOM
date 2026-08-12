@@ -17,7 +17,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from fenceai.catalog.model import Catalog
+from fenceai.catalog.model import Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
@@ -177,8 +177,8 @@ def generate(
     run_meta.model_snapshot = sorted(
         {u.sort_key(): u for u in models_used}.values(), key=ModelUse.sort_key
     )
-    run_meta.catalog_hash = hashlib.sha256(
-        catalog.model_dump_json().encode()).hexdigest()[:16]
+    run_meta.catalog_skus = _skus_used(strategy, demand_skus)
+    run_meta.catalog_hash = catalog_hash(catalog, run_meta.catalog_skus)
     # `policy` was already merged with DEFAULT_POLICY above, so the key always
     # exists — a `.get(..., "least_cost")` fallback here could never fire; direct
     # indexing says so instead of implying a fallback that is dead on arrival.
@@ -198,6 +198,28 @@ def generate(
 
 
 # --- knowledge-resolved selection helpers -----------------------------------
+
+def _skus_used(strategy: Strategy, demand_skus: dict[str, str]) -> list[str]:
+    """Every product this run named, from the run itself rather than from a list
+    someone has to remember to extend.
+
+    Eligibility MEMBERS, not just the chosen sku: the choice among them is made
+    at read time by `resolve_supply`, so a run depends on the content of every
+    candidate it may still pick — a rival's price changing is exactly a reason
+    for the stored answer to be re-checked rather than silently kept.
+    """
+    skus = {p.sku for p in strategy.posts if p.sku}
+    skus |= {g.kit_sku for g in strategy.gates if g.kit_sku}
+    skus |= set(demand_skus.values())
+    for span in strategy.spans:
+        if span.panel is None:
+            continue
+        for slot in span.panel.slots:
+            skus |= {m.sku for m in slot.eligibility.members}
+            if slot.sku:
+                skus.add(slot.sku)
+    return sorted(skus)
+
 
 def bind_scope(*bindings: dict) -> dict[str, str]:
     """Bind evaluation-scope dimensions from the facts of this generation.

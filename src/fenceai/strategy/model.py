@@ -124,6 +124,11 @@ class GenerationRun(BaseModel):
     # catalog content hash at generation time — /bom and /structure refuse to
     # re-read a stored run against a catalog that no longer matches it
     catalog_hash: str = ""
+    # the products this run actually named — what `catalog_hash` covers. Empty
+    # means "hashed over the whole catalog", which is how a run stamped before
+    # the hash was narrowed still reads: its stored hash is only comparable
+    # against the same broad computation.
+    catalog_skus: list[str] = []
     created_at: str = ""
 
     @field_validator("model_snapshot", mode="before")
