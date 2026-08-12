@@ -1,48 +1,14 @@
 // Tab panels: annotations, knowledge, review queue, BOM, inventory.
 
 import { apiGet, apiSend, esc } from "./api.js";
+import {
+  el, field, loadCatalogProducts, option, skuSelect, updateAdvancedUi,
+} from "./builder-ui.js";
 import { currentLocale, t } from "./i18n.js";
+import { renderImpactReport } from "./impact.js";
 import { emit, on, reloadProject, state } from "./state.js";
 import { fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitLabel } from "./units.js";
 import { supplyProblemsHtml } from "./warnings.js";
-
-// ---------- small DOM helpers (builder rows are DOM-built, no innerHTML) ----------
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k === "text") node.textContent = v;
-    else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v === true ? "" : v);
-  }
-  node.append(...children);
-  return node;
-}
-
-function option(value, label, selected) {
-  const o = el("option", { value, text: label });
-  if (selected) o.selected = true;
-  return o;
-}
-
-// small labelled field: <label><span class=meta>label</span> input</label>
-const field = (labelKey, input) =>
-  el("label", { class: "builder-field" }, el("span", { class: "meta", text: tu(labelKey) }), input);
-
-function productLabel(products, sku) {
-  const name = products[sku]?.name_i18n?.[currentLocale()] || products[sku]?.name;
-  return name ? `${sku} — ${name}` : sku;
-}
-
-// SKU <select> from the cached catalog (localized names); optional adds a "none" entry
-function skuSelect(products, current, optional, onchange) {
-  const sel = el("select", { title: t(optional ? "knowledge.builder.sku_optional" : "knowledge.builder.sku") });
-  if (optional) sel.appendChild(option("", t("knowledge.builder.none"), !current));
-  const skus = Object.keys(products).sort();
-  for (const sku of skus) sel.appendChild(option(sku, productLabel(products, sku), current === sku));
-  if (current && !skus.includes(current)) sel.appendChild(option(current, current, true));
-  sel.addEventListener("change", () => onchange(sel.value || null));
-  return sel;
-}
 
 export function initTabs() {
   document.querySelectorAll("#tabs button").forEach((btn) =>
@@ -190,18 +156,6 @@ function parseInventory(text) {
   } catch { return null; }
 }
 
-// show/hide the structured editor vs. the raw-JSON textarea; the toggle button's
-// data-i18n key is swapped so applyStatic keeps it correct across locale changes.
-// `backKey` names the surface being returned to — the inventory tab has no rule
-// builder, and labelling its button "back to the rule builder" misled a persona.
-function updateAdvancedUi(editorId, textareaId, btnId, open, backKey = "knowledge.builder.back") {
-  document.getElementById(editorId).hidden = open;
-  document.getElementById(textareaId).hidden = !open;
-  const btn = document.getElementById(btnId);
-  btn.dataset.i18n = open ? backKey : "knowledge.builder.advanced";
-  btn.textContent = t(btn.dataset.i18n);
-}
-
 function renderAnnTargets() {
   const sel = document.getElementById("ann-target");
   sel.innerHTML = "";
@@ -222,20 +176,6 @@ function maybeRenderBom() {
 }
 
 // ---------- BOM ----------
-// BomLine carries only the English `name`; localized names live on the catalog
-// Product (`name_i18n`). Fetch the catalog once and map sku -> product for display.
-let catalogProducts = null;
-async function loadCatalogProducts() {
-  if (!catalogProducts) {
-    try {
-      catalogProducts = (await apiGet("/api/catalog")).products || {};
-    } catch {
-      catalogProducts = {};
-    }
-  }
-  return catalogProducts;
-}
-
 function lineName(products, line) {
   return products[line.sku]?.name_i18n?.[currentLocale()] || line.name;
 }
@@ -648,37 +588,6 @@ function builderRow(a, idx, products) {
   });
   row.appendChild(rm);
   return row;
-}
-
-// ---------- impact preview (shared by review queue + knowledge form) ----------
-function renderImpactReport(container, report) {
-  let html = `<div class="impact"><b>${t("impact.summary",
-    { affected: report.projects_affected, checked: report.projects_checked })}</b>`;
-  for (const i of report.impacts) {
-    if (!i.changed) continue;
-    html += `<div class="impact-row"><bdi>${esc(i.project_name || i.project_id)}</bdi>: `;
-    if (i.generation_failure) {
-      // code + params, localized; the engine's English sentence stays a tooltip
-      const f = i.generation_failure;
-      html += `<span class="tag rejected">${t("impact.generation_fails")}</span>
-        <span class="meta" title="${esc(f.message)}">${esc(t("impact.failure." + f.code, f.params || {}))}</span>`;
-    } else {
-      const delta = (i.bom_delta_cents / 100).toFixed(2);
-      const sign = i.bom_delta_cents > 0 ? "+" : "";
-      html += `${t("impact.spans", { before: i.spans_before, after: i.spans_after })} · `
-        + `${t("impact.posts", { added: i.posts_added, removed: i.posts_removed, modified: i.posts_modified })} · `
-        + `<span class="num">${sign}${delta}€</span>`;
-      if (i.vs_accepted_delta_cents !== null && i.vs_accepted_delta_cents !== undefined) {
-        const vs = (i.vs_accepted_delta_cents / 100).toFixed(2);
-        const vsSign = i.vs_accepted_delta_cents > 0 ? "+" : "";
-        html += ` · ${t("impact.vs_accepted", { delta: `${vsSign}${vs}` })}`;
-      }
-    }
-    html += "</div>";
-  }
-  if (!report.projects_affected) html += `<div class="meta">${t("impact.none")}</div>`;
-  html += "</div>";
-  container.innerHTML = html;
 }
 
 // ---------- review queue ----------

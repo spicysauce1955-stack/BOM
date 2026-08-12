@@ -8,6 +8,7 @@ may change, via a dedicated method that audits the transition).
 from __future__ import annotations
 
 import functools
+import inspect
 import json
 import sqlite3
 import threading
@@ -50,17 +51,78 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _serialized(cls):
+    """One connection, one caller at a time — enforced for every public method.
+
+    FastAPI runs sync endpoints in a threadpool, so one process serves several
+    requests at once through the SINGLE `sqlite3.Connection` this store opens
+    with `check_same_thread=False`. That connection is not safe for interleaved
+    statements, and the damage is not only a 500: half of these methods are
+    read-then-write sequences (`set_fence_model_status` SELECTs the document
+    then UPDATEs it, `accept_quote` supersedes then inserts), and another
+    thread's `commit()` landing in the middle of one commits a transaction
+    nobody finished.
+
+    Measured before this existed: 48 failures in ~540 overlapping requests, and
+    a browser session that 500'd on `GET /inventory` while a fence-model draft
+    was being saved. It was found by a client that briefly saved on a 250 ms
+    debounce; that client no longer does, but the hazard was never the client's
+    — any two overlapping requests reach it, and the model editor merely made
+    the odds routine enough to catch.
+
+    A connection per THREAD is not the alternative: every test constructs
+    `Store(":memory:")`, where per-thread connections mean per-thread
+    DATABASES, and the suite would be testing empty ones. So the invariant is
+    serialization, and it lives here rather than as a `with self._lock` to be
+    remembered at each of ~35 call sites — the one that gets forgotten is the
+    one that corrupts a transaction. Re-entrant, because public methods call
+    each other (`__init__` -> `seed_fence_models` -> `save_fence_model`).
+
+    SCOPE: this makes each store CALL atomic, not each route. A route that reads
+    and then writes through two calls (`publish_fence_model` loads, checks the
+    status and sets it; `put_fence_model_draft` reads the library, computes the
+    next version and saves) is still a TOCTOU window. Closing that needs a
+    transaction spanning the sequence, which is a different change; ADR-0008
+    says so rather than letting this docstring imply more than it delivers.
+    """
+    for name, member in list(vars(cls).items()):
+        if name.startswith("_"):
+            continue
+        if not inspect.isfunction(member):
+            # Refused rather than skipped. A `property` is not callable, so a
+            # filter on `callable` would leave it UNGUARDED with nothing
+            # failing; a `staticmethod` IS callable and would be wrapped and
+            # handed a bogus `self`. Both are silent, and this decorator only
+            # protects what it can see.
+            if callable(member) or isinstance(member, (property, staticmethod, classmethod)):
+                raise TypeError(
+                    f"{cls.__name__}.{name} is a {type(member).__name__}, which "
+                    "@_serialized cannot guard — give it a leading underscore or "
+                    "widen the decorator deliberately"
+                )
+            continue    # plain class attributes (_STATUS_TRANSITIONS and friends)
+
+        def guard(fn):
+            @functools.wraps(fn)
+            def wrapper(self, *args, **kwargs):
+                with self._lock:
+                    return fn(self, *args, **kwargs)
+            return wrapper
+
+        setattr(cls, name, guard(member))
+    return cls
+
+
+@_serialized
 class Store:
     def __init__(self, path: str = ":memory:"):
-        # ONE connection shared by every request thread, so every method that
-        # touches it must hold `_lock` (see the wrapping at the foot of this
-        # module). `check_same_thread=False` only silences sqlite3's guard; it
-        # does not make the connection safe. FastAPI runs sync endpoints in a
-        # threadpool, so two overlapping fetches interleaved statements on one
-        # cursor and raised `InterfaceError: bad parameter or other API misuse`
-        # straight out of a route — a real 500 in the browser that NO pytest test
-        # can see, because TestClient serialises requests. The browser smoke
-        # suite is the only detector, and it caught it.
+        # `check_same_thread=False` only silences sqlite3's guard; it does not
+        # make the connection safe. FastAPI runs sync endpoints in a threadpool,
+        # so two overlapping fetches interleaved statements on one cursor and
+        # raised `InterfaceError: bad parameter or other API misuse` straight out
+        # of a route — a real 500 in the browser that NO pytest test can see,
+        # because TestClient serialises requests. The browser smoke suite was the
+        # only detector, and it was red here while green on main.
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript("PRAGMA journal_mode=WAL;" + _SCHEMA)
@@ -445,23 +507,3 @@ class Store:
             {"seq": r[0], "at": r[1], "actor": r[2], "action": r[3], "ref": r[4]}
             for r in rows
         ]
-
-
-def _synchronized(method):
-    @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):
-        with self._lock:
-            return method(self, *args, **kwargs)
-    return wrapper
-
-
-# Every method, wrapped once, rather than a `with self._lock:` in thirty-seven
-# bodies. The lock is held for the WHOLE call, not per statement, because several
-# methods read and then write (`next_version`, `replace_active_version`,
-# `save_fence_model`'s immutability check) and a per-statement lock would make
-# those safe from corruption and still wrong. Doing it here also covers the next
-# method somebody adds: the failure mode is stochastic and invisible to pytest,
-# so "remember to take the lock" is not a policy that can hold.
-for _name, _attr in list(vars(Store).items()):
-    if callable(_attr) and not _name.startswith("__"):
-        setattr(Store, _name, _synchronized(_attr))

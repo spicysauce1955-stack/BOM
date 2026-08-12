@@ -234,6 +234,24 @@ input[type="number"] { direction: ltr; }
 #inventory-table { margin-block-end: 6px; }
 #inventory-table .remove-row { margin-inline-start: 0; }
 
+/* fence model editor: the same builder rows, plus a live preview beside them */
+.models-row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.models-row > #model-form { flex: 3 1 560px; }
+.models-row > #model-preview { flex: 2 1 340px; }
+.builder-head { display: flex; gap: 8px; align-items: center; margin-block: 8px 2px;
+  padding-block-start: 6px; border-block-start: 1px solid #e2e8f0; }
+/* a requirement belongs to the row above it: indented on the reading side, so
+   RTL indents from the right without a single physical property */
+.builder-sub { margin-inline-start: 18px; border-inline-start: 2px solid #e2e8f0;
+  padding-inline-start: 8px; }
+.builder-group { margin-block: 4px; }
+.builder-row input.invalid, #model-variant-condition.invalid {
+  border-color: #dc2626; background: #fef2f2; }
+.swatch-chip { display: inline-block; inline-size: 16px; block-size: 16px;
+  border: 1px solid #b9c2cd; border-radius: 3px; vertical-align: middle; }
+.model-row select, .model-row button { margin-inline-end: 4px; }
+#model-json { inline-size: 100%; }
+
 /* getting-started checklist */
 #checklist { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px;
   padding: 8px 12px; margin-block-end: 6px; font-size: 13px; }

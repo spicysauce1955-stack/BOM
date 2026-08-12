@@ -188,6 +188,76 @@ def test_only_one_module_localizes_a_warning_by_code():
     assert definers == ["warnings.js"], definers
 
 
+def test_one_module_owns_each_shared_renderer():
+    """Same reason as the warning localizer above, for the two surfaces W4
+    added a third caller to.
+
+    `renderImpactReport` answers "this change would affect N of your projects"
+    for the review queue, the knowledge form AND the model editor's publish
+    gate; `skuSelect` is the single place that knows a product is shown as
+    "SKU — localized name". A copy of either in the new editor is how it comes
+    to disagree with the knowledge tab — about what a failed hypothetical
+    generation says, or about whether product names localize at all."""
+    js_dir = STATIC / "js"
+    sources = {p.name: p.read_text() for p in [*js_dir.glob("*.js"), STATIC / "app.js"]}
+    for fn, owner in [("renderImpactReport", "impact.js"),
+                      ("skuSelect", "builder-ui.js"),
+                      ("loadCatalogProducts", "builder-ui.js"),
+                      ("updateAdvancedUi", "builder-ui.js")]:
+        definers = [name for name, src in sources.items()
+                    if f"function {fn}" in src or f"const {fn} =" in src]
+        assert definers == [owner], (fn, definers)
+    # One definition is only half of it: a module that stops IMPORTING the
+    # shared renderer and inlines its own innerHTML defines nothing new and
+    # diverges anyway, which is the failure the docstring is actually about.
+    editor = sources["model-editor.js"]
+    assert 'from "./impact.js"' in editor and "renderImpactReport" in editor
+    assert 'from "./builder-ui.js"' in editor and "skuSelect" in editor
+
+
+def test_every_value_the_model_editor_offers_has_a_word_in_both_bundles():
+    """The editor renders its closed vocabularies through COMPUTED keys —
+    `t("model.basis." + b)` and a dozen siblings — which key-parity scanning
+    cannot see, because neither bundle contains the literal.
+
+    This is the hole the other tests open: `test_the_editor_and_the_schema_agree
+    _on_the_closed_vocabularies` forces the editor's arrays to track `model.py`,
+    so adding a `LengthRule` makes the editor offer it automatically — and
+    without this, that ships a green suite with a raw `model.length_rule.foo`
+    on screen in both languages."""
+    import re
+
+    en, he = _bundles()
+    src = (STATIC / "js" / "model-editor.js").read_text()
+
+    def values(name):
+        body = re.search(rf"const {name} = \[(.*?)\];", src, re.S)
+        assert body, name
+        return re.findall(r'"([a-z_]+)"', body.group(1))
+
+    expected = set()
+    for const, prefix in [("ROLES", "role."), ("LENGTH_RULES", "model.length_rule."),
+                          ("PLACEMENT_KINDS", "model.placement."),
+                          ("JUSTIFICATIONS", "model.justification."),
+                          ("EXCESS", "model.excess."), ("BASES", "model.basis."),
+                          ("APPROVALS", "model.approval."), ("GRADES", "model.grade."),
+                          ("AXIS_KINDS", "model.axis_kind."),
+                          ("COUNT_PARAMS", "action.param.")]:
+        expected |= {prefix + v for v in values(const)}
+    # the keys built from a literal rather than from a const array
+    expected |= {"model.orientation.horizontal", "model.orientation.vertical",
+                 "model.length_rule.none", "model.option_axis.none",
+                 "model.count_param_none", "model.ref_none",
+                 "model.spec.default", "model.spec.variant"}
+    expected |= {f"status.{s}" for s in ("draft", "active", "retired")}
+    expected |= {f"model.invalid.{c}"
+                 for c in ("fence_model_invalid", "fence_model_unknown_sku")}
+
+    missing = sorted(f"{lang}:{k}" for lang, table in (("en", en), ("he", he))
+                     for k in expected if k not in table)
+    assert not missing, missing
+
+
 def test_the_supply_gap_is_rendered_on_both_the_bom_and_structure_tabs():
     """`Bom.warnings`, `StructureReport.warnings` and `StructureReport.unresolved`
     were populated by the API and read by NO JS, so a bay with a part nothing can

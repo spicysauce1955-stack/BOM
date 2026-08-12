@@ -779,9 +779,44 @@ def set_fence_model_status(
     return state.store.load_fence_model(model_id, version)
 
 
+def _preview_or_refuse(model: FenceModel, bay: PreviewRequest) -> PanelPreview:
+    try:
+        return preview_panel(model, bay, state.store.load_catalog())
+    except ReadRefused as e:
+        raise HTTPException(400, {"code": e.code, "params": e.params, "message": str(e)})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class DocumentPreviewRequest(BaseModel):
+    """A model that need not exist yet, and the bay to imagine it into."""
+
+    model: FenceModel
+    bay: PreviewRequest = PreviewRequest()
+
+
+@app.post("/api/fence-models/preview")
+def preview_fence_model_document(body: DocumentPreviewRequest) -> PanelPreview:
+    """What one panel of THIS DOCUMENT is made of — stored or not.
+
+    The editor's reason for existing. `preview_panel` was always a pure function
+    of a `FenceModel` object; only the route below insisted on a store lookup, and
+    that accident of signature is what made a live preview and a save-on-demand
+    editor look mutually exclusive. It is not a real constraint: the impact
+    preview two routes up has taken an unsaved document in its body since W3.
+
+    Charging a keystroke to the database to see its effect is the alternative,
+    and it is a bad one — it writes a library row per typed character of a model
+    id, an audit row per pause, and it turns "a draft may be saved invalid" (a
+    permission about CONTENT) into a licence to save when the user did not ask.
+    Stores nothing, is not quotable, and refuses nothing a draft may hold.
+    """
+    return _preview_or_refuse(body.model, body.bay)
+
+
 @app.post("/api/fence-models/{model_id}/{version}/preview")
 def preview_fence_model(model_id: str, version: int, body: PreviewRequest) -> PanelPreview:
-    """What one panel of this model is made of, at this height and width.
+    """What one panel of this STORED model is made of, at this height and width.
 
     Deliberately available BEFORE a project has a topology, and for a version
     that is still a draft: the point is to see what a model builds while deciding
@@ -790,12 +825,7 @@ def preview_fence_model(model_id: str, version: int, body: PreviewRequest) -> Pa
     model = state.store.load_fence_model(model_id, version)
     if model is None:
         raise HTTPException(404, f"{model_id}@v{version} not found")
-    try:
-        return preview_panel(model, body, state.store.load_catalog())
-    except ReadRefused as e:
-        raise HTTPException(400, {"code": e.code, "params": e.params, "message": str(e)})
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    return _preview_or_refuse(model, body)
 
 
 @app.put("/api/projects/{project_id}/fence-model")
