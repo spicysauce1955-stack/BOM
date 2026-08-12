@@ -419,6 +419,54 @@ def test_quote_snapshot_flow(client):
     assert client.get("/api/quotes/none").status_code == 404
 
 
+def test_unresolved_supply_is_visible_on_working_views_and_refused_on_a_quote(client):
+    """No fence model in the demo catalog currently produces an unresolvable slot
+    (every eligibility group has exactly one auto-approved member), so this test
+    forces the state directly: persist a run whose panel has had a slot's
+    eligibility emptied out, exactly what `resolve_supply` sees as
+    `no_eligible_item`. /bom and /structure are working views and must still
+    report the gap rather than going silent; a quote is a commercial document and
+    must refuse rather than freeze one that's silently missing a part."""
+    from fenceai.api.app import state
+    from fenceai.fencemodel.model import Eligibility
+
+    pid = make_project(client, name="unresolvable")
+    put_straight_topology(client, pid)
+    run = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = run["run"]["id"]
+
+    result = state.store.load_run(run_id)
+    slot = result.strategy.spans[0].panel.slots[0]
+    assert slot.role == "rail"
+    slot.eligibility = Eligibility()  # no member can supply it
+    # generation_runs is append-only (ADR-0004: a run is immutable once
+    # generated) — save_run() INSERT OR IGNOREs, so a second call is a no-op.
+    # Overwrite the row directly; this is a test-only way to force the state,
+    # not a path the product exposes.
+    state.store._conn.execute(
+        "UPDATE generation_runs SET doc=? WHERE id=?",
+        (result.model_dump_json(), run_id),
+    )
+    state.store._conn.commit()
+
+    bom_doc = client.get(f"/api/runs/{run_id}/bom").json()
+    assert bom_doc["unresolved"], "the emptied-out slot must surface, not vanish"
+    assert bom_doc["unresolved"][0]["role"] == "rail"
+    assert bom_doc["unresolved"][0]["sku"] == ""
+    assert bom_doc["bom"]["warnings"][0]["code"] == "no_eligible_item"
+
+    structure_doc = client.get(f"/api/runs/{run_id}/structure").json()
+    assert structure_doc["unresolved"]
+    assert structure_doc["unresolved"][0]["role"] == "rail"
+    assert structure_doc["warnings"][0]["code"] == "no_eligible_item"
+
+    quote_resp = client.post(f"/api/runs/{run_id}/quote", json={})
+    assert quote_resp.status_code == 400
+    body = quote_resp.json()["detail"]
+    assert body["code"] == "unresolved_supply"
+    assert body["unresolved"][0]["role"] == "rail"
+
+
 def test_impact_preview_reports_vs_accepted_quote(client):
     pid = make_project(client, name="quoted")
     put_straight_topology(client, pid)

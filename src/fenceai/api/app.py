@@ -293,7 +293,11 @@ def get_bom(run_id: str):
     # produced it so a later recomputation is distinguishable (final review, #5)
     inventory_hash = hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16]
     state.store.log("system", "fulfill", f"{run_id}:inv={inventory_hash}")
-    return {"requirements": requirements, "bom": bom, "inventory_hash": inventory_hash}
+    # routing an unresolved line out of `requirements` (so a blank sku can never
+    # reach fulfill()/the ledger) must not make it disappear from this view —
+    # /bom is a working view, so it reports the gap rather than refusing.
+    return {"requirements": requirements, "unresolved": resolution.unresolved,
+            "bom": bom, "inventory_hash": inventory_hash}
 
 
 @app.get("/api/runs/{run_id}/structure")
@@ -333,6 +337,7 @@ def get_structure(run_id: str):
     # sheet, not just on /bom — stamped the same way as inventory_hash, since
     # build_structure() itself stays a pure function of its four inputs.
     report.warnings = resolution.warnings
+    report.unresolved = resolution.unresolved
     return report
 
 
@@ -355,6 +360,19 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
         raise HTTPException(400, str(e))
     resolution = resolve_supply(requirements, catalog, inventory,
                                 preset=result.run.objective_preset)
+    if resolution.unresolved:
+        # An immutable commercial document must not silently price a job that's
+        # missing a part — refuse rather than freeze a quote that under-prices it
+        # (get_bom/get_structure are working views and stay permissive; a quote
+        # is the one place this becomes a hard stop).
+        raise HTTPException(400, {
+            "code": "unresolved_supply",
+            "unresolved": [
+                {"requirement_id": r.id, "role": r.role, "slot_key": r.slot_key,
+                 "pegs": r.pegs}
+                for r in resolution.unresolved
+            ],
+        })
     requirements = resolution.requirements
     bom = fulfill(requirements, catalog, inventory)
     bom.warnings = resolution.warnings

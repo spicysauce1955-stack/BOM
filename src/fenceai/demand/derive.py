@@ -40,11 +40,6 @@ class RequirementLine(BaseModel):
     eligibility: Eligibility = Eligibility()
 
 
-# Which engineering unit a role is counted in. A cut length makes a line a "cut";
-# everything else is counted in eaches.
-_UNIT_BY_ROLE = {"rail": "cut", "infill": "cut"}
-
-
 def derive_requirements(
     strategy: Strategy,
     catalog: Catalog,
@@ -75,8 +70,16 @@ def derive_requirements(
                 "their legacy fields intact"
             )
         for slot in span.panel.slots:
+            # A cut length makes a line a "cut"; everything else is counted in
+            # eaches. NOT a role allowlist: fulfill() derives engineering_unit
+            # from the product's consumption kind, never from RequirementLine.unit
+            # (fulfillment/fulfill.py:133/156/167/196), and role is free-form
+            # fence-model data (fencemodel/model.py:57) — a role-keyed guess can
+            # disagree with what fulfill() actually does and double-book the
+            # parts ledger, which keys asked/purchased on (sku, unit).
+            unit = "cut" if slot.length_mm is not None else "each"
             add(
-                "", slot.qty, _UNIT_BY_ROLE.get(slot.role, "each"), [span.id],
+                "", slot.qty, unit, [span.id],
                 cut_length_mm=slot.length_mm, length_basis=slot.length_basis,
                 role=slot.role, slot_key=slot.slot_key, eligibility=slot.eligibility,
             )

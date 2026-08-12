@@ -141,6 +141,11 @@ class StructureReport(BaseModel):
     # stays a pure function of (topology, strategy, requirements, bom) and does not
     # compute these; a bay with a part nothing can supply must not go silent here.
     warnings: list[StrategyWarning] = []
+    # the lines resolve_supply could not name a product for — stamped alongside
+    # `warnings` for the same reason: routing them out of `requirements` (so a
+    # blank sku can never reach fulfill()/the ledger) must not make them
+    # disappear from what this view reports.
+    unresolved: list[RequirementLine] = []
 
 
 # --- parts, by inverting the pegs -------------------------------------------

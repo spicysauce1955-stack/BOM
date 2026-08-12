@@ -82,3 +82,28 @@ def test_a_zero_qty_slot_produces_a_zero_qty_line_that_fulfils_harmlessly():
     assert bom.lines == []
     assert bom.cut_plans["RAIL-3000"].bars == []
     assert bom.cut_plans["RAIL-3000"].new_bar_count == 0
+
+
+def test_unit_is_derived_from_length_not_guessed_from_an_allowlisted_role():
+    """A role that isn't "rail"/"infill" (fence-model roles are free-form, e.g.
+    "spacer" per fencemodel/model.py:57) must still get the SAME unit fulfill()
+    derives from the product's consumption kind — fulfill() never reads
+    RequirementLine.unit at all, so a role-keyed guess that disagrees with it
+    double-books the parts ledger, which keys asked/purchased on (sku, unit)."""
+    panel = ResolvedPanel(model_ref="M-TEST", slots=[
+        ResolvedSlot(
+            slot_key="brace", role="spacer", qty=2, length_mm=900, length_basis="width",
+            eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")]),  # divisible_linear
+        ),
+    ])
+    strategy = Strategy(id="s1", spans=[
+        Span(id="span1", run_ref="run1", start_station_mm=0, end_station_mm=1500,
+             width_mm=1500, slope_len_mm=1500, panel=panel)
+    ])
+    reqs = derive_requirements(strategy, demo_catalog())
+    spacer_req = next(r for r in reqs if r.role == "spacer")
+
+    resolution = resolve_supply(reqs, demo_catalog())
+    bom = fulfill(resolution.requirements, demo_catalog())
+    bom_line = next(l for l in bom.lines if l.sku == "RAIL-3000")
+    assert spacer_req.unit == bom_line.engineering_unit == "cut"
