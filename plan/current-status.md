@@ -328,8 +328,23 @@ costed together, and cut planning is not additive). **`validate_model` gained it
 production caller**: `generate()` validates the resolved model, `GenerationFailure`/422 if
 it fails, 2.1 us against a 0.85 ms four-bay generation, once per topology run — no caching.
 That gate found a real hole on its first run (a test catalog missing the rail its panels
-were eligible for). 568 pytest (+13) · 126 golden scenarios (unchanged) · 105/105 smoke
-(+4, driving the actual defect through the real UI). Compatibility-gate fixtures untouched.
+were eligible for). Compatibility-gate fixtures untouched.
+
+A second review of that round found five more, all fixed. **One of the new smoke checks was
+vacuous** — it read the whole structure body for `A/B1`, which the ordinary bays table
+already prints, so it passed with the feature deleted; every assertion is now scoped to the
+`.supply-problems` panel and the bay-naming one to the warning rows inside it (re-verified
+by deletion). **The Hebrew sentence printed raw English identifiers**: a `role.*` lexicon
+and a `roleWord()` beside `enumWord()` — its own namespace, because `concrete` is both a
+base surface and a role — plus `{slot_key}` suppressed when it equals `{role}`. **The 422
+told the user nothing and also threw**: `GenerationFailure` carries optional `code + params`
+like `ReadRefused`, `fence_model_unknown_sku` names the SKU a knowledge rule got wrong,
+`api.js` renders any `error.<code>`, and `btn-generate` no longer hands an async function
+to `addEventListener`. **The customer sheet was getting an itemised screw count** — the
+panel now follows that sheet's own describe-don't-itemise rule. **And the false "generate a
+strategy" message's CLASS is closed**, not just this round's cause: an unrecognised refusal
+in `structure-data.js` was mapped to "no attempt yet", and is now `"unknown"` naming its
+code. 580 pytest (+25) · 126 golden scenarios (unchanged) · 106/106 smoke (+5).
 
 **Phases 2 and 3 remain.** Phase 2: `M-SLAT`, variants, option axes, the pricing union,
 the elevation read model, the panel warning codes, and multi-member eligibility selected by

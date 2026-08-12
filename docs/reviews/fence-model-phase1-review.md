@@ -101,6 +101,47 @@ so no caching. Its first run found a real hole: `tests/strategy/test_gate_kit.py
 was missing the rail and screw its panels were eligible for, unnoticed because those tests
 never read a BOM.
 
+## Second review of the closing round, and what it found
+
+**One of the new smoke checks was vacuous, and it was the one proving the bay-naming
+feature.** It read `#structure-body` whole and asserted `"A/B1" in text` — which the
+ordinary bays table already prints. The reviewer deleted `supplyProblemsHtml` from
+`structure.js` and the check still passed. Every assertion in that block now reads the
+`.supply-problems` panel by class, and the bay-naming one reads the warning ROWS inside it;
+re-verified by the same deletion, which now fails four checks.
+
+**The Hebrew sentence printed raw English identifiers.** `{role}` was interpolated into the
+middle of Hebrew prose and the Part column printed `esc(line.role)`, so the headline
+sentence on two money views read `אף מוצר אינו יכול לספק rail`. There is now a `role.*`
+lexicon in both bundles with a `roleWord()` beside `enumWord()` — a separate namespace
+rather than more `enum.*` keys, because the two vocabularies collide: `concrete` is a base
+surface AND a role, and the slab is not the bag. `{slot_key}` is suppressed in the sentence
+when it equals `{role}` (M-LEGACY's one rail slot is keyed `rail`, so it read "rail in
+rail"), via a `supply.slot_suffix` locale string rather than punctuation glued on in JS.
+
+**The 422 told the user nothing, and also threw.** `f"generation failed: {e}"` rendered as
+the generic *"the action failed (422)"*, so a user who mistyped a SKU in a knowledge rule
+lost their strategy and was told neither which SKU nor that a SKU was the problem — the
+same defect class wave H existed to remove, which this round had newly routed a
+user-authorable input into. `GenerationFailure` now carries optional `code + params` on the
+same contract as `ReadRefused`; `fence_model_unknown_sku` names the SKUs (computed
+structurally by `unknown_skus()`, never by parsing validation strings) and
+`fence_model_invalid` covers the authoring cases no route can reach yet. `api.js` renders
+any `error.<code>` a refusal names rather than only `unresolved_supply`. Separately,
+`btn-generate` passed an async function straight to `addEventListener`, so every refused
+generation was also an unhandled rejection.
+
+**The customer sheet was getting an itemised parts table.** The panel was prepended outside
+the `detail === "customer"` branch and did not filter `CONSUMABLE_ROLES`, so an
+unsuppliable screw would print "screw · 96" on a proposal. It now follows the sheet's own
+rule — named materials are listed, fixings and concrete collapse to one sentence.
+
+**And the false-message CLASS is closed, not just its cause.** `structure-data.js` mapped
+any unrecognised failure to `staleReason = null`, which means "no attempt yet", so the tab
+said *"generate a strategy to see how it is laid out"* about a run that had been generated
+and could not be read. The gap-1 400 reached it through that door; the door is now shut —
+an unrecognised refusal is `"unknown"` and names its code.
+
 ## Parked deliberately, with triggers in `v1-known-limitations.md`
 
 A chosen SKU has no traceable decision-graph node once a group has more than one member;
