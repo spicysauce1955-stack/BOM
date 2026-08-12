@@ -4,6 +4,8 @@ The gap list is the point: integer millimetres cannot express "23.5 mm each",
 and a single rounded gap would hide openings that exceed a safety limit.
 """
 
+import pytest
+
 from fenceai.fencemodel.fit import fit_pattern
 
 
@@ -138,3 +140,43 @@ def test_is_deterministic():
                     excess="space", edge_margin_mm=12)
     assert a == b
     _assert_accounts_for_axis(a, 1737, [90, 40])
+
+
+# ---- the pattern that never advances (fix wave, finding A) -------------------
+
+def test_a_pattern_that_never_advances_raises_instead_of_hanging():
+    """`gap_after_mm` may be negative (an overlap), and nothing bounded how
+    negative. A member whose overlap swallows it whole leaves `used` where it
+    was, so `_count_members` incremented `count` for ever — inside generate(),
+    which meant a hung request thread and no exception ever raised.
+
+    There is no honest member count for "infinitely many fit", so it is an
+    error, not a number.
+    """
+    with pytest.raises(ValueError, match="never advances"):
+        fit_pattern(2000, [100], [-100], justification="start",
+                    excess="space", edge_margin_mm=0)
+
+
+def test_a_pattern_that_walks_backwards_also_raises():
+    with pytest.raises(ValueError, match="never advances"):
+        fit_pattern(2000, [100], [-150], justification="start",
+                    excess="truncate", edge_margin_mm=0)
+
+
+def test_the_guard_is_per_cycle_so_a_zero_advance_member_is_still_allowed():
+    """Board-on-board: the narrow member is fully lapped by its neighbour (100
+    wide, -100 gap → zero advance), but the repeat as a whole still moves on by
+    150 mm. That is a real fence and must still fit."""
+    r = fit_pattern(1000, [100, 100], [-100, 150], justification="start",
+                    excess="truncate", edge_margin_mm=0)
+    assert r.count > 0
+    _assert_accounts_for_axis(r, 1000, [100, 100])
+
+
+def test_the_guard_does_not_fire_on_an_axis_too_short_to_hold_anything():
+    """The check is a property of the PATTERN, not of the axis — a well-formed
+    pattern in a tiny bay is still 'no members fit', never an error."""
+    r = fit_pattern(10, [100], [-100 + 1], justification="start",
+                    excess="truncate", edge_margin_mm=0)
+    assert r.count == 0

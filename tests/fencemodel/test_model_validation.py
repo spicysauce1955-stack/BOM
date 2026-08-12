@@ -105,3 +105,131 @@ def test_a_swatch_must_be_a_plain_hex_colour():
         ])],
     )
     assert any("swatch" in e for e in validate_model(model, demo_catalog()))
+
+
+# ---- a pattern that never advances (fix wave, finding A) ---------------------
+
+def _infill_model(**member_kw) -> FenceModel:
+    """A model whose single infill member is authored by the caller."""
+    from fenceai.fencemodel.model import InfillSpec, Member
+
+    base = dict(key="slat", width_mm=90, gap_after_mm=20)
+    return _model(PanelSpec(infill=InfillSpec(
+        orientation="vertical",
+        pattern=[Member(**{**base, **member_kw}, requirement=PartRequirement(
+            role="infill", qty=1, length_rule="centre_to_centre",
+            eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")]),
+        ))],
+    )))
+
+
+def test_a_zero_width_member_is_rejected():
+    """`fit_pattern` places members while the next one still fits; a member with
+    no width fits for ever. Nothing bounded width_mm before."""
+    errs = validate_model(_infill_model(width_mm=0), demo_catalog())
+    assert any("width_mm must be positive" in e for e in errs)
+
+
+def test_a_member_whose_overlap_swallows_it_whole_is_rejected():
+    """A negative gap is a documented feature (board-on-board). A negative gap
+    at least as big as the member is a pattern that never advances — infinitely
+    many slats in one bay, which used to hang generate()."""
+    errs = validate_model(_infill_model(width_mm=100, gap_after_mm=-100),
+                          demo_catalog())
+    assert any("never advance" in e for e in errs)
+
+
+def test_an_ordinary_overlap_is_still_accepted():
+    """The bound is on the member's NET advance, not on the sign of the gap —
+    board-on-board must keep working."""
+    assert validate_model(_infill_model(width_mm=100, gap_after_mm=-25),
+                          demo_catalog()) == []
+
+
+# ---- validated-then-ignored features (fix wave, finding G) -------------------
+
+def test_variants_are_refused_because_the_resolver_never_selects_one():
+    """The generator passes model.default_spec straight to resolve_panel, so a
+    variant condition is never evaluated. Accepting the model would build every
+    bay to the default with nobody told."""
+    from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+    from fenceai.fencemodel.model import Variant
+
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.variants = [Variant(
+        condition=Cmp(cmp="<", left=FieldRef(path="panel.height_mm"), right=Lit(value=1200)),
+        spec=PanelSpec(frame=[_slot()]),
+    )]
+    errs = validate_model(model, demo_catalog())
+    assert any("variants are not yet supported" in e for e in errs)
+
+
+def test_option_axes_are_refused_because_panelcontext_options_is_never_read():
+    from fenceai.fencemodel.model import Axis, OptionValue
+
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.option_axes = [Axis(key="finish", kind="enum",
+                              values=[OptionValue(key="black", swatch="#101010")])]
+    errs = validate_model(model, demo_catalog())
+    assert any("option_axes are not yet supported" in e for e in errs)
+
+
+def test_a_restricted_height_support_is_refused_because_it_is_never_checked():
+    from fenceai.fencemodel.model import Discrete
+
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.height_support = Discrete(heights_mm=[1000, 1200])
+    errs = validate_model(model, demo_catalog())
+    assert any("height_support" in e and "not yet supported" in e for e in errs)
+
+
+def test_the_permissive_default_height_support_is_not_flagged():
+    """Only a model that ASKS for something unbuilt is refused; the default asks
+    for nothing, so M-LEGACY and every phase-1 model stay clean."""
+    assert validate_model(_model(PanelSpec(frame=[_slot()])), demo_catalog()) == []
+
+
+def test_a_layout_policy_is_refused_because_nothing_contributes_it():
+    from fenceai.fencemodel.model import PolicyContribution
+
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.layout_policy = [PolicyContribution(
+        param="max_span_mm", value=1500, knowledge_type="hard_constraint")]
+    errs = validate_model(model, demo_catalog())
+    assert any("layout_policy" in e and "not yet supported" in e for e in errs)
+
+
+def test_an_eligibility_predicate_is_refused_because_it_is_never_evaluated():
+    """Its docstring said "resolved and FROZEN into the run's snapshot". Nothing
+    resolves it and nothing freezes it."""
+    from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+
+    req = PartRequirement(
+        role="rail", qty=2, length_rule="centre_to_centre",
+        eligibility=Eligibility(
+            members=[EligibleItem(sku="RAIL-3000", priority=1)],
+            predicate=Cmp(cmp="==", left=FieldRef(path="product.attrs.finish"),
+                          right=Lit(value="black")),
+        ),
+    )
+    errs = validate_model(_model(PanelSpec(frame=[_slot(requirement=req)])),
+                          demo_catalog())
+    assert any("predicate" in e and "not yet supported" in e for e in errs)
+
+
+def test_trim_last_and_extension_clip_are_refused_because_they_behave_as_truncate():
+    """`space` and `trim_last` produce DIFFERENT BOMs from the same model — that
+    is the point of the field. fit_pattern treats them identically today."""
+    from fenceai.fencemodel.model import InfillSpec, Member
+
+    for excess in ("trim_last", "extension_clip"):
+        model = _model(PanelSpec(infill=InfillSpec(
+            orientation="vertical", excess=excess,
+            pattern=[Member(key="slat", width_mm=90, gap_after_mm=20,
+                            requirement=PartRequirement(
+                                role="infill", qty=1, length_rule="centre_to_centre",
+                                eligibility=Eligibility(members=[
+                                    EligibleItem(sku="RAIL-3000")])))],
+        )))
+        errs = validate_model(model, demo_catalog())
+        assert any(excess in e and "not yet supported" in e for e in errs), excess

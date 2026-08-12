@@ -4,8 +4,11 @@ Immutable versions, like knowledge objects (ADR-0006): a run stamps the model
 versions it resolved, so editing a model cannot change what an old run meant.
 
 The model owns product STRUCTURE. Numbers that can conflict — max span, rail
-count, embedment — stay knowledge, and the model contributes them through
-LayoutPolicy so the existing evaluator resolves them with everything else.
+count, embedment — stay knowledge. The DESIGN for that is `LayoutPolicy`: the
+model states them as knowledge-shaped contributions and the existing evaluator
+resolves them with everything else. That is phase 2 — nothing reads
+`layout_policy` today, so `validate_model` refuses a model that sets one rather
+than accepting an ask that would go nowhere.
 """
 
 from __future__ import annotations
@@ -50,7 +53,11 @@ EligibilityMember = Annotated[Union[EligibleItem,], Field(discriminator="kind")]
 class Eligibility(BaseModel):
     group: str | None = None
     members: list[EligibilityMember] = []
-    predicate: Expr | None = None  # resolved and FROZEN into the run's snapshot
+    # DESIGNED to be resolved once and frozen into the run's snapshot, so a new
+    # catalog product cannot change what an accepted quote meant. NOT BUILT:
+    # nothing evaluates it and nothing freezes it, so `validate_model` rejects a
+    # model that sets one instead of letting it read as a working filter.
+    predicate: Expr | None = None
 
 
 class PartRequirement(BaseModel):
@@ -160,10 +167,15 @@ class Axis(BaseModel):
 
 
 class PolicyContribution(BaseModel):
-    """The model's ask of the span layout, emitted as knowledge rather than read
-    directly. Authority is PER CONTRIBUTION: a manufacturer maximum span is a
-    hard constraint, a nominal width is a preference. One authority for the whole
-    policy would make one of the two wrong."""
+    """The model's ask of the span layout — DESIGNED to be emitted as knowledge
+    rather than read directly, with authority PER CONTRIBUTION: a manufacturer
+    maximum span is a hard constraint, a nominal width is a preference, and one
+    authority for the whole policy would make one of the two wrong.
+
+    NOT BUILT in phase 1: nothing turns a contribution into a knowledge version
+    and the evaluator never sees one. `validate_model` therefore rejects a model
+    carrying a `layout_policy`, rather than accepting a max span that would be
+    silently ignored by the layout it was written to constrain."""
 
     param: str
     value: int
@@ -227,6 +239,69 @@ def _can_supply_length(catalog: Catalog, sku: str) -> bool:
     return isinstance(product.attrs.get("length_mm"), int)
 
 
+# Phase 1 resolves a PanelSpec and nothing more. Several schema fields are
+# already expressible — the spec designs them, phase 2 builds them — and
+# `resolve_panel` silently ignores every one of them today. Accepting such a
+# model at load and then ignoring the field at resolve is not a deferral, it is
+# a wrong answer with a green light: the author asks for three rails below
+# 1200 mm, validation says "fine", and every bay is built to `default_spec`
+# with nothing reported. So a model that USES an unbuilt feature is refused
+# here, by name. Deleting an entry from this table is how phase 2 turns each
+# feature on — and the resolver change and the entry's removal are then the
+# same commit.
+_UNSUPPORTED = "not yet supported (phase 2)"
+
+_PERMISSIVE_HEIGHT_SUPPORT = Continuous(min_mm=0, max_mm=10_000, step_mm=1)
+
+
+def _unsupported_features(model: FenceModel) -> list[str]:
+    """Features the schema accepts that `resolve_panel` does not honour."""
+    errors: list[str] = []
+    if model.variants:
+        errors.append(
+            f"variants are {_UNSUPPORTED}: the generator resolves default_spec "
+            "directly and select_variant has no production caller, so a variant "
+            "condition would never be evaluated"
+        )
+    if model.option_axes:
+        errors.append(
+            f"option_axes are {_UNSUPPORTED}: PanelContext.options is never read, "
+            "so an option value could not narrow eligibility or pick a product"
+        )
+    if model.layout_policy:
+        errors.append(
+            f"layout_policy is {_UNSUPPORTED}: nothing emits its contributions "
+            "into the knowledge evaluator, so the span layout would not see them"
+        )
+    if model.height_support != _PERMISSIVE_HEIGHT_SUPPORT:
+        errors.append(
+            f"a restricted height_support is {_UNSUPPORTED}: resolution never "
+            "checks the panel height against it, so an unquotable height would "
+            "be built silently instead of raising height_not_supported"
+        )
+
+    for spec in [model.default_spec, *(v.spec for v in model.variants)]:
+        if spec.infill and spec.infill.excess in ("trim_last", "extension_clip"):
+            errors.append(
+                f"excess={spec.infill.excess!r} is {_UNSUPPORTED}: fit_pattern "
+                "treats it exactly as 'truncate', which is a different BOM"
+            )
+        for key, req in _requirements(spec):
+            if req.eligibility.predicate is not None:
+                errors.append(
+                    f"slot {key}: Eligibility.predicate is {_UNSUPPORTED}: it is "
+                    "never evaluated and never frozen into the run's snapshot, so "
+                    "it would neither add nor remove a candidate"
+                )
+            if req.option_axis is not None or req.sku_by_option:
+                errors.append(
+                    f"slot {key}: option_axis/sku_by_option are {_UNSUPPORTED}: "
+                    "the chosen option value is never read at resolution, so the "
+                    "slot would silently keep its full eligibility set"
+                )
+    return errors
+
+
 def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
     """Every reason this model cannot be used, as English strings for the author.
 
@@ -235,6 +310,8 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
     errors: list[str] = []
     axis_keys = {a.key for a in model.option_axes}
     axis_values = {a.key: {v.key for v in a.values} for a in model.option_axes}
+
+    errors += _unsupported_features(model)
 
     for axis in model.option_axes:
         for value in axis.values:
@@ -245,6 +322,26 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                 )
 
     for spec in [model.default_spec, *(v.spec for v in model.variants)]:
+        for member in (spec.infill.pattern if spec.infill else []):
+            # `fit_pattern` walks the sequence adding a member then its gap. A
+            # member that occupies no space, or one whose overlap swallows it
+            # whole, makes that walk stand still — infinitely many members in a
+            # finite bay. `gap_after_mm` may legitimately be NEGATIVE (an
+            # overlap, which is what board-on-board is), so the bound is on the
+            # member's net advance, not on the gap.
+            if member.width_mm <= 0:
+                errors.append(
+                    f"infill member {member.key!r}: width_mm must be positive, "
+                    f"got {member.width_mm}"
+                )
+            elif member.width_mm + member.gap_after_mm <= 0:
+                errors.append(
+                    f"infill member {member.key!r}: width_mm + gap_after_mm must be "
+                    f"positive, got {member.width_mm} + {member.gap_after_mm} = "
+                    f"{member.width_mm + member.gap_after_mm}; the pattern would "
+                    "never advance"
+                )
+
         reqs = _requirements(spec)
         seen: set[str] = set()
         for key, _ in reqs:

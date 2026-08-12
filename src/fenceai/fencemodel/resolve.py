@@ -56,7 +56,13 @@ class ResolvedPanel(BaseModel):
 def select_variant(model: FenceModel, ctx: PanelContext) -> tuple[PanelSpec, int | None]:
     """Authored order, first satisfied condition wins — deliberately not
     'specificity', which is undefined for a bare Expr and would have two
-    implementers counting different things."""
+    implementers counting different things.
+
+    NOT WIRED UP in phase 1: the generator resolves `model.default_spec`
+    directly, so this has no production caller and `validate_model` refuses a
+    model that declares variants. It is kept (and tested) as the resolution rule
+    phase 2 turns on, not as behaviour any run gets today.
+    """
     for index, variant in enumerate(model.variants):
         try:
             if evaluate_expr(variant.condition, ctx.condition_ctx()):

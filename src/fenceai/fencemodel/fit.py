@@ -9,6 +9,7 @@ justification x excess boundary matrix stays cheap to pin.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import lcm
 from typing import Literal
 
 from fenceai.core.units import Mm
@@ -27,11 +28,38 @@ class FitResult:
     rejected_alternative: list[Mm] | None  # the gap list the other excess policy gives
 
 
+def _cycle_advance_mm(widths: list[Mm], gaps: list[Mm]) -> Mm:
+    """How far one FULL repeat of the pattern moves along the axis.
+
+    The widths and the gaps are independent cycles, so the pattern only repeats
+    after lcm(len(widths), len(gaps)) members — a two-member sequence against a
+    one-member gap list advances by the sum over both members, not over one.
+    """
+    cycle = lcm(len(widths), len(gaps))
+    return sum(widths[i % len(widths)] + gaps[i % len(gaps)] for i in range(cycle))
+
+
 def _count_members(usable_mm: Mm, widths: list[Mm], gaps: list[Mm]) -> int:
     """Walk the repeating sequence, adding a member then the gap that follows it,
     while the NEXT member still fits. Gaps may be negative (an overlap)."""
-    if usable_mm <= 0 or not widths:
+    if usable_mm <= 0 or not widths or not gaps:
         return 0
+    # A pattern whose full repeat does not move FORWARD places infinitely many
+    # members in finite space: `used` never grows, `count` increments for ever,
+    # and — because this runs inside generate() — the request thread hangs with
+    # no exception ever raised. There is no defensible member count to return
+    # (both 0 and "as many as we felt like" would be inventions), so say so.
+    # The condition is deliberately per-CYCLE, not per-member: a pattern whose
+    # individual member overlaps its neighbour to zero advance is still a real
+    # board-on-board fence as long as the repeat as a whole moves on.
+    # `validate_model` is the load-time gate and is stricter (per member); this
+    # is the safety net for the callers that never pass through it.
+    if _cycle_advance_mm(widths, gaps) <= 0:
+        raise ValueError(
+            f"member pattern never advances: widths {widths} with gaps {gaps} "
+            f"move {_cycle_advance_mm(widths, gaps)} mm per repeat, so no finite "
+            "number of members fills the axis"
+        )
     used = 0
     count = 0
     while True:
