@@ -333,10 +333,31 @@ def _unsupported_features(model: FenceModel) -> list[str]:
             )
 
     for spec in [model.default_spec, *(v.spec for v in model.variants)]:
-        if spec.infill and spec.infill.excess in ("trim_last", "extension_clip"):
+        if spec.infill and spec.infill.excess == "trim_last":
+            # NOT a phase-2 deferral, and calling it one was wrong: trimming the
+            # last member means ripping it NARROWER, which is 2D cutting — the
+            # standing non-goal `docs/v1-known-limitations.md` records for sheet
+            # and mesh infill, and for the same reason. `cutplan.py` cuts to
+            # LENGTH; nothing in the system can price a part whose width changed.
+            # This refusal ends when 2D cutting arrives, not before.
             errors.append(
-                f"excess={spec.infill.excess!r} is {_UNSUPPORTED}: fit_pattern "
-                "treats it exactly as 'truncate', which is a different BOM"
+                "excess='trim_last' needs 2D cutting: ripping the last member "
+                "narrower changes its WIDTH, and the cut planner only cuts to "
+                "length. Use 'space' (widen the gaps) or 'truncate' (leave the "
+                "gap) until sheet cutting exists"
+            )
+        if spec.infill and spec.infill.excess == "extension_clip":
+            # Also not a plain deferral: the FEATURE is undesigned, not merely
+            # unbuilt. `InfillSpec` has nowhere to name the clip product, and
+            # where the clips go is a real question with more than one defensible
+            # answer — one at the far end, or one at each end whose opening is
+            # non-zero, which differ under `center` justification. Inventing a
+            # reading here would ship exactly the plausible-but-wrong answer this
+            # table exists to refuse.
+            errors.append(
+                "excess='extension_clip' is not designed yet: InfillSpec has no "
+                "field naming the clip product, and how many clips a residual "
+                "needs depends on the justification. Use 'space' or 'truncate'"
             )
         if spec.infill and spec.infill.supply != "components":
             # Classified as geometry-only in the first pass and therefore left

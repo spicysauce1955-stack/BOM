@@ -121,6 +121,58 @@ each is recorded with the trigger that should end the deferral.
   all projects; previews persist nothing. Remaining refinement: diff against *historical*
   accepted quotes once BOM snapshots exist (see below).
 
+### Panel authoring, W1-W6 (2026-08-13)
+
+What the panel waves deliberately did not build. Each is refused by
+`validate_model` by name, so none of them can quietly half-work; what follows is
+why, and what would end each deferral.
+
+- **`excess='trim_last'` needs 2D cutting.** Trimming the last member means
+  ripping it NARROWER, and `cutplan.py` cuts to length: nothing in the system can
+  price a part whose width changed. This is the same non-goal as sheet and mesh
+  infill, not a queued feature, and it was mislabelled "phase 2" until now.
+  **Trigger:** 2D cutting arrives, for whatever reason brings it.
+
+- **`excess='extension_clip'` is undesigned, not merely unbuilt.** `InfillSpec`
+  has nowhere to name the clip product, and how many clips a residual needs
+  depends on the justification — one at the far end, or one at each end whose
+  opening is non-zero, which differ under `center`. Both readings are defensible,
+  which is precisely why picking one here would ship the plausible-but-wrong
+  answer the refusal table exists to prevent. **Trigger:** a real catalog with a
+  clip in it, whose data settles where they go.
+
+- **`InfillSpec.supply='assembly'`** — the infill bought as one pre-made unit
+  rather than as N members. `resolve_panel` unconditionally emits a component
+  slot per member, and turning that around raises questions the spec does not
+  answer: what the assembly's eligibility looks like, how the parts ledger
+  accounts for a unit whose members are still drawn, and whether the elevation
+  still shows the members it no longer buys. **Trigger:** the first ready-made
+  panel product in a catalog.
+
+- **`Axis.available_when`** — an axis is answered by whoever chose the model,
+  long before a bay exists, so there is no context to evaluate it against and no
+  surface that could hide the question. **Trigger:** options answered per bay
+  rather than per selection.
+
+- **Phase 3: arc-flow over multiple stock lengths and sources.** ADR-0007 already
+  names it, and the spec is explicit that it is a planned door rather than a
+  dependency argument: "when a real catalog has eligibility groups worth
+  optimising over". Today's FFD + LP bound certifies optimality honestly and
+  flags the plans it cannot certify, so the gap is a bound, not a wrong answer.
+  It also adds an OR-Tools dependency, which is a cost worth incurring against a
+  real catalog and not against the demo one. **Trigger:** the first job where the
+  certificate says "heuristic" and the money is worth the solver.
+
+- **Inventory is not part of a run's identity.** `_candidate_cost` plans cuts
+  against inventory remnants, so which eligible product wins can change when
+  stock does — and `inventory_hash` is stamped but compared to nothing, while
+  `catalog_hash` is checked. An accepted quote is safe (it persists its own BOM),
+  but `/explain` on the same run, read later, can name a different product from
+  the one the quote bought. Making inventory part of the identity would 409 the
+  money views every time stock moved, which is worse; dropping it from the cost
+  tier changes what "cheapest" means. **Trigger:** the first user who reads an
+  explanation that disagrees with their own accepted quote.
+
 ## Learning / AI
 
 - **Stub proposer recognizes one demo pattern** (existing-foundation corrections);
