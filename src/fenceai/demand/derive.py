@@ -12,6 +12,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
+from fenceai.core.errors import ReadRefused
 from fenceai.core.units import Mm
 from fenceai.fencemodel.model import Eligibility
 from fenceai.strategy.model import Strategy
@@ -72,10 +73,18 @@ def derive_requirements(
 
     for span in strategy.spans:
         if span.panel is None:
-            raise ValueError(
+            # A run stored before the fence-model change has rail_count and
+            # screws_count but no panel. Falling back to those would make demand
+            # disagree with what the run recorded, so the read is refused — but
+            # as code + params, because "no structure yet" (what the tab said
+            # while this surfaced as a raw English ValueError) is false: there
+            # IS structure, it just cannot be read without regenerating.
+            raise ReadRefused(
+                "run_predates_fence_model",
                 f"span {span.id} has no panel — regenerate the run; "
                 "stored runs from before the fence-model change are read with "
-                "their legacy fields intact"
+                "their legacy fields intact",
+                span_id=span.id,
             )
         for slot in span.panel.slots:
             # No unit here. A slot's cut length says the part is cut TO a length,

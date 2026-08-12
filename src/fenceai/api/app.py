@@ -23,14 +23,13 @@ load_dotenv()  # .env in the working directory fills gaps; real env vars win
 from fenceai.ai.claude import build_interpreter  # noqa: E402
 from fenceai.ai.stub import StubCritic, StubProposer
 from fenceai.catalog.demo import demo_catalog
-from fenceai.catalog.model import Product
-from fenceai.core.errors import GenerationFailure
+from fenceai.catalog.model import Catalog, Product
+from fenceai.core.errors import GenerationFailure, ReadRefused
 from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
-from fenceai.demand.derive import derive_requirements
-from fenceai.fulfillment.fulfill import Inventory, fulfill
+from fenceai.fulfillment.fulfill import Inventory
+from fenceai.fulfillment.pipeline import PricedRun, price_strategy
 from fenceai.fulfillment.quote import Quote
-from fenceai.fulfillment.supply import resolve_supply
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion
 from fenceai.learning.impact import (
@@ -150,6 +149,34 @@ def _fresh_catalog(result):
             "current_catalog_hash": current,
         })
     return catalog
+
+
+def _priced(result) -> tuple[Catalog, Inventory, PricedRun]:
+    """The read path every BOM-shaped view shares: check the catalog is the one
+    the run was generated against, then run the single domain pipeline, then
+    convert its refusals into HTTP.
+
+    This exists because the four copies of that sequence had already diverged —
+    `create_quote` called `load_catalog()` directly, so the one endpoint that
+    freezes an immutable commercial document was the ONLY one exempt from the
+    staleness check (BOM 409, structure 409, quote 200). One helper, four
+    callers, no way to be the odd one out.
+    """
+    catalog = _fresh_catalog(result)
+    inventory = state.store.load_inventory(result.run.project_id)
+    try:
+        priced = price_strategy(
+            result.strategy, catalog, inventory,
+            demand_skus=result.run.demand_skus,
+            preset=result.run.objective_preset,
+        )
+    except ReadRefused as e:
+        # code + params, not a raw English sentence: a run generated before the
+        # fence-model change surfaced as untranslated text in a Hebrew-first UI
+        raise HTTPException(400, {"code": e.code, "params": e.params, "message": str(e)})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return catalog, inventory, priced
 
 
 @app.get("/api/health")
@@ -294,17 +321,7 @@ def get_run(run_id: str):
 @app.get("/api/runs/{run_id}/bom")
 def get_bom(run_id: str):
     result = _run(run_id)
-    catalog = _fresh_catalog(result)
-    inventory = state.store.load_inventory(result.run.project_id)
-    try:
-        requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
-        resolution = resolve_supply(requirements, catalog, inventory,
-                                    preset=result.run.objective_preset)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    requirements = resolution.requirements
-    bom = fulfill(requirements, catalog, inventory)
-    bom.warnings = resolution.warnings
+    _, inventory, priced = _priced(result)
     # the BOM is what a customer gets quoted on: record which inventory state
     # produced it so a later recomputation is distinguishable (final review, #5)
     inventory_hash = hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16]
@@ -312,8 +329,8 @@ def get_bom(run_id: str):
     # routing an unresolved line out of `requirements` (so a blank sku can never
     # reach fulfill()/the ledger) must not make it disappear from this view —
     # /bom is a working view, so it reports the gap rather than refusing.
-    return {"requirements": requirements, "unresolved": resolution.unresolved,
-            "bom": bom, "inventory_hash": inventory_hash}
+    return {"requirements": priced.requirements, "unresolved": priced.unresolved,
+            "bom": priced.bom, "inventory_hash": inventory_hash}
 
 
 @app.get("/api/runs/{run_id}/structure")
@@ -331,19 +348,9 @@ def get_structure(run_id: str):
             "run_topology_revision": result.run.topology_revision,
             "project_topology_revision": project.topology.revision,
         })
-    catalog = _fresh_catalog(result)
-    inventory = state.store.load_inventory(result.run.project_id)
-    try:
-        requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
-        resolution = resolve_supply(requirements, catalog, inventory,
-                                    preset=result.run.objective_preset)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    requirements = resolution.requirements
-    bom = fulfill(requirements, catalog, inventory)
-    bom.warnings = resolution.warnings
-    report = build_structure(project.topology, result.strategy, requirements, bom,
-                             run_id=run_id)
+    _, inventory, priced = _priced(result)
+    report = build_structure(project.topology, result.strategy, priced.requirements,
+                             priced.bom, run_id=run_id)
     # The layout is a function of the run alone, but the PARTS name the bars a
     # piece is cut from, and those depend on the inventory that was on hand.
     # Stamp it, exactly as /bom does, so two sheets that differ are explainable.
@@ -352,8 +359,8 @@ def get_structure(run_id: str):
     # A bay with a part nothing can supply must still say so on the setting-out
     # sheet, not just on /bom — stamped the same way as inventory_hash, since
     # build_structure() itself stays a pure function of its four inputs.
-    report.warnings = resolution.warnings
-    report.unresolved = resolution.unresolved
+    report.warnings = priced.warnings
+    report.unresolved = priced.unresolved
     return report
 
 
@@ -368,15 +375,12 @@ class QuoteCreate(BaseModel):
 def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     """Snapshot the run's BOM as an immutable quote document."""
     result = _run(run_id)
-    catalog = state.store.load_catalog()
-    inventory = state.store.load_inventory(result.run.project_id)
-    try:
-        requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
-        resolution = resolve_supply(requirements, catalog, inventory,
-                                    preset=result.run.objective_preset)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    if resolution.unresolved:
+    # via _priced, so the catalog staleness check applies here TOO. It did not
+    # before: this was the only one of the four sites that loaded the catalog
+    # directly, which made the one endpoint producing an immutable commercial
+    # document the one endpoint that would happily freeze a stale one.
+    _, inventory, priced = _priced(result)
+    if priced.unresolved:
         # An immutable commercial document must not silently price a job that's
         # missing a part — refuse rather than freeze a quote that under-prices it
         # (get_bom/get_structure are working views and stay permissive; a quote
@@ -386,18 +390,19 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
             "unresolved": [
                 {"requirement_id": r.id, "role": r.role, "slot_key": r.slot_key,
                  "pegs": r.pegs}
-                for r in resolution.unresolved
+                for r in priced.unresolved
             ],
         })
-    requirements = resolution.requirements
-    bom = fulfill(requirements, catalog, inventory)
-    bom.warnings = resolution.warnings
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
         label=body.label,
         inventory_hash=hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16],
         knowledge_snapshot_hash=result.run.snapshot_hash,
-        requirements=requirements, bom=bom, total_cents=bom.total_cents,
+        # which catalog priced this document, beside which knowledge shaped it —
+        # the two inputs that decide what the customer was quoted
+        catalog_hash=result.run.catalog_hash,
+        requirements=priced.requirements, bom=priced.bom,
+        total_cents=priced.bom.total_cents,
     )
     state.store.save_quote(quote, actor=body.author)
     return quote

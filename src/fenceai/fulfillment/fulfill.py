@@ -102,6 +102,21 @@ def fulfill(
     bom = Bom()
     by_sku: dict[str, list[RequirementLine]] = {}
     for r in requirements:
+        if not r.sku:
+            # A SKU-free line makes every ledger key ("", unit), so one demand
+            # reports as unassigned AND from stock at once, prints a blank SKU
+            # column on the setting-out sheet, and satisfies the both-directions
+            # property vacuously while being maximally wrong (spec §"The
+            # resolved SKU has to flow back"). resolve_supply already routes
+            # unresolvable lines to `unresolved` — but that guarantee rested on
+            # caller discipline nothing enforced, and a reviewer reintroduced
+            # the defect at all three routes with a three-word edit and got zero
+            # failures. It is enforced here now, where it cannot be bypassed.
+            raise ValueError(
+                f"requirement {r.id} ({r.role or 'unknown role'}) reached fulfill() "
+                "with no sku — resolve_supply must name a product or route the "
+                "line to `unresolved`; a blank sku splits the parts ledger"
+            )
         by_sku.setdefault(r.sku, []).append(r)
 
     for sku in sorted(by_sku):
