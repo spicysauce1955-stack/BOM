@@ -1165,21 +1165,60 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(3)
         c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
         time.sleep(2)
-        bom_text = c.js("document.getElementById('bom-body').textContent") or ""
+        # EVERY assertion below reads the supply-problems PANEL, never the page.
+        # The first version of the bay-naming check read `#structure-body` whole
+        # and passed with the panel deleted, because the ordinary bays table
+        # prints "A/B1" too — a check that proved the feature was there by
+        # finding something else.
+        bom_panel = c.js(
+            "document.querySelector('#bom-body .supply-problems')?.textContent || ''")
         check("the BOM tab names the part it cannot supply, localized",
-              "no_feasible_item" in bom_text and "RAIL-SHORT" in bom_text
-              and "לספק" in bom_text)
+              "no_feasible_item" in bom_panel and "RAIL-SHORT" in bom_panel
+              and "לספק" in bom_panel)
         check("the BOM tab still prices what it CAN supply beside the gap",
               (c.js("document.querySelectorAll('#bom-body table').length") or 0) >= 2)
         c.shot("15-bom-unsupplied.png")
         c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
         time.sleep(2)
         struct_text = c.js("document.getElementById('structure-body').textContent") or ""
+        struct_panel = c.js(
+            "document.querySelector('#structure-body .supply-problems')?.textContent || ''")
         check("the structure sheet says the bay cannot be supplied, not 'generate a strategy'",
-              "לספק" in struct_text and "חשבו אסטרטגיה" not in struct_text)
-        check("the supply warning names the BAY, not a raw element id",
-              "A/B1" in struct_text and "span@run" not in struct_text)
+              "לספק" in struct_panel and "חשבו אסטרטגיה" not in struct_text)
+        warning_rows = c.js("""
+[...document.querySelectorAll('#structure-body .supply-problems .warning')]
+  .map(n => n.textContent).join(' | ')""") or ""
+        check("the supply WARNING ROW names the bay, not a raw element id",
+              "A/B1" in warning_rows and "span@run" not in warning_rows)
+        check("the warning row reads the role as a word, not a raw English id",
+              "מסילה" in warning_rows and " rail" not in warning_rows)
         c.shot("16-structure-unsupplied.png")
+
+        # The customer sheet must still SAY a part cannot be supplied. That it
+        # describes rather than itemises an unsuppliable CONSUMABLE cannot be
+        # checked from here — no UI path makes a screw or concrete unsuppliable
+        # (fixings carry no cut length, so the feasibility gate never rejects
+        # one), and a check for an absent screw would pass with the filter
+        # deleted. tests/web/test_supply_panel_module.py covers that half in node.
+        c.js("""
+{
+  const sel = document.getElementById('structure-detail');
+  sel.value = 'customer'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1)
+        customer_panel = c.js(
+            "document.querySelector('#structure-body .supply-problems')?.textContent || ''")
+        check("the customer sheet still says a part cannot be supplied",
+              "לספק" in customer_panel and "A/B1" in customer_panel)
+        c.shot("17-structure-customer-unsupplied.png")
+        c.js("""
+{
+  const sel = document.getElementById('structure-detail');
+  sel.value = 'installer'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.5)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.5)
 
