@@ -92,6 +92,28 @@ Expect: hard K-MAXSPAN cannot be violated; conflict between K-EQUAL and the 1800
 Annotation on run: "keep the top aligned with the neighbour's fence (approx. 1750)".
 Expect: AI (or stub) proposes structured intent `top_line = level @ 1750` with confidence + original text preserved; intent is `proposed` until confirmed; once confirmed, height decisions cite it.
 
+### S15 — Two eligible stock lengths, chosen by the objective
+Own catalog (not the shared demo catalog above — see note): two divisible-linear rail
+stocks eligible for the same slot, RAIL-3000 (3000 mm, kerf 3, 1800c, priority 1) and
+RAIL-3050 (3050 mm, kerf 3, 1850c, priority 2). Demand: 4 rails cut to 1500 mm.
+A 1500 mm piece costs 1503 mm against capacity (stock + kerf) per the kerf model
+(cutplan.py: `n·(piece+kerf) ≤ stock+kerf`). RAIL-3000 capacity is 3003 mm, so only
+one 1503 mm piece fits per bar (2 × 1503 = 3006 > 3003) → 4 new bars → 4 × 1800c =
+7200c. RAIL-3050 capacity is 3053 mm, so two pieces fit per bar (2 × 1503 = 3006 ≤
+3053) → 2 new bars → 2 × 1850c = 3700c. The nominal lengths alone (3000 vs 3050)
+give no reason to expect a different piece-per-bar count; only planning the cuts
+does.
+Expect: under `least_cost`, RAIL-3050 is chosen for all 4 lines (3700c < 7200c)
+despite its lower stated priority and higher per-bar price — cost beats priority.
+Under `honour_priority`, RAIL-3000 is chosen (priority 1 wins regardless of cost),
+buying 4 bars. Either way one product answers the whole group — a demand is never
+split across two SKUs (that is SAP's usage-probability model, deliberately
+rejected). The decision records the rejected candidate for the explanation.
+Note: this scenario intentionally uses its own two-rail catalog fixture rather
+than the shared demo catalog, because giving RAIL a second, cheaper-per-cut stock
+in `demo_catalog()` would change S07's answer (S07 depends on RAIL-3000 being the
+only rail stock) and break the compatibility gate S01–S14 established.
+
 ## Invariants checked across all scenarios
 
 - span width ≤ applicable hard maximum (unless authorized exception exists — none in demo KB)

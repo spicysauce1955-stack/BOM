@@ -17,10 +17,13 @@ from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
 from fenceai.demand.derive import RequirementLine
+from fenceai.fulfillment.cutplan import CutPiece, RemnantStock, plan_cuts
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.strategy.model import StrategyWarning
 
 Preset = Literal["least_cost", "honour_priority"]
+
+_INFEASIBLE = 2**62
 
 
 class SupplyResolution(BaseModel):
@@ -51,6 +54,10 @@ def resolve_supply(
     approvals = approvals or set()
     out = SupplyResolution()
 
+    # lines still needing a choice, deep-copied so the caller's lines are never
+    # touched — grouped below so one demand is answered by one product, never
+    # split across skus the way SAP's usage-probability model would.
+    pending: list[RequirementLine] = []
     for req in requirements:
         line = req.model_copy(deep=True)   # never mutate the caller's lines
         if line.sku:
@@ -78,20 +85,75 @@ def resolve_supply(
             out.unresolved.append(line)
             continue
 
-        chosen = _choose(usable, line, catalog, inventory, preset)
-        line.sku = chosen.sku
-        out.requirements.append(line)
-        if len(usable) > 1:
-            out.decisions.append({
-                "requirement_id": line.id, "slot_key": line.slot_key,
-                "chosen": chosen.sku, "preset": preset,
-                "rejected": [m.sku for m in usable if m.sku != chosen.sku],
-            })
+        pending.append(line)
+
+    groups: dict[tuple, list[RequirementLine]] = {}
+    for line in pending:
+        key = tuple(sorted(m.sku for m in _usable(line.eligibility.members, approvals)))
+        groups.setdefault(key, []).append(line)
+
+    for key, lines in sorted(groups.items()):
+        usable = [m for m in lines[0].eligibility.members if m.sku in key]
+        chosen = _choose(usable, lines, catalog, inventory, preset)
+        for line in lines:
+            line.sku = chosen.sku
+            out.requirements.append(line)
+            if len(usable) > 1:
+                out.decisions.append({
+                    "requirement_id": line.id, "slot_key": line.slot_key,
+                    "chosen": chosen.sku, "preset": preset,
+                    "rejected": [m.sku for m in usable if m.sku != chosen.sku],
+                })
     return out
 
 
-def _choose(usable, line, catalog, inventory, preset):
-    """One member: no decision. More than one: Task 8 replaces this body with the
-    cut-plan-coupled comparison. Ordering by priority here is correct for a
-    single member and is the honour_priority answer for several."""
-    return sorted(usable, key=lambda m: (m.priority, m.sku))[0]
+def _candidate_cost(sku: str, lines: list[RequirementLine], catalog, inventory) -> int:
+    """Cents to buy this candidate for these lines, by actually planning the cuts.
+    A candidate the planner cannot use at all costs infinitely."""
+    product = catalog.products.get(sku)
+    if product is None:
+        return _INFEASIBLE
+    sem = product.consumption
+    if sem.kind != "divisible_linear":
+        return product.price_cents * sum(l.engineering_qty for l in lines)
+    pieces = [
+        CutPiece(length_mm=l.cut_length_mm, requirement_id=l.id)
+        for l in lines for _ in range(l.engineering_qty)
+        if l.cut_length_mm is not None
+    ]
+    if any(p.length_mm + sem.kerf_mm > sem.purchase_length_mm + sem.kerf_mm
+           for p in pieces):
+        return _INFEASIBLE
+    remnants = [
+        RemnantStock(inventory_item_id=i.id, length_mm=i.length_mm)
+        for i in (inventory or Inventory()).for_sku(sku)
+        if i.kind == "remnant" and i.length_mm
+    ]
+    plan = plan_cuts(sku, sem, pieces, remnants)
+    return plan.new_bar_count * product.price_cents
+
+
+def _waste(sku: str, lines, catalog, inventory) -> int:
+    product = catalog.products[sku]
+    sem = product.consumption
+    if sem.kind != "divisible_linear":
+        return 0
+    pieces = [CutPiece(length_mm=l.cut_length_mm, requirement_id=l.id)
+              for l in lines for _ in range(l.engineering_qty)
+              if l.cut_length_mm is not None]
+    return plan_cuts(sku, sem, pieces, []).waste_mm   # CutPlan.waste_mm, cutplan.py:45
+
+
+def _choose(usable, lines, catalog, inventory, preset):
+    """One member: no decision. More than one: the choice is coupled to the cut
+    plan — stock lengths cannot be ranked without planning the cuts (Task 8)."""
+    if len(usable) == 1:
+        return usable[0]
+
+    def rank(m):
+        cost = _candidate_cost(m.sku, lines, catalog, inventory)
+        if preset == "honour_priority":
+            return (m.priority, cost, _waste(m.sku, lines, catalog, inventory), m.sku)
+        return (cost, _waste(m.sku, lines, catalog, inventory), m.priority, m.sku)
+
+    return min(usable, key=rank)

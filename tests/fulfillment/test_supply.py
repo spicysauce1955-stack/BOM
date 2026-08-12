@@ -1,5 +1,7 @@
 """Choosing among eligible items. With one member there is nothing to choose and
-the line simply gains its SKU; the two-member case arrives in the next task."""
+the line simply gains its SKU; with more than one, the choice is cost-driven
+(S15 in tests/scenarios covers the case that actually needs a cut plan to
+resolve — stock lengths that cannot be ranked by nominal length alone)."""
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.demand.derive import RequirementLine
@@ -67,24 +69,28 @@ def test_resolved_line_keeps_its_engineering_fields():
     assert resolved.slot_key == "rail"
 
 
-def test_two_members_chosen_by_priority_records_a_decision():
-    """With more than one usable member, the lowest-priority (then sku-ordered)
-    member wins today, and the choice is recorded for the decision graph — Task 8
-    replaces the comparison itself, not this bookkeeping."""
+def test_two_members_chosen_by_cost_records_a_decision():
+    """With more than one usable member, least_cost plans the cuts for each
+    candidate and picks the cheaper one — priority only breaks a cost tie.
+    The line asks for 2 cuts of 1500 mm: RAIL-3000 (divisible_linear, 3000 mm
+    stock, 3 mm kerf) needs 2 new bars since two 1500 mm pieces cost 1503 mm
+    each against a 3003 mm capacity (3006 > 3003) — 2 * 1800c = 3600c. POST-S
+    (indivisible_discrete) is bought 1-for-1 at 2500c each for 2 = 5000c.
+    3600c < 5000c, so RAIL-3000 wins despite its lower (worse) priority."""
     line = _line(eligibility=Eligibility(members=[
         EligibleItem(sku="RAIL-3000", priority=2),
         EligibleItem(sku="POST-S", priority=1),
     ]))
     out = resolve_supply([line], demo_catalog())
-    assert out.requirements[0].sku == "POST-S"
+    assert out.requirements[0].sku == "RAIL-3000"
     assert out.warnings == []
     assert len(out.decisions) == 1
     decision = out.decisions[0]
     assert decision["requirement_id"] == "req0001"
     assert decision["slot_key"] == "rail"
-    assert decision["chosen"] == "POST-S"
+    assert decision["chosen"] == "RAIL-3000"
     assert decision["preset"] == "least_cost"
-    assert decision["rejected"] == ["RAIL-3000"]
+    assert decision["rejected"] == ["POST-S"]
 
 
 def test_an_approved_suggest_only_member_is_used():
