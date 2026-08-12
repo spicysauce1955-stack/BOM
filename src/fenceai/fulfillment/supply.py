@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from fenceai.catalog.model import Catalog
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.cutplan import CutPiece, RemnantStock, plan_cuts
-from fenceai.fulfillment.fulfill import Inventory
+from fenceai.fulfillment.fulfill import Inventory, engineering_unit_for
 from fenceai.strategy.model import StrategyWarning
 
 Preset = Literal["least_cost", "honour_priority"]
@@ -45,6 +45,20 @@ class SupplyResolution(BaseModel):
 
 def _usable(members, approvals: set[str]) -> list:
     return [m for m in members if m.approval == "auto" or m.sku in approvals]
+
+
+def _name_product(line: RequirementLine, sku: str, catalog: Catalog) -> None:
+    """Give a line its product — and, in the SAME statement, the unit that
+    product is counted in.
+
+    This is the only place a requirement acquires a sku, which makes it the only
+    place that can decide the unit; setting the two together is what stops the
+    asked and purchased sides of the parts ledger from ever disagreeing. The
+    value comes from `fulfillment.fulfill.engineering_unit_for`, which is
+    literally the function `fulfill()` uses to stamp `BomLine.engineering_unit`.
+    """
+    line.sku = sku
+    line.unit = engineering_unit_for(catalog, sku)
 
 
 def resolve_supply(
@@ -75,6 +89,7 @@ def resolve_supply(
     for req in requirements:
         line = req.model_copy(deep=True)   # never mutate the caller's lines
         if line.sku:
+            _name_product(line, line.sku, catalog)
             out.requirements.append(line)
             continue
 
@@ -118,8 +133,29 @@ def resolve_supply(
         usable = [m for m in lines[0].eligibility.members
                   if (m.sku, m.priority, m.approval) in key]
         chosen = _choose(usable, lines, catalog, inventory, preset)
+        if chosen is None:
+            # Every candidate is infeasible. This used to fall back to the full
+            # field and pick one anyway: no warning, nothing in `unresolved`, and
+            # a BOM line naming a product that cannot physically be cut to the
+            # piece — after which fulfill() raised ValueError from OUTSIDE the
+            # routes' try/except, i.e. a 500 where the sibling "no eligible item"
+            # case gets a 400. A silent wrong answer followed by a crash is two
+            # bugs, not a fallback. It is the same fact as an empty eligibility
+            # set — nothing here can supply this part — so it is reported the
+            # same way, with the candidates that were tried in `params`.
+            for line in lines:
+                out.warnings.append(StrategyWarning(
+                    code="no_eligible_item", severity="error",
+                    message=f"No eligible product can supply {line.role}: none of "
+                            f"{', '.join(m.sku for m in usable)} can be cut to the "
+                            "required piece.",
+                    params={"role": line.role, "slot_key": line.slot_key,
+                            "skus": ", ".join(m.sku for m in usable)},
+                ))
+                out.unresolved.append(line)
+            continue
         for line in lines:
-            line.sku = chosen.sku
+            _name_product(line, chosen.sku, catalog)
             out.requirements.append(line)
             if len(usable) > 1:
                 out.decisions.append({
@@ -171,9 +207,17 @@ def _waste(sku: str, lines, catalog, inventory) -> int:
     return plan_cuts(sku, sem, pieces, []).waste_mm   # CutPlan.waste_mm, cutplan.py:45
 
 
-def _choose(usable, lines, catalog, inventory, preset):
+def _choose(usable, lines, catalog, inventory, preset) -> "EligibleItem | None":
     """One member: no decision. More than one: the choice is coupled to the cut
     plan — stock lengths cannot be ranked without planning the cuts (Task 8).
+    `None` means every candidate was infeasible and there is no answer to give.
+
+    The single-member path deliberately does NOT check feasibility: with one
+    candidate there is no choice to make, and fulfill() already has a defined
+    answer for each way that one product can fall short — an unknown sku becomes
+    a flagged zero-priced line, and a piece longer than its stock becomes a
+    ValueError the routes now convert to a 400. Adding a feasibility gate here
+    would reroute the unknown-product case away from that flagged line.
 
     Feasibility is resolved FIRST and filters the field before any other tier
     runs: an unusable candidate (piece longer than its stock, or a sku absent
@@ -190,19 +234,19 @@ def _choose(usable, lines, catalog, inventory, preset):
     costs = {m.sku: _candidate_cost(m.sku, lines, catalog, inventory) for m in usable}
     feasible = [m for m in usable if costs[m.sku] < _INFEASIBLE]
     if not feasible:
-        # every candidate is unusable — no good answer exists; fall back to
-        # the full field so the ordinary tie-break still yields a stable,
-        # deterministic pick rather than an exception. `rank` below still
-        # never calls `_waste` on one of these, since none has a cost under
-        # `_INFEASIBLE`.
-        feasible = usable
+        # No candidate can supply this part. Answering anyway would be a wrong
+        # answer with nobody told, so there is no answer — the caller reports it
+        # as `no_eligible_item` + an `unresolved` line, exactly as it reports an
+        # empty eligibility set.
+        return None
 
     def rank(m):
         cost = costs[m.sku]
         # `_waste` plans real cuts for `sku` — only safe once `_candidate_cost`
-        # has already proved the sku buildable; an infeasible candidate (only
-        # reachable via the all-infeasible fallback above) gets no waste tier.
-        waste = _waste(m.sku, lines, catalog, inventory) if cost < _INFEASIBLE else 0
+        # has already proved the sku buildable. Every member of `feasible` has,
+        # by the filter above, so this tier can never reach a sku plan_cuts
+        # would raise on.
+        waste = _waste(m.sku, lines, catalog, inventory)
         if preset == "honour_priority":
             return (m.priority, cost, waste, m.sku)
         return (cost, waste, m.priority, m.sku)

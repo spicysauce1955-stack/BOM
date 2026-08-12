@@ -84,12 +84,15 @@ def test_a_zero_qty_slot_produces_a_zero_qty_line_that_fulfils_harmlessly():
     assert bom.cut_plans["RAIL-3000"].new_bar_count == 0
 
 
-def test_unit_is_derived_from_length_not_guessed_from_an_allowlisted_role():
+def test_demand_names_no_unit_because_it_has_not_chosen_a_product_yet():
     """A role that isn't "rail"/"infill" (fence-model roles are free-form, e.g.
     "spacer" per fencemodel/model.py:57) must still get the SAME unit fulfill()
     derives from the product's consumption kind — fulfill() never reads
-    RequirementLine.unit at all, so a role-keyed guess that disagrees with it
-    double-books the parts ledger, which keys asked/purchased on (sku, unit)."""
+    RequirementLine.unit at all, so a guess that disagrees with it double-books
+    the parts ledger, which keys asked/purchased on (sku, unit).
+
+    Demand cannot make that guess correctly, because the unit is a property of
+    a product it has not chosen. So it makes no guess at all."""
     panel = ResolvedPanel(model_ref="M-TEST", slots=[
         ResolvedSlot(
             slot_key="brace", role="spacer", qty=2, length_mm=900, length_basis="width",
@@ -102,8 +105,56 @@ def test_unit_is_derived_from_length_not_guessed_from_an_allowlisted_role():
     ])
     reqs = derive_requirements(strategy, demo_catalog())
     spacer_req = next(r for r in reqs if r.role == "spacer")
+    assert spacer_req.sku == "" and spacer_req.unit == ""
 
     resolution = resolve_supply(reqs, demo_catalog())
+    resolved = next(r for r in resolution.requirements if r.role == "spacer")
     bom = fulfill(resolution.requirements, demo_catalog())
     bom_line = next(l for l in bom.lines if l.sku == "RAIL-3000")
-    assert spacer_req.unit == bom_line.engineering_unit == "cut"
+    assert resolved.unit == bom_line.engineering_unit == "cut"
+
+
+def test_a_ready_made_part_with_a_length_is_counted_in_eaches_on_both_sides():
+    """The third instance of one bug class, pinned.
+
+    `validate_model._can_supply_length` explicitly blesses an INDIVISIBLE product
+    carrying `attrs.length_mm` as able to back a `length_rule` slot — POST-S is
+    exactly that (indivisible_discrete, attrs.length_mm = 2600). It therefore has
+    a cut length and is still bought and counted in eaches.
+
+    Demand's third guess at the unit ("a cut_length_mm means a cut") called it
+    "cut" while fulfill() called it "each", so the parts ledger reported the same
+    six posts as unassigned AND from stock at once: maximally wrong, and A3's
+    both-directions property satisfied vacuously. Against the old code this test
+    fails on `unassigned`/`from_stock` being non-empty.
+    """
+    from fenceai.report.structure import build_structure
+    from fenceai.topology.model import Topology
+
+    panel = ResolvedPanel(model_ref="M-TEST", slots=[
+        ResolvedSlot(
+            slot_key="rail", role="rail", qty=6, length_mm=1500, length_basis="width",
+            eligibility=Eligibility(members=[EligibleItem(sku="POST-S")]),
+        ),
+    ])
+    strategy = Strategy(id="s1", spans=[
+        Span(id="span1", run_ref="run1", start_station_mm=0, end_station_mm=1500,
+             width_mm=1500, slope_len_mm=1500, panel=panel)
+    ])
+    catalog = demo_catalog()
+    assert catalog.products["POST-S"].consumption.kind == "indivisible_discrete"
+    assert catalog.products["POST-S"].attrs["length_mm"] == 2600
+
+    reqs = derive_requirements(strategy, catalog)
+    resolution = resolve_supply(reqs, catalog)
+    bom = fulfill(resolution.requirements, catalog)
+    report = build_structure(Topology(nodes=[], runs=[]), strategy,
+                             resolution.requirements, bom)
+
+    assert [(l.sku, l.engineering_qty, l.engineering_unit) for l in bom.lines] \
+        == [("POST-S", 6, "each")]
+    assert [(t.sku, t.qty, t.unit) for t in report.totals.per_sku] \
+        == [("POST-S", 6, "each")]
+    # the whole point: neither bucket may double-book the same six items
+    assert report.totals.unassigned == []
+    assert report.totals.from_stock == []

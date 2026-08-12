@@ -221,3 +221,87 @@ def test_two_lines_with_opposite_priority_order_each_get_their_own_choice():
     assert decisions["req0001"]["rejected"] == ["RAIL-3050"]
     assert decisions["req0002"]["chosen"] == "RAIL-3050"
     assert decisions["req0002"]["rejected"] == ["RAIL-3000"]
+
+
+# ---- when nothing fits at all (fix wave, finding D) --------------------------
+
+def _short_stock_catalog() -> Catalog:
+    """Two divisible products, both with stock shorter than the piece asked for."""
+    catalog = demo_catalog()
+    catalog.products["SHORT-A"] = Product(
+        sku="SHORT-A", name="Short stock A", price_cents=100,
+        consumption=DivisibleLinear(purchase_length_mm=1000))
+    catalog.products["SHORT-B"] = Product(
+        sku="SHORT-B", name="Short stock B", price_cents=90,
+        consumption=DivisibleLinear(purchase_length_mm=900))
+    return catalog
+
+
+def test_all_candidates_infeasible_is_reported_not_silently_picked():
+    """Neither 1000 mm nor 900 mm stock can yield a 1500 mm piece.
+
+    The old fallback (`feasible = usable`) picked one anyway: no warning, nothing
+    in `unresolved`, a BOM line naming a product that cannot be cut — and then
+    fulfill() raised ValueError from outside the routes' try/except, so a 500
+    where the sibling no-eligible-item case gets a 400. Silence followed by a
+    crash is not a fallback."""
+    line = _line(engineering_qty=1, eligibility=Eligibility(members=[
+        EligibleItem(sku="SHORT-A", priority=1),
+        EligibleItem(sku="SHORT-B", priority=2),
+    ]))
+    out = resolve_supply([line], _short_stock_catalog())
+
+    assert out.requirements == []                      # never a silent pick
+    assert [r.id for r in out.unresolved] == ["req0001"]
+    assert out.unresolved[0].sku == ""                 # and never a blank sku downstream
+    assert [w.code for w in out.warnings] == ["no_eligible_item"]
+    assert out.warnings[0].severity == "error"
+    assert out.warnings[0].params["role"] == "rail"
+    assert out.warnings[0].params["skus"] == "SHORT-A, SHORT-B"
+
+
+def test_all_candidates_infeasible_never_reaches_fulfill():
+    """The point of routing it to `unresolved`: what fulfill() is handed is still
+    only lines that can actually be built, so it cannot raise."""
+    from fenceai.fulfillment.fulfill import fulfill
+
+    catalog = _short_stock_catalog()
+    line = _line(engineering_qty=1, eligibility=Eligibility(members=[
+        EligibleItem(sku="SHORT-A"), EligibleItem(sku="SHORT-B")]))
+    out = resolve_supply([line], catalog)
+    assert fulfill(out.requirements, catalog).lines == []
+
+
+def test_one_feasible_candidate_among_infeasible_ones_still_wins():
+    """The guard must not turn a partially-infeasible field into a refusal —
+    RAIL-3000 can be cut to 1500 mm and is the answer."""
+    line = _line(engineering_qty=1, eligibility=Eligibility(members=[
+        EligibleItem(sku="SHORT-A", priority=1),
+        EligibleItem(sku="RAIL-3000", priority=2),
+    ]))
+    out = resolve_supply([line], _short_stock_catalog())
+    assert out.unresolved == [] and out.warnings == []
+    assert out.requirements[0].sku == "RAIL-3000"
+
+
+# ---- the unit comes from the product, not from the length (finding B) --------
+
+def test_the_resolved_unit_is_the_one_fulfill_will_stamp_on_the_bom_line():
+    """asked and purchased are keyed on (sku, unit) in the parts ledger, and the
+    two strings come from ONE function — so a product whose consumption kind
+    disagrees with the line's shape (indivisible, but carrying a cut length)
+    cannot split the ledger."""
+    from fenceai.fulfillment.fulfill import engineering_unit_for
+
+    catalog = demo_catalog()
+    for sku, expected in [("RAIL-3000", "cut"), ("POST-S", "each"),
+                          ("SCREW-S10", "each"), ("CONC-25", "application"),
+                          ("GATE-KIT-1000", "each"), ("NOT-IN-CATALOG", "each")]:
+        assert engineering_unit_for(catalog, sku) == expected, sku
+
+    # POST-S is indivisible AND has attrs.length_mm, so it legitimately backs a
+    # slot with a cut length — and is still counted in eaches.
+    line = _line(cut_length_mm=1500,
+                 eligibility=Eligibility(members=[EligibleItem(sku="POST-S")]))
+    resolved = resolve_supply([line], catalog).requirements[0]
+    assert resolved.sku == "POST-S" and resolved.unit == "each"
