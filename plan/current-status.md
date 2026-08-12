@@ -1,6 +1,7 @@
 # Current status
 
-Updated: 2026-08-12 — V1 complete; fence models phase 1 landed (phases 2–3 remain)
+Updated: 2026-08-12 — V1 complete; fence models phase 1 landed, and W1/W2 of
+`specs/2026-08-12-panel-authoring-design.md` gave the model a UI (W3–W6 remain)
 
 - [x] Research (4 parallel researcher reports, synthesis, ADRs 0001–0010)
 - [x] Architecture (docs/architecture/*, golden scenarios S01–S14 defined)
@@ -351,3 +352,32 @@ the elevation read model, the panel warning codes, and multi-member eligibility 
 running the FFD planner per candidate — plus the `select_supply` decision node, without
 which a multi-member choice has no explanation (docs/v1-known-limitations.md). Phase 3:
 arc-flow over multiple stock lengths and sources with remnants, via OR-Tools.
+
+## Panel authoring W1/W2 — the model gets a UI (2026-08-12) — COMPLETE
+Spec docs/superpowers/specs/2026-08-12-panel-authoring-design.md. W1 and W2's backend
+landed on `feat/panel-authoring-w1` (persisted, versioned models; the `fence_model`
+interval event; `POST /api/fence-models/{id}/{v}/preview`); this is the surface, which was
+the whole complaint: *"I don't see an option to see the Panel spec and choose a model
+before the strategy."* Every clause of it was true of the frontend — `variant` and `preset`
+had **zero hits** across `web/static/`, and the only product choice anywhere in the app was
+the gate kit picker, so the thing that decides every material, size and structure below it
+was unreachable. Three surfaces now: a **Panel tab** between Structure and BOM (`js/panel.js`
+— a model picker over the library, height and bay width in the display unit, and one
+panel's parts priced from the preview endpoint, which drives the SAME `resolve_panel` →
+`derive_requirements` → `resolve_supply` pipeline a real bay does, so the preview cannot
+drift from the fence the user then gets); a **model row in the canvas aside**, so "what is
+this fence built from" is answerable without leaving the drawing; and a **`fence_model`
+event tool** on the rail, authored through the same popover as height intent. Three
+decisions worth keeping: `unsupplied` and `warnings` render ABOVE the priced table, because
+a panel one part short must not read as complete; `apiSend` grew a `quiet` option, because a
+debounced preview firing per keystroke owed the user silence rather than a dialog each time;
+and the event tool replaces any `fence_model` event overlapping the stretch it writes,
+because `fence_model_at` answers with the FIRST covering event — a stale one left behind
+would silently defeat the choice just made, with nothing on screen to see. 671 pytest (+7,
+a node suite for the library naming rules the browser cannot reach: a draft-only or retired
+model is offered NOT SELECTABLE rather than hidden) · 126 golden scenarios (unchanged) ·
+116/116 smoke (+9).
+
+**W3–W6 remain**: variants and option axes (`_unsupported_features`), authoring (edit, add,
+duplicate, vary), the elevation drawing beside the slot table, and the `select_supply`
+explanation.

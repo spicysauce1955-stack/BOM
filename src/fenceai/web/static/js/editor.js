@@ -3,6 +3,7 @@
 // The canvas is never mirrored in RTL (spec §4).
 
 import { apiGet, apiSend, esc } from "./api.js";
+import { isSelectable, loadModelListing, modelOptionLabel } from "./fence-models.js";
 import {
   clearGroup, el, endpointNodeAt, GROUND_TOL_MM, groundSamplesFor, groundZAt,
   nodeById, pointAtStation, runAtPoint, runById, runLength, runPoints, snapPoint,
@@ -22,7 +23,7 @@ import {
 } from "./units.js";
 import { localizedByCode, warningRowHtml } from "./warnings.js";
 
-const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin"];
+const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin", "model"];
 
 const BASE_COLORS = { soil: "#a16207", concrete: "#64748b", masonry_wall: "#dc2626" };
 const POST_COLORS = { line: "#2563eb", end: "#1e293b", corner: "#1e293b",
@@ -58,7 +59,7 @@ function renderAllCanvas() {
 }
 
 // ---------- toolbar ----------
-const TOOLS = ["select", "draw", "gate", "base", "ground", "height", "pin"];
+const TOOLS = ["select", "draw", "gate", "base", "ground", "height", "pin", "model"];
 
 function setupToolbar() {
   for (const tool of TOOLS) {
@@ -460,6 +461,10 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
     gateKits = gateKitProducts(await loadCatalogProducts());
     defaultKit = gateKits[0] || null;   // catalog order; no sku is special
   }
+  // model: only PUBLISHED models may be authored onto a run — a draft's document
+  // can still change under its version, so a run pinned to one is a run whose
+  // panel could be rewritten under it
+  const models = tool === "model" ? (await loadModelListing()).filter(isSelectable) : [];
   // length fields carry mm in, display units out (units.js is the only converter).
   // A null value opens the field EMPTY — save() then refuses it — which is how a
   // figure nobody stated stays unstated instead of becoming a plausible default.
@@ -474,8 +479,8 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
   // the header names what will actually be written: the corner node and ITS
   // station, never the pixel that happened to be under the cursor
   const shownStation = groundNode ? (station <= L / 2 ? 0 : L) : station;
-  // base and height apply to the whole section: no station in the header
-  const wholeRun = tool === "base" || tool === "height";
+  // base, height and model state a stretch, not a point: no station in the header
+  const wholeRun = tool === "base" || tool === "height" || tool === "model";
   let html = `<h4>${t("tool." + tool)}</h4>
     <div class="meta"><bdi>${esc(groundNode ? groundNode.id : runId)}</bdi>${wholeRun ? ""
       : ` · ${t("popover.station")} <span class="num">${esc(fmtLen(shownStation))}</span>`}</div>`;
@@ -525,6 +530,18 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
     html += numField("popover.height", "pop-height", 1800);
     html += numField("popover.start", "pop-start", 0);
     html += numField("popover.end", "pop-end", L);
+  } else if (tool === "model") {
+    // the same shape as the height tool, one question along: which model this
+    // stretch is built to, and where that stretch starts and ends
+    if (models.length) {
+      html += `<label>${t("popover.model")}<select id="pop-model">` + models.map((row) =>
+        `<option value="${esc(row.id)}" dir="auto">${esc(modelOptionLabel(row))}</option>`
+      ).join("") + `</select></label>`;
+    } else {
+      html += `<div class="meta">${t("popover.no_models")}</div>`;
+    }
+    html += numField("popover.start", "pop-start", 0);
+    html += numField("popover.end", "pop-end", L);
   } else if (tool === "pin") {
     html += `<div class="meta">${t("popover.pin_hint")}</div>`;
   }
@@ -544,7 +561,8 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
     // a blank or unparseable length is NOT zero: refuse the save, flag the field
     // and leave the popover open — never push null into a topology payload
     const needed = { gate: ["pop-width"], ground: ["pop-z"],
-      height: ["pop-height", "pop-start", "pop-end"] }[tool] || [];
+      height: ["pop-height", "pop-start", "pop-end"],
+      model: ["pop-start", "pop-end"] }[tool] || [];
     const values = {};
     let bad = null;
     for (const id of needed) {
@@ -554,6 +572,9 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
       if (values[id] === null && !bad) bad = field;
     }
     if (bad) { bad.focus(); return; }
+    // nothing published to choose: close rather than write an event naming a
+    // model that does not resolve — the generator would refuse the whole run
+    if (tool === "model" && !models.length) { closePopover(); return; }
     pushSnapshot(tool);
     if (tool === "gate") {
       addPointEvent(runId, {
@@ -600,6 +621,24 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
       addIntervalEvent(runId, {
         kind: "height_intent", height_mm: values["pop-height"], source: "user",
       }, values["pop-start"], values["pop-end"]);
+    } else if (tool === "model") {
+      const start = values["pop-start"], end = values["pop-end"];
+      // Replace on save, as the base tool does — but scoped to the stretch,
+      // because this event is an interval. `fence_model_at` (topology/station.py)
+      // answers with the FIRST event covering a station, so an older overlapping
+      // choice left in the list would silently defeat the one just authored:
+      // the user picks M-SLAT here, presses save, and the fence stays M-LEGACY
+      // with nothing to see. Anything the new stretch touches goes.
+      run.interval_events = run.interval_events.filter((iv) =>
+        iv.payload.kind !== "fence_model"
+        || stationOfAnchor(run, iv.end_anchor) <= start
+        || stationOfAnchor(run, iv.start_anchor) >= end);
+      addIntervalEvent(runId, {
+        // no version pin: an unpinned choice follows the published line, and the
+        // resolved (id, version) is stamped on the run either way
+        kind: "fence_model", model_id: document.getElementById("pop-model").value,
+        version_pin: null, options: {},
+      }, start, end);
     } else if (tool === "pin") {
       await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
         id: "", run_id: runId,

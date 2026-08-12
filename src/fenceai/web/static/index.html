@@ -25,6 +25,7 @@
     <button data-tab="knowledge" data-i18n="tabs.knowledge">Knowledge</button>
     <button data-tab="review" data-i18n="tabs.review">Review queue</button>
     <button data-tab="structure" data-i18n="tabs.structure">Structure</button>
+    <button data-tab="panel" data-i18n="tabs.panel">Panel</button>
     <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
     <button data-tab="inventory" data-i18n="tabs.inventory">Inventory</button>
   </nav>
@@ -40,6 +41,7 @@
           <button id="tool-base" class="tool" data-i18n-title="tool.base" title="Base surface"><span class="t-icon">🧱</span><span class="t-label" data-i18n="toolbar.base">Base</span></button>
           <button id="tool-ground" class="tool" data-i18n-title="tool.ground" title="Ground elevation point"><span class="t-icon">⛰️</span><span class="t-label" data-i18n="toolbar.ground">Ground</span></button>
           <button id="tool-height" class="tool" data-i18n-title="tool.height" title="Height intent"><span class="t-icon">📏</span><span class="t-label" data-i18n="toolbar.height">Height</span></button>
+          <button id="tool-model" class="tool" data-i18n-title="tool.model" title="Fence model"><span class="t-icon">🧩</span><span class="t-label" data-i18n="toolbar.model">Model</span></button>
           <button id="tool-pin" class="tool" data-i18n-title="tool.pin" title="Pin post"><span class="t-icon">📍</span><span class="t-label" data-i18n="toolbar.pin">Pin</span></button>
           <div class="toolbar-spacer"></div>
           <button id="btn-undo" data-i18n-title="tool.undo" title="Undo (Ctrl+Z)"><span class="t-icon">↶</span><span class="t-label" data-i18n="toolbar.undo">Undo</span></button>
@@ -91,6 +93,9 @@
           </div>
         </div>
         <aside class="side-col">
+          <!-- what this fence is BUILT FROM, without leaving the drawing.
+               Owned by js/panel.js (the Panel tab owns the rest of the story). -->
+          <div class="panel" id="model-row"></div>
           <div class="panel">
             <h3 data-i18n="inspect.run_editing">Run editing</h3>
             <select id="run-select"></select>
@@ -169,6 +174,14 @@
         <button id="btn-propose" data-i18n="review.propose">Propose knowledge from corrections</button>
       </div>
       <div id="candidate-list"></div>
+    </section>
+
+    <!-- ============ panel tab ============
+         Both children are rendered entirely by js/panel.js: the height/width
+         labels carry the display unit, so they cannot be static data-i18n. -->
+    <section id="tab-panel" class="tab">
+      <div class="panel" id="panel-picker"></div>
+      <div id="panel-preview"></div>
     </section>
 
     <!-- ============ bom tab ============ -->
