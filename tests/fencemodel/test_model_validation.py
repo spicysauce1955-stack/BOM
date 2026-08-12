@@ -277,9 +277,15 @@ def test_an_eligibility_predicate_is_refused_because_it_is_never_evaluated():
     assert any("predicate" in e and "not yet supported" in e for e in errs)
 
 
-def test_trim_last_and_extension_clip_are_refused_because_they_behave_as_truncate():
-    """`space` and `trim_last` produce DIFFERENT BOMs from the same model — that
-    is the point of the field. fit_pattern treats them identically today."""
+def test_trim_last_and_extension_clip_are_refused_for_their_own_reasons():
+    """Both were labelled "not yet supported (phase 2)", and neither is.
+
+    `trim_last` rips the last member NARROWER, which is 2D cutting — the standing
+    non-goal, not a queued feature; the cut planner cuts to length and nothing
+    can price a part whose width changed. `extension_clip` is undesigned rather
+    than unbuilt: `InfillSpec` has nowhere to name the clip product, and how many
+    clips a residual needs depends on the justification. A refusal that names the
+    wrong reason sends the next reader to the wrong place."""
     from fenceai.fencemodel.model import InfillSpec, Member
 
     for excess in ("trim_last", "extension_clip"):
@@ -292,7 +298,10 @@ def test_trim_last_and_extension_clip_are_refused_because_they_behave_as_truncat
                                     EligibleItem(sku="RAIL-3000")])))],
         )))
         errs = validate_model(model, demo_catalog())
-        assert any(excess in e and "not yet supported" in e for e in errs), excess
+        reason = {"trim_last": "2D cutting", "extension_clip": "not designed yet"}[excess]
+        assert any(excess in e and reason in e for e in errs), (excess, errs)
+        assert not any("phase 2" in e for e in errs), \
+            "neither of these is waiting on phase 2"
 
 
 def test_an_assembly_infill_is_refused_because_resolve_panel_buys_the_parts():
