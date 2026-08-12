@@ -136,8 +136,14 @@ POST   /api/fence-models/{id}/{version}/status  active ↔ retired
 PUT    /api/projects/{id}/fence-model        set the project default
 ```
 
-Every write runs `validate_model` against the live catalog and returns 422 with
-`code + params` on failure — the same shape `fence_model_unknown_sku` already uses.
+Every write runs `validate_model` against the live catalog. **Corrected during
+implementation**: a draft is saved even when invalid, with its errors returned
+rather than refused, and `publish` is the gate. Authoring is iterative — a panel
+half-built is invalid by definition, and a save that refuses until the whole thing
+is coherent is a save nobody can use. Nothing is lost by this: an invalid draft
+can only be selected by an explicit version pin, and `_validate_resolved_model`
+still refuses to *generate* from it, so an invalid model can never quietly become
+a fence.
 
 ### UI (minimal in W1)
 
@@ -263,11 +269,12 @@ from this table is how phase 2 turns each feature on."
 `bind_scope()` gains `series` — closing the blocked dimension recorded at
 `plan/current-status.md:105`.
 
-**The locale-bundle guard must be extended first.** `tests/web/test_locale_bundles.py:60-70`
-regexes `code="..."` out of exactly two files, `strategy/generator.py` and `ai/stub.py`.
-Every code this wave adds originates in `fencemodel/` or fulfillment, so all of them would
-ship untranslated with the test green. Extending the scanner is part of this slice, verified
-by adding a code and watching the test fail.
+**The locale-bundle guard.** **Corrected**: the phase-1 spec's warning that the scanner
+covers only `strategy/generator.py` and `ai/stub.py` is out of date — the phase-1 fix round
+already extended it to `fulfillment/supply.py`, `fencemodel/resolve.py` and
+`demand/derive.py`. It caught `fence_model_not_found` in W1 on the first run. A code emitted
+from a file it still does not scan is the remaining hole, so any new emitting file joins the
+list in the same slice.
 
 ---
 
