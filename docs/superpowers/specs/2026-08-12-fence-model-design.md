@@ -1,6 +1,6 @@
 # Fence models: what a section is made of, and which items may make it
 
-Status: proposed · 2026-08-12 · revised after adversarial review
+Status: phase 1 implemented · 2026-08-12 · revised after adversarial review
 (`docs/reviews/fence-model-design-review.md` — 7 blockers, 8 major, 9 minor, all dispositioned)
 
 Today the structure of a fence is two integers. `Span.rail_count` and `Span.screws_count`
