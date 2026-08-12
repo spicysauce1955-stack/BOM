@@ -302,7 +302,7 @@ feature. The compatibility gate became a committed artifact (per-fixture require
 mutations that previously left the suite green (deleting the slope-length branch; ignoring
 the resolved `demand_skus`) now fail. Two vacuous tests deleted/replaced. 555 pytest
 (+46) · 126 golden scenarios (+18) · 101/101 smoke. Dispositions and the fix wave:
-.superpowers/sdd/2026-08-12-fence-model-phase1/fix-wave-report.md.
+docs/reviews/fence-model-phase1-review.md.
 
 ## Fence models phase 1 — closing the open findings (2026-08-12) — COMPLETE
 The four gaps `docs/reviews/fence-model-phase1-review.md` left open (two "Open", one
