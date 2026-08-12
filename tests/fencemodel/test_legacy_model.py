@@ -71,3 +71,36 @@ def test_without_a_rule_the_panel_falls_back_to_the_demo_default():
     result = generate(straight_topology(3000), demo_knowledge(), demo_catalog())
     rails = next(s for s in result.strategy.spans[0].panel.slots if s.role == "rail")
     assert [m.sku for m in rails.eligibility.members] == ["RAIL-3000"]
+
+
+# ---- validate_model has a production caller (phase 1 open finding) -----------
+
+def test_generation_validates_the_model_it_resolved():
+    """`validate_model` had no production caller: models are only ever built by
+    `legacy_model()`, which bypassed it, so every load-time gate on this branch
+    — the unbuilt-feature refusals, the per-member advance bound, the SKU and
+    length checks — was enforced by tests alone.
+
+    A knowledge DefaultComponent seeds the model's eligibility, so a SKU that is
+    not in the catalog is reachable from the knowledge editor. That model cannot
+    produce a correct BOM, which is a hard constraint, not a note: 422, loudly,
+    rather than a run that quietly prices a phantom product at zero."""
+    import pytest
+
+    from fenceai.core.errors import GenerationFailure
+
+    kb = demo_knowledge()
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-RAIL-GHOST", version=1, type="fact",
+        title="rail default nobody stocks",
+        actions=[DefaultComponent(role="rail", sku="NOT-IN-CATALOG")],
+    ))
+    with pytest.raises(GenerationFailure, match="NOT-IN-CATALOG"):
+        generate(straight_topology(3000), kb, demo_catalog())
+
+
+def test_the_shipped_model_still_generates_clean():
+    """The other half of the contract: the gate must refuse an unusable model
+    WITHOUT refusing the only one that ships."""
+    result = generate(straight_topology(3000), demo_knowledge(), demo_catalog())
+    assert result.strategy.spans and all(s.panel for s in result.strategy.spans)
