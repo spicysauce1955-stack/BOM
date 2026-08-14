@@ -25,6 +25,7 @@
     <button data-tab="knowledge" data-i18n="tabs.knowledge">Knowledge</button>
     <button data-tab="review" data-i18n="tabs.review">Review queue</button>
     <button data-tab="structure" data-i18n="tabs.structure">Structure</button>
+    <button data-tab="assembly" data-i18n="tabs.assembly">Assembly</button>
     <button data-tab="panel" data-i18n="tabs.panel">Panel</button>
     <button data-tab="models" data-i18n="tabs.models">Models</button>
     <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
@@ -138,6 +139,20 @@
         <div id="structure-totals"></div>
       </div>
       <div id="structure-body"></div>
+    </section>
+
+    <!-- ============ assembly tab ============
+         Two synchronized viewports over one fence: the run as it is set out
+         (macro) and one panel as it is assembled (micro). Both are rendered
+         entirely by js/assembly.js — the bar's labels carry dimensions and a
+         currency, so they cannot be static data-i18n. -->
+    <section id="tab-assembly" class="tab">
+      <div class="panel" id="assembly-bar"></div>
+      <div class="assembly-row" id="assembly-row">
+        <div class="panel" id="assembly-macro"></div>
+        <div class="panel" id="assembly-micro"></div>
+      </div>
+      <div id="assembly-drawer"></div>
     </section>
 
     <!-- ============ knowledge tab ============ -->
