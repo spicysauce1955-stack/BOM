@@ -9,7 +9,10 @@ and one test below pins the boundary instead of asserting the number we want.
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import DivisibleLinear
-from fenceai.fencemodel.demo import M_LEGACY, M_SLAT, demo_models, slat_model
+from fenceai.fencemodel.demo import (
+    M_LEGACY, M_SLAT, M_SLAT_V2, demo_model_versions, demo_models, slat_model,
+)
+from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.model import validate_model
 from fenceai.fencemodel.resolve import PanelContext, resolve_panel
 
@@ -161,3 +164,65 @@ def test_the_slat_stock_length_is_chosen_for_the_height_it_is_cut_to():
     assert 3 * piece <= capacity < 4 * piece
     leftover = sem.purchase_length_mm - 3 * BAY.height_mm - 3 * sem.kerf_mm
     assert leftover == 591 >= sem.min_reusable_remnant_mm
+
+
+# ---- v2: the same line, built with a joint -----------------------------------
+
+def test_the_channel_version_validates_against_the_demo_catalog():
+    assert validate_model(M_SLAT_V2, demo_catalog()) == []
+    assert M_SLAT_V2.ref == "M-SLAT@v2"
+
+
+def test_the_slats_are_cut_to_the_opening_plus_what_the_channel_takes():
+    """By hand, in the 1800 mm bay this module states once:
+
+        bottom channel  50 up, 60 face   ->   centreline 50,  30 above it
+        top rail        50 down, 40 face ->   centreline 1750, 20 below it
+
+        centre to centre   1750 - 50 = 1700
+        face to face       1700 - (20 + 30) = 1650    the opening
+        seated 15 deep     1650 + 15 = 1665           the piece that is CUT
+
+    1665, against v1's 1800 for the same bay. That 135 mm is the whole reason
+    the version exists: the two panels draw as the same rectangle and are cut to
+    different lengths, and only the joint fields say which."""
+    by_key = {s.slot_key: s
+              for s in resolve_panel(M_SLAT_V2.default_spec, BAY, M_SLAT_V2.ref).slots}
+
+    assert by_key["slat"].length_mm == 1665
+    assert by_key["slat"].qty == 20         # the fit is v1's: 20 x 100 in 2400 clear
+    assert by_key["bottom_channel"].length_mm == by_key["top_rail"].length_mm == 2500
+    # one screw per slat, at the top rail: a slat held in a channel is not
+    # screwed at the bottom, so v1's per-crossing count would buy 80
+    assert by_key["screw"].qty == 20
+
+
+def test_the_channel_version_leaves_v1_exactly_as_it_was():
+    """A version is immutable (ADR-0006): a run stamped M-SLAT@v1 must come back
+    the same panel after v2 exists, so the demonstration is a new document and
+    never an edit. Asserted against the model that BUILDS v1 rather than against
+    the module constant, so a mutation of the shared default would be caught."""
+    assert M_SLAT == slat_model()
+    slat = next(s for s in resolve_panel(M_SLAT.default_spec, BAY).slots
+                if s.slot_key == "slat")
+    assert slat.length_mm == 1800
+
+
+def test_publishing_the_channel_version_stays_a_decision_someone_makes():
+    """v2 is a DRAFT. `latest_active` is what an unpinned project resolves, so a
+    seeded-active v2 would move every existing M-SLAT job onto a different cut
+    list at its next generation with nobody publishing anything — which is the
+    change `preview_model_impact` exists to put in front of a human first."""
+    lib = FenceModelLibrary(models=demo_model_versions())
+    assert M_SLAT_V2.status == "draft"
+    assert lib.resolve("M-SLAT", None).ref == "M-SLAT@v1"
+    assert lib.resolve("M-SLAT", 2).ref == "M-SLAT@v2", "a pin must still reach it"
+
+
+def test_every_line_still_seeds_a_version_a_project_can_choose():
+    """The property that made forcing `status="active"` at seed time safe, kept
+    as a property now that the seed follows the document instead."""
+    lib = FenceModelLibrary(models=demo_model_versions())
+    assert {m.id for m in demo_model_versions()} == set(demo_models())
+    for model_id, active in demo_models().items():
+        assert lib.latest_active(model_id) == active
