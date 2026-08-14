@@ -43,6 +43,15 @@ class ResolvedSlot(BaseModel):
     qty: int
     length_mm: Mm | None = None
     length_basis: str | None = None
+    # This slot declares a length rule and the rule produced no length in THIS
+    # bay. Recorded rather than left as a bare `length_mm is None`, which a
+    # fixing and a cap share and mean nothing by: a divisible product asked for
+    # with no cut length plans no bars, so the panel would price that member at
+    # zero and the parts ledger would read the gap as demand covered from stock —
+    # a panel that silently costs nothing rather than one that visibly costs the
+    # wrong amount. `validate_model` closes that at authoring for the rules it
+    # can; `between_frame` depends on the bay, so the generator warns instead.
+    length_unresolved: bool = False
     sku: str = ""                    # resolved by fulfillment, never here
     eligibility: Eligibility = Eligibility()
     fit: FitResult | None = None
@@ -189,11 +198,22 @@ def _between_frame_length(
         # there is no member to seat into. Substituting the panel height would
         # hand the cut list a length measured between things that are not there.
         return None
-    return (
+    length = (
         (max(top_slot.positions_mm) - min(base_slot.positions_mm))
         - ((top_slot.thickness_mm or 0) // 2 + (base_slot.thickness_mm or 0) // 2)
         + member.base_engagement_mm + member.top_engagement_mm
     )
+    if length <= 0:
+        # NOT clamped, and not returned. Two ways to arrive here and neither is
+        # decidable when the model is authored: refs the wrong way round (the
+        # editor offers both selects and which member is higher depends on the
+        # BAY's height), and a knowledge param collapsing a `Distributed` set to
+        # one position, where both ends become the same member and the face
+        # correction eats what is left. A negative number is not a shorter piece
+        # — `plan_cuts` packs it into a bar and certifies the plan optimal — so
+        # this bay has no resolvable length, and the caller says so.
+        return None
+    return length
 
 
 def _length_for(
@@ -369,11 +389,20 @@ def resolve_panel(
                 continue
             eligibility, option_axis, option_value = _chosen_option(
                 member.requirement, ctx)
+            length = _length_for(member.requirement, ctx, member, frame)
             slots.append(ResolvedSlot(
                 slot_key=member.key, role=member.requirement.role,
                 slot_kind="infill", qty=n * member.requirement.qty,
-                length_mm=_length_for(member.requirement, ctx, member, frame),
-                length_basis=ctx.length_basis,
+                length_mm=length,
+                length_unresolved=(member.requirement.length_rule is not None
+                                   and length is None),
+                # `between_frame` measures a vertical distance INSIDE the panel,
+                # so the slope factor never applied to it (`_length_for`) — and
+                # stamping "slope" beside a number that ignores the slope says
+                # the opposite to every reader of the structure sheet.
+                length_basis=("width"
+                              if member.requirement.length_rule == "between_frame"
+                              else ctx.length_basis),
                 eligibility=eligibility, fit=fit,
                 option_axis=option_axis, option_value=option_value,
                 orientation=spec.infill.orientation,

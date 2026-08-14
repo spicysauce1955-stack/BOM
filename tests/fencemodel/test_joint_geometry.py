@@ -198,6 +198,113 @@ def test_a_knowledge_param_that_empties_the_referenced_rail_set_cuts_nothing():
     assert by_key["slat"].length_mm is None
 
 
+# --- the answers that are not lengths ----------------------------------------
+
+def test_refs_the_wrong_way_round_resolve_to_no_length_rather_than_a_negative_one():
+    """Which member is HIGHER depends on the bay's height, so no load-time check
+    can decide this — and the editor offers both selects. Measured before the
+    guard: −1750 mm, which `plan_cuts` packs into a bar and certifies optimal.
+
+    A negative number is not a shorter piece. The bay reports no resolvable
+    length and says so on the slot, so the generator can raise it.
+    """
+    by_key = _resolve(
+        [_frame("bottom_rail", FromBottom(offset_mm=100), thickness_mm=60),
+         _frame("top_rail", FromTop(offset_mm=100), thickness_mm=40)],
+        _slat(base_ref="top_rail", top_ref="bottom_rail"),
+    )
+
+    assert by_key["slat"].length_mm is None
+    assert by_key["slat"].length_unresolved is True
+
+
+def test_an_opening_the_faces_close_completely_is_not_a_zero_length_part():
+    """Exactly zero, not negative: two 800 mm faces 800 mm apart leave nothing
+    between them. `<= 0` rather than `< 0`, because a part cut to nothing is as
+    unbuyable as one cut to less than nothing and reads as an ordinary integer
+    on the way to the cut planner.
+    """
+    by_key = _resolve(
+        [_frame("bottom_rail", FromBottom(offset_mm=500), thickness_mm=800),
+         _frame("top_rail", FromBottom(offset_mm=1300), thickness_mm=800)],
+        _slat(base_ref="bottom_rail", top_ref="top_rail"),
+    )
+
+    assert by_key["slat"].length_mm is None      # 800 - (400 + 400) = 0
+    assert by_key["slat"].length_unresolved is True
+
+
+def test_one_emptied_ref_is_enough_to_leave_nothing_to_measure():
+    """The other end is placed perfectly well; the rule still has one datum
+    missing. Asserted separately from the both-ends case because that one fails
+    for a second reason — `max([])` raises — so it would pass with the guard
+    written as `and`."""
+    ctx = BAY.model_copy(update={"params": {"rails_per_span": 0}})
+    by_key = _resolve(
+        [_frame("bottom_rail", FromBottom(offset_mm=100), thickness_mm=60),
+         _frame("top_rail", Distributed(count=2, count_param="rails_per_span"),
+                thickness_mm=40)],
+        _slat(base_ref="bottom_rail", top_ref="top_rail"),
+        ctx,
+    )
+
+    assert by_key["bottom_rail"].positions_mm == [100]
+    assert by_key["slat"].length_mm is None
+    assert by_key["slat"].length_unresolved is True
+
+
+def test_a_resolved_length_is_never_flagged_unresolved():
+    """The flag is what the generator warns on, so a false positive would file an
+    error against a panel that priced correctly."""
+    by_key = _resolve(
+        [_frame("bottom_rail", FromBottom(offset_mm=100), thickness_mm=60),
+         _frame("top_rail", FromTop(offset_mm=100), thickness_mm=40)],
+        _slat(base_ref="bottom_rail", top_ref="top_rail"),
+    )
+    assert by_key["slat"].length_mm == 1550
+    assert by_key["slat"].length_unresolved is False
+    # and a slot with NO length rule is not "unresolved", it is unmeasured on
+    # purpose — a fixing has no length and never wanted one
+    assert all(not s.length_unresolved for s in by_key.values())
+
+
+def test_a_stepped_bay_measures_the_same_as_a_level_one():
+    """"A stepped bay is a rectangle", says `_length_for`. Every vertical mode
+    resolves the same 1550 mm opening, so the comment is pinned rather than
+    trusted."""
+    frame = [_frame("bottom_rail", FromBottom(offset_mm=100), thickness_mm=60),
+             _frame("top_rail", FromTop(offset_mm=100), thickness_mm=40)]
+    for mode, extra in (("level", {}), ("stepped", {}),
+                        ("raked", {"length_basis": "slope", "slope_len_mm": 2600})):
+        ctx = BAY.model_copy(update={"vertical": mode, **extra})
+        slat = _resolve(frame, _slat(base_ref="bottom_rail", top_ref="top_rail"),
+                        ctx)["slat"]
+        assert slat.length_mm == 1550, mode
+        # and the basis stamped beside it never says "slope" for a rule the
+        # slope factor does not reach
+        assert slat.length_basis == "width", mode
+
+
+def test_a_panel_cannot_measure_against_a_frame_slot_from_another_panel():
+    """`resolve_panel` reads the frame it just resolved and nothing else. A
+    module-level cache would make the second call's answer depend on the first,
+    and a determinism test comparing two identical calls would not notice —
+    resolution is a pure function of (spec, ctx) across DIFFERENT specs too.
+    """
+    frame = [_frame("bottom_rail", FromBottom(offset_mm=100), thickness_mm=60),
+             _frame("top_rail", FromTop(offset_mm=100), thickness_mm=40)]
+    orphan = _slat(base_ref="bottom_rail", top_ref="top_rail")
+
+    alone = _resolve([], orphan)
+    _resolve(frame, _slat(base_ref="bottom_rail", top_ref="top_rail"))
+    after = _resolve([], orphan)
+
+    assert alone["slat"].length_mm is None
+    assert after["slat"].length_mm is None, \
+        "a previous panel's frame leaked into this one"
+    assert after["slat"].length_unresolved is True
+
+
 def test_resolution_stays_deterministic_with_a_joint_in_the_panel():
     spec = PanelSpec(
         frame=[_frame("bottom_channel", FromBottom(offset_mm=100), thickness_mm=60,

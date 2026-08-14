@@ -513,3 +513,16 @@ def test_refs_under_any_other_length_rule_are_refused_as_unbuilt():
         demo_catalog())
     assert any("base_ref and top_ref" in e and "not yet supported" in e
                for e in errs), errs
+
+    # ONE ref is the same wrong answer and the easier one to miss — an author
+    # who names only where the member starts still gets a part cut to the panel
+    # height, and a check written as "both refs set" would pass it.
+    one = validate_model(
+        _jointed(member_kw={"joint": "butt", "base_engagement_mm": 0,
+                            "top_ref": None},
+                 member_req=PartRequirement(
+                     role="infill", qty=1, length_rule="panel_height",
+                     eligibility=Eligibility(members=[EligibleItem(sku="SLAT-100")]),
+                 )),
+        demo_catalog())
+    assert any("base_ref with" in e and "not yet supported" in e for e in one), one
