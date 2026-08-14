@@ -209,8 +209,8 @@ def channel_slat_model(
                     # mechanic; the top end butts under the rail and takes no
                     # engagement. One kind per member is what the schema has, and
                     # naming the end that changes the cut length is the honest
-                    # use of it — the elevation reports each end's engagement
-                    # separately, so nothing downstream has to read this as both.
+                    # use of it — the two engagements are separate fields, so
+                    # nothing downstream has to read this kind as both ends.
                     joint="channel", base_engagement_mm=15, top_engagement_mm=0,
                     requirement=PartRequirement(
                         role="infill", qty=1, length_rule="between_frame",

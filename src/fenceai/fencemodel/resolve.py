@@ -52,6 +52,13 @@ class ResolvedSlot(BaseModel):
     # wrong amount. `validate_model` closes that at authoring for the rules it
     # can; `between_frame` depends on the bay, so the generator warns instead.
     length_unresolved: bool = False
+    # Where this member starts along its OWN axis, in panel coordinates — set
+    # only by the one rule that fixes it (`between_frame`), None everywhere else,
+    # where a member spans the whole opening and 0 is the answer. It travels with
+    # the length because they are one calculation: the elevation draws the
+    # rectangle the cut list buys, or the picture starts lying about the panel it
+    # is derived from.
+    span_start_mm: Mm | None = None
     sku: str = ""                    # resolved by fulfillment, never here
     eligibility: Eligibility = Eligibility()
     fit: FitResult | None = None
@@ -161,10 +168,17 @@ def height_supported(support: HeightSupport, height_mm: Mm) -> bool:
     return (height_mm - support.min_mm) % support.step_mm == 0
 
 
-def _between_frame_length(
+def _between_frame_extent(
     member: Member, frame: dict[str, "ResolvedSlot"]
-) -> Mm | None:
-    """A member cut to fit between two frame members, plus what disappears into
+) -> tuple[Mm, Mm] | None:
+    """(where this member starts in panel coordinates, how long it is cut).
+
+    Both from one calculation, because they are one fact and two of them would
+    drift: the elevation draws the rectangle the cut list buys, or the picture
+    starts lying about the panel it is derived from — which is the property
+    `report/elevation.py` opens by claiming.
+
+    A member cut to fit between two frame members, plus what disappears into
     them:
 
         (top_position - base_position)
@@ -198,11 +212,13 @@ def _between_frame_length(
         # there is no member to seat into. Substituting the panel height would
         # hand the cut list a length measured between things that are not there.
         return None
-    length = (
-        (max(top_slot.positions_mm) - min(base_slot.positions_mm))
-        - ((top_slot.thickness_mm or 0) // 2 + (base_slot.thickness_mm or 0) // 2)
-        + member.base_engagement_mm + member.top_engagement_mm
-    )
+    # the member's own ends: the facing face of the base member, less however far
+    # it reaches past that face into the housing
+    start = (min(base_slot.positions_mm) + (base_slot.thickness_mm or 0) // 2
+             - member.base_engagement_mm)
+    end = (max(top_slot.positions_mm) - (top_slot.thickness_mm or 0) // 2
+           + member.top_engagement_mm)
+    length = end - start
     if length <= 0:
         # NOT clamped, and not returned. Two ways to arrive here and neither is
         # decidable when the model is authored: refs the wrong way round (the
@@ -213,30 +229,21 @@ def _between_frame_length(
         # — `plan_cuts` packs it into a bar and certifies the plan optimal — so
         # this bay has no resolvable length, and the caller says so.
         return None
-    return length
+    return (start, length)
 
 
-def _length_for(
-    req: PartRequirement,
-    ctx: PanelContext,
-    member: Member | None = None,
-    frame: dict[str, "ResolvedSlot"] | None = None,
-) -> Mm | None:
-    """`member` and `frame` are passed in rather than reached for: `between_frame`
-    is the one rule that measures against the rest of the panel, and a resolver
-    that read the frame off module state would stop being a pure function of its
-    arguments."""
-    if req.length_rule is None:
+def _length_for(req: PartRequirement, ctx: PanelContext) -> Mm | None:
+    """Every rule that can be answered from the BAY alone.
+
+    `between_frame` is not one of them: it measures against the panel's own
+    frame and fixes where the member sits as well as how long it is, so
+    `resolve_panel` resolves it through `_between_frame_extent` — with the frame
+    it just placed passed in, never reached for, so resolution stays a pure
+    function of its arguments. A frame slot that declares the rule (refused at
+    load) therefore gets no length here rather than quietly getting a width.
+    """
+    if req.length_rule is None or req.length_rule == "between_frame":
         return None
-    if req.length_rule == "between_frame":
-        # Same as `panel_height` below, for the same reason: this measures a
-        # VERTICAL distance inside the panel, between two frame members that
-        # slope together in a raked bay, so the slope factor must not stretch it.
-        if member is None or frame is None:
-            # only an infill member carries the refs, and `validate_model`
-            # refuses the rule anywhere else
-            return None
-        return _between_frame_length(member, frame)
     if req.length_rule == "panel_height":
         # A member spanning the panel's full height — a picket, a slat, a baluster.
         # Constant in every vertical mode: a raked bay's top follows the grade and
@@ -389,20 +396,23 @@ def resolve_panel(
                 continue
             eligibility, option_axis, option_value = _chosen_option(
                 member.requirement, ctx)
-            length = _length_for(member.requirement, ctx, member, frame)
+            rule = member.requirement.length_rule
+            if rule == "between_frame":
+                extent = _between_frame_extent(member, frame)
+                span_start, length = extent if extent else (None, None)
+            else:
+                span_start, length = None, _length_for(member.requirement, ctx)
             slots.append(ResolvedSlot(
                 slot_key=member.key, role=member.requirement.role,
                 slot_kind="infill", qty=n * member.requirement.qty,
-                length_mm=length,
-                length_unresolved=(member.requirement.length_rule is not None
-                                   and length is None),
-                # `between_frame` measures a vertical distance INSIDE the panel,
-                # so the slope factor never applied to it (`_length_for`) — and
-                # stamping "slope" beside a number that ignores the slope says
-                # the opposite to every reader of the structure sheet.
-                length_basis=("width"
-                              if member.requirement.length_rule == "between_frame"
-                              else ctx.length_basis),
+                length_mm=length, span_start_mm=span_start,
+                length_unresolved=rule is not None and length is None,
+                # `between_frame` measures a distance INSIDE the panel, between
+                # two frame members that slope together, so the slope factor
+                # never applied to it — and stamping "slope" beside a number
+                # that ignores the slope says the opposite to every reader of
+                # the structure sheet.
+                length_basis="width" if rule == "between_frame" else ctx.length_basis,
                 eligibility=eligibility, fit=fit,
                 option_axis=option_axis, option_value=option_value,
                 orientation=spec.infill.orientation,

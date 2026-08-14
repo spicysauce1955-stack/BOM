@@ -174,3 +174,39 @@ def test_a_shadowbox_member_carries_its_depth_not_just_its_side():
     slats = [m for m in elevation.members if m.slot_key == "slat"]
     assert slats and all(m.face == "back" for m in slats)
     assert all(m.face_offset_mm == -18 for m in slats)
+
+
+# --- a member that does not span the opening ----------------------------------
+
+def test_a_seated_slat_is_drawn_as_the_piece_the_bom_buys():
+    """The property this module opens by claiming, tested where it was breaking.
+
+    M-SLAT@v2's slat is cut to 1665 in an 1800 mm bay: it starts inside a bottom
+    channel whose face is 50 + 30 = 80 up, less the 15 mm it seats into it, and
+    stops under the top rail's face at 1750 − 20. Drawn full height it would
+    have run through the channel and out past the rail, 135 mm longer than the
+    part on the cut list — on the model whose whole reason to exist is that
+    135 mm.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    panel = resolve_panel(M_SLAT_V2.default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    slat_slot = next(s for s in panel.slots if s.slot_key == "slat")
+
+    drawn = by_slot(elevation, "slat")
+    assert drawn, "the slats must still be drawn"
+    for member in drawn:
+        assert member.y_mm == 65           # 50 + 60//2 − 15
+        assert member.h_mm == 1665         # (1750 − 20) − 65
+        assert member.h_mm == slat_slot.length_mm, \
+            "the drawn member and the bought member are one number"
+    # it starts INSIDE the channel and stops short of the top rail's centreline
+    assert drawn[0].y_mm < 80 and drawn[0].y_mm + drawn[0].h_mm < 1750
+
+
+def test_a_full_height_member_is_still_drawn_across_the_whole_opening():
+    """The extent is used only where the resolver fixed one. Every model that
+    cuts to `panel_height` must draw exactly as it did before."""
+    for member in by_slot(elevation_of(M_SLAT), "slat"):
+        assert (member.y_mm, member.h_mm) == (0, BAY.height_mm)

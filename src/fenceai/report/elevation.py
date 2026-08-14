@@ -133,16 +133,25 @@ def _infill(slot: ResolvedSlot, width_mm: Mm, height_mm: Mm, nominal: Mm):
 
 def _rect(slot, i, cursor, member_width, width_mm, height_mm) -> ElevationMember:
     face = "back" if slot.face_offset_mm < 0 else "front"
+    # A member spans the whole opening unless the resolver said where it starts
+    # and stops. `between_frame` does: a slat seated 15 mm into a bottom channel
+    # and stopping under a top rail is 135 mm shorter than the bay, and drawing
+    # it full height would put the piece the BOM buys and the piece on the
+    # drawing 135 mm apart — on the very model whose reason to exist is that
+    # 135 mm. Both come from one calculation in `_between_frame_extent`.
+    start, extent = 0, height_mm if slot.orientation == "vertical" else width_mm
+    if slot.span_start_mm is not None and slot.length_mm is not None:
+        start, extent = slot.span_start_mm, slot.length_mm
     if slot.orientation == "vertical":
         return ElevationMember(
             slot_key=slot.slot_key, role=slot.role, index=i,
-            x_mm=cursor, y_mm=0, w_mm=member_width, h_mm=height_mm,
+            x_mm=cursor, y_mm=start, w_mm=member_width, h_mm=extent,
             kind="infill", face=face, face_offset_mm=slot.face_offset_mm,
             sku=slot.sku,
         )
     return ElevationMember(
         slot_key=slot.slot_key, role=slot.role, index=i,
-        x_mm=0, y_mm=cursor, w_mm=width_mm, h_mm=member_width,
+        x_mm=start, y_mm=cursor, w_mm=extent, h_mm=member_width,
         kind="infill", face=face, face_offset_mm=slot.face_offset_mm,
         sku=slot.sku,
     )
