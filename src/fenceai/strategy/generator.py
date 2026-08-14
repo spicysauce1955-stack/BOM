@@ -1719,7 +1719,11 @@ def _check_post_lengths(
 ) -> None:
     """Plumb-post consequence of sloped ground: the downhill post of a stepped
     panel is exposed (panel height + step) above ITS ground, plus embedment below.
-    When the catalog knows the post's physical length, verify it suffices."""
+    When the catalog knows the post's physical length, verify it suffices.
+
+    Also the one place `post_embed_mm` becomes a fact about a post: it is recorded
+    on every post here, so the elevation draws the footing the length check paid
+    for and the two cannot drift apart."""
     embed, embed_refs = _resolve_quantity(
         kb, {"scope": bind_scope(scope)}, "post_embed_mm", 600
     )
@@ -1729,6 +1733,16 @@ def _check_post_lengths(
 
     run_lengths = {run.id: run_length(topology, run) for run in topology.runs}
     for post in strategy.posts:
+        # a masonry-mounted post is bolted to what it stands on; only a post set
+        # INTO the ground spends length on embedment
+        #
+        # Recorded BEFORE the adjacency search, because embedment is a property of
+        # how the post is set — resolved once for the whole topology, from a scope
+        # no span narrows. The `continue` below skips posts with no bay to measure
+        # against — the node post of a run whose first bay is a gate has none — and
+        # those are still buried; leaving them at 0 would draw them sitting on top
+        # of the ground.
+        post.embed_mm = embed if post.mounting == "ground" else 0
         adjacent: list[Span] = []
         if post.run_ref.startswith("node:"):
             node_id = post.run_ref.split(":", 1)[1]
@@ -1754,17 +1768,18 @@ def _check_post_lengths(
             import math
 
             exposed = round(exposed / math.cos(math.radians(post.tilt_deg)))
-        # a masonry-mounted post is bolted to what it stands on; only a post set
-        # INTO the ground spends length on embedment
-        required = exposed + (embed if post.mounting == "ground" else 0)
+        required = exposed + post.embed_mm
         product = catalog.products.get(post.sku)
         available = (product.attrs.get("length_mm") if product else None)
         if isinstance(available, int) and required > available:
             node = builder.add(
                 "conflict", "insufficient_post_length",
+                # the post's own embedment, not the resolved default: on a masonry
+                # post required is exposed alone, and a node claiming 600 mm
+                # underground would explain a sum it did not make
                 payload={"element": post.id, "required_mm": required,
                          "available_mm": available, "exposed_mm": exposed,
-                         "embed_mm": embed},
+                         "embed_mm": post.embed_mm},
                 scope_refs=[post.id],
                 governed_by=embed_refs,
             )
@@ -1772,7 +1787,7 @@ def _check_post_lengths(
                 StrategyWarning(
                     code="insufficient_post_length", severity="error",
                     message=f"Post {post.id} needs {required} mm ({exposed} exposed "
-                            f"+ {embed} embedded) but {post.sku} is only "
+                            f"+ {post.embed_mm} embedded) but {post.sku} is only "
                             f"{available} mm long.",
                     element_refs=[post.id], decision_ref=node.id,
                     params={"element": post.id, "required_mm": required,

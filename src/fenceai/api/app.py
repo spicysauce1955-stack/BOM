@@ -368,9 +368,9 @@ def get_structure(run_id: str):
             "run_topology_revision": result.run.topology_revision,
             "project_topology_revision": project.topology.revision,
         })
-    _, inventory, priced = _priced(result)
+    catalog, inventory, priced = _priced(result)
     report = build_structure(project.topology, result.strategy, priced.requirements,
-                             priced.bom, run_id=run_id)
+                             priced.bom, run_id=run_id, catalog=catalog)
     # The layout is a function of the run alone, but the PARTS name the bars a
     # piece is cut from, and those depend on the inventory that was on hand.
     # Stamp it, exactly as /bom does, so two sheets that differ are explainable.
@@ -378,7 +378,7 @@ def get_structure(run_id: str):
         inventory.model_dump_json().encode()).hexdigest()[:16]
     # A bay with a part nothing can supply must still say so on the setting-out
     # sheet, not just on /bom — stamped the same way as inventory_hash, since
-    # build_structure() itself stays a pure function of its four inputs.
+    # build_structure() itself stays a pure function of its inputs.
     report.warnings = priced.warnings
     report.unresolved = priced.unresolved
     return report
