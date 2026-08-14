@@ -380,3 +380,48 @@ def test_editing_a_model_cannot_move_a_stored_runs_bom(client):
     # feature that never works
     fresh = client.post(f"/api/projects/{pid}/generate").json()["result"]
     assert fresh["strategy"]["spans"][0]["panel"]["slots"][0]["qty"] == 5
+
+
+def test_a_model_authored_before_the_joint_rule_still_opens_and_says_why(client):
+    """The joint wave made `base_ref`/`top_ref` under a rule that does not read
+    them a REFUSAL. They were savable before it, so a document written then is
+    now invalid — and "invalid" has to mean an editor that opens with an error
+    the author can act on, never a route that fails and a model nobody can reach
+    to fix. Validation runs on the way OUT of the editor, not on the way in.
+    """
+    body = draft_body("M-OLDREFS")
+    body["default_spec"]["infill"] = {
+        "orientation": "vertical",
+        "pattern": [{
+            "key": "slat", "width_mm": 100, "gap_after_mm": 20,
+            # authored while the fields were accepted and ignored
+            "base_ref": "rail", "top_ref": "rail",
+            "requirement": {"role": "infill", "qty": 1, "length_rule": "panel_height",
+                            "eligibility": {"members": [
+                                {"kind": "catalog_item", "sku": "SLAT-100"}]}},
+        }],
+    }
+    created = client.post("/api/fence-models", json=body).json()
+    version = created["model"]["version"]
+
+    # it saved, and it said what is wrong in the vocabulary a Hebrew UI renders
+    assert created["invalid"]["code"] == "fence_model_invalid"
+    assert "base_ref and top_ref" in created["invalid"]["params"]["errors"]
+
+    # it lists, and it reads back whole — the editor can open it
+    assert any(r["id"] == "M-OLDREFS" for r in client.get("/api/fence-models").json())
+    assert client.get(f"/api/fence-models/M-OLDREFS/{version}").status_code == 200
+
+    # publishing it is refused, which is the gate ...
+    assert client.post(
+        f"/api/fence-models/M-OLDREFS/{version}/publish").status_code == 422
+
+    # ... and fixing it is one edit, which is why the refusal belongs at
+    # authoring rather than at the far end of a quote
+    body["default_spec"]["infill"]["pattern"][0]["base_ref"] = None
+    body["default_spec"]["infill"]["pattern"][0]["top_ref"] = None
+    fixed = client.put("/api/fence-models/M-OLDREFS/draft", json=body).json()
+    assert fixed["invalid"] is None
+    assert client.post(
+        f"/api/fence-models/M-OLDREFS/{fixed['model']['version']}/publish"
+    ).status_code == 200

@@ -422,6 +422,40 @@ def test_a_ref_must_name_a_frame_slot_of_the_same_spec():
     assert any("'screw' is not a frame slot of this spec" in e for e in errs), errs
 
 
+def test_a_ref_may_not_reach_into_another_variants_frame():
+    """"of this spec" is the whole check. Each variant is resolved on its own —
+    `resolve_panel` sees one spec and the frame slots IN it — so a default-spec
+    member naming a slot that exists only in the variant's frame is measured
+    against nothing, in whichever bays the variant does not win."""
+    from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+    from fenceai.fencemodel.model import FromBottom, InfillSpec, Member, Variant
+
+    variant_only = FrameSlot(
+        key="mid_rail", orientation="horizontal", placement=FromBottom(offset_mm=900),
+        thickness_mm=40,
+        requirement=PartRequirement(
+            role="rail", qty=1, length_rule="centre_to_centre",
+            eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")])),
+    )
+    model = _jointed(member_kw={"top_ref": "mid_rail"})
+    model.variants = [Variant(
+        condition=Cmp(cmp="<", left=FieldRef(path="panel.height_mm"), right=Lit(value=1200)),
+        spec=PanelSpec(frame=[*model.default_spec.frame, variant_only],
+                       infill=InfillSpec(orientation="vertical", pattern=[
+                           Member(key="slat", width_mm=100, gap_after_mm=20,
+                                  base_ref="bottom_channel", top_ref="mid_rail",
+                                  requirement=PartRequirement(
+                                      role="infill", qty=1, length_rule="between_frame",
+                                      eligibility=Eligibility(members=[
+                                          EligibleItem(sku="SLAT-100")])))])),
+    )]
+
+    errs = validate_model(model, demo_catalog())
+    assert any("'mid_rail' is not a frame slot of this spec" in e for e in errs), errs
+    # the variant's OWN member names it legitimately, and is not flagged
+    assert sum("mid_rail" in e for e in errs) == 1
+
+
 def test_an_engagement_deeper_than_the_channel_cuts_the_member_too_long():
     """20 mm of slat into a 12 mm channel that keeps 3 mm of insertion clearance
     under it: the seat on offer is 9 mm, so the member stands 11 mm proud — on

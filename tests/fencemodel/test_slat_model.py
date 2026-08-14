@@ -200,12 +200,28 @@ def test_the_slats_are_cut_to_the_opening_plus_what_the_channel_takes():
 def test_the_channel_version_leaves_v1_exactly_as_it_was():
     """A version is immutable (ADR-0006): a run stamped M-SLAT@v1 must come back
     the same panel after v2 exists, so the demonstration is a new document and
-    never an edit. Asserted against the model that BUILDS v1 rather than against
-    the module constant, so a mutation of the shared default would be caught."""
-    assert M_SLAT == slat_model()
-    slat = next(s for s in resolve_panel(M_SLAT.default_spec, BAY).slots
-                if s.slot_key == "slat")
-    assert slat.length_mm == 1800
+    never an edit.
+
+    Asserted as the STRUCTURE v2 changes, one fact at a time. Comparing
+    `M_SLAT == slat_model()` would have been a tautology — `M_SLAT` is literally
+    `slat_model()` — so an edit to the shared builder would move both sides
+    together and the test would stay green while every stored v1 run came back a
+    different panel."""
+    spec = M_SLAT.default_spec
+    (rail,), (slat,), (screw,) = spec.frame, spec.infill.pattern, spec.fixings
+
+    assert [s.key for s in spec.frame] == ["rail"]     # not v2's channel + rail
+    assert rail.thickness_mm == 0 and rail.channel_depth_mm == 0
+    assert rail.joint == "butt" and slat.joint == "butt"
+    assert (slat.base_ref, slat.top_ref) == (None, None)
+    assert (slat.base_engagement_mm, slat.top_engagement_mm) == (0, 0)
+    assert slat.requirement.length_rule == "panel_height"
+    assert (screw.basis, screw.qty_per_basis) == ("per_member_crossing", 2)
+
+    resolved = next(s for s in resolve_panel(spec, BAY).slots
+                    if s.slot_key == "slat")
+    assert resolved.length_mm == 1800
+    assert resolved.span_start_mm is None
 
 
 def test_publishing_the_channel_version_stays_a_decision_someone_makes():
@@ -226,3 +242,49 @@ def test_every_line_still_seeds_a_version_a_project_can_choose():
     assert {m.id for m in demo_model_versions()} == set(demo_models())
     for model_id, active in demo_models().items():
         assert lib.latest_active(model_id) == active
+
+
+def test_the_joint_reaches_the_cut_list_and_the_bar_it_is_cut_from():
+    """The wave's whole claim, proved where it is spendable rather than at the
+    resolver: a run pinned to v2 puts 1665 mm on every slat line, and the same
+    run pinned to v1 puts 1800.
+
+    The bar count does NOT move — SLAT-100 is 6000 mm with a 3 mm kerf, so
+    3 x 1668 = 5004 fits and 3 x 1803 = 5409 fits too — and that is the point of
+    asserting the remnant instead: the joint changes what is cut and what is
+    left over (996 mm against 591), and a test that watched only the bar count
+    would have passed with the engagement thrown away.
+    """
+    from fenceai.fencemodel.library import FenceModelLibrary
+    from fenceai.fencemodel.selection import FenceModelChoice
+    from fenceai.fulfillment.pipeline import price_strategy
+    from fenceai.knowledge.demo import demo_knowledge
+    from fenceai.strategy.generator import generate
+    from tests.conftest import straight_topology
+
+    library = FenceModelLibrary(models=demo_model_versions())
+
+    def slat_lines(version: int):
+        result = generate(
+            straight_topology(6000), demo_knowledge(), demo_catalog(),
+            models=library,
+            default_model=FenceModelChoice(model_id="M-SLAT", version_pin=version),
+        )
+        priced = price_strategy(result.strategy, demo_catalog(), None,
+                                demand_skus=result.run.demand_skus,
+                                preset=result.run.objective_preset)
+        return ([r for r in priced.requirements if r.role == "infill"],
+                priced.bom)
+
+    v2_lines, v2_bom = slat_lines(2)
+    v1_lines, v1_bom = slat_lines(1)
+
+    assert v2_lines and all(r.cut_length_mm == 1665 for r in v2_lines)
+    assert v1_lines and all(r.cut_length_mm == 1800 for r in v1_lines)
+    v2_plan, v1_plan = v2_bom.cut_plans["SLAT-100"], v1_bom.cut_plans["SLAT-100"]
+    assert v2_plan.new_bar_count == v1_plan.new_bar_count, \
+        "3 slats per bar either way — which is why the leftover is the assertion"
+    full = [bar for bar in v2_plan.bars if len(bar.pieces) == 3]
+    assert full and all(bar.leftover_mm == 996 for bar in full)   # 6000 - 3x1665 - 3x3
+    v1_full = [bar for bar in v1_plan.bars if len(bar.pieces) == 3]
+    assert v1_full and all(bar.leftover_mm == 591 for bar in v1_full)
