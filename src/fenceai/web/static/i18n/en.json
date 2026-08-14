@@ -626,5 +626,16 @@
   "error.fence_model_reserved": "{model_id} is the built-in compatibility model and cannot be edited — its products follow your knowledge rules. Duplicate it under a new id to build on it.",
   "error.catalog_changed": "The catalog changed since this strategy was computed, so its prices and cut plans can no longer be shown as they were. Generate again to price it against today's catalog.",
   "error.topology_changed": "The drawing changed since this strategy was computed. Generate again to lay it out over the fence as it is now.",
-  "error.unresolved_supply": "This strategy has {n} part(s) no product can supply, so it cannot be frozen into a quote that would under-price the job."
+  "error.unresolved_supply": "This strategy has {n} part(s) no product can supply, so it cannot be frozen into a quote that would under-price the job.",
+  "material.aluminium": "Aluminium",
+  "material.steel": "Steel",
+  "material.galvanised_steel": "Galvanised steel",
+  "material.composite": "Composite",
+  "material.cedar": "Cedar",
+  "material.concrete": "Concrete",
+  "finish.powder_coated": "Powder coated",
+  "finish.anodised": "Anodised",
+  "finish.mill": "Mill finish",
+  "finish.stained": "Stained",
+  "finish.raw": "Raw"
 }

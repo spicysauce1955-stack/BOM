@@ -1,4 +1,19 @@
-"""Shared demo catalog — the one defined in docs/scenarios/golden-scenarios.md."""
+"""Shared demo catalog — the one defined in docs/scenarios/golden-scenarios.md.
+
+`material` and `finish` are drawn from a small closed vocabulary — material:
+aluminium | steel | galvanised_steel | composite | cedar | concrete; finish:
+powder_coated | anodised | mill | stained | raw — closed because every value has
+to have a word in both locale bundles before a Hebrew reader can be shown it
+(`tests/web/test_locale_bundles.py` derives the check from THIS catalog, so a
+product with a new material fails the suite rather than shipping an English word
+into a Hebrew UI). Nothing in code enumerates them: the vocabulary is data, and a
+company that stocks bamboo adds a product and two locale words.
+
+LATCH deliberately declares none of the three. A product with no material is
+ordinary, and the drawer must show no material row rather than guess one — a demo
+catalog where every product happened to have one would leave that path untested
+by the thing people actually click.
+"""
 
 from __future__ import annotations
 
@@ -20,20 +35,34 @@ def demo_catalog() -> Catalog:
     return Catalog.of(
         Product(sku="POST-S", name="Ground post (soil)", name_i18n={"he": "עמוד קרקע"},
                 consumption=IndivisibleDiscrete(), price_cents=2500,
-                attrs={"length_mm": 2600}),
+                # face_width_mm is the post as SEEN in elevation, which is not
+                # its length and not derivable from anything else here: the macro
+                # drawing needs it to draw a post at its real width instead of a
+                # nominal band. A product without it still draws (nominal, and
+                # said so), which is why it is an attr and not a required field.
+                attrs={"length_mm": 2600, "face_width_mm": 80,
+                       "material": "galvanised_steel", "finish": "mill",
+                       "colour": "#9ca3af"}),
         Product(sku="POST-S-HD", name="Heavy-duty ground post", name_i18n={"he": "עמוד מחוזק"},
                 consumption=IndivisibleDiscrete(), price_cents=4200,
-                attrs={"length_mm": 2600}),
+                attrs={"length_mm": 2600, "face_width_mm": 100,
+                       "material": "galvanised_steel", "finish": "powder_coated",
+                       "colour": "#374151"}),
         Product(sku="POST-M", name="Masonry post/bracket", name_i18n={"he": "עמוד קיר"},
-                consumption=IndivisibleDiscrete(), price_cents=3100),
+                consumption=IndivisibleDiscrete(), price_cents=3100,
+                attrs={"face_width_mm": 60, "material": "steel",
+                       "finish": "powder_coated", "colour": "#374151"}),
         Product(sku="POST-CAP", name="Post cap", name_i18n={"he": "כיפת עמוד"},
-                consumption=IndivisibleDiscrete(), price_cents=300),
+                consumption=IndivisibleDiscrete(), price_cents=300,
+                attrs={"material": "aluminium", "finish": "powder_coated",
+                       "colour": "#374151"}),
         Product(
             sku="RAIL-3000",
             name="Rail stock 3000 mm",
             name_i18n={"he": 'מוט מסילה 3000 מ"מ'},
             consumption=DivisibleLinear(purchase_length_mm=3000, kerf_mm=3, min_reusable_remnant_mm=300),
             price_cents=1800,
+            attrs={"material": "aluminium", "finish": "mill", "colour": "#cbd5e1"},
         ),
         Product(
             sku="SLAT-100",
@@ -50,6 +79,7 @@ def demo_catalog() -> Catalog:
             consumption=DivisibleLinear(purchase_length_mm=6000, kerf_mm=3,
                                         min_reusable_remnant_mm=300),
             price_cents=5400,
+            attrs={"material": "cedar", "finish": "stained", "colour": "#8b5e34"},
         ),
         Product(
             sku="SCREW-S10",
@@ -57,6 +87,7 @@ def demo_catalog() -> Catalog:
             name_i18n={"he": "בורג S10 (קופסה של 20)"},
             consumption=PackagedDiscrete(qty_per_package=20),
             price_cents=450,
+            attrs={"material": "steel", "finish": "mill", "colour": "#6b7280"},
         ),
         Product(
             sku="CONC-25",
@@ -68,6 +99,7 @@ def demo_catalog() -> Catalog:
                 application="per_post_footing",
             ),
             price_cents=800,
+            attrs={"material": "concrete", "finish": "raw", "colour": "#94a3b8"},
         ),
         Product(
             sku="GATE-KIT-1000",
@@ -82,12 +114,20 @@ def demo_catalog() -> Catalog:
             ),
             price_cents=18500,
             # the opening this kit fits: fit is catalog DATA, never parsed from the sku
-            attrs={"category": "gate", "opening_width_mm": 1000},
+            attrs={"category": "gate", "opening_width_mm": 1000,
+                   "material": "aluminium", "finish": "powder_coated",
+                   "colour": "#374151"},
         ),
         Product(sku="GATE-LEAF-1000", name="Gate leaf 1000 mm", name_i18n={"he": 'כנף שער 1000 מ"מ'},
-                consumption=IndivisibleDiscrete(), price_cents=12000),
+                consumption=IndivisibleDiscrete(), price_cents=12000,
+                attrs={"material": "aluminium", "finish": "powder_coated",
+                       "colour": "#374151"}),
         Product(sku="HINGE-SET", name="Hinge set", name_i18n={"he": "סט צירים"},
-                consumption=IndivisibleDiscrete(), price_cents=2200),
+                consumption=IndivisibleDiscrete(), price_cents=2200,
+                attrs={"material": "aluminium", "finish": "anodised",
+                       "colour": "#d1d5db"}),
+        # no material, no finish, no colour: the ordinary case the drawer must
+        # leave blank rather than guess at
         Product(sku="LATCH", name="Latch", name_i18n={"he": "בריח"},
                 consumption=IndivisibleDiscrete(), price_cents=1400),
         substitutions=[

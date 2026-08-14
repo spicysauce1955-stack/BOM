@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, model_validator
 
 from fenceai.core.units import Cents, Mm
+
+_SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class Ratio(BaseModel):
@@ -92,6 +95,12 @@ class Product(BaseModel):
     consumption: Consumption
     price_cents: Cents = 0  # per purchase unit; the FLAT basis authors it here
     pricing: Pricing = FlatPrice()
+    # Open bag of catalog facts. Three of them are the material drawer's
+    # vocabulary — `material`, `finish` and `colour` — and they live HERE rather
+    # than in a Python enum because what a product is made of is the catalog's
+    # answer, not the code's: a company that stocks bamboo adds a product and a
+    # locale word, it does not ship a release. All three are optional, and a
+    # product without `material` shows no material row rather than a guessed one.
     attrs: dict[str, str | int | bool] = {}
 
     def display_name(self, lang: str) -> str:
@@ -114,6 +123,26 @@ class Product(BaseModel):
             raise ValueError(
                 f"{self.sku}: priced by the metre, but it is not bought by the "
                 f"length ({self.consumption.kind}), so a rate prices nothing"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _colour_is_a_swatch(self) -> "Product":
+        """`attrs.colour` is not text, it is paint.
+
+        It reaches the client as a CSS `fill` / `background`, and `esc()` does
+        nothing for that: escaping makes a string safe to put in an element, not
+        safe to hand to the painter, where an arbitrary value is a style the
+        catalog author gets to write into the page. `#rrggbb` is the entire
+        vocabulary a swatch needs, so it is checked at load — the same rule, for
+        the same reason, that `OptionValue.swatch` is checked by
+        `validate_model`."""
+        colour = self.attrs.get("colour")
+        if colour is None:
+            return self
+        if not isinstance(colour, str) or not _SWATCH.match(colour):
+            raise ValueError(
+                f"{self.sku}: attrs.colour must be #rrggbb, got {colour!r}"
             )
         return self
 
