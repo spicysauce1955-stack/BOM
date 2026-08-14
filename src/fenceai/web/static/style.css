@@ -368,6 +368,51 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
   block-size: 10px; border: 1px dashed #475569; background: #cbd5e1;
   opacity: 0.55; margin-inline-end: 4px; vertical-align: baseline; }
 
+/* ---------- the assembly tab: two viewports (js/assembly.js) -------------
+   Split follows the .models-row convention (flex, wrapping, a wide primary and
+   a narrower companion). `data-mode` on the row is what makes the toggle a
+   layout change rather than three renderers. */
+.assembly-row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.assembly-row > #assembly-macro { flex: 3 1 620px; }
+.assembly-row > #assembly-micro { flex: 2 1 360px; }
+.assembly-row[data-mode="macro"] > #assembly-micro,
+.assembly-row[data-mode="micro"] > #assembly-macro { display: none; }
+.assembly-row[data-mode="macro"] > #assembly-macro,
+.assembly-row[data-mode="micro"] > #assembly-micro { flex: 1 1 100%; }
+
+/* The macro drawing is an ELEVATION of the real fence: never mirrored in RTL,
+   for the same reason the plan canvas and the panel elevation are not — the
+   first post of a run is the first post in every language. */
+.macro-svg { inline-size: 100%; block-size: auto; max-block-size: 460px;
+  direction: ltr; cursor: pointer; }
+.macro-ground { fill: none; stroke: #7c6f4f; stroke-width: 1.6; }
+.macro-base { fill: #64748b; fill-opacity: 0.35; stroke: #64748b; stroke-width: 1; }
+.macro-base-masonry_wall { fill: #dc2626; fill-opacity: 0.25; stroke: #dc2626; }
+.macro-base-concrete { fill: #64748b; fill-opacity: 0.35; stroke: #64748b; }
+.macro-bay-face { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.2; }
+.macro-bay:hover .macro-bay-face { stroke: #2563eb; }
+.macro-bay.selected .macro-bay-face { stroke: #2563eb; stroke-width: 2.4;
+  fill: #eff6ff; }
+/* No stroke at macro scale: a 40 mm rail scales to about a pixel, and an outline
+   around it doubles its apparent thickness — a two-rail panel then reads as a
+   pair of black bars rather than as two rails. Fill alone, and the selection
+   colour is what makes a member findable. */
+.macro-member { stroke: none; pointer-events: none; }
+.macro-member.selected { fill: #2563eb; stroke: #1d4ed8; }
+.macro-post-face { fill: #94a3b8; stroke: #475569; stroke-width: 1; }
+.macro-post.macro-nominal .macro-post-face { stroke-dasharray: 5 4; fill-opacity: 0.65; }
+.macro-post.selected .macro-post-face { stroke: #2563eb; stroke-width: 2.4; }
+/* below the base line nothing is visible on site either, so it is hatched */
+.macro-embed { fill: #94a3b8; fill-opacity: 0.5; stroke: #475569;
+  stroke-width: 0.8; stroke-dasharray: 3 3; }
+.macro-footing { fill: #cbd5e1; fill-opacity: 0.75; stroke: #64748b; stroke-width: 0.8; }
+.macro-gate-leaf { fill: #ecfeff; stroke: #0891b2; stroke-width: 1.4;
+  stroke-dasharray: 6 3; }
+.macro-gate-swing { fill: none; stroke: #0891b2; stroke-width: 0.9;
+  stroke-dasharray: 3 4; }
+.macro-dims line { stroke: #94a3b8; stroke-width: 1; }
+.macro-dim-label { font-size: 11px; fill: #475569; }
+
 /* ---------- the printable sheet: drawings + schedules, no chrome ---------- */
 .print-title { display: none; }
 @media print {
@@ -379,6 +424,10 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
   /* the sheet is the drawings AND the schedules, whichever tab is on screen */
   .tab { display: none !important; }
   #tab-canvas, #tab-structure { display: block !important; }
+  /* The assembly tab is deliberately NOT on the sheet. The printed set is the
+     plan plus the schedules a crew measures from; a second elevation of the
+     same fence would add pages without adding a number, and what goes to site
+     is a decision for whoever owns the sheet, not a side effect of a new tab. */
   #tab-canvas .canvas-row { display: block; }
   .canvas-col { max-width: none; }
   svg#canvas { height: 300px; border: 1px solid #cbd5e1; break-inside: avoid; }

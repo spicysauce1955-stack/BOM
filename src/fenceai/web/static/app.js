@@ -2,6 +2,7 @@
 // All behavior lives in js/* modules communicating via state.js events.
 
 import { apiGet } from "./js/api.js";
+import { initAssembly } from "./js/assembly.js";
 import { initChecklist } from "./js/checklist.js";
 import { initEditor } from "./js/editor.js";
 import { currentLocale, initI18n, setLocale, t } from "./js/i18n.js";
@@ -66,6 +67,7 @@ async function main() {
   initModelEditor();
   initStructureData();
   initStructure();
+  initAssembly();
   initProfile();
   initChecklist();
   setupHeader();
