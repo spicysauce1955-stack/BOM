@@ -529,6 +529,71 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
   box.checked = true; box.dispatchEvent(new Event('change')); }""")
         time.sleep(0.6)
         c.shot("26-assembly-macro.png")
+
+        # --- the part drawer, and a what-if that generates nothing ------------
+        # Clicking a member asks "what is that made of, what else fits, do we
+        # have any" — three documents joined on one sku. And the whole point of
+        # the what-if is what it does NOT do: no run is created behind it.
+        runs_before = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}/runs`)
+  .then(r => r.json()).then(rs => rs.length)""")
+        c.js("""
+{ const m = document.querySelector('#assembly-micro .elev-member');
+  m.dispatchEvent(new MouseEvent('click', { bubbles: true })); }""")
+        time.sleep(1.4)
+        # the cost strip must be showing THIS bay's panel before anything is
+        # compared against it — selecting a bay re-prices, and the previous
+        # bay's figure under this bay's tag is the defect this waits out
+        time.sleep(0.8)
+        drawer = c.js("""
+({ rows: document.querySelectorAll('#assembly-drawer .drawer-table tr').length,
+   chosen: document.querySelectorAll('#assembly-drawer .tag.active').length,
+   text: document.getElementById('assembly-drawer')?.textContent || '',
+   priced: /\u20aa/.test(document.getElementById('assembly-drawer')?.textContent || '') })""")
+        check("clicking a member opens its material & inventory drawer",
+              drawer["rows"] >= 2 and drawer["chosen"] == 1 and drawer["priced"])
+        # the caveat is not optional: stock here cannot reach the next job
+        check("the drawer states the stock scope it is reporting",
+              "מחסן" in drawer["text"] or "warehouse" in drawer["text"])
+        c.shot("27-assembly-drawer.png")
+
+        # a dimension change re-prices the panel in place — and nothing else
+        cost_before = c.js(
+            "document.getElementById('assembly-cost')?.textContent || ''")
+        c.js("""
+{ const f = document.getElementById('assembly-height');
+  f.value = '2400'; f.dispatchEvent(new Event('input')); }""")
+        time.sleep(1.6)
+        after = c.js("""
+(async () => {
+  const pid = document.getElementById('project-select').value;
+  const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
+  return {
+    runs: runs.length,
+    cost: document.getElementById('assembly-cost')?.textContent || '',
+    badge: document.querySelector('#assembly-micro .tag.medium')?.textContent || '',
+    back: !!document.getElementById('btn-as-built'),
+    macro_bays: document.querySelectorAll('#assembly-macro .macro-bay').length,
+  };
+})()""")
+        check("a dimension change re-prices the panel in real time",
+              after["cost"] != cost_before and "\u20aa" in after["cost"])
+        # THE check of this wave: the project rule is that generation stays behind
+        # an explicit press, so a live preview must not have fired one
+        check("a what-if generates nothing behind the user's back",
+              after["runs"] == runs_before)
+        check("a what-if says it is one, and offers the way back",
+              bool(after["badge"]) and after["back"])
+        check("the macro view is untouched by a panel what-if",
+              after["macro_bays"] == macro["bays"])
+        c.js("document.getElementById('btn-as-built').click(); 'ok'")
+        time.sleep(1.4)
+        restored = c.js("""
+({ badge: document.querySelector('#assembly-micro .tag.medium')?.textContent || '',
+   cost: document.getElementById('assembly-cost')?.textContent || '' })""")
+        check("back to as-generated restores the panel that was built",
+              not restored["badge"] and restored["cost"] == cost_before)
+
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
 

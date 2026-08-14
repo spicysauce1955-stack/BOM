@@ -413,6 +413,19 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .macro-dims line { stroke: #94a3b8; stroke-width: 1; }
 .macro-dim-label { font-size: 11px; fill: #475569; }
 
+/* ---------- the material & inventory drawer (js/part-drawer.js) ---------- */
+#assembly-drawer:empty { display: none; }
+.drawer-table td, .drawer-table th { vertical-align: top; }
+.drawer-table tr.selected { background: #eff6ff; }
+.drawer-table tr.pinned { outline: 2px solid #2563eb; outline-offset: -2px; }
+/* the ONE place a catalog value reaches paint: `swatch()` has already proved it
+   is a plain #rrggbb, because esc() guarantees nothing in a style context */
+.drawer-swatch { display: inline-block; inline-size: 14px; block-size: 14px;
+  border: 1px solid #94a3b8; border-radius: 3px; margin-inline-end: 5px;
+  vertical-align: text-bottom; }
+#assembly-cost .summary-line { gap: 16px; }
+#assembly-cost .stat b { font-size: 15px; }
+
 /* ---------- the printable sheet: drawings + schedules, no chrome ---------- */
 .print-title { display: none; }
 @media print {

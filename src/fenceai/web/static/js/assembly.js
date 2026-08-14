@@ -27,21 +27,24 @@
 // `#assembly-drawer`. No other module writes those, and this module writes
 // nothing else.
 
-import { esc } from "./api.js";
+import { apiGet, apiSend, esc } from "./api.js";
 import { loadCatalogProducts } from "./builder-ui.js";
 import {
   elevationRects, gapLine, hasNominal, highlightSlot, renderElevation,
 } from "./elevation.js";
 import { el } from "./geom.js";
-import { t } from "./i18n.js";
+import { currentLocale, t } from "./i18n.js";
 import { on, setSelection, state } from "./state.js";
+import { drawerHtml, partOptions } from "./part-drawer.js";
 import {
   footingShape, macroDimensions, macroModel, macroPlacement,
 } from "./runview.js";
 import {
   getReport, isStale, loadStructure, staleCode, staleKind,
 } from "./structure-data.js";
-import { enumWord, tu } from "./units.js";
+import {
+  enumWord, inputStep, money, moneyDelta, toDisplayValue, toMm, tu,
+} from "./units.js";
 
 const MODES = ["split", "macro", "micro"];
 // Above this many drawn members the macro view stops drawing panels as their
@@ -50,6 +53,10 @@ const MODES = ["split", "macro", "micro"];
 // and the picture is not better for it. The view SAYS it simplified rather than
 // quietly showing a different fence.
 const MEMBER_BUDGET = 900;
+// A typed dimension is a keystroke, not a decision: the same debounce the Panel
+// tab and the model editor already use, so the three surfaces that re-price live
+// re-price at one rhythm.
+const PREVIEW_DEBOUNCE_MS = 250;
 
 let mode = "split";
 let annotations = true;
@@ -58,6 +65,16 @@ let microSvg = null;
 let drawnBayId = null;       // the bay the micro view is showing
 let microSlot = null;        // the member slot both views agree on
 let faceWidths = {};         // sku -> declared post face width, from the catalog
+let products = {};           // the catalog, for the drawer's names and materials
+let inventory = null;        // this project's stock, for the drawer's availability
+let preview = null;          // the current PanelPreview (as built, or the what-if)
+let basePreview = null;      // the same bay at its OWN size, nothing pinned
+let previewError = null;     // a locale KEY, never a server sentence
+let previewTimer = null;
+let previewSeq = 0;          // only the newest request may paint
+let whatIf = null;           // { height_mm, width_mm, slot_skus } — null = as built
+let drawerSlot = null;       // the slot the material drawer is open on
+let runBom = null;           // this run's BOM total, in cents
 
 const assemblyTabActive = () =>
   !!document.getElementById("tab-assembly")?.classList.contains("active");
@@ -71,29 +88,54 @@ export function initAssembly() {
   on("structure-loaded", () => { if (assemblyTabActive()) render(); });
   on("locale-changed", () => { if (assemblyTabActive()) render(); });
   on("units-changed", () => { if (assemblyTabActive()) render(); });
+  // a new run is a new fence AND a new price: both viewports and the strip
+  on("result-changed", async () => {
+    clearWhatIf();
+    basePreview = null;
+    await loadRunBom();
+    if (assemblyTabActive()) { render(); schedulePreview(0); }
+  });
+  // stock moved, so the drawer's availability column did too
+  on("inventory-saved", async () => {
+    await ensureInventory();
+    if (assemblyTabActive()) renderDrawer();
+  });
   // a selection made on the Structure tab or in the plan canvas lands here too:
   // switching tabs must not lose which bay the user was looking at
   on("selection-changed", () => { if (assemblyTabActive()) render(); });
 }
 
 async function openTab() {
-  await ensureFaceWidths();
+  await Promise.all([ensureCatalog(), ensureInventory(), loadRunBom()]);
   await loadStructure();
   render();
+  schedulePreview(0);
 }
 
-// Post face widths are catalog DATA (`attrs.face_width_mm`). Read through the
-// shared cache rather than fetched here: the builder already holds the products,
-// and a second copy is a second answer to "how wide is a POST-S".
-async function ensureFaceWidths() {
+// The catalog is DATA this tab reads twice: post face widths for the macro
+// drawing, and names, materials and prices for the drawer. Read through the
+// shared cache rather than fetched here — the builder already holds the
+// products, and a second copy is a second answer to "how wide is a POST-S".
+async function ensureCatalog() {
   try {
-    const products = await loadCatalogProducts();
-    faceWidths = Object.fromEntries(
-      Object.entries(products || {})
-        .map(([sku, p]) => [sku, p?.attrs?.face_width_mm])
-        .filter(([, w]) => Number.isFinite(w)));
+    products = await loadCatalogProducts() || {};
   } catch {
-    faceWidths = {};   // no catalog: every post draws at its nominal, and says so
+    products = {};     // no catalog: every post draws at its nominal, and says so
+  }
+  faceWidths = Object.fromEntries(
+    Object.entries(products)
+      .map(([sku, p]) => [sku, p?.attrs?.face_width_mm])
+      .filter(([, w]) => Number.isFinite(w)));
+}
+
+// Stock is a property of a PROJECT, not of a model — which is why the drawer
+// reads it here and the panel preview deliberately does not take it at all.
+async function ensureInventory() {
+  if (!state.projectId) { inventory = null; return; }
+  try {
+    inventory = await apiGet(`/api/projects/${state.projectId}/inventory`);
+  } catch {
+    inventory = null;
   }
 }
 
@@ -113,7 +155,9 @@ function renderBar() {
       <label class="builder-field"><input type="checkbox" id="assembly-dims"
         ${annotations ? "checked" : ""}> <span class="meta">${
           esc(t("assembly.annotations"))}</span></label>
-    </div>`;
+      ${dimensionFields()}
+    </div>
+    <div id="assembly-cost"></div>`;
   for (const btn of host.querySelectorAll("[data-mode]"))
     btn.addEventListener("click", () => {
       mode = btn.dataset.mode;
@@ -125,6 +169,45 @@ function renderBar() {
     localStorage.setItem("fenceai.assembly.dims", String(annotations));
     render();
   });
+  wireDimensionFields(host);
+}
+
+/** Height and width for the SELECTED bay, seeded from what was generated.
+ *
+ * Typing in them does not edit the fence: it asks "what would this panel be if
+ * it were this size", answered by the preview pipeline in a quarter of a second.
+ * Editing the real fence is the canvas's height tool, and building it is the
+ * Generate button — both one tab away, both unchanged by this. */
+function dimensionFields() {
+  const bay = bayToDraw(getReport());
+  if (!bay) return "";
+  const height = whatIf?.height_mm ?? bay.height_mm;
+  const width = whatIf?.width_mm ?? bay.width_mm;
+  const field = (id, key, value) =>
+    `<label class="builder-field"><span class="meta">${esc(tu(key))}</span>
+      <input id="${id}" type="number" step="${inputStep()}"
+        value="${esc(String(toDisplayValue(value)))}"></label>`;
+  return field("assembly-height", "panel.height", height)
+    + field("assembly-width", "panel.width", width);
+}
+
+function wireDimensionFields(host) {
+  for (const [id, key] of [["assembly-height", "height_mm"],
+                           ["assembly-width", "width_mm"]]) {
+    const field = host.querySelector(`#${id}`);
+    if (!field) continue;
+    field.addEventListener("input", () => {
+      // a blank or unreadable field is NOT a panel of zero height: flag it and
+      // keep the last good figure rather than previewing a fence of nothing
+      const mm = toMm(field.value);
+      const ok = mm !== null && mm > 0;
+      field.classList.toggle("invalid", !ok);
+      if (!ok) return;
+      enterWhatIf({ [key]: mm });
+      schedulePreview();
+      renderCost();
+    });
+  }
 }
 
 // --------------------------------------------------------------- rendering
@@ -135,6 +218,8 @@ function render() {
   if (row) row.dataset.mode = mode;
   renderMacro();
   renderMicro();
+  renderCost();
+  renderDrawer();
 }
 
 /** The refusal branches, borrowed WHOLE from the Structure tab.
@@ -408,24 +493,52 @@ function renderMicro() {
       : emptyMessage();
     return;
   }
-  if (bay.element_id !== drawnBayId) microSlot = null;
+  if (bay.element_id !== drawnBayId) {
+    // Another bay is another panel, and everything held about the last one
+    // belongs to the last one: a highlighted slot names nothing here, and the
+    // preview is a different SIZE. Keeping it made the cost strip quote the
+    // previous bay's panel under this bay's tag — which the browser suite found
+    // and no unit test could, because both numbers are correct in isolation.
+    microSlot = null;
+    drawerSlot = null;
+    whatIf = null;
+    preview = null;
+    basePreview = null;
+    drawnBayId = bay.element_id;
+    schedulePreview(0);
+  }
   drawnBayId = bay.element_id;
 
-  const gaps = gapLine(bay.elevation);
+  // WHICH panel is on screen, said before the drawing rather than after it: a
+  // what-if and a bay that was really generated look identical, and the one
+  // number on this tab that must never be mistaken for the other is a price.
+  const drawn = whatIf && preview ? preview.elevation : bay.elevation;
+  const gaps = gapLine(drawn);
   host.insertAdjacentHTML("beforeend",
     `<div class="summary-line"><b>${esc(t("elevation.bay_title", { tag: bay.tag }))}</b>`
     + `<span class="meta">${esc(tu("assembly.bay_dims",
-        { width_mm: bay.width_mm, height_mm: bay.height_mm }))}</span>`
-    + `<span class="meta">${esc(enumWord(bay.vertical))}</span></div>`
+        { width_mm: drawn.width_mm || bay.width_mm,
+          height_mm: drawn.height_mm || bay.height_mm }))}</span>`
+    + `<span class="meta">${esc(enumWord(bay.vertical))}</span>`
+    + (whatIf
+      ? `<span class="tag medium">${esc(t("assembly.what_if"))}</span>`
+        + `<button id="btn-as-built">${esc(t("assembly.as_built"))}</button>`
+      : `<span class="tag active">${esc(t("assembly.as_built_tag"))}</span>`)
+    + `</div>`
     + `<div id="assembly-micro-draw"></div>`
     + `<div class="meta">${esc(t("assembly.micro_hint"))}${
         gaps ? ` · <bdi class="elev-gaps">${esc(gaps)}</bdi>` : ""}</div>`
-    + (hasNominal(bay.elevation)
+    + (hasNominal(drawn)
       ? `<div class="elevation-note"><span class="elev-swatch"></span>${
           esc(t("elevation.nominal_note"))}</div>` : ""));
+  host.querySelector("#btn-as-built")?.addEventListener("click", () => {
+    clearWhatIf();
+    schedulePreview(0);
+    render();
+  });
 
   const draw = host.querySelector("#assembly-micro-draw");
-  const svg = renderElevation(bay.elevation, { onSelect: selectSlot });
+  const svg = renderElevation(drawn, { onSelect: selectSlot });
   if (!svg) {
     draw.innerHTML = `<div class="meta">${esc(t("elevation.empty"))}</div>`;
     return;
@@ -436,10 +549,170 @@ function renderMicro() {
 }
 
 /** Clicking the same member twice clears it — a highlight with no way off is a
- *  highlight the user has to leave the tab to be rid of. */
+ *  highlight the user has to leave the tab to be rid of. It also opens (and
+ *  closes) the drawer, because "which of these is the rail" and "what is that
+ *  rail made of" are the same click in every CAD tool a person has used. */
 function selectSlot(slotKey) {
   microSlot = microSlot === slotKey ? null : slotKey;
+  drawerSlot = microSlot;
   applySlot();
+  renderDrawer();
+}
+
+// ------------------------------------------------------- the panel preview
+//
+// The drawer needs the slot's ELIGIBILITY, and a stored run's structure report
+// does not carry it — it reports what was bought, which is the point of a bill
+// of materials. The eligible set lives on a panel preview, so the drawer asks
+// for one: same model, same version, same bay size. It is not a second opinion
+// about the fence — a preview at the bay's own dimensions resolves the panel the
+// run resolved — and it is never stored, quoted or generated from.
+//
+// It is also what makes a material swap and a dimension change immediate: both
+// re-run this one request, and both are explicitly labelled a what-if until
+// somebody generates.
+
+/** "M-SLAT@v1" -> { id: "M-SLAT", version: 1 }, or null.
+ *
+ * A run generated before fence models carries no model_ref at all, and a bay
+ * from one gets no drawer rather than a drawer full of guesses. */
+export function modelRefParts(ref) {
+  const m = /^(.+)@v(\d+)$/.exec(String(ref || ""));
+  return m ? { id: m[1], version: Number(m[2]) } : null;
+}
+
+function schedulePreview(delay = PREVIEW_DEBOUNCE_MS) {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, delay);
+}
+
+async function runPreview() {
+  const bay = bayToDraw(getReport());
+  const ref = modelRefParts(bay?.elevation?.model_ref);
+  if (!ref) { preview = null; previewError = null; renderCost(); renderDrawer(); return; }
+  const seq = ++previewSeq;
+  const body = {
+    height_mm: whatIf?.height_mm ?? bay.height_mm,
+    width_mm: whatIf?.width_mm ?? bay.width_mm,
+    slot_skus: whatIf?.slot_skus || {},
+  };
+  try {
+    const out = await apiSend(
+      "POST", `/api/fence-models/${encodeURIComponent(ref.id)}/${ref.version}/preview`,
+      body, { quiet: true });
+    if (seq !== previewSeq) return;      // a later request already answered
+    preview = out;
+    previewError = null;
+    // the baseline the what-if is compared against: the bay at its OWN size,
+    // with nothing pinned. Kept separately so a delta is always against what is
+    // actually built, never against the previous what-if.
+    if (!whatIf) basePreview = out;
+  } catch (err) {
+    if (seq !== previewSeq) return;
+    preview = whatIf ? preview : null;   // keep the last good drawing on screen
+    previewError = refusalCode(err);
+  }
+  renderCost();
+  renderDrawer();
+  if (whatIf) renderMicro();
+}
+
+/** The refusal's `code`, so a coded 422 can be said in the user's language.
+ *  Same shape as `structure-data.js`'s — a panel is not a log viewer. */
+function refusalCode(err) {
+  try {
+    const detail = JSON.parse(String(err?.message || ""))?.detail;
+    if (detail?.code) return `error.${detail.code}`;
+  } catch { /* not JSON */ }
+  return "assembly.preview_failed";
+}
+
+function clearWhatIf() {
+  whatIf = null;
+  preview = basePreview;
+}
+
+function enterWhatIf(patch) {
+  const bay = bayToDraw(getReport());
+  whatIf = {
+    height_mm: whatIf?.height_mm ?? bay?.height_mm ?? 0,
+    width_mm: whatIf?.width_mm ?? bay?.width_mm ?? 0,
+    slot_skus: { ...(whatIf?.slot_skus || {}) },
+    ...patch,
+  };
+}
+
+// ---------------------------------------------------------- the cost strip
+
+/** What this tab currently costs, and WHICH of two questions that answers.
+ *
+ * A run's BOM and one panel's preview are different numbers with the same shape,
+ * and a strip that silently switched between them would be the worst kind of
+ * live figure. So it names both, every time. */
+function renderCost() {
+  const host = document.getElementById("assembly-cost");
+  if (!host) return;
+  const bits = [];
+  if (runBom !== null)
+    bits.push(`<span class="stat"><span class="meta">${esc(t("assembly.run_bom"))}</span> `
+      + `<b class="num">${esc(money(runBom))}</b></span>`);
+  if (previewError)
+    bits.push(`<span class="stat meta">${esc(t(previewError, { code: "" }))}</span>`);
+  else if (preview)
+    bits.push(`<span class="stat"><span class="meta">${esc(t("assembly.panel_cost"))}</span> `
+      + `<b class="num">${esc(money(preview.total_cents))}</b></span>`);
+  if (whatIf && preview && basePreview
+      && preview.total_cents !== basePreview.total_cents)
+    bits.push(`<span class="stat"><span class="meta">${esc(t("assembly.vs_as_built"))}</span> `
+      + `<b class="num">${esc(moneyDelta(preview.total_cents - basePreview.total_cents))}</b></span>`);
+  if (whatIf)
+    bits.push(`<span class="stat meta">${esc(t("assembly.what_if_note"))}</span>`);
+  host.innerHTML = `<div class="summary-line">${bits.join("")}</div>`;
+}
+
+async function loadRunBom() {
+  const runId = state.result?.run?.id;
+  if (!runId) { runBom = null; return; }
+  try {
+    const doc = await apiGet(`/api/runs/${runId}/bom`);
+    runBom = doc?.bom?.total_cents ?? null;
+  } catch {
+    // a stale run refuses its money views, and the two viewports already say so
+    runBom = null;
+  }
+}
+
+// -------------------------------------------------------------- the drawer
+
+function renderDrawer() {
+  const host = document.getElementById("assembly-drawer");
+  if (!host) return;
+  if (!drawerSlot) { host.innerHTML = ""; return; }
+  if (!preview) {
+    host.innerHTML = `<div class="panel meta">${
+      esc(t(previewError || "assembly.no_options_here"))}</div>`;
+    return;
+  }
+  const model = partOptions(preview, drawerSlot, products, inventory);
+  if (!model) { host.innerHTML = ""; return; }
+  host.innerHTML = drawerHtml(model, {
+    locale: currentLocale(), pinned: whatIf?.slot_skus?.[drawerSlot] || null,
+  });
+  host.querySelector("#btn-drawer-close")?.addEventListener("click", () => {
+    drawerSlot = null;
+    renderDrawer();
+  });
+  // the drawer opens BELOW two viewports, so on a laptop it opens off-screen —
+  // an inspector nobody can see reads as a click that did nothing
+  host.querySelector("#assembly-drawer-panel")
+    ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  for (const btn of host.querySelectorAll("[data-pick-sku]"))
+    btn.addEventListener("click", () => {
+      enterWhatIf({ slot_skus: { ...(whatIf?.slot_skus || {}),
+                                 [drawerSlot]: btn.dataset.pickSku } });
+      schedulePreview(0);
+      render();
+    });
 }
 
 // The two viewports agree about one slot: the micro drawing raises it, and the
