@@ -355,3 +355,143 @@ def test_a_named_eligibility_group_is_refused_because_it_could_change_the_answer
     errs = validate_model(_model(PanelSpec(frame=[_slot(requirement=req)])),
                           demo_catalog())
     assert any("Eligibility.group" in e and "not yet supported" in e for e in errs)
+
+
+# ---- joint geometry (two-tier visualizer, W2) --------------------------------
+#
+# These are not "invalid data" in the schema sense — every one of them loads,
+# resolves, and produces an integer. They are refused because the integer would
+# be wrong on every bay of every job built to the model, and would arrive on a
+# cut list looking exactly like a measured one. So each test below asserts BOTH
+# halves: the mistake is caught, and the same model without it is clean.
+
+def _jointed(frame_kw=None, top_kw=None, member_kw=None, member_req=None) -> FenceModel:
+    """A slat panel seated into a bottom channel and butted under a top rail —
+    the shape M-SLAT@v2 has — with each part open to the caller so a test can
+    change exactly one thing."""
+    from fenceai.fencemodel.model import FromBottom, FromTop, InfillSpec, Member
+
+    def rail(key, placement, **kw):
+        return FrameSlot(
+            key=key, orientation="horizontal", placement=placement,
+            requirement=PartRequirement(
+                role="rail", qty=1, length_rule="centre_to_centre",
+                eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")]),
+            ),
+            **kw,
+        )
+
+    base = dict(thickness_mm=60, joint="channel", channel_depth_mm=20,
+                insertion_margin_mm=3)
+    member = dict(base_ref="bottom_channel", top_ref="top_rail",
+                  joint="channel", base_engagement_mm=15)
+    req = member_req or PartRequirement(
+        role="infill", qty=1, length_rule="between_frame",
+        eligibility=Eligibility(members=[EligibleItem(sku="SLAT-100")]),
+    )
+    return _model(PanelSpec(
+        frame=[rail("bottom_channel", FromBottom(offset_mm=50),
+                    **{**base, **(frame_kw or {})}),
+               rail("top_rail", FromTop(offset_mm=50),
+                    **{**dict(thickness_mm=40), **(top_kw or {})})],
+        infill=InfillSpec(orientation="vertical", pattern=[Member(
+            key="slat", width_mm=100, gap_after_mm=20,
+            **{**member, **(member_kw or {})}, requirement=req)]),
+    ))
+
+
+def test_a_jointed_panel_validates_clean():
+    """The baseline every refusal below is a single edit away from. Without it,
+    a test asserting "some error is reported" would pass on a fixture that was
+    broken for an unrelated reason."""
+    assert validate_model(_jointed(), demo_catalog()) == []
+
+
+def test_between_frame_without_refs_has_nothing_to_measure_between():
+    errs = validate_model(
+        _jointed(member_kw={"base_ref": None, "top_ref": None, "joint": "butt",
+                            "base_engagement_mm": 0}),
+        demo_catalog())
+    assert any("nothing to measure between" in e for e in errs), errs
+
+
+def test_a_ref_must_name_a_frame_slot_of_the_same_spec():
+    """A fixing key, an infill key, or a frame slot of a DIFFERENT variant are
+    all plausible things to type, and none of them has a placement."""
+    errs = validate_model(_jointed(member_kw={"base_ref": "screw"}), demo_catalog())
+    assert any("'screw' is not a frame slot of this spec" in e for e in errs), errs
+
+
+def test_an_engagement_deeper_than_the_channel_cuts_the_member_too_long():
+    """20 mm of slat into a 12 mm channel: the member cannot go in that far, so
+    it stands 8 mm proud — on every bay, in a number that reads as measured."""
+    errs = validate_model(
+        _jointed(frame_kw={"channel_depth_mm": 12},
+                 member_kw={"base_engagement_mm": 20}),
+        demo_catalog())
+    assert any("8 mm too long" in e for e in errs), errs
+    assert validate_model(
+        _jointed(frame_kw={"channel_depth_mm": 12},
+                 member_kw={"base_engagement_mm": 12}), demo_catalog()) == []
+
+
+def test_a_channel_inside_an_undeclared_member_has_no_datum():
+    """`thickness_mm=0` is "undeclared" everywhere else in this schema, so a
+    depth measured into it is measured from a face the model does not have."""
+    errs = validate_model(_jointed(frame_kw={"thickness_mm": 0}), demo_catalog())
+    assert any("thickness_mm is undeclared" in e for e in errs), errs
+
+
+def test_a_margin_that_reaches_the_bottom_of_the_channel_is_refused():
+    """The margin is the clearance under the seated end. At or past the depth it
+    swallows the seat, and the member rests on nothing."""
+    errs = validate_model(_jointed(frame_kw={"insertion_margin_mm": 20}),
+                          demo_catalog())
+    assert any("swallows the whole seat" in e for e in errs), errs
+    assert validate_model(_jointed(frame_kw={"insertion_margin_mm": 19}),
+                          demo_catalog()) == []
+
+
+def test_a_joint_kind_with_no_numbers_behind_it_is_refused_at_both_ends():
+    """The kind is what the drawing and the shop read; the millimetres are what
+    the cut list reads. A `channel` with neither a depth nor an engagement is a
+    butt joint wearing a better name — and it would be DRAWN as a housed one."""
+    frame_errs = validate_model(
+        _jointed(top_kw={"joint": "bracket"}), demo_catalog())
+    assert any("joint='bracket'" in e and "channel_depth_mm=0" in e
+               for e in frame_errs), frame_errs
+
+    member_errs = validate_model(
+        _jointed(member_kw={"joint": "groove", "base_engagement_mm": 0}),
+        demo_catalog())
+    assert any("joint='groove'" in e and "no engagement" in e
+               for e in member_errs), member_errs
+
+
+def test_a_frame_slot_may_not_declare_between_frame():
+    """It is a member-to-frame rule and a frame slot has no refs, so the slot
+    would resolve to no cut length at all — and a divisible rail asked for with
+    no length plans no bars, prices nothing, and reads as covered from stock."""
+    req = PartRequirement(
+        role="rail", qty=1, length_rule="between_frame",
+        eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")]),
+    )
+    errs = validate_model(_model(PanelSpec(frame=[_slot(requirement=req)])),
+                          demo_catalog())
+    assert any("has no base_ref/top_ref to measure between" in e for e in errs), errs
+
+
+def test_refs_under_any_other_length_rule_are_refused_as_unbuilt():
+    """The gap this wave closed, kept closed from the other side. `_length_for`
+    reads the refs under `between_frame` and under no other rule, so a member
+    that declares "starts at the bottom rail" and is cut to `panel_height` runs
+    past it to the ground — while the editor shows both selects, answered."""
+    errs = validate_model(
+        _jointed(member_kw={"joint": "butt", "base_engagement_mm": 0},
+                 member_req=PartRequirement(
+                     role="infill", qty=1, length_rule="panel_height",
+                     eligibility=Eligibility(members=[EligibleItem(sku="SLAT-100")]),
+                 )),
+        demo_catalog())
+    assert any("base_ref and top_ref" in e and "not yet supported" in e
+               for e in errs), errs
