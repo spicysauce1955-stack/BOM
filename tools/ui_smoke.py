@@ -434,6 +434,104 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
 
+        # --- the Assembly tab: the fence standing up, beside one panel ---------
+        # The plan looks DOWN and the schedule is a table; neither shows a panel
+        # docked between two posts, a footing under one, or a step-down as a
+        # fence. Both viewports here are drawn from the SAME structure report the
+        # schedule is drawn from, which is what stops them disagreeing.
+        c.js("document.querySelector('#tabs button[data-tab=\"assembly\"]').click(); 'ok'")
+        time.sleep(1.6)
+        macro = c.js("""
+(async () => {
+  const pid = document.getElementById('project-select').value;
+  const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
+  const report = await (await fetch(
+    `/api/runs/${runs[runs.length - 1].id}/structure`)).json();
+  const stations = report.sections.reduce((n, s) => n + s.setting_out.length, 0);
+  const bays = report.sections.reduce((n, s) => n + s.bays.length, 0);
+  const gates = report.sections.reduce((n, s) => n + s.gates.length, 0);
+  const svg = document.querySelector('#assembly-macro .macro-svg');
+  return {
+    stations, bays, gates,
+    drawn_posts: svg ? svg.querySelectorAll('.macro-post').length : 0,
+    drawn_bays: svg ? svg.querySelectorAll('.macro-bay').length : 0,
+    drawn_gates: svg ? svg.querySelectorAll('.macro-gate').length : 0,
+    embeds: svg ? svg.querySelectorAll('.macro-embed').length : 0,
+    footings: svg ? svg.querySelectorAll('.macro-footing').length : 0,
+    members: svg ? svg.querySelectorAll('.macro-member').length : 0,
+    dims: svg ? svg.querySelectorAll('.macro-dims text').length : 0,
+    micro: document.querySelectorAll('#assembly-micro .elevation-svg').length,
+  };
+})()""")
+        # one drawn thing per scheduled thing: a viewport that quietly dropped a
+        # post would still look like a fence
+        check("the macro view draws every post, bay and gate the schedule lists",
+              macro["drawn_posts"] == macro["stations"]
+              and macro["drawn_bays"] == macro["bays"]
+              and macro["drawn_gates"] == macro["gates"])
+        check("posts are drawn in the ground they are set in",
+              macro["embeds"] > 0 and macro["footings"] > 0)
+        check("a bay is drawn as its own members, not as a grey block",
+              macro["members"] > 0)
+        check("the macro drawing is dimensioned", macro["dims"] > 0)
+        check("the micro viewport assembles a panel beside it", macro["micro"] == 1)
+        c.shot("25-assembly-split.png")
+
+        # selection is SHARED: clicking a bay up there opens it down here. Two
+        # viewports that each kept their own idea of "the current bay" is the
+        # failure this prevents — and it is invisible until you compare tags.
+        picked = c.js("""
+(() => {
+  const bays = [...document.querySelectorAll('#assembly-macro .macro-bay')];
+  const last = bays[bays.length - 1];
+  last.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return last.getAttribute('data-element');
+})()""")
+        time.sleep(0.8)
+        micro_head = c.js(
+            "document.querySelector('#assembly-micro .summary-line b')?.textContent || ''")
+        picked_tag = c.js(f"""
+(async () => {{
+  const pid = document.getElementById('project-select').value;
+  const runs = await (await fetch(`/api/projects/${{pid}}/runs`)).json();
+  const report = await (await fetch(
+    `/api/runs/${{runs[runs.length - 1].id}}/structure`)).json();
+  const bay = report.sections.flatMap(s => s.bays)
+    .find(b => b.element_id === {picked!r});
+  return bay ? bay.tag : '';
+}})()""")
+        check("clicking a bay in the macro view assembles THAT bay in the micro view",
+              bool(picked_tag) and picked_tag in micro_head)
+
+        # the toggle is a layout change, not a third renderer
+        c.js("document.querySelector('#assembly-bar [data-mode=\"micro\"]').click(); 'ok'")
+        time.sleep(0.5)
+        hidden = c.js("""
+({ macro: getComputedStyle(document.getElementById('assembly-macro')).display,
+   micro: getComputedStyle(document.getElementById('assembly-micro')).display })""")
+        check("the viewport toggle hides the other view",
+              hidden["macro"] == "none" and hidden["micro"] != "none")
+        c.js("document.querySelector('#assembly-bar [data-mode=\"split\"]').click(); 'ok'")
+        time.sleep(0.5)
+
+        # dimensions come off, and the drawing stays
+        c.js("""
+{ const box = document.getElementById('assembly-dims');
+  box.checked = false; box.dispatchEvent(new Event('change')); }""")
+        time.sleep(0.6)
+        bare = c.js("""
+({ dims: document.querySelectorAll('#assembly-macro .macro-dims text').length,
+   posts: document.querySelectorAll('#assembly-macro .macro-post').length })""")
+        check("the dimension layer can be switched off without losing the drawing",
+              bare["dims"] == 0 and bare["posts"] == macro["stations"])
+        c.js("""
+{ const box = document.getElementById('assembly-dims');
+  box.checked = true; box.dispatchEvent(new Event('change')); }""")
+        time.sleep(0.6)
+        c.shot("26-assembly-macro.png")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.3)
+
         # --- quotes: snapshot, freeze, accept ---------------------------------
         # save-quote opens an inline label form (no window.prompt anymore)
         c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
