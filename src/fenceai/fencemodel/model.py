@@ -497,6 +497,7 @@ def _joint_errors(spec: PanelSpec) -> list[str]:
                 "to no cut length at all"
             )
 
+    infill_orientation = spec.infill.orientation if spec.infill else None
     for member in (spec.infill.pattern if spec.infill else []):
         rule = member.requirement.length_rule
         if rule == "between_frame" and not (member.base_ref and member.top_ref):
@@ -522,6 +523,26 @@ def _joint_errors(spec: PanelSpec) -> list[str]:
                     f"infill member {member.key!r}: {name}={ref!r} is not a frame "
                     "slot of this spec, so the member has no placed member to "
                     "measure from — refs name frame slots only"
+                )
+                continue
+            if target.orientation == infill_orientation:
+                # A member is measured between the two frame members it CROSSES,
+                # and `placement_positions` places a horizontal slot up the
+                # height while a vertical one runs across the clear width. So a
+                # vertical slat referring to a vertical stile would be cut to a
+                # distance measured across the bay — a width, on a part that runs
+                # up it. Not in the wave's list of refusals and added anyway: the
+                # arithmetic below is orientation-blind by design (it reads
+                # positions, not axes), which makes this the one mistake it
+                # cannot notice, and the number it produces looks like every
+                # other length on the cut list.
+                errors.append(
+                    f"infill member {member.key!r}: {name}={ref!r} is a "
+                    f"{target.orientation} frame slot and the infill runs "
+                    f"{infill_orientation}, so they never cross — the member "
+                    "would be cut to a distance measured along the wrong axis of "
+                    "the panel. A member is measured between the frame members "
+                    "it crosses"
                 )
                 continue
             if engagement > target.channel_depth_mm:

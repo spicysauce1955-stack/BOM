@@ -372,14 +372,14 @@ def _jointed(frame_kw=None, top_kw=None, member_kw=None, member_req=None) -> Fen
     from fenceai.fencemodel.model import FromBottom, FromTop, InfillSpec, Member
 
     def rail(key, placement, **kw):
-        return FrameSlot(
-            key=key, orientation="horizontal", placement=placement,
-            requirement=PartRequirement(
+        return FrameSlot(**{
+            "key": key, "orientation": "horizontal", "placement": placement,
+            "requirement": PartRequirement(
                 role="rail", qty=1, length_rule="centre_to_centre",
                 eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")]),
             ),
             **kw,
-        )
+        })
 
     base = dict(thickness_mm=60, joint="channel", channel_depth_mm=20,
                 insertion_margin_mm=3)
@@ -466,6 +466,24 @@ def test_a_joint_kind_with_no_numbers_behind_it_is_refused_at_both_ends():
         demo_catalog())
     assert any("joint='groove'" in e and "no engagement" in e
                for e in member_errs), member_errs
+
+
+def test_a_ref_must_name_a_frame_slot_the_member_actually_crosses():
+    """`placement_positions` places a horizontal slot up the HEIGHT and a
+    vertical one across the CLEAR WIDTH, and `_between_frame_length` reads
+    positions without asking which axis they are on — deliberately, since it is
+    the same arithmetic either way. So a vertical slat referred to a vertical
+    stile is cut to a distance measured across the bay, on a part that runs up
+    it, and the resulting integer looks like every other length in the list.
+    """
+    errs = validate_model(
+        _jointed(top_kw={"orientation": "vertical",
+                         "joint": "channel", "channel_depth_mm": 20}),
+        demo_catalog())
+    assert any("never cross" in e for e in errs), errs
+    # and the same model with the stile turned back into a rail is clean, so
+    # this is the orientation being read and not the fixture being broken
+    assert validate_model(_jointed(), demo_catalog()) == []
 
 
 def test_a_frame_slot_may_not_declare_between_frame():
