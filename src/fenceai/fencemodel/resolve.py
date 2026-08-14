@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from fenceai.core.errors import RequestRefused
 from fenceai.core.units import Mm
 from fenceai.fencemodel.fit import FitResult, fit_pattern
 from fenceai.fencemodel.model import (
@@ -29,6 +30,12 @@ class PanelContext(BaseModel):
     slope_len_mm: Mm | None = None
     params: dict[str, int] = {}      # knowledge-resolved: rails_per_span, ...
     options: dict[str, str | int] = {}
+    # A product the CALLER named for a slot — the material drawer's "build this
+    # panel in cedar instead". It narrows that slot's eligibility exactly as an
+    # option axis does and never bypasses it (`_pinned_sku`). Empty in every
+    # generated run: a stored fence is built to its model and its overrides, not
+    # to whatever a preview was last asked to imagine.
+    slot_skus: dict[str, str] = {}
 
     def condition_ctx(self) -> dict:
         return {"panel": {
@@ -75,6 +82,12 @@ class ResolvedSlot(BaseModel):
     # divergent implementation of the narrowing rule.
     option_axis: str | None = None
     option_value: str | None = None
+    # and which product a caller PINNED this slot to, if one did. Recorded for
+    # exactly the reason the axis above is: the narrowing rule has one
+    # implementation, and a reader that matched the resolved sku back to the
+    # request to decide whether it was asked for or merely chosen would be a
+    # second one — it cannot tell "cedar was requested" from "cedar won anyway".
+    pinned_sku: str | None = None
 
 
 class ResolvedPanel(BaseModel):
@@ -251,6 +264,54 @@ def _chosen_option(
             req.option_axis, value)
 
 
+def _pinned_sku(
+    slot_key: str, eligibility: Eligibility, ctx: PanelContext
+) -> tuple[Eligibility, str | None]:
+    """The caller named a product for this slot: narrow to it, or refuse.
+
+    The same discipline as `_chosen_option`, for the same reason and applied
+    AFTER it — an answer narrows a slot's eligibility, it never bypasses it. The
+    surviving member keeps its own `priority` and its own `approval`, so picking
+    a colour cannot promote a product past an approval it still needs, and a pin
+    naming a product the axis already ruled out is out of the running because
+    the axis put it there.
+
+    A sku that is not a member of that eligibility is REFUSED, not dropped:
+    ignoring it would price a panel nobody asked for and present the number as
+    the answer to the question that was asked.
+    """
+    sku = ctx.slot_skus.get(slot_key)
+    if sku is None:
+        return eligibility, None
+    members = [m for m in eligibility.members if m.sku == sku]
+    if not members:
+        raise RequestRefused(
+            code="sku_not_eligible",
+            message=f"slot {slot_key} cannot be supplied by {sku}",
+            slot_key=slot_key, sku=sku,
+        )
+    return eligibility.model_copy(update={"members": members}), sku
+
+
+def _refuse_unknown_slots(slots: list[ResolvedSlot], ctx: PanelContext) -> None:
+    """A pin on a slot this panel does not have is refused for the same reason a
+    pin on an ineligible product is: it is a question about a different panel,
+    and answering it with this one's price would be answering something else.
+
+    Checked against the slots RESOLVED rather than against the spec, because a
+    slot the fit placed none of (an infill member with no room, a fixing basis
+    that came out zero) is a slot this bay genuinely does not have.
+    """
+    resolved = {slot.slot_key for slot in slots}
+    for slot_key, sku in ctx.slot_skus.items():
+        if slot_key not in resolved:
+            raise RequestRefused(
+                code="sku_not_eligible",
+                message=f"this panel has no slot called {slot_key}",
+                slot_key=slot_key, sku=sku,
+            )
+
+
 def resolve_panel(
     spec: PanelSpec,
     ctx: PanelContext,
@@ -267,6 +328,7 @@ def resolve_panel(
         count = (_qty(frame_slot.placement.count, frame_slot.placement.count_param, ctx)
                  if isinstance(frame_slot.placement, Distributed) else 1)
         eligibility, option_axis, option_value = _chosen_option(req, ctx)
+        eligibility, pinned = _pinned_sku(frame_slot.key, eligibility, ctx)
         # a horizontal member is placed up the HEIGHT; a vertical one across the
         # clear width
         span = (ctx.height_mm if frame_slot.orientation == "horizontal"
@@ -276,7 +338,7 @@ def resolve_panel(
             slot_kind="frame",
             length_mm=_length_for(req, ctx), length_basis=ctx.length_basis,
             eligibility=eligibility,
-            option_axis=option_axis, option_value=option_value,
+            option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
             orientation=frame_slot.orientation,
             thickness_mm=frame_slot.thickness_mm or None,
             positions_mm=placement_positions(frame_slot.placement, count, span),
@@ -300,13 +362,14 @@ def resolve_panel(
                 continue
             eligibility, option_axis, option_value = _chosen_option(
                 member.requirement, ctx)
+            eligibility, pinned = _pinned_sku(member.key, eligibility, ctx)
             slots.append(ResolvedSlot(
                 slot_key=member.key, role=member.requirement.role,
                 slot_kind="infill", qty=n * member.requirement.qty,
                 length_mm=_length_for(member.requirement, ctx),
                 length_basis=ctx.length_basis,
                 eligibility=eligibility, fit=fit,
-                option_axis=option_axis, option_value=option_value,
+                option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
                 orientation=spec.infill.orientation,
                 member_width_mm=member.width_mm,
                 cycle_widths_mm=[m.width_mm for m in spec.infill.pattern],
@@ -339,11 +402,13 @@ def resolve_panel(
         if not basis:
             continue
         eligibility, option_axis, option_value = _chosen_option(rule.requirement, ctx)
+        eligibility, pinned = _pinned_sku(rule.key, eligibility, ctx)
         slots.append(ResolvedSlot(
             slot_key=rule.key, role=rule.requirement.role, slot_kind="fixing",
             qty=per * basis,
             eligibility=eligibility,
-            option_axis=option_axis, option_value=option_value,
+            option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
         ))
 
+    _refuse_unknown_slots(slots, ctx)
     return ResolvedPanel(model_ref=model_ref, variant_index=variant_index, slots=slots)

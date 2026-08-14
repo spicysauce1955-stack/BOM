@@ -37,6 +37,27 @@ class InvalidTopology(FenceAiError):
     pass
 
 
+class RequestRefused(FenceAiError, ValueError):
+    """The REQUEST names something the model does not have — as `code + params`.
+
+    Distinct from `ReadRefused`, which is about stored data that can no longer be
+    served: here nothing is wrong with what is stored, the caller asked for a
+    part the panel cannot be built from. That is a different answer (422: fix
+    your request, not 400/409: regenerate), and a route that told the two apart
+    by inspecting the code would be a second list of codes drifting quietly out
+    of step with this one.
+
+    Subclasses ValueError for the same reason `ReadRefused` does: every existing
+    `except ValueError` around the panel pipeline keeps catching it, so a caller
+    that does not care about the code is unchanged.
+    """
+
+    def __init__(self, code: str, message: str, **params: str | int):
+        super().__init__(message)
+        self.code = code
+        self.params: dict[str, str | int] = params
+
+
 class ReadRefused(FenceAiError, ValueError):
     """A stored run cannot be read, as `code + params` rather than a sentence.
 

@@ -24,7 +24,7 @@ from fenceai.ai.claude import build_interpreter  # noqa: E402
 from fenceai.ai.stub import StubCritic, StubProposer
 from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import Catalog, Product, catalog_hash
-from fenceai.core.errors import GenerationFailure, ReadRefused
+from fenceai.core.errors import GenerationFailure, ReadRefused, RequestRefused
 from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
 from fenceai.decisions.supply import with_supply_decisions
@@ -808,6 +808,11 @@ def set_fence_model_status(
 def _preview_or_refuse(model: FenceModel, bay: PreviewRequest) -> PanelPreview:
     try:
         return preview_panel(model, bay, state.store.load_catalog())
+    except RequestRefused as e:
+        # 422, not 400: nothing stored is wrong — the body named a product this
+        # slot cannot be supplied by, or a slot this panel has not got, and the
+        # fix is to the request. Caught first because it is also a ValueError.
+        raise HTTPException(422, {"code": e.code, "params": e.params, "message": str(e)})
     except ReadRefused as e:
         raise HTTPException(400, {"code": e.code, "params": e.params, "message": str(e)})
     except ValueError as e:

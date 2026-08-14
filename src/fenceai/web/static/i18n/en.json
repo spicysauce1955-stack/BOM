@@ -644,5 +644,17 @@
   "assembly.dim_total": "total {total_mm} {u}",
   "assembly.nominal_post": "Post widths are drawn to a nominal: the catalog does not declare a face width for every post.",
   "assembly.gate_height_unknown": "A gate opening is drawn without a leaf where no neighbouring bay states a height.",
-  "assembly.simplified": "Panels are drawn as blocks on this run — too many members to read at this scale."
+  "assembly.simplified": "Panels are drawn as blocks on this run — too many members to read at this scale.",
+  "error.sku_not_eligible": "{sku} is not one of the products the {slot_key} slot of this panel can be built from, so the panel was not priced with it. Choose one of the products offered for that part.",
+  "material.aluminium": "Aluminium",
+  "material.steel": "Steel",
+  "material.galvanised_steel": "Galvanised steel",
+  "material.composite": "Composite",
+  "material.cedar": "Cedar",
+  "material.concrete": "Concrete",
+  "finish.powder_coated": "Powder coated",
+  "finish.anodised": "Anodised",
+  "finish.mill": "Mill finish",
+  "finish.stained": "Stained",
+  "finish.raw": "Raw"
 }

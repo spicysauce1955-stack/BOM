@@ -644,5 +644,17 @@
   "assembly.dim_total": "סה\"כ {total_mm} {u}",
   "assembly.nominal_post": "רוחב העמודים משורטט לפי ערך נומינלי: הקטלוג אינו מצהיר רוחב חזית לכל עמוד.",
   "assembly.gate_height_unknown": "פתח שער משורטט ללא כנף כאשר אף מפרש שכן אינו מצהיר גובה.",
-  "assembly.simplified": "הפאנלים משורטטים כגושים במקטע הזה — יותר מדי אלמנטים מכדי לקרוא בקנה מידה זה."
+  "assembly.simplified": "הפאנלים משורטטים כגושים במקטע הזה — יותר מדי אלמנטים מכדי לקרוא בקנה מידה זה.",
+  "error.sku_not_eligible": "{sku} אינו אחד המוצרים שמשבצת {slot_key} בפאנל הזה יכולה להיבנות מהם, ולכן הפאנל לא תומחר איתו. בחרו אחד מהמוצרים המוצעים לחלק הזה.",
+  "material.aluminium": "אלומיניום",
+  "material.steel": "פלדה",
+  "material.galvanised_steel": "פלדה מגולוונת",
+  "material.composite": "קומפוזיט",
+  "material.cedar": "עץ ארז",
+  "material.concrete": "בטון",
+  "finish.powder_coated": "צביעה אלקטרוסטטית",
+  "finish.anodised": "אנודייז",
+  "finish.mill": "גימור מפעל",
+  "finish.stained": "צביעת עץ",
+  "finish.raw": "גלם"
 }

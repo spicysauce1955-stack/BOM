@@ -57,6 +57,11 @@ REFUSAL_CODES = [
     "catalog_changed",
     "topology_changed",
     "unresolved_supply",
+    # `core.errors.RequestRefused`: the panel preview was asked for a product
+    # that slot cannot be supplied by (or for a slot the panel has not got). A
+    # refusal the user causes by clicking, so it must say which slot and which
+    # product rather than "the action failed (422)".
+    "sku_not_eligible",
 ]
 
 
@@ -279,6 +284,34 @@ def test_every_value_the_model_editor_offers_has_a_word_in_both_bundles():
     expected |= {f"status.{s}" for s in ("draft", "active", "retired")}
     expected |= {f"model.invalid.{c}"
                  for c in ("fence_model_invalid", "fence_model_unknown_sku")}
+
+    missing = sorted(f"{lang}:{k}" for lang, table in (("en", en), ("he", he))
+                     for k in expected if k not in table)
+    assert not missing, missing
+
+
+def test_every_material_and_finish_in_the_catalog_has_a_word_in_both_bundles():
+    """The material drawer renders `attrs.material` / `attrs.finish` through
+    COMPUTED keys (`t("material." + value)`), which key-parity scanning cannot
+    see — the same hole `test_every_value_the_model_editor_offers…` covers for
+    the editor's arrays.
+
+    The vocabulary is derived from the CATALOG rather than listed here, because
+    material is catalog DATA: nothing in code enumerates it, so the only way to
+    keep the words honest is to ask the products what they are made of. Adding a
+    product with a new material now fails this suite instead of shipping an
+    English word into a Hebrew UI.
+    """
+    from fenceai.catalog.demo import demo_catalog
+
+    en, he = _bundles()
+    expected = set()
+    for product in demo_catalog().products.values():
+        for attr, prefix in (("material", "material."), ("finish", "finish.")):
+            value = product.attrs.get(attr)
+            if value is not None:
+                expected.add(prefix + str(value))
+    assert expected, "the demo catalog declares no materials at all"
 
     missing = sorted(f"{lang}:{k}" for lang, table in (("en", en), ("he", he))
                      for k in expected if k not in table)
