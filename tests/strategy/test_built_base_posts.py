@@ -13,9 +13,12 @@ from fenceai.catalog.demo import demo_catalog
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import (
-    BasePayload, BaseTopPayload, BaseTopPoint, ElevationSamplePayload, HeightIntentPayload,
+    BasePayload, BaseTopPayload, BaseTopPoint, ElevationSamplePayload, GatePayload,
+    HeightIntentPayload,
 )
 from tests.conftest import add_interval_event, add_point_event, straight_topology
+
+EMBED_MM = 600  # K-POST-EMBED in the demo knowledge base
 
 WALL_MM = 600
 
@@ -70,6 +73,67 @@ def test_ground_posts_still_pay_for_embedment():
     warns = [w for w in result.strategy.warnings if w.code == "insufficient_post_length"]
     assert warns, "2200 mm panel + 600 mm embed exceeds the 2600 mm POST-S"
     assert warns[0].params["required_mm"] == 2800
+
+
+# --- the embedment the elevation draws --------------------------------------
+#
+# `Post.embed_mm` exists so a macro elevation can draw the buried portion and its
+# footing. The only thing that makes that drawing trustworthy is that it is the
+# SAME number `_check_post_lengths` spent — so every test here ties it back to
+# either the mounting rule or the decision node, never to a literal in isolation.
+
+
+def test_a_ground_post_records_the_embedment_it_was_checked_against():
+    topo = straight_topology(6000)
+    result = generate(topo, demo_knowledge(), demo_catalog())
+    assert result.strategy.posts
+    for post in result.strategy.posts:
+        assert post.mounting == "ground"
+        assert post.embed_mm == EMBED_MM, post.id
+
+
+def test_a_masonry_post_embeds_nothing():
+    """0 is a fact here, not a blank: a post bolted to a wall goes nowhere below
+    it, and the elevation must draw no footing rather than a 600 mm one."""
+    result = generate(_wall_topology(), demo_knowledge(), demo_catalog())
+    assert result.strategy.posts
+    for post in result.strategy.posts:
+        assert post.mounting == "masonry"
+        assert post.embed_mm == 0, post.id
+
+
+def test_the_drawing_and_the_length_check_cannot_disagree():
+    """The whole point of the field. The conflict node explains a sum; the post
+    carries one of its terms; if they ever drift, the sheet and the drawing are
+    describing different fences."""
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "h", 0, 6000, HeightIntentPayload(height_mm=2200))
+    result = generate(topo, demo_knowledge(), demo_catalog())
+
+    nodes = [n for n in result.graph.nodes if n.action == "insufficient_post_length"]
+    assert nodes, "2200 mm panel + 600 mm embed exceeds the 2600 mm POST-S"
+    for node in nodes:
+        post = next(p for p in result.strategy.posts if p.id == node.payload["element"])
+        assert node.payload["embed_mm"] == post.embed_mm
+        assert (node.payload["required_mm"]
+                == node.payload["exposed_mm"] + post.embed_mm)
+
+
+def test_a_post_the_length_check_skips_is_still_buried():
+    """`_check_post_lengths` walks past a post with no bay to measure against —
+    a gate hung off the very start of a run leaves the node post with none. It is
+    set into the ground all the same, and 0 there would draw it standing on top
+    of it. Embedment is recorded before the skip, not after it."""
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "ev_gate", 0,
+                    GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    result = generate(topo, demo_knowledge(), demo_catalog())
+
+    stranded = next(p for p in result.strategy.posts if p.run_ref == "node:n1")
+    assert not [s for s in result.strategy.spans if s.start_station_mm == 0], (
+        "the fixture is supposed to leave the first node post with no adjacent bay")
+    assert stranded.mounting == "ground"
+    assert stranded.embed_mm == EMBED_MM
 
 
 def test_the_base_top_follows_the_ground_under_it():

@@ -20,13 +20,14 @@ from fenceai.topology.model import (
 from tests.conftest import add_interval_event, add_point_event, straight_topology
 
 
-def _report(topo, inventory: Inventory | None = None, run_id: str = "run-x"):
-    catalog = demo_catalog()
+def _report(topo, inventory: Inventory | None = None, run_id: str = "run-x", catalog=None):
+    catalog = catalog or demo_catalog()
     result = generate(topo, demo_knowledge(), catalog)
     requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
     requirements = resolve_supply(requirements, catalog, inventory).requirements
     bom = fulfill(requirements, catalog, inventory)
-    report = build_structure(topo, result.strategy, requirements, bom, run_id=run_id)
+    report = build_structure(topo, result.strategy, requirements, bom, run_id=run_id,
+                             catalog=catalog)
     return report, result, requirements, bom
 
 
@@ -262,6 +263,65 @@ def test_a_section_reports_its_base_and_what_its_posts_stand_on():
     assert section.base_surface == "masonry_wall"
     assert all(s.base_z_mm == 600 for s in section.setting_out)
     assert all(s.ground_z_mm == 0 for s in section.setting_out)
+
+
+# --- what the elevation needs to draw a post ----------------------------------
+
+def test_a_station_carries_the_embedment_and_the_post_length():
+    """The two numbers a macro elevation cannot see anywhere else. Both are read,
+    never derived: the embedment is the strategy's own, the length is the
+    catalog product's own."""
+    topo = straight_topology(6000)
+    report, result, _, _ = _report(topo)
+    posts = {p.id: p for p in result.strategy.posts}
+    stations = report.sections[0].setting_out
+    assert stations
+    for station in stations:
+        assert station.embed_mm == posts[station.element_id].embed_mm
+        assert station.post_length_mm == 2600  # POST-S declares its length
+
+
+def test_a_masonry_station_reports_no_embedment():
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "base", 0, 6000, BasePayload(surface="masonry_wall"))
+    add_interval_event(topo, "run1", "top", 0, 6000, BaseTopPayload(
+        points=[BaseTopPoint(pos_permille=0, z_mm=600),
+                BaseTopPoint(pos_permille=1000, z_mm=600)]))
+    report, _, _, _ = _report(topo)
+    stations = report.sections[0].setting_out
+    assert stations
+    assert all(s.mounting == "masonry" and s.embed_mm == 0 for s in stations)
+
+
+def test_a_post_product_with_no_declared_length_yields_none():
+    """POST-M declares no `length_mm`, and neither does this stripped POST-S: the
+    sheet says None so the drawing omits the embed dimension. A guessed length on
+    a setting-out drawing is worse than a missing one."""
+    catalog = demo_catalog()
+    catalog.products["POST-S"] = catalog.products["POST-S"].model_copy(
+        update={"attrs": {}})
+    report, _, _, _ = _report(straight_topology(6000), catalog=catalog)
+    stations = report.sections[0].setting_out
+    assert stations
+    assert all(s.sku == "POST-S" for s in stations)
+    assert all(s.post_length_mm is None for s in stations)
+    # the embedment is unaffected: it is not a catalog fact
+    assert all(s.embed_mm == 600 for s in stations)
+
+
+def test_without_a_catalog_the_length_is_unknown_rather_than_invented():
+    """`build_structure` still answers with four inputs — it simply cannot claim a
+    post length it was never shown."""
+    topo = straight_topology(6000)
+    catalog = demo_catalog()
+    result = generate(topo, demo_knowledge(), catalog)
+    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    requirements = resolve_supply(requirements, catalog).requirements
+    bom = fulfill(requirements, catalog)
+    report = build_structure(topo, result.strategy, requirements, bom, run_id="r")
+    stations = report.sections[0].setting_out
+    assert all(s.post_length_mm is None for s in stations)
+    assert all(s.embed_mm == 600 for s in stations)
 
 
 def test_a_section_with_one_height_reports_it():

@@ -25,6 +25,14 @@ class Post(BaseModel):
     # true ground, which is what embedment is measured into. None = same as the
     # ground (also how strategies generated before this field read).
     base_z_mm: Mm | None = None
+    # How far below ground_z_mm this post is set, and the SAME number the length
+    # check spent (`_check_post_lengths` writes it there, from the value it
+    # resolves): a drawing that showed a different footing depth than the length
+    # the post was checked against would be a drawing of a different fence.
+    # 0 is a fact, not a blank — a masonry-mounted post is bolted to what it
+    # stands on and embeds nothing. (A strategy generated before this field
+    # reads 0 for its ground posts too; regenerating restores the truth.)
+    embed_mm: Mm = 0
     tilt_deg: int = 0  # degrees from vertical; 0 = plumb (the default and the norm)
     pinned: bool = False
 

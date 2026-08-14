@@ -175,6 +175,18 @@ the exposed length from `base_z_mm`, not through the wall, and only a `ground`-m
 spends length on embedment — a masonry-mounted post is bolted to what it stands on.
 See tests/strategy/test_built_base_posts.py.
 
+`Post.embed_mm` (2026-08-14) records that embedment on the post itself, written by
+`_check_post_lengths` from the `post_embed_mm` it already resolves — one number, so the
+elevation cannot draw a footing deeper than the length check paid for. It is recorded for
+every post BEFORE the check's adjacency skip: a post with no bay to measure against (the
+node post of a run whose first bay is a gate) is buried all the same, and 0 there would
+draw it standing on the ground. 0 is therefore a fact — masonry — not a blank. The
+structure report carries it to the wire as `Station.embed_mm`, alongside
+`Station.post_length_mm`, the post product's declared catalog `attrs.length_mm`; that one
+is `None` when the product declares none, and a client then draws no embed dimension
+rather than a guessed one. `build_structure` takes the catalog as a fifth GIVEN for it —
+read, never recomputed, and without one every station simply reports `None`.
+
 ## Post orientation: plumb by default, tilt supported (2026-08-11)
 
 Posts are PLUMB by default — vertical to earth (construction reality). A section

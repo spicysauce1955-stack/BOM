@@ -654,3 +654,24 @@ Findings log for the whole arc, with the still-open suggestions in the order I w
 them: `docs/reviews/panel-authoring-session-2026-08-13.md`. The first of them is that
 prices still render in €, which the persona lab flagged in run 1 and which the market this
 ships into does not use.
+
+## W4 — the embedment reaches the drawing (2026-08-14) — COMPLETE
+Wave 4 of `docs/superpowers/specs/2026-08-14-two-tier-visualizer-design.md` §2.5. A macro
+elevation has to draw a post's buried portion and its footing, and nothing on the wire said
+how deep a post sits: `post_embed_mm` was resolved inside `_check_post_lengths` and written
+only into a conflict node's params.
+
+`Post.embed_mm` is now written by that same function, from the same resolved value, so the
+drawing and the length check cannot disagree; the conflict node reports the post's own
+embedment rather than the resolved default, which on a masonry post had it explaining a sum
+it never made. `Station.embed_mm` and `Station.post_length_mm` carry it to
+`/api/runs/{id}/structure`, the length read from the post product's catalog `attrs.length_mm`
+and `None` when the product declares none — a client then draws no embed dimension rather
+than a guessed one. `build_structure` takes the catalog as a fifth GIVEN for that one read.
+
+The coverage question the wave asked: `_check_post_lengths` walks past any post with no
+adjacent bay, and one exists in practice — the node post of a run whose first bay is a gate.
+Embedment is therefore recorded BEFORE that skip, so 0 stays a fact (masonry) and never
+means "not known".
+
+872 pytest · 145 golden scenarios · compatibility gate byte-identical.

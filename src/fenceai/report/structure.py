@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
 from fenceai.demand.derive import RequirementLine
 from fenceai.fulfillment.fulfill import Bom
@@ -60,6 +61,14 @@ class Station(BaseModel):
     mounting: str
     ground_z_mm: Mm
     base_z_mm: Mm  # what the post stands on: a built base top, or the ground
+    # what the elevation needs to draw the post as it actually sits: how far below
+    # ground_z_mm it is set (the strategy's own number, resolved and checked at
+    # generation), and how long the post is. `post_length_mm` is None when the
+    # catalog product declares no length — the drawing then omits the embed
+    # dimension instead of guessing one, which on a setting-out sheet is worse
+    # than saying nothing.
+    embed_mm: Mm = 0
+    post_length_mm: Mm | None = None
     tilt_deg: int = 0
     reinforced: bool = False
     pinned: bool = False
@@ -302,14 +311,30 @@ def _post_tilt(topo: Topology, run_id: str) -> str:
     return modes.pop() if len(modes) == 1 else "mixed"
 
 
+def _declared_post_length(catalog: Catalog | None, sku: str) -> Mm | None:
+    """The post product's own length, read and never derived. The `isinstance`
+    guard mirrors `_check_post_lengths` exactly: a length the generator would not
+    check against is a length this sheet will not draw against either."""
+    product = catalog.products.get(sku) if catalog else None
+    length = product.attrs.get("length_mm") if product else None
+    return length if isinstance(length, int) else None
+
+
 def build_structure(
     topology: Topology,
     strategy: Strategy,
     requirements: list[RequirementLine],
     bom: Bom,
     run_id: str = "",
+    catalog: Catalog | None = None,
 ) -> StructureReport:
-    """Pure: the same inputs always produce the same report."""
+    """Pure: the same inputs always produce the same report.
+
+    The catalog is a fifth GIVEN, not a fifth computation: the only thing read
+    from it is a post product's declared `length_mm`, copied onto the station.
+    Without one, every station reports `post_length_mm=None` — the same answer a
+    product that declares no length gets, and the same drawing.
+    """
     ledger = _parts_by_element(requirements, bom)
     parts = ledger.per_element
     # (element, slot) -> the product supply chose for it. Keyed on both because a
@@ -362,6 +387,8 @@ def build_structure(
                 kind=post.kind, sku=post.sku, mounting=post.mounting,
                 ground_z_mm=post.ground_z_mm,
                 base_z_mm=post.base_z_mm if post.base_z_mm is not None else post.ground_z_mm,
+                embed_mm=post.embed_mm,
+                post_length_mm=_declared_post_length(catalog, post.sku),
                 tilt_deg=post.tilt_deg, reinforced=post.reinforced, pinned=post.pinned,
                 parts=_merge_parts(parts.get(post.id, [])),
             ))

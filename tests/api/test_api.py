@@ -791,6 +791,25 @@ def test_structure_endpoint_lays_out_the_run(client):
     assert client.get(f"/api/runs/{run_id}/structure").json() == doc
 
 
+def test_structure_puts_the_embedment_and_post_length_on_the_wire(client):
+    """A macro elevation draws the buried portion of a post and its footing. Both
+    dimensions have to arrive from the run, or the client invents them — and an
+    invented dimension on a setting-out drawing is the worst kind."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    result = client.post(f"/api/projects/{pid}/generate").json()["result"]
+    run_id = result["run"]["id"]
+    doc = client.get(f"/api/runs/{run_id}/structure").json()
+
+    embed = {p["id"]: p["embed_mm"] for p in result["strategy"]["posts"]}
+    stations = doc["sections"][0]["setting_out"]
+    assert stations
+    for station in stations:
+        # the sheet repeats the strategy's number; it does not resolve its own
+        assert station["embed_mm"] == embed[station["element_id"]] == 600
+        assert station["post_length_mm"] == 2600  # POST-S's declared length
+
+
 def test_structure_stamps_the_inventory_it_read(client):
     """The layout depends on the run alone, but a part names the BAR it is cut
     from — and that depends on what was in the yard. Two sheets that differ must
