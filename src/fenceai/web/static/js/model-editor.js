@@ -34,7 +34,9 @@ import { loadModelListing, refreshModelListing } from "./fence-models.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
 import { emit, on } from "./state.js";
-import { fmt, inputStep, roleWord, toDisplayValue, toMm, tu, unitParams } from "./units.js";
+import {
+  fmt, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
+} from "./units.js";
 
 // --- the closed vocabularies, read from fencemodel/model.py -------------------
 const ROLES = ["post", "cap", "concrete", "rail", "screw", "infill", "spacer"];
@@ -205,8 +207,6 @@ let previewSeq = 0;
 
 const modelsTabActive = () =>
   !!document.getElementById("tab-models")?.classList.contains("active");
-
-const money = (cents) => `€${((cents || 0) / 100).toFixed(2)}`;
 
 // A locale sentence whose params are ids, refs or dimensions: escape the
 // template first, then drop each param in bidi-isolated. Same shape (and same

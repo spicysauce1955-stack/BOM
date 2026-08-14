@@ -90,11 +90,50 @@ export function roleWord(value) {
   return word === key ? value : word;   // unknown role: show it raw, never blank
 }
 
+// ------------------------------------------------------------------- money
+//
+// ONE definition of what a price looks like, for the same reason there is one
+// `toDisplayValue`: five call sites each formatting cents their own way is five
+// places a currency change has to be found, and the € this replaced was missed
+// in exactly that way for two review rounds.
+//
+// One currency, ILS, and the symbol is a LOCALE key rather than a literal here —
+// so `test_locale_bundles.py` can forbid a bare ₪ in any other string, the way it
+// already forbids a literal "mm". Multi-currency is a `Money(amount, currency)`
+// type through the whole cost tier plus a rate source with an as-of date; a
+// symbol swap that pretends to be that is worse than not having it.
+//
+// Grouped thousands and always two decimals: a quote figure is read by someone
+// checking it against another quote, and "₪180000" invites a factor-of-ten
+// argument that "₪1,800.00" does not. The output is a number with a symbol, so
+// every caller renders it inside `.num` (direction: ltr; unicode-bidi: isolate)
+// like every other figure in a Hebrew sentence.
+
+export function currencySymbol() {
+  return t("units.currency");
+}
+
+export function money(cents) {
+  const n = Math.round(Number(cents) || 0);
+  const whole = String(Math.floor(Math.abs(n) / 100))
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const frac = String(Math.abs(n) % 100).padStart(2, "0");
+  return `${n < 0 ? "-" : ""}${currencySymbol()}${whole}.${frac}`;
+}
+
+// A signed difference: the "+" is the whole point (a saving and a cost are the
+// two answers this is asked for), and `money` already carries the "-".
+export function moneyDelta(cents) {
+  const n = Math.round(Number(cents) || 0);
+  return (n > 0 ? "+" : "") + money(n);
+}
+
 // Display params for a template: every `*_mm` param converts to the display unit,
-// enum params become words in the current language, and `{u}` carries the unit
-// label — so a locale string writes "{width_mm} {u}" once and works in both units.
+// enum params become words in the current language, `{u}` carries the unit label
+// and `{c}` the currency symbol — so a locale string writes "{width_mm} {u}" (or
+// "סה\"כ {c}") once and works in both units and in either language.
 export function unitParams(params = {}) {
-  const out = { u: unitLabel() };
+  const out = { u: unitLabel(), c: currencySymbol() };
   for (const [k, v] of Object.entries(params)) {
     if (k.endsWith("_mm")) out[k] = toDisplayValue(v);
     // supply warnings put the role in the middle of a Hebrew sentence, so a raw

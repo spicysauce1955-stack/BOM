@@ -7,7 +7,9 @@ import {
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
 import { emit, on, reloadProject, state } from "./state.js";
-import { fmt, fmtLen, inputStep, toDisplayValue, toMm, tu, unitLabel } from "./units.js";
+import {
+  fmt, fmtLen, inputStep, money, toDisplayValue, toMm, tu, unitLabel,
+} from "./units.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
 export function initTabs() {
@@ -243,11 +245,11 @@ function quotesHtml(quotes) {
   if (!quotes.length) return "";
   let html = `<div class="panel"><h3>${t("quote.title")}</h3>
     <table><tr><th>${t("quote.label")}</th><th>${t("quote.date")}</th>
-    <th>${t("bom.line_total")}</th><th>${t("quote.status")}</th><th></th></tr>`;
+    <th>${tu("bom.line_total")}</th><th>${t("quote.status")}</th><th></th></tr>`;
   for (const q of quotes) {
     html += `<tr><td dir="auto">${esc(q.label) || `<bdi class="meta">${esc(q.id.slice(0, 14))}</bdi>`}</td>
       <td class="num">${esc((q.created_at || "").slice(0, 16).replace("T", " "))}</td>
-      <td class="num">${(q.total_cents / 100).toFixed(2)}</td>
+      <td class="num">${esc(money(q.total_cents))}</td>
       <td><span class="tag ${q.status === "accepted" ? "active" : q.status === "superseded" ? "retired" : "medium"}">${t("quote." + q.status)}</span></td>
       <td><button data-view-quote="${esc(q.id)}">${t("quote.view")}</button>
         ${q.status === "draft" ? `<button data-accept-quote="${esc(q.id)}">${t("quote.accept")}</button>` : ""}</td></tr>`;
@@ -275,9 +277,9 @@ function wireQuoteButtons(div, products) {
 }
 
 function bomHtml(bom, products) {
-  let html = `<div class="panel"><h3>${t("bom.title")} — ${t("bom.total")} €${(bom.total_cents / 100).toFixed(2)}</h3>
+  let html = `<div class="panel"><h3>${t("bom.title")} — ${t("bom.total")} ${esc(money(bom.total_cents))}</h3>
   <table><tr><th>${t("bom.sku")}</th><th>${t("bom.purchase")}</th><th>${t("bom.engineering")}</th>
-  <th>${t("bom.overage")}</th><th>${t("bom.unit_price")}</th><th>${t("bom.line_total")}</th><th>${t("bom.notes")}</th></tr>`;
+  <th>${t("bom.overage")}</th><th>${tu("bom.unit_price")}</th><th>${tu("bom.line_total")}</th><th>${t("bom.notes")}</th></tr>`;
   for (const l of bom.lines) {
     html += `<tr><td><span class="sku">${esc(l.sku)}</span><br><span class="meta" dir="auto">${esc(lineName(products, l))}</span></td>
       <td><span class="num">${l.purchase_qty}</span> × ${esc(l.purchase_unit)}</td>
@@ -285,8 +287,8 @@ function bomHtml(bom, products) {
         : l.engineering_qty}</span> ${esc(l.engineering_unit === "mm" ? unitLabel()
         : l.engineering_unit)}</td>
       <td class="num">${l.overage_qty || ""}</td>
-      <td class="num">${(l.unit_price_cents / 100).toFixed(2)}</td>
-      <td class="num">${(l.total_cents / 100).toFixed(2)}</td>
+      <td class="num">${esc(money(l.unit_price_cents))}</td>
+      <td class="num">${esc(money(l.total_cents))}</td>
       <td>${esc((l.notes || []).join("; "))}</td></tr>`;
   }
   html += "</table></div>";

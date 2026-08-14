@@ -19,8 +19,8 @@ import {
 } from "./state.js";
 import { tagOf } from "./structure-data.js";
 import {
-  currentUnit, enumWord, fmt, fmtLen, inputStep, parseTypedLength, toDisplayValue,
-  toMm, tu,
+  currentUnit, enumWord, fmt, fmtLen, inputStep, money, parseTypedLength,
+  toDisplayValue, toMm, tu,
 } from "./units.js";
 import { localizedByCode, warningRowHtml } from "./warnings.js";
 
@@ -489,11 +489,11 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
     html += numField("popover.width", "pop-width", declaredOpening(defaultKit));
     if (gateKits.length) {
       // options cannot hold nested markup: dir="auto" + an LRM before the price
-      // keep the €-figure readable in RTL (in lieu of a .num span)
+      // keep the money figure readable in RTL (in lieu of a .num span)
       html += `<label>${t("popover.kit")}<select id="pop-kit">` + gateKits.map((p) =>
         `<option value="${esc(p.sku)}" dir="auto"${p === defaultKit ? " selected" : ""}>`
         + `${esc(p.name_i18n?.[currentLocale()] || p.name)}`
-        + ` — ‎€${(p.price_cents / 100).toFixed(2)}</option>`).join("")
+        + ` — ‎${esc(money(p.price_cents))}</option>`).join("")
         + `</select></label>`;
     } else {
       // no catalog reached us: free text, and no sku invented on the user's behalf
