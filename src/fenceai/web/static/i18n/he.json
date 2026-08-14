@@ -563,6 +563,7 @@
   "model.length_rule.centre_to_centre": "ממרכז עמוד למרכז עמוד",
   "model.length_rule.overlap": "ממרכז למרכז ועוד חפיפה",
   "model.length_rule.panel_height": "גובה הפאנל",
+  "model.length_rule.between_frame": "המרווח בין אלמנטי המסגרת שהוא מתחיל ומסתיים בהם",
   "model.overlap_mm": "חפיפה ({u})",
   "model.option_axis": "נבחר לפי",
   "model.option_axis.none": "— בלי אפשרות —",

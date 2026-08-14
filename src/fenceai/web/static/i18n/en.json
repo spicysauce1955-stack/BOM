@@ -563,6 +563,7 @@
   "model.length_rule.centre_to_centre": "centre to centre of the posts",
   "model.length_rule.overlap": "centre to centre plus an overlap",
   "model.length_rule.panel_height": "the height of the panel",
+  "model.length_rule.between_frame": "the gap between the frame members it starts and ends at",
   "model.overlap_mm": "overlap ({u})",
   "model.option_axis": "chosen by",
   "model.option_axis.none": "— no option —",
