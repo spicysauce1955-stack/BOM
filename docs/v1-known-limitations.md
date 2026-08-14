@@ -154,6 +154,26 @@ why, and what would end each deferral.
   surface that could hide the question. **Trigger:** options answered per bay
   rather than per selection.
 
+- **`joint="bracket"` and `joint="overlap"`.** Both are in the `JointKind`
+  vocabulary because the spec named them and neither has a field that could give
+  it a mechanic: a bracket's is a PRODUCT (and `FrameSlot`/`Member` have nowhere
+  to name one), an overlap's is a lap length, which is neither a channel depth
+  nor an engagement. Authored, they would change no number and be drawn as a
+  joint the panel does not have. **Trigger:** a catalog with a bracket in it, or
+  a lap-length field with a cut rule that reads it.
+
+- **The demo's M-SLAT@v2 is a seeded DRAFT, so the editor's "Edit" opens it.**
+  `draft_version` is the version the editor opens and `PUT …/draft` writes into
+  the highest existing draft, so on a fresh database an author's first save to
+  M-SLAT lands on the shipped joint demonstration and overwrites it. Seeding it
+  ACTIVE is worse — `latest_active` is what an unpinned project resolves, so
+  every existing M-SLAT job would move onto a different cut list at its next
+  generation with nobody having published anything — and giving it its own model
+  id would make it a different product line rather than a second version of one,
+  which is the thing being demonstrated. **Trigger:** an editor action that
+  starts a new draft beside an existing one, or a "shipped" flag that keeps a
+  seeded document out of the author's save slot.
+
 - **`Member.base_ref`/`top_ref` under any rule but `between_frame`.** Narrowed by
   the joint wave (2026-08-14) from "never read at all", which is what they were
   from phase 1 until then — refused by nothing while the model editor offered

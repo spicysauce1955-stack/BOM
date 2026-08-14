@@ -678,4 +678,26 @@ every unpinned M-SLAT and move existing jobs onto a different cut list with nobo
 published anything.
 
 Every default is zero and no shipped model declared the rule, so the compatibility gate is
-byte-identical with no regeneration. 886 pytest · 145 golden scenarios.
+byte-identical with no regeneration.
+
+**What the adversarial pass changed, which was the important half.** The refusal set
+shipped without the one check that mattered most: a cut length must be POSITIVE. Refs the
+wrong way round (−1750 mm) and a knowledge param collapsing a rail set to one position
+(−20 mm) both validated clean, reached `plan_cuts`, and came back
+`certified_optimal=True` — a wrong number wearing an optimality certificate. Neither is
+decidable when the model is authored, so the resolver refuses to answer and the generator
+says so: `panel_length_unresolved`, `severity="error"`, one per (model, slot) per section.
+Alone among the panel checks it is an error, because every other one describes a fence
+built badly and this one describes a part not bought at all.
+
+The elevation was drawing the OPENING and the BOM was buying the MEMBER — 1800 against
+1665 on the model whose reason to exist is that 135 mm — while `report/elevation.py` opened
+by claiming the picture cannot drift from the numbers. `_between_frame_extent` now returns
+where the member starts as well as how long it is cut, one calculation for one fact, and
+the rectangle is placed from it. Four more refusals were one relation short (the insertion
+margin constrained nothing; a channel deeper than its own rail passed; `bracket`/`overlap`
+were unauthorable by accident and belong in the unbuilt table; an engagement under another
+length rule was still ignored), and the demo gave one SKU two different face heights — the
+channel is a different profile and now has its own product.
+
+903 pytest · 145 golden scenarios · gate unmoved.
