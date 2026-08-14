@@ -649,3 +649,8 @@ four codes shipping untranslated — including two 409s a user meets whenever th
 catalog or a drawing.
 
 863 pytest · 145 golden scenarios · 137/137 smoke.
+
+Findings log for the whole arc, with the still-open suggestions in the order I would take
+them: `docs/reviews/panel-authoring-session-2026-08-13.md`. The first of them is that
+prices still render in €, which the persona lab flagged in run 1 and which the market this
+ships into does not use.
