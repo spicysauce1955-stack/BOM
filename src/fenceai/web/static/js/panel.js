@@ -25,7 +25,9 @@ import { gapLine, hasNominal, highlightSlot, renderElevation } from "./elevation
 import { isSelectable, loadModelListing, modelName, modelOptionLabel, rowFor } from "./fence-models.js";
 import { t } from "./i18n.js";
 import { on, reloadProject, state } from "./state.js";
-import { fmt, inputStep, roleWord, toDisplayValue, toMm, tu, unitParams } from "./units.js";
+import {
+  fmt, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
+} from "./units.js";
 import { warningRowHtml } from "./warnings.js";
 
 // The bay a preview is imagined into. Millimetres at rest, exactly like storage
@@ -45,8 +47,6 @@ let pending = null;          // debounce timer
 let previewSeq = 0;          // only the newest request may paint
 let selectedSlot = null;     // the slot the drawing and the table agree on
 let elevationSvg = null;     // the last drawing, so the table can light it up
-
-const money = (cents) => `€${((cents || 0) / 100).toFixed(2)}`;
 
 const panelTabActive = () =>
   !!document.getElementById("tab-panel")?.classList.contains("active");

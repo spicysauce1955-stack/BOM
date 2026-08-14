@@ -13,6 +13,7 @@
 
 import { esc } from "./api.js";
 import { t } from "./i18n.js";
+import { moneyDelta } from "./units.js";
 
 export function renderImpactReport(container, report) {
   let html = `<div class="impact"><b>${t("impact.summary",
@@ -26,15 +27,12 @@ export function renderImpactReport(container, report) {
       html += `<span class="tag rejected">${t("impact.generation_fails")}</span>
         <span class="meta" title="${esc(f.message)}">${esc(t("impact.failure." + f.code, f.params || {}))}</span>`;
     } else {
-      const delta = (i.bom_delta_cents / 100).toFixed(2);
-      const sign = i.bom_delta_cents > 0 ? "+" : "";
       html += `${t("impact.spans", { before: i.spans_before, after: i.spans_after })} · `
         + `${t("impact.posts", { added: i.posts_added, removed: i.posts_removed, modified: i.posts_modified })} · `
-        + `<span class="num">${sign}${delta}€</span>`;
+        + `<span class="num">${esc(moneyDelta(i.bom_delta_cents))}</span>`;
       if (i.vs_accepted_delta_cents !== null && i.vs_accepted_delta_cents !== undefined) {
-        const vs = (i.vs_accepted_delta_cents / 100).toFixed(2);
-        const vsSign = i.vs_accepted_delta_cents > 0 ? "+" : "";
-        html += ` · ${t("impact.vs_accepted", { delta: `${vsSign}${vs}` })}`;
+        html += ` · ${t("impact.vs_accepted",
+          { delta: moneyDelta(i.vs_accepted_delta_cents) })}`;
       }
     }
     html += "</div>";
