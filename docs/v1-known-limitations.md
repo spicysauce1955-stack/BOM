@@ -154,6 +154,18 @@ why, and what would end each deferral.
   surface that could hide the question. **Trigger:** options answered per bay
   rather than per selection.
 
+- **`Member.base_ref`/`top_ref` under any rule but `between_frame`.** Narrowed by
+  the joint wave (2026-08-14) from "never read at all", which is what they were
+  from phase 1 until then — refused by nothing while the model editor offered
+  both selects to authors, the exact defect `_UNSUPPORTED` exists to catch and
+  the one it missed. `between_frame` now reads them and cuts a member to the
+  opening between the two frame members plus its engagements; under
+  `panel_height` or a width rule they still reach nothing, so a member that says
+  "starts at the bottom rail" would run past it to the ground. **Trigger:** a
+  length rule that measures against the frame in some other way — a diagonal
+  brace between two rails is the obvious candidate, and it needs a second axis
+  the schema does not have.
+
 - **Phase 3: arc-flow over multiple stock lengths and sources.** ADR-0007 already
   names it, and the spec is explicit that it is a planned door rather than a
   dependency argument: "when a real catalog has eligibility groups worth

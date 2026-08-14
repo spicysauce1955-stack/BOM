@@ -654,3 +654,28 @@ Findings log for the whole arc, with the still-open suggestions in the order I w
 them: `docs/reviews/panel-authoring-session-2026-08-13.md`. The first of them is that
 prices still render in €, which the persona lab flagged in run 1 and which the market this
 ships into does not use.
+
+## Joint geometry (2026-08-14) — W2 of `specs/2026-08-14-two-tier-visualizer-design.md`
+`Member.base_ref`/`top_ref` had been on the schema since phase 1, read by nothing, and
+offered as two selects by the model editor since the authoring wave — a field that reads
+as honoured and is not, which is the defect `_UNSUPPORTED` exists to catch and the one it
+missed. The `between_frame` length rule closes it for the case a joint needs: a member cut
+to the opening between two frame members plus the engagements that disappear into them,
+with the positions READ off the frame slots the same panel already resolved rather than
+placed a second time. Under any other length rule the refs are now refused by name.
+
+`FrameSlot` gains `joint`/`channel_depth_mm`/`insertion_margin_mm` and `Member` gains
+`joint`/`base_engagement_mm`/`top_engagement_mm`, so a joint is data the CUT LIST depends
+on before it is anything on a drawing. Seven load-time refusals, each about a number that
+would otherwise be wrong on every bay and arrive looking measured — a 20 mm seat into a
+12 mm channel, a channel inside a member of undeclared depth, a `channel` kind with no
+depth and no engagement behind it.
+
+`M-SLAT` gains v2: the same line with its slats seated 15 mm into a 20 mm bottom channel,
+cutting 1665 mm where v1 cuts 1800 in the same 1800 mm bay. It is a DRAFT, and the seed
+stopped overriding a document's status to make that possible — an active v2 would answer
+every unpinned M-SLAT and move existing jobs onto a different cut list with nobody having
+published anything.
+
+Every default is zero and no shipped model declared the rule, so the compatibility gate is
+byte-identical with no regeneration. 886 pytest · 145 golden scenarios.
