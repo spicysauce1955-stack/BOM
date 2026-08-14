@@ -135,6 +135,7 @@ def slat_model(
 def channel_slat_model(
     slat_sku: str = "SLAT-100",
     rail_sku: str = "RAIL-3000",
+    channel_sku: str = "CHANNEL-3000",
     screw_sku: str = "SCREW-S10",
 ) -> FenceModel:
     """M-SLAT v2: the same product line, built with a joint.
@@ -175,12 +176,16 @@ def channel_slat_model(
                     # height is structure, and a knowledge param that moved it
                     # would move every slat's cut length with it.
                     placement=FromBottom(offset_mm=50),
+                    # the face height and the housing are the CHANNEL's, which is
+                    # why the slot names its own product rather than reusing the
+                    # rail: one SKU cannot be 40 mm tall in one panel and 60 in
+                    # another, and the slats' cut length depends on which it is.
                     thickness_mm=60, joint="channel",
                     channel_depth_mm=20, insertion_margin_mm=3,
                     requirement=PartRequirement(
                         role="rail", qty=1, length_rule="centre_to_centre",
                         eligibility=Eligibility(
-                            members=[EligibleItem(sku=rail_sku, priority=1)]),
+                            members=[EligibleItem(sku=channel_sku, priority=1)]),
                     ),
                 ),
                 FrameSlot(

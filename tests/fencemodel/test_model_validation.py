@@ -423,16 +423,28 @@ def test_a_ref_must_name_a_frame_slot_of_the_same_spec():
 
 
 def test_an_engagement_deeper_than_the_channel_cuts_the_member_too_long():
-    """20 mm of slat into a 12 mm channel: the member cannot go in that far, so
-    it stands 8 mm proud — on every bay, in a number that reads as measured."""
+    """20 mm of slat into a 12 mm channel that keeps 3 mm of insertion clearance
+    under it: the seat on offer is 9 mm, so the member stands 11 mm proud — on
+    every bay, in a number that reads as measured.
+
+    Measured against depth MINUS margin, not against the depth alone: a 12 mm
+    seat in that same 12 mm channel bottoms out in the clearance the channel
+    exists to keep, and a depth-only check called that clean."""
     errs = validate_model(
         _jointed(frame_kw={"channel_depth_mm": 12},
                  member_kw={"base_engagement_mm": 20}),
         demo_catalog())
-    assert any("8 mm too long" in e for e in errs), errs
+    assert any("11 mm too long" in e for e in errs), errs
+    assert any("12 mm less 3 mm of insertion clearance" in e for e in errs), errs
+
+    # 12 into a 12 mm channel with 3 mm of clearance is still refused ...
     assert validate_model(
         _jointed(frame_kw={"channel_depth_mm": 12},
-                 member_kw={"base_engagement_mm": 12}), demo_catalog()) == []
+                 member_kw={"base_engagement_mm": 12}), demo_catalog()) != []
+    # ... and 9 — exactly what the channel offers — is the deepest that is not
+    assert validate_model(
+        _jointed(frame_kw={"channel_depth_mm": 12},
+                 member_kw={"base_engagement_mm": 9}), demo_catalog()) == []
 
 
 def test_a_channel_inside_an_undeclared_member_has_no_datum():
@@ -448,8 +460,12 @@ def test_a_margin_that_reaches_the_bottom_of_the_channel_is_refused():
     errs = validate_model(_jointed(frame_kw={"insertion_margin_mm": 20}),
                           demo_catalog())
     assert any("swallows the whole seat" in e for e in errs), errs
-    assert validate_model(_jointed(frame_kw={"insertion_margin_mm": 19}),
-                          demo_catalog()) == []
+    # 19 leaves 1 mm of seat, which the fixture's 15 mm engagement then overruns
+    # — so the clean case has to shorten the member too, rather than pretending
+    # the margin alone was the whole rule
+    assert validate_model(
+        _jointed(frame_kw={"insertion_margin_mm": 19},
+                 member_kw={"base_engagement_mm": 1}), demo_catalog()) == []
 
 
 def test_a_joint_kind_with_no_numbers_behind_it_is_refused_at_both_ends():
@@ -457,15 +473,69 @@ def test_a_joint_kind_with_no_numbers_behind_it_is_refused_at_both_ends():
     the cut list reads. A `channel` with neither a depth nor an engagement is a
     butt joint wearing a better name — and it would be DRAWN as a housed one."""
     frame_errs = validate_model(
-        _jointed(top_kw={"joint": "bracket"}), demo_catalog())
-    assert any("joint='bracket'" in e and "channel_depth_mm=0" in e
+        _jointed(top_kw={"joint": "groove"}), demo_catalog())
+    assert any("joint='groove'" in e and "channel_depth_mm=0" in e
                for e in frame_errs), frame_errs
 
+    # A member is only bare if BOTH ends are: no engagement of its own AND no
+    # channel in either slot it names — the conjunction the spec states.
     member_errs = validate_model(
-        _jointed(member_kw={"joint": "groove", "base_engagement_mm": 0}),
+        _jointed(frame_kw={"joint": "butt", "channel_depth_mm": 0,
+                           "insertion_margin_mm": 0},
+                 member_kw={"joint": "groove", "base_engagement_mm": 0}),
         demo_catalog())
-    assert any("joint='groove'" in e and "no engagement" in e
+    assert any("joint='groove'" in e and "no engagement at either end" in e
                for e in member_errs), member_errs
+    # and a member that seats nothing itself but names a slot that DOES house it
+    # is not bare — the mechanic is the channel's
+    assert validate_model(
+        _jointed(member_kw={"joint": "groove", "base_engagement_mm": 0}),
+        demo_catalog()) == []
+
+
+def test_a_joint_kind_the_schema_cannot_express_is_refused_as_unbuilt():
+    """`bracket` and `overlap` are in the vocabulary because the spec named them,
+    and neither has a field that could make it mean anything: a bracket's
+    mechanic is a product, an overlap's is a lap length. Refused with the reason
+    they cannot be authored, rather than with advice ("give the channel its
+    depth") that is impossible to follow for a joint with no channel."""
+    for kind in ("bracket", "overlap"):
+        errs = validate_model(_jointed(top_kw={"joint": kind}), demo_catalog())
+        assert any(f"joint={kind!r}" in e and "not yet supported" in e
+                   for e in errs), (kind, errs)
+        member = validate_model(_jointed(member_kw={"joint": kind}), demo_catalog())
+        assert any(f"joint={kind!r}" in e and "not yet supported" in e
+                   for e in member), (kind, member)
+
+
+def test_a_channel_deeper_than_the_member_it_is_cut_into_is_refused():
+    """The mirror of the engagement check, and it was missing: refusing a seat
+    deeper than its channel while accepting a channel deeper than the rail it is
+    cut into is an inconsistent pair, and the second one comes out the far
+    side."""
+    errs = validate_model(
+        _jointed(frame_kw={"thickness_mm": 40, "channel_depth_mm": 60}),
+        demo_catalog())
+    assert any("come out the far side" in e for e in errs), errs
+    assert validate_model(
+        _jointed(frame_kw={"thickness_mm": 40, "channel_depth_mm": 20}),
+        demo_catalog()) == []
+
+
+def test_an_engagement_under_another_length_rule_is_refused_too():
+    """The other half of the refs gap, and it was still open: `_length_for` adds
+    an engagement under `between_frame` and under no other rule, so an author who
+    says the slat seats 15 mm into the channel and cuts it to `panel_height` gets
+    a member cut as though it seated into nothing."""
+    errs = validate_model(
+        _jointed(member_kw={"base_ref": None, "top_ref": None},
+                 member_req=PartRequirement(
+                     role="infill", qty=1, length_rule="panel_height",
+                     eligibility=Eligibility(members=[EligibleItem(sku="SLAT-100")]),
+                 )),
+        demo_catalog())
+    assert any("base_engagement_mm" in e and "not yet supported" in e
+               for e in errs), errs
 
 
 def test_a_ref_must_name_a_frame_slot_the_member_actually_crosses():

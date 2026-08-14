@@ -39,6 +39,13 @@ LengthRule = Literal[
 # with no depth and no engagement is a butt joint wearing a better name.
 JointKind = Literal["butt", "channel", "groove", "bracket", "overlap"]
 
+# The two kinds whose mechanic the schema can express: a housing of some depth,
+# and a member seated into it. `bracket` and `overlap` are in the vocabulary
+# because the spec named them and are refused by `_unsupported_features` —
+# neither has a field that could make it mean anything, and a kind with no
+# numbers behind it is a butt joint wearing a better name.
+_HOUSED_JOINTS = frozenset({"channel", "groove"})
+
 
 # --- what a part IS, and which items may supply it ---------------------------
 
@@ -409,7 +416,42 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                 "resolve_panel always emits per-member component slots, so the "
                 "panel would be bought as its parts rather than as one unit"
             )
+        for holder in [*spec.frame, *(spec.infill.pattern if spec.infill else [])]:
+            if holder.joint in ("bracket", "overlap"):
+                # Named by the spec's vocabulary and given no field to mean
+                # anything with. A bracket joint's mechanic is a PRODUCT — the
+                # bracket — and `FrameSlot`/`Member` have nowhere to name one;
+                # an overlap's is a lap length, which is neither a channel depth
+                # (the receiving member is not housed) nor an engagement (the
+                # member is not seated in anything). So both would ride on the
+                # model, change no number, and be drawn as a mechanic the panel
+                # does not have. Refused rather than accepted-and-ignored, which
+                # is what this table is for.
+                errors.append(
+                    f"slot {holder.key}: joint={holder.joint!r} is "
+                    f"{_UNSUPPORTED}: nothing in the schema can give it a "
+                    "mechanic — a bracket needs a product and an overlap needs a "
+                    "lap length, and neither has a field — so the member would be "
+                    "cut exactly as a butt joint cuts it while the drawing "
+                    "claimed otherwise"
+                )
+
         for member in (spec.infill.pattern if spec.infill else []):
+            seats = [n for n, mm in (("base_engagement_mm", member.base_engagement_mm),
+                                     ("top_engagement_mm", member.top_engagement_mm)) if mm]
+            if seats and member.requirement.length_rule != "between_frame":
+                # The other half of the same hole. `_length_for` adds an
+                # engagement under `between_frame` and under no other rule, so
+                # here the author has said how deep the member seats and the
+                # member is cut as though it seated nowhere.
+                errors.append(
+                    f"infill member {member.key!r}: "
+                    f"{' and '.join(seats)} with "
+                    f"length_rule={member.requirement.length_rule!r} is "
+                    f"{_UNSUPPORTED}: only 'between_frame' adds an engagement to "
+                    "the cut length, so the member would be cut as if it seated "
+                    "into nothing"
+                )
             refs = [n for n, r in (("base_ref", member.base_ref),
                                    ("top_ref", member.top_ref)) if r]
             if refs and member.requirement.length_rule != "between_frame":
@@ -481,7 +523,16 @@ def _joint_errors(spec: PanelSpec) -> list[str]:
                 f"{slot.channel_depth_mm}, so the clearance swallows the whole "
                 "seat and the member would rest on nothing"
             )
-        if slot.joint != "butt" and slot.channel_depth_mm == 0:
+        if 0 < slot.thickness_mm < slot.channel_depth_mm:
+            errors.append(
+                f"frame slot {slot.key!r}: channel_depth_mm="
+                f"{slot.channel_depth_mm} is deeper than the member it is cut "
+                f"into (thickness_mm={slot.thickness_mm}) — the channel would "
+                "come out the far side. Refused for the same reason an "
+                "engagement deeper than its channel is: both put a member "
+                "somewhere it cannot go, in a number that reads as measured"
+            )
+        if slot.joint in _HOUSED_JOINTS and slot.channel_depth_mm == 0:
             errors.append(
                 f"frame slot {slot.key!r}: joint={slot.joint!r} with "
                 "channel_depth_mm=0 claims a mechanic the numbers do not have — "
@@ -545,22 +596,39 @@ def _joint_errors(spec: PanelSpec) -> list[str]:
                     "it crosses"
                 )
                 continue
-            if engagement > target.channel_depth_mm:
+            # The seat has to fit in what is left of the channel ABOVE the
+            # clearance under it. Checked against the two together rather than
+            # against the depth alone: a 12 mm seat in a 12 mm channel with a
+            # 3 mm margin is a member bottoming out in a channel whose whole
+            # point is to keep 3 mm under it, and the depth-only check called
+            # that fine.
+            seat = target.channel_depth_mm - target.insertion_margin_mm
+            if engagement > seat:
                 errors.append(
                     f"infill member {member.key!r}: seats {engagement} mm into "
-                    f"frame slot {ref!r}, whose channel is "
-                    f"{target.channel_depth_mm} mm deep — the member would be cut "
-                    f"{engagement - target.channel_depth_mm} mm too long on every "
-                    "bay and would stand proud of the frame it is meant to sit in"
+                    f"frame slot {ref!r}, which offers {seat} mm "
+                    f"(channel {target.channel_depth_mm} mm less "
+                    f"{target.insertion_margin_mm} mm of insertion clearance) — "
+                    f"the member would be cut {engagement - seat} mm too long on "
+                    "every bay and would stand proud of the frame it is meant to "
+                    "sit in"
                 )
-        if member.joint != "butt" and not (
+        housed = any(
+            frame_by_key[r].channel_depth_mm > 0
+            for r in (member.base_ref, member.top_ref) if r in frame_by_key
+        )
+        if member.joint != "butt" and not housed and not (
                 member.base_engagement_mm or member.top_engagement_mm):
+            # The conjunction the spec states: zero engagement AND no channel to
+            # engage. A member named `channel` that seats nothing into a slot
+            # that houses nothing is cut exactly as a butt joint cuts it, and
+            # would be DRAWN as a housed one.
             errors.append(
                 f"infill member {member.key!r}: joint={member.joint!r} with no "
-                "engagement at either end claims a mechanic the numbers do not "
-                "have — the member is cut exactly as a butt joint would cut it. "
-                "Give it a base_engagement_mm/top_engagement_mm, or call the "
-                "joint 'butt'"
+                "engagement at either end and no channel in either frame slot "
+                "claims a mechanic the numbers do not have — the member is cut "
+                "exactly as a butt joint would cut it. Give it a "
+                "base_engagement_mm/top_engagement_mm, or call the joint 'butt'"
             )
     return errors
 
