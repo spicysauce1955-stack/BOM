@@ -263,7 +263,11 @@ function drawBay(group, bay, { px, pz }, drawParts) {
   }, g);
   for (const m of elevationRects(bay.elevation))
     el("rect", {
-      class: `macro-member elev-${m.role || "other"}`,
+      // `elev-member` too, so a rail is the same colour in both viewports: the
+      // role palette is a closed set in the stylesheet, and a macro view with
+      // its own colours would make "the grey one" mean two different parts.
+      // (Without it the role class alone matches nothing and SVG paints black.)
+      class: `macro-member elev-member elev-${m.role || "other"}`,
       x: r6(m.x_mm), y: r6(m.y_mm),
       width: r6(Math.max(m.w_mm, 1)), height: r6(Math.max(m.h_mm, 1)),
       "data-slot": m.slot_key,
