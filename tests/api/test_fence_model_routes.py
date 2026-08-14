@@ -311,6 +311,49 @@ def test_previewing_an_unknown_model_is_a_404(client):
     assert client.post("/api/fence-models/M-NOPE/1/preview", json={}).status_code == 404
 
 
+# --- asking the preview for a specific product --------------------------------
+
+def test_a_preview_can_be_asked_for_a_specific_product_per_slot(client):
+    """The material drawer's request. Preview-scoped: it re-prices what is being
+    imagined and patches nothing stored."""
+    r = client.post("/api/fence-models/M-SLAT/1/preview",
+                    json={"height_mm": 1800, "width_mm": 2500,
+                          "slot_skus": {"slat": "SLAT-100"}})
+    assert r.status_code == 200, r.text
+    slot = next(s for s in r.json()["panel"]["slots"] if s["slot_key"] == "slat")
+    assert slot["pinned_sku"] == "SLAT-100"
+
+
+def test_asking_for_a_product_the_slot_cannot_use_is_a_coded_422(client):
+    """Silently ignoring it would price a panel the user did not ask for, and a
+    bare 422 would tell them only that "the action failed"."""
+    r = client.post("/api/fence-models/M-SLAT/1/preview",
+                    json={"height_mm": 1800, "width_mm": 2500,
+                          "slot_skus": {"slat": "RAIL-3000"}})
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "sku_not_eligible"
+    assert detail["params"] == {"slot_key": "slat", "sku": "RAIL-3000"}
+
+
+def test_asking_for_a_slot_the_panel_has_not_got_is_the_same_refusal(client):
+    r = client.post("/api/fence-models/M-SLAT/1/preview",
+                    json={"slot_skus": {"batten": "SLAT-100"}})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "sku_not_eligible"
+    assert r.json()["detail"]["params"]["slot_key"] == "batten"
+
+
+def test_the_unsaved_document_preview_refuses_the_same_way(client):
+    """Both preview routes go through one `_preview_or_refuse`, so the editor's
+    live preview and the stored one cannot disagree about what is allowed."""
+    body = {"model": client.get("/api/fence-models/M-SLAT/1").json(),
+            "bay": {"slot_skus": {"slat": "RAIL-3000"}}}
+    r = client.post("/api/fence-models/preview", json=body)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "sku_not_eligible"
+
+
 def test_two_models_can_be_compared_at_the_same_bay(client):
     """What a picker is for."""
     body = {"height_mm": 1800, "width_mm": 2500}

@@ -8,8 +8,15 @@ The last test in this file is the one that keeps that true.
 
 from __future__ import annotations
 
+import pytest
+
 from fenceai.catalog.demo import demo_catalog
+from fenceai.core.errors import RequestRefused
 from fenceai.fencemodel.demo import M_LEGACY, M_SLAT
+from fenceai.fencemodel.model import (
+    Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
+    PartRequirement,
+)
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.strategy.generator import generate
@@ -87,6 +94,114 @@ def test_a_knowledge_resolved_quantity_can_be_handed_in():
 
 def test_previewing_is_pure_and_deterministic():
     assert preview(M_SLAT) == preview(M_SLAT)
+
+
+# --- asking for a specific product, per slot ----------------------------------
+#
+# The material drawer's whole question: "what does this panel cost in cedar?".
+# The rule under test is that the answer NARROWS the slot, exactly as an option
+# axis does — it never bypasses eligibility, an approval or a priority.
+
+def two_candidate_model(approval: str = "auto") -> FenceModel:
+    """One rail slot with two real candidates, which the built-ins deliberately
+    do not have (`slat_model`: "it stays a plain panel"). Without a second
+    eligible product a pin narrows nothing, so the rule would be tested against
+    a set of one and every assertion would pass by accident.
+
+    RAIL-3000 is a 3000 mm bar at 1800; SLAT-100 is a 6000 mm bar at 5400, and
+    both can be cut to a 2500 mm rail — so the two really are alternatives and
+    they really do cost different amounts.
+    """
+    return FenceModel(
+        id="M-PIN", version=1,
+        name_i18n={"en": "Two-candidate rail", "he": "מסילה עם שני מועמדים"},
+        default_spec=PanelSpec(frame=[FrameSlot(
+            key="rail", orientation="horizontal",
+            placement=Distributed(count=2),
+            requirement=PartRequirement(
+                role="rail", qty=1, length_rule="centre_to_centre",
+                eligibility=Eligibility(members=[
+                    EligibleItem(sku="RAIL-3000", priority=1),
+                    EligibleItem(sku="SLAT-100", priority=7, approval=approval),
+                ]),
+            ),
+        )]),
+    )
+
+
+def test_a_pinned_sku_is_the_one_the_panel_is_priced_with():
+    """Hand-derived, both ways.
+
+    Two rails of 2500 mm, each charged its 3 mm kerf against (stock + kerf):
+      * RAIL-3000 — 2503 + 2503 = 5006 does not fit 3003, so one bar per rail:
+        2 x 1800 = 3600.
+      * SLAT-100  — 5006 fits 6003, so both rails come off ONE bar: 5400.
+    least_cost therefore buys the rail stock unasked, and pinning the slat is a
+    real, checkable 1800-cent difference rather than a re-ordered list.
+    """
+    model = two_candidate_model()
+    default = preview(model, height_mm=1800, width_mm=2500)
+    pinned = preview(model, height_mm=1800, width_mm=2500,
+                     slot_skus={"rail": "SLAT-100"})
+
+    assert by_slot(default)["rail"].sku == "RAIL-3000"
+    assert default.total_cents == 3600
+    assert by_slot(pinned)["rail"].sku == "SLAT-100"
+    assert pinned.total_cents == 5400
+
+
+def test_the_pin_is_recorded_on_the_resolved_slot_and_narrows_the_candidates():
+    """The drawer reads why a product is the chosen one off the slot; "cedar was
+    asked for" and "cedar won anyway" are different facts, so the pin is said
+    outright rather than inferred by matching the resolved sku to the request."""
+    model = two_candidate_model()
+    slot = preview(model, slot_skus={"rail": "SLAT-100"}).panel.slots[0]
+    assert slot.pinned_sku == "SLAT-100"
+    assert [m.sku for m in slot.eligibility.members] == ["SLAT-100"]
+    # and with no pin, nothing claims one
+    assert preview(model).panel.slots[0].pinned_sku is None
+    assert len(preview(model).panel.slots[0].eligibility.members) == 2
+
+
+def test_narrowing_carries_priority_and_approval_through_untouched():
+    """A colour choice must not promote a product past an approval it still
+    needs — the discipline `_chosen_option` states, applied to the same set."""
+    model = two_candidate_model(approval="suggest_only")
+    result = preview(model, height_mm=1800, width_mm=2500,
+                     slot_skus={"rail": "SLAT-100"})
+
+    member = result.panel.slots[0].eligibility.members[0]
+    assert (member.sku, member.priority, member.approval) == \
+        ("SLAT-100", 7, "suggest_only")
+    # and the pin did NOT buy it: with no approval on the request, supply still
+    # refuses to spend money on a suggest-only product
+    assert [w.code for w in result.warnings] == ["substitute_needs_approval"]
+    assert [p.slot_key for p in result.unsupplied] == ["rail"]
+    assert result.total_cents == 0
+
+
+def test_a_sku_that_slot_is_not_eligible_for_is_refused_not_ignored():
+    """Ignoring it would price a panel nobody asked for and show the number as
+    the answer to the question that was asked."""
+    with pytest.raises(RequestRefused) as excinfo:
+        preview(M_SLAT, slot_skus={"slat": "RAIL-3000"})
+    assert excinfo.value.code == "sku_not_eligible"
+    assert excinfo.value.params == {"slot_key": "slat", "sku": "RAIL-3000"}
+
+
+def test_a_slot_this_panel_does_not_have_is_refused():
+    with pytest.raises(RequestRefused) as excinfo:
+        preview(M_SLAT, slot_skus={"batten": "SLAT-100"})
+    assert excinfo.value.code == "sku_not_eligible"
+    assert excinfo.value.params == {"slot_key": "batten", "sku": "SLAT-100"}
+
+
+def test_an_empty_slot_skus_is_exactly_todays_behaviour():
+    """The field's whole compatibility claim, byte for byte: a preview asked
+    with `{}` must be the same document as one asked without the field at all,
+    or every stored comparison and every screenshot moved for nothing."""
+    assert preview(M_SLAT, slot_skus={}).model_dump_json() == \
+        preview(M_SLAT).model_dump_json()
 
 
 # --- the property the whole design rests on -----------------------------------

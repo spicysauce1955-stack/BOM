@@ -47,6 +47,11 @@ class PreviewRequest(BaseModel):
     # so a caller that knows them passes them and a caller that does not gets the
     # model's own authored defaults.
     params: dict[str, int] = {}
+    # "price this panel with THAT product in this slot" — the material drawer.
+    # Preview-scoped by design (spec §1): it re-prices what is being imagined and
+    # patches no stored run; making a choice stick is authoring the model or an
+    # override anchored to (run_id, station, kind), both of which already exist.
+    slot_skus: dict[str, str] = {}
 
 
 class PreviewPart(BaseModel):
@@ -109,6 +114,7 @@ def preview_panel(
         length_basis="width",
         params=request.params,
         options=dict(request.options),
+        slot_skus=dict(request.slot_skus),
     )
     spec, variant_index = select_variant(model, ctx)
     panel = resolve_panel(spec, ctx, model_ref=model.ref)

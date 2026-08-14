@@ -57,6 +57,11 @@ REFUSAL_CODES = [
     "catalog_changed",
     "topology_changed",
     "unresolved_supply",
+    # `core.errors.RequestRefused`: the panel preview was asked for a product
+    # that slot cannot be supplied by (or for a slot the panel has not got). A
+    # refusal the user causes by clicking, so it must say which slot and which
+    # product rather than "the action failed (422)".
+    "sku_not_eligible",
 ]
 
 
