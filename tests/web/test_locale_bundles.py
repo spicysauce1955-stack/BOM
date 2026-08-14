@@ -139,31 +139,38 @@ def test_lengths_carry_the_unit_placeholder_not_a_literal():
 
 
 def test_unit_bearing_keys_are_rendered_with_tu():
-    """`{u}` is supplied by units.tu()/unitParams() — a plain t("key") would leave
-    the placeholder in the UI."""
+    """`{u}` and `{c}` are supplied by units.tu()/unitParams() — a plain t("key")
+    would leave the placeholder in the UI.
+
+    `{c}` (the currency symbol) rides the same mechanism as `{u}` for the same
+    reason: the symbol lives in exactly one bundle key, so a column header that
+    wants it has to ask the layer that knows it."""
     import re
 
     js_dir = STATIC / "js"
     sources = {p.name: p.read_text() for p in [*js_dir.glob("*.js"), STATIC / "app.js"]}
     en, _ = _bundles()
-    unit_keys = [k for k, v in en.items() if "{u}" in str(v)]
-    # EVERY call whose first argument is a {u}-bearing key must go through tu()
-    # or hand `u` in explicitly — `t("key", {width_mm: 5})` (params, but no unit)
-    # is the mistake that actually happens.
+    # EVERY call whose first argument is a {u}- or {c}-bearing key must go through
+    # tu() or hand the param in explicitly — `t("key", {width_mm: 5})` (params, but
+    # no unit) is the mistake that actually happens.
     offenders = []
-    for key in unit_keys:
-        call = re.compile(r'([a-zA-Z_]*)\(\s*["\'`]' + re.escape(key) + r'["\'`]\s*(,|\))')
-        for fname, src in sources.items():
-            for m in call.finditer(src):
-                fn = m.group(1)
-                if fn == "tu":
-                    continue
-                if fn != "t":
-                    continue      # some other function that happens to take the key
-                tail = src[m.end():m.end() + 200]
-                if m.group(2) == "," and re.match(r"\s*\{[^}]*\bu\s*:", tail):
-                    continue      # t("key", { u: ... }) supplies the label itself
-                offenders.append((fname, key))
+    for placeholder in ("u", "c"):
+        keys = [k for k, v in en.items() if "{%s}" % placeholder in str(v)]
+        supplied = re.compile(r"\s*\{[^}]*\b%s\s*:" % placeholder)
+        for key in keys:
+            call = re.compile(
+                r'([a-zA-Z_]*)\(\s*["\'`]' + re.escape(key) + r'["\'`]\s*(,|\))')
+            for fname, src in sources.items():
+                for m in call.finditer(src):
+                    fn = m.group(1)
+                    if fn == "tu":
+                        continue
+                    if fn != "t":
+                        continue  # some other function that happens to take the key
+                    tail = src[m.end():m.end() + 200]
+                    if m.group(2) == "," and supplied.match(tail):
+                        continue  # t("key", { u: ... }) supplies the label itself
+                    offenders.append((fname, key, placeholder))
     assert not offenders, offenders
 
 
@@ -216,7 +223,14 @@ def test_one_module_owns_each_shared_renderer():
     for fn, owner in [("renderImpactReport", "impact.js"),
                       ("skuSelect", "builder-ui.js"),
                       ("loadCatalogProducts", "builder-ui.js"),
-                      ("updateAdvancedUi", "builder-ui.js")]:
+                      ("updateAdvancedUi", "builder-ui.js"),
+                      # money was the counter-example that made this rule worth
+                      # widening: `€${(cents/100).toFixed(2)}` was copied into
+                      # five modules, and moving the whole app to ₪ meant finding
+                      # all five plus two bundle strings plus three smoke checks.
+                      ("money", "units.js"),
+                      ("moneyDelta", "units.js"),
+                      ("currencySymbol", "units.js")]:
         definers = [name for name, src in sources.items()
                     if f"function {fn}" in src or f"const {fn} =" in src]
         assert definers == [owner], (fn, definers)
@@ -441,3 +455,23 @@ def test_every_role_a_real_generation_emits_is_in_that_vocabulary():
     roles = {r.role for r in derive_requirements(result.strategy, catalog,
                                                  result.run.demand_skus)}
     assert roles and roles <= set(ROLE_VOCABULARY), sorted(roles - set(ROLE_VOCABULARY))
+
+
+def test_no_literal_currency_symbol_in_a_bundle_value():
+    """The mirror of the unit rule above, for the same reason.
+
+    A price is rendered by `units.money()`, which reads its symbol from
+    `units.currency` — so a string that spells the symbol itself is a second
+    place the currency lives, and the ₪ migration found five of those. It also
+    catches the stale one: a bundle left saying € after the code moved on."""
+    for name, table in zip(("en", "he"), _bundles()):
+        offenders = [
+            k for k, v in table.items()
+            if k != "units.currency" and any(sym in str(v) for sym in "₪€$£¥")
+        ]
+        assert not offenders, (name, offenders)
+
+
+def test_the_currency_symbol_is_declared_in_both_bundles():
+    for name, table in zip(("en", "he"), _bundles()):
+        assert table.get("units.currency", "").strip(), name

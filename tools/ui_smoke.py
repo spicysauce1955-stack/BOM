@@ -450,6 +450,33 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
 fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
   .then(r => r.json()).then(qs => qs.filter(q => q.status === 'accepted').length)""")
         check("quote accepted via UI", accepted == 1)
+
+        # Currency: every price on this tab is `units.money()`, and the ₪ comes
+        # from ONE locale key. The lie this prevents is a half-migrated app —
+        # a BOM header in ₪ over a quotes table still totalling in €, which is
+        # exactly the shape the five hardcoded formatters had.
+        prices = c.js("""
+(() => {
+  const body = document.getElementById('bom-body');
+  const text = body ? body.textContent : '';
+  const cells = [...document.querySelectorAll('#bom-body td.num')]
+    .map(td => td.textContent.trim()).filter(s => /[\u20aa\u20ac$]/.test(s));
+  return {
+    nis: (text.match(/\u20aa/g) || []).length,
+    other: (text.match(/[\u20ac$\u00a3]/g) || []).length,
+    grouped: cells.filter(s => /^-?\u20aa[\\d,]+\\.\\d\\d$/.test(s)).length,
+    cells: cells.length,
+    // the BOM total's own heading, found by what it says rather than by
+    // position: this tab stacks four panels and the totals one is not the first
+    total: [...document.querySelectorAll('#bom-body h3')]
+      .map(h => h.textContent).find(s => /₪/.test(s)) || '',
+  };
+})()""")
+        check("every price on the BOM tab is a ₪ figure, and no other symbol is left",
+              (prices["nis"] or 0) > 0 and prices["other"] == 0
+              and "\u20aa" in prices["total"])
+        check("prices render grouped with two decimals through one formatter",
+              prices["cells"] > 0 and prices["grouped"] == prices["cells"])
         c.shot("07-quotes.png")
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
@@ -475,7 +502,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
   const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')];
   return {
     slots: rows.map(r => r.dataset.slot),
-    priced: rows.filter(r => /€\\d/.test(r.textContent)).length,
+    priced: rows.filter(r => /₪\\d/.test(r.textContent)).length,
     total: document.getElementById('panel-total')?.textContent || '',
     head: document.querySelector('#panel-parts h3')?.textContent || '',
   };
@@ -485,7 +512,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         check("the Panel tab prices a parts table for M-SLAT",
               slat["slots"] == ["rail", "screw", "slat"]
               and slat["priced"] == 3 and "M-SLAT@v1" in slat["head"]
-              and "€" in slat["total"])
+              and "₪" in slat["total"])
 
         # --- and DRAWS it ------------------------------------------------------
         # "See the panel" was this wave's headline and it shipped as a table of
@@ -1587,7 +1614,7 @@ fetch('/api/fence-models').then(r => r.json()).then(l => l.map(x => x.id).join('
         priced_unsaved = c.js(
             "document.getElementById('model-preview-total')?.textContent || ''")
         check("an unsaved model is priced anyway",
-              "€" in priced_unsaved and priced_unsaved.strip() != "")
+              "₪" in priced_unsaved and priced_unsaved.strip() != "")
         c.shot("21-models-editor.png")
         c.click(*c.element_center("#btn-model-publish"))
         time.sleep(2.5)
@@ -1792,7 +1819,7 @@ document.querySelector('#model-parts tr[data-slot="slat"] td:nth-child(3)')
         # "it changed" is not the claim — a re-render changes a string. The
         # claim is arithmetic: a wider gap fits FEWER slats across the same bay.
         check("the live preview re-prices the panel when a spec field changes",
-              "€" in total_60 and "€" in total_300 and total_60 != total_300
+              "₪" in total_60 and "₪" in total_300 and total_60 != total_300
               and slats_60.isdigit() and slats_300.isdigit()
               and int(slats_60) > int(slats_300) > 0)
         c.shot("24-models-preview.png")

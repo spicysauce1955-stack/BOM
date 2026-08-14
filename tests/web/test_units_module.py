@@ -27,13 +27,29 @@ globalThis.localStorage = {
   getItem: (k) => globalThis.localStorage.s[k] ?? null,
   setItem: (k, v) => { globalThis.localStorage.s[k] = String(v); },
 };
-globalThis.document = { getElementById: () => null };
+globalThis.document = { getElementById: () => null, querySelectorAll: () => [],
+                        documentElement: {} };
+// money() reads the currency symbol out of the REAL locale bundle, so serve it:
+// a test that stubbed the symbol would pass while the shipped bundle was missing
+// the key, and every price on screen would read "units.currency1,234.56".
+import { readFileSync } from "node:fs";
+globalThis.fetch = async (url) => ({
+  ok: true, json: async () => JSON.parse(readFileSync(url, "utf8")),
+});
 
 import { on, state } from "./js/state.js";
+import { initI18n, setLocale } from "./js/i18n.js";
 import {
-  UNITS, initUnits, inputStep, parseTypedLength, setUnits, snapStep,
-  toDisplayValue, toMm, toggleUnits, unitParams,
+  UNITS, currencySymbol, initUnits, inputStep, money, moneyDelta,
+  parseTypedLength, setUnits, snapStep, toDisplayValue, toMm, toggleUnits,
+  unitParams,
 } from "./js/units.js";
+
+await initI18n();
+// the bundle is now REALLY loaded (money needs the symbol out of it), so pin the
+// language before anything reads a word: `initI18n` opens in Hebrew, and a params
+// assertion that drifted with the default locale would be testing the default
+await setLocale("en");
 
 const out = {};
 out.units = UNITS;
@@ -81,6 +97,20 @@ const typed = (unit) => Object.fromEntries(
     .map((s) => [s, parseTypedLength(s, unit)]));
 out.typed_mm = typed("mm");
 out.typed_cm = typed("cm");
+
+// money: one formatter, from the bundle's symbol, in both languages
+await setLocale("en");
+out.symbol_en = currencySymbol();
+out.money_en = [0, 5, 450, 180000, 123456789, -2500, null, undefined]
+  .map((c) => money(c));
+out.delta_en = [1200, -1200, 0].map((c) => moneyDelta(c));
+await setLocale("he");
+out.symbol_he = currencySymbol();
+out.money_he = money(180000);
+// a price never leaks a fractional cent: cents are integers at rest, and a
+// float that reached here would otherwise print ".005"
+out.money_rounded = [money(1234.4), money(1234.6)];
+out.params_currency = unitParams({ width_mm: 100 }).c;
 
 console.log(JSON.stringify(out));
 """
@@ -131,13 +161,13 @@ def test_only_mm_params_convert(units):
     assert p["mode"] == "level" and p["span_id"] == "s1"
     # plain numbers are NOT lengths: counts and degrees must never be divided
     assert p["posts"] == 7 and p["tilt_deg"] == 12
-    assert p["u"] == "units.cm"  # locale table absent in node: t() falls back to the key
+    assert p["u"] == "cm"
 
 
 def test_mm_params_pass_through_untouched(units):
     """The mm side must be exercised too, or a hardcoded-cm conversion passes."""
     assert units["params_mm"] == {
-        "u": "units.mm", "width_mm": 1234, "min_mm": 900,
+        "u": "mm", "c": "₪", "width_mm": 1234, "min_mm": 900,
         "mode": "level", "span_id": "s1", "posts": 7, "tilt_deg": 12,
     }
 
@@ -189,3 +219,32 @@ def test_typed_length_rejects_what_it_cannot_read(units):
         assert table["0"] is None          # zero-length segment is not a length
         assert table["12cm34"] is None     # unit must be a SUFFIX
     assert units["typed_cm"]["0.5"] == 5   # sub-centimetre entry still resolves
+
+
+def test_the_currency_symbol_comes_from_the_bundle_in_both_languages(units):
+    """One currency, ILS, and the symbol is a locale key rather than a literal in
+    JS — which is what lets test_locale_bundles forbid a bare ₪ anywhere else."""
+    assert units["symbol_en"] == "₪"
+    assert units["symbol_he"] == "₪"
+    assert units["money_he"] == "₪1,800.00"
+    # tu()/unitParams carry it as {c}, the way they carry the unit label as {u}
+    assert units["params_currency"] == "₪"
+
+
+def test_money_groups_thousands_and_always_shows_two_decimals(units):
+    """A quote figure is checked against another quote by eye: "₪180000" invites
+    a factor-of-ten argument that "₪1,800.00" does not."""
+    assert units["money_en"] == [
+        "₪0.00", "₪0.05", "₪4.50", "₪1,800.00", "₪1,234,567.89", "-₪25.00",
+        "₪0.00", "₪0.00",      # null/undefined price: free, never "NaN"
+    ]
+
+
+def test_money_rounds_to_the_cent_rather_than_printing_a_fraction(units):
+    assert units["money_rounded"] == ["₪12.34", "₪12.35"]
+
+
+def test_money_delta_signs_a_saving_and_a_cost_differently(units):
+    """The "+" is the whole point: an impact preview is read to learn which way
+    the money moved, and an unsigned figure answers a different question."""
+    assert units["delta_en"] == ["+₪12.00", "-₪12.00", "₪0.00"]
