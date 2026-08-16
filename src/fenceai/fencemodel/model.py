@@ -767,7 +767,23 @@ def _post_slot_errors(post: PostSlot, catalog: Catalog) -> list[str]:
     if predicate is not None:
         for path in sorted(field_paths(predicate)):
             head, _, field = path.partition(".")
-            if head == "panel" and field not in POST_PREDICATE_PANEL_FACTS:
+            if head == "panel" and field in POST_PREDICATE_PANEL_FACTS:
+                # DESIGNED and not yet supplied. `_model_post_skus` resolves a
+                # post from its own station, where the bay's height and rail
+                # positions are not yet computed, so it matches against `item.*`
+                # alone. A predicate reading one of these would therefore match
+                # NOTHING and fall silently through to the company default — a
+                # model quietly not getting the post it asked for. Refused by
+                # name until the generator supplies them, which is the same rule
+                # `_UNSUPPORTED` applies to every other designed-not-built field.
+                errors.append(
+                    f"slot {post.key}: panel.{field} is not yet supplied to post "
+                    f"matching — a post is resolved at its own station, before "
+                    f"any bay is laid out, so this predicate would match nothing "
+                    f"and the company default would answer instead. Match on "
+                    f"item.* for now"
+                )
+            elif head == "panel":
                 errors.append(
                     f"slot {post.key}: a post predicate may not read "
                     f"panel.{field} — the clear opening is measured TO the post "

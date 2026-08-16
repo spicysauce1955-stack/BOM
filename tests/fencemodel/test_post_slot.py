@@ -69,13 +69,27 @@ def test_a_post_slot_with_no_eligible_product_is_refused():
     assert any("post" in e for e in errs)
 
 
-def test_a_post_predicate_may_read_height_derived_panel_facts():
-    """A routed post has to agree with where the panel puts its rails, so it
-    must be able to ask."""
+def test_a_post_predicate_reading_the_panel_is_refused_until_it_is_supplied():
+    """A routed post has to agree with where the panel puts its rails, and the
+    design says so — `POST_PREDICATE_PANEL_FACTS` is the set it may eventually
+    read. It is not supplied YET: a post is resolved at its own station, before
+    any bay is laid out, so such a predicate would match nothing and the company
+    default would answer with nobody told. Refused by name rather than allowed to
+    fail silently."""
     tall_enough = Cmp(cmp=">=", left=FieldRef(path="item.length_mm"),
                       right=FieldRef(path="panel.height_mm"))
+    errs = validate_model(_model(_post(requirement=PartRequirement(
+        role="post", eligibility=Eligibility(predicate=tall_enough)))), demo_catalog())
+    assert any("not yet supplied" in e for e in errs)
+
+
+def test_a_post_predicate_on_the_item_alone_is_fine():
+    """Which is the whole usable case today: a product line identifying its own
+    post by what that post IS."""
+    vinyl = Cmp(cmp="==", left=FieldRef(path="item.material"),
+                right=Lit(value="galvanised_steel"))
     model = _model(_post(requirement=PartRequirement(
-        role="post", eligibility=Eligibility(predicate=tall_enough))))
+        role="post", eligibility=Eligibility(predicate=vinyl))))
     assert validate_model(model, demo_catalog()) == []
 
 
