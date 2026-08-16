@@ -77,6 +77,30 @@ from fenceai.topology.station import (
 # honest default is the vocabulary's own default, not the vestigial name.
 DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_cost"}
 
+# What the ENGINE does, as part of what a run means.
+#
+# The digest held data versions — topology, knowledge, models, catalog — and no
+# algorithm version at all, so a legitimate change to how a fence is laid out
+# produced a different strategy under the SAME id, and `save_run`'s
+# INSERT OR IGNORE then served the old stored document for ever. Deliberately not
+# a git commit: most commits change nothing a run means, and an identity that
+# churns on every push makes every stored run unreadable for no reason.
+#
+# Bump PLANNING_BEHAVIOR_VERSION when generation's OUTPUT changes for unchanged
+# inputs — a different post rule, a different layout, a different panel
+# resolution. Bump RUN_DIGEST_VERSION when the digest's own inputs or
+# serialisation change, which is what makes two genuinely different runs able to
+# hash the same.
+#
+# There is deliberately NO fulfillment version here. A run's stored document is
+# the strategy and its graph; the BOM is recomputed on every read and is already
+# a function of mutable inventory. A fulfillment algorithm version belongs to the
+# materialization identity this system does not have yet (see the backend audit
+# response, §1.5) — putting it in the DESIGN digest would deepen exactly the
+# conflation that finding is about.
+PLANNING_BEHAVIOR_VERSION = "planning-v1"
+RUN_DIGEST_VERSION = "digest-v1"
+
 # The catalog attribute by which a product declares the opening width it fits.
 # Fit is DATA, like Product.attrs["length_mm"] for posts: a SKU is an opaque id and
 # "GATE-KIT-1000" is a naming accident of one catalog, never a width to parse.
@@ -196,7 +220,8 @@ def generate(
             [project_id, topology.model_dump(), run_meta.knowledge_snapshot,
              [o.model_dump() for o in overrides], policy,
              [u.model_dump() for u in run_meta.model_snapshot], run_meta.catalog_hash,
-             run_meta.objective_preset],
+             run_meta.objective_preset,
+             PLANNING_BEHAVIOR_VERSION, RUN_DIGEST_VERSION],
             sort_keys=True, default=str,
         ).encode()
     ).hexdigest()[:12]

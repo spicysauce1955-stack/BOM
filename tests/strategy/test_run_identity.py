@@ -47,3 +47,29 @@ def test_identical_inputs_still_give_identical_ids():
     topo, kb = straight_topology(3000), demo_knowledge()
     assert generate(topo, kb, demo_catalog()).run.id == \
         generate(topo, kb, demo_catalog()).run.id
+
+
+def test_the_planning_behaviour_version_is_part_of_a_runs_identity(monkeypatch):
+    """The digest held DATA versions and no ALGORITHM version, so a legitimate
+    change to how a fence is laid out produced a different strategy under the
+    SAME id — and `INSERT OR IGNORE` then served the old stored document for
+    ever. Bumping the constant is how a planning change says "this means
+    something new"."""
+    from fenceai.strategy import generator
+
+    topo, kb = straight_topology(3000), demo_knowledge()
+    before = generate(topo, kb, demo_catalog()).run.id
+    monkeypatch.setattr(generator, "PLANNING_BEHAVIOR_VERSION", "planning-vNEXT")
+    assert generate(topo, kb, demo_catalog()).run.id != before
+
+
+def test_the_digest_version_is_part_of_a_runs_identity(monkeypatch):
+    """Same argument one level down: if what goes INTO the digest changes, or how
+    it is serialised changes, two runs that mean different things can still hash
+    the same."""
+    from fenceai.strategy import generator
+
+    topo, kb = straight_topology(3000), demo_knowledge()
+    before = generate(topo, kb, demo_catalog()).run.id
+    monkeypatch.setattr(generator, "RUN_DIGEST_VERSION", "digest-vNEXT")
+    assert generate(topo, kb, demo_catalog()).run.id != before
