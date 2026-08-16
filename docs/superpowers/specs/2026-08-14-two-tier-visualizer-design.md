@@ -230,17 +230,33 @@ another's DOM:
 
 | change | macro | micro | BOM strip |
 |---|---|---|---|
-| panel height / bay width in the bar | stale badge + Generate button | re-previews (debounced 250 ms) | preview total, live |
+| panel height / bay width in the bar | unchanged (see below) | re-previews (debounced 250 ms) | preview total, live |
 | material swap in the drawer | unchanged | re-previews with `slot_skus` | preview total, live |
 | model swap | stale badge | re-previews | preview total, live |
 | a new run generated | redraws | redraws from the run | run BOM total |
 | units mm↔cm, locale | redraws | redraws | redraws |
 
+**Correction, made during the review pass rather than left as a disagreement.**
+The first version of this table said a dimension what-if marks the macro viewport
+stale and offers a Generate button. The implementation does not, and the
+implementation is right: the macro viewport is showing the RUN, which a
+hypothetical panel height has not made wrong. Calling it stale would claim the
+drawing is inaccurate when it is exactly accurate, and a Generate button there
+would be worse — a what-if height lives nowhere the generator could read it, so
+the button would either do nothing or silently generate the OLD height. What the
+what-if actually needs is what it has: a badge on the panel that is hypothetical,
+and one button back.
+
+Staleness in the real sense — the topology moved, the catalog moved, the run
+predates fence models — is still handled, by the same `structure-data.js` refusal
+branches the Structure tab uses. Those branches are now ONE function
+(`refusalKey`) in the module that owns the refusal state rather than a copy per
+tab, because two copies is how one surface comes to say "generate a strategy"
+about a run whose catalog moved while the surface beside it says the truth.
+
 The cost strip states which of the two it is showing — *preview of one panel* or
 *this run's BOM* — because a number that silently changes meaning is worse than two
-numbers. The stale badge carries the same `code + params` vocabulary as every other
-refusal (`structure.stale`, `structure.catalog_changed`, …), reusing
-`structure-data.js`'s refusal branches rather than inventing a second set.
+numbers.
 
 ---
 
