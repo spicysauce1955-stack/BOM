@@ -16,7 +16,7 @@ import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { emit, on, setSelection, state } from "./state.js";
 import {
-  CONSUMABLE_ROLES, getReport, isStale, loadStructure, staleCode, staleKind,
+  CONSUMABLE_ROLES, getReport, loadStructure, refusalKey, staleCode,
 } from "./structure-data.js";
 import { enumWord, fmt, fmtLen, tu, unitLabel } from "./units.js";
 import { supplyProblemsHtml } from "./warnings.js";
@@ -64,14 +64,11 @@ function render() {
     totals.innerHTML = "";
     // "no structure yet" is true for EXACTLY one of these: no run. Every other
     // branch is a run that exists and cannot be laid out, and saying "generate a
-    // strategy" about it is a lie the user cannot act on.
-    const emptyKey = !isStale() ? "structure.empty"
-      : staleKind() === "catalog" ? "structure.catalog_changed"
-      : staleKind() === "predates" ? "error.run_predates_fence_model"
-      : staleKind() === "unknown" ? "structure.unreadable"
-      : "structure.stale";
+    // strategy" about it is a lie the user cannot act on. The mapping lives in
+    // structure-data.js, which owns the refusal state; this tab only names what
+    // IT calls the no-run case.
     body.innerHTML = `<div class="panel meta">${
-      esc(t(emptyKey, { code: staleCode() }))}</div>`;
+      esc(t(refusalKey("structure.empty"), { code: staleCode() }))}</div>`;
     return;
   }
   renderPrintTitle(report);
