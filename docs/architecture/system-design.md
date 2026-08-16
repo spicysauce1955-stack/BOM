@@ -3,6 +3,13 @@
 Modular monolith (`src/fenceai/`), Python 3.12, FastAPI, Pydantic v2, SQLite. Static SVG/JS
 frontend. See ADR-0001, -0008, -0010.
 
+> Diagram-led companions to this document: [`00-overview.md`](00-overview.md),
+> [`01-domains.md`](01-domains.md), [`02-entities.md`](02-entities.md),
+> [`03-flows.md`](03-flows.md), [`04-backend.md`](04-backend.md),
+> [`05-frontend.md`](05-frontend.md), [`06-choices.md`](06-choices.md). Index:
+> [`README.md`](README.md). Where they and this document disagree about a mechanism,
+> **this document wins**.
+
 ## Module map and dependency rule
 
 ```
@@ -11,9 +18,11 @@ topology    nodes, runs, events, stationing, profiles              (core)
 catalog     products, consumption semantics, substitution rules    (core)
 knowledge   objects/versions, condition AST, evaluator, precedence (core)
 decisions   decision graph builder, node/edge types, explanations  (core)
-strategy    generator pipeline, layout, overrides, warnings        (topology, catalog, knowledge, decisions)
-demand      requirement derivation from strategy                   (strategy, catalog)
-fulfillment cut planner, packaging, inventory netting, BOM         (demand, catalog)
+fencemodel  panel schema, pattern fit, resolution, model library   (catalog, knowledge)
+strategy    generator pipeline, layout, overrides, warnings        (topology, catalog, knowledge, decisions, fencemodel)
+demand      requirement derivation from strategy                   (strategy, catalog, fencemodel)
+fulfillment supply resolution, cut planner, packaging, netting, BOM (demand, catalog, fencemodel)
+report      structure + elevation read models (derived, never stored) (strategy, demand, fulfillment)
 ai          ports + records (dependency-free); stub/claude ADAPTERS may import domain models
 project     project aggregate, annotations, intent confirmation    (topology, ai.records, strategy.overrides)
 learning    corrections, candidates, review, impact preview       (knowledge, decisions, strategy, demand, fulfillment)
