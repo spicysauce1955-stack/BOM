@@ -374,6 +374,42 @@ eligibility modes, the strengthened `validate_model` check, and the deletion of 
 yet. The compatibility gate must not move in this wave: every shipped model still
 authors `members`.
 
+**W2, remaining — and one fork found while starting it (2026-08-16).**
+
+The matcher, the `attrs` widening, the two eligibility modes, the strengthened
+`validate_model` check and the `_UNSUPPORTED` deletion all landed. Engine
+behaviour versions landed. Two items remain, and the first has a decision in it
+that must be taken deliberately rather than during the edit:
+
+*The `DemandLine` / `ResolvedSupplyLine` split.* `derive_requirements` does not
+emit uniformly unresolved lines. Posts, caps, concrete and gate kits arrive with
+a SKU already chosen — by knowledge, not by supply resolution — carrying an
+**empty** eligibility; only panel slots arrive with eligibility and a blank sku.
+`resolve_supply` therefore has two paths, and a `DemandLine` with no `sku` field
+cannot express the first.
+
+* **A — one path.** An authored SKU becomes a one-member eligibility, exactly as
+  `legacy_model()` already seeds itself from `demand_skus`. Cleanest, matches the
+  audit's design, and lets `fulfillment` stop importing `fencemodel`. **Costs a
+  compatibility-gate regeneration**: the fence is byte-for-byte the same, but
+  every post, cap, concrete and gate-kit line's `eligibility` field changes from
+  empty to a one-member list. The gate would then be unable to say "nothing
+  moved" for the very change that most needs it to.
+* **B — two paths, named honestly.** `DemandLine` carries `authored_sku: str |
+  None` — "the product knowledge already chose" — distinct from "the product
+  supply resolution chose". Never blank-and-meaningless, so the audit's real win
+  still holds: a resolved line cannot lack a SKU and an unresolved one cannot
+  reach `fulfill()`. Gate stays byte-identical.
+
+A is better design; B is better migration. The choice turns on whether the gate's
+"nothing moved" guarantee is worth more than one unified path, and that is a
+judgement about this project's risk posture rather than about the types.
+
+*Typed catalog capabilities* has its own hazard, recorded here before it is
+started: `catalog_hash` is computed over `Product.model_dump()`, so ADDING a
+field to `Product` changes every product's hash and 409s every stored run. It
+needs either a hash that ignores new fields or a stated, deliberate migration.
+
 **W3 — posts and caps on the model.** `PostSlot`, the generator reordering of §6,
 the cycle rule and its refusal, boundary-post intersection, and the three error
 codes with both locale bundles. The riskiest wave; the gate is the check.
