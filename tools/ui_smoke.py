@@ -1926,6 +1926,14 @@ fetch('/api/fence-models').then(r => r.json())
         # Foundation §11: a portfolio-wide change is exposed before it is made.
         # Editing M-SLAT's slat gap is exactly that — it re-fits every bay of
         # every project built to it.
+        # what the library says about M-SLAT BEFORE the editor is opened: the
+        # property is "nothing was stored", and pinning it to a literal version
+        # made it a property of the seed instead (M-SLAT gained a v2 draft when
+        # joint geometry landed, and this check failed for a reason that had
+        # nothing to do with what it is about)
+        slat_before = c.js("""
+fetch('/api/fence-models').then(r => r.json())
+  .then(l => l.find(x => x.id === 'M-SLAT'))""")
         c.js("""
 document.querySelector('#model-list [data-model="M-SLAT"] [data-act="edit"]').click();
 'ok'""")
@@ -1958,8 +1966,8 @@ fetch('/api/fence-models').then(r => r.json())
         check("the impact of a model edit is reported before it is published",
               impact_rows >= 1 and "models" in impact_text
               and "אף פרויקט לא ישתנה" not in impact_text
-              and slat_row["active_version"] == 1
-              and slat_row["draft_version"] is None)
+              and slat_row["active_version"] == slat_before["active_version"]
+              and slat_row["draft_version"] == slat_before["draft_version"])
         c.shot("23-models-impact.png")
 
         # --- the preview beside the editor follows the spec --------------------
