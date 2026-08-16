@@ -346,7 +346,13 @@ def test_the_rule_that_set_the_rail_count_reaches_the_panel_it_measured():
     quantities = next(n for n in result.graph.nodes
                       if n.action == "resolve_span_quantities")
     assert quantities.payload["rails_per_span"] == 3
-    assert quantities.id in [e.from_id for e in result.graph.in_edges(panel.id)]
+    inputs = [e.from_id for e in result.graph.in_edges(panel.id)]
+    assert quantities.id in inputs
+    # and the bay whose height the other length rules read, which reached this
+    # node only through a variant node — i.e. never, on a model without variants
+    span_node = next(n for n in result.graph.nodes_for_element(
+        result.strategy.spans[0].id) if n.action == "create_span")
+    assert span_node.id in inputs
     # and so the governing version is reachable FROM the panel, not merely nearby
     refs = {e.knowledge_ref for anc in result.graph.ancestors(panel.id)
             for e in result.graph.in_edges(anc.id) if e.type == "governed_by"}

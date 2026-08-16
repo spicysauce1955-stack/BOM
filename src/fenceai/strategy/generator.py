@@ -1368,7 +1368,15 @@ def _generate_run(
                 inputs=[layout_node.id] + ([fv_node] if fv_node else []),
                 governed_by=governed,
             )
-            panel_inputs = [layout_node.id, sm.select_node_id, quantity_node.id]
+            # `span_node` among them: the panel was resolved against THIS bay's
+            # width and height, so every length rule that reads them
+            # (`panel_height`, `centre_to_centre`) traces to the node that fixed
+            # them. It reached `resolve_panel` only through the variant node
+            # before, which exists only for a model that declares variants — so
+            # on the plainest model the bay's own height was not upstream of the
+            # panel cut to it.
+            panel_inputs = [layout_node.id, sm.select_node_id, quantity_node.id,
+                            span_node.id]
             if model.variants:
                 # NO `defeated` edge, and that is not an omission: a variant
                 # condition is evaluated outside the knowledge evaluator, so
@@ -1592,7 +1600,7 @@ def _panel_slots_payload(panel: ResolvedPanel) -> list[dict]:
 
     Before the panel waves every cut length on a BOM line was derivable from the
     graph: `panel_height` and `centre_to_centre` are functions of `create_span`'s
-    own payload, and `create_span` is an input edge of this node. `between_frame`
+    own payload, which is an input edge of this node. `between_frame`
     is not. Its length is a function of the frame slots' positions, their face
     heights and the two engagements — none of which appears anywhere else in the
     graph — so the slat that is 1665 mm instead of 1800 mm, the whole reason
