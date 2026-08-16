@@ -1,5 +1,52 @@
 # Current status
 
+## W3 — a model owns its post and cap (2026-08-16)
+Spec §W3, and the §5 reversal the user chose: post selection leaves run-wide
+knowledge for any model that declares a `PostSlot`. A model described the panel
+BETWEEN two posts and said nothing about the posts, which is right for a company
+with one post standard and wrong for a product line — a routed vinyl post is
+specific to the panel that seats into it.
+
+**The cap nests inside the post** because a cap exists BECAUSE a post does, and
+its predicate reads the post it caps — answerable only because the post is chosen
+first. Every relation in this design is one-directional for that reason.
+
+**The cycle rule** (`POST_PREDICATE_PANEL_FACTS`) is why the resolution order is a
+DAG: a bay's clear opening is measured TO its posts' faces, so a post chosen BY
+that opening would be choosing itself.
+
+    height -> rail positions -> post -> clear width -> infill fit
+
+**Posts are sampled at their OWN station**, not gathered from the bays either
+side. A post stands at one place and `fence_model_at` answers for that place with
+the half-open convention every other station question uses — so the answer cannot
+depend on which neighbouring bay resolved first, and the generator needed no
+two-pass restructure.
+
+**Precedence sits BELOW the three situational posts** — forced sku, masonry mount,
+gate reinforcement. Those describe a post doing a different JOB, and a line with
+no variant for them would otherwise silently replace a post chosen for its
+situation.
+
+**And the honest half.** W3a designed the post predicate to read height-derived
+panel facts; W3b then resolved posts before any bay exists, so those facts are not
+in the matching context. A predicate reading one would match nothing and fall
+silently through to the company default — a model quietly not getting the post it
+asked for. Refused BY NAME at authoring with the reason and the workaround, the
+same rule `_UNSUPPORTED` applies to every designed-not-built field. The constant
+stays as the statement of what will be readable when the generator supplies it.
+
+Mutation-verified four ways: cycle rule disabled, post validation skipped, model
+post ignored, model cap ignored — each kills tests. One vacuous test avoided
+rather than shipped (the cap test named POST-CAP, which is also the company
+default, so it passed whether or not the model was consulted).
+
+**Remaining in W3:** supplying the bay facts to post matching, the routed-vinyl
+demo model and its golden scenario, and boundary-post intersection across two
+models.
+
+1090 pytest · 159/159 smoke · gate byte-identical.
+
 ## Typed catalog capabilities, and a migration that says what it did (2026-08-16)
 Audit finding §4.2, with its hazard taken head-on. Three facts were read out of the
 open `attrs` bag by deterministic code: the post length the length check measures
