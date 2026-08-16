@@ -391,3 +391,33 @@ def test_a_member_drawn_unseated_is_given_no_section_to_be_seated_in():
     assert elevation.details == [], "nothing to cut a section through"
 
 
+def test_the_clearance_against_the_post_is_the_fit_s_own_number():
+    """MINOR 10. `PanelElevation` carried the fitted gaps but not the fitted edge
+    margins, so a client dimensioning the clearance measured it off the drawn
+    rectangles — deriving a fitted number from a picture of itself.
+
+    Hand-derived over a 2400 mm opening of 100 mm slats with 20 mm gaps:
+    12 * 100 + 11 * 20 would leave room for more, and 20 members with 19 gaps
+    take 2000 + 380 = 2380, leaving 20 mm. M-SLAT spreads that into the gaps
+    (`excess="space"`), so both margins are 0; justified `center` with the
+    residual kept, the same 20 mm splits into 10 mm against each post.
+    """
+    spread = elevation_of(M_SLAT)
+    assert len(by_slot(spread, "slat")) == 20
+    assert (spread.edge_margin_start_mm, spread.edge_margin_end_mm) == (0, 0)
+    assert spread.residual_mm == 0
+    assert by_slot(spread, "slat")[0].x_mm == 0
+
+    model = M_SLAT.model_copy(deep=True)
+    model.default_spec.infill.justification = "center"
+    model.default_spec.infill.excess = "truncate"
+    centred = elevation_of(model)
+    assert len(by_slot(centred, "slat")) == 20
+    assert (centred.edge_margin_start_mm, centred.edge_margin_end_mm) == (10, 10)
+    assert centred.residual_mm == 0
+    assert centred.gaps_mm == [20] * 19, "the slack went to the ends, not the gaps"
+    # the drawing agrees with the number, which is the point of reporting it
+    slats = by_slot(centred, "slat")
+    assert slats[0].x_mm == centred.edge_margin_start_mm
+    assert (2400 - (slats[-1].x_mm + slats[-1].w_mm)
+            == centred.edge_margin_end_mm + centred.residual_mm)
