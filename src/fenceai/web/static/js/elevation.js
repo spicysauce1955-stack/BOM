@@ -37,6 +37,8 @@ const PAD_BOTTOM = 54;       // room for the width dimension
 const PAD_TOP = 18;
 const PAD_TOP_GAP = 60;      // …and for the fitted-gap dimension, when there is one
 const PAD_END_GAP = 76;      // (a horizontal pattern's gap is called out beside it)
+const CALLOUT_STEP = 30;     // one lane out for a second callout on the same side
+const MARGIN_ROW = 22;       // the edge-margin row, under the panel
 const TICK = 7;              // dimension tick half-length
 
 // Fill and edge come from the stylesheet, keyed by a role from a CLOSED set —
@@ -124,6 +126,86 @@ export function gapDimension(elev) {
   return null;
 }
 
+/** The pattern's PITCH — member plus the gap after it — or null.
+ *
+ * The number a slat fence is specified by ("100 at 150 centres"), and the one
+ * neither the member width nor the gap states on its own. Measured between two
+ * consecutive members' leading edges, which is a placement fact both rectangles
+ * already carry.
+ *
+ * Emitted only when the pitch is CONSTANT across the whole placed sequence. A
+ * `spread_to_fit` pattern absorbs its remainder into the gaps, so its members
+ * are not evenly pitched, and one pitch quoted over an uneven pattern is a
+ * number an installer would set out from and get wrong by the last bay. The gap
+ * line beside the drawing already says the honest thing there ("20–21 mm"). */
+
+/** The members of the fitted PATTERN, keyed by slot.
+ *
+ * `kind` is on the wire ("frame" | "infill") precisely so a client does not have
+ * to guess: a two-rail frame slot and a two-slat pattern are the same shape here,
+ * and calling out an "edge margin" between the opening and a rail would dimension
+ * something nobody set out. A run generated before `kind` existed carries "" for
+ * every member, and there the old behaviour (consider them all) is the only
+ * option — better a dimension derived from every member than none at all. */
+function patternSlots(elev) {
+  const members = elev?.members || [];
+  const typed = members.some((m) => m.kind);
+  const bySlot = new Map();
+  for (const m of members) {
+    if (typed && m.kind !== "infill") continue;
+    if (!bySlot.has(m.slot_key)) bySlot.set(m.slot_key, []);
+    bySlot.get(m.slot_key).push(m);
+  }
+  return bySlot;
+}
+
+export function pitchDimension(elev) {
+  for (const list of patternSlots(elev).values()) {
+    if (list.length < 3) continue;      // two members show a gap, not a rhythm
+    const seq = [...list].sort((a, b) => a.index - b.index);
+    const vertical = seq.every((m, i) => i === 0 || m.y_mm === seq[0].y_mm);
+    const axis = vertical ? "x" : "y";
+    const at = (m) => (axis === "x" ? m.x_mm : m.y_mm);
+    const pitches = seq.slice(1).map((m, i) => at(m) - at(seq[i]));
+    if (!pitches.length || pitches.some((p) => p !== pitches[0] || p <= 0)) continue;
+    const a = seq[0];
+    const b = seq[1];
+    return {
+      axis, value_mm: pitches[0], from_mm: at(a), to_mm: at(b),
+      cross_mm: axis === "x" ? a.y_mm + a.h_mm : a.x_mm + a.w_mm,
+      slot_key: a.slot_key,
+    };
+  }
+  return null;
+}
+
+/** What is left clear at each end of the pattern, or null.
+ *
+ * `edge_margin_mm` is authored on the infill and the fit spends it; on the wire
+ * it survives as the distance between the opening edge and the outermost
+ * member, which is what the drawing measures — the same two rectangles the
+ * renderer is already placing. Reported as a PAIR because the two ends differ
+ * under `start`/`end` justification, and one figure would name the wrong end. */
+export function edgeMargins(elev) {
+  const width = elev?.width_mm || 0;
+  const height = elev?.height_mm || 0;
+  for (const list of patternSlots(elev).values()) {
+    if (list.length < 2) continue;
+    const seq = [...list].sort((a, b) => a.index - b.index);
+    const vertical = seq.every((m) => m.y_mm === seq[0].y_mm && m.h_mm === seq[0].h_mm);
+    const first = seq[0];
+    const last = seq[seq.length - 1];
+    const start = vertical ? first.x_mm : first.y_mm;
+    const end = vertical ? width - (last.x_mm + last.w_mm)
+                         : height - (last.y_mm + last.h_mm);
+    if (start <= 0 && end <= 0) continue;   // flush both ends: nothing to call out
+    return { axis: vertical ? "x" : "y", start_mm: Math.max(start, 0),
+             end_mm: Math.max(end, 0), slot_key: first.slot_key,
+             cross_mm: vertical ? first.y_mm + first.h_mm : first.x_mm + first.w_mm };
+  }
+  return null;
+}
+
 /** The sentence that goes beside the drawing: the gaps, in the display unit. */
 export function gapLine(elev) {
   const g = gapSummary(elev);
@@ -141,17 +223,26 @@ export function gapLine(elev) {
  *  `onSelect(slotKey)` fires when a member is clicked. The renderer never
  *  reaches out of its own SVG: which row that highlights is the CALLER's table
  *  and the caller's business. */
-export function renderElevation(elev, { onSelect } = {}) {
+export function renderElevation(elev, { onSelect, annotations = true } = {}) {
   const w = elev?.width_mm || 0;
   const h = elev?.height_mm || 0;
   const rects = elevationRects(elev);
   if (!(w > 0) || !(h > 0) || !rects.length) return null;
 
-  const dim = gapDimension(elev);
+  const dim = annotations ? gapDimension(elev) : null;
+  const pitch = annotations ? pitchDimension(elev) : null;
+  const margins = annotations ? edgeMargins(elev) : null;
   // the gap callout is drawn clear of the panel, so it needs the room: above a
-  // vertical pattern, beyond the end edge of a horizontal one
-  const padTop = dim?.axis === "x" ? PAD_TOP_GAP : PAD_TOP;
-  const padEnd = dim?.axis === "y" ? PAD_END_GAP : PAD_END;
+  // vertical pattern, beyond the end edge of a horizontal one — and the pitch
+  // sits one line beyond the gap on the same side, because they measure the
+  // same rhythm and reading them apart is reading them twice
+  const above = [dim, pitch].filter((d) => d?.axis === "x").length;
+  const beside = [dim, pitch].filter((d) => d?.axis === "y").length;
+  const padTop = above ? PAD_TOP_GAP + (above - 1) * CALLOUT_STEP : PAD_TOP;
+  const padEnd = beside ? PAD_END_GAP + (beside - 1) * CALLOUT_STEP : PAD_END;
+  // the edge margins take their own row under the panel, and push the overall
+  // width dimension down rather than sharing a line with it
+  const padBottom = PAD_BOTTOM + (margins ? MARGIN_ROW : 0);
   // one scale for both axes: a drawing that stretched to fill its box would
   // make a 100 mm slat and a 20 mm gap look like the same thing
   const s = Math.min(MAX_DRAW_W / w, MAX_DRAW_H / h);
@@ -160,7 +251,7 @@ export function renderElevation(elev, { onSelect } = {}) {
   const x0 = PAD_START;
   const y0 = padTop;
   const vw = PAD_START + dw + padEnd;
-  const vh = padTop + dh + PAD_BOTTOM;
+  const vh = padTop + dh + padBottom;
   const px = (mm) => x0 + mm * s;
   const py = (mm) => y0 + mm * s;
 
@@ -197,11 +288,21 @@ export function renderElevation(elev, { onSelect } = {}) {
       width: r(Math.max(m.w_mm * s, 0.5)), height: r(Math.max(m.h_mm * s, 0.5)),
     }, edges);
 
-  dimension(svg, "x", x0, y0 + dh + 22, x0 + dw, y0 + dh + 22,
-            tu("elevation.length", { len_mm: w }));
-  dimension(svg, "y", x0 - 26, y0, x0 - 26, y0 + dh,
-            tu("elevation.length", { len_mm: h }));
-  if (dim) drawGap(svg, dim, { px, py, w, h, y0 });
+  if (annotations) {
+    const widthRow = y0 + dh + 22 + (margins ? MARGIN_ROW : 0);
+    dimension(svg, "x", x0, widthRow, x0 + dw, widthRow,
+              tu("elevation.length", { len_mm: w }));
+    dimension(svg, "y", x0 - 26, y0, x0 - 26, y0 + dh,
+              tu("elevation.length", { len_mm: h }));
+    if (dim) drawGap(svg, dim, { px, py, w, h, y0, lane: 0 });
+    // the pitch goes one lane out from the gap when both are on the same side
+    if (pitch)
+      drawGap(svg, { ...pitch, gap_mm: pitch.value_mm,
+                     start_mm: pitch.from_mm, end_mm: pitch.to_mm },
+              { px, py, w, h, y0, lane: dim?.axis === pitch.axis ? 1 : 0,
+                cls: "elev-pitch-dim" });
+    if (margins) drawMargins(svg, margins, { px, py, w, h, x0, y0, dw, dh });
+  }
 
   if (onSelect) {
     svg.addEventListener("click", (ev) => {
@@ -252,13 +353,13 @@ function dimension(svg, axis, x1, y1, x2, y2, label) {
 // The fitted gap, called out clear of the panel: above it for a vertical
 // pattern, beside it for a horizontal one, because a 20 mm label drawn INSIDE a
 // 20 mm gap is a label nobody can read.
-function drawGap(svg, dim, { px, py, w, h, y0 }) {
-  const g = el("g", { class: "elev-dim elev-gap-dim" }, svg);
+function drawGap(svg, dim, { px, py, w, h, y0, lane = 0, cls = "elev-gap-dim" }) {
+  const g = el("g", { class: `elev-dim ${cls}` }, svg);
   const label = tu("elevation.length", { len_mm: dim.gap_mm });
   if (dim.axis === "x") {
     const x1 = px(dim.start_mm);
     const x2 = px(dim.end_mm);
-    const y = y0 - 22;
+    const y = y0 - 22 - lane * CALLOUT_STEP;
     el("line", { x1: r(x1), y1: r(y), x2: r(x2), y2: r(y) }, g);
     for (const x of [x1, x2])
       el("line", { class: "elev-leader", x1: r(x), y1: r(y), x2: r(x),
@@ -270,7 +371,7 @@ function drawGap(svg, dim, { px, py, w, h, y0 }) {
   // horizontal pattern: the gap runs up the panel, so the callout goes beside it
   const y1 = py(h - dim.start_mm);
   const y2 = py(h - dim.end_mm);
-  const x = px(w) + 20;
+  const x = px(w) + 20 + lane * CALLOUT_STEP;
   el("line", { x1: r(x), y1: r(y1), x2: r(x), y2: r(y2) }, g);
   for (const y of [y1, y2])
     el("line", { class: "elev-leader", x1: r(px(dim.cross_mm)), y1: r(y), x2: r(x), y2: r(y) }, g);
@@ -280,3 +381,46 @@ function drawGap(svg, dim, { px, py, w, h, y0 }) {
 }
 
 const r = (n) => Math.round(n * 10) / 10;
+
+/** What is left clear at each end of the pattern, dimensioned under the panel.
+ *
+ * On its own row rather than sharing the width dimension's line: the two answer
+ * different questions ("how wide is the opening" against "how far in does the
+ * infill start"), and a reader who has to work out which tick belongs to which
+ * has been given a puzzle instead of a dimension. A zero margin is drawn as
+ * nothing at all — a dimension line of length zero is a tick with a 0 beside it,
+ * which reads as a mistake. */
+function drawMargins(svg, margins, { px, py, w, h, x0, y0, dw, dh }) {
+  const g = el("g", { class: "elev-dim elev-margin-dim" }, svg);
+  if (margins.axis === "x") {
+    const y = y0 + dh + 14;
+    if (margins.start_mm > 0) marginSpan(g, x0, px(margins.start_mm), y, margins.start_mm);
+    if (margins.end_mm > 0)
+      marginSpan(g, px(w - margins.end_mm), x0 + dw, y, margins.end_mm);
+    return;
+  }
+  // a horizontal pattern's margins run up the panel, so they are called out on
+  // the start edge beside the height dimension
+  const x = x0 - 14;
+  if (margins.start_mm > 0)
+    marginSpan(g, x, x, y0 + dh, margins.start_mm, py(h - margins.start_mm));
+  if (margins.end_mm > 0)
+    marginSpan(g, x, x, y0, margins.end_mm, py(margins.end_mm));
+}
+
+function marginSpan(g, x1, x2, y, value_mm, yEnd) {
+  const vertical = yEnd !== undefined;
+  el("line", vertical
+    ? { x1: r(x1), y1: r(x2), x2: r(x1), y2: r(yEnd) }
+    : { x1: r(x1), y1: r(y), x2: r(x2), y2: r(y) }, g);
+  const label = el("text", {
+    class: "elev-dim-label elev-margin-label",
+    x: r(vertical ? x1 - 4 : (x1 + x2) / 2),
+    y: r(vertical ? (x2 + yEnd) / 2 : y - 4),
+    "text-anchor": "middle",
+  }, g);
+  if (vertical)
+    label.setAttribute("transform",
+      `rotate(-90 ${r(x1 - 4)} ${r((x2 + yEnd) / 2)})`);
+  label.textContent = tu("elevation.length", { len_mm: value_mm });
+}

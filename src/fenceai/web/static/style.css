@@ -358,6 +358,10 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
   pointer-events: none; }
 .elev-dim line { stroke: #94a3b8; stroke-width: 1; }
 .elev-dim line.elev-leader { stroke: #cbd5e1; stroke-dasharray: 4 4; }
+/* the pitch and the edge margins are secondary to the gap they describe: same
+   ink, lighter, so the drawing does not become a page of numbers */
+.elev-pitch-dim line, .elev-margin-dim line { stroke: #cbd5e1; }
+.elev-margin-label { font-size: 17px; fill: #64748b; }
 .elev-dim-label { font-size: 20px; fill: #475569; }
 /* the drawing and the priced table select together, in both directions */
 #panel-parts tr[data-slot] { cursor: pointer; }

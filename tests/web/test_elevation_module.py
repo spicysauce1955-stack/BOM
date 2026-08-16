@@ -49,7 +49,8 @@ globalThis.fetch = async (url) => ({
 import { setLocale } from "./js/i18n.js";
 import { setUnits } from "./js/units.js";
 import {
-  elevationRects, gapDimension, gapLine, gapSummary, hasNominal,
+  edgeMargins, elevationRects, gapDimension, gapLine, gapSummary, hasNominal,
+  pitchDimension,
 } from "./js/elevation.js";
 
 const SLAT = %(slat)s;
@@ -129,6 +130,54 @@ out.he_empty = gapLine(LEGACY);
 
 // a range rather than one figure — the reason gaps_mm is a LIST
 out.he_range = gapLine({ ...SLAT, gaps_mm: [20, 21, 20] });
+
+// --- pitch and edge margins, the two dimensions a slat fence is specified by
+out.pitch = pitchDimension(SLAT);
+out.pitch_legacy = pitchDimension(LEGACY);
+// an UNEVEN pattern has no single pitch, and one quoted over it is a figure an
+// installer would set out from and be wrong by the last bay
+const uneven = { ...SLAT, members: SLAT.members.map(
+  (m) => (m.slot_key === "slat" && m.index === 3 ? { ...m, x_mm: m.x_mm + 7 } : m)) };
+out.pitch_uneven = pitchDimension(uneven);
+// two members show a gap, not a rhythm
+out.pitch_two = pitchDimension({
+  ...SLAT,
+  members: SLAT.members.filter((m) => m.slot_key === "slat" && m.index < 2),
+});
+// M-SLAT fills its bay exactly: 21 slats at 120 centres is 2500 mm, flush at
+// both ends, so there is no margin to call out. The pattern WITH a margin is
+// built by hand, because no demo model authors one.
+out.margins = edgeMargins(SLAT);
+out.margins_inset = edgeMargins({
+  width_mm: 1000, height_mm: 1000, gaps_mm: [100, 100],
+  members: [0, 1, 2].map((i) => ({
+    slot_key: "s", role: "infill", kind: "infill", index: i,
+    x_mm: 50 + i * 200, y_mm: 0, w_mm: 100, h_mm: 1000,
+    declared: true, face: "front", sku: "A",
+  })),
+});
+// a FRAME slot is never mistaken for the pattern: two rails inset from the top
+// and bottom of the opening are not an edge margin anyone sets out
+out.margins_frame_only = edgeMargins({
+  width_mm: 1000, height_mm: 1000, gaps_mm: [],
+  members: [0, 1].map((i) => ({
+    slot_key: "rail", role: "rail", kind: "frame", index: i,
+    x_mm: 0, y_mm: 100 + i * 700, w_mm: 1000, h_mm: 40,
+    declared: true, face: "front", sku: "R",
+  })),
+});
+// flush at both ends: nothing to call out, rather than two zeros
+const flush = {
+  width_mm: 300, height_mm: 1000, gaps_mm: [100],
+  members: [
+    { slot_key: "s", role: "infill", index: 0, x_mm: 0, y_mm: 0, w_mm: 100,
+      h_mm: 1000, declared: true, face: "front", sku: "A" },
+    { slot_key: "s", role: "infill", index: 1, x_mm: 200, y_mm: 0, w_mm: 100,
+      h_mm: 1000, declared: true, face: "front", sku: "A" },
+  ],
+};
+out.margins_flush = edgeMargins(flush);
+out.pitch_flush = pitchDimension(flush);   // only two members: no rhythm
 
 console.log(JSON.stringify(out));
 """
@@ -219,3 +268,48 @@ def test_the_gap_line_localizes_and_converts(ev):
     assert "gaps" not in ev["he_gaps"] and "mm" not in ev["he_gaps"]
     assert ev["he_empty"] == ""
     assert "20–21" in ev["he_range"]
+
+
+# --- pitch and edge margins -------------------------------------------------
+
+def test_the_pattern_pitch_is_the_number_a_slat_fence_is_specified_by(ev):
+    """"100 at 120 centres" — a figure neither the member width nor the gap
+    states on its own, and the one an installer sets out from."""
+    assert ev["pitch"]["value_mm"] == 120
+    assert ev["pitch"]["axis"] == "x"
+    assert ev["pitch"]["slot_key"] == "slat"
+
+
+def test_an_uneven_pattern_gets_no_pitch_rather_than_an_average(ev):
+    """`spread_to_fit` absorbs its remainder into the gaps, so its members are
+    not evenly pitched. One pitch quoted over that is a number that is wrong by
+    the last bay — and the gap line beside the drawing already says the honest
+    thing ("20-21 mm")."""
+    assert ev["pitch_uneven"] is None
+    assert ev["pitch_two"] is None, "two members are a gap, not a rhythm"
+    assert ev["pitch_flush"] is None
+    assert ev["pitch_legacy"] is None, "a frame-only panel has no pattern at all"
+
+
+def test_the_edge_margins_are_reported_as_a_pair(ev):
+    """The two ends differ under start/end justification, so one figure would
+    name the wrong end. 50 in at the start, 1000 - (450 + 100) = 450 at the far
+    end."""
+    assert ev["margins_inset"]["start_mm"] == 50
+    assert ev["margins_inset"]["end_mm"] == 450
+    assert ev["margins_inset"]["axis"] == "x"
+    # M-SLAT fills its own bay exactly — 21 slats at 120 centres is 2500 mm
+    assert ev["margins"] is None
+
+
+def test_a_frame_slot_is_never_read_as_the_pattern(ev):
+    """Two rails inset from the top and bottom of an opening are not an edge
+    margin: nobody sets out from that figure, and `kind` is on the wire so a
+    client does not have to guess which slot is the infill."""
+    assert ev["margins_frame_only"] is None
+
+
+def test_a_pattern_flush_at_both_ends_gets_no_margin_dimension(ev):
+    """A dimension line of length zero is a tick with a 0 beside it, which reads
+    as a mistake rather than as "flush"."""
+    assert ev["margins_flush"] is None
