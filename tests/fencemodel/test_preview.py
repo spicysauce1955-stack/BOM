@@ -238,3 +238,42 @@ def test_the_preview_agrees_with_what_generation_actually_builds():
         assert (part.qty, part.length_mm, part.sku, part.unit) == \
             (line.engineering_qty, line.cut_length_mm, line.sku, line.unit), \
             f"the preview and the run disagree about {key}"
+
+
+def test_the_preview_carries_the_joint_details_of_the_panel_it_priced():
+    """A joint detail rides on `PanelElevation`, which the preview and a stored
+    run's `Bay.elevation` both hand back — one code path, so the detail beside a
+    panel on the Models tab cannot say something different from the detail beside
+    the bay built to it. `tests/report/test_structure.py` asserts the run side.
+
+    M-SLAT@v2's slat seats 15 mm into a 20 mm channel with 3 mm of insertion
+    clearance, and starts 65 up (50 to the channel's centre, plus half its 60 mm
+    face height, less the 15 mm it disappears into) — so the buried band is
+    65 -> 80, and 80 is the channel's own top face.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    result = preview(M_SLAT_V2, height_mm=1800, width_mm=2500)
+    assert result.invalid == [], "a preview of a document the loader would refuse"
+
+    assert [d.key for d in result.elevation.details] == ["slat@bottom_channel"]
+    detail = result.elevation.details[0]
+    assert (detail.end, detail.kind) == ("base", "channel")
+    assert (detail.channel_depth_mm, detail.engagement_mm, detail.margin_mm) == (20, 15, 3)
+
+    slats = [m for m in result.elevation.members if m.slot_key == "slat"]
+    assert slats
+    for slat in slats:
+        assert (slat.seat_start_mm, slat.seat_end_mm) == (65, 80)
+        # the drawn piece and the priced piece are one number, and the buried
+        # part of it is a sub-range of that piece rather than a second opinion
+        assert slat.h_mm == by_slot(result)["slat"].length_mm == 1665
+        assert slat.seat_start_mm >= slat.y_mm
+        assert slat.seat_end_mm <= slat.y_mm + slat.h_mm
+
+
+def test_a_model_with_no_joints_previews_no_details():
+    """Every model in the repo but one, and the rule that keeps an empty section
+    drawing off the screen: no engagement and no channel means nothing to draw."""
+    assert preview(M_SLAT, height_mm=1800, width_mm=2500).elevation.details == []
+    assert preview(M_LEGACY, height_mm=1800, width_mm=2500).elevation.details == []

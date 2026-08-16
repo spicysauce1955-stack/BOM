@@ -92,6 +92,25 @@ class ResolvedSlot(BaseModel):
     # whole cycle has to travel with each slot or the walk cannot be exact.
     cycle_widths_mm: list[Mm] = []
     cycle_gaps_mm: list[Mm] = []     # the AUTHORED gaps; the fitted ones are on `fit`
+    # --- the joint, carried for the same reason the geometry above is --------
+    # A section through a joint is drawn from numbers that live on the SPEC
+    # (`FrameSlot.channel_depth_mm`, `Member.base_engagement_mm`), and the read
+    # model that draws it is handed a `ResolvedPanel`. They travel here rather
+    # than being passed beside the panel, because a read model taking both a
+    # panel and the spec it came from has two sources that can disagree — and
+    # only one of the two is what a stored run keeps.
+    #
+    # Carrying them costs the read model nothing it could get wrong:
+    # `_between_frame_extent` has ALREADY spent these numbers on `span_start_mm`
+    # and `length_mm`, so the drawing reports what resolution decided and
+    # recomputes no length from them (foundation §15).
+    joint: str = "butt"              # this slot's own JointKind
+    channel_depth_mm: Mm = 0         # frame slots: how deep this member receives
+    insertion_margin_mm: Mm = 0      # ... and the clearance left at its bottom
+    base_ref: str | None = None      # infill: the frame slot it starts at
+    top_ref: str | None = None       # ... and the one it stops at
+    base_engagement_mm: Mm = 0       # ... and how far it seats into each of them
+    top_engagement_mm: Mm = 0
     # which option answer narrowed this slot's eligibility, if one did. Recorded
     # rather than re-derived: the generator writes the `select_product` node from
     # it, and a second pass matching skus back to axes would be a second, quietly
@@ -435,6 +454,9 @@ def resolve_panel(
             option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
             orientation=frame_slot.orientation,
             thickness_mm=frame_slot.thickness_mm or None,
+            joint=frame_slot.joint,
+            channel_depth_mm=frame_slot.channel_depth_mm,
+            insertion_margin_mm=frame_slot.insertion_margin_mm,
             positions_mm=placement_positions(frame_slot.placement, count, span),
         )
         slots.append(resolved)
@@ -484,6 +506,10 @@ def resolve_panel(
                 cycle_gaps_mm=[m.gap_after_mm for m in spec.infill.pattern],
                 thickness_mm=member.thickness_mm or None,
                 face_offset_mm=member.face_offset_mm,
+                joint=member.joint,
+                base_ref=member.base_ref, top_ref=member.top_ref,
+                base_engagement_mm=member.base_engagement_mm,
+                top_engagement_mm=member.top_engagement_mm,
                 pattern_index=offset,
             ))
 

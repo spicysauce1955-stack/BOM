@@ -493,3 +493,46 @@ def test_a_section_with_two_base_surfaces_says_mixed():
     add_interval_event(topo, "run1", "b2", 3000, 6000, BasePayload(surface="concrete"))
     report, _, _, _ = _report(topo)
     assert report.sections[0].base_surface == "mixed"
+
+
+# --- the joint, on a stored bay ----------------------------------------------
+
+def test_a_generated_bay_carries_the_joint_details_of_the_model_it_was_built_to():
+    """The other half of the property `tests/fencemodel/test_preview.py` asserts
+    from the preview side: the detail rides on `PanelElevation`, so a stored run
+    and a panel preview get it from one code path and cannot disagree.
+
+    The run is pinned to M-SLAT@v2, whose slats seat 15 mm into a 20 mm channel
+    with 3 mm of insertion clearance. Every bay of it says the same thing,
+    because the joint is the MODEL's and every bay is built to that model.
+    """
+    from fenceai.fencemodel.demo import M_LEGACY, M_SLAT, M_SLAT_V2
+    from fenceai.fencemodel.library import FenceModelLibrary
+    from fenceai.fencemodel.selection import FenceModelChoice
+
+    library = FenceModelLibrary(models=[M_LEGACY, M_SLAT, M_SLAT_V2])
+    catalog = demo_catalog()
+    topo = straight_topology(6000)
+    result = generate(topo, demo_knowledge(), catalog, models=library,
+                      default_model=FenceModelChoice(model_id="M-SLAT", version_pin=2))
+    requirements = derive_requirements(result.strategy, catalog, result.run.demand_skus)
+    requirements = resolve_supply(requirements, catalog, None).requirements
+    report = build_structure(topo, result.strategy, requirements,
+                             fulfill(requirements, catalog, None),
+                             run_id="run-joint", catalog=catalog)
+
+    bays = [b for s in report.sections for b in s.bays]
+    assert bays, "no bay to carry a detail"
+    for bay in bays:
+        assert bay.elevation is not None
+        assert [d.key for d in bay.elevation.details] == ["slat@bottom_channel"]
+        detail = bay.elevation.details[0]
+        assert (detail.end, detail.kind) == ("base", "channel")
+        assert (detail.channel_depth_mm, detail.engagement_mm, detail.margin_mm) == \
+            (20, 15, 3)
+        # and the members are hatched from the same extent the cut list bought
+        slats = [m for m in bay.elevation.members if m.slot_key == "slat"]
+        assert slats
+        for slat in slats:
+            assert slat.seat_start_mm == slat.y_mm
+            assert slat.seat_end_mm - slat.seat_start_mm == detail.engagement_mm
