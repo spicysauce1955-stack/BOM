@@ -30,7 +30,13 @@ from fenceai.decisions.explain import explain_element
 from fenceai.decisions.supply import with_supply_decisions
 from fenceai.fencemodel.library import ModelListing
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
-from fenceai.fencemodel.preview import PanelPreview, PreviewRequest, preview_panel
+from fenceai.fencemodel.preview import (
+    BayPreviewRequest,
+    PanelPreview,
+    PreviewRequest,
+    bay_preview_plan,
+    preview_panel,
+)
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.fulfillment.pipeline import PricedRun, price_strategy
@@ -805,18 +811,35 @@ def set_fence_model_status(
     return state.store.load_fence_model(model_id, version)
 
 
-def _preview_or_refuse(model: FenceModel, bay: PreviewRequest) -> PanelPreview:
-    try:
-        return preview_panel(model, bay, state.store.load_catalog())
-    except RequestRefused as e:
+def _refusal(e: ValueError) -> HTTPException:
+    """The panel pipeline's refusals as HTTP, in one place — every path into it
+    answers the same way."""
+    if isinstance(e, RequestRefused):
         # 422, not 400: nothing stored is wrong — the body named a product this
         # slot cannot be supplied by, or a slot this panel has not got, and the
-        # fix is to the request. Caught first because it is also a ValueError.
-        raise HTTPException(422, {"code": e.code, "params": e.params, "message": str(e)})
-    except ReadRefused as e:
-        raise HTTPException(400, {"code": e.code, "params": e.params, "message": str(e)})
+        # fix is to the request. Checked first because it is also a ValueError.
+        return HTTPException(422, {"code": e.code, "params": e.params, "message": str(e)})
+    if isinstance(e, ReadRefused):
+        return HTTPException(400, {"code": e.code, "params": e.params, "message": str(e)})
+    return HTTPException(400, str(e))
+
+
+def _preview_or_refuse(
+    model: FenceModel, bay: PreviewRequest,
+    catalog: Catalog | None = None, preset: str = "least_cost",
+) -> PanelPreview:
+    """`catalog` and `preset` are arguments rather than lookups because a bay of
+    a stored run is priced against the catalog that run was generated with and
+    under the objective preset it was generated under — see `preview_run_bay`.
+    A model-scoped preview has neither, and asks the library for both."""
+    try:
+        return preview_panel(
+            model, bay,
+            catalog if catalog is not None else state.store.load_catalog(),
+            preset=preset,
+        )
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise _refusal(e)
 
 
 class DocumentPreviewRequest(BaseModel):
@@ -857,6 +880,49 @@ def preview_fence_model(model_id: str, version: int, body: PreviewRequest) -> Pa
     if model is None:
         raise HTTPException(404, f"{model_id}@v{version} not found")
     return _preview_or_refuse(model, body)
+
+
+@app.post("/api/runs/{run_id}/bays/{element_id}/panel-preview")
+def preview_run_bay(run_id: str, element_id: str, body: BayPreviewRequest) -> PanelPreview:
+    """What ONE BAY of a stored run is made of, and what a change to it would do.
+
+    The route above answers a question about a MODEL, at whatever height and
+    width the caller names, under the default preset and against today's
+    catalog. Asking it about a bay of an existing fence and reading the answer as
+    that bay is how the drawer came to mark one product "chosen" while the run
+    had bought another: the run resolved the bay with its vertical mode, its rail
+    cut basis, its company-resolved rail and screw counts and its option values,
+    then priced it under `objective_preset` against a FROZEN catalog.
+
+    So this route supplies all of that from the run — the model document the run
+    stamped for the bay (never `latest_active`), the context
+    `bay_preview_plan` rebuilds, the run's preset — and then calls the same
+    `preview_panel` the model-scoped route calls. One preview implementation,
+    two ways of saying which bay.
+
+    Inherits the catalog staleness 409 through `_fresh_catalog`, exactly as /bom
+    and /structure do: a run whose catalog has moved cannot be re-priced as
+    itself, and a bay of it is no more re-priceable than the whole.
+
+    Inventory is deliberately not passed. Stock on hand is consumed across the
+    WHOLE run, so handing it to a single bay would let every bay previewed spend
+    the same remnant — the panel cost here is what this bay costs to build, the
+    same question `/api/fence-models/.../preview` answers.
+    """
+    result = _run(run_id)
+    try:
+        plan = bay_preview_plan(result, element_id, body)
+    except ValueError as e:
+        raise _refusal(e)
+    if plan is None:
+        # before the staleness check: an element that is not a bay of this run is
+        # the wrong request whatever the catalog has done since
+        raise HTTPException(404, f"{element_id} is not a bay of run {run_id}")
+    catalog = _fresh_catalog(result)
+    model = state.store.load_fence_model(plan.model_id, plan.version)
+    if model is None:
+        raise HTTPException(404, f"{plan.model_id}@v{plan.version} not found")
+    return _preview_or_refuse(model, plan.request, catalog, result.run.objective_preset)
 
 
 @app.put("/api/projects/{project_id}/fence-model")
