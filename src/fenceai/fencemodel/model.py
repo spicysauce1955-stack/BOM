@@ -201,6 +201,43 @@ class PanelSpec(BaseModel):
     fixings: list[FixingRule] = []
 
 
+class PostSlot(BaseModel):
+    """The post a panel is built between, and the cap that finishes it.
+
+    A model describing the panel and saying nothing about its posts is right for
+    a company with one post standard and wrong for a product LINE: a routed vinyl
+    post is specific to the panel that seats into it, and that panel is not
+    expressible without it.
+
+    The cap NESTS rather than sitting beside, because a cap exists BECAUSE a post
+    does and its predicate reads the post it caps — which is only answerable
+    because the post is chosen first. That ordering is what keeps every relation
+    in this design one-directional.
+    """
+
+    key: str = "post"
+    requirement: PartRequirement
+    cap: PartRequirement | None = None
+
+
+# What a POST's eligibility predicate may know about the bay it stands beside.
+#
+# THE cycle rule. A bay's clear opening is measured to its posts' faces, so a
+# post chosen BY that opening would be choosing itself. The facts below are all
+# settled from the HEIGHT of the bay, before any post is known, which is what
+# makes the resolution order a DAG:
+#
+#     height -> rail positions -> post -> clear width -> infill fit
+#
+# Refused at authoring rather than at generation, where the same mistake is
+# either a hang or an arbitrary answer that reads as measured. Deliberately the
+# same shape as SERIES_SCOPED_PARAMS: a closed set of names, a refusal, and a
+# stated reason for the boundary.
+POST_PREDICATE_PANEL_FACTS = frozenset({
+    "height_mm", "rail_positions_mm", "vertical", "model_id",
+})
+
+
 # --- the model ---------------------------------------------------------------
 
 class OptionValue(BaseModel):
@@ -265,6 +302,11 @@ class FenceModel(BaseModel):
     option_axes: list[Axis] = []
     default_spec: PanelSpec = PanelSpec()
     variants: list[Variant] = []   # authored order; first satisfied condition wins
+    # None is NO OPINION, not "must come from knowledge": it is what every model
+    # shipped before this carried, and it is what lets a boundary post between an
+    # opinionated model and a legacy one resolve to the opinionated one's spec
+    # rather than to a conflict.
+    post: PostSlot | None = None
 
     @property
     def ref(self) -> str:
@@ -690,6 +732,53 @@ def _predicate_errors(key: str, eligibility: Eligibility, catalog: Catalog) -> l
     return errors
 
 
+def _post_slot_errors(post: PostSlot, catalog: Catalog) -> list[str]:
+    """The post and its cap, checked like any other slot — plus the cycle rule.
+
+    A post predicate may read only HEIGHT-derived facts about the bay. The clear
+    opening is measured to the post faces, so a post chosen by that opening would
+    be choosing itself; the resolution order is a DAG only while this holds:
+
+        height -> rail positions -> post -> clear width -> infill fit
+
+    Caught here, where it is a typo an author can fix, rather than at generation,
+    where the same mistake is either a hang or an arbitrary answer that comes out
+    looking measured.
+    """
+    errors: list[str] = []
+    for what, req in (("post", post.requirement), ("cap", post.cap)):
+        if req is None:
+            continue
+        if req.eligibility.predicate is not None:
+            errors += _predicate_errors(f"{post.key} ({what})", req.eligibility, catalog)
+            continue
+        if not req.eligibility.members:
+            errors.append(
+                f"slot {post.key} ({what}): no eligible product, so nothing could "
+                f"ever supply it"
+            )
+        for m in req.eligibility.members:
+            if m.sku not in catalog.products:
+                errors.append(
+                    f"slot {post.key} ({what}): eligible sku {m.sku} is not in the "
+                    f"catalog")
+
+    predicate = post.requirement.eligibility.predicate
+    if predicate is not None:
+        for path in sorted(field_paths(predicate)):
+            head, _, field = path.partition(".")
+            if head == "panel" and field not in POST_PREDICATE_PANEL_FACTS:
+                errors.append(
+                    f"slot {post.key}: a post predicate may not read "
+                    f"panel.{field} — the clear opening is measured TO the post "
+                    f"faces, so a post chosen by it would be choosing itself. A "
+                    f"post is resolved from the bay's HEIGHT, before any width is "
+                    f"known; readable: "
+                    + ", ".join(f"panel.{f}" for f in sorted(POST_PREDICATE_PANEL_FACTS))
+                )
+    return errors
+
+
 def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
     """Every reason this model cannot be used, as English strings for the author.
 
@@ -700,6 +789,8 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
     axis_values = {a.key: {v.key for v in a.values} for a in model.option_axes}
 
     errors += _unsupported_features(model)
+    if model.post is not None:
+        errors += _post_slot_errors(model.post, catalog)
 
     for axis in model.option_axes:
         for value in axis.values:
