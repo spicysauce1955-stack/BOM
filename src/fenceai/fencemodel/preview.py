@@ -16,19 +16,31 @@ by the function that will produce it for real.
 The synthetic strategy carries one span and no posts, so `derive_requirements`
 emits the panel's lines and nothing else — the posts, caps and concrete of a real
 bay depend on neighbours this bay does not have.
+
+A bay of a STORED run is the same question asked about a fence that exists, and
+`bay_preview_plan` below is how it stays the same question: it rebuilds the
+`PanelContext` the run resolved that bay with — its vertical mode, its rail cut
+basis, its knowledge-resolved quantities, its option values — and hands it to the
+one `preview_panel` above. A drawer that asked the model-scoped route instead was
+previewing a DIFFERENT bay of the same model: level rails on a raked span, the
+model's authored rail count over the company's, and whatever objective preset
+that route happened to default to.
 """
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
-from fenceai.core.units import Cents, Mm
+from fenceai.core.errors import ReadRefused
+from fenceai.core.units import Cents, Mm, slope_len_mm
 from fenceai.fencemodel.model import FenceModel, validate_model
 from fenceai.fencemodel.resolve import PanelContext, ResolvedPanel, resolve_panel, select_variant
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.report.elevation import PanelElevation, panel_elevation
-from fenceai.strategy.model import Span, Strategy, StrategyWarning
+from fenceai.strategy.model import GenerationResult, Span, Strategy, StrategyWarning
 
 PREVIEW_SPAN_ID = "span@preview:0-0"
 
@@ -41,6 +53,12 @@ class PreviewRequest(BaseModel):
     width_mm: Mm = 2500                  # centre to centre, as a span is measured
     clear_width_mm: Mm | None = None     # None = the same, until face widths land
     vertical: str = "level"
+    # How a member that crosses the bay is measured, exactly as `Span` records
+    # it: a raked bay's rails are cut on the SLOPE, and a preview that assumed
+    # "width" drew and priced shorter rails than the fence is built from (S04,
+    # S06). Not expressible before, so the drawer could not ask for it at all.
+    length_basis: Literal["width", "slope"] = "width"   # the span's own basis
+    slope_len_mm: Mm | None = None       # true length along grade; None = width
     options: dict[str, str | int] = {}
     # knowledge-resolved quantities a real bay would arrive with. The preview
     # cannot resolve knowledge itself (it has no project, so no scope to bind),
@@ -106,25 +124,31 @@ def preview_panel(
     preset: str = "least_cost",
 ) -> PanelPreview:
     clear = request.clear_width_mm if request.clear_width_mm is not None else request.width_mm
+    slope = request.slope_len_mm if request.slope_len_mm is not None else request.width_mm
     ctx = PanelContext(
         centre_width_mm=request.width_mm,
         clear_width_mm=clear,
         height_mm=request.height_mm,
         vertical=request.vertical,
-        length_basis="width",
+        length_basis=request.length_basis,
+        slope_len_mm=slope,
         params=request.params,
         options=dict(request.options),
         slot_skus=dict(request.slot_skus),
     )
     spec, variant_index = select_variant(model, ctx)
-    panel = resolve_panel(spec, ctx, model_ref=model.ref)
+    # the variant is recorded on the panel as well as on the preview, because a
+    # bay of a stored run previews into a `ResolvedPanel` that must be the one
+    # the run stored — down to which variant it was built to
+    panel = resolve_panel(spec, ctx, model_ref=model.ref, variant_index=variant_index)
 
     span = Span(
         id=PREVIEW_SPAN_ID, run_ref="preview",
         start_station_mm=0, end_station_mm=request.width_mm,
-        width_mm=request.width_mm, slope_len_mm=request.width_mm,
+        width_mm=request.width_mm, slope_len_mm=slope,
         vertical=request.vertical,  # type: ignore[arg-type]
         height_mm=request.height_mm,
+        rail_cut_basis=request.length_basis,
         panel=panel,
     )
     # no inventory: a preview answers "what does this model cost to build", and
@@ -152,6 +176,139 @@ def preview_panel(
         invalid=validate_model(model, catalog),
         total_cents=priced.bom.total_cents,
     )
+
+
+# -- a bay of a stored run ----------------------------------------------------
+
+class BayPreviewRequest(BaseModel):
+    """What a caller may vary about a bay that already exists.
+
+    Every field is optional and every default is the bay's own, so an empty body
+    means "price this bay exactly as the run resolved it". Deliberately NOT a
+    `PreviewRequest`: a client that could send `params`, `options` or a length
+    basis for a bay of a stored fence could ask for a preview of a bay that run
+    never built and be answered without a word. What the run resolved is read
+    off the run; what a person is imagining — a taller bay, a wider one, a
+    different product in one slot — is what is left here.
+    """
+
+    height_mm: Mm | None = None
+    width_mm: Mm | None = None
+    slot_skus: dict[str, str] = {}
+
+
+class BayPreviewPlan(BaseModel):
+    """The bay, ready to be previewed: which model document to resolve it
+    against, and the request that reproduces it."""
+
+    model_id: str
+    version: int
+    request: PreviewRequest
+
+
+def bay_preview_plan(
+    result: GenerationResult, element_id: str, ask: BayPreviewRequest | None = None,
+) -> BayPreviewPlan | None:
+    """Rebuild the context one stored bay was generated with.
+
+    The generator resolves a bay from a `PanelContext` carrying far more than a
+    height and a width (`strategy/generator.py`), and every part of it changes
+    what the panel is made of: the vertical mode picks the variant, the rail cut
+    basis decides whether a rail is cut on the chord or the slope, the params
+    carry the company's rails- and screws-per-span, and the options narrow half
+    the eligibility sets. A preview that defaulted them was not a preview of
+    this bay.
+
+    So they are read back rather than re-derived: the quantities from the span
+    (which is where the generator recorded them), the options from the run's own
+    explanation. `None` when the element is not a bay of this run — the caller
+    turns that into a 404, since this module knows nothing about HTTP.
+    """
+    ask = ask or BayPreviewRequest()
+    span = next((s for s in result.strategy.spans if s.id == element_id), None)
+    if span is None:
+        return None
+    if span.panel is None or not span.panel.model_ref:
+        # the same refusal `derive_requirements` raises for such a run, and for
+        # the same reason: there IS structure, it just cannot be read without
+        # regenerating — a preview must not invent a model for it
+        raise ReadRefused(
+            code="run_predates_fence_model",
+            message=f"span {span.id} has no panel — regenerate the run",
+            span_id=span.id,
+        )
+    model_id, version = _ref_parts(span.panel.model_ref)
+    width = ask.width_mm if ask.width_mm is not None else span.width_mm
+    return BayPreviewPlan(
+        model_id=model_id, version=version,
+        request=PreviewRequest(
+            height_mm=ask.height_mm if ask.height_mm is not None else span.height_mm,
+            width_mm=width,
+            vertical=span.vertical,
+            length_basis=span.rail_cut_basis,
+            slope_len_mm=_slope_for(span, width),
+            # what the generator put in `ctx.params`, from where it put it: the
+            # span carries the resolved quantities precisely so a later reader
+            # never has to re-run the knowledge evaluator to learn them
+            params={"rails_per_span": span.rail_count,
+                    "screws_per_span": span.screws_count},
+            options=_bay_options(result, span),
+            slot_skus=dict(ask.slot_skus),
+        ),
+    )
+
+
+def _ref_parts(model_ref: str) -> tuple[str, int]:
+    model_id, _, version = model_ref.rpartition("@v")
+    if not model_id or not version.isdigit():
+        raise ReadRefused(
+            code="run_predates_fence_model",
+            message=f"unreadable model ref {model_ref!r}",
+            model_ref=model_ref,
+        )
+    return model_id, int(version)
+
+
+def _slope_for(span: Span, width: Mm) -> Mm:
+    """The bay's true length along the grade, at the width being asked about.
+
+    At the bay's own width this is the number the generator stored. It is
+    recomputed rather than copied because a what-if may change the width, and a
+    slope length carried over from a different width describes neither bay — so
+    it comes from the span's own rise through the one chord->slope rounding
+    point (`core.units.slope_len_mm`), the function the generator used.
+    """
+    if span.vertical != "raked":
+        return width
+    return slope_len_mm(width, span.bottom_z_end_mm - span.bottom_z_start_mm)
+
+
+def _bay_options(result: GenerationResult, span: Span) -> dict[str, str | int]:
+    """Which option values this bay was built with.
+
+    Read from the decision graph, because the graph is where the run says it:
+    `select_model` records the effective choice's options, and the bay's
+    `resolve_panel` node takes that node as an input — so the attribution is the
+    run's own, per bay. The run's `model_snapshot` cannot answer it alone: two
+    stretches of one fence may be built to the SAME model version with different
+    options, and then `(model_id, version)` names two entries with no way to tell
+    which bay belongs to which.
+
+    The snapshot is still the fallback, for a run stored before those nodes
+    existed and for the case it does answer unambiguously — one entry for this
+    model, one set of options.
+    """
+    graph = result.graph
+    for node in graph.nodes_for_element(span.id):
+        if node.action != "resolve_panel":
+            continue
+        for edge in graph.in_edges(node.id):
+            source = graph.node(edge.from_id)
+            if source.action == "select_model":
+                return dict(source.payload.get("options") or {})
+    uses = [u for u in result.run.model_snapshot
+            if f"{u.model_id}@v{u.version}" == span.panel.model_ref]
+    return dict(uses[0].options) if len(uses) == 1 else {}
 
 
 def _priced_parts(priced) -> list[PreviewPart]:

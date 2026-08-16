@@ -240,6 +240,59 @@ def test_the_preview_agrees_with_what_generation_actually_builds():
             f"the preview and the run disagree about {key}"
 
 
+def test_a_stored_bays_plan_re_resolves_the_panel_that_run_stored():
+    """The same property, for a bay that already exists.
+
+    The test above hand-assembles the context a run resolved a bay with, which
+    is exactly what the drawer used to get wrong: it passed a height and a width
+    and took the answer for that bay. `bay_preview_plan` reads the whole context
+    back off the run, and the assertion here is the strongest available one —
+    the panel it re-resolves must be the panel the run stored, field for field.
+    A new `PanelContext` input in the generator that this plan does not carry
+    fails here rather than in a drawer.
+    """
+    from fenceai.fencemodel.preview import bay_preview_plan
+    from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
+
+    # raked (so the rails are cut on the slope) and three rails per span (so the
+    # company's count differs from the model's authored default) — the two
+    # inputs a height and a width cannot carry
+    topo = straight_topology(1700)
+    topo.nodes[1].z_mm = 200
+    kb = demo_knowledge()
+    kb = KnowledgeBase(versions=[
+        *[v for v in kb.versions if v.object_id != "K-RAILS"],
+        KnowledgeVersion(object_id="K-RAILS", version=2, type="fact",
+                         title="3 rails per span",
+                         actions=[SetParam(param="rails_per_span", value=3)]),
+    ])
+    result = generate(
+        topo, kb, demo_catalog(),
+        models=FenceModelLibrary(models=[M_SLAT]),
+        default_model=FenceModelChoice(model_id="M-SLAT"),
+    )
+    span = result.strategy.spans[0]
+    assert span.vertical == "raked" and span.rail_count == 3
+
+    plan = bay_preview_plan(result, span.id)
+    assert (plan.model_id, plan.version) == ("M-SLAT", M_SLAT.version)
+    shown = preview_panel(M_SLAT, plan.request, demo_catalog(),
+                          preset=result.run.objective_preset)
+    assert shown.panel == span.panel
+
+
+def test_a_bay_of_another_run_is_not_a_bay_of_this_one():
+    """`None` rather than an exception: which HTTP status "no such bay" is worth
+    belongs to the route, not to the resolver."""
+    from fenceai.fencemodel.preview import bay_preview_plan
+
+    result = generate(straight_topology(1700), demo_knowledge(), demo_catalog(),
+                      models=FenceModelLibrary(models=[M_SLAT]),
+                      default_model=FenceModelChoice(model_id="M-SLAT"))
+    assert bay_preview_plan(result, "span@elsewhere:0-1700") is None
+    assert bay_preview_plan(result, result.strategy.posts[0].id) is None
+
+
 def test_the_preview_carries_the_joint_details_of_the_panel_it_priced():
     """A joint detail rides on `PanelElevation`, which the preview and a stored
     run's `Bay.elevation` both hand back — one code path, so the detail beside a
