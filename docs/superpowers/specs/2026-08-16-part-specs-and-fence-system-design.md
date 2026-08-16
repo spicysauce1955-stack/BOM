@@ -300,15 +300,39 @@ count and spacing are computed over roughly one post-face more room than the bay
 has. `clear_between_posts` (`resolve.py:292`) is wrong for the same reason; no
 shipped model uses it, which is why only the infill case bites.
 
-So this arc does **not** promise what every previous arc promised.
+So this arc did **not** promise what every previous arc promised.
 
 * **`M-LEGACY` stays byte-identical.** No infill, rails on `centre_to_centre`,
   `post=None`. Its requirement lines and BOM are unchanged, and that half of the
   compatibility gate remains the guarantee it has always been.
-* **Infill fixtures are regenerated deliberately**, with the reason recorded in the
-  fixture commit: the previous numbers were fitted over an opening that does not
-  exist. A regeneration that is not explained in the same commit is indistinguishable
-  from a regression.
+* **Infill fixtures were expected to be regenerated deliberately**, with the reason
+  recorded in the fixture commit: the previous numbers were fitted over an opening
+  that does not exist. A regeneration that is not explained in the same commit is
+  indistinguishable from a regression.
+
+### What W1 actually found (2026-08-16)
+
+**The gate did not move at all.** The prediction above was wrong, in the safe
+direction, and the reason is worth keeping.
+
+The `slat` fixture is a 1500 mm bay whose opening is now 1420 mm. Twelve 100 mm
+slats fit either way — thirteen would need 1300 mm plus twelve gaps and never fitted
+— so the purchased quantities are identical. What changed is where the slats *sit*:
+`spread_to_fit` had been widening the eleven gaps to 27–28 mm to absorb a residual
+that was really **80 mm of post**, and they now sit at their designed 20 mm. The
+outer slats had been overlapping the posts.
+
+Gaps are not a purchased quantity, so nothing reached a requirement line or a BOM
+line. The change is fully capable of moving the gate — at 1700 mm the member count
+does change, which is how the panel-preview tests caught it — the committed widths
+simply do not sit near a boundary.
+
+One assertion in `test_compatibility_gate.py` did fail, and it was over-specific
+rather than wrong: it demanded the fixture's gaps *differ*, which required a
+non-zero residual — a property of the chosen bay width, not of the feature.
+`tests/fencemodel/test_fit.py` owns the spreading arithmetic with a case built to
+have a remainder. Replaced with the assertion the fixture is actually there to
+make: the fitted count is a number the golden file is watching.
 
 ---
 

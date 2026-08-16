@@ -25,7 +25,8 @@ from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import (
-    PanelContext, ResolvedPanel, choose_variant, height_supported, resolve_panel,
+    PanelContext, ResolvedPanel, choose_variant, clear_opening_mm, height_supported,
+    resolve_panel,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.evaluator import (
@@ -710,6 +711,37 @@ def _pick_model(
     return model, source
 
 
+def _post_at(strategy: Strategy, run: Run, station: Mm, run_len: Mm):
+    """The post standing at this station of this run, if one does.
+
+    A run END is a shared node post, recorded against the NODE (`node:<id>`)
+    rather than against either run that meets there — one corner has one post,
+    and two runs must not each contribute their own face to it.
+    """
+    for post in strategy.posts:
+        if post.run_ref == run.id and post.station_mm == station:
+            return post
+    node_id = (run.start_node_id if station == 0 else
+               run.end_node_id if station == run_len else None)
+    if node_id is None:
+        return None
+    return next((p for p in strategy.posts if p.run_ref == f"node:{node_id}"), None)
+
+
+def _post_face_width(strategy: Strategy, run: Run, station: Mm, run_len: Mm,
+                     catalog: Catalog) -> Mm:
+    """How wide the post at this station is as SEEN — its extent along the run.
+
+    0 when there is no post, no product, or the product declares no
+    `face_width_mm`; `clear_opening_mm` documents why that is a zero and not a
+    nominal.
+    """
+    post = _post_at(strategy, run, station, run_len)
+    product = catalog.products.get(post.sku) if post is not None and post.sku else None
+    face = product.attrs.get("face_width_mm") if product is not None else None
+    return face if isinstance(face, int) else 0
+
+
 def _generate_run(
     topo: Topology,
     run: Run,
@@ -1299,6 +1331,47 @@ def _generate_run(
             inputs=[run_fact.id, sm.select_node_id],
             governed_by=sm.quantity_refs,
         )
+        # Interior line posts, created BEFORE the bays they bound: a bay's
+        # clear opening is measured to the faces of the posts at its ends, so
+        # those posts have to exist — and have their product resolved — before
+        # `resolve_panel` is asked how wide the opening is.
+        for s in stations[1:-1]:
+            suppressor = next(
+                (ov for ov in suppress_ovs if _near(ov.directive.station_mm, s)), None
+            )
+            if suppressor is not None:
+                applied.add(suppressor.id)
+                builder.add(
+                    "override_applied", "suppress_post",
+                    payload={"override_id": suppressor.id, "station_mm": s},
+                )
+                continue
+            surface = base_surface_at(topo, run, s)
+            forced_sku, forced_mounting, matched = _matched_force_overrides(
+                overrides, run.id, s
+            )
+            override_nodes = []
+            for mov in matched:
+                applied.add(mov.id)
+                override_nodes.append(
+                    builder.add(
+                        "override_applied", mov.directive.kind,
+                        payload={"override_id": mov.id, "station_mm": s},
+                    ).id
+                )
+            tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
+            post = _make_post(
+                builder, kb, scope,
+                post_id=f"post@{run.id}:{s}", run_ref=run.id,
+                station=s, kind="line", surface=surface,
+                ground_z_mm=ground_z(topo, run, s),
+                base_z_mm=_stand_z(topo, run, s),
+                inputs=[layout_node.id],
+                forced_sku=forced_sku, forced_mounting=forced_mounting,
+                override_nodes=override_nodes,
+                tilt_deg=tilt_deg,
+            )
+            strategy.posts.append(post)
         for s0, s1 in zip(stations, stations[1:]):
             width = s1 - s0
             mid = (s0 + s1) // 2
@@ -1317,9 +1390,18 @@ def _generate_run(
                     gz1 += t1[0]
             v_mode, fv_node = span_vertical(mid)
             height, height_src, height_extra = _span_height(topo, run, mid, gz0, gz1, policy)
+            # ONE calculation for one fact: the opening is measured here, from the
+            # posts that bound this bay, and both the stored span and the context
+            # the panel is resolved in read that single number.
+            clear = clear_opening_mm(
+                width,
+                _post_face_width(strategy, run, s0, length, catalog),
+                _post_face_width(strategy, run, s1, length, catalog),
+            )
             span = Span(
                 id=f"span@{run.id}:{s0}-{s1}", run_ref=run.id,
                 start_station_mm=s0, end_station_mm=s1, width_mm=width,
+                clear_width_mm=clear,
                 slope_len_mm=slope_len_mm(width, gz1 - gz0) if v_mode == "raked" else width,
                 vertical=v_mode, height_mm=height,  # type: ignore[arg-type]
                 bottom_z_start_mm=gz0, bottom_z_end_mm=gz1,
@@ -1329,7 +1411,7 @@ def _generate_run(
             )
             panel_ctx = PanelContext(
                 centre_width_mm=width,
-                clear_width_mm=width,  # face widths arrive in phase 2
+                clear_width_mm=clear,
                 height_mm=height,
                 vertical=v_mode,
                 length_basis=span.rail_cut_basis,
@@ -1494,44 +1576,6 @@ def _generate_run(
                         element_refs=[span.id], decision_ref=conflict_node.id,
                     )
                 )
-        # interior line posts for this segment
-        for s in stations[1:-1]:
-            suppressor = next(
-                (ov for ov in suppress_ovs if _near(ov.directive.station_mm, s)), None
-            )
-            if suppressor is not None:
-                applied.add(suppressor.id)
-                builder.add(
-                    "override_applied", "suppress_post",
-                    payload={"override_id": suppressor.id, "station_mm": s},
-                )
-                continue
-            surface = base_surface_at(topo, run, s)
-            forced_sku, forced_mounting, matched = _matched_force_overrides(
-                overrides, run.id, s
-            )
-            override_nodes = []
-            for mov in matched:
-                applied.add(mov.id)
-                override_nodes.append(
-                    builder.add(
-                        "override_applied", mov.directive.kind,
-                        payload={"override_id": mov.id, "station_mm": s},
-                    ).id
-                )
-            tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
-            post = _make_post(
-                builder, kb, scope,
-                post_id=f"post@{run.id}:{s}", run_ref=run.id,
-                station=s, kind="line", surface=surface,
-                ground_z_mm=ground_z(topo, run, s),
-                base_z_mm=_stand_z(topo, run, s),
-                inputs=[layout_node.id],
-                forced_sku=forced_sku, forced_mounting=forced_mounting,
-                override_nodes=override_nodes,
-                tilt_deg=tilt_deg,
-            )
-            strategy.posts.append(post)
 
     _check_panel_safety(kb, run, scope, strategy, builder, resolved, spans_by_model,
                         {s.id: s for s in strategy.spans}, ctx["run"])

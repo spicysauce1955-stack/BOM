@@ -1,5 +1,47 @@
 # Current status
 
+## The clear opening becomes real (2026-08-16) — W1 of the part-specs arc
+Spec `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md` §W1.
+`PanelContext.clear_width_mm` had been `= width` since phase 1 behind the comment
+"face widths arrive in phase 2", so `clear_between_posts` and `centre_to_centre`
+returned the SAME number and `resolve.py`'s infill axis was the centre-to-centre
+width. Every slat panel was fitted across an opening that includes half a post at
+each end: the demo's 1500 mm bay spread its eleven gaps to 27–28 mm to absorb
+80 mm of post, where the model asks for 20 mm — the outer slats overlapped the
+posts they were supposed to sit between.
+
+**The blocker was ordering, not arithmetic.** Interior line posts were created
+AFTER the bays they bound (two sibling loops inside the segment loop), so at
+`resolve_panel` time the posts at a bay's ends did not exist. The two loops are
+swapped; the mutant that hides line posts dies with `1460` — one end narrowed and
+the other not — which is what pins the swap.
+
+**One calculation for one fact.** `clear_opening_mm(centre, face_start, face_end)`
+in `fencemodel/resolve.py` is the single rounding point: the two halves are summed
+and divided ONCE, so a pair of odd faces cannot lose a millimetre twice. `Span`
+records the result, because the panel preview and the read models re-read a stored
+run and must fit to the number the bay was built to — `bay_preview_plan` carries
+the face allowance over rather than re-measuring, and a what-if on the width keeps
+it, since imagining a wider bay does not change which posts bound it. A product
+declaring no `face_width_mm` contributes 0, never a nominal. `Span.clear_width_mm`
+is `None` for runs generated before this, which read at centre-to-centre — the
+fence that exists, not the one today's generator would build.
+
+**The gate did not move**, against the spec's own prediction. Twelve slats fit at
+1500 and at 1420, so no purchased quantity changed; only where the slats sit. The
+change is capable of moving it — at 1700 mm the member count does change, which is
+how the panel-preview tests caught the drift — the committed widths just do not sit
+near a boundary. One gate assertion was over-specific (it required the fixture's
+residual to be non-zero, a property of the width rather than of the feature) and
+now asserts what the fixture is for: the fitted count is a number the golden file
+watches.
+
+**Known gap, deliberately not closed here:** the model-scoped preview (Panel tab)
+still fits at the width it is given, because a model with no project has no posts
+to measure. It closes in W3, when the model owns its post.
+
+1048 pytest (+4) · 156 golden scenarios · 159/159 smoke · gate byte-identical.
+
 Updated: 2026-08-16 — the two-tier visualizer is in: an Assembly tab with two
 synchronized viewports (the run standing up, and one panel assembled), a material
 and inventory drawer on every part, a live what-if that never generates, joints

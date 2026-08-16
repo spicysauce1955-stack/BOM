@@ -228,6 +228,13 @@ def test_the_preview_agrees_with_what_generation_actually_builds():
 
     shown = by_slot(preview(
         M_SLAT, height_mm=span.height_mm, width_mm=span.width_mm,
+        # The opening, not just the width. A model-scoped preview has no posts —
+        # it answers "what does this model cost at this bay size" — so a caller
+        # comparing it against a REAL bay has to say how much of that size is
+        # post. Supplying it is also what makes this test pin the opening: drop
+        # the argument and the preview fits its slats across the full
+        # centre-to-centre width and buys more screws than the run did.
+        clear_width_mm=span.clear_width_mm,
         params={"rails_per_span": span.rail_count,
                 "screws_per_span": span.screws_count},
     ))

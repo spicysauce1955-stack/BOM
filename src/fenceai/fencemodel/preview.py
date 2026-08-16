@@ -247,6 +247,12 @@ def bay_preview_plan(
             vertical=span.vertical,
             length_basis=span.rail_cut_basis,
             slope_len_mm=_slope_for(span, width),
+            # The face allowance this bay was actually built with, carried over
+            # rather than recomputed: imagining a different bay WIDTH does not
+            # change which posts bound it, so the same two half-faces are lost.
+            # A run generated before the opening was recorded allows nothing,
+            # which is what those runs were built to.
+            clear_width_mm=width - _face_allowance(span),
             # what the generator put in `ctx.params`, from where it put it: the
             # span carries the resolved quantities precisely so a later reader
             # never has to re-run the knowledge evaluator to learn them
@@ -267,6 +273,23 @@ def _ref_parts(model_ref: str) -> tuple[str, int]:
             model_ref=model_ref,
         )
     return model_id, int(version)
+
+
+def _face_allowance(span: Span) -> Mm:
+    """How much of this bay's centre-to-centre width is post rather than opening.
+
+    Read back off the span rather than re-measured from the posts: the generator
+    already resolved which products bound this bay and wrote the answer down, and
+    a second measurement here could disagree with the panel the run stored.
+
+    `None` is a run generated before the opening was recorded. Those bays were
+    genuinely fitted at centre-to-centre, so their allowance is zero — the
+    preview reproduces the fence that exists, not the one today's generator would
+    build.
+    """
+    if span.clear_width_mm is None:
+        return 0
+    return span.width_mm - span.clear_width_mm
 
 
 def _slope_for(span: Span, width: Mm) -> Mm:
