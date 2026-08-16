@@ -84,7 +84,11 @@ def derive_requirements(
 
     for post in strategy.posts:
         add(1, [post.id], role="post", eligibility=chosen(post.sku))
-        add(1, [post.id], role="cap", eligibility=chosen(policy["cap_sku"]))
+        # the MODEL's cap if its line ships one, the company default otherwise.
+        # `post.cap_sku` is "" for every fence built before a model could own its
+        # post, which is exactly when the company default is the right answer.
+        add(1, [post.id], role="cap",
+            eligibility=chosen(post.cap_sku or policy["cap_sku"]))
         if post.mounting == "ground":
             add(1, [post.id], role="concrete",
                 eligibility=chosen(policy["concrete_sku"]))

@@ -48,6 +48,10 @@ class Post(BaseModel):
     top_z_mm: Mm | None = None
     tilt_deg: int = 0  # degrees from vertical; 0 = plumb (the default and the norm)
     pinned: bool = False
+    # The cap this post's MODEL asked for. "" means the model had no opinion and
+    # demand falls back to the company default, which is what every fence built
+    # before models owned their posts used.
+    cap_sku: str = ""
 
 
 class Span(BaseModel):

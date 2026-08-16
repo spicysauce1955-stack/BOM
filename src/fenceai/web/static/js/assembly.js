@@ -23,10 +23,13 @@
 //     that generation stays behind an explicit press, and a viewport that
 //     silently re-ran it would spend money on the user's behalf.
 //
-// DOM ownership: `#assembly-bar`, `#assembly-macro`, `#assembly-micro` and
-// `#assembly-drawer`. No other module writes those, and this module writes
-// nothing else.
+// DOM ownership: `#assembly-bar`, `#assembly-play`, `#assembly-macro`,
+// `#assembly-micro` and `#assembly-drawer`. No other module writes those, and
+// this module writes nothing else.
 
+import {
+  SCRUB_MAX, assemblyPlan, frameAt, msAtPermille, permilleAt, placedCount,
+} from "./animate.js";
 import { apiGet, apiSend, esc } from "./api.js";
 import { loadCatalogProducts } from "./builder-ui.js";
 import {
@@ -58,6 +61,11 @@ const MEMBER_BUDGET = 900;
 // tab and the model editor already use, so the three surfaces that re-price live
 // re-price at one rhythm.
 const PREVIEW_DEBOUNCE_MS = 250;
+// The animation's tick. Not requestAnimationFrame: the clock is read from
+// `performance.now()` either way, so the frame rate only decides how smooth it
+// looks, and an interval keeps running at a known rate in a headless browser —
+// which is where this feature is actually checked.
+const ANIM_TICK_MS = 40;
 
 let mode = "split";
 let annotations = true;
@@ -77,6 +85,12 @@ let whatIf = null;           // { height_mm, width_mm, slot_skus } — null = as
 let drawerSlot = null;       // the slot the material drawer is open on
 let runBom = null;           // this run's BOM total, in cents
 let runAllocations = [];     // what this run already takes off the shelf
+let animPlan = null;         // the reveal schedule, from animate.js
+let animEls = new Map();     // plan id -> the drawn node it uncovers
+let animMs = null;           // null = "not animating": every part is on screen
+let animPainted = -1;        // how many parts the DOM currently SHOWS placed
+let animTimer = null;
+let animClock = 0;           // performance.now() at the last tick
 
 const assemblyTabActive = () =>
   !!document.getElementById("tab-assembly")?.classList.contains("active");
@@ -86,7 +100,8 @@ export function initAssembly() {
     ? localStorage.getItem("fenceai.assembly.mode") : "split";
   annotations = localStorage.getItem("fenceai.assembly.dims") !== "false";
 
-  on("tab-changed", (tab) => { if (tab === "assembly") openTab(); });
+  // a film playing on a tab nobody is looking at is a timer burning a laptop
+  on("tab-changed", (tab) => { if (tab === "assembly") openTab(); else pauseAnim(); });
   on("structure-loaded", () => { if (assemblyTabActive()) render(); });
   on("locale-changed", () => { if (assemblyTabActive()) render(); });
   on("units-changed", () => { if (assemblyTabActive()) render(); });
@@ -222,6 +237,9 @@ function render() {
   renderMicro();
   renderCost();
   renderDrawer();
+  // last: the film is over what the two viewports have just drawn, so it can
+  // only be collected once they have drawn it
+  rebuildAnimation();
 }
 
 /** The refusal branches, from the module that OWNS the refusal state — not a
@@ -354,6 +372,10 @@ function drawBay(group, bay, { px, pz }, drawParts) {
       x: r6(m.x_mm), y: r6(m.y_mm),
       width: r6(Math.max(m.w_mm, 1)), height: r6(Math.max(m.h_mm, 1)),
       "data-slot": m.slot_key,
+      // the role as DATA rather than as a class to be parsed back out: the
+      // assembly film needs to know a rail from a slat, and reading it off the
+      // paint would make the colour palette load-bearing
+      "data-role": m.role || "other",
     }, members);
 }
 
@@ -858,6 +880,227 @@ function applySlot() {
   for (const rect of macroSvg.querySelectorAll(".macro-member"))
     rect.classList.toggle("selected",
       microSlot !== null && rect.getAttribute("data-slot") === microSlot);
+}
+
+// ------------------------------------------------------- the assembly film
+//
+// Both viewports draw a FINISHED fence. This uncovers it in the order it would
+// be built — footings, posts, frame, infill, fixings — by adding and removing
+// one class on rectangles that are already on screen.
+//
+// It places, it never computes. Nothing here reads a coordinate, and nothing
+// here writes one: a part's position is where `runview.js` and `elevation.js`
+// put it, from numbers the server placed, and an animation that nudged a slat
+// into position would be a fourth opinion about where that slat goes. The
+// ORDER is `animate.js` (pure, node tested) over a list of `{ id, role }`; this
+// half is the one that knows what an SVG is.
+//
+// `animMs === null` is the resting state and means "fully assembled" — not
+// "paused at 0 ms". A tab whose drawing starts hidden until somebody presses
+// play is a tab that looks broken.
+
+const reducedMotion = () =>
+  !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+/** The drawn parts, in the order they were drawn, each with the role that
+ *  decides when it arrives.
+ *
+ * An item is a LIST of nodes rather than one, because several drawn shapes are
+ * one part: a post is its face and the buried length under it, and a panel
+ * member is its rectangle, its outline and its housed end. Uncovering those a
+ * step apart would show a post arriving in two halves. */
+function collectAnimationParts() {
+  animEls = new Map();
+  const items = [];
+  const take = (nodes, role) => {
+    const group = nodes.filter(Boolean);
+    if (!group.length) return;
+    const id = String(items.length);
+    for (const node of group) node.classList.add("anim-part");
+    animEls.set(id, group);
+    items.push({ id, role });
+  };
+
+  if (macroSvg) {
+    // The ground line and a built base are NOT parts: the site is there before
+    // the crew is, and a fence that appears to be built on nothing reads as a
+    // drawing error. Same for the dimension layer — it measures the design, not
+    // the progress.
+    for (const post of macroSvg.querySelectorAll(".macro-post")) {
+      take([post.querySelector(".macro-footing")], "concrete");
+      take([post.querySelector(".macro-embed"),
+            post.querySelector(".macro-post-face")], "post");
+    }
+    for (const bay of macroSvg.querySelectorAll(".macro-bay")) {
+      take([bay.querySelector(".macro-bay-face")], "bay");
+      for (const member of bay.querySelectorAll(".macro-member"))
+        take([member], member.getAttribute("data-role") || "");
+    }
+    for (const gate of macroSvg.querySelectorAll(".macro-gate")) take([gate], "gate_kit");
+  }
+
+  const bay = bayToDraw(getReport());
+  const drawn = whatIf && preview ? preview.elevation : bay?.elevation;
+  if (microSvg && drawn) {
+    const rects = elevationRects(drawn);
+    const edges = [...microSvg.querySelectorAll(".elev-edges > rect")];
+    const seats = [...microSvg.querySelectorAll(".elev-seats > rect")];
+    // Three layers, one order: `renderElevation` paints members, seats and
+    // edges by walking the SAME `elevationRects` list, so layer i belongs to
+    // member i. The members say so themselves (`data-order`); the other two say
+    // it only by position, so the reading is checked before it is trusted and
+    // the layer is left alone rather than uncovered against the wrong member —
+    // an outline arriving before its slat is worse than an outline that never
+    // hides at all.
+    const seatOf = new Map();
+    for (const [i, m] of rects.entries()) if (m.seat) seatOf.set(i, seatOf.size);
+    const edgesAlign = edges.length === rects.length;
+    const seatsAlign = seats.length === seatOf.size;
+    const members = [...microSvg.querySelectorAll(".elev-members .elev-member")]
+      // paint order, not DOM order: a raised selection re-appends its rectangles
+      .sort((a, b) => +a.getAttribute("data-order") - +b.getAttribute("data-order"));
+    for (const node of members) {
+      const order = Number(node.getAttribute("data-order"));
+      const m = rects[order];
+      if (!m) continue;
+      take([node,
+            edgesAlign ? edges[order] : null,
+            seatsAlign && seatOf.has(order) ? seats[seatOf.get(order)] : null],
+           m.role);
+    }
+  }
+  return items;
+}
+
+/** Rebuild the schedule over whatever has just been drawn, and re-apply the
+ *  moment the user is looking at. Called at the END of every render: a new
+ *  preview, a new locale and a new selection all redraw the SVGs, and a plan
+ *  that still pointed at the old nodes would freeze the film. */
+function rebuildAnimation() {
+  animPlan = assemblyPlan(collectAnimationParts());
+  animPainted = -1;                       // nothing on the new nodes yet
+  if (!animPlan.steps.length) { pauseAnim(); animMs = null; }
+  else if (animMs !== null) animMs = Math.min(animMs, animPlan.duration_ms);
+  paintAnimation();
+  renderPlay();
+}
+
+/** The DOM caught up to `animMs`, by the DIFFERENCE rather than by a sweep.
+ *
+ * `steps` is ascending, so a tick reveals the parts between two cursors. A pass
+ * over every rectangle 25 times a second is affordable on a 4-bay fence and is
+ * not on a 60-bay one, and the frame rate is exactly where that shows. */
+function paintAnimation() {
+  if (!animPlan) return;
+  const target = animMs === null ? animPlan.steps.length
+                                 : placedCount(animPlan, animMs);
+  if (target === animPainted) return;
+  if (animPainted < 0) {
+    // freshly drawn nodes carry no class at all, so the resting state is
+    // already painted and touching it would flash the whole fence
+    if (animMs === null) { animPainted = animPlan.steps.length; return; }
+    for (const step of animPlan.steps) setPlaced(step.id, false);
+    animPainted = 0;
+  }
+  for (let i = animPainted; i < target; i += 1) setPlaced(animPlan.steps[i].id, true);
+  for (let i = target; i < animPainted; i += 1) setPlaced(animPlan.steps[i].id, false);
+  animPainted = target;
+}
+
+function setPlaced(id, placed) {
+  for (const node of animEls.get(id) || [])
+    node.classList.toggle("anim-pending", !placed);
+}
+
+function renderPlay() {
+  const host = document.getElementById("assembly-play");
+  if (!host) return;
+  const head = `<h3>${esc(t("assembly.animate.title"))}</h3>`;
+  if (!animPlan?.steps?.length) {
+    host.innerHTML = `${head}<div class="meta">${
+      esc(t("assembly.animate.nothing"))}</div>`;
+    return;
+  }
+  if (reducedMotion()) {
+    // The user asked their system for no motion, so there is no film to offer:
+    // the fence is shown finished and the panel says why. A disabled play
+    // button would be a control that reads as broken rather than as respected.
+    pauseAnim();
+    animMs = null;
+    paintAnimation();
+    host.innerHTML = `${head}<div class="meta" id="anim-reduced">${
+      esc(t("assembly.animate.reduced_motion"))}</div>`;
+    return;
+  }
+  host.innerHTML = `${head}
+    <div class="toolbar">
+      <button id="btn-anim-play" class="primary"></button>
+      <input type="range" id="anim-scrub" min="0" max="${SCRUB_MAX}" step="1"
+        value="${SCRUB_MAX}" title="${esc(t("assembly.animate.scrub"))}"
+        aria-label="${esc(t("assembly.animate.scrub"))}">
+      <span class="meta" id="anim-stage"></span>
+    </div>
+    <div class="meta">${esc(t("assembly.animate.hint"))}</div>`;
+  host.querySelector("#btn-anim-play").addEventListener("click", togglePlay);
+  const scrub = host.querySelector("#anim-scrub");
+  scrub.addEventListener("input", () => {
+    // dragging IS the playhead: a slider that fought a running clock would
+    // snap back under the thumb
+    pauseAnim();
+    const permille = Number(scrub.value);
+    animMs = permille >= SCRUB_MAX ? null : msAtPermille(animPlan, permille);
+    paintAnimation();
+    updatePlay();
+  });
+  updatePlay();
+}
+
+/** The values only — the control's markup is not rebuilt on every tick, or the
+ *  slider would be torn out from under the pointer 25 times a second. */
+function updatePlay() {
+  const button = document.getElementById("btn-anim-play");
+  if (!button || !animPlan) return;
+  button.textContent = t(animTimer ? "assembly.animate.pause"
+    : animMs === null ? "assembly.animate.replay" : "assembly.animate.play");
+  const scrub = document.getElementById("anim-scrub");
+  if (scrub && document.activeElement !== scrub)
+    scrub.value = String(animMs === null ? SCRUB_MAX : permilleAt(animPlan, animMs));
+  const caption = document.getElementById("anim-stage");
+  if (!caption) return;
+  const frame = frameAt(animPlan, animMs === null ? animPlan.duration_ms : animMs);
+  caption.textContent = frame.stage === null
+    ? t("assembly.animate.done")
+    : `${t(`assembly.animate.stage.${frame.stage}`)} · ${
+        t("assembly.animate.placed", { placed: frame.placed, total: frame.total })}`;
+}
+
+function togglePlay() {
+  if (animTimer) { pauseAnim(); updatePlay(); return; }
+  // Play from a finished fence means play it AGAIN. The finished drawing is
+  // where everybody starts, so "play" and "replay" are the same button and the
+  // label says which one it currently is.
+  if (animMs === null || animMs >= animPlan.duration_ms) animMs = 0;
+  paintAnimation();
+  animClock = performance.now();
+  animTimer = setInterval(tick, ANIM_TICK_MS);
+  updatePlay();
+}
+
+function tick() {
+  if (!animPlan?.steps?.length || animMs === null) { pauseAnim(); return; }
+  // driven by the wall clock rather than by the tick count: a browser that
+  // throttles the interval must make the film shorter, not slower
+  const now = performance.now();
+  animMs = Math.min(animMs + (now - animClock), animPlan.duration_ms);
+  animClock = now;
+  if (animMs >= animPlan.duration_ms) { animMs = null; pauseAnim(); }
+  paintAnimation();
+  updatePlay();
+}
+
+function pauseAnim() {
+  clearInterval(animTimer);
+  animTimer = null;
 }
 
 const r = (n) => Math.round(n * 10) / 10;

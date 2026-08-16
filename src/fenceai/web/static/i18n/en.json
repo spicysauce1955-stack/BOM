@@ -705,5 +705,20 @@
   "joint.dim.margin": "clearance {len_mm} {u}",
   "drawer.none_available": "none free",
   "drawer.committed": "of {on_hand} on hand, {committed} already on this fence",
-  "drawer.remnants_committed": "+{n} offcuts already being cut from"
+  "drawer.remnants_committed": "+{n} offcuts already being cut from",
+  "assembly.animate.title": "Build it up",
+  "assembly.animate.hint": "Play the assembly order: footings, posts, frame, infill, fixings. Nothing is moved or recalculated — each part simply appears where the drawing already puts it.",
+  "assembly.animate.play": "Play",
+  "assembly.animate.pause": "Pause",
+  "assembly.animate.replay": "Play again",
+  "assembly.animate.scrub": "Move through the assembly",
+  "assembly.animate.stage.groundworks": "Footings",
+  "assembly.animate.stage.posts": "Posts",
+  "assembly.animate.stage.frame": "Frame",
+  "assembly.animate.stage.infill": "Infill",
+  "assembly.animate.stage.fixings": "Fixings",
+  "assembly.animate.placed": "{placed} of {total} parts",
+  "assembly.animate.done": "Fully assembled",
+  "assembly.animate.nothing": "Nothing is drawn here yet — generate a fence to watch it go up.",
+  "assembly.animate.reduced_motion": "Your system asks for reduced motion, so the fence is shown fully assembled instead of being played."
 }

@@ -148,6 +148,11 @@
          currency, so they cannot be static data-i18n. -->
     <section id="tab-assembly" class="tab">
       <div class="panel" id="assembly-bar"></div>
+      <!-- the assembly film's own control (js/assembly.js over js/animate.js).
+           Its own panel rather than a row in the bar above: the bar is rebuilt
+           whenever a dimension is typed, and a play control that vanished
+           mid-press would be a control nobody trusts. -->
+      <div class="panel" id="assembly-play"></div>
       <div class="assembly-row" id="assembly-row">
         <div class="panel" id="assembly-macro"></div>
         <div class="panel" id="assembly-micro"></div>

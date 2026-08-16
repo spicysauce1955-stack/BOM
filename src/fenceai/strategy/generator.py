@@ -23,7 +23,7 @@ from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
-from fenceai.fencemodel.match import match_spec, panel_facts
+from fenceai.fencemodel.match import match_eligibility, match_spec, panel_facts
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import (
     PanelContext, ResolvedPanel, choose_variant, clear_opening_mm, height_supported,
@@ -157,7 +157,8 @@ def generate(
     )
 
     _generate_node_posts(
-        topology, knowledge, scope, catalog, overrides, builder, strategy, applied
+        topology, knowledge, scope, catalog, overrides, builder, strategy, applied,
+        models, default_model,
     )
     # every fence model actually drawn from, across all runs — part of the run id
     # (a model swap changes what the run means even though the digest's other
@@ -406,6 +407,44 @@ def _stand_z(topo: Topology, run: Run, station: Mm) -> Mm:
     return gz
 
 
+
+def _model_post_skus(
+    library: FenceModelLibrary,
+    default_model: FenceModelChoice | None,
+    topo: Topology,
+    run: Run,
+    station: Mm,
+    catalog: Catalog,
+) -> tuple[str | None, str | None]:
+    """The post and cap the MODEL at this station asks for, if it asks.
+
+    Sampled at the POST'S OWN station rather than gathered from the bays either
+    side. A post stands at one place, and `fence_model_at` answers for that place
+    with the same half-open convention every other station question uses — so the
+    answer cannot depend on which neighbouring bay happened to be resolved first.
+
+    Choosing among several matched candidates is `sorted-first`, not cost-based:
+    a post is one line and the cut-plan coupling that makes `select_supply` worth
+    running does not apply to an indivisible each. Recorded in the limitations
+    rather than faked — a post line still carries its full eligibility into
+    demand, so the choice remains explainable there.
+    """
+    choice = fence_model_at(topo, run, station) or default_model
+    if choice is None:
+        return None, None
+    model = library.resolve(choice.model_id, choice.version_pin)
+    if model is None or model.post is None:
+        return None, None
+
+    def first(req) -> str | None:
+        if req is None:
+            return None
+        resolved = match_eligibility(req.eligibility, catalog, {})
+        return resolved.members[0].sku if resolved.members else None
+
+    return first(model.post.requirement), first(model.post.cap)
+
+
 def _make_post(
     builder: GraphBuilder,
     kb: KnowledgeBase,
@@ -427,6 +466,8 @@ def _make_post(
     forced_mounting: str | None = None,
     override_nodes: list[str] | None = None,
     tilt_deg: int = 0,
+    model_post: str | None = None,
+    model_cap: str | None = None,
 ) -> Post:
     """Create a post; every selection resolved from knowledge BEFORE the decision
     node is recorded — elements are never mutated afterwards (critic finding 4)."""
@@ -442,12 +483,21 @@ def _make_post(
     elif reinforced and reinforced_sku:
         sku = reinforced_sku
         sku_refs = []
+    elif model_post is not None:
+        # The MODEL's ordinary post. Deliberately below the three above: a forced
+        # sku is an explicit user patch, and a masonry or gate-reinforced post is
+        # doing a different JOB from the one a product line ships — bolted to a
+        # wall, or carrying a leaf. A line that has no variant for those cases
+        # would otherwise silently replace a post chosen for its situation.
+        sku = model_post
+        sku_refs = []
     else:
         sku, sku_refs = _resolve_default_post(kb, scope, surface)
     post = Post(
         id=post_id, run_ref=run_ref, station_mm=station, kind=kind,  # type: ignore[arg-type]
         reinforced=reinforced, mounting=mounting, sku=sku,  # type: ignore[arg-type]
         ground_z_mm=ground_z_mm, base_z_mm=base_z_mm, tilt_deg=tilt_deg, pinned=pinned,
+        cap_sku=model_cap or "",
     )
     builder.add(
         "structural", "place_post",
@@ -475,6 +525,8 @@ def _generate_node_posts(
     builder: GraphBuilder,
     strategy: Strategy,
     applied: set[str],
+    library: FenceModelLibrary | None = None,
+    default_model: FenceModelChoice | None = None,
 ) -> None:
     touches_by_node: dict[str, list[tuple[Run, Mm]]] = {}
     for run in topology.runs:
@@ -544,8 +596,12 @@ def _generate_node_posts(
             payload={"node_id": node.id, "x_mm": node.x_mm, "y_mm": node.y_mm,
                      "runs": len(touches)},
         )
+        node_post_sku, node_cap_sku = (
+            _model_post_skus(library, default_model, topology, run0, station0, catalog)
+            if library is not None else (None, None))
         post = _make_post(
             builder, kb, scope,
+            model_post=node_post_sku, model_cap=node_cap_sku,
             post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
             station=station0, kind=kind, surface=surface,
             ground_z_mm=ground_z(topology, run0, station0),
@@ -1088,8 +1144,11 @@ def _generate_run(
                 ).id
             )
         tilt_deg, tilt_ev = (0, None) if kind == "gate" else _post_tilt_at(topo, run, station)
+        fixed_post_sku, fixed_cap_sku = _model_post_skus(
+            library, default_model, topo, run, station, catalog)
         post = _make_post(
             builder, kb, scope,
+            model_post=fixed_post_sku, model_cap=fixed_cap_sku,
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
             station=station, kind=kind, surface=surface,
             ground_z_mm=ground_z(topo, run, station),
@@ -1387,8 +1446,11 @@ def _generate_run(
                     ).id
                 )
             tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
+            line_post_sku, line_cap_sku = _model_post_skus(
+                library, default_model, topo, run, s, catalog)
             post = _make_post(
                 builder, kb, scope,
+                model_post=line_post_sku, model_cap=line_cap_sku,
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
                 station=s, kind="line", surface=surface,
                 ground_z_mm=ground_z(topo, run, s),

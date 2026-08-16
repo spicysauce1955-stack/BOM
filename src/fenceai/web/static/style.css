@@ -421,6 +421,20 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .macro-dims line { stroke: #94a3b8; stroke-width: 1; }
 .macro-dim-label { font-size: 11px; fill: #475569; }
 
+/* ---------- the assembly film (js/animate.js + js/assembly.js) -----------
+   The whole visual mechanism: a part waiting its turn is transparent, and it
+   fades in where it already is. Nothing here moves anything — a transform
+   would slide a slat through a position the fit never gave it, and the drawing
+   would spend 200 ms disagreeing with the cut list. */
+#assembly-play .toolbar { align-items: center; }
+#anim-scrub { flex: 1 1 240px; min-inline-size: 140px; max-inline-size: 460px; }
+#anim-stage { min-inline-size: 12ch; }
+.anim-part { transition: opacity 200ms ease-out; }
+.anim-pending { opacity: 0; }
+/* the film is offered only when motion is welcome (assembly.js renders the note
+   instead), but a fade left mid-flight by a preference change must stop too */
+@media (prefers-reduced-motion: reduce) { .anim-part { transition: none; } }
+
 /* ---------- the material & inventory drawer (js/part-drawer.js) ---------- */
 #assembly-drawer:empty { display: none; }
 .drawer-table td, .drawer-table th { vertical-align: top; }

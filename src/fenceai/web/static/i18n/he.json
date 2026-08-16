@@ -705,5 +705,20 @@
   "joint.dim.margin": "מרווח {len_mm} {u}",
   "drawer.none_available": "אין פנוי",
   "drawer.committed": "מתוך {on_hand} במלאי, {committed} כבר משובצים בגדר הזו",
-  "drawer.remnants_committed": "+{n} שאריות שכבר נחתכות"
+  "drawer.remnants_committed": "+{n} שאריות שכבר נחתכות",
+  "assembly.animate.title": "בונים את הגדר",
+  "assembly.animate.hint": "הפעילו את סדר ההרכבה: יסודות, עמודים, שלד, מילוי ואביזרים. שום דבר אינו זז ואינו מחושב מחדש — כל חלק פשוט מופיע במקום שבו השרטוט כבר ממקם אותו.",
+  "assembly.animate.play": "הפעלה",
+  "assembly.animate.pause": "השהיה",
+  "assembly.animate.replay": "הפעלה מחדש",
+  "assembly.animate.scrub": "מעבר לאורך ההרכבה",
+  "assembly.animate.stage.groundworks": "יסודות",
+  "assembly.animate.stage.posts": "עמודים",
+  "assembly.animate.stage.frame": "שלד",
+  "assembly.animate.stage.infill": "מילוי",
+  "assembly.animate.stage.fixings": "אביזרים",
+  "assembly.animate.placed": "{placed} מתוך {total} חלקים",
+  "assembly.animate.done": "מורכב במלואו",
+  "assembly.animate.nothing": "עדיין לא משורטט כאן דבר — הפיקו גדר כדי לראות אותה נבנית.",
+  "assembly.animate.reduced_motion": "המערכת שלכם מבקשת להפחית תנועה, ולכן הגדר מוצגת מורכבת במלואה במקום מונפשת."
 }
