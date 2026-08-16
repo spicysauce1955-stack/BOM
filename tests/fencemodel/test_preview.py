@@ -337,3 +337,32 @@ def test_a_model_with_no_joints_previews_no_details():
     drawing off the screen: no engagement and no channel means nothing to draw."""
     assert preview(M_SLAT, height_mm=1800, width_mm=2500).elevation.details == []
     assert preview(M_LEGACY, height_mm=1800, width_mm=2500).elevation.details == []
+
+
+def test_a_spec_declared_slot_previews_as_the_products_it_will_be_built_from():
+    """The preview runs the same matcher generation runs. Without it a
+    predicate slot would preview as a panel with nothing in it — and the Panel
+    tab would show an empty, free panel for a model that builds perfectly well."""
+    from fenceai.fencemodel.model import (
+        Distributed, Eligibility, FenceModel, FrameSlot, PanelSpec, PartRequirement,
+    )
+    from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
+
+    model = FenceModel(
+        id="M-PRED", version=1,
+        default_spec=PanelSpec(frame=[FrameSlot(
+            key="rail", orientation="horizontal", placement=Distributed(count=2),
+            requirement=PartRequirement(
+                role="rail", qty=1, length_rule="centre_to_centre",
+                eligibility=Eligibility(predicate=And(items=[
+                    Cmp(cmp="==", left=FieldRef(path="item.material"),
+                        right=Lit(value="aluminium")),
+                    Cmp(cmp="==", left=FieldRef(path="item.consumption"),
+                        right=Lit(value="divisible_linear")),
+                ])),
+            ),
+        )]),
+    )
+    parts = by_slot(preview(model, height_mm=1800, width_mm=2500))
+    assert parts["rail"].sku == "RAIL-3000"
+    assert parts["rail"].qty > 0

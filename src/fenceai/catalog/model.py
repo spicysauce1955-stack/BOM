@@ -101,7 +101,16 @@ class Product(BaseModel):
     # answer, not the code's: a company that stocks bamboo adds a product and a
     # locale word, it does not ship a release. All three are optional, and a
     # product without `material` shows no material row rather than a guessed one.
-    attrs: dict[str, str | int | bool] = {}
+    # Lists are allowed because some specs genuinely are one: a routed post's
+    # hole heights are `[150, 1650]` and no scalar can hold that. Kept in the
+    # open bag rather than promoted to a typed field for the same reason the bag
+    # exists — an eligibility PREDICATE names the keys it reads, so a company
+    # that stocks a new kind of thing adds a product and a rule, not a release.
+    #
+    # The rule that bounds this: data read by CODE should be typed (a magic
+    # string key in Python is the defect); data read by a predicate is data
+    # reading data, and belongs here.
+    attrs: dict[str, str | int | bool | list[int] | list[str]] = {}
 
     def display_name(self, lang: str) -> str:
         return self.name_i18n.get(lang) or self.name

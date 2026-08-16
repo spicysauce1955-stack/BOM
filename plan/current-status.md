@@ -1,5 +1,54 @@
 # Current status
 
+## A part can declare what it needs (2026-08-16) — W2a of the part-specs arc
+Spec §W2, first half. `Eligibility.predicate` had been on the schema since phase 1
+and refused at load for two stated reasons — nothing evaluated it, nothing froze
+it. `fencemodel/match.py` closes both, and the `_UNSUPPORTED` entry is deleted in
+the same change that makes it work, which is what that table's own comment asks
+for.
+
+**The matcher sits ABOVE the mechanism that already exists.** It produces
+`EligibleItem`s — the shape a slot has always carried and a run has always frozen
+— so `resolve_supply`, `select_supply`, `fulfill()`, the parts ledger, the drawer
+and the decision graph are untouched, and freezing is free. Members come back
+sorted by SKU at the default priority and approval, because `resolve_supply`
+groups on that signature and grouping decides which product is chosen.
+
+**A `MissingField` is a NO, not a "not applicable".** The knowledge evaluator
+reads it the other way because there the question is whether a rule fires; here it
+is whether an item COVERS a requirement, and an item that cannot answer has not.
+
+**`item` is what a product IS**, not merely its attrs: `sku` and `consumption` are
+reserved keys that always win. Without `consumption` a rail slot is inexpressible
+— "bought by the length" is a typed field, and every author would otherwise have
+to hand-tag their bar stock. `Product.attrs` widened to hold `list[int]` /
+`list[str]`, because a routed post's hole heights are `[150, 1650]` and no scalar
+holds that. The bound: data read by CODE should be typed (a magic string key in
+Python is the defect the audit named); data read by a PREDICATE is data reading
+data, and belongs in the open bag.
+
+**Authoring keeps its guardrail and gains a better sentence.** A predicate no
+catalog item covers is refused at authoring — the same rule an empty member list
+already got, for the same reason. A predicate that reads `panel.*` is NOT checked
+there, because the bay does not exist yet and refusing it for failing a question
+nobody asked would be worse than the gap; `field_paths()` (new, in
+`knowledge/ast.py`) is how the two are told apart. A slot carrying BOTH a
+predicate and members is refused: intersecting the two lists has more than one
+defensible reading.
+
+Wired at both call sites — generation and the panel preview — and the mutation
+that makes `match_spec` a no-op kills tests in both. The preview one was the only
+cover for that path; without it the Panel tab would have shown an empty, free
+panel for a model that builds perfectly well.
+
+1064 pytest (+16) · 156 golden scenarios · 159/159 smoke · compatibility gate
+byte-identical (every shipped model still authors its members, and a spec with no
+predicate is returned as-is rather than deep-copied).
+
+**Still open in W2:** the `DemandLine`/`ResolvedSupplyLine` split, typed catalog
+capabilities for the keys Python reads (`length_mm`, `face_width_mm`,
+`opening_width_mm`), and engine behaviour versions.
+
 ## The clear opening becomes real (2026-08-16) — W1 of the part-specs arc
 Spec `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md` §W1.
 `PanelContext.clear_width_mm` had been `= width` since phase 1 behind the comment

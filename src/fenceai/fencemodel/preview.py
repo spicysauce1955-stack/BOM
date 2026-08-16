@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from fenceai.catalog.model import Catalog
 from fenceai.core.errors import ReadRefused
 from fenceai.core.units import Cents, Mm, slope_len_mm
+from fenceai.fencemodel.match import match_spec, panel_facts
 from fenceai.fencemodel.model import FenceModel, validate_model
 from fenceai.fencemodel.resolve import PanelContext, ResolvedPanel, resolve_panel, select_variant
 from fenceai.fulfillment.pipeline import price_strategy
@@ -137,6 +138,9 @@ def preview_panel(
         slot_skus=dict(request.slot_skus),
     )
     spec, variant_index = select_variant(model, ctx)
+    # the same matcher generation runs, so a spec-declared slot previews
+    # as the products it will actually be built from
+    spec = match_spec(spec, catalog, panel_facts(ctx))
     # the variant is recorded on the panel as well as on the preview, because a
     # bay of a stored run previews into a `ResolvedPanel` that must be the one
     # the run stored — down to which variant it was built to

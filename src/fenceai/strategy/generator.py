@@ -23,6 +23,7 @@ from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
+from fenceai.fencemodel.match import match_spec, panel_facts
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import (
     PanelContext, ResolvedPanel, choose_variant, clear_opening_mm, height_supported,
@@ -1424,8 +1425,12 @@ def _generate_run(
             # height and vertical mode, and a level top over a slope gives every
             # bay of one segment a different height (S06)
             variant = choose_variant(model, panel_ctx)
+            # A spec-declared slot becomes concrete members HERE, so what the run
+            # stores is the candidate set it may choose among — the same shape an
+            # authored slot has always had, and the reason `catalog_hash` may be
+            # narrowed to the SKUs a run actually named.
             span.panel = resolve_panel(
-                variant.spec, panel_ctx,
+                match_spec(variant.spec, catalog, panel_facts(panel_ctx)), panel_ctx,
                 model_ref=model.ref, variant_index=variant.index,
             )
             if not height_supported(model.height_support, height):

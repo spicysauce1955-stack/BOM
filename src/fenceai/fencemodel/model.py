@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
-from fenceai.knowledge.ast import Expr
+from fenceai.knowledge.ast import Expr, field_paths
 
 _SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -71,12 +71,21 @@ EligibilityMember = Annotated[Union[EligibleItem,], Field(discriminator="kind")]
 
 
 class Eligibility(BaseModel):
+    """Which items may satisfy a requirement — said one of two ways, never both.
+
+    `members` NAMES products. `predicate` says what the part NEEDS, and
+    `match.match_eligibility` turns it into members against the catalog, once,
+    during generation. The resolved members are what a run freezes, which is why
+    a new catalog product cannot change what an accepted quote meant and why
+    `catalog_hash` may be narrowed to the SKUs a run actually named.
+    """
+
     group: str | None = None
     members: list[EligibilityMember] = []
-    # DESIGNED to be resolved once and frozen into the run's snapshot, so a new
-    # catalog product cannot change what an accepted quote meant. NOT BUILT:
-    # nothing evaluates it and nothing freezes it, so `validate_model` rejects a
-    # model that sets one instead of letting it read as a working filter.
+    # Cleared by the matcher on the way into a `ResolvedSlot`: members are the
+    # frozen answer, and a predicate riding along would let a later reader
+    # re-evaluate it against a moved catalog and get a different candidate set
+    # for the same run.
     predicate: Expr | None = None
 
 
@@ -486,12 +495,6 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                     "neither join nor separate the lines it names — and grouping "
                     "decides which product is chosen"
                 )
-            if req.eligibility.predicate is not None:
-                errors.append(
-                    f"slot {key}: Eligibility.predicate is {_UNSUPPORTED}: it is "
-                    "never evaluated and never frozen into the run's snapshot, so "
-                    "it would neither add nor remove a candidate"
-                )
     return errors
 
 
@@ -652,6 +655,41 @@ def unknown_skus(model: FenceModel, catalog: Catalog) -> list[str]:
     })
 
 
+def _predicate_errors(key: str, eligibility: Eligibility, catalog: Catalog) -> list[str]:
+    """A slot that declares what it NEEDS rather than naming products.
+
+    The import is deferred because `match.py` imports this module for
+    `Eligibility`/`EligibleItem`. Validation asking the matcher "would anything
+    satisfy this?" is the right direction — the alternative is a second copy of
+    the covering rule here, which is how the two would eventually disagree about
+    what counts as a match.
+    """
+    from fenceai.fencemodel.match import match_eligibility
+
+    errors: list[str] = []
+    if eligibility.members:
+        errors.append(
+            f"slot {key}: eligibility declares a predicate AND names members. A "
+            "slot says what it needs or which products it accepts, never both — "
+            "intersecting the two lists has more than one defensible reading"
+        )
+        return errors
+    reads = field_paths(eligibility.predicate)
+    if any(p.split(".", 1)[0] != "item" for p in reads):
+        # The predicate asks about the bay it is being fitted to, which does not
+        # exist yet. Refusing it here for failing a question nobody asked would
+        # be worse than the gap: `no_eligible_item` still reports it per bay.
+        return errors
+    if not match_eligibility(eligibility, catalog, {}).members:
+        errors.append(
+            f"slot {key}: no item in the catalog covers this spec, so nothing "
+            "could ever supply it. Same reason an empty member list is refused — "
+            "it would publish cleanly and then report `no_eligible_item` on "
+            "every bay of every job built to this model"
+        )
+    return errors
+
+
 def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
     """Every reason this model cannot be used, as English strings for the author.
 
@@ -702,6 +740,12 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
             seen.add(key)
         for key, req in reqs:
             skus = [m.sku for m in req.eligibility.members]
+            if req.eligibility.predicate is not None:
+                errors += _predicate_errors(key, req.eligibility, catalog)
+                # a predicate slot names no skus of its own; the checks below are
+                # about authored ones, and the matcher only ever selects products
+                # that are IN the catalog and satisfy the requirement
+                continue
             if not skus:
                 # A slot nothing can supply publishes cleanly and then reports
                 # `no_eligible_item` on every bay of every job built to it. The

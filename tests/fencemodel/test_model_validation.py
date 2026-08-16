@@ -2,6 +2,7 @@
 loads rather than trusted at every resolution."""
 
 from fenceai.catalog.demo import demo_catalog
+from fenceai.knowledge.ast import Cmp, FieldRef, Lit
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
     PartRequirement, validate_model,
@@ -259,22 +260,29 @@ def test_a_contribution_to_a_param_no_model_scope_reaches_is_refused():
     assert any("post_embed_mm" in e and "not yet supported" in e for e in errs)
 
 
-def test_an_eligibility_predicate_is_refused_because_it_is_never_evaluated():
-    """Its docstring said "resolved and FROZEN into the run's snapshot". Nothing
-    resolves it and nothing freezes it."""
+def test_a_predicate_beside_authored_members_is_still_refused():
+    """This slot used to be refused because NOTHING evaluated a predicate. The
+    matcher evaluates it now, and freezes what it selects — so the refusal that
+    remains is the narrow one: a slot says what it needs, or which products it
+    accepts, never both.
+
+    Kept as the same shape the old refusal test used, because that shape (a
+    predicate riding along beside a members list) is exactly what an editor
+    produces when someone converts a slot from one mode to the other and does not
+    clear the field they left behind."""
     from fenceai.knowledge.ast import Cmp, FieldRef, Lit
 
     req = PartRequirement(
         role="rail", qty=2, length_rule="centre_to_centre",
         eligibility=Eligibility(
             members=[EligibleItem(sku="RAIL-3000", priority=1)],
-            predicate=Cmp(cmp="==", left=FieldRef(path="product.attrs.finish"),
+            predicate=Cmp(cmp="==", left=FieldRef(path="item.finish"),
                           right=Lit(value="black")),
         ),
     )
     errs = validate_model(_model(PanelSpec(frame=[_slot(requirement=req)])),
                           demo_catalog())
-    assert any("predicate" in e and "not yet supported" in e for e in errs)
+    assert any("predicate" in e and "members" in e for e in errs)
 
 
 def test_trim_last_and_extension_clip_are_refused_for_their_own_reasons():
@@ -630,3 +638,47 @@ def test_refs_under_any_other_length_rule_are_refused_as_unbuilt():
                  )),
         demo_catalog())
     assert any("base_ref with" in e and "not yet supported" in e for e in one), one
+
+
+# --- spec-declared eligibility (the matcher) ----------------------------------
+
+RAIL_IS_ALUMINIUM = Cmp(cmp="==", left=FieldRef(path="item.material"),
+                        right=Lit(value="aluminium"))
+NOTHING_IS_UNOBTAINIUM = Cmp(cmp="==", left=FieldRef(path="item.material"),
+                             right=Lit(value="unobtainium"))
+
+
+def _predicate_slot(predicate, **kw) -> FrameSlot:
+    return _slot(requirement=PartRequirement(
+        role="rail", qty=2, length_rule="centre_to_centre",
+        eligibility=Eligibility(predicate=predicate, **kw),
+    ))
+
+
+def test_a_slot_may_declare_what_it_needs_instead_of_naming_skus():
+    """The refusal `_unsupported_features` carried since phase 1 is gone: the
+    matcher evaluates the predicate and freezes the members it selects."""
+    errs = validate_model(
+        _model(PanelSpec(frame=[_predicate_slot(RAIL_IS_ALUMINIUM)])), demo_catalog())
+    assert errs == []
+
+
+def test_a_slot_cannot_both_name_skus_and_declare_a_predicate():
+    """Two modes, never combined. "Intersect the typed list with the matched
+    list" has two defensible readings and neither is needed."""
+    errs = validate_model(
+        _model(PanelSpec(frame=[_predicate_slot(
+            RAIL_IS_ALUMINIUM, members=[EligibleItem(sku="RAIL-3000")])])),
+        demo_catalog())
+    assert any("predicate" in e and "members" in e for e in errs)
+
+
+def test_a_predicate_no_item_in_the_catalog_covers_is_refused_at_authoring():
+    """The same guardrail an empty `members` list already gets, and for the same
+    reason: a slot nothing can supply publishes cleanly and then reports
+    `no_eligible_item` on every bay of every job built to it. The author is the
+    only person who can say what belongs there, and now is when they can."""
+    errs = validate_model(
+        _model(PanelSpec(frame=[_predicate_slot(NOTHING_IS_UNOBTAINIUM)])),
+        demo_catalog())
+    assert any("no item" in e.lower() for e in errs)
