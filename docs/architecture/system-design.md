@@ -59,6 +59,32 @@ overlay (posts/spans/gates with warning badges), inspector panel (click element 
 trace → explanation), tabs for knowledge, annotations/interpretations, review queue, BOM/cut
 plan. Frontend renders server JSON only.
 
+**Four drawings, one fence.** The plan canvas looks DOWN; the profile side view unrolls the
+ground and the post tops so they can be edited (at 5x vertical exaggeration — a measuring
+instrument, not a picture); the Assembly tab's macro viewport draws the run STANDING UP at
+true scale (posts in their footings, panels docked between them, risers, gates); and the
+panel elevation draws one bay's members. They must never disagree, so each of them PLACES
+numbers it was given rather than deriving its own:
+
+* the panel elevation's rectangles are `report/elevation.py`'s, computed once on the server,
+  because the fit behind them is an algorithm with a justification x excess matrix and a JS
+  copy would eventually disagree with the cut list the same numbers produced;
+* the macro viewport (`js/runview.js`) reads the structure report — itself a read model
+  forbidden from recomputing a quantity — so a bay width on the drawing is the same integer
+  as the bay width in the schedule and in the BOM;
+* the joint section (`js/joint.js`) exists because 15 mm on an 1800 mm panel is illegible:
+  it is the same `JointDetail` numbers at their own scale, and it derives none of them.
+
+Where a drawing does not have a number, it says so rather than inventing one: an undeclared
+post face width or member thickness draws as a flagged nominal, and a gate opening with no
+neighbouring height gets no leaf.
+
+**Live figures name what they are.** A panel preview is not a run: the Assembly tab prices
+what-ifs (a typed dimension, a material swap) through the same `preview_panel` pipeline, and
+the cost strip shows the run's BOM total and the preview's panel total side by side rather
+than switching one figure's meaning underneath the reader. Generation stays behind its
+explicit button.
+
 ## What V1 deliberately defers
 
 Multi-user/auth, concurrent editing, Postgres, embeddings/semantic search, CP-SAT solvers,
