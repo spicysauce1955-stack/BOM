@@ -44,6 +44,24 @@ class PanelContext(BaseModel):
         }}
 
 
+def clear_opening_mm(centre_width_mm: Mm, face_start_mm: Mm, face_end_mm: Mm) -> Mm:
+    """The opening between two post FACES, from their centre-to-centre distance.
+
+    Half of each post stands inside the bay, so a bay loses one whole face across
+    its two ends whenever both posts are the same product.
+
+    THE rounding point for the opening (ADR-0002): the two halves are summed and
+    divided ONCE, so a pair of odd faces cannot lose a millimetre twice — 75 and
+    75 give 75, not 37 + 37.
+
+    A post product declaring no `face_width_mm` contributes 0 rather than a
+    nominal. The opening is then the centre-to-centre width, which is exactly
+    what this system computed for every bay before this function existed: a
+    guessed face would be a number that reads as measured.
+    """
+    return centre_width_mm - (face_start_mm + face_end_mm) // 2
+
+
 class ResolvedSlot(BaseModel):
     slot_key: str
     role: str

@@ -445,7 +445,7 @@ function gateKitProducts(products) {
 // that declares nothing is never second-guessed here, as in the generator.
 const KIT_OPENING_ATTR = "opening_width_mm";
 function declaredOpening(p) {
-  const v = p && (p.attrs || {})[KIT_OPENING_ATTR];
+  const v = p && (p.capabilities || {})[KIT_OPENING_ATTR];
   return Number.isFinite(v) ? v : null;
 }
 

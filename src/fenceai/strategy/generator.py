@@ -17,15 +17,17 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from fenceai.catalog.model import Catalog, catalog_hash
+from fenceai.catalog.model import CATALOG_SCHEMA_VERSION, Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
+from fenceai.fencemodel.match import match_spec, panel_facts
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import (
-    PanelContext, ResolvedPanel, choose_variant, height_supported, resolve_panel,
+    PanelContext, ResolvedPanel, choose_variant, clear_opening_mm, height_supported,
+    resolve_panel,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.evaluator import (
@@ -75,6 +77,30 @@ from fenceai.topology.station import (
 # honest default is the vocabulary's own default, not the vestigial name.
 DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_cost"}
 
+# What the ENGINE does, as part of what a run means.
+#
+# The digest held data versions — topology, knowledge, models, catalog — and no
+# algorithm version at all, so a legitimate change to how a fence is laid out
+# produced a different strategy under the SAME id, and `save_run`'s
+# INSERT OR IGNORE then served the old stored document for ever. Deliberately not
+# a git commit: most commits change nothing a run means, and an identity that
+# churns on every push makes every stored run unreadable for no reason.
+#
+# Bump PLANNING_BEHAVIOR_VERSION when generation's OUTPUT changes for unchanged
+# inputs — a different post rule, a different layout, a different panel
+# resolution. Bump RUN_DIGEST_VERSION when the digest's own inputs or
+# serialisation change, which is what makes two genuinely different runs able to
+# hash the same.
+#
+# There is deliberately NO fulfillment version here. A run's stored document is
+# the strategy and its graph; the BOM is recomputed on every read and is already
+# a function of mutable inventory. A fulfillment algorithm version belongs to the
+# materialization identity this system does not have yet (see the backend audit
+# response, §1.5) — putting it in the DESIGN digest would deepen exactly the
+# conflation that finding is about.
+PLANNING_BEHAVIOR_VERSION = "planning-v1"
+RUN_DIGEST_VERSION = "digest-v1"
+
 # The catalog attribute by which a product declares the opening width it fits.
 # Fit is DATA, like Product.attrs["length_mm"] for posts: a SKU is an opaque id and
 # "GATE-KIT-1000" is a naming accident of one catalog, never a width to parse.
@@ -89,7 +115,7 @@ def _declared_opening(catalog: Catalog, sku: str) -> Mm | None:
     """The opening width a catalog product declares it fits, or None if it says
     nothing — an undeclared product is never second-guessed."""
     product = catalog.products.get(sku)
-    value = product.attrs.get(KIT_OPENING_ATTR) if product else None
+    value = product.capabilities.opening_width_mm if product else None
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
@@ -179,6 +205,7 @@ def generate(
     )
     run_meta.catalog_skus = _skus_used(strategy, demand_skus)
     run_meta.catalog_hash = catalog_hash(catalog, run_meta.catalog_skus)
+    run_meta.catalog_schema_version = CATALOG_SCHEMA_VERSION
     # `policy` was already merged with DEFAULT_POLICY above, so the key always
     # exists — a `.get(..., "least_cost")` fallback here could never fire; direct
     # indexing says so instead of implying a fallback that is dead on arrival.
@@ -194,7 +221,8 @@ def generate(
             [project_id, topology.model_dump(), run_meta.knowledge_snapshot,
              [o.model_dump() for o in overrides], policy,
              [u.model_dump() for u in run_meta.model_snapshot], run_meta.catalog_hash,
-             run_meta.objective_preset],
+             run_meta.objective_preset,
+             PLANNING_BEHAVIOR_VERSION, RUN_DIGEST_VERSION],
             sort_keys=True, default=str,
         ).encode()
     ).hexdigest()[:12]
@@ -708,6 +736,37 @@ def _pick_model(
             version_pin=effective.version_pin if effective.version_pin is not None else "",
         )
     return model, source
+
+
+def _post_at(strategy: Strategy, run: Run, station: Mm, run_len: Mm):
+    """The post standing at this station of this run, if one does.
+
+    A run END is a shared node post, recorded against the NODE (`node:<id>`)
+    rather than against either run that meets there — one corner has one post,
+    and two runs must not each contribute their own face to it.
+    """
+    for post in strategy.posts:
+        if post.run_ref == run.id and post.station_mm == station:
+            return post
+    node_id = (run.start_node_id if station == 0 else
+               run.end_node_id if station == run_len else None)
+    if node_id is None:
+        return None
+    return next((p for p in strategy.posts if p.run_ref == f"node:{node_id}"), None)
+
+
+def _post_face_width(strategy: Strategy, run: Run, station: Mm, run_len: Mm,
+                     catalog: Catalog) -> Mm:
+    """How wide the post at this station is as SEEN — its extent along the run.
+
+    0 when there is no post, no product, or the product declares no
+    `face_width_mm`; `clear_opening_mm` documents why that is a zero and not a
+    nominal.
+    """
+    post = _post_at(strategy, run, station, run_len)
+    product = catalog.products.get(post.sku) if post is not None and post.sku else None
+    face = product.capabilities.face_width_mm if product is not None else None
+    return face or 0
 
 
 def _generate_run(
@@ -1299,6 +1358,47 @@ def _generate_run(
             inputs=[run_fact.id, sm.select_node_id],
             governed_by=sm.quantity_refs,
         )
+        # Interior line posts, created BEFORE the bays they bound: a bay's
+        # clear opening is measured to the faces of the posts at its ends, so
+        # those posts have to exist — and have their product resolved — before
+        # `resolve_panel` is asked how wide the opening is.
+        for s in stations[1:-1]:
+            suppressor = next(
+                (ov for ov in suppress_ovs if _near(ov.directive.station_mm, s)), None
+            )
+            if suppressor is not None:
+                applied.add(suppressor.id)
+                builder.add(
+                    "override_applied", "suppress_post",
+                    payload={"override_id": suppressor.id, "station_mm": s},
+                )
+                continue
+            surface = base_surface_at(topo, run, s)
+            forced_sku, forced_mounting, matched = _matched_force_overrides(
+                overrides, run.id, s
+            )
+            override_nodes = []
+            for mov in matched:
+                applied.add(mov.id)
+                override_nodes.append(
+                    builder.add(
+                        "override_applied", mov.directive.kind,
+                        payload={"override_id": mov.id, "station_mm": s},
+                    ).id
+                )
+            tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
+            post = _make_post(
+                builder, kb, scope,
+                post_id=f"post@{run.id}:{s}", run_ref=run.id,
+                station=s, kind="line", surface=surface,
+                ground_z_mm=ground_z(topo, run, s),
+                base_z_mm=_stand_z(topo, run, s),
+                inputs=[layout_node.id],
+                forced_sku=forced_sku, forced_mounting=forced_mounting,
+                override_nodes=override_nodes,
+                tilt_deg=tilt_deg,
+            )
+            strategy.posts.append(post)
         for s0, s1 in zip(stations, stations[1:]):
             width = s1 - s0
             mid = (s0 + s1) // 2
@@ -1317,9 +1417,18 @@ def _generate_run(
                     gz1 += t1[0]
             v_mode, fv_node = span_vertical(mid)
             height, height_src, height_extra = _span_height(topo, run, mid, gz0, gz1, policy)
+            # ONE calculation for one fact: the opening is measured here, from the
+            # posts that bound this bay, and both the stored span and the context
+            # the panel is resolved in read that single number.
+            clear = clear_opening_mm(
+                width,
+                _post_face_width(strategy, run, s0, length, catalog),
+                _post_face_width(strategy, run, s1, length, catalog),
+            )
             span = Span(
                 id=f"span@{run.id}:{s0}-{s1}", run_ref=run.id,
                 start_station_mm=s0, end_station_mm=s1, width_mm=width,
+                clear_width_mm=clear,
                 slope_len_mm=slope_len_mm(width, gz1 - gz0) if v_mode == "raked" else width,
                 vertical=v_mode, height_mm=height,  # type: ignore[arg-type]
                 bottom_z_start_mm=gz0, bottom_z_end_mm=gz1,
@@ -1329,7 +1438,7 @@ def _generate_run(
             )
             panel_ctx = PanelContext(
                 centre_width_mm=width,
-                clear_width_mm=width,  # face widths arrive in phase 2
+                clear_width_mm=clear,
                 height_mm=height,
                 vertical=v_mode,
                 length_basis=span.rail_cut_basis,
@@ -1342,8 +1451,12 @@ def _generate_run(
             # height and vertical mode, and a level top over a slope gives every
             # bay of one segment a different height (S06)
             variant = choose_variant(model, panel_ctx)
+            # A spec-declared slot becomes concrete members HERE, so what the run
+            # stores is the candidate set it may choose among — the same shape an
+            # authored slot has always had, and the reason `catalog_hash` may be
+            # narrowed to the SKUs a run actually named.
             span.panel = resolve_panel(
-                variant.spec, panel_ctx,
+                match_spec(variant.spec, catalog, panel_facts(panel_ctx)), panel_ctx,
                 model_ref=model.ref, variant_index=variant.index,
             )
             if not height_supported(model.height_support, height):
@@ -1494,44 +1607,6 @@ def _generate_run(
                         element_refs=[span.id], decision_ref=conflict_node.id,
                     )
                 )
-        # interior line posts for this segment
-        for s in stations[1:-1]:
-            suppressor = next(
-                (ov for ov in suppress_ovs if _near(ov.directive.station_mm, s)), None
-            )
-            if suppressor is not None:
-                applied.add(suppressor.id)
-                builder.add(
-                    "override_applied", "suppress_post",
-                    payload={"override_id": suppressor.id, "station_mm": s},
-                )
-                continue
-            surface = base_surface_at(topo, run, s)
-            forced_sku, forced_mounting, matched = _matched_force_overrides(
-                overrides, run.id, s
-            )
-            override_nodes = []
-            for mov in matched:
-                applied.add(mov.id)
-                override_nodes.append(
-                    builder.add(
-                        "override_applied", mov.directive.kind,
-                        payload={"override_id": mov.id, "station_mm": s},
-                    ).id
-                )
-            tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
-            post = _make_post(
-                builder, kb, scope,
-                post_id=f"post@{run.id}:{s}", run_ref=run.id,
-                station=s, kind="line", surface=surface,
-                ground_z_mm=ground_z(topo, run, s),
-                base_z_mm=_stand_z(topo, run, s),
-                inputs=[layout_node.id],
-                forced_sku=forced_sku, forced_mounting=forced_mounting,
-                override_nodes=override_nodes,
-                tilt_deg=tilt_deg,
-            )
-            strategy.posts.append(post)
 
     _check_panel_safety(kb, run, scope, strategy, builder, resolved, spans_by_model,
                         {s.id: s for s in strategy.spans}, ctx["run"])
@@ -1913,7 +1988,7 @@ def _check_post_lengths(
         post.exposed_mm = exposed
         required = exposed + post.embed_mm
         product = catalog.products.get(post.sku)
-        available = (product.attrs.get("length_mm") if product else None)
+        available = (product.capabilities.length_mm if product else None)
         if isinstance(available, int) and required > available:
             node = builder.add(
                 "conflict", "insufficient_post_length",

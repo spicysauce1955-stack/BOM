@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from fenceai.catalog.model import (
     AssemblyKit,
+    Capabilities,
     Catalog,
     CoverageBased,
     DivisibleLinear,
@@ -40,18 +41,16 @@ def demo_catalog() -> Catalog:
                 # drawing needs it to draw a post at its real width instead of a
                 # nominal band. A product without it still draws (nominal, and
                 # said so), which is why it is an attr and not a required field.
-                attrs={"length_mm": 2600, "face_width_mm": 80,
-                       "material": "galvanised_steel", "finish": "mill",
-                       "colour": "#9ca3af"}),
+                attrs={"material": "galvanised_steel", "finish": "mill",
+                       "colour": "#9ca3af"}, capabilities=Capabilities(length_mm=2600, face_width_mm=80)),
         Product(sku="POST-S-HD", name="Heavy-duty ground post", name_i18n={"he": "עמוד מחוזק"},
                 consumption=IndivisibleDiscrete(), price_cents=4200,
-                attrs={"length_mm": 2600, "face_width_mm": 100,
-                       "material": "galvanised_steel", "finish": "powder_coated",
-                       "colour": "#374151"}),
+                attrs={"material": "galvanised_steel", "finish": "powder_coated",
+                       "colour": "#374151"}, capabilities=Capabilities(length_mm=2600, face_width_mm=100)),
         Product(sku="POST-M", name="Masonry post/bracket", name_i18n={"he": "עמוד קיר"},
                 consumption=IndivisibleDiscrete(), price_cents=3100,
-                attrs={"face_width_mm": 60, "material": "steel",
-                       "finish": "powder_coated", "colour": "#374151"}),
+                attrs={"material": "steel",
+                       "finish": "powder_coated", "colour": "#374151"}, capabilities=Capabilities(face_width_mm=60)),
         Product(sku="POST-CAP", name="Post cap", name_i18n={"he": "כיפת עמוד"},
                 consumption=IndivisibleDiscrete(), price_cents=300,
                 attrs={"material": "aluminium", "finish": "powder_coated",
@@ -128,9 +127,8 @@ def demo_catalog() -> Catalog:
             ),
             price_cents=18500,
             # the opening this kit fits: fit is catalog DATA, never parsed from the sku
-            attrs={"category": "gate", "opening_width_mm": 1000,
-                   "material": "aluminium", "finish": "powder_coated",
-                   "colour": "#374151"},
+            attrs={"category": "gate", "material": "aluminium", "finish": "powder_coated",
+                   "colour": "#374151"}, capabilities=Capabilities(opening_width_mm=1000),
         ),
         Product(sku="GATE-LEAF-1000", name="Gate leaf 1000 mm", name_i18n={"he": 'כנף שער 1000 מ"מ'},
                 consumption=IndivisibleDiscrete(), price_cents=12000,

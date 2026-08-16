@@ -55,7 +55,18 @@ class Span(BaseModel):
     run_ref: str
     start_station_mm: Mm
     end_station_mm: Mm
-    width_mm: Mm  # plan (chord) width
+    width_mm: Mm  # plan (chord) width, centre-to-centre between its two posts
+    # The opening between the two post FACES — what an infill is actually fitted
+    # across and what `clear_between_posts` measures. Computed ONCE here, during
+    # generation, from the posts that bound the bay, because the panel preview
+    # and the read models re-read a stored run and must fit the panel to the same
+    # number it was built to; a second derivation downstream is how a drawing and
+    # a cut list end up a post-face apart.
+    #
+    # None means "generated before the opening was computed" — those runs read
+    # their bays at centre-to-centre, which is what they were actually built to.
+    # 0 would be a different and false claim: a bay with no opening at all.
+    clear_width_mm: Mm | None = None
     slope_len_mm: Mm  # true length along grade (== width for level/stepped)
     vertical: Literal["level", "stepped", "raked"] = "level"
     height_mm: Mm = 1800
@@ -145,6 +156,10 @@ class GenerationRun(BaseModel):
     # catalog content hash at generation time — /bom and /structure refuse to
     # re-read a stored run against a catalog that no longer matches it
     catalog_hash: str = ""
+    # the Product SHAPE that hash was computed over. "" is a run generated before
+    # the shape was recorded, which is exactly the population a schema migration
+    # must be able to name.
+    catalog_schema_version: str = ""
     # the products this run actually named — what `catalog_hash` covers. Empty
     # means "hashed over the whole catalog", which is how a run stamped before
     # the hash was narrowed still reads: its stored hash is only comparable

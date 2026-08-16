@@ -56,6 +56,10 @@ REFUSAL_CODES = [
     # 409s the read paths raise when a stored run can no longer be served as it
     # was generated. Refusals like the rest, and they were never listed.
     "catalog_changed",
+    # the shape of a Product moved, which is a different fact from a price
+    # moving and needs a different sentence — a reader told "the catalog
+    # changed" goes looking for an edit that never happened
+    "catalog_schema_changed",
     "topology_changed",
     "unresolved_supply",
     # `core.errors.RequestRefused`: the panel preview was asked for a product

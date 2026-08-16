@@ -100,13 +100,27 @@ def test_the_gate_covers_a_fitted_infill_panel():
                       models=LIBRARY, default_model=choice)
     spans = result.strategy.spans
     assert spans
+    golden_slats = {
+        line["slot_key"]: line["engineering_qty"]
+        for line in json.loads((GOLDEN_DIR / "slat.json").read_text())["requirements"]
+        if line["role"] == "infill"
+    }
     for span in spans:
         infill = [s for s in span.panel.slots if s.role == "infill"]
         assert infill and infill[0].fit is not None, "no fitted pattern to pin"
         assert infill[0].qty > 5, "a pattern of one or two members pins little"
-        # the gaps are SPREAD, which is the arithmetic a golden file protects
         gaps = infill[0].fit.gaps_mm
-        assert max(gaps) - min(gaps) <= 1 and len(set(gaps)) > 1
+        # spread, never lumped. NOT "and the gaps differ": that clause demanded
+        # this fixture's residual be non-zero, which is a property of the bay
+        # width and not of the feature — and it went to zero the moment the
+        # clear opening became real (1500 mm centre, 1420 mm clear: 12 slats and
+        # 11 gaps at their designed 20 mm, where the bay used to spread them to
+        # 27-28 mm across 80 mm of post). `tests/fencemodel/test_fit.py` owns the
+        # spreading arithmetic itself, with a case built to have a remainder.
+        assert max(gaps) - min(gaps) <= 1
+        # what this fixture is FOR: the fitted count is a number the golden file
+        # is watching, so a change to the fit cannot pass the gate unnoticed
+        assert infill[0].qty in golden_slats.values()
 
 
 def test_every_fixture_has_a_committed_gate_file():

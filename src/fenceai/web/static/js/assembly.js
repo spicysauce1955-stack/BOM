@@ -126,7 +126,7 @@ async function ensureCatalog() {
   }
   faceWidths = Object.fromEntries(
     Object.entries(products)
-      .map(([sku, p]) => [sku, p?.attrs?.face_width_mm])
+      .map(([sku, p]) => [sku, p?.capabilities?.face_width_mm])
       .filter(([, w]) => Number.isFinite(w)));
 }
 

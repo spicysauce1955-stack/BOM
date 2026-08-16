@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from fenceai.catalog.model import Catalog
 from fenceai.core.errors import ReadRefused
 from fenceai.core.units import Cents, Mm, slope_len_mm
+from fenceai.fencemodel.match import match_spec, panel_facts
 from fenceai.fencemodel.model import FenceModel, validate_model
 from fenceai.fencemodel.resolve import PanelContext, ResolvedPanel, resolve_panel, select_variant
 from fenceai.fulfillment.pipeline import price_strategy
@@ -137,6 +138,9 @@ def preview_panel(
         slot_skus=dict(request.slot_skus),
     )
     spec, variant_index = select_variant(model, ctx)
+    # the same matcher generation runs, so a spec-declared slot previews
+    # as the products it will actually be built from
+    spec = match_spec(spec, catalog, panel_facts(ctx))
     # the variant is recorded on the panel as well as on the preview, because a
     # bay of a stored run previews into a `ResolvedPanel` that must be the one
     # the run stored — down to which variant it was built to
@@ -247,6 +251,12 @@ def bay_preview_plan(
             vertical=span.vertical,
             length_basis=span.rail_cut_basis,
             slope_len_mm=_slope_for(span, width),
+            # The face allowance this bay was actually built with, carried over
+            # rather than recomputed: imagining a different bay WIDTH does not
+            # change which posts bound it, so the same two half-faces are lost.
+            # A run generated before the opening was recorded allows nothing,
+            # which is what those runs were built to.
+            clear_width_mm=width - _face_allowance(span),
             # what the generator put in `ctx.params`, from where it put it: the
             # span carries the resolved quantities precisely so a later reader
             # never has to re-run the knowledge evaluator to learn them
@@ -267,6 +277,23 @@ def _ref_parts(model_ref: str) -> tuple[str, int]:
             model_ref=model_ref,
         )
     return model_id, int(version)
+
+
+def _face_allowance(span: Span) -> Mm:
+    """How much of this bay's centre-to-centre width is post rather than opening.
+
+    Read back off the span rather than re-measured from the posts: the generator
+    already resolved which products bound this bay and wrote the answer down, and
+    a second measurement here could disagree with the panel the run stored.
+
+    `None` is a run generated before the opening was recorded. Those bays were
+    genuinely fitted at centre-to-centre, so their allowance is zero — the
+    preview reproduces the fence that exists, not the one today's generator would
+    build.
+    """
+    if span.clear_width_mm is None:
+        return 0
+    return span.width_mm - span.clear_width_mm
 
 
 def _slope_for(span: Span, width: Mm) -> Mm:
@@ -364,11 +391,19 @@ def _apportion(total: Cents, weights: list[int]) -> list[Cents]:
 
 
 def _part(line, bom_line) -> PreviewPart:
+    """One row of the preview, from either kind of line.
+
+    `line` is a `ResolvedSupplyLine` for a priced part and a plain `DemandLine`
+    for an unsupplied one — which by definition never got a product, so it has
+    no sku and no unit to report. Empty strings are the honest answer here rather
+    than a placeholder: the caller renders `unsupplied` ABOVE the priced table
+    precisely so a panel one part short cannot read as complete.
+    """
     return PreviewPart(
         slot_key=line.slot_key, role=line.role, qty=line.engineering_qty,
-        length_mm=line.cut_length_mm, unit=line.unit,
+        length_mm=line.cut_length_mm, unit=getattr(line, "unit", ""),
         eligible_skus=[m.sku for m in line.eligibility.members],
-        sku=line.sku,
+        sku=getattr(line, "sku", ""),
         unit_price_cents=bom_line.unit_price_cents if bom_line else 0,
         purchase_qty=bom_line.purchase_qty if bom_line else 0,
         total_cents=bom_line.total_cents if bom_line else 0,

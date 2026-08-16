@@ -2,13 +2,13 @@
 length, differing only in face offset — merge into one row, and clicking a slat
 in the drawing cannot say which part it is."""
 
-from fenceai.demand.derive import RequirementLine
+from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.fulfill import Bom
 from fenceai.report.structure import _merge_parts, _parts_by_element
 
 
 def _line(id_, slot_key):
-    return RequirementLine(id=id_, sku="SLAT-90", engineering_qty=10, unit="cut",
+    return ResolvedSupplyLine(id=id_, sku="SLAT-90", engineering_qty=10, unit="cut",
                            cut_length_mm=1600, role="infill", slot_key=slot_key,
                            pegs=["span@run1:0-1500"])
 

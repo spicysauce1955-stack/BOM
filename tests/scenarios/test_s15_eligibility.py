@@ -7,7 +7,7 @@ by comparing stock lengths — only by planning the cuts.
 """
 
 from fenceai.catalog.model import Catalog, DivisibleLinear, Product
-from fenceai.demand.derive import RequirementLine
+from fenceai.demand.derive import DemandLine
 from fenceai.fencemodel.model import Eligibility, EligibleItem
 from fenceai.fulfillment.fulfill import fulfill
 from fenceai.fulfillment.supply import resolve_supply
@@ -27,9 +27,8 @@ BOTH = Eligibility(members=[
 ])
 
 
-def _rails(n: int) -> list[RequirementLine]:
-    return [RequirementLine(id=f"req{i:04d}", sku="", engineering_qty=1, unit="cut",
-                            cut_length_mm=1500, role="rail", slot_key="rail",
+def _rails(n: int) -> list[DemandLine]:
+    return [DemandLine(id=f"req{i:04d}", engineering_qty=1, cut_length_mm=1500, role="rail", slot_key="rail",
                             eligibility=BOTH) for i in range(1, n + 1)]
 
 

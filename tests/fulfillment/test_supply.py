@@ -7,16 +7,15 @@ import pytest
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import Catalog, DivisibleLinear, Product
-from fenceai.demand.derive import RequirementLine
+from fenceai.demand.derive import DemandLine
 from fenceai.fencemodel.model import Eligibility, EligibleItem
 from fenceai.fulfillment.supply import resolve_supply
 
 
-def _line(**kw) -> RequirementLine:
-    base = dict(id="req0001", sku="", engineering_qty=2, unit="cut",
-                cut_length_mm=1500, role="rail", slot_key="rail",
+def _line(**kw) -> DemandLine:
+    base = dict(id="req0001", engineering_qty=2, cut_length_mm=1500, role="rail", slot_key="rail",
                 eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")]))
-    return RequirementLine(**{**base, **kw})
+    return DemandLine(**{**base, **kw})
 
 
 def test_a_single_member_resolves_to_itself():
@@ -25,9 +24,14 @@ def test_a_single_member_resolves_to_itself():
     assert out.warnings == []
 
 
-def test_a_line_that_already_names_a_sku_is_left_alone():
-    """Posts, caps and concrete never go through eligibility."""
-    line = _line(sku="POST-S", eligibility=Eligibility(), role="post", slot_key="")
+def test_a_product_knowledge_already_chose_arrives_as_a_one_member_eligibility():
+    """Posts, caps and concrete used to arrive with an authored `sku` and skip
+    eligibility entirely, which gave `resolve_supply` a second path that had to
+    re-implement the feasibility gate — and did not, until a saved run could be
+    made permanently unreadable through the UI alone. A choice already made is
+    still a choice; it is said the same way, with one candidate."""
+    line = _line(eligibility=Eligibility(members=[EligibleItem(sku="POST-S")]),
+                 role="post", slot_key="")
     assert resolve_supply([line], demo_catalog()).requirements[0].sku == "POST-S"
 
 
@@ -44,7 +48,7 @@ def test_an_unrecognised_preset_is_a_loud_error_not_a_silent_least_cost():
 def test_an_empty_eligibility_warns_rather_than_guessing():
     out = resolve_supply([_line(eligibility=Eligibility())], demo_catalog())
     assert out.requirements == []            # never a blank-sku line in `requirements`
-    assert out.unresolved[0].sku == ""
+    assert not hasattr(out.unresolved[0], "sku")
     assert [w.code for w in out.warnings] == ["no_eligible_item"]
     assert out.warnings[0].params["role"] == "rail"
 
@@ -54,7 +58,7 @@ def test_a_suggest_only_member_is_not_used_without_approval():
         members=[EligibleItem(sku="RAIL-3000", approval="suggest_only")]))
     out = resolve_supply([line], demo_catalog())
     assert out.requirements == []
-    assert out.unresolved[0].sku == ""
+    assert not hasattr(out.unresolved[0], "sku")
     assert [w.code for w in out.warnings] == ["substitute_needs_approval"]
 
 
@@ -64,7 +68,7 @@ def test_resolution_does_not_mutate_the_caller_s_lines():
     on whether anyone had looked at the BOM."""
     line = _line()
     resolve_supply([line], demo_catalog())
-    assert line.sku == ""
+    assert not hasattr(line, "sku")
 
 
 def test_resolved_line_keeps_its_engineering_fields():
@@ -131,8 +135,8 @@ def test_a_blank_sku_can_never_reach_requirements_even_in_a_mixed_batch():
     no_item = _line(id="req0002", eligibility=Eligibility())
     needs_approval = _line(id="req0003", eligibility=Eligibility(
         members=[EligibleItem(sku="RAIL-3000", approval="suggest_only")]))
-    already_named = _line(id="req0004", sku="POST-S", eligibility=Eligibility(),
-                          role="post", slot_key="")
+    already_named = _line(id="req0004", role="post", slot_key="",
+                          eligibility=Eligibility(members=[EligibleItem(sku="POST-S")]))
 
     out = resolve_supply([resolvable, no_item, needs_approval, already_named], demo_catalog())
 
@@ -141,7 +145,7 @@ def test_a_blank_sku_can_never_reach_requirements_even_in_a_mixed_batch():
     assert {r.id for r in out.requirements} == {"req0001", "req0004"}
 
     assert {r.id for r in out.unresolved} == {"req0002", "req0003"}
-    assert all(r.sku == "" for r in out.unresolved)
+    assert not any(hasattr(r, "sku") for r in out.unresolved)
 
     # one warning per unresolved line, in the same order the loop visited them
     assert [w.code for w in out.warnings] == [
@@ -263,7 +267,7 @@ def test_all_candidates_infeasible_is_reported_not_silently_picked():
 
     assert out.requirements == []                      # never a silent pick
     assert [r.id for r in out.unresolved] == ["req0001"]
-    assert out.unresolved[0].sku == ""                 # and never a blank sku downstream
+    assert not hasattr(out.unresolved[0], "sku")       # it never got one
     # `no_feasible_item`, NOT `no_eligible_item`: there were candidates and they
     # were tried. One code for both cases sent the reader to the fence model when
     # the thing to go fix was the catalog's stock length.
@@ -318,12 +322,14 @@ def test_a_lone_infeasible_candidate_never_reaches_fulfill():
     assert fulfill(out.requirements, catalog).lines == []   # no ValueError
 
 
-def test_an_authored_sku_too_short_for_its_cut_is_refused_too():
-    """A line arriving WITH a sku skips the choice — there is nothing to choose —
-    but not the feasibility gate, or the same raw 400 comes back through a
-    different door. No shipped demand line carries both a sku and a cut length,
-    so this path is guarded rather than observed."""
-    line = _line(sku="SHORT-A", engineering_qty=1, eligibility=Eligibility())
+def test_a_lone_candidate_too_short_for_its_cut_is_refused_too():
+    """A line with ONE candidate has nothing to choose between — and still passes
+    the feasibility gate, or the same raw 400 comes back through a different
+    door. This used to be a separate authored-sku branch that had to re-implement
+    the gate; a product knowledge chose now arrives as a one-member eligibility
+    and takes the same path as everything else."""
+    line = _line(engineering_qty=1,
+                 eligibility=Eligibility(members=[EligibleItem(sku="SHORT-A")]))
     out = resolve_supply([line], _short_stock_catalog())
 
     assert out.requirements == []
@@ -338,8 +344,8 @@ def test_an_authored_sku_absent_from_the_catalog_is_still_the_flagged_bom_line()
     from fenceai.fulfillment.fulfill import fulfill
 
     catalog = _short_stock_catalog()
-    line = _line(sku="GHOST-1", engineering_qty=1, cut_length_mm=None,
-                 role="post", slot_key="", eligibility=Eligibility())
+    line = _line(engineering_qty=1, cut_length_mm=None, role="post", slot_key="",
+                 eligibility=Eligibility(members=[EligibleItem(sku="GHOST-1")]))
     out = resolve_supply([line], catalog)
     assert out.unresolved == [] and out.warnings == []
     assert fulfill(out.requirements, catalog).lines[0].notes == [

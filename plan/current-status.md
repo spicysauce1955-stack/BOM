@@ -1,5 +1,177 @@
 # Current status
 
+## Typed catalog capabilities, and a migration that says what it did (2026-08-16)
+Audit finding §4.2, with its hazard taken head-on. Three facts were read out of the
+open `attrs` bag by deterministic code: the post length the length check measures
+against, the post face the clear opening is measured to, and the opening a gate
+kit fits. `attrs.get("length_mm")` compiles whether or not anything sets it, a typo
+is a silent `None`, and by the time it matters the number is on a cut list.
+
+`Product.capabilities` is a typed record of exactly those three. Deliberately flat
+rather than a union of capability KINDS: three facts is not a taxonomy, and a union
+whose variants each hold one integer is machinery around nothing.
+
+**The rule, drawn precisely.** Data read by CODE is typed; data read by a
+PREDICATE or the UI stays in the open bag — material, finish and colour are the
+catalog's answer, not the code's. `_item_ctx` merges capabilities INTO the item
+namespace so a predicate asks "how wide is its face" without caring where the
+catalog keeps the answer; an undeclared capability is OMITTED rather than passed as
+None, so it raises `MissingField` and correctly fails to cover a requirement.
+
+**The migration is deliberate and legible.** `catalog_hash` is computed over
+`model_dump()`, so adding a field changes every product's hash and every
+previously generated run refuses. That refusal is correct — but `catalog_changed`
+is the wrong sentence for it: nothing was repriced, the schema moved, and a reader
+told the catalog changed goes hunting an edit that never happened. Runs now stamp
+`catalog_schema_version`, and a mismatch raises `catalog_schema_changed` with both
+versions and its own line in each locale bundle.
+
+**What the browser suite caught, for the fourth time this arc:** two JS readers
+still fetching the migrated keys out of `attrs` — the gate picker's declared
+opening and the macro view's post faces. Both silently fell back to a nominal, and
+1079 passing unit tests saw nothing.
+
+1079 pytest (+6) · 156 golden scenarios · 159/159 smoke · compatibility gate
+byte-identical (it carries no catalog hash).
+
+## One line, one lifecycle state (2026-08-16) — W2b, option A
+Audit finding §1.7. `RequirementLine` was both states at once: demand emitted it
+with `sku=""` and `unit=""`, and `resolve_supply` filled them in by MUTATING the
+same object. So the type claimed a product through the whole half of its life
+where it had none, and "a blank sku never reaches `fulfill()`" rested on caller
+discipline — which `fulfill()`'s own refusal records having been broken at all
+three routes by a three-word edit that produced zero test failures.
+
+`DemandLine` (no sku, no unit) and `ResolvedSupplyLine` (both required, non-empty,
+set together by `of()` because the unit is a property of the CHOSEN product).
+`fulfill()`'s runtime check is gone, and its absence is the point: there is no
+longer a value to hand it that it would have to refuse. `ResolvedSupplyLine` lives
+in its own `fulfillment/lines.py` for the same reason `fencemodel/selection.py`
+exists — `supply.py` needs `fulfill.engineering_unit_for` to build one and
+`fulfill.py` consumes one, so the type cannot live in either.
+
+**Option A, chosen deliberately: one path.** A product knowledge already chose —
+a post, a cap, concrete, a gate kit — now arrives as a ONE-MEMBER eligibility
+instead of an authored `sku`. That deletes the second branch in `resolve_supply`,
+the branch that had to re-implement the feasibility gate and did not until a saved
+run could be made permanently unreadable through the UI alone.
+
+**One behaviour preserved on purpose.** A lone candidate naming a product the
+catalog does not have still resolves, so `fulfill()` gives it its defined answer —
+a zero-priced, flagged line — which is how a post pointing at a DELETED product
+still shows up on the BOM instead of vanishing into a warnings panel. Narrow by
+design: with rivals an unknown sku stays filtered out, because `_candidate_cost`
+cannot price what does not exist and a candidate costing nothing would beat every
+one that does.
+
+**The gate was regenerated, and the regeneration was proved first.** Before
+writing a single file: BOM sections byte-identical in all ten fixtures, the same
+set of line ids everywhere, and exactly one field differing per line —
+`eligibility`. Line ORDER also changed, and `resolve_supply` now sorts its output
+back into demand order, because grouping is an internal optimisation and must not
+reorder the answer. The old order was itself an artifact: authored lines were
+emitted in a first pass, so gate kits appeared BEFORE panel slots although demand
+asks for them last.
+
+**What the browser suite caught that pytest could not**, again: the Panel tab's
+parts table read rail/screw/slat and now reads rail/slat/screw — frame, infill,
+fixings, the panel's own structure. A user-visible ordering change out of a
+backend refactor, invisible to 1073 passing unit tests.
+
+1073 pytest (+6) · 156 golden scenarios · 159/159 smoke · gate regenerated with a
+verified diff.
+
+## A part can declare what it needs (2026-08-16) — W2a of the part-specs arc
+Spec §W2, first half. `Eligibility.predicate` had been on the schema since phase 1
+and refused at load for two stated reasons — nothing evaluated it, nothing froze
+it. `fencemodel/match.py` closes both, and the `_UNSUPPORTED` entry is deleted in
+the same change that makes it work, which is what that table's own comment asks
+for.
+
+**The matcher sits ABOVE the mechanism that already exists.** It produces
+`EligibleItem`s — the shape a slot has always carried and a run has always frozen
+— so `resolve_supply`, `select_supply`, `fulfill()`, the parts ledger, the drawer
+and the decision graph are untouched, and freezing is free. Members come back
+sorted by SKU at the default priority and approval, because `resolve_supply`
+groups on that signature and grouping decides which product is chosen.
+
+**A `MissingField` is a NO, not a "not applicable".** The knowledge evaluator
+reads it the other way because there the question is whether a rule fires; here it
+is whether an item COVERS a requirement, and an item that cannot answer has not.
+
+**`item` is what a product IS**, not merely its attrs: `sku` and `consumption` are
+reserved keys that always win. Without `consumption` a rail slot is inexpressible
+— "bought by the length" is a typed field, and every author would otherwise have
+to hand-tag their bar stock. `Product.attrs` widened to hold `list[int]` /
+`list[str]`, because a routed post's hole heights are `[150, 1650]` and no scalar
+holds that. The bound: data read by CODE should be typed (a magic string key in
+Python is the defect the audit named); data read by a PREDICATE is data reading
+data, and belongs in the open bag.
+
+**Authoring keeps its guardrail and gains a better sentence.** A predicate no
+catalog item covers is refused at authoring — the same rule an empty member list
+already got, for the same reason. A predicate that reads `panel.*` is NOT checked
+there, because the bay does not exist yet and refusing it for failing a question
+nobody asked would be worse than the gap; `field_paths()` (new, in
+`knowledge/ast.py`) is how the two are told apart. A slot carrying BOTH a
+predicate and members is refused: intersecting the two lists has more than one
+defensible reading.
+
+Wired at both call sites — generation and the panel preview — and the mutation
+that makes `match_spec` a no-op kills tests in both. The preview one was the only
+cover for that path; without it the Panel tab would have shown an empty, free
+panel for a model that builds perfectly well.
+
+1064 pytest (+16) · 156 golden scenarios · 159/159 smoke · compatibility gate
+byte-identical (every shipped model still authors its members, and a spec with no
+predicate is returned as-is rather than deep-copied).
+
+**Still open in W2:** the `DemandLine`/`ResolvedSupplyLine` split, typed catalog
+capabilities for the keys Python reads (`length_mm`, `face_width_mm`,
+`opening_width_mm`), and engine behaviour versions.
+
+## The clear opening becomes real (2026-08-16) — W1 of the part-specs arc
+Spec `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md` §W1.
+`PanelContext.clear_width_mm` had been `= width` since phase 1 behind the comment
+"face widths arrive in phase 2", so `clear_between_posts` and `centre_to_centre`
+returned the SAME number and `resolve.py`'s infill axis was the centre-to-centre
+width. Every slat panel was fitted across an opening that includes half a post at
+each end: the demo's 1500 mm bay spread its eleven gaps to 27–28 mm to absorb
+80 mm of post, where the model asks for 20 mm — the outer slats overlapped the
+posts they were supposed to sit between.
+
+**The blocker was ordering, not arithmetic.** Interior line posts were created
+AFTER the bays they bound (two sibling loops inside the segment loop), so at
+`resolve_panel` time the posts at a bay's ends did not exist. The two loops are
+swapped; the mutant that hides line posts dies with `1460` — one end narrowed and
+the other not — which is what pins the swap.
+
+**One calculation for one fact.** `clear_opening_mm(centre, face_start, face_end)`
+in `fencemodel/resolve.py` is the single rounding point: the two halves are summed
+and divided ONCE, so a pair of odd faces cannot lose a millimetre twice. `Span`
+records the result, because the panel preview and the read models re-read a stored
+run and must fit to the number the bay was built to — `bay_preview_plan` carries
+the face allowance over rather than re-measuring, and a what-if on the width keeps
+it, since imagining a wider bay does not change which posts bound it. A product
+declaring no `face_width_mm` contributes 0, never a nominal. `Span.clear_width_mm`
+is `None` for runs generated before this, which read at centre-to-centre — the
+fence that exists, not the one today's generator would build.
+
+**The gate did not move**, against the spec's own prediction. Twelve slats fit at
+1500 and at 1420, so no purchased quantity changed; only where the slats sit. The
+change is capable of moving it — at 1700 mm the member count does change, which is
+how the panel-preview tests caught the drift — the committed widths just do not sit
+near a boundary. One gate assertion was over-specific (it required the fixture's
+residual to be non-zero, a property of the width rather than of the feature) and
+now asserts what the fixture is for: the fitted count is a number the golden file
+watches.
+
+**Known gap, deliberately not closed here:** the model-scoped preview (Panel tab)
+still fits at the width it is given, because a model with no project has no posts
+to measure. It closes in W3, when the model owns its post.
+
+1048 pytest (+4) · 156 golden scenarios · 159/159 smoke · gate byte-identical.
+
 Updated: 2026-08-16 — the two-tier visualizer is in: an Assembly tab with two
 synchronized viewports (the run standing up, and one panel assembled), a material
 and inventory drawer on every part, a live what-if that never generates, joints

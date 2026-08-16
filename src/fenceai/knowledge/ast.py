@@ -96,6 +96,35 @@ def lookup(ctx: dict[str, Any], path: str) -> Any:
     return cur
 
 
+def field_paths(expr: Expr) -> set[str]:
+    """Every context path this expression reads.
+
+    Structural, not evaluated — it answers "what would this need to know?"
+    without needing it. `validate_model` uses it to tell an eligibility predicate
+    that can be checked when a model is AUTHORED (it reads only `item.*`) from
+    one that can only be answered per bay (it reads `panel.*`), so authoring
+    never refuses a slot for failing a question it was not asked.
+
+    Every branch that can hold a sub-expression is walked, so a new node type
+    cannot hide a read: getting this wrong silently narrows the check rather than
+    breaking it.
+    """
+    match expr:
+        case FieldRef():
+            return {expr.path}
+        case Cmp():
+            return field_paths(expr.left) | field_paths(expr.right)
+        case And() | Or():
+            return set().union(*(field_paths(i) for i in expr.items)) if expr.items else set()
+        case Not():
+            return field_paths(expr.item)
+        case In() | Between():
+            return field_paths(expr.item)
+        case FnCall():
+            return set().union(*(field_paths(a) for a in expr.args)) if expr.args else set()
+    return set()
+
+
 def evaluate_expr(expr: Expr, ctx: dict[str, Any]) -> Any:
     match expr:
         case FieldRef():

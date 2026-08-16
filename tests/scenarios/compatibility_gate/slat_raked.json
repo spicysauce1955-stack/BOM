@@ -754,7 +754,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-S"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -772,7 +779,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-CAP"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -790,7 +804,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -808,7 +829,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-S"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -826,7 +854,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-CAP"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -844,7 +879,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -862,7 +904,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-S"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -880,7 +929,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-CAP"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -898,7 +954,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -916,7 +979,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-S"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -934,7 +1004,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-CAP"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -952,7 +1029,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -970,7 +1054,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-S"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -988,7 +1079,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-CAP"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -1006,7 +1104,14 @@
       "cut_length_mm": null,
       "eligibility": {
         "group": null,
-        "members": [],
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
         "predicate": null
       },
       "engineering_qty": 1,
@@ -1046,7 +1151,7 @@
       "unit": "cut"
     },
     {
-      "cut_length_mm": 1521,
+      "cut_length_mm": 1800,
       "eligibility": {
         "group": null,
         "members": [
@@ -1054,70 +1159,20 @@
             "approval": "auto",
             "kind": "catalog_item",
             "priority": 1,
-            "sku": "RAIL-3000"
+            "sku": "SLAT-100"
           }
         ],
         "predicate": null
       },
-      "engineering_qty": 2,
-      "id": "req0019",
+      "engineering_qty": 12,
+      "id": "req0017",
       "length_basis": "slope",
       "pegs": [
-        "span@run1:1500-3000"
+        "span@run1:0-1500"
       ],
-      "role": "rail",
-      "sku": "RAIL-3000",
-      "slot_key": "rail",
-      "unit": "cut"
-    },
-    {
-      "cut_length_mm": 1521,
-      "eligibility": {
-        "group": null,
-        "members": [
-          {
-            "approval": "auto",
-            "kind": "catalog_item",
-            "priority": 1,
-            "sku": "RAIL-3000"
-          }
-        ],
-        "predicate": null
-      },
-      "engineering_qty": 2,
-      "id": "req0022",
-      "length_basis": "slope",
-      "pegs": [
-        "span@run1:3000-4500"
-      ],
-      "role": "rail",
-      "sku": "RAIL-3000",
-      "slot_key": "rail",
-      "unit": "cut"
-    },
-    {
-      "cut_length_mm": 1521,
-      "eligibility": {
-        "group": null,
-        "members": [
-          {
-            "approval": "auto",
-            "kind": "catalog_item",
-            "priority": 1,
-            "sku": "RAIL-3000"
-          }
-        ],
-        "predicate": null
-      },
-      "engineering_qty": 2,
-      "id": "req0025",
-      "length_basis": "slope",
-      "pegs": [
-        "span@run1:4500-6000"
-      ],
-      "role": "rail",
-      "sku": "RAIL-3000",
-      "slot_key": "rail",
+      "role": "infill",
+      "sku": "SLAT-100",
+      "slot_key": "slat",
       "unit": "cut"
     },
     {
@@ -1146,7 +1201,7 @@
       "unit": "each"
     },
     {
-      "cut_length_mm": null,
+      "cut_length_mm": 1521,
       "eligibility": {
         "group": null,
         "members": [
@@ -1154,95 +1209,20 @@
             "approval": "auto",
             "kind": "catalog_item",
             "priority": 1,
-            "sku": "SCREW-S10"
+            "sku": "RAIL-3000"
           }
         ],
         "predicate": null
       },
-      "engineering_qty": 48,
-      "id": "req0021",
-      "length_basis": null,
+      "engineering_qty": 2,
+      "id": "req0019",
+      "length_basis": "slope",
       "pegs": [
         "span@run1:1500-3000"
       ],
-      "role": "screw",
-      "sku": "SCREW-S10",
-      "slot_key": "screw",
-      "unit": "each"
-    },
-    {
-      "cut_length_mm": null,
-      "eligibility": {
-        "group": null,
-        "members": [
-          {
-            "approval": "auto",
-            "kind": "catalog_item",
-            "priority": 1,
-            "sku": "SCREW-S10"
-          }
-        ],
-        "predicate": null
-      },
-      "engineering_qty": 48,
-      "id": "req0024",
-      "length_basis": null,
-      "pegs": [
-        "span@run1:3000-4500"
-      ],
-      "role": "screw",
-      "sku": "SCREW-S10",
-      "slot_key": "screw",
-      "unit": "each"
-    },
-    {
-      "cut_length_mm": null,
-      "eligibility": {
-        "group": null,
-        "members": [
-          {
-            "approval": "auto",
-            "kind": "catalog_item",
-            "priority": 1,
-            "sku": "SCREW-S10"
-          }
-        ],
-        "predicate": null
-      },
-      "engineering_qty": 48,
-      "id": "req0027",
-      "length_basis": null,
-      "pegs": [
-        "span@run1:4500-6000"
-      ],
-      "role": "screw",
-      "sku": "SCREW-S10",
-      "slot_key": "screw",
-      "unit": "each"
-    },
-    {
-      "cut_length_mm": 1800,
-      "eligibility": {
-        "group": null,
-        "members": [
-          {
-            "approval": "auto",
-            "kind": "catalog_item",
-            "priority": 1,
-            "sku": "SLAT-100"
-          }
-        ],
-        "predicate": null
-      },
-      "engineering_qty": 12,
-      "id": "req0017",
-      "length_basis": "slope",
-      "pegs": [
-        "span@run1:0-1500"
-      ],
-      "role": "infill",
-      "sku": "SLAT-100",
-      "slot_key": "slat",
+      "role": "rail",
+      "sku": "RAIL-3000",
+      "slot_key": "rail",
       "unit": "cut"
     },
     {
@@ -1271,6 +1251,56 @@
       "unit": "cut"
     },
     {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SCREW-S10"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 48,
+      "id": "req0021",
+      "length_basis": null,
+      "pegs": [
+        "span@run1:1500-3000"
+      ],
+      "role": "screw",
+      "sku": "SCREW-S10",
+      "slot_key": "screw",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": 1521,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0022",
+      "length_basis": "slope",
+      "pegs": [
+        "span@run1:3000-4500"
+      ],
+      "role": "rail",
+      "sku": "RAIL-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
       "cut_length_mm": 1800,
       "eligibility": {
         "group": null,
@@ -1293,6 +1323,56 @@
       "role": "infill",
       "sku": "SLAT-100",
       "slot_key": "slat",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SCREW-S10"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 48,
+      "id": "req0024",
+      "length_basis": null,
+      "pegs": [
+        "span@run1:3000-4500"
+      ],
+      "role": "screw",
+      "sku": "SCREW-S10",
+      "slot_key": "screw",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": 1521,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0025",
+      "length_basis": "slope",
+      "pegs": [
+        "span@run1:4500-6000"
+      ],
+      "role": "rail",
+      "sku": "RAIL-3000",
+      "slot_key": "rail",
       "unit": "cut"
     },
     {
@@ -1319,6 +1399,31 @@
       "sku": "SLAT-100",
       "slot_key": "slat",
       "unit": "cut"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SCREW-S10"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 48,
+      "id": "req0027",
+      "length_basis": null,
+      "pegs": [
+        "span@run1:4500-6000"
+      ],
+      "role": "screw",
+      "sku": "SCREW-S10",
+      "slot_key": "screw",
+      "unit": "each"
     }
   ]
 }

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from fenceai.catalog.model import (
     AssemblyKit,
+    Capabilities,
     Catalog,
     DivisibleLinear,
     IndivisibleDiscrete,
@@ -66,9 +67,9 @@ def _catalog_with(kit: Product) -> Catalog:
     behaviour under test was not."""
     return Catalog.of(
         Product(sku="POST-S", name="post", consumption=IndivisibleDiscrete(),
-                price_cents=2500, attrs={"length_mm": 2600}),
+                price_cents=2500, attrs={}, capabilities=Capabilities(length_mm=2600)),
         Product(sku="POST-S-HD", name="hd post", consumption=IndivisibleDiscrete(),
-                price_cents=4200, attrs={"length_mm": 2600}),
+                price_cents=4200, attrs={}, capabilities=Capabilities(length_mm=2600)),
         Product(sku="LEAF", name="leaf", consumption=IndivisibleDiscrete(), price_cents=1),
         Product(sku="RAIL-3000", name="rail", price_cents=1800,
                 consumption=DivisibleLinear(purchase_length_mm=3000)),
@@ -95,7 +96,7 @@ def test_kit_is_chosen_from_the_catalog_by_its_declared_width(knowledge):
     cat = _catalog_with(Product(
         sku="BAR-PORTAIL-A", name="portail", price_cents=9900,
         consumption=AssemblyKit(components=[KitComponent(sku="LEAF", qty=1)]),
-        attrs={"opening_width_mm": 3500},
+        attrs={}, capabilities=Capabilities(opening_width_mm=3500),
     ))
     result = generate(_gated(3500, None), knowledge, cat)
     assert [g.kit_sku for g in result.strategy.gates] == ["BAR-PORTAIL-A"]
@@ -140,7 +141,7 @@ def test_a_catalog_selected_kit_says_the_catalog_chose_it(knowledge):
     cat = _catalog_with(Product(
         sku="BAR-PORTAIL-A", name="portail", price_cents=9900,
         consumption=AssemblyKit(components=[KitComponent(sku="LEAF", qty=1)]),
-        attrs={"opening_width_mm": 3500},
+        attrs={}, capabilities=Capabilities(opening_width_mm=3500),
     ))
     node = _kit_node(generate(_gated(3500, None), knowledge, cat))
     assert node.payload["source"] == "catalog"

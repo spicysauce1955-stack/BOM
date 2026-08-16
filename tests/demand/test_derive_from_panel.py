@@ -20,7 +20,7 @@ def test_span_lines_come_from_the_panel_and_carry_slot_key_and_eligibility():
     reqs = derive_requirements(result.strategy, demo_catalog(), result.run.demand_skus)
     rails = [r for r in reqs if r.role == "rail"]
     assert rails and all(r.slot_key == "rail" for r in rails)
-    assert all(r.sku == "" for r in rails)          # resolved in fulfillment
+    assert not any(hasattr(r, "sku") for r in rails)  # resolved in fulfillment
     assert all([m.sku for m in r.eligibility.members] == ["RAIL-3000"] for r in rails)
 
 
@@ -28,7 +28,10 @@ def test_post_lines_are_untouched_by_the_panel_path():
     result = generate(straight_topology(3000), demo_knowledge(), demo_catalog())
     reqs = derive_requirements(result.strategy, demo_catalog(), result.run.demand_skus)
     posts = [r for r in reqs if r.role == "post"]
-    assert posts and all(r.sku for r in posts)      # still named directly
+    # a post's product is chosen by KNOWLEDGE rather than by supply resolution,
+    # and arrives as the one candidate it is
+    assert posts and all(
+        [m.sku for m in r.eligibility.members] == ["POST-S"] for r in posts)
     assert all(r.slot_key == "" for r in posts)
 
 
@@ -88,7 +91,7 @@ def test_demand_names_no_unit_because_it_has_not_chosen_a_product_yet():
     """A role that isn't "rail"/"infill" (fence-model roles are free-form, e.g.
     "spacer" per fencemodel/model.py:57) must still get the SAME unit fulfill()
     derives from the product's consumption kind — fulfill() never reads
-    RequirementLine.unit at all, so a guess that disagrees with it double-books
+    DemandLine.unit at all, so a guess that disagrees with it double-books
     the parts ledger, which keys asked/purchased on (sku, unit).
 
     Demand cannot make that guess correctly, because the unit is a property of
@@ -105,7 +108,7 @@ def test_demand_names_no_unit_because_it_has_not_chosen_a_product_yet():
     ])
     reqs = derive_requirements(strategy, demo_catalog())
     spacer_req = next(r for r in reqs if r.role == "spacer")
-    assert spacer_req.sku == "" and spacer_req.unit == ""
+    assert not hasattr(spacer_req, "sku") and not hasattr(spacer_req, "unit")
 
     resolution = resolve_supply(reqs, demo_catalog())
     resolved = next(r for r in resolution.requirements if r.role == "spacer")
@@ -143,7 +146,7 @@ def test_a_ready_made_part_with_a_length_is_counted_in_eaches_on_both_sides():
     ])
     catalog = demo_catalog()
     assert catalog.products["POST-S"].consumption.kind == "indivisible_discrete"
-    assert catalog.products["POST-S"].attrs["length_mm"] == 2600
+    assert catalog.products["POST-S"].capabilities.length_mm == 2600
 
     reqs = derive_requirements(strategy, catalog)
     resolution = resolve_supply(reqs, catalog)
