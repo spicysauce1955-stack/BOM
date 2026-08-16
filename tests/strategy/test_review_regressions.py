@@ -353,3 +353,44 @@ def test_the_rule_that_set_the_rail_count_reaches_the_panel_it_measured():
     assert "K-THREE-RAILS@v1" in refs
 
 
+def test_the_embedment_that_is_drawn_cites_the_version_that_decided_it():
+    """MAJOR 6. `post_embed_mm` was resolved with its refs and written onto every
+    post, but `embed_refs` was cited ONLY in the failure branch — so in the
+    ordinary case no node recorded that 600 mm had been decided, or by which
+    rule. This arc promoted `embed_mm` to a persisted field and then to a
+    dimension on a drawing, so two versions of the rule drew two different
+    footings with no `defeated` edge anywhere.
+    """
+    from fenceai.decisions.explain import explain_node
+
+    result = generate(straight_topology(6000), demo_knowledge(), demo_catalog())
+    buried = [p.id for p in result.strategy.posts if p.mounting == "ground"]
+    node = next(n for n in result.graph.nodes
+                if n.action == "resolve_post_embedment")
+
+    assert node.payload["embed_mm"] == 600
+    assert sorted(node.scope_refs) == sorted(buried)
+    assert all(p.embed_mm == 600 for p in result.strategy.posts if p.id in buried)
+    governed = {e.knowledge_ref for e in result.graph.in_edges(node.id)
+                if e.type == "governed_by"}
+    assert governed == {"K-POST-EMBED@v1"}
+    for lang in ("en", "he"):
+        assert "600" in explain_node(result.graph, node, lang=lang)
+
+
+def test_a_wall_mounted_fence_records_no_embedment_it_never_spent():
+    """The other side of that node: a post bolted to a wall embeds nothing, so a
+    node claiming 600 mm underground would explain a footing that is not there."""
+    from fenceai.topology.model import BasePayload
+    from tests.conftest import add_interval_event
+
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "b", 0, 6000, BasePayload(surface="masonry_wall"))
+    result = generate(topo, demo_knowledge(), demo_catalog())
+
+    assert all(p.mounting == "masonry" for p in result.strategy.posts)
+    assert all(p.embed_mm == 0 for p in result.strategy.posts)
+    assert not [n for n in result.graph.nodes
+                if n.action == "resolve_post_embedment"]
+
+

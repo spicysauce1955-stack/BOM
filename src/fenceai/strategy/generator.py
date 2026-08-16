@@ -1831,6 +1831,25 @@ def _check_post_lengths(
     embed, embed_refs = _resolve_quantity(
         kb, {"scope": bind_scope(scope)}, "post_embed_mm", 600
     )
+    # The embedment gets a node of its own, the same shape `resolve_span_quantities`
+    # has one function away. It used to cite `embed_refs` ONLY in the failure
+    # branch below, so in the ordinary case nothing recorded that 600 mm had been
+    # decided or by which version — while this arc promoted `embed_mm` to a
+    # persisted field and then to a dimension on a drawing. Two knowledge
+    # versions of `post_embed_mm` then drew two different footings with no
+    # `defeated` edge anywhere (review finding 6).
+    #
+    # Scoped to the posts that actually spend length on it: a masonry-mounted
+    # post is bolted to what it stands on and embeds nothing, so putting it in
+    # this node's scope would explain a depth it does not have. A fence with no
+    # buried post at all gets no node, because then nothing was decided.
+    buried = [p.id for p in strategy.posts if p.mounting == "ground"]
+    embed_node = builder.add(
+        "quantity", "resolve_post_embedment",
+        payload={"embed_mm": embed, "n": len(buried)},
+        scope_refs=buried,
+        governed_by=embed_refs,
+    ) if buried else None
 
     def top_of(span: Span) -> Mm:
         return max(span.bottom_z_start_mm, span.bottom_z_end_mm) + span.height_mm
@@ -1885,6 +1904,10 @@ def _check_post_lengths(
                          "available_mm": available, "exposed_mm": exposed,
                          "embed_mm": post.embed_mm},
                 scope_refs=[post.id],
+                # the embedment reaches this sum through the node that decided
+                # it, so the chain from the shortfall back to the rule is an
+                # edge rather than a repeated citation
+                inputs=[embed_node.id] if embed_node is not None else [],
                 governed_by=embed_refs,
             )
             strategy.warnings.append(

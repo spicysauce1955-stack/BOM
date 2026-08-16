@@ -121,6 +121,9 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "resolve_span_quantities": (
             "Quantities per span: {rails_per_span} rails, {screws_per_span} screws."
         ),
+        "resolve_post_embedment": (
+            "Posts are set {embed_mm} {u} into the ground ({n} post(s))."
+        ),
         "resolve_demand_products": (
             "Demand products: rail {rail_sku}, screws {screw_sku}, "
             "concrete {concrete_sku}, caps {cap_sku}."
@@ -254,6 +257,9 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "resolve_max_span": "המפתח המרבי נקבע ל-{value_mm} {u}.",
         "resolve_span_quantities": (
             "כמויות לכל מפתח: {rails_per_span} מוטות, {screws_per_span} ברגים."
+        ),
+        "resolve_post_embedment": (
+            "העמודים מוטמנים {embed_mm} {u} באדמה ({n} עמודים)."
         ),
         "resolve_demand_products": (
             "מוצרי הדרישה: מוט {rail_sku}, ברגים {screw_sku}, "
@@ -481,6 +487,9 @@ def explain_node(
             base = _fmt(t, "resolve_span_quantities", lang, units,
                 rails_per_span=p.get("rails_per_span"), screws_per_span=p.get("screws_per_span")
             )
+        case "resolve_post_embedment":
+            base = _fmt(t, "resolve_post_embedment", lang, units,
+                embed_mm=p.get("embed_mm"), n=p.get("n"))
         case "resolve_demand_products":
             base = _fmt(t, "resolve_demand_products", lang, units,
                 rail_sku=p.get("rail_sku"), screw_sku=p.get("screw_sku"),
