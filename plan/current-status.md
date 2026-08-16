@@ -1,5 +1,29 @@
 # Current status
 
+## Note for archaeology: two concurrent agents, one working tree (2026-08-16)
+`11d3c99` ("feat(strategy): a model's post and cap reach the fence") also carries
+`animate.js`, `assembly.js`, `style.css`, `index.html` and both locale bundles —
+the assembly-film slice, swept in by a `git add -A` while a concurrent agent was
+mid-edit in the SAME working tree. Nothing was lost and nothing is wrong in the
+tree; the message is simply narrower than the diff, and the film's own commit
+(`9527509`) carries its browser suite and its reasoning.
+
+The cause is worth writing down because it is not obvious: subagents share the
+filesystem, so one agent's `git checkout -b` moves the OTHER agent's branch, and
+one agent's `git add -A` stages the other's in-progress files. Two rules for next
+time — give each agent its own worktree, or let exactly one agent touch git; and
+never `git add -A` while another agent is running, stage by path.
+
+## The panel's layer identity is positional (found by the film, unfixed)
+`elevation.js` gives `.elev-member` a `data-order`, but the `.elev-edges` and
+`.elev-seats` layers carry nothing tying a shape back to its member — the
+correspondence holds only because all three loops walk the same `elevationRects`
+array in the same order. Any change to one loop silently mis-pairs outlines and
+housed ends with the wrong slat. `assembly.js` defends itself by checking the
+layer lengths agree before trusting the reading, and leaves a layer un-animated
+rather than fading an outline off the wrong member. The real fix is a `data-order`
+on those rects, for whoever is next in that file.
+
 ## W3 — a model owns its post and cap (2026-08-16)
 Spec §W3, and the §5 reversal the user chose: post selection leaves run-wide
 knowledge for any model that declares a `PostSlot`. A model described the panel
