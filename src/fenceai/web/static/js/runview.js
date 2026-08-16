@@ -70,9 +70,15 @@ export function macroModel(report, { faceWidths = {}, gapMm = SECTION_GAP_MM } =
       length_mm: section.length_mm,
       base_surface: section.base_surface,
       height_mm: section.height_mm ?? null,
-      // the ground under this section, as the report samples it: one point per
-      // station, which is exactly where the ground elevation is known
-      ground: stations.map((s) => [at(s.station_mm), s.ground_z_mm]),
+      // The ground the LAYOUT measured — node elevations plus every interior
+      // elevation sample — not one point per post. Between two posts either
+      // side of a retaining step, a station-only line draws a smooth chord
+      // where the site has a wall, on the datum the footings sit on.
+      // A run reported before this field existed falls back to the stations,
+      // which is what there is.
+      ground: (section.ground?.length ? section.ground
+        : stations.map((s) => [s.station_mm, s.ground_z_mm]))
+        .map(([station_mm, z]) => [at(station_mm), z]),
       // where a post stands on something built rather than on the ground
       base: stations.map((s) => [at(s.station_mm), s.base_z_mm]),
     });
@@ -112,7 +118,11 @@ export function macroModel(report, { faceWidths = {}, gapMm = SECTION_GAP_MM } =
                     || b.start_station_mm >= gate.end_station_mm);
       const height = section.height_mm
         ?? (neighbours.length ? Math.max(...neighbours.map((b) => b.height_mm)) : null);
-      const bottom = groundAt(stations, gate.start_station_mm);
+      const bottom = groundAt(
+        (section.ground?.length
+          ? section.ground.map(([s, z]) => ({ station_mm: s, ground_z_mm: z }))
+          : stations),
+        gate.start_station_mm);
       out.gates.push({
         element_id: gate.element_id,
         tag: gate.tag,
@@ -133,11 +143,18 @@ export function macroModel(report, { faceWidths = {}, gapMm = SECTION_GAP_MM } =
       const declaredFace = faceWidths[station.sku];
       const face = Number.isFinite(declaredFace) && declaredFace > 0
         ? declaredFace : NOMINAL_POST_FACE_MM;
-      // The post's TOP is the fence's top where it meets it — the tallest thing
-      // this post carries. Drawn to the design line rather than to the stock
-      // length: `post_length_mm` is the bar that arrives, and a post drawn to it
-      // stands proud of the fence by however much the installer cuts off.
-      const carried = adjacentTops(out, station, x);
+      // The post's TOP is the fence's top where it meets it. Drawn to the design
+      // line rather than to the stock length: `post_length_mm` is the bar that
+      // arrives, and a post drawn to it stands proud of the fence by however
+      // much the installer cuts off.
+      //
+      // Read from the REPORT when it says so. The same question is answered
+      // server-side by the length check — with a tilt correction this module
+      // does not have — and it is the number `insufficient_post_length` is
+      // computed from, so a JS copy meant a run could warn "this post is 200 mm
+      // short" and draw a post that looks fine. `top_z_mm` is null (never 0) for
+      // a post the check skipped, and only then is the neighbour scan used.
+      const carried = station.top_z_mm ?? adjacentTops(out, station, x);
       out.posts.push({
         element_id: station.element_id,
         tag: station.tag,
@@ -207,6 +224,11 @@ export function macroModel(report, { faceWidths = {}, gapMm = SECTION_GAP_MM } =
 }
 
 /** The top of everything this post carries, or null when it carries nothing.
+ *
+ * The FALLBACK only: the report answers this for every post the length check
+ * reached, and that answer is authoritative because the warning depends on it.
+ * This covers the one case it skips — a post with no adjacent bay, where there
+ * is no design top to be drawn to and the caller says so.
  *
  * A post between two bays of different heights is drawn to the taller one: that
  * is what is actually built, and it is how a step reads as a step. A post with no

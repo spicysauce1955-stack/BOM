@@ -212,6 +212,27 @@ export function pitchDimension(elev) {
  * renderer is already placing. Reported as a PAIR because the two ends differ
  * under `start`/`end` justification, and one figure would name the wrong end. */
 export function edgeMargins(elev) {
+  // The FIT's own answer when the wire carries it. The margin is a number the
+  // fit produced and spent; measuring it back off the drawn rectangles was a
+  // client-side re-derivation of it, and the two diverge exactly where it
+  // matters — `start`/`spread_to_fit` leave the residual BEYOND the end margin,
+  // so the honest far-end clearance is `edge_margin_end_mm + residual_mm`.
+  if (Number.isFinite(elev?.edge_margin_start_mm)
+      && Number.isFinite(elev?.edge_margin_end_mm)) {
+    const start = elev.edge_margin_start_mm;
+    const end = elev.edge_margin_end_mm + (elev.residual_mm || 0);
+    if (start > 0 || end > 0) {
+      const first = (elev.members || []).find((m) => !m.kind || m.kind === "infill");
+      const vertical = !first || first.h_mm >= first.w_mm;
+      return { axis: vertical ? "x" : "y", start_mm: start, end_mm: end,
+               slot_key: first?.slot_key || "",
+               cross_mm: first
+                 ? (vertical ? first.y_mm + first.h_mm : first.x_mm + first.w_mm) : 0 };
+    }
+    return null;
+  }
+  // a run generated before the fit put its margins on the wire: measured off the
+  // outermost rectangles, which is honest as a DRAWN clearance and is all there is
   const width = elev?.width_mm || 0;
   const height = elev?.height_mm || 0;
   for (const list of patternSlots(elev).values()) {

@@ -119,14 +119,15 @@ export function swatch(value) {
 function unitPrice(products, sku) {
   const product = products[sku];
   if (!product) return null;
-  if (product.pricing?.kind === "linear") {
-    // the rate is authored per metre; ONE purchase unit is a whole bar, and the
-    // backend rounds that once (`purchase_price_cents`). Mirrored here rather
-    // than shown as a rate, so the column compares like with like.
-    const length = product.consumption?.purchase_length_mm || 0;
-    return Math.floor((product.pricing.cents_per_m * length + 500) / 1000);
-  }
-  return product.price_cents ?? 0;
+  // The SERVER's answer to "what does one purchase unit cost". This used to
+  // mirror `purchase_price_cents` in JavaScript — identical arithmetic, and a
+  // second implementation of the rule that module's docstring calls THE rounding
+  // point for rate pricing, on a money surface, one minimum charge or waste
+  // factor away from disagreeing by a cent with the BOM beside it.
+  if (Number.isFinite(product.purchase_price_cents)) return product.purchase_price_cents;
+  // a catalog fetched before the field existed: a flat price is still exact, and
+  // a rate-priced product without it has no per-unit figure to show
+  return product.pricing?.kind === "linear" ? null : product.price_cents ?? 0;
 }
 
 // ------------------------------------------------------------------- render

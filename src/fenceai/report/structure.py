@@ -27,7 +27,7 @@ from fenceai.fulfillment.fulfill import Bom
 from fenceai.report.elevation import PanelElevation, panel_elevation
 from fenceai.strategy.model import Strategy, StrategyWarning
 from fenceai.topology.model import Topology
-from fenceai.topology.station import run_length
+from fenceai.topology.station import ground_samples, run_length
 
 
 class Part(BaseModel):
@@ -153,6 +153,16 @@ class Section(BaseModel):
     setting_out: list[Station] = []
     bays: list[Bay] = []
     gates: list[GateRow] = []
+    # The ground under this section, as (station, z) — the SAME samples the
+    # generator measured slope and steps against (`topology.station.ground_samples`),
+    # not one z per post.
+    #
+    # A client with only the stations has to interpolate between them, and
+    # between two posts either side of a retaining step that is a smooth chord:
+    # a picture that argues with the site, on the datum the footings and the
+    # embed hatch sit on. Copied, never recomputed — the report reads the same
+    # function the layout read.
+    ground: list[tuple[Mm, Mm]] = []
 
 
 class SkuTotal(BaseModel):
@@ -368,6 +378,7 @@ def build_structure(
             tag=_section_tag(index), run_id=run.id, length_mm=length,
             base_surface=_base_surface(topology, run.id),
             post_tilt=_post_tilt(topology, run.id),
+            ground=ground_samples(topology, run),
         )
 
         # posts: this run's own, plus the shared node posts at either end

@@ -55,6 +55,7 @@ import {
 
 const SLAT = %(slat)s;
 const LEGACY = %(legacy)s;
+const INSET = %(inset)s;
 
 const out = {};
 const rects = elevationRects(SLAT);
@@ -148,6 +149,12 @@ out.pitch_two = pitchDimension({
 // both ends, so there is no margin to call out. The pattern WITH a margin is
 // built by hand, because no demo model authors one.
 out.margins = edgeMargins(SLAT);
+// the FIT's own margins, off the wire. The far-end clearance is the end margin
+// PLUS the residual: `truncate` leaves the remainder beyond it, and a client
+// that measured the last rectangle instead would report only one of the two.
+out.margins_from_fit = edgeMargins(INSET);
+out.inset_fit = { start: INSET.edge_margin_start_mm, end: INSET.edge_margin_end_mm,
+                  residual: INSET.residual_mm };
 out.margins_inset = edgeMargins({
   width_mm: 1000, height_mm: 1000, gaps_mm: [100, 100],
   members: [0, 1, 2].map((i) => ({
@@ -190,9 +197,14 @@ def ev():
         pytest.skip("node not available")
     catalog = demo_catalog()
     req = PreviewRequest(height_mm=1800, width_mm=2500)
+    inset = M_SLAT.model_copy(deep=True)
+    inset.default_spec.infill.edge_margin_mm = 50
+    inset.default_spec.infill.justification = "center"
+    inset.default_spec.infill.excess = "truncate"
     script = SCRIPT % {
         "slat": preview_panel(M_SLAT, req, catalog).elevation.model_dump_json(),
         "legacy": preview_panel(M_LEGACY, req, catalog).elevation.model_dump_json(),
+        "inset": preview_panel(inset, req, catalog).elevation.model_dump_json(),
     }
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script],
@@ -313,3 +325,16 @@ def test_a_pattern_flush_at_both_ends_gets_no_margin_dimension(ev):
     """A dimension line of length zero is a tick with a 0 beside it, which reads
     as a mistake rather than as "flush"."""
     assert ev["margins_flush"] is None
+
+
+def test_the_edge_margin_is_the_fits_own_number_not_a_measurement(ev):
+    """Spec §3.3: the annotation is `fit.edge_margin_start_mm`. Measuring it back
+    off the drawn rectangles was a client-side re-derivation of a number the fit
+    had already produced and spent — and the two diverge exactly where it
+    matters, because `truncate` leaves the residual BEYOND the end margin."""
+    fit = ev["inset_fit"]
+    drawn = ev["margins_from_fit"]
+    assert drawn is not None
+    assert drawn["start_mm"] == fit["start"]
+    assert drawn["end_mm"] == fit["end"] + fit["residual"]
+    assert fit["start"] > 0, "the fixture must actually inset its pattern"

@@ -64,8 +64,16 @@ export function skuSelect(products, current, optional, onchange) {
 // rest of the session because one request lost a network.
 let catalogPromise = null;
 export function loadCatalogProducts() {
+  // `purchase_price_cents` rides alongside the products, derived by the server —
+  // what ONE purchase unit costs, which for a rate-priced bar is a rounding the
+  // catalog module calls THE rounding point for rate pricing. Folded onto each
+  // product here so every consumer sees one shape and nobody is tempted to work
+  // it out again in JavaScript.
   catalogPromise ??= apiGet("/api/catalog")
-    .then((c) => c.products || {})
+    .then((c) => Object.fromEntries(
+      Object.entries(c.products || {}).map(([sku, p]) => [sku, {
+        ...p, purchase_price_cents: c.purchase_price_cents?.[sku] ?? null,
+      }])))
     .catch(() => { catalogPromise = null; return {}; });
   return catalogPromise;
 }

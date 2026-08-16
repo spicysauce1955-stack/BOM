@@ -23,7 +23,9 @@ load_dotenv()  # .env in the working directory fills gaps; real env vars win
 from fenceai.ai.claude import build_interpreter  # noqa: E402
 from fenceai.ai.stub import StubCritic, StubProposer
 from fenceai.catalog.demo import demo_catalog
-from fenceai.catalog.model import Catalog, Product, catalog_hash
+from fenceai.catalog.model import (
+    Catalog, Product, catalog_hash, purchase_price_cents,
+)
 from fenceai.core.errors import GenerationFailure, ReadRefused, RequestRefused
 from fenceai.core.ids import new_id
 from fenceai.decisions.explain import explain_element
@@ -949,7 +951,30 @@ def put_project_fence_model(project_id: str, choice: FenceModelChoice | None = N
 
 @app.get("/api/catalog")
 def get_catalog():
-    return state.store.load_catalog()
+    """The catalog, with what ONE purchase unit costs already worked out.
+
+    `purchase_price_cents` is derived, never stored: a flat-priced product carries
+    its own `price_cents` and a rate-priced one carries a rate and a bar length,
+    and turning the second into the first is `catalog.purchase_price_cents` —
+    which its own docstring calls THE rounding point for rate pricing, the one
+    place that rounds, because two call sites differing by a cent total the same
+    BOM two ways.
+
+    A client comparing two candidate products for one slot needs exactly that
+    number, and the drawer had been recomputing it in JavaScript. Identical today
+    and a divergence waiting for the first minimum charge or waste factor, so the
+    server answers it instead. Sent alongside the product rather than replacing
+    its fields: the raw price and the pricing basis are still what an editor
+    edits.
+    """
+    catalog = state.store.load_catalog()
+    return {
+        **catalog.model_dump(),
+        "purchase_price_cents": {
+            sku: purchase_price_cents(product)
+            for sku, product in catalog.products.items()
+        },
+    }
 
 
 @app.put("/api/catalog/products")

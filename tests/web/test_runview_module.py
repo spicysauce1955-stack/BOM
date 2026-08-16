@@ -68,6 +68,13 @@ const out = {};
 const model = macroModel(flat, { faceWidths: { "POST-S": 100 } });
 out.nominal_face = NOMINAL_POST_FACE_MM;
 out.section_gap = SECTION_GAP_MM;
+out.ground_line = {
+  drawn: macroModel(stepped, { faceWidths: {} }).sections[0].ground,
+  reported: (stepped.sections || [])[0].ground,
+  station_count: (stepped.sections || [])[0].setting_out.length,
+};
+out.report_tops = (flat.sections || []).flatMap((s) => s.setting_out)
+  .map((s) => [s.tag, s.top_z_mm ?? null, s.exposed_mm ?? null]);
 out.flat = {
   posts: model.posts.map((p) => ({
     tag: p.tag, sku: p.sku, x: p.x_mm, face: p.face_mm, declared: p.declared_face,
@@ -255,6 +262,18 @@ def view():
 
 
 # --- posts ------------------------------------------------------------------
+
+def test_the_post_top_is_the_reports_answer_not_a_second_one(view):
+    """The same question is answered server-side by the length check — with a
+    tilt correction this module does not have — and it is the number
+    `insufficient_post_length` is computed from. A JS copy meant a run could warn
+    "this post is 200 mm short" and draw a post that looks fine."""
+    reported = {tag: top for tag, top, _ in view["report_tops"] if top is not None}
+    assert reported, "the report must actually carry the top it measured"
+    drawn = {p["tag"]: p["top"] for p in view["flat"]["posts"]}
+    for tag, top in reported.items():
+        assert drawn[tag] == top, (tag, drawn[tag], top)
+
 
 def test_a_post_is_drawn_to_the_fence_top_not_to_the_stock_length(view):
     """`post_length_mm` is the bar that ARRIVES (2600 mm for POST-S). A post
@@ -478,3 +497,18 @@ def test_ground_interpolates_between_samples_and_never_past_the_ends(view):
 
 def test_an_empty_report_is_an_empty_drawing(view):
     assert view["empty"] == 0
+
+
+def test_the_ground_line_is_the_one_the_layout_measured(view):
+    """One z per post is not the ground: between two posts either side of a
+    retaining step, a station-only line draws a smooth chord where the site has
+    a wall — on the datum the footings and the embed hatch sit on. The stepped
+    fixture puts a 900 mm break between two stations, which is exactly the case
+    that vanishes."""
+    ground = view["ground_line"]
+    assert ground["reported"], "the report must carry the samples it measured"
+    assert len(ground["drawn"]) == len(ground["reported"])
+    assert [z for _, z in ground["drawn"]] == [z for _, z in ground["reported"]]
+    # and it is genuinely finer than the stations, or the fix changed nothing
+    assert len(ground["drawn"]) > ground["station_count"] or \
+        any(z not in (0,) for _, z in ground["drawn"])

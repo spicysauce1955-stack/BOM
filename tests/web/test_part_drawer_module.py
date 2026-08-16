@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from fenceai.catalog.demo import demo_catalog
+from fenceai.catalog.model import purchase_price_cents
 from fenceai.fencemodel.demo import demo_models
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
 from tests.fencemodel.test_preview import two_candidate_model
@@ -125,6 +126,32 @@ out.pinned = {
 out.pinned_without_catalogue =
   partOptions(pinned, "rail", products, inventory).options.map((o) => o.sku);
 
+// the per-unit price comes off the wire, not out of a second rounding here.
+// The rate is deliberately one the client's old formula would ALSO have got
+// right, so the assertion is about which number is read, not about arithmetic.
+const bare = (p) => partOptions(
+  { parts: [{ slot_key: "x", role: "rail", qty: 1, sku: "P",
+              eligible_skus: ["P"] }] },
+  "x", { P: p }, null).options[0].price_cents;
+out.rate_priced = {
+  wire: 1850,
+  shown: bare({ sku: "P", price_cents: 0, purchase_price_cents: 1850,
+                pricing: { kind: "linear", cents_per_m: 600 },
+                consumption: { kind: "divisible_linear",
+                               purchase_length_mm: 3000 } }),
+  // and the field WINS over anything derivable here: a server that starts
+  // charging a minimum must not be silently overruled by the client
+  overrides_the_rate: bare({ sku: "P", price_cents: 0, purchase_price_cents: 9900,
+                             pricing: { kind: "linear", cents_per_m: 600 },
+                             consumption: { kind: "divisible_linear",
+                                            purchase_length_mm: 3000 } }),
+};
+out.legacy_flat = bare({ sku: "P", price_cents: 2500, pricing: { kind: "flat" } });
+out.legacy_rate = bare({ sku: "P", price_cents: 0,
+                         pricing: { kind: "linear", cents_per_m: 600 },
+                         consumption: { kind: "divisible_linear",
+                                        purchase_length_mm: 3000 } });
+
 // a hostile catalog: the name is server text and must not become markup
 const hostile = JSON.parse(JSON.stringify(products));
 const anySku = slat.options[0].sku;
@@ -160,7 +187,12 @@ def drawer():
     request = PreviewRequest(height_mm=1800, width_mm=2500)
     script = SCRIPT % {
         "preview": preview.model_dump_json(),
-        "products": json.dumps({s: p.model_dump() for s, p in catalog.products.items()}),
+        # exactly what `/api/catalog` serves, folded the way `loadCatalogProducts`
+        # folds it: the derived per-unit price rides along, because the client no
+        # longer works it out
+        "products": json.dumps({
+            s: {**p.model_dump(), "purchase_price_cents": purchase_price_cents(p)}
+            for s, p in catalog.products.items()}),
         "inventory": inventory.model_dump_json(),
         "two_way": preview_panel(two_way_model, request, catalog).model_dump_json(),
         "pinned": preview_panel(
@@ -278,3 +310,18 @@ def test_pinning_a_product_does_not_destroy_the_list_it_was_picked_from(drawer):
     assert drawer["pinned"]["buttons"] == 1, "the other product is still offered"
     # the defect, pinned as its own fact so the fix cannot be quietly undone
     assert drawer["pinned_without_catalogue"] == ["SLAT-100"]
+
+
+def test_the_per_unit_price_is_the_servers_and_not_a_second_rounding(drawer):
+    """`purchase_price_cents` is what the catalog module's own docstring calls
+    THE rounding point for rate pricing — "nothing upstream rounds and nothing
+    downstream re-rounds, or two call sites differ by a cent and the same BOM
+    totals two ways". The drawer had been the downstream that re-rounded."""
+    # 600 c/m over a 3000 mm bar: one purchase unit, rounded once, by the server
+    assert drawer["rate_priced"]["shown"] == drawer["rate_priced"]["wire"] == 1850
+    # and the server's figure wins over anything the client could derive — which
+    # is the whole point the first time a minimum charge or waste factor lands
+    assert drawer["rate_priced"]["overrides_the_rate"] == 9900
+    # and a product fetched from a catalog that does not carry the field yet
+    assert drawer["legacy_flat"] == 2500      # a flat price needs no derivation
+    assert drawer["legacy_rate"] is None      # a rate without it is not a price
