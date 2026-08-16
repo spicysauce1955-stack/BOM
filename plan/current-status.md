@@ -827,3 +827,56 @@ and never again — the box was present and simply empty.
 
 906 pytest · 145 golden scenarios · 155/155 smoke · compatibility gate byte-identical
 throughout the arc.
+
+## The review pass (2026-08-16) — COMPLETE
+Two adversarial reviews of the visualizer arc: `architecture-critic`
+(SOUND-WITH-FIXES, 14 findings) and `test-reviewer` (GAPS, found by mutating the
+implementation and watching the suite stay green). Every finding dispositioned;
+all fourteen fixed.
+
+**The blocker.** The Assembly tab priced a bay of a STORED run through the
+model-scoped preview route, which hardcodes `least_cost`, hardcodes
+`length_basis="width"`, reads the live catalog, and knows none of the
+company-resolved quantities the bay was laid out with. Under S15 the drawer
+marked RAIL-3050 as the chosen product where the run had bought RAIL-3000 and
+priced the bay at 51% of what it cost — under a tag that said "as generated".
+`POST /api/runs/{id}/bays/{element_id}/panel-preview` reads everything the run
+decided off the run (preset, cut basis, rail and screw counts, the STAMPED model
+version, and the option answers off the decision graph) and leaves only what a
+person is imagining in the body. One `preview_panel`, not a second one.
+
+**Four client-side re-derivations of numbers the server owns**, each removed:
+the post top (the length check answers it, with a tilt correction the JS did not
+have, and the `insufficient_post_length` warning depends on it); the per-unit
+price (a second implementation of the declared single rounding point, on a money
+surface); the edge margin (the fit's own figure, and `truncate` leaves the
+residual BEYOND it); and the ground line (sampled at posts, so a retaining step
+between two posts drew as a smooth chord).
+
+**The graph now explains the length.** A `between_frame` slat is 1665 mm in an
+1800 mm opening and no node said the number or the subtraction behind it, while
+`report/elevation.py` opened by claiming the picture cannot drift from the
+numbers. The `resolve_panel` payload carries each slot's length, its start and
+the terms it was measured between; the span-quantity node became a real input
+edge rather than a shared scope tag; and embedment got its own quantity node
+with `governed_by`, so two knowledge versions of `post_embed_mm` can no longer
+draw two different footings with no `defeated` edge anywhere.
+
+**What the mutation pass found.** The drawer's alternatives — the feature's whole
+reason to exist — were rendered by no test in any tier: every demo slot names one
+eligible product, so `buttons == len(options) - 1` was `0 == 0`, and deleting the
+offer button AND hardcoding a zero delta passed eighteen tests. Five `runview.js`
+mutants survived simultaneously (footings for everything, the embed dimension
+drawn UPWARD, the whole step-dimension branch, the gate branch, the vertical
+extent). "One scale for both axes" was the name of two tests and the assertion of
+neither. And the second direction of the shared selection — a member picked in
+the panel lighting up in every bay that carries it — was checked nowhere.
+
+**One doc/code disagreement settled rather than left.** The spec promised a stale
+badge and a Generate button on the macro view during a what-if. The
+implementation does neither and should not: the macro view is showing the RUN,
+which a hypothetical panel height has not made wrong, and the button would either
+do nothing or silently generate the old height. Spec corrected, with the reason.
+
+954 pytest · 155 golden scenarios · 158/158 smoke · compatibility gate
+byte-identical across the whole arc, including every fix above.
