@@ -33,7 +33,9 @@ globalThis.document = {
 };
 
 import { state } from "./js/state.js";
-import { isStale, loadStructure, staleCode, staleKind } from "./js/structure-data.js";
+import {
+  isStale, loadStructure, refusalKey, staleCode, staleKind,
+} from "./js/structure-data.js";
 
 // one refusal body -> what the tab is left knowing
 async function refusal(body, status = 400) {
@@ -43,7 +45,10 @@ async function refusal(body, status = 400) {
   });
   state.result = { run: { id: `run_${Math.random()}` } };   // a NEW run each time
   await loadStructure();
-  return { stale: isStale(), kind: staleKind(), code: staleCode() };
+  return { stale: isStale(), kind: staleKind(), code: staleCode(),
+           // the sentence each surface would show for this state
+           structure: refusalKey("structure.empty"),
+           assembly: refusalKey("assembly.no_run") };
 }
 
 const out = {};
@@ -63,7 +68,9 @@ out.long_body = await refusal("x".repeat(400), 500);
 // the ONE state that really is "nothing generated yet"
 state.result = null;
 await loadStructure();
-out.no_run = { stale: isStale(), kind: staleKind(), code: staleCode() };
+out.no_run = { stale: isStale(), kind: staleKind(), code: staleCode(),
+               structure: refusalKey("structure.empty"),
+               assembly: refusalKey("assembly.no_run") };
 
 console.log(JSON.stringify(out));
 """
@@ -83,7 +90,9 @@ def refusals():
 
 
 def test_no_run_is_the_only_state_that_is_not_stale(refusals):
-    assert refusals["no_run"] == {"stale": False, "kind": None, "code": ""}
+    assert refusals["no_run"]["stale"] is False
+    assert refusals["no_run"]["kind"] is None
+    assert refusals["no_run"]["code"] == ""
 
 
 def test_the_three_named_refusals_keep_their_own_branch(refusals):
@@ -113,3 +122,27 @@ def test_a_runaway_body_does_not_become_the_panel(refusals):
     a log viewer."""
     assert len(refusals["long_body"]["code"]) <= 121
     assert refusals["long_body"]["code"].endswith("…")
+
+
+def test_every_surface_says_the_same_thing_about_the_same_run(refusals):
+    """The mapping from "why is there no report" to "what does the tab say" is
+    ONE function, in the module that owns the refusal state. Two copies is how
+    the Structure tab comes to say "generate a strategy" about a run whose
+    catalog moved while the Assembly tab beside it says the truth — and a copy
+    living inside a tab is a copy no test ever reaches."""
+    expected = {
+        "no_run": None,                # each surface names its own absence
+        "topology": "structure.stale",
+        "catalog": "structure.catalog_changed",
+        "predates": "error.run_predates_fence_model",
+        "unknown_coded": "structure.unreadable",
+        "unknown_plain": "structure.unreadable",
+        "long_body": "structure.unreadable",
+    }
+    for case, key in expected.items():
+        row = refusals[case]
+        if key is None:
+            assert (row["structure"], row["assembly"]) \
+                == ("structure.empty", "assembly.no_run"), case
+        else:
+            assert row["structure"] == row["assembly"] == key, case

@@ -57,6 +57,11 @@ out.details = (ELEV.details || []).map((d) => ({
 
 const sections = sectionsFor(ELEV, "slat");
 out.section_count = sections.length;
+out.section_slot = sections[0]?.member_slot;
+// a slot that is housed in nothing gets nothing: without this, deleting the
+// slot filter in sectionsFor passes every other assertion in this file
+out.sections_of_rail = sectionsFor(ELEV, "rail").length;
+out.sections_of_nothing = sectionsFor(ELEV, "no-such-slot").length;
 const s = sections[0];
 out.section = s && {
   end: s.end, kind: s.kind, tip: s.tip_mm, extent: s.extent_mm,
@@ -105,6 +110,11 @@ out.place = {
   scale: place.scale,
   floor_below_mouth: place.py(0) > place.py(out.declared.extent_mm),
   viewbox: [place.viewBox.w > 0, place.viewBox.h > 0],
+  // one scale: 10 mm across the section and 10 mm along it are the same number
+  // of drawing units. Stretching one axis is what makes a 3 mm clearance and a
+  // 20 mm housing look like the same gap — the thing this view exists to avoid.
+  px_len: place.px(10) - place.px(0),
+  py_len: place.py(0) - place.py(10),
 };
 
 // the elevation's own seat band, flipped into SVG y
@@ -195,10 +205,24 @@ def test_both_ends_are_shown_base_first(joint):
 
 
 def test_the_section_is_drawn_to_one_scale_with_the_floor_at_the_bottom(joint):
+    """`scale > 0` was the whole assertion, and it holds while x is stretched
+    three to one against y — the exact distortion the module docstring says
+    makes a 3 mm clearance and a 20 mm housing look like the same gap."""
     place = joint["place"]
     assert place["scale"] > 0
     assert place["floor_below_mouth"], "a bottom channel is looked at from below"
+    assert abs(place["px_len"] - place["py_len"]) < 1e-6
+    assert abs(place["px_len"] - place["scale"] * 10) < 1e-6
     assert all(place["viewbox"])
+
+
+def test_a_section_belongs_to_the_member_it_was_asked_for(joint):
+    """Deleting the slot filter in `sectionsFor` returned every joint on the
+    panel and passed everything else in this file."""
+    assert joint["section_count"] == 1
+    assert joint["section_slot"] == "slat"
+    assert joint["sections_of_rail"] == 0
+    assert joint["sections_of_nothing"] == 0
 
 
 def test_the_elevation_hatches_the_housed_end_of_the_member(joint):

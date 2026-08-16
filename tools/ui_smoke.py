@@ -27,6 +27,24 @@ OUT = os.path.join(os.path.dirname(__file__), "smoke-out")
 CHECKS: list[tuple[str, bool]] = []
 
 
+def wait_for(c, expr: str, timeout: float = 8.0, step: float = 0.4):
+    """Poll a JS expression until it is truthy, then return it.
+
+    The suite otherwise waits on the clock, which is fine for a re-render and
+    wrong after `location.reload()`: the bootstrap re-fetches health, the project
+    list and the project itself, and how long that takes is not a constant. A
+    fixed sleep there does not fail when the app is broken — it fails when the
+    machine is busy, which is worse than either outcome."""
+    deadline = time.time() + timeout
+    value = None
+    while time.time() < deadline:
+        value = c.js(expr)
+        if value:
+            return value
+        time.sleep(step)
+    return value
+
+
 def check(name: str, ok: bool) -> None:
     CHECKS.append((name, bool(ok)))
     print(("PASS " if ok else "FAIL ") + name)
@@ -448,11 +466,13 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
   const report = await (await fetch(
     `/api/runs/${runs[runs.length - 1].id}/structure`)).json();
   const stations = report.sections.reduce((n, s) => n + s.setting_out.length, 0);
+  const report_members = report.sections.flatMap(s => s.bays)
+    .reduce((n, b) => n + (b.elevation?.members?.length || 0), 0);
   const bays = report.sections.reduce((n, s) => n + s.bays.length, 0);
   const gates = report.sections.reduce((n, s) => n + s.gates.length, 0);
   const svg = document.querySelector('#assembly-macro .macro-svg');
   return {
-    stations, bays, gates,
+    stations, bays, gates, report_members,
     drawn_posts: svg ? svg.querySelectorAll('.macro-post').length : 0,
     drawn_bays: svg ? svg.querySelectorAll('.macro-bay').length : 0,
     drawn_gates: svg ? svg.querySelectorAll('.macro-gate').length : 0,
@@ -461,6 +481,8 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
     members: svg ? svg.querySelectorAll('.macro-member').length : 0,
     dims: svg ? svg.querySelectorAll('.macro-dims text').length : 0,
     micro: document.querySelectorAll('#assembly-micro .elevation-svg').length,
+    notes: [...document.querySelectorAll('#assembly-macro .elevation-note')]
+      .map(n => n.textContent).join(' '),
   };
 })()""")
         # one drawn thing per scheduled thing: a viewport that quietly dropped a
@@ -472,9 +494,18 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
         check("posts are drawn in the ground they are set in",
               macro["embeds"] > 0 and macro["footings"] > 0)
         check("a bay is drawn as its own members, not as a grey block",
-              macro["members"] > 0)
-        check("the macro drawing is dimensioned", macro["dims"] > 0)
+              macro["members"] == macro["report_members"] and macro["members"] > 0)
+        # one width and one height per bay, plus the run total, plus one embed
+        # per buried post: "> 0" passed with every branch but one deleted
+        check("the macro drawing is dimensioned",
+              macro["dims"] >= 2 * macro["bays"] + 1)
         check("the micro viewport assembles a panel beside it", macro["micro"] == 1)
+        # every demo post declares `attrs.face_width_mm`, so the nominal note must
+        # NOT be showing — which is what proves the catalog lookup happened at all
+        # (the nominal and POST-S's real width are both 80 mm, so the drawing
+        # looks identical either way)
+        check("posts are drawn at their declared face width, not at a nominal",
+              "נומינלי" not in (macro["notes"] or ""))
         c.shot("25-assembly-split.png")
 
         # selection is SHARED: clicking a bay up there opens it down here. Two
@@ -521,9 +552,14 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
         time.sleep(0.6)
         bare = c.js("""
 ({ dims: document.querySelectorAll('#assembly-macro .macro-dims text').length,
-   posts: document.querySelectorAll('#assembly-macro .macro-post').length })""")
+   micro_dims: document.querySelectorAll('#assembly-micro .elev-dim').length,
+   posts: document.querySelectorAll('#assembly-macro .macro-post').length,
+   members: document.querySelectorAll('#assembly-micro .elev-member').length })""")
+        # BOTH viewports: they are one drawing at two scales, and a switch that
+        # cleared half the annotations would look broken rather than clean
         check("the dimension layer can be switched off without losing the drawing",
-              bare["dims"] == 0 and bare["posts"] == macro["stations"])
+              bare["dims"] == 0 and bare["micro_dims"] == 0
+              and bare["posts"] == macro["stations"] and bare["members"] > 0)
         c.js("""
 { const box = document.getElementById('assembly-dims');
   box.checked = true; box.dispatchEvent(new Event('change')); }""")
@@ -534,9 +570,16 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
         # Clicking a member asks "what is that made of, what else fits, do we
         # have any" — three documents joined on one sku. And the whole point of
         # the what-if is what it does NOT do: no run is created behind it.
+        # not just the COUNT: an implementation that PUT a new revision of the
+        # existing run, or re-priced it, keeps the count and changes the answer
         runs_before = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}/runs`)
-  .then(r => r.json()).then(rs => rs.length)""")
+(async () => {
+  const pid = document.getElementById('project-select').value;
+  const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
+  const last = runs[runs.length - 1];
+  const bom = await (await fetch(`/api/runs/${last.id}/bom`)).json();
+  return { runs: runs.length, last_id: last.id, last_total: bom.bom.total_cents };
+})()""")
         c.js("""
 { const m = document.querySelector('#assembly-micro .elev-member');
   m.dispatchEvent(new MouseEvent('click', { bubbles: true })); }""")
@@ -553,6 +596,27 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/runs`)
         check("clicking a member opens its material & inventory drawer",
               drawer["rows"] >= 2 and drawer["chosen"] == 1 and drawer["priced"])
         # the caveat is not optional: stock here cannot reach the next job
+        # The other direction of the shared selection, and the headline of the
+        # two-viewport design: a member picked in the panel lights up in EVERY
+        # bay that carries it, which is the macro question the micro view cannot
+        # answer on its own. Verified nowhere until the test review said so.
+        spread = c.js("""
+(() => {
+  const slot = document.querySelector('#assembly-micro .elev-member.selected')
+    ?.getAttribute('data-slot');
+  const all = [...document.querySelectorAll('#assembly-macro .macro-member')];
+  return {
+    slot,
+    of_that_slot: all.filter(m => m.getAttribute('data-slot') === slot).length,
+    lit: all.filter(m => m.classList.contains('selected')).length,
+    others_lit: all.filter(m => m.classList.contains('selected')
+                            && m.getAttribute('data-slot') !== slot).length,
+  };
+})()""")
+        check("a member picked in the panel lights up in every bay that carries it",
+              bool(spread["slot"]) and spread["lit"] == spread["of_that_slot"]
+              and spread["lit"] >= macro["bays"] and spread["others_lit"] == 0)
+
         check("the drawer states the stock scope it is reporting",
               "מחסן" in drawer["text"] or "warehouse" in drawer["text"])
         # the joint section renders for the SELECTED member, or says there is no
@@ -580,8 +644,12 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/runs`)
 (async () => {
   const pid = document.getElementById('project-select').value;
   const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
+  const last = runs[runs.length - 1];
+  const bom = await (await fetch(`/api/runs/${last.id}/bom`)).json();
   return {
     runs: runs.length,
+    last_id: last.id,
+    last_total: bom.bom.total_cents,
     cost: document.getElementById('assembly-cost')?.textContent || '',
     badge: document.querySelector('#assembly-micro .tag.medium')?.textContent || '',
     back: !!document.getElementById('btn-as-built'),
@@ -593,7 +661,9 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/runs`)
         # THE check of this wave: the project rule is that generation stays behind
         # an explicit press, so a live preview must not have fired one
         check("a what-if generates nothing behind the user's back",
-              after["runs"] == runs_before)
+              after["runs"] == runs_before["runs"]
+              and after["last_id"] == runs_before["last_id"]
+              and after["last_total"] == runs_before["last_total"])
         check("a what-if says it is one, and offers the way back",
               bool(after["badge"]) and after["back"])
         check("the macro view is untouched by a panel what-if",
@@ -851,7 +921,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         stored_model = c.js(f"""
 fetch('/api/projects/{project_id}').then(r => r.json())
   .then(p => (p.fence_model || {{}}).model_id || null)""")
-        aside = c.js("document.getElementById('model-row')?.textContent || ''")
+        aside = wait_for(
+            c, "document.getElementById('model-row')?.textContent || ''")
         check("the project's chosen model persists across a reload",
               stored_model == "M-SLAT")
         # and it is legible from the DRAWING: "what is this fence built from"

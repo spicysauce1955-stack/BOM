@@ -39,9 +39,9 @@ from fenceai.knowledge.demo import demo_knowledge
 from fenceai.report.structure import build_structure
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import (
-    ElevationSamplePayload, GatePayload, Node, Run, Topology,
+    BasePayload, ElevationSamplePayload, GatePayload, Node, Run, Topology,
 )
-from tests.conftest import add_point_event, straight_topology
+from tests.conftest import add_interval_event, add_point_event, straight_topology
 
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
@@ -59,6 +59,7 @@ import {
 } from "./js/runview.js";
 
 const flat = %(flat)s;
+const masonry = %(masonry)s;
 const raked = %(raked)s;
 const stepped = %(stepped)s;
 const two = %(two)s;
@@ -79,6 +80,8 @@ out.flat = {
     top: [b.top_start_z_mm, b.top_end_z_mm],
     members: b.elevation?.members?.length || 0,
   })),
+  member_counts: (flat.sections || []).flatMap((s) => s.bays)
+    .map((b) => (b.elevation?.members || []).length),
   gates: model.gates.map((g) => ({
     tag: g.tag, x0: g.x0_mm, x1: g.x1_mm, h: g.height_mm,
     declared: g.declared_height,
@@ -116,8 +119,23 @@ out.two = {
   total: twoModel.total_mm,
 };
 
-// dimensions: descriptors over report fields, never measurements of the drawing
-out.dims = macroDimensions(model).map((d) => ({ kind: d.kind, value: d.value_mm }));
+// a wall-mounted section: nothing is buried and nothing is poured, so the
+// negative case of "footings come from the report" is a real fixture rather
+// than an absent one
+const wall = macroModel(masonry, { faceWidths: {} });
+out.masonry = wall.posts.map((p) => ({ tag: p.tag, embed: p.embed_mm,
+                                       footing: p.footing }));
+
+// dimensions: descriptors over report fields, never measurements of the drawing.
+// The WHOLE descriptor, because "the embed dimension drawn upward" is failure
+// mode 3 in this file's own docstring and `kind`+`value` cannot see it.
+out.dims = macroDimensions(model).map((d) => ({
+  kind: d.kind, value: d.value_mm, from: d.from_mm, to: d.to_mm,
+  x: d.x_mm ?? null, axis: d.axis,
+}));
+out.stepped_dims = macroDimensions(macroModel(stepped, { faceWidths: {} }))
+  .filter((d) => d.kind === "step")
+  .map((d) => ({ value: d.value_mm, from: d.from_mm, to: d.to_mm }));
 out.dims_off = macroDimensions(model, { bays: false, heights: false, embed: false,
                                         steps: false, total: false }).length;
 
@@ -128,6 +146,11 @@ out.place = {
   top_is_smaller_y: place.pz(model.z_max_mm) < place.pz(model.z_min_mm),
   x_grows: place.px(model.total_mm) > place.px(0),
   viewbox: [place.viewBox.w, place.viewBox.h],
+  // ONE scale means a metre along the run and a metre up the post are the same
+  // number of drawing units. Asserting `scale > 0` says nothing about that.
+  px_len: place.px(1000) - place.px(0),
+  pz_len: place.pz(0) - place.pz(1000),
+  fits: [place.width <= 1000, place.height <= 400],
 };
 
 // footing: a trapezoid wider at the bottom, only where there IS concrete
@@ -192,6 +215,14 @@ def _stepped():
     return _report(topo)
 
 
+def _masonry():
+    """A section built on a masonry wall: its posts are bracketed, not buried."""
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "ev_base", 0, 6000,
+                       BasePayload(surface="masonry_wall"))
+    return _report(topo)
+
+
 def _two_runs():
     """Two runs that share no node: two sections, drawn one after the other."""
     topo = Topology(
@@ -210,6 +241,7 @@ def view():
         pytest.skip("node not available")
     script = SCRIPT % {
         "flat": _flat().model_dump_json(),
+        "masonry": _masonry().model_dump_json(),
         "raked": _raked().model_dump_json(),
         "stepped": _stepped().model_dump_json(),
         "two": _two_runs().model_dump_json(),
@@ -248,10 +280,17 @@ def test_a_declared_face_width_is_used_and_an_undeclared_one_is_flagged(view):
 
 def test_embedment_and_footings_come_from_the_report(view):
     """A ground post carries the embedment generation resolved; the footing is
-    drawn where the station actually carries concrete, never per post."""
+    drawn where the station actually carries concrete, never per post.
+
+    The negative case is the load-bearing half: with only soil posts in the
+    fixture, `hasFooting = () => true` passes every assertion. A wall-mounted
+    section is bracketed, not buried, and neither pours nor embeds."""
     posts = view["flat"]["posts"]
     assert all(p["embed"] == 600 for p in posts), posts
     assert all(p["footing"] for p in posts), "every soil post here is set in concrete"
+    assert view["masonry"], "the wall fixture must actually produce posts"
+    assert not any(p["footing"] for p in view["masonry"]), view["masonry"]
+    assert all(p["embed"] == 0 for p in view["masonry"]), view["masonry"]
 
 
 # --- bays -------------------------------------------------------------------
@@ -267,8 +306,14 @@ def test_a_bay_spans_between_its_two_stations(view):
 
 def test_a_bay_carries_the_panel_the_server_placed(view):
     """The macro view draws the bay's OWN members — the same rectangles the micro
-    view draws — so the two viewports cannot show different panels."""
-    assert any(bay["members"] > 0 for bay in view["flat"]["bays"])
+    view draws — so the two viewports cannot show different panels.
+
+    Per bay, not "some bay": keeping only the first bay's elevation satisfies
+    `any(...)` and draws every other bay as an empty box."""
+    bays = view["flat"]["bays"]
+    assert bays
+    assert all(bay["members"] > 0 for bay in bays), bays
+    assert view["flat"]["member_counts"] == [b["members"] for b in bays]
 
 
 def test_a_stepped_run_is_drawn_at_two_levels_with_the_riser_between_them(view):
@@ -331,7 +376,8 @@ def test_stations_of_the_second_section_are_offset_into_the_chain(view):
     xs = view["two"]["first_post_x"]
     sections = view["two"]["sections"]
     assert min(xs) == 0
-    assert max(xs) >= sections[1]["x0"]
+    # the LAST post of the second section, exactly — `>=` passed a doubled offset
+    assert max(xs) == sections[1]["x0"] + sections[1]["len"]
 
 
 # --- dimensions and placement ----------------------------------------------
@@ -347,6 +393,49 @@ def test_every_bay_is_dimensioned_and_the_total_is_stated_once(view):
     assert view["dims_off"] == 0
 
 
+def test_the_embed_dimension_measures_downward_from_the_base(view):
+    """Failure mode 3 of this module's docstring, and it survived every earlier
+    assertion because only `kind` and `value_mm` were exported: an embed drawn
+    from the base UPWARD is the same 600 mm and the same word."""
+    posts = {p["tag"]: p for p in view["flat"]["posts"]}
+    for dim in [d for d in view["dims"] if d["kind"] == "embed"]:
+        assert dim["axis"] == "z"
+        post = next(p for p in posts.values() if p["x"] == dim["x"])
+        assert dim["to"] == post["base"]
+        assert dim["from"] == post["base"] - 600
+        assert dim["value"] == 600
+
+
+def test_every_riser_is_dimensioned_on_a_stepped_run(view):
+    """`macroDimensions` was only ever called on the FLAT model, so deleting its
+    whole step branch changed nothing any test could see."""
+    steps = view["stepped"]["steps"]
+    assert steps, "the stepped fixture must actually step"
+    assert len(view["stepped_dims"]) == len(steps)
+    assert sorted(d["value"] for d in view["stepped_dims"]) \
+        == sorted(s["rise"] for s in steps)
+    for dim in view["stepped_dims"]:
+        assert dim["to"] > dim["from"]
+
+
+def test_a_gate_is_placed_and_carries_the_height_it_interrupts(view):
+    """The gate branch was exported and asserted by nothing: its placement, the
+    neighbour-height fallback and its `declared_height` flag were all dead."""
+    gates = view["flat"]["gates"]
+    assert len(gates) == 1
+    gate = gates[0]
+    assert gate["x1"] - gate["x0"] == 1000     # the opening the topology asked for
+    assert gate["h"] == 1800 and gate["declared"] is True
+
+
+def test_the_drawing_extends_below_the_deepest_embedment(view):
+    """The vertical extent has to cover what is buried, or the footings are
+    clipped off the bottom of the sheet."""
+    lowest_base = min(p["base"] for p in view["flat"]["posts"])
+    assert view["flat"]["z"][0] == lowest_base - 600
+    assert view["flat"]["z"][1] >= max(p["top"] for p in view["flat"]["posts"])
+
+
 def test_a_dimension_reports_the_reports_own_number(view):
     """Not a measurement of the drawing: a dimension line that measured pixels
     and converted back would round, and disagree with the schedule beside it."""
@@ -357,10 +446,18 @@ def test_a_dimension_reports_the_reports_own_number(view):
 
 
 def test_placement_flips_z_and_keeps_one_scale_for_both_axes(view):
+    """The name of this test was previously the assertion of nothing: with
+    `scale > 0` alone, stretching x three to one against z passes — which is
+    exactly the distortion that makes a 600 mm footing and a 1800 mm panel look
+    like the same thing."""
     place = view["place"]
     assert place["top_is_smaller_y"], "elevation grows up; SVG y grows down"
     assert place["x_grows"]
     assert place["scale"] > 0
+    # float, so compared to the millimetre rather than to the bit
+    assert abs(place["px_len"] - place["pz_len"]) < 1e-6
+    assert abs(place["px_len"] - place["scale"] * 1000) < 1e-6
+    assert all(place["fits"]), "the drawing must fit the box it was given"
     assert place["viewbox"][0] > 0 and place["viewbox"][1] > 0
 
 
