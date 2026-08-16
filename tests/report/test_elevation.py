@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.fencemodel.demo import M_LEGACY, M_SLAT
-from fenceai.fencemodel.model import Distributed, FromBottom, FromTop, Fraction
+from fenceai.fencemodel.model import (
+    Distributed, FromBottom, FromTop, Fraction, validate_model,
+)
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
 from fenceai.fencemodel.resolve import PanelContext, placement_positions, resolve_panel
 from fenceai.report.elevation import panel_elevation
@@ -210,3 +212,152 @@ def test_a_full_height_member_is_still_drawn_across_the_whole_opening():
     cuts to `panel_height` must draw exactly as it did before."""
     for member in by_slot(elevation_of(M_SLAT), "slat"):
         assert (member.y_mm, member.h_mm) == (0, BAY.height_mm)
+
+
+# --- the joint, drawn ---------------------------------------------------------
+
+def top_seated_model():
+    """M-SLAT@v2 turned upside down: the housing is in the TOP rail.
+
+    Authored here rather than in `demo.py` because it demonstrates nothing a
+    product line would — it exists so the top-engagement branch is reached by a
+    test instead of by a customer.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    model = M_SLAT_V2.model_copy(deep=True)
+    channel, rail = model.default_spec.frame
+    channel.joint, channel.channel_depth_mm, channel.insertion_margin_mm = "butt", 0, 0
+    rail.joint, rail.channel_depth_mm, rail.insertion_margin_mm = "groove", 20, 2
+    slat = model.default_spec.infill.pattern[0]
+    slat.joint, slat.base_engagement_mm, slat.top_engagement_mm = "groove", 0, 15
+    return model
+
+
+def test_a_seated_member_says_which_part_of_itself_is_buried():
+    """M-SLAT@v2's slat runs 65 -> 1730 (see the extent test above), and the
+    first 15 mm of it are inside the channel: 65 -> 80. 80 is the channel's own
+    top face — 50 up plus half its 60 mm face height — which is the check that
+    the hatched band stops exactly where the timber becomes visible.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    drawn = by_slot(elevation_of(M_SLAT_V2), "slat")
+    assert drawn
+    for member in drawn:
+        assert (member.seat_start_mm, member.seat_end_mm) == (65, 80)
+        assert member.seat_start_mm == member.y_mm, "the seat starts at the member"
+        assert member.seat_end_mm == 50 + 60 // 2, "the channel's own top face"
+        assert member.joint == "channel"
+
+
+def test_a_member_housed_at_the_top_is_hatched_at_the_top():
+    """Same arithmetic from the other end: the slat starts at the channel's face
+    with nothing buried (50 + 30 = 80) and runs to 1750 - 20 + 15 = 1745, so it
+    is 1665 long again and its last 15 mm — 1730 -> 1745 — are in the groove.
+    1730 is the top rail's bottom face, which is where the groove begins.
+    """
+    ctx = BAY
+    elevation = panel_elevation(
+        resolve_panel(top_seated_model().default_spec, ctx),
+        ctx.clear_width_mm, ctx.height_mm)
+    drawn = by_slot(elevation, "slat")
+    assert drawn
+    for member in drawn:
+        assert (member.y_mm, member.h_mm) == (80, 1665)
+        assert (member.seat_start_mm, member.seat_end_mm) == (1730, 1745)
+        assert member.seat_end_mm == member.y_mm + member.h_mm
+
+
+def test_a_butted_member_seats_into_nothing_and_says_so():
+    """Every model that does not declare `between_frame` — which is every model
+    in the repo but one — must draw with no seat at all, or a renderer keyed on
+    the presence of these fields hatches a band through solid timber."""
+    for member in elevation_of(M_SLAT).members:
+        assert member.seat_start_mm is None and member.seat_end_mm is None
+        assert member.joint == "butt"
+
+
+def test_a_real_joint_yields_one_detail_per_member_end_not_per_member():
+    """Twenty slats seat identically, so twenty copies of one fact would be a
+    list a client has to de-duplicate to read.
+
+    M-SLAT@v2 has one end worth drawing: the slat's base, 15 mm into a 20 mm
+    channel with 3 mm of insertion clearance, inside a 60 mm channel member.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    elevation = elevation_of(M_SLAT_V2)
+    assert len(by_slot(elevation, "slat")) > 5, "a lone slat pins little"
+    assert len(elevation.details) == 1
+    detail = elevation.details[0]
+    assert (detail.key, detail.member_slot, detail.frame_slot, detail.end) == \
+        ("slat@bottom_channel", "slat", "bottom_channel", "base")
+    assert detail.kind == "channel"
+    assert (detail.channel_depth_mm, detail.engagement_mm, detail.margin_mm) == \
+        (20, 15, 3)
+    assert detail.frame_thickness_mm == 60
+    assert all(isinstance(mm, int) for mm in (
+        detail.channel_depth_mm, detail.engagement_mm, detail.margin_mm,
+        detail.frame_thickness_mm, detail.member_thickness_mm))
+
+
+def test_a_butt_landing_and_a_member_with_no_refs_produce_no_detail():
+    """M-SLAT@v2's slat ALSO lands on the top rail, and that end has no
+    engagement and no channel — a section through it would be two rectangles
+    touching, which is what the elevation already draws. M-SLAT@v1's slat names
+    no frame slot at either end, so there is no second piece to cut through.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    assert [d.frame_slot for d in elevation_of(M_SLAT_V2).details] == ["bottom_channel"]
+    assert elevation_of(M_SLAT).details == []
+    assert elevation_of(M_LEGACY).details == []
+
+
+def test_a_detail_with_a_nominal_thickness_is_not_declared():
+    """M-SLAT@v2's slat carries no `thickness_mm` — how thick the piece in the
+    channel is, is product data nothing has authored — so the detail reports 0
+    and flags itself, exactly as a frame member's face height does on the
+    drawing. Declaring it is what makes the section measurable.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    detail = elevation_of(M_SLAT_V2).details[0]
+    assert detail.member_thickness_mm == 0 and detail.declared is False
+
+    model = M_SLAT_V2.model_copy(deep=True)
+    model.default_spec.infill.pattern[0].thickness_mm = 18
+    measured = elevation_of(model).details[0]
+    assert measured.member_thickness_mm == 18 and measured.declared is True
+
+
+def test_the_joint_fixtures_are_documents_the_loader_would_accept():
+    """A test fixture that `validate_model` refuses proves the drawing works on a
+    model nobody can save."""
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    catalog = demo_catalog()
+    assert validate_model(M_SLAT_V2, catalog) == []
+    assert validate_model(top_seated_model(), catalog) == []
+
+
+def test_the_details_are_deterministic():
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    assert elevation_of(M_SLAT_V2) == elevation_of(M_SLAT_V2)
+
+
+def test_the_preview_carries_the_joint_details_it_priced():
+    """The detail rides on `PanelElevation`, so the panel tab and a stored bay
+    get it from one code path — this is half of the proof, and
+    `tests/report/test_structure.py` is the other half."""
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    preview = preview_panel(M_SLAT_V2, PreviewRequest(height_mm=1800, width_mm=2500),
+                            demo_catalog())
+    assert [d.key for d in preview.elevation.details] == ["slat@bottom_channel"]
+    assert preview.elevation.details[0].engagement_mm == 15
+    slats = [m for m in preview.elevation.members if m.slot_key == "slat"]
+    assert slats and all(
+        (m.seat_start_mm, m.seat_end_mm) == (65, 80) for m in slats)

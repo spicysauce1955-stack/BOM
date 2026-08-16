@@ -722,3 +722,40 @@ length rule was still ignored), and the demo gave one SKU two different face hei
 channel is a different profile and now has its own product.
 
 903 pytest · 145 golden scenarios · gate unmoved.
+
+## Joint details on the drawing (2026-08-14) — W3 of `specs/2026-08-14-two-tier-visualizer-design.md`
+W2 made a joint change the cut list; a joint nothing can DRAW is still a number on a
+schedule. `ElevationMember` gains `joint` and `seat_start_mm`/`seat_end_mm` — the
+sub-range of the member, in the same panel coordinates as its rectangle, that is inside a
+frame member rather than seen — and `PanelElevation` gains `details: list[JointDetail]`,
+one per member END worth a section: the two thicknesses, the channel depth, the
+engagement, the insertion margin, and whether the thicknesses are measured or nominal.
+
+The seat is read off the same `(start, extent)` the rectangle is drawn from, never
+re-derived from the frame positions. That is the rule W2's review round landed on, applied
+one layer up: `_between_frame_extent` is one calculation for one fact, and a second
+derivation of the extent here is exactly how a hatched band and the piece it hatches end
+up a millimetre apart.
+
+The spec's numbers reach the read model on `ResolvedSlot` rather than beside it. It
+already carries geometry PARAMETERS for this reason, and the alternative — `panel_elevation`
+taking a panel AND the spec it came from — is a read model with two sources that can
+disagree, only one of which a stored run keeps. That is also what makes the property below
+free.
+
+`details` rides on `PanelElevation`, so the panel preview and a stored run's
+`Bay.elevation` carry it by the SAME code path: no second endpoint, and no chance of the
+Models tab's detail disagreeing with the bay built to that model. Asserted from both ends
+(`tests/fencemodel/test_preview.py`, `tests/report/test_structure.py`).
+
+Two things it refuses to invent: a member naming no frame slot at an end gets no detail,
+and neither does a butt landing with no engagement and no channel — a section through two
+rectangles touching is what the elevation already draws, so the inset would frame a fact
+the panel states better. An empty section drawing is worse than none.
+
+Two narrowings recorded in the limitations rather than half-built: one seated range where
+a member can seat at both ends (`details` is per-end and states both), and the design's
+`"<member_slot>@<frame_slot>"` key, which repeats when a member names one rail SET at both
+ends — `end` disambiguates it.
+
+977 pytest (+12) · 145 golden scenarios · gate byte-identical, no regeneration.

@@ -186,6 +186,26 @@ why, and what would end each deferral.
   brace between two rails is the obvious candidate, and it needs a second axis
   the schema does not have.
 
+- **`ElevationMember` carries ONE seated range, and a member can seat at both
+  ends.** `seat_start_mm`/`seat_end_mm` name the base seat where there is one and
+  the top seat otherwise, so a member housed at both ends is drawn hatched at its
+  base only. One range cannot describe two disjoint bands without claiming the
+  middle of the member is buried too, and the drawing under-hatching is a smaller
+  lie than a band drawn through visible timber. Nothing is lost from the data:
+  `PanelElevation.details` is per-END by construction and states both. **Trigger:**
+  a second pair of fields, or a `seats: list[…]`, once a real model houses a
+  member at both ends and the micro view has to draw both.
+
+- **`JointDetail.key` is `"<member_slot>@<frame_slot>"` and is not unique on its
+  own.** A member may name the same frame slot at both ends — a `Distributed`
+  rail SET, where `between_frame` measures between its outermost two positions,
+  which `_between_frame_extent` supports on purpose — and if both ends are
+  engaged that produces two details with one key. `end` is on the detail and
+  disambiguates it, so a client keying selection on the pair is correct and one
+  keying on `key` alone is not. Left as the design declares it rather than
+  silently widened. **Trigger:** the micro view's detail inset (W6), which is the
+  first reader that has to select one.
+
 - **Phase 3: arc-flow over multiple stock lengths and sources.** ADR-0007 already
   names it, and the spec is explicit that it is a planned door rather than a
   dependency argument: "when a real catalog has eligibility groups worth
