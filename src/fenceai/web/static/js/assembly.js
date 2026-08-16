@@ -33,6 +33,7 @@ import {
   elevationRects, gapLine, hasNominal, highlightSlot, renderElevation,
 } from "./elevation.js";
 import { el } from "./geom.js";
+import { sectionPlacement, sectionsFor } from "./joint.js";
 import { currentLocale, t } from "./i18n.js";
 import { on, setSelection, state } from "./state.js";
 import { drawerHtml, partOptions } from "./part-drawer.js";
@@ -548,7 +549,98 @@ function renderMicro() {
   }
   draw.appendChild(svg);
   microSvg = svg;
+  const sections = document.createElement("div");
+  sections.id = "assembly-sections";
+  host.appendChild(sections);
   applySlot();
+}
+
+// ------------------------------------------------------- the joint section
+//
+// A 15 mm engagement on an 1800 mm panel is eight thousandths of the drawing: at
+// that scale a slat seated into a channel and a slat butted onto a rail are the
+// same picture, and they are 135 mm apart on the cut list. So the joint gets its
+// own view at its own scale, beside the panel — and only when a member with one
+// is selected, because a section nobody asked for is a box of numbers.
+
+/** Re-filled on every member click, not only on a full re-render.
+ *
+ * The bug this shape removes: `selectSlot` raises the member and opens the
+ * drawer without redrawing the panel — which is right, the drawing has not
+ * changed — so a section rendered inside the panel's own render ran exactly
+ * once, while nothing was selected, and never again. The browser suite found
+ * it; nothing else could, because the box was present and simply empty. */
+function refreshSections() {
+  const box = document.getElementById("assembly-sections");
+  if (!box) return;
+  const bay = bayToDraw(getReport());
+  const elev = whatIf && preview ? preview.elevation : bay?.elevation;
+  const sections = microSlot ? sectionsFor(elev, microSlot) : [];
+  if (!sections.length) {
+    // said, rather than left blank: "this member is not housed in anything" is
+    // an answer, and an empty space where a detail was is not
+    box.innerHTML = microSlot
+      ? `<div class="meta">${esc(t("joint.none"))}</div>` : "";
+    return;
+  }
+  box.innerHTML = `<h4>${esc(t("joint.title"))}</h4>`;
+  const row = document.createElement("div");
+  row.className = "joint-row";
+  for (const section of sections) row.appendChild(sectionFigure(section));
+  box.appendChild(row);
+}
+
+function sectionFigure(section) {
+  const figure = document.createElement("div");
+  figure.className = "joint-figure";
+  figure.innerHTML = `<div class="meta">${esc(tu("joint.caption", {
+    end: t(`joint.end.${section.end}`), kind: t(`joint.kind.${section.kind}`),
+    frame: section.frame_slot,
+  }))}</div>`;
+  const place = sectionPlacement(section);
+  const svg = el("svg", {
+    viewBox: `0 0 ${r(place.viewBox.w)} ${r(place.viewBox.h)}`,
+    class: "joint-svg", preserveAspectRatio: "xMidYMid meet",
+  });
+  const { px, py } = place;
+  const across = place.across_mm;
+  const half = (across - section.member_thickness_mm) / 2;
+
+  // the housing: everything either side of the member, up to the mouth
+  for (const [from, to] of [[0, half], [across - half, across]])
+    el("rect", {
+      class: "joint-frame",
+      x: r(px(from)), y: r(py(section.bands.at(-1).from_mm)),
+      width: r(Math.max((to - from) * place.scale, 0.5)),
+      height: r(py(0) - py(section.bands.at(-1).from_mm)),
+    }, svg);
+
+  for (const band of section.bands) {
+    if (band.role === "clearance") continue;    // a void is drawn by NOT drawing
+    el("rect", {
+      class: `joint-band joint-${band.role}${section.declared ? "" : " elev-nominal"}`,
+      x: r(px(half)), y: r(py(band.to_mm)),
+      width: r(Math.max(section.member_thickness_mm * place.scale, 0.5)),
+      height: r(Math.max(py(band.from_mm) - py(band.to_mm), 0.5)),
+    }, svg);
+  }
+
+  for (const [i, dim] of section.dims.entries()) {
+    const x = px(0) - 8 - i * 13;
+    el("line", { class: "joint-dim", x1: r(x), y1: r(py(dim.from_mm)),
+                 x2: r(x), y2: r(py(dim.to_mm)) }, svg);
+    const label = el("text", {
+      class: "joint-dim-label", x: r(x - 3),
+      y: r((py(dim.from_mm) + py(dim.to_mm)) / 2), "text-anchor": "middle",
+      transform: `rotate(-90 ${r(x - 3)} ${r((py(dim.from_mm) + py(dim.to_mm)) / 2)})`,
+    }, svg);
+    label.textContent = tu(`joint.dim.${dim.kind}`, { len_mm: dim.value_mm });
+  }
+  figure.appendChild(svg);
+  if (!section.declared)
+    figure.insertAdjacentHTML("beforeend",
+      `<div class="meta">${esc(t("joint.nominal_member"))}</div>`);
+  return figure;
 }
 
 /** Clicking the same member twice clears it — a highlight with no way off is a
@@ -724,6 +816,7 @@ function renderDrawer() {
 // answer on its own.
 function applySlot() {
   highlightSlot(microSvg, microSlot);
+  refreshSections();
   if (!macroSvg) return;
   for (const rect of macroSvg.querySelectorAll(".macro-member"))
     rect.classList.toggle("selected",

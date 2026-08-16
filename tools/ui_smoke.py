@@ -555,6 +555,18 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/runs`)
         # the caveat is not optional: stock here cannot reach the next job
         check("the drawer states the stock scope it is reporting",
               "מחסן" in drawer["text"] or "warehouse" in drawer["text"])
+        # the joint section renders for the SELECTED member, or says there is no
+        # joint. The demo line lands its rails face to face, so this exercises
+        # the honest-negative branch — an empty space where a detail was is not
+        # an answer, and the section for a housed member is pinned in node
+        # (tests/web/test_joint_module.py) against M-SLAT@v2's channel.
+        section = c.js("""
+({ box: !!document.getElementById('assembly-sections'),
+   figures: document.querySelectorAll('#assembly-sections .joint-figure').length,
+   text: document.getElementById('assembly-sections')?.textContent || '' })""")
+        check("a selected member either shows its joint in section or says it has none",
+              section["box"] and (section["figures"] > 0
+                                  or "פנים אל פנים" in section["text"]))
         c.shot("27-assembly-drawer.png")
 
         # a dimension change re-prices the panel in place — and nothing else

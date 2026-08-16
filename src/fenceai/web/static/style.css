@@ -353,6 +353,10 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .elev-member.elev-nominal { fill-opacity: 0.45; }
 .elev-member.selected { stroke: #2563eb; stroke-width: 2.5; fill: #dbeafe; }
 .elev-member:hover { stroke: #2563eb; }
+/* the housed end of a member: inside something, so it is hatched rather than
+   filled — the elevation says THAT it is seated; the section says how */
+.elev-seat { fill: #64748b; fill-opacity: 0.28; stroke: #475569; stroke-width: 0.8;
+  stroke-dasharray: 4 3; pointer-events: none; }
 /* hidden edges: what is behind still reads as a member, per drawing convention */
 .elev-edges rect { fill: none; stroke: #475569; stroke-width: 0.8; opacity: 0.45;
   pointer-events: none; }
@@ -427,6 +431,17 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .drawer-swatch { display: inline-block; inline-size: 14px; block-size: 14px;
   border: 1px solid #94a3b8; border-radius: 3px; margin-inline-end: 5px;
   vertical-align: text-bottom; }
+/* the joint section: its own scale, beside the panel rather than on it */
+.joint-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.joint-figure { flex: 0 1 240px; }
+.joint-svg { inline-size: 100%; block-size: auto; max-block-size: 200px;
+  direction: ltr; /* a section is a drawing: never mirrored */ }
+.joint-frame { fill: #94a3b8; stroke: #475569; stroke-width: 1; }
+.joint-band { stroke: #475569; stroke-width: 1; }
+.joint-seated { fill: #64748b; fill-opacity: 0.45; stroke-dasharray: 4 3; }
+.joint-exposed { fill: #d7dee7; }
+.joint-dim { stroke: #94a3b8; stroke-width: 1; }
+.joint-dim-label { font-size: 9px; fill: #475569; }
 #assembly-cost .summary-line { gap: 16px; }
 #assembly-cost .stat b { font-size: 15px; }
 

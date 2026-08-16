@@ -687,5 +687,19 @@
   "consumption.divisible_linear": "cut from stock lengths",
   "consumption.packaged_discrete": "packs",
   "consumption.coverage_based": "by coverage",
-  "consumption.assembly_kit": "kit"
+  "consumption.assembly_kit": "kit",
+  "joint.title": "The joint, in section",
+  "joint.caption": "{end} · {kind} into {frame}",
+  "joint.none": "This member is not housed in anything — it lands face to face.",
+  "joint.nominal_member": "The member's own thickness is a nominal: the catalog does not declare one.",
+  "joint.end.base": "base",
+  "joint.end.top": "top",
+  "joint.kind.butt": "butt",
+  "joint.kind.channel": "channel",
+  "joint.kind.groove": "groove",
+  "joint.kind.bracket": "bracket",
+  "joint.kind.overlap": "overlap",
+  "joint.dim.channel": "housing {len_mm} {u}",
+  "joint.dim.engagement": "seated {len_mm} {u}",
+  "joint.dim.margin": "clearance {len_mm} {u}"
 }

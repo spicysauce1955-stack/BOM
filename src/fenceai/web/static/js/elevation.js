@@ -57,6 +57,7 @@ export function elevationRects(elev) {
   const height = elev?.height_mm || 0;
   return (elev?.members || [])
     .map((m, order) => ({
+      seat: seatRect(m, height),
       key: `${m.slot_key}#${m.index}`,
       slot_key: m.slot_key || "",
       role: m.role || "",
@@ -72,6 +73,30 @@ export function elevationRects(elev) {
     }))
     .sort((a, b) => (a.face === b.face ? a.order - b.order
       : a.face === "back" ? -1 : 1));
+}
+
+/** The housed part of a drawn member, flipped into SVG y, or null.
+ *
+ * `seat_start_mm`/`seat_end_mm` are stated along the member's OWN axis, and the
+ * wire does not say which axis that is — a tall thin rectangle and a long flat
+ * one are the same shape here. So the pair has to prove it: the range is taken
+ * as the axis it actually falls inside. A range that fits neither is drawn as
+ * nothing rather than as a band across the wrong dimension.
+ *
+ * Nothing is derived. The seat is where the read model said the member enters
+ * its housing, which is the same integer that shortened it on the cut list. */
+export function seatRect(m, height) {
+  const start = m?.seat_start_mm;
+  const end = m?.seat_end_mm;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  const inY = start >= m.y_mm && end <= m.y_mm + m.h_mm;
+  const inX = start >= m.x_mm && end <= m.x_mm + m.w_mm;
+  if (inY && (m.h_mm >= m.w_mm || !inX))
+    return { x_mm: m.x_mm, y_mm: height - end, w_mm: m.w_mm, h_mm: end - start };
+  if (inX)
+    return { x_mm: start, y_mm: height - (m.y_mm + m.h_mm), w_mm: end - start,
+             h_mm: m.h_mm };
+  return null;
 }
 
 /** The fitted gaps as one fact: how many, and the range they cover.
@@ -223,7 +248,9 @@ export function gapLine(elev) {
  *  `onSelect(slotKey)` fires when a member is clicked. The renderer never
  *  reaches out of its own SVG: which row that highlights is the CALLER's table
  *  and the caller's business. */
-export function renderElevation(elev, { onSelect, annotations = true } = {}) {
+export function renderElevation(elev, {
+  onSelect, annotations = true, joints = true,
+} = {}) {
   const w = elev?.width_mm || 0;
   const h = elev?.height_mm || 0;
   const rects = elevationRects(elev);
@@ -274,6 +301,24 @@ export function renderElevation(elev, { onSelect, annotations = true } = {}) {
     // identifiers only, and set as TEXT — a sku never becomes markup or paint
     el("title", {}, rect).textContent = m.sku ? `${m.slot_key} · ${m.sku}` : m.slot_key;
   });
+
+  // The housed ends, hatched over the members they belong to. This is the one
+  // thing the elevation can honestly say about a joint at this scale — "that
+  // part of it is inside something" — and it is worth saying, because a seated
+  // member and a butted one are otherwise the same rectangle and 135 mm apart
+  // on the cut list. HOW it is housed is the section inset's job (joint.js).
+  if (joints) {
+    const seats = el("g", { class: "elev-seats" }, svg);
+    for (const m of rects) {
+      if (!m.seat) continue;
+      el("rect", {
+        class: "elev-seat", "data-slot": m.slot_key,
+        x: r(px(m.seat.x_mm)), y: r(py(m.seat.y_mm)),
+        width: r(Math.max(m.seat.w_mm * s, 0.5)),
+        height: r(Math.max(m.seat.h_mm * s, 0.5)),
+      }, seats);
+    }
+  }
 
   // Hidden edges, drawn over the infill. A rail on a slat panel is genuinely
   // behind the slats, so occlusion alone leaves a two-rail panel and a

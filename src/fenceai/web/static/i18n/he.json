@@ -687,5 +687,19 @@
   "consumption.divisible_linear": "נחתך ממוטות מלאי",
   "consumption.packaged_discrete": "אריזות",
   "consumption.coverage_based": "לפי כיסוי",
-  "consumption.assembly_kit": "ערכה"
+  "consumption.assembly_kit": "ערכה",
+  "joint.title": "החיבור, בחתך",
+  "joint.caption": "{end} · {kind} אל {frame}",
+  "joint.none": "האלמנט הזה אינו משוכן בדבר — הוא נוגע פנים אל פנים.",
+  "joint.nominal_member": "עובי האלמנט עצמו נומינלי: הקטלוג אינו מצהיר עליו.",
+  "joint.end.base": "בסיס",
+  "joint.end.top": "ראש",
+  "joint.kind.butt": "מגע ישיר",
+  "joint.kind.channel": "תעלה",
+  "joint.kind.groove": "חריץ",
+  "joint.kind.bracket": "תושבת",
+  "joint.kind.overlap": "חפיפה",
+  "joint.dim.channel": "שיכון {len_mm} {u}",
+  "joint.dim.engagement": "מושחל {len_mm} {u}",
+  "joint.dim.margin": "מרווח {len_mm} {u}"
 }
