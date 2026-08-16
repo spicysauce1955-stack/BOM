@@ -16,8 +16,13 @@ fall where they do.
 | 05 | [`05-frontend.md`](05-frontend.md) | How is the frontend put together — modules, state, four drawings, RTL? |
 | 06 | [`06-choices.md`](06-choices.md) | Why is it like this? The load-bearing decisions and their costs. |
 
-**The territory** — prose deep-dives that own the detail. Where the map and a
-deep-dive disagree about a mechanism, **the deep-dive wins** and the map is stale.
+**The territory** — prose deep-dives that own the detail.
+
+> **When two documents disagree, the CODE wins** and whichever document contradicts
+> it is the defect. This rule started life as "the deep-dive wins", which was wrong
+> the first time it was tested: `ai-layer.md` documented four AI ports with
+> signatures the three real Protocols do not have, and the map was the accurate one.
+> A deep-dive is more detailed, not more current.
 
 | File | Owns |
 |---|---|

@@ -103,8 +103,8 @@ built badly, an error describes a part not bought at all.
 
 ## Persistence
 
-Eight tables. Documents are stored as JSON `doc` columns; the schema holds only what
-is queried or ordered by.
+Nine tables — eight document stores plus the append-only `audit_log`. Documents are
+stored as JSON `doc` columns; the schema holds only what is queried or ordered by.
 
 ```sql
 projects(id, doc)

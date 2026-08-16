@@ -59,6 +59,7 @@ flowchart TD
     REP --> STR
     PRJ --> TOP
     PRJ --> AI
+    PRJ --> STR
     LRN --> KNO
     LRN --> FUL
     STO --> PRJ
@@ -71,6 +72,21 @@ flowchart TD
 
 > **Note.** `system-design.md`'s module map predates `fencemodel` and `report`; both
 > are added there alongside this document.
+
+### Two edges that point the wrong way
+
+`project` imports `strategy.overrides` and `ai.records` (`project/model.py:7,9`).
+Both are drawn above because both are real, and both are **inverted ownership**:
+
+* An `Override` is *authored project state*. Strategy **consumes** it; strategy
+  should not own the type. It sits under `strategy` for historical reasons.
+* An `InterpretationRecord` is persisted project provenance. The AI adapter
+  *produces* one but should not own its lifecycle model — and the port itself
+  belongs to the caller, not to the adapter package.
+
+Neither is a correctness defect today: both types are inert data, `project`
+imports no behaviour from either, and the dependency graph stays acyclic. They are
+recorded here so the next person does not read the direction as intentional.
 
 ---
 

@@ -485,6 +485,7 @@ classDiagram
         +str sku
         +int engineering_qty
         +str unit
+        %% sku and unit are EMPTY until resolve_supply
         +Mm cut_length_mm
         +str length_basis
         +list~str~ pegs
@@ -555,6 +556,18 @@ classDiagram
     RequirementLine ..> BomLine : pegs
     CutPiece ..> RequirementLine : requirement_id
 ```
+
+**`RequirementLine` carries two lifecycle states in one type.** `derive_requirements`
+emits it with `sku=""` and `unit=""` — deliberately, because only the chosen product
+knows the unit and the product is not chosen yet. `resolve_supply` writes both in one
+statement. The diagram shows the fields because they exist on the class; it cannot
+show that they are meaningless for the first half of the line's life.
+
+That is a genuine modelling weakness, not just a drawing limitation: nothing in the
+type system stops an unresolved line reaching `fulfill()`, which is why `fulfill()`
+has to *refuse* a blank sku at runtime. Splitting it into `DemandLine` /
+`ResolvedSupplyLine` / `UnresolvedSupplyLine` would make the illegal states
+unrepresentable. Recorded, not yet done.
 
 **`pegs` is the traceability invariant.** Every BOM line points back to the
 requirement lines that caused it, which point back to the strategy elements that

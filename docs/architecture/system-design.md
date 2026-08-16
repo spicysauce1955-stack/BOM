@@ -97,5 +97,11 @@ explicit button.
 ## What V1 deliberately defers
 
 Multi-user/auth, concurrent editing, Postgres, embeddings/semantic search, CP-SAT solvers,
-2D sheet cutting, arcs in plan geometry, IFC export, reservation/ATP beyond flags,
-impact-preview across historical projects (single-project impact analysis only).
+2D sheet cutting, arcs in plan geometry, IFC export, reservation/ATP beyond flags.
+
+**No longer deferred:** portfolio-wide impact preview shipped (`learning/impact.py`,
+`preview_impact` / `preview_model_impact`, reporting `projects_checked` and
+`projects_affected`). It runs synchronously inside the review endpoint, over one
+process and a serialized store — a known scaling limit, recorded in
+`docs/v1-known-limitations.md` rather than by leaving this list saying the feature
+does not exist.
