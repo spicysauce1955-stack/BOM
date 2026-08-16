@@ -248,3 +248,27 @@ def test_missing_hard_knowledge_is_generation_failure():
     empty = KnowledgeBase(versions=[])
     with pytest.raises(GenerationFailure):
         generate(straight_topology(3000), empty, demo_catalog())
+
+
+@pytest.mark.parametrize("name", sorted(_fixtures()))
+def test_no_generated_run_carries_a_pinned_product(name):
+    """`ResolvedSlot.pinned_sku` is a PREVIEW concept living on a persisted type.
+
+    A drawer can ask "what would this panel cost in cedar", and the resolver
+    narrows the slot's eligibility to answer — request-scoped, refused rather
+    than bypassed, and labelled a what-if on screen. What it must never be is a
+    product override that reached a stored run: it carries no `Override` record,
+    no anchor and no decision node, so a run holding one would price a product
+    nothing in the graph chose. The invariant was written down as a comment on
+    the field; the architecture review pointed out that a comment is not an
+    enforcement, and that a future caller wiring `slot_skus` into generation
+    would create exactly the fifth category the architecture forbids.
+    """
+    topo, overrides, inventory, *model = _fixtures()[name]
+    result = generate(topo, demo_knowledge(), demo_catalog(), overrides=overrides,
+                      models=LIBRARY, default_model=model[0] if model else None)
+    pinned = [(sp.id, slot.slot_key, slot.pinned_sku)
+              for sp in result.strategy.spans
+              for slot in (sp.panel.slots if sp.panel else [])
+              if slot.pinned_sku]
+    assert not pinned, pinned

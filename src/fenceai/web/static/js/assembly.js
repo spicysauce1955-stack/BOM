@@ -41,10 +41,10 @@ import {
   footingShape, macroDimensions, macroModel, macroPlacement,
 } from "./runview.js";
 import {
-  getReport, isStale, loadStructure, staleCode, staleKind,
+  getReport, loadStructure, refusalKey, staleCode,
 } from "./structure-data.js";
 import {
-  enumWord, inputStep, money, moneyDelta, toDisplayValue, toMm, tu,
+  enumWord, inputStep, money, moneyDelta, toDisplayValue, toMm, tu, unitParams,
 } from "./units.js";
 
 const MODES = ["split", "macro", "micro"];
@@ -223,18 +223,12 @@ function render() {
   renderDrawer();
 }
 
-/** The refusal branches, borrowed WHOLE from the Structure tab.
- *
- * "No structure yet" is true for exactly one state — no run. Every other branch
- * is a run that exists and cannot be laid out, and telling the user to generate
- * a strategy about one of those is a lie they cannot act on. */
+/** The refusal branches, from the module that OWNS the refusal state — not a
+ *  second copy of the mapping, which is how two surfaces come to disagree about
+ *  the same run (and which is a copy no test ever reached). */
 function emptyMessage() {
-  const key = !isStale() ? "assembly.no_run"
-    : staleKind() === "catalog" ? "structure.catalog_changed"
-    : staleKind() === "predates" ? "error.run_predates_fence_model"
-    : staleKind() === "unknown" ? "structure.unreadable"
-    : "structure.stale";
-  return `<div class="meta">${esc(t(key, { code: staleCode() }))}</div>`;
+  return `<div class="meta">${
+    esc(t(refusalKey("assembly.no_run"), { code: staleCode() }))}</div>`;
 }
 
 function renderMacro() {
@@ -328,8 +322,10 @@ function drawBay(group, bay, { px, pz }, drawParts) {
     [bay.x1_mm, bay.top_end_z_mm], [bay.x0_mm, bay.top_start_z_mm],
   ].map(([x, z]) => `${r(px(x))},${r(pz(z))}`).join(" ");
   el("polygon", { class: "macro-bay-face", points: outline }, g);
-  el("title", {}, g).textContent =
-    `${bay.tag} · ${bay.width_mm} × ${bay.height_mm}`;
+  // through tu() like every other length on this tab: a raw millimetre figure
+  // in a tooltip stays in millimetres after the user switches to centimetres
+  el("title", {}, g).textContent = `${bay.tag} · ${tu("assembly.bay_dims",
+    { width_mm: bay.width_mm, height_mm: bay.height_mm })}`;
 
   if (!drawParts || !bay.elevation?.members?.length) return;
   // The panel's own members, mapped into the opening. A raked bay is a SHEAR,
@@ -717,9 +713,23 @@ async function runPreview() {
 function refusalCode(err) {
   try {
     const detail = JSON.parse(String(err?.message || ""))?.detail;
-    if (detail?.code) return `error.${detail.code}`;
+    // the PARAMS travel with the code, as they do everywhere else in this app:
+    // `error.sku_not_eligible` is authored with {sku} and {slot_key}, and a
+    // sentence rendered without them shows the reader its own braces
+    if (detail?.code)
+      return { key: `error.${detail.code}`, params: detail.params || {} };
   } catch { /* not JSON */ }
-  return "assembly.preview_failed";
+  return { key: "assembly.preview_failed", params: {} };
+}
+
+// a refusal, localized the way warnings.js localizes one: escape the template,
+// then drop each param in bidi-isolated
+function refusalText(refusal) {
+  if (!refusal) return "";
+  let s = esc(t(refusal.key));
+  for (const [k, v] of Object.entries(unitParams(refusal.params || {})))
+    s = s.replaceAll(`{${k}}`, `<bdi>${esc(String(v))}</bdi>`);
+  return s;
 }
 
 function clearWhatIf() {
@@ -752,7 +762,7 @@ function renderCost() {
     bits.push(`<span class="stat"><span class="meta">${esc(t("assembly.run_bom"))}</span> `
       + `<b class="num">${esc(money(runBom))}</b></span>`);
   if (previewError)
-    bits.push(`<span class="stat meta">${esc(t(previewError, { code: "" }))}</span>`);
+    bits.push(`<span class="stat meta">${refusalText(previewError)}</span>`);
   else if (preview)
     bits.push(`<span class="stat"><span class="meta">${esc(t("assembly.panel_cost"))}</span> `
       + `<b class="num">${esc(money(preview.total_cents))}</b></span>`);
@@ -785,10 +795,15 @@ function renderDrawer() {
   if (!drawerSlot) { host.innerHTML = ""; return; }
   if (!preview) {
     host.innerHTML = `<div class="panel meta">${
-      esc(t(previewError || "assembly.no_options_here"))}</div>`;
+      previewError ? refusalText(previewError)
+                   : esc(t("assembly.no_options_here"))}</div>`;
     return;
   }
-  const model = partOptions(preview, drawerSlot, products, inventory);
+  // the OPTIONS come from the unpinned baseline and the price from the current
+  // preview: see partOptions — a pinned slot's own eligibility is the one
+  // product that was pinned, which is right for pricing and useless as a list
+  const model = partOptions(preview, drawerSlot, products, inventory,
+                            basePreview || preview);
   if (!model) { host.innerHTML = ""; return; }
   host.innerHTML = drawerHtml(model, {
     locale: currentLocale(), pinned: whatIf?.slot_skus?.[drawerSlot] || null,

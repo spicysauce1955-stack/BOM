@@ -85,6 +85,26 @@ export function staleKind() {
   return staleReason;
 }
 
+/** Which sentence a surface with no report should show, given what it calls the
+ *  ONE state that is not a refusal.
+ *
+ * "No structure yet" is true for exactly one state — no run. Every other branch
+ * is a run that exists and cannot be read as-is, and telling the user to
+ * generate a strategy about one of those is a lie they cannot act on.
+ *
+ * It lives here rather than in each tab because two copies of this mapping is
+ * how one surface comes to say "generate a strategy" about a run whose catalog
+ * moved while the surface beside it says the truth — and because a copy in a
+ * tab is a copy nothing tests. `noRunKey` is the only part that legitimately
+ * differs: each surface names its own absence. */
+export function refusalKey(noRunKey) {
+  if (!isStale()) return noRunKey;
+  return staleKind() === "catalog" ? "structure.catalog_changed"
+    : staleKind() === "predates" ? "error.run_predates_fence_model"
+    : staleKind() === "unknown" ? "structure.unreadable"
+    : "structure.stale";
+}
+
 // The refusal's `code`, for the branch that has no sentence of its own. Naming
 // the code is not a great message; claiming there is no structure is a false one.
 export function staleCode() {

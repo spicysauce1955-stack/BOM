@@ -29,6 +29,7 @@ import pytest
 from fenceai.catalog.demo import demo_catalog
 from fenceai.fencemodel.demo import demo_models
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
+from tests.fencemodel.test_preview import two_candidate_model
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem
 
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
@@ -54,6 +55,12 @@ await setLocale("en");
 const preview = %(preview)s;
 const products = %(products)s;
 const inventory = %(inventory)s;
+// a slot with a REAL alternative. Every built-in slot names exactly one eligible
+// product, so an option table built from one of those is a table of one row —
+// and the pick button, the delta column and the chosen/offer fork are then all
+// asserted as 0 == 0.
+const twoWay = %(two_way)s;
+const pinned = %(pinned)s;
 
 const out = {};
 const slat = partOptions(preview, "slat", products, inventory);
@@ -90,6 +97,34 @@ out.html = {
   raw_script: html.includes("<script"),
 };
 
+// the alternatives, which are the drawer's reason to exist
+const rail = partOptions(twoWay, "rail", products, inventory);
+out.two_way = {
+  skus: rail.options.map((o) => o.sku),
+  chosen: rail.options.filter((o) => o.chosen).map((o) => o.sku),
+  deltas: rail.options.map((o) => o.delta_cents),
+  prices: rail.options.map((o) => o.price_cents),
+};
+const twoWayHtml = drawerHtml(rail, { locale: "en" });
+out.two_way_html = {
+  buttons: (twoWayHtml.match(/data-pick-sku="/g) || []).length,
+  offers_the_other: twoWayHtml.includes('data-pick-sku="SLAT-100"'),
+  shows_delta: twoWayHtml.includes("+₪36.00"),
+  chosen_tags: (twoWayHtml.match(/tag active/g) || []).length,
+};
+// once a product is PINNED its own eligibility is that product alone — correct
+// for pricing, useless as a list. The table is built from the unpinned baseline.
+const pinnedRail = partOptions(pinned, "rail", products, inventory, twoWay);
+out.pinned = {
+  skus: pinnedRail.options.map((o) => o.sku),
+  chosen: pinnedRail.options.filter((o) => o.chosen).map((o) => o.sku),
+  buttons: (drawerHtml(pinnedRail, { locale: "en", pinned: "SLAT-100" })
+    .match(/data-pick-sku="/g) || []).length,
+};
+// and without the baseline it collapses, which is the defect this argument is about
+out.pinned_without_catalogue =
+  partOptions(pinned, "rail", products, inventory).options.map((o) => o.sku);
+
 // a hostile catalog: the name is server text and must not become markup
 const hostile = JSON.parse(JSON.stringify(products));
 const anySku = slat.options[0].sku;
@@ -121,10 +156,17 @@ def drawer():
         InventoryItem(id="i3", sku="SLAT-100", kind="remnant", length_mm=450),
         InventoryItem(id="i4", sku="RAIL-3000", kind="opened_package", qty=2),
     ])
+    two_way_model = two_candidate_model()
+    request = PreviewRequest(height_mm=1800, width_mm=2500)
     script = SCRIPT % {
         "preview": preview.model_dump_json(),
         "products": json.dumps({s: p.model_dump() for s, p in catalog.products.items()}),
         "inventory": inventory.model_dump_json(),
+        "two_way": preview_panel(two_way_model, request, catalog).model_dump_json(),
+        "pinned": preview_panel(
+            two_way_model,
+            request.model_copy(update={"slot_skus": {"rail": "SLAT-100"}}),
+            catalog).model_dump_json(),
     }
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script],
@@ -200,3 +242,39 @@ def test_a_hostile_product_name_and_colour_cannot_escape(drawer):
     the API. Both go somewhere dangerous — one into innerHTML, one into paint."""
     assert drawer["hostile"]["escaped"]
     assert drawer["hostile"]["no_bad_swatch"]
+
+
+# --- the alternatives, which are the drawer's reason to exist ---------------
+
+def test_a_slot_with_a_real_alternative_offers_it(drawer):
+    """Every built-in slot names exactly one eligible product, so a drawer tested
+    only against those asserts "0 alternatives were offered" and passes with the
+    offer branch deleted. This slot has two that genuinely cost different
+    amounts: RAIL-3000 (a 3000 mm bar at 1800c) and SLAT-100 (6000 mm at 5400c),
+    both able to supply a 2500 mm rail."""
+    assert drawer["two_way"]["skus"] == ["RAIL-3000", "SLAT-100"]
+    assert drawer["two_way"]["chosen"] == ["RAIL-3000"], "least cost wins by default"
+    assert drawer["two_way"]["prices"] == [1800, 5400]
+    # the delta is per PURCHASE UNIT, the only honest comparison before cutting
+    assert drawer["two_way"]["deltas"] == [0, 3600]
+
+
+def test_the_rendered_drawer_offers_the_alternative_and_prices_the_difference(drawer):
+    html = drawer["two_way_html"]
+    assert html["buttons"] == 1, "one button per product that is not the chosen one"
+    assert html["offers_the_other"]
+    assert html["shows_delta"], "a signed difference is what the column is for"
+    assert html["chosen_tags"] == 1
+
+
+def test_pinning_a_product_does_not_destroy_the_list_it_was_picked_from(drawer):
+    """A pin narrows that slot's eligibility — correct, and what makes the price
+    honest — so the pinned preview's `eligible_skus` is the pinned product alone.
+    Building the table from it collapsed the comparison to one row on the first
+    click, with no way to try a third product or go back. The list is a property
+    of the SLOT; only the price and the marker come from the choice."""
+    assert drawer["pinned"]["skus"] == ["RAIL-3000", "SLAT-100"]
+    assert drawer["pinned"]["chosen"] == ["SLAT-100"], "the pin is what was priced"
+    assert drawer["pinned"]["buttons"] == 1, "the other product is still offered"
+    # the defect, pinned as its own fact so the fix cannot be quietly undone
+    assert drawer["pinned_without_catalogue"] == ["SLAT-100"]

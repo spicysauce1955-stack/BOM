@@ -224,6 +224,8 @@ def test_one_module_owns_each_shared_renderer():
     "SKU — localized name". A copy of either in the new editor is how it comes
     to disagree with the knowledge tab — about what a failed hypothetical
     generation says, or about whether product names localize at all."""
+    import re
+
     js_dir = STATIC / "js"
     sources = {p.name: p.read_text() for p in [*js_dir.glob("*.js"), STATIC / "app.js"]}
     for fn, owner in [("renderImpactReport", "impact.js"),
@@ -237,8 +239,12 @@ def test_one_module_owns_each_shared_renderer():
                       ("money", "units.js"),
                       ("moneyDelta", "units.js"),
                       ("currencySymbol", "units.js")]:
-        definers = [name for name, src in sources.items()
-                    if f"function {fn}" in src or f"const {fn} =" in src]
+        # word-bounded: `function money` also matches `function moneyDelta`, so
+        # the single-owner rule for the shorter name was partly aliased by the
+        # longer one — a second `money` in another module would have passed as
+        # long as that module also defined a `moneyDelta`
+        pattern = re.compile(r"\b(?:function|const)\s+" + re.escape(fn) + r"\b")
+        definers = [name for name, src in sources.items() if pattern.search(src)]
         assert definers == [owner], (fn, definers)
     # One definition is only half of it: a module that stops IMPORTING the
     # shared renderer and inlines its own innerHTML defines nothing new and
@@ -509,3 +515,28 @@ def test_no_literal_currency_symbol_in_a_bundle_value():
 def test_the_currency_symbol_is_declared_in_both_bundles():
     for name, table in zip(("en", "he"), _bundles()):
         assert table.get("units.currency", "").strip(), name
+
+
+def test_every_joint_kind_and_consumption_model_has_a_word_in_both_bundles():
+    """Two more COMPUTED key families, and the reason the material/finish test
+    exists one screen up: `assembly.js` builds `joint.kind.${kind}` and
+    `part-drawer.js` builds `consumption.${kind}` by concatenation, and `t()`
+    returns the key itself when the bundle has no entry. A sixth JointKind or a
+    new consumption model would render "joint.kind.rebate" into a Hebrew UI —
+    silently, because nothing else reads those strings."""
+    from typing import get_args
+
+    from fenceai.catalog.model import Consumption
+    from fenceai.fencemodel.model import JointKind
+
+    en, he = _bundles()
+    for value in get_args(JointKind):
+        for name, table in (("en", en), ("he", he)):
+            assert f"joint.kind.{value}" in table, (name, value)
+    # the consumption union's discriminator values, straight off the models
+    kinds = {get_args(member.model_fields["kind"].annotation)[0]
+             for member in get_args(get_args(Consumption)[0])}
+    assert kinds, "the consumption union must be readable, or this test is vacuous"
+    for value in kinds:
+        for name, table in (("en", en), ("he", he)):
+            assert f"consumption.{value}" in table, (name, value)

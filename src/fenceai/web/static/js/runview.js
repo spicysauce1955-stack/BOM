@@ -213,8 +213,10 @@ export function macroModel(report, { faceWidths = {}, gapMm = SECTION_GAP_MM } =
  * bay at all — a gate hung at the end of a run — has no design top to be drawn
  * to, and the caller says so (`declared_top: false`) instead of inventing one. */
 function adjacentTops(out, station, x) {
-  // Matched by POSITION, not by run: a corner post is set out in two sections
-  // and carries a bay from each, and the taller of the two is what stands there.
+  // Matched by position within the chain. NOT a cross-section lookup: each
+  // section is unrolled at its own offset, so a corner post's two copies sit at
+  // two different x and can never see each other's bays — claiming otherwise
+  // here was a comment describing behaviour the code does not have.
   const tops = [];
   for (const bay of out.bays) {
     if (bay.x0_mm === x) tops.push(bay.top_start_z_mm);

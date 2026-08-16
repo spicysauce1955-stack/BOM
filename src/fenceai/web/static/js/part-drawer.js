@@ -17,8 +17,11 @@
 //     cut planner counts it: whole units and reusable remnants are different
 //     things, and adding them together would promise a 300 mm offcut as a post.
 //
-// DOM ownership: `#assembly-drawer`. `assembly.js` decides WHEN it opens; this
-// module decides what is in it.
+// DOM ownership: none. `assembly.js` owns `#assembly-drawer` and writes it; this
+// module is a pure producer of the HTML that goes in it and of the join behind
+// that HTML. (An earlier version of this header claimed the node, which would
+// have made two modules its owner — the one rule the frontend has no room to be
+// vague about.)
 
 import { esc } from "./api.js";
 import { t } from "./i18n.js";
@@ -26,16 +29,28 @@ import { money, moneyDelta, roleWord, tu } from "./units.js";
 
 /** The rows for one slot: the chosen product first, then its alternatives.
  *
- * `preview` is a PanelPreview (the slot's eligibility is on its parts),
+ * `preview` is the PanelPreview whose price and choice are being SHOWN;
+ * `catalogue` is the preview the option LIST comes from, and they are different
+ * documents on purpose. Pinning a sku narrows that slot's eligibility — which is
+ * correct, and is what makes the price honest — but `eligible_skus` on the
+ * narrowed preview then contains exactly the pinned product, so building the
+ * comparison table from it collapsed the table to one row on the first click and
+ * left no way back to the other candidates. The list is a property of the slot,
+ * not of the choice.
+ *
  * `products` the catalog map, `inventory` the project's items.
  *
  * Returns null when the preview has no such slot — which happens legitimately:
  * a fitted pattern can place none of a member, and a slot with no placed member
  * is not a part of this bay. */
-export function partOptions(preview, slotKey, products = {}, inventory = null) {
-  const part = (preview?.parts || []).concat(preview?.unsupplied || [])
+export function partOptions(preview, slotKey, products = {}, inventory = null,
+                            catalogue = null) {
+  const find = (doc) => (doc?.parts || []).concat(doc?.unsupplied || [])
     .find((p) => p.slot_key === slotKey);
+  const part = find(preview);
   if (!part) return null;
+  // the unnarrowed candidate set, when the caller has one to offer
+  const offered = find(catalogue)?.eligible_skus;
   const stock = stockBySku(inventory);
   const chosenPrice = unitPrice(products, part.sku);
   return {
@@ -46,7 +61,7 @@ export function partOptions(preview, slotKey, products = {}, inventory = null) {
     unit: part.unit || "",
     total_cents: part.total_cents || 0,
     unsupplied: (preview?.unsupplied || []).some((p) => p.slot_key === slotKey),
-    options: (part.eligible_skus || []).map((sku) => {
+    options: (offered?.length ? offered : part.eligible_skus || []).map((sku) => {
       const product = products[sku] || null;
       const price = unitPrice(products, sku);
       return {
@@ -153,9 +168,17 @@ export function drawerHtml(model, { locale = "en", pinned = null } = {}) {
 
 function optionRow(option, locale, pinned) {
   const name = option.name?.[locale] || option.name?.en || option.fallback_name;
-  const material = [option.material ? t(`material.${option.material}`) : null,
-                    option.finish ? t(`finish.${option.finish}`) : null]
-    .filter(Boolean).join(" · ");
+  // A catalog is editable through the API, so its vocabulary is open while the
+  // bundle's is not: `t()` returns the KEY when it has no entry, and a product
+  // made of bamboo would read "material.bamboo". Fall back to the attr itself.
+  const word = (prefix, value) => {
+    if (!value) return null;
+    const key = `${prefix}.${value}`;
+    const said = t(key);
+    return said === key ? value : said;
+  };
+  const material = [word("material", option.material),
+                    word("finish", option.finish)].filter(Boolean).join(" · ");
   const stock = option.on_hand
     ? `<span class="num">${esc(String(option.on_hand))}</span>`
     : `<span class="meta">${esc(t("drawer.none_on_hand"))}</span>`;
