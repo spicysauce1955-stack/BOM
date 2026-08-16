@@ -1,9 +1,10 @@
 # Current status
 
-Updated: 2026-08-13 — V1 complete; fence models phase 1 landed, and W1–W5 plus
-most of W6 of `specs/2026-08-12-panel-authoring-design.md` are in: a model is
-persisted, selectable, previewable, explainable, editable and now DRAWN. Two
-review rounds (architecture + tests) dispositioned. Remaining:
+Updated: 2026-08-16 — the two-tier visualizer is in: an Assembly tab with two
+synchronized viewports (the run standing up, and one panel assembled), a material
+and inventory drawer on every part, a live what-if that never generates, joints
+that change the cut list and are drawn in section, and prices in ₪. Five tags,
+`v0.6.0-nis` through `v0.9.0-joint-drawing`. Still open from the panel arc:
 `excess=trim_last`/`extension_clip`, `InfillSpec.supply=assembly`, and phase 3
 arc-flow.
 
@@ -759,3 +760,70 @@ a member can seat at both ends (`details` is per-end and states both), and the d
 ends — `end` disambiguates it.
 
 977 pytest (+12) · 145 golden scenarios · gate byte-identical, no regeneration.
+
+## The two-tier visualizer (2026-08-14/16) — COMPLETE
+Spec `docs/superpowers/specs/2026-08-14-two-tier-visualizer-design.md`. Nine waves,
+each tested, merged and tagged: `v0.6.0-nis`, `v0.6.1-post-embed`, `v0.7.0-assembly`,
+`v0.8.0-joints`, `v0.9.0-joint-drawing`.
+
+**Prices read ₪.** Five hardcoded `€${(cents/100).toFixed(2)}` sites — two of them
+copies of one `money` helper — became `units.money()` reading `units.currency`, which is
+what lets the bundle test forbid a bare symbol anywhere else. Thousands group and deltas
+are signed. Multi-currency is deliberately NOT done: that is a `Money(amount, currency)`
+type through the whole cost tier plus a rate source with an as-of date, and a symbol swap
+wearing its clothes is worse than one honest currency.
+
+**The Assembly tab: two viewports over one fence.** MACRO (`runview.js`, pure, node
+tested) unrolls the structure report into an elevation — posts in their footings, the
+embedded length hatched below the ground line, panels drawn as their own members and
+bounded by the post faces they dock into, gates with a swing arc, risers where two bays'
+bottoms disagree, and the dimension set (total run, bay widths, heights, embedment, step
+rise) behind one switch. MICRO is the same `elevation.js` drawing the Panel and Structure
+tabs use, for the bay the macro view has selected. Selection is shared in both directions:
+a bay picked above is assembled below, and a member picked below lights up every bay that
+carries it — the macro question the micro view cannot answer on its own.
+
+`runview.js` PLACES and does not compute: every station, elevation, height, width and
+embedment it emits is a field of the report, which is itself forbidden from recomputing a
+quantity. It refuses three inventions and says each out loud — a post whose product
+declares no `face_width_mm` is a nominal, a gate opening with no neighbouring height gets
+no leaf, and above 900 drawn members panels become blocks and the panel says it simplified.
+
+**The material & inventory drawer** joins three documents on one SKU (the slot's own
+eligibility, the catalog, this project's stock) and is pure, because each join has a way
+of being wrong that looks fine: offering the CATALOG rather than the eligible set, adding
+remnants to whole units, or showing a rate-priced product's per-metre figure in a column
+of per-unit prices.
+
+**Real time, honestly.** Typing a height or picking a product re-runs the same preview
+pipeline the Panel tab uses, at the selected bay's model and version, in 250 ms. It is
+labelled a what-if with one button back, and the cost strip names BOTH figures — this
+run's BOM and one panel's preview — every time, because two numbers with the same shape
+and different meanings are exactly what a silently-switching live figure gets wrong.
+Generation stays behind the explicit button and the smoke counts the project's runs across
+a dimension change to prove it.
+
+**Joints, at two scales.** `between_frame` honours `base_ref`/`top_ref`, so a slat seated
+15 mm into a channel is CUT 15 mm longer: the picture and the price come from one extent.
+The elevation hatches the housed end (the one honest thing it can say at 1:8000); the
+section inset beside it draws the housing, the clearance, the seated length and the
+exposed run, each dimensioned from numbers the read model already spent on the cut list.
+A butt landing draws no section at all. The pattern PITCH (member + gap, the figure a slat
+fence is specified by) is emitted only when constant — `spread_to_fit` absorbs its
+remainder into the gaps, and one pitch over an uneven pattern is wrong by the last bay.
+
+**Not built, deliberately**: no 3D (a different renderer with a different set of lies
+available to it, and nothing in the BOM needs it); the Assembly tab is not on the print
+sheet (what goes to site is a decision for whoever owns that sheet); and a drawer
+selection stays preview-scoped — making one stick is authoring the model or writing an
+override, both existing surfaces, neither bypassed by a dropdown.
+
+**What the browser suite caught that pytest could not**, again, three times: a rail
+painting black because the macro member carried its role class but not `elev-member`;
+selecting a different bay keeping the previous bay's preview, so the cost strip quoted one
+panel's price under another's tag (both numbers correct in isolation); and the joint
+section rendering inside the panel's own render, so it ran once while nothing was selected
+and never again — the box was present and simply empty.
+
+906 pytest · 145 golden scenarios · 155/155 smoke · compatibility gate byte-identical
+throughout the arc.
