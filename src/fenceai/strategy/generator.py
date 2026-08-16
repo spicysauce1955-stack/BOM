@@ -25,7 +25,7 @@ from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import (
-    PanelContext, choose_variant, height_supported, resolve_panel,
+    PanelContext, ResolvedPanel, choose_variant, height_supported, resolve_panel,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.evaluator import (
@@ -1275,6 +1275,30 @@ def _generate_run(
             governed_by=governed,
         )
         stations = boundaries(seg_start, layout.widths)
+        # The bays this segment is about to lay out, NAMED before they exist so
+        # the quantities that govern them are recorded first. `rails_per_span`
+        # decides how many positions a `Distributed` frame slot has, and those
+        # positions are what a `between_frame` member is measured between — so
+        # the rail count sits upstream of a slat's cut length and has to reach
+        # `resolve_panel` as an input EDGE. Emitted after the span loop (where
+        # this node used to live) it could only ever SHARE A SCOPE with the bays
+        # it decided, and a shared scope is not a chain anything can walk.
+        #
+        # Per segment rather than per model: a segment is the smallest stretch
+        # that has one model, and these numbers were resolved under that model's
+        # scope. Two segments built to one model repeat the node, which says the
+        # same true thing about each set of bays — where one node covering both
+        # would have to be emitted before either segment picked its model.
+        segment_span_ids = [f"span@{run.id}:{s0}-{s1}"
+                            for s0, s1 in zip(stations, stations[1:])]
+        quantity_node = builder.add(
+            "quantity", "resolve_span_quantities",
+            payload={"rails_per_span": sm.rails_per_span,
+                     "screws_per_span": sm.screws_per_span},
+            scope_refs=segment_span_ids,
+            inputs=[run_fact.id, sm.select_node_id],
+            governed_by=sm.quantity_refs,
+        )
         for s0, s1 in zip(stations, stations[1:]):
             width = s1 - s0
             mid = (s0 + s1) // 2
@@ -1344,7 +1368,7 @@ def _generate_run(
                 inputs=[layout_node.id] + ([fv_node] if fv_node else []),
                 governed_by=governed,
             )
-            panel_inputs = [layout_node.id, sm.select_node_id]
+            panel_inputs = [layout_node.id, sm.select_node_id, quantity_node.id]
             if model.variants:
                 # NO `defeated` edge, and that is not an omission: a variant
                 # condition is evaluated outside the knowledge evaluator, so
@@ -1382,8 +1406,7 @@ def _generate_run(
             builder.add(
                 "structural", "resolve_panel",
                 payload={"model_ref": model.ref,
-                         "slots": [{"key": s.slot_key, "role": s.role, "qty": s.qty}
-                                   for s in span.panel.slots]},
+                         "slots": _panel_slots_payload(span.panel)},
                 scope_refs=[span.id], inputs=panel_inputs,
             )
             if width > sm.max_span:
@@ -1502,21 +1525,6 @@ def _generate_run(
             )
             strategy.posts.append(post)
 
-    # one node per model actually built to, scoped to that model's bays — the
-    # numbers differ per model as soon as a rule is scoped to `series`, and a
-    # single run-wide node would then attribute one model's rail count to the
-    # other model's bays
-    for key, ids in spans_by_model.items():
-        sm = resolved[key]
-        builder.add(
-            "quantity", "resolve_span_quantities",
-            payload={"rails_per_span": sm.rails_per_span,
-                     "screws_per_span": sm.screws_per_span},
-            scope_refs=ids,
-            inputs=[run_fact.id, sm.select_node_id],
-            governed_by=sm.quantity_refs,
-        )
-
     _check_panel_safety(kb, run, scope, strategy, builder, resolved, spans_by_model,
                         {s.id: s for s in strategy.spans}, ctx["run"])
 
@@ -1576,6 +1584,64 @@ def _generate_run(
                         "run_id": run.id, "n": len(affected)},
             )
         )
+
+
+def _panel_slots_payload(panel: ResolvedPanel) -> list[dict]:
+    """One `resolve_panel` payload entry per slot: what it is, how many, and —
+    where resolution fixed one — the LENGTH each piece is cut to.
+
+    Before the panel waves every cut length on a BOM line was derivable from the
+    graph: `panel_height` and `centre_to_centre` are functions of `create_span`'s
+    own payload, and `create_span` is an input edge of this node. `between_frame`
+    is not. Its length is a function of the frame slots' positions, their face
+    heights and the two engagements — none of which appears anywhere else in the
+    graph — so the slat that is 1665 mm instead of 1800 mm, the whole reason
+    M-SLAT@v2 exists, was a number `/explain` could not say (review finding 3).
+
+    So the terms of that subtraction travel too, under `between`:
+
+        length = (top_position - top_thickness//2 + top_engagement)
+               - (base_position + base_thickness//2 - base_engagement)
+
+    which is `_between_frame_extent`'s arithmetic, reported rather than repeated
+    — nothing here recomputes it, and `length_mm` beside it is the resolver's own
+    answer. The positions are the OUTERMOST of each referenced set, because that
+    is the pair the resolver measured between.
+
+    `between` appears only where a span start was actually fixed, which is
+    exactly where those positions were used: a slot whose refs inverted at this
+    bay's height resolved no length, and listing the positions it failed against
+    as the ones it used would be a different claim. That bay's slot is reported
+    by the `panel_length_unresolved` conflict instead.
+    """
+    frame = {s.slot_key: s for s in panel.slots if s.slot_kind == "frame"}
+    entries: list[dict] = []
+    for slot in panel.slots:
+        entry: dict = {"key": slot.slot_key, "role": slot.role, "qty": slot.qty}
+        if slot.length_mm is not None:
+            entry["length_mm"] = slot.length_mm
+        if slot.span_start_mm is not None:
+            entry["span_start_mm"] = slot.span_start_mm
+            between = {}
+            for end, ref, engagement in (
+                ("base", slot.base_ref, slot.base_engagement_mm),
+                ("top", slot.top_ref, slot.top_engagement_mm),
+            ):
+                target = frame.get(ref or "")
+                if target is None or not target.positions_mm:
+                    continue
+                between[end] = {
+                    "slot": target.slot_key,
+                    "position_mm": (min if end == "base" else max)(target.positions_mm),
+                    # 0 for an undeclared face height, which is what the extent
+                    # calculation contributed for it — not a nominal
+                    "thickness_mm": target.thickness_mm or 0,
+                    "engagement_mm": engagement,
+                }
+            if between:
+                entry["between"] = between
+        entries.append(entry)
+    return entries
 
 
 # The panel checks, and the ONE knowledge param each is governed by. Every gap a

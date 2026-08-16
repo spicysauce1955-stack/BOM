@@ -270,3 +270,86 @@ def test_the_bay_drawing_names_its_products_like_the_preview_does(client):
     assert members
     slats = [m for m in members if m["slot_key"] == "slat"]
     assert slats and all(m["sku"] == "SLAT-100" for m in slats)
+
+
+# --- the two-tier visualizer review ------------------------------------------
+#
+# A second review, of the arc that put the fence on two drawings. Its findings
+# are about what the GRAPH and the READ MODEL say, so they are tested here beside
+# the panel-wave defects rather than in the drawing that consumes them.
+
+def _channel_run():
+    """A section built entirely to M-SLAT@v2 — the model whose slats are cut to
+    1665 instead of 1800, which is the whole reason the version exists."""
+    from fenceai.fencemodel.demo import M_LEGACY, M_SLAT_V2
+
+    library = FenceModelLibrary(models=[M_LEGACY, M_SLAT, M_SLAT_V2])
+    return generate(straight_topology(6000), demo_knowledge(), demo_catalog(),
+                    models=library,
+                    default_model=FenceModelChoice(model_id="M-SLAT", version_pin=2))
+
+
+def test_the_length_a_slat_is_cut_to_is_derivable_from_the_decision_graph():
+    """MAJOR 3. `/explain` said "Panel M-SLAT@v2 built from 12 infill" and could
+    not say 1665 — the number the version exists for. `panel_height` and
+    `centre_to_centre` are functions of `create_span`'s payload, which is an
+    input edge of the panel node; `between_frame` is a function of the frame
+    slots' positions, their face heights and the two engagements, and none of
+    those appeared in any node.
+
+    Hand-derived, in a 1500 mm bay 1800 mm high:
+
+        start = 50 (channel centreline) + 60//2 (its face) − 15 (engagement) = 65
+        end   = 1750 (rail centreline)  − 40//2 (its face) + 0               = 1730
+        slat  = 1730 − 65                                                    = 1665
+    """
+    from fenceai.decisions.explain import explain_node
+
+    result = _channel_run()
+    node = next(n for n in result.graph.nodes if n.action == "resolve_panel")
+    slat = next(s for s in node.payload["slots"] if s["key"] == "slat")
+
+    assert (slat["length_mm"], slat["span_start_mm"]) == (1665, 65)
+    base, top = slat["between"]["base"], slat["between"]["top"]
+    assert (base["slot"], base["position_mm"], base["thickness_mm"],
+            base["engagement_mm"]) == ("bottom_channel", 50, 60, 15)
+    assert (top["slot"], top["position_mm"], top["thickness_mm"],
+            top["engagement_mm"]) == ("top_rail", 1750, 40, 0)
+    # the reported terms ARE the subtraction, so a reader can redo it
+    start = base["position_mm"] + base["thickness_mm"] // 2 - base["engagement_mm"]
+    end = top["position_mm"] - top["thickness_mm"] // 2 + top["engagement_mm"]
+    assert (start, end - start) == (slat["span_start_mm"], slat["length_mm"])
+    assert all(isinstance(v, int) for v in (start, end, slat["length_mm"]))
+
+    for lang, cut in (("en", "1665 mm"), ("he", '1665 מ"מ')):
+        assert cut in explain_node(result.graph, node, lang=lang)
+
+
+def test_the_rule_that_set_the_rail_count_reaches_the_panel_it_measured():
+    """MAJOR 3, the other half. `positions_mm` under a `Distributed` slot depend
+    on `rails_per_span`, so the rail count sits upstream of a `between_frame` cut
+    length — but `resolve_span_quantities` was emitted AFTER the span loop, and
+    the chain from a slat's length back to the rule that set the count existed
+    only as a shared `scope_refs`, which nothing can walk.
+    """
+    kb = demo_knowledge()
+    # scoped to the project, so it beats the demo's own K-RAILS on specificity
+    # rather than tying with it
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-THREE-RAILS", version=1, type="company_rule",
+        title="three rails", scope={"project_id": "proj_rails"},
+        actions=[SetParam(param="rails_per_span", value=3)]))
+    result = generate(straight_topology(6000), kb, demo_catalog(),
+                      project_id="proj_rails")
+
+    panel = next(n for n in result.graph.nodes if n.action == "resolve_panel")
+    quantities = next(n for n in result.graph.nodes
+                      if n.action == "resolve_span_quantities")
+    assert quantities.payload["rails_per_span"] == 3
+    assert quantities.id in [e.from_id for e in result.graph.in_edges(panel.id)]
+    # and so the governing version is reachable FROM the panel, not merely nearby
+    refs = {e.knowledge_ref for anc in result.graph.ancestors(panel.id)
+            for e in result.graph.in_edges(anc.id) if e.type == "governed_by"}
+    assert "K-THREE-RAILS@v1" in refs
+
+
