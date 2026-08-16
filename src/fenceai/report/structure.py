@@ -7,7 +7,7 @@ the two questions the drawing and the BOM leave between them:
   * what does each element consist of (its parts).
 
 Nothing here computes quantities. The parts come from inverting pegs that already
-exist — `RequirementLine.pegs` holds strategy element ids and `BomLine.pegs` holds
+exist — `ResolvedSupplyLine.pegs` holds strategy element ids and `BomLine.pegs` holds
 requirement ids — so the sum of the per-element parts IS the BOM, grouped by element
 instead of by SKU. Anything the BOM carries that no element asked for (rounding
 overage, a package remainder) is reported as unassigned rather than quietly dropped.
@@ -22,7 +22,8 @@ from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
-from fenceai.demand.derive import RequirementLine
+from fenceai.demand.derive import DemandLine
+from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.fulfill import Bom
 from fenceai.report.elevation import PanelElevation, panel_elevation
 from fenceai.strategy.model import Strategy, StrategyWarning
@@ -205,7 +206,10 @@ class StructureReport(BaseModel):
     # `warnings` for the same reason: routing them out of `requirements` (so a
     # blank sku can never reach fulfill()/the ledger) must not make them
     # disappear from what this view reports.
-    unresolved: list[RequirementLine] = []
+    # DemandLines, not resolved ones: an unresolved line is precisely one
+    # that never got a product, and the type is what stops it reaching
+    # fulfill()
+    unresolved: list[DemandLine] = []
 
 
 # --- parts, by inverting the pegs -------------------------------------------
@@ -230,7 +234,7 @@ class _Ledger(BaseModel):
     from_stock: list[SkuTotal] = []
 
 
-def _parts_by_element(requirements: list[RequirementLine], bom: Bom) -> _Ledger:
+def _parts_by_element(requirements: list[ResolvedSupplyLine], bom: Bom) -> _Ledger:
     """element id -> its parts, and the two ways the BOM can differ from them.
 
     Everything is accounted per (sku, UNIT): one SKU can legitimately be demanded
@@ -346,7 +350,7 @@ def _declared_post_length(catalog: Catalog | None, sku: str) -> Mm | None:
 def build_structure(
     topology: Topology,
     strategy: Strategy,
-    requirements: list[RequirementLine],
+    requirements: list[ResolvedSupplyLine],
     bom: Bom,
     run_id: str = "",
     catalog: Catalog | None = None,

@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from typing import Literal, get_args
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from fenceai.catalog.model import Catalog, purchase_price_cents
 from fenceai.core.units import Cents, Mm
-from fenceai.demand.derive import RequirementLine
+from fenceai.demand.derive import DemandLine
+from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.cutplan import CutPiece, RemnantStock, plan_cuts
 from fenceai.fulfillment.fulfill import Inventory, engineering_unit_for
 from fenceai.strategy.model import StrategyWarning
@@ -66,15 +67,15 @@ class SupplyDecision(BaseModel):
 
 
 class SupplyResolution(BaseModel):
-    # every line here has a real sku — the invariant fulfill() and the parts
-    # ledger both depend on is enforced HERE, structurally, not by caller
-    # discipline: a blank sku can never leave this module inside `requirements`.
-    requirements: list[RequirementLine] = []
-    # lines that could not be resolved (no eligible item, or only suggest-only
-    # members without approval). Not discarded — each one has a matching entry
-    # in `warnings`, so nothing goes silent; a future caller is free to surface
-    # them (e.g. on the structure sheet) without risking them reaching fulfill().
-    unresolved: list[RequirementLine] = []
+    # every line here has a real sku — enforced by the TYPE now, so it cannot be
+    # bypassed by a caller, a refactor, or a three-word edit
+    requirements: list[ResolvedSupplyLine] = []
+    # lines that could not be resolved (no eligible item, nothing feasible, or
+    # only suggest-only members without approval). Still DemandLines, which is
+    # the point: an unresolved line is one that never got a product, and it
+    # cannot reach `fulfill()` because `fulfill()` does not accept its type.
+    # Each has a matching entry in `warnings`, so nothing goes silent.
+    unresolved: list[DemandLine] = []
     warnings: list[StrategyWarning] = []
     decisions: list[SupplyDecision] = []
 
@@ -83,7 +84,7 @@ def _usable(members, approvals: set[str]) -> list:
     return [m for m in members if m.approval == "auto" or m.sku in approvals]
 
 
-def _element_params(line: RequirementLine) -> dict[str, str | int]:
+def _element_params(line: DemandLine) -> dict[str, str | int]:
     """The part of a warning that says WHICH element it is about.
 
     `role` + `slot_key` alone name a KIND of part, not an instance: every bay of
@@ -95,7 +96,7 @@ def _element_params(line: RequirementLine) -> dict[str, str | int]:
     return {"pegs": ", ".join(line.pegs)}
 
 
-def _piece_too_long(sku: str, lines: list[RequirementLine], catalog: Catalog) -> bool:
+def _piece_too_long(sku: str, lines: list[DemandLine], catalog: Catalog) -> bool:
     """This product exists, and one of these pieces is longer than its stock.
 
     The same comparison `plan_cuts` makes before it raises — kerf cancels on both
@@ -115,7 +116,7 @@ def _piece_too_long(sku: str, lines: list[RequirementLine], catalog: Catalog) ->
     )
 
 
-def _can_supply(sku: str, lines: list[RequirementLine], catalog: Catalog) -> bool:
+def _can_supply(sku: str, lines: list[DemandLine], catalog: Catalog) -> bool:
     """Can this candidate supply these lines AT ALL — the gate every candidate
     passes before it can be chosen, whatever the preset and however many rivals
     it has. Pure catalog + geometry: no cut plan is built, so it is cheap enough
@@ -123,21 +124,20 @@ def _can_supply(sku: str, lines: list[RequirementLine], catalog: Catalog) -> boo
     return sku in catalog.products and not _piece_too_long(sku, lines, catalog)
 
 
-def _name_product(line: RequirementLine, sku: str, catalog: Catalog) -> None:
+def _resolved(line: DemandLine, sku: str, catalog: Catalog) -> ResolvedSupplyLine:
     """Give a line its product — and, in the SAME statement, the unit that
     product is counted in.
 
-    This is the only place a requirement acquires a sku, which makes it the only
-    place that can decide the unit; setting the two together is what stops the
-    asked and purchased sides of the parts ledger from ever disagreeing. The
-    value comes from `fulfillment.fulfill.engineering_unit_for`, which is
-    literally the function `fulfill()` uses to stamp `BomLine.engineering_unit`.
+    This is the only place a demand acquires a sku, which makes it the only place
+    that can decide the unit; setting the two together is what stops the asked
+    and purchased sides of the parts ledger from ever disagreeing. The value
+    comes from `fulfillment.fulfill.engineering_unit_for`, which is literally the
+    function `fulfill()` uses to stamp `BomLine.engineering_unit`.
     """
-    line.sku = sku
-    line.unit = engineering_unit_for(catalog, sku)
+    return ResolvedSupplyLine.of(line, sku, engineering_unit_for(catalog, sku))
 
 
-def _infeasible_warning(line: RequirementLine, skus: list[str]) -> StrategyWarning:
+def _infeasible_warning(line: DemandLine, skus: list[str]) -> StrategyWarning:
     """"There are candidates, and not one of them fits" — distinct from
     `no_eligible_item` ("there are no candidates at all"), because the two send
     the reader to different places: one to the model's eligibility, the other to
@@ -155,7 +155,7 @@ def _infeasible_warning(line: RequirementLine, skus: list[str]) -> StrategyWarni
 
 
 def resolve_supply(
-    requirements: list[RequirementLine],
+    requirements: list[DemandLine],
     catalog: Catalog,
     inventory: Inventory | None = None,
     preset: Preset = "least_cost",
@@ -178,27 +178,15 @@ def resolve_supply(
     # lines still needing a choice, deep-copied so the caller's lines are never
     # touched — grouped below so one demand is answered by one product, never
     # split across skus the way SAP's usage-probability model would.
-    pending: list[RequirementLine] = []
+    pending: list[DemandLine] = []
     for req in requirements:
         line = req.model_copy(deep=True)   # never mutate the caller's lines
-        if line.sku:
-            # An authored sku skips the choice — there is nothing to choose — but
-            # not the feasibility gate: `fulfill()` hands a too-long piece
-            # straight to `plan_cuts`, which raises a raw English sentence that
-            # became a 400 on /bom, /structure AND /quote with no code, no
-            # params and no locale entry. No line in the shipped demand carries
-            # both a sku and a cut length today, so this guard fires for nothing
-            # that exists — it is here so the invariant "fulfill() never sees a
-            # piece longer than its stock" holds for every path into it, not
-            # just the resolved one.
-            if _piece_too_long(line.sku, [line], catalog):
-                out.warnings.append(_infeasible_warning(line, [line.sku]))
-                out.unresolved.append(line)
-                continue
-            _name_product(line, line.sku, catalog)
-            out.requirements.append(line)
-            continue
-
+        # There is no longer a branch for "this line already knows its product".
+        # A sku knowledge chose arrives as a ONE-MEMBER eligibility, so it takes
+        # the same path as every other line and passes the same feasibility gate
+        # — which is what the old authored-sku branch had to re-implement, and
+        # what it was missing until a saved run could be made permanently
+        # unreadable through the UI alone.
         if not line.eligibility.members:
             out.warnings.append(StrategyWarning(
                 code="no_eligible_item", severity="error",
@@ -233,7 +221,7 @@ def resolve_supply(
     # whichever line happened to be lines[0], silently misreporting the
     # other's decision. Same sku set + same priorities + same approvals is
     # still "one demand", so it is still answered once.
-    groups: dict[tuple, list[RequirementLine]] = {}
+    groups: dict[tuple, list[DemandLine]] = {}
     for line in pending:
         usable_members = _usable(line.eligibility.members, approvals)
         key = tuple(sorted((m.sku, m.priority, m.approval) for m in usable_members))
@@ -243,6 +231,21 @@ def resolve_supply(
         usable = [m for m in lines[0].eligibility.members
                   if (m.sku, m.priority, m.approval) in key]
         chosen, candidates = _choose(usable, lines, catalog, inventory, preset)
+        if chosen is None and len(usable) == 1 and usable[0].sku not in catalog.products:
+            # ONE candidate, and it names a product the catalog does not have.
+            # That is not a length problem, and `_piece_too_long`'s docstring says
+            # so: `fulfill()` has its own defined answer — a zero-priced, flagged
+            # line — which is how a post pointing at a DELETED product still shows
+            # up on the BOM instead of vanishing into a warnings panel.
+            #
+            # Narrow on purpose. With rivals, an unknown sku must stay filtered
+            # out so a real product can win; `_candidate_cost` cannot price a
+            # product that does not exist, and a candidate costing nothing would
+            # beat every one that does. With exactly one there is no rival to
+            # protect, and losing the line loses the information.
+            for line in lines:
+                out.requirements.append(_resolved(line, usable[0].sku, catalog))
+            continue
         if chosen is None:
             # Every candidate is infeasible. This used to fall back to the full
             # field and pick one anyway: no warning, nothing in `unresolved`, and
@@ -261,8 +264,7 @@ def resolve_supply(
                 out.unresolved.append(line)
             continue
         for line in lines:
-            _name_product(line, chosen.sku, catalog)
-            out.requirements.append(line)
+            out.requirements.append(_resolved(line, chosen.sku, catalog))
         if candidates:
             # only when there was a real choice: `_choose` returns no candidates
             # for a lone feasible member, because there is nothing to account for
@@ -272,10 +274,21 @@ def resolve_supply(
                 slot_key=lines[0].slot_key, role=lines[0].role,
                 chosen=chosen.sku, preset=preset, candidates=candidates,
             ))
+
+    # Grouping is an internal optimisation — one demand answered once — and it
+    # must not reorder the ANSWER. Posts, caps and concrete used to be emitted
+    # immediately, in demand order, because they skipped the choice; now that
+    # every line is grouped, the natural output order is group order, which
+    # reads as an unrelated change on every /bom response and in every gate
+    # file. Restored to the order demand asked in, which is the order the fence
+    # is built in.
+    position = {req.id: i for i, req in enumerate(requirements)}
+    out.requirements.sort(key=lambda line: position[line.id])
+    out.unresolved.sort(key=lambda line: position[line.id])
     return out
 
 
-def _candidate_cost(sku: str, lines: list[RequirementLine], catalog, inventory) -> int:
+def _candidate_cost(sku: str, lines: list[DemandLine], catalog, inventory) -> int:
     """Cents to buy this candidate for these lines, by actually planning the cuts.
     A candidate the planner cannot use at all costs infinitely."""
     if not _can_supply(sku, lines, catalog):

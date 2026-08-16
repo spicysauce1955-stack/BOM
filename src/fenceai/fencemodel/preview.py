@@ -391,11 +391,19 @@ def _apportion(total: Cents, weights: list[int]) -> list[Cents]:
 
 
 def _part(line, bom_line) -> PreviewPart:
+    """One row of the preview, from either kind of line.
+
+    `line` is a `ResolvedSupplyLine` for a priced part and a plain `DemandLine`
+    for an unsupplied one — which by definition never got a product, so it has
+    no sku and no unit to report. Empty strings are the honest answer here rather
+    than a placeholder: the caller renders `unsupplied` ABOVE the priced table
+    precisely so a panel one part short cannot read as complete.
+    """
     return PreviewPart(
         slot_key=line.slot_key, role=line.role, qty=line.engineering_qty,
-        length_mm=line.cut_length_mm, unit=line.unit,
+        length_mm=line.cut_length_mm, unit=getattr(line, "unit", ""),
         eligible_skus=[m.sku for m in line.eligibility.members],
-        sku=line.sku,
+        sku=getattr(line, "sku", ""),
         unit_price_cents=bom_line.unit_price_cents if bom_line else 0,
         purchase_qty=bom_line.purchase_qty if bom_line else 0,
         total_cents=bom_line.total_cents if bom_line else 0,

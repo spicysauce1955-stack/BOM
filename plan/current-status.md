@@ -1,5 +1,52 @@
 # Current status
 
+## One line, one lifecycle state (2026-08-16) — W2b, option A
+Audit finding §1.7. `RequirementLine` was both states at once: demand emitted it
+with `sku=""` and `unit=""`, and `resolve_supply` filled them in by MUTATING the
+same object. So the type claimed a product through the whole half of its life
+where it had none, and "a blank sku never reaches `fulfill()`" rested on caller
+discipline — which `fulfill()`'s own refusal records having been broken at all
+three routes by a three-word edit that produced zero test failures.
+
+`DemandLine` (no sku, no unit) and `ResolvedSupplyLine` (both required, non-empty,
+set together by `of()` because the unit is a property of the CHOSEN product).
+`fulfill()`'s runtime check is gone, and its absence is the point: there is no
+longer a value to hand it that it would have to refuse. `ResolvedSupplyLine` lives
+in its own `fulfillment/lines.py` for the same reason `fencemodel/selection.py`
+exists — `supply.py` needs `fulfill.engineering_unit_for` to build one and
+`fulfill.py` consumes one, so the type cannot live in either.
+
+**Option A, chosen deliberately: one path.** A product knowledge already chose —
+a post, a cap, concrete, a gate kit — now arrives as a ONE-MEMBER eligibility
+instead of an authored `sku`. That deletes the second branch in `resolve_supply`,
+the branch that had to re-implement the feasibility gate and did not until a saved
+run could be made permanently unreadable through the UI alone.
+
+**One behaviour preserved on purpose.** A lone candidate naming a product the
+catalog does not have still resolves, so `fulfill()` gives it its defined answer —
+a zero-priced, flagged line — which is how a post pointing at a DELETED product
+still shows up on the BOM instead of vanishing into a warnings panel. Narrow by
+design: with rivals an unknown sku stays filtered out, because `_candidate_cost`
+cannot price what does not exist and a candidate costing nothing would beat every
+one that does.
+
+**The gate was regenerated, and the regeneration was proved first.** Before
+writing a single file: BOM sections byte-identical in all ten fixtures, the same
+set of line ids everywhere, and exactly one field differing per line —
+`eligibility`. Line ORDER also changed, and `resolve_supply` now sorts its output
+back into demand order, because grouping is an internal optimisation and must not
+reorder the answer. The old order was itself an artifact: authored lines were
+emitted in a first pass, so gate kits appeared BEFORE panel slots although demand
+asks for them last.
+
+**What the browser suite caught that pytest could not**, again: the Panel tab's
+parts table read rail/screw/slat and now reads rail/slat/screw — frame, infill,
+fixings, the panel's own structure. A user-visible ordering change out of a
+backend refactor, invisible to 1073 passing unit tests.
+
+1073 pytest (+6) · 156 golden scenarios · 159/159 smoke · gate regenerated with a
+verified diff.
+
 ## A part can declare what it needs (2026-08-16) — W2a of the part-specs arc
 Spec §W2, first half. `Eligibility.predicate` had been on the schema since phase 1
 and refused at load for two stated reasons — nothing evaluated it, nothing froze

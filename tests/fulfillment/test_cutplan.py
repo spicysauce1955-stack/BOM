@@ -152,11 +152,11 @@ def test_determinism():
 # both untranslated and unreadable — and it read as an admission of padding.
 
 def test_bom_line_for_an_uncertified_plan_carries_no_solver_jargon(catalog):
-    from fenceai.demand.derive import RequirementLine
+    from fenceai.fulfillment.lines import ResolvedSupplyLine
     from fenceai.fulfillment.fulfill import fulfill
 
     reqs = [
-        RequirementLine(id=f"r{i}", sku="RAIL-3000", engineering_qty=1, unit="cut",
+        ResolvedSupplyLine(id=f"r{i}", sku="RAIL-3000", engineering_qty=1, unit="cut",
                         cut_length_mm=length)
         for i, length in enumerate((2000, 1000, 1000, 1000))
     ]

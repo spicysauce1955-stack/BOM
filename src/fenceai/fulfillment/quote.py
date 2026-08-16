@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from fenceai.core.units import Cents
-from fenceai.demand.derive import RequirementLine
+from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.fulfill import Bom
 
 
@@ -33,7 +33,7 @@ class Quote(BaseModel):
     # already immutable (requirements and bom are persisted in full), so this
     # records what it MEANT, it does not guard it.
     catalog_hash: str = ""
-    requirements: list[RequirementLine] = []
+    requirements: list[ResolvedSupplyLine] = []
     bom: Bom
     total_cents: Cents = 0
 

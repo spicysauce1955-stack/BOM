@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog, purchase_price_cents
 from fenceai.core.units import Cents, Mm
-from fenceai.demand.derive import RequirementLine
+from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.cutplan import CutPiece, CutPlan, RemnantStock, plan_cuts
 from fenceai.strategy.model import StrategyWarning
 
@@ -68,7 +68,7 @@ def engineering_unit_for(catalog: Catalog, sku: str) -> str:
     `Consumption` and of nothing else.
 
     The parts ledger balances per `(sku, unit)`: it keys the ASKED side on
-    `RequirementLine.unit` and the PURCHASED side on `BomLine.engineering_unit`
+    `ResolvedSupplyLine.unit` and the PURCHASED side on `BomLine.engineering_unit`
     (`report/structure.py`). Those must be the same string or one demand reports
     as unassigned AND from-stock at once — the exact failure the ledger's
     two-directional property was built to catch, satisfied vacuously.
@@ -94,29 +94,26 @@ def engineering_unit_for(catalog: Catalog, sku: str) -> str:
 
 
 def fulfill(
-    requirements: list[RequirementLine],
+    requirements: list[ResolvedSupplyLine],
     catalog: Catalog,
     inventory: Inventory | None = None,
 ) -> Bom:
     inventory = inventory or Inventory()
     bom = Bom()
-    by_sku: dict[str, list[RequirementLine]] = {}
+    by_sku: dict[str, list[ResolvedSupplyLine]] = {}
     for r in requirements:
-        if not r.sku:
-            # A SKU-free line makes every ledger key ("", unit), so one demand
-            # reports as unassigned AND from stock at once, prints a blank SKU
-            # column on the setting-out sheet, and satisfies the both-directions
-            # property vacuously while being maximally wrong (spec §"The
-            # resolved SKU has to flow back"). resolve_supply already routes
-            # unresolvable lines to `unresolved` — but that guarantee rested on
-            # caller discipline nothing enforced, and a reviewer reintroduced
-            # the defect at all three routes with a three-word edit and got zero
-            # failures. It is enforced here now, where it cannot be bypassed.
-            raise ValueError(
-                f"requirement {r.id} ({r.role or 'unknown role'}) reached fulfill() "
-                "with no sku — resolve_supply must name a product or route the "
-                "line to `unresolved`; a blank sku splits the parts ledger"
-            )
+        # No blank-sku check here any more, and its absence is the point. A
+        # SKU-free line would make every ledger key ("", unit), so one demand
+        # reports as unassigned AND from stock at once, prints a blank SKU column
+        # on the setting-out sheet, and satisfies the both-directions property
+        # vacuously while being maximally wrong. That used to be a runtime raise
+        # in this loop, because the guarantee rested on caller discipline nothing
+        # enforced — a reviewer reintroduced the defect at all three routes with
+        # a three-word edit and got zero failures.
+        #
+        # `ResolvedSupplyLine` cannot be CONSTRUCTED without a sku and a unit, so
+        # there is no longer a value to hand to this function that it would have
+        # to refuse. A type cannot be edited around.
         by_sku.setdefault(r.sku, []).append(r)
 
     for sku in sorted(by_sku):

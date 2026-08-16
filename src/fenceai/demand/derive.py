@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from fenceai.catalog.model import Catalog
 from fenceai.core.errors import ReadRefused
 from fenceai.core.units import Mm
-from fenceai.fencemodel.model import Eligibility
+from fenceai.fencemodel.model import Eligibility, EligibleItem
 from fenceai.strategy.model import Strategy
 
 DEMAND_POLICY_DEFAULTS = {
@@ -25,19 +25,29 @@ DEMAND_POLICY_DEFAULTS = {
 }
 
 
-class RequirementLine(BaseModel):
+class DemandLine(BaseModel):
+    """What the fence NEEDS. One lifecycle state, not two.
+
+    Deliberately no `sku` and no `unit`. Which product satisfies this is
+    `resolve_supply`'s answer, and the unit is a property of the product it
+    chooses — demand guessed the unit three different ways (beside the sku, from
+    `role`, from `length_mm is not None`) and was wrong each time, reporting the
+    same demand as unassigned AND from-stock at once.
+
+    Both were once fields here, defaulted to `""` and filled in later by mutating
+    this object. That made the type claim a product through the whole half of its
+    life where it had none, and left "a blank sku never reaches `fulfill()`"
+    resting on caller discipline — which `fulfill()`'s refusal records having been
+    broken at all three routes by a three-word edit, with zero test failures.
+
+    `eligibility` is always populated, including for the products KNOWLEDGE
+    chose. A post's sku is not less of a choice for having been made earlier, and
+    expressing it as a one-member eligibility is what lets `resolve_supply` stop
+    branching on whether a line already knows its own answer.
+    """
+
     id: str
-    sku: str = ""          # RESOLVED by fulfillment from `eligibility`, not authored
     engineering_qty: int
-    # "each" | "cut" | "application" — RESOLVED by resolve_supply from the chosen
-    # product's Consumption, in the same statement that sets `sku`, and never
-    # authored here. The parts ledger balances asked-vs-purchased per
-    # (sku, unit) with the purchased side reading BomLine.engineering_unit, so a
-    # unit demand GUESSES can disagree with what fulfill() actually did and
-    # report one demand as unassigned and from-stock at once. Demand guessed it
-    # three ways (beside the sku, from `role`, from `length_mm is not None`) and
-    # was wrong each time; it does not guess any more.
-    unit: str = ""
     cut_length_mm: Mm | None = None
     length_basis: str | None = None  # "width" | "slope" (Research A pitfall 4)
     pegs: list[str] = []  # strategy element ids
@@ -53,23 +63,31 @@ def derive_requirements(
     strategy: Strategy,
     catalog: Catalog,
     policy: dict | None = None,
-) -> list[RequirementLine]:
+) -> list[DemandLine]:
     policy = {**DEMAND_POLICY_DEFAULTS, **(policy or {})}
-    lines: list[RequirementLine] = []
+    lines: list[DemandLine] = []
     n = 0
 
-    def add(sku: str, qty: int, pegs: list[str], **kw) -> None:  # noqa: D401
+    def add(qty: int, pegs: list[str], **kw) -> None:  # noqa: D401
         nonlocal n
         n += 1
         lines.append(
-            RequirementLine(id=f"req{n:04d}", sku=sku, engineering_qty=qty, pegs=pegs, **kw)
+            DemandLine(id=f"req{n:04d}", engineering_qty=qty, pegs=pegs, **kw)
         )
 
+    def chosen(sku: str) -> Eligibility:
+        """A product KNOWLEDGE already chose, said the same way as every other
+        answer to "which items could supply this". It is still a choice — one
+        with a single candidate — and saying it this way is what keeps
+        `resolve_supply` to one path and one feasibility gate."""
+        return Eligibility(members=[EligibleItem(sku=sku)])
+
     for post in strategy.posts:
-        add(post.sku, 1, [post.id], role="post")
-        add(policy["cap_sku"], 1, [post.id], role="cap")
+        add(1, [post.id], role="post", eligibility=chosen(post.sku))
+        add(1, [post.id], role="cap", eligibility=chosen(policy["cap_sku"]))
         if post.mounting == "ground":
-            add(policy["concrete_sku"], 1, [post.id], role="concrete")
+            add(1, [post.id], role="concrete",
+                eligibility=chosen(policy["concrete_sku"]))
 
     for span in strategy.spans:
         if span.panel is None:
@@ -94,13 +112,13 @@ def derive_requirements(
             # counted in eaches. Only the chosen product knows, and the product
             # is not chosen yet — resolve_supply stamps the unit when it is.
             add(
-                "", slot.qty, [span.id],
+                slot.qty, [span.id],
                 cut_length_mm=slot.length_mm, length_basis=slot.length_basis,
                 role=slot.role, slot_key=slot.slot_key, eligibility=slot.eligibility,
             )
 
     for gate in strategy.gates:
         if gate.kit_sku:  # no kit fits this opening — the strategy already said so
-            add(gate.kit_sku, 1, [gate.id], role="gate_kit")
+            add(1, [gate.id], role="gate_kit", eligibility=chosen(gate.kit_sku))
 
     return lines

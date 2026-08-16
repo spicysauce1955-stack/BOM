@@ -20,7 +20,7 @@ from fenceai.catalog.model import (
     Product,
     purchase_price_cents,
 )
-from fenceai.demand.derive import RequirementLine
+from fenceai.demand.derive import DemandLine
 from fenceai.fencemodel.model import Eligibility, EligibleItem
 from fenceai.fulfillment.fulfill import fulfill
 from fenceai.fulfillment.supply import resolve_supply
@@ -75,11 +75,10 @@ def test_a_rate_needs_something_with_a_length_to_be_a_rate_of():
 
 # --- through the pipeline -----------------------------------------------------
 
-def _line(**kw) -> RequirementLine:
-    base = dict(id="req0001", sku="", engineering_qty=2, unit="cut",
-                cut_length_mm=1500, role="rail", slot_key="rail",
+def _line(**kw) -> DemandLine:
+    base = dict(id="req0001", engineering_qty=2, cut_length_mm=1500, role="rail", slot_key="rail",
                 eligibility=Eligibility(members=[EligibleItem(sku="RATE-RAIL")]))
-    return RequirementLine(**{**base, **kw})
+    return DemandLine(**{**base, **kw})
 
 
 def test_the_bom_prices_a_rate_product_per_bar():

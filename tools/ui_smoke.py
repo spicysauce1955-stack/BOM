@@ -853,8 +853,13 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
 })()""")
         # a picker that shows a name and a price but no parts is a dropdown; the
         # point of the tab is what one panel is MADE of
+        # frame, then infill, then fixings — the panel's OWN structure, which is
+        # the order `resolve_panel` emits slots in and therefore the order demand
+        # asks in. It used to read rail/screw/slat, which was the order supply
+        # GROUPING happened to produce; grouping is an internal optimisation and
+        # no longer reorders the answer.
         check("the Panel tab prices a parts table for M-SLAT",
-              slat["slots"] == ["rail", "screw", "slat"]
+              slat["slots"] == ["rail", "slat", "screw"]
               and slat["priced"] == 3 and "M-SLAT@v1" in slat["head"]
               and "₪" in slat["total"])
 

@@ -19,8 +19,9 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
-from fenceai.demand.derive import RequirementLine, derive_requirements
+from fenceai.demand.derive import DemandLine, derive_requirements
 from fenceai.fulfillment.fulfill import Bom, Inventory, fulfill
+from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.supply import SupplyDecision, resolve_supply
 from fenceai.strategy.model import Strategy, StrategyWarning
 
@@ -30,11 +31,14 @@ class PricedRun(BaseModel):
 
     # every line here names a product — `fulfill()` refuses a blank sku, so this
     # is structural rather than a convention
-    requirements: list[RequirementLine] = []
+    requirements: list[ResolvedSupplyLine] = []
     # lines no eligible product could supply. Kept, never dropped: /bom and
     # /structure are working views and report the gap, /quote refuses to freeze
     # a document that under-prices the job.
-    unresolved: list[RequirementLine] = []
+    # DemandLines, not resolved ones: an unresolved line is precisely one
+    # that never got a product, and the type is what stops it reaching
+    # fulfill()
+    unresolved: list[DemandLine] = []
     warnings: list[StrategyWarning] = []
     # why each multi-candidate group resolved the way it did. Carried out of the
     # pipeline because the decision-graph nodes for it are DERIVED at read time:

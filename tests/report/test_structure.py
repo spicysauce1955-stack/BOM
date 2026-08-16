@@ -455,14 +455,14 @@ def test_every_sku_balances_in_both_directions():
 def test_unassigned_never_reports_a_negative_quantity():
     """A negative count is a defect, not a quantity — it used to appear when one
     SKU was demanded in two units (a tube bought as a post, cut as a rail)."""
-    from fenceai.demand.derive import RequirementLine
+    from fenceai.fulfillment.lines import ResolvedSupplyLine
     from fenceai.fulfillment.fulfill import Bom, BomLine
     from fenceai.report.structure import _parts_by_element
 
     ledger = _parts_by_element(
-        [RequirementLine(id="r1", sku="TUBE", engineering_qty=8, unit="cut",
+        [ResolvedSupplyLine(id="r1", sku="TUBE", engineering_qty=8, unit="cut",
                          pegs=["span@run1:0-1000"], role="rail"),
-         RequirementLine(id="r2", sku="TUBE", engineering_qty=5, unit="each",
+         ResolvedSupplyLine(id="r2", sku="TUBE", engineering_qty=5, unit="each",
                          pegs=["post@run1:0"], role="post")],
         Bom(lines=[BomLine(sku="TUBE", name="tube", purchase_qty=4, purchase_unit="bar",
                            engineering_qty=8, engineering_unit="cut",
@@ -476,12 +476,12 @@ def test_unassigned_never_reports_a_negative_quantity():
 def test_a_requirement_pegged_to_nothing_lands_in_unassigned():
     """The spec says nothing is hidden; it used to land under a phantom element
     that no table renders."""
-    from fenceai.demand.derive import RequirementLine
+    from fenceai.fulfillment.lines import ResolvedSupplyLine
     from fenceai.fulfillment.fulfill import Bom
     from fenceai.report.structure import _parts_by_element
 
     ledger = _parts_by_element(
-        [RequirementLine(id="r1", sku="MISC", engineering_qty=3, unit="each", pegs=[])],
+        [ResolvedSupplyLine(id="r1", sku="MISC", engineering_qty=3, unit="each", pegs=[])],
         Bom())
     assert ledger.per_element == {}
     assert [(u.sku, u.qty) for u in ledger.unassigned] == [("MISC", 3)]

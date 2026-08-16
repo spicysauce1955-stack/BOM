@@ -527,7 +527,9 @@ def test_unresolved_supply_is_visible_on_working_views_and_refused_on_a_quote(cl
     bom_doc = client.get(f"/api/runs/{run_id}/bom").json()
     assert bom_doc["unresolved"], "the emptied-out slot must surface, not vanish"
     assert bom_doc["unresolved"][0]["role"] == "rail"
-    assert bom_doc["unresolved"][0]["sku"] == ""
+    # an unresolved line carries no `sku` key AT ALL now: it is a DemandLine,
+    # and never having got a product is exactly what unresolved means
+    assert "sku" not in bom_doc["unresolved"][0]
     assert bom_doc["bom"]["warnings"][0]["code"] == "no_eligible_item"
 
     structure_doc = client.get(f"/api/runs/{run_id}/structure").json()
@@ -658,19 +660,20 @@ def test_no_blank_sku_ever_appears_on_the_structure_sheet(client):
             assert all(p["sku"] for p in station["parts"]), station["tag"]
 
 
-def test_fulfill_refuses_a_blank_sku_rather_than_trusting_its_caller(client):
-    """The guarantee is structural now, not a convention. This is the unit-level
-    statement of it; the two route tests above cover the response shapes
-    fulfill() never gets to see."""
+def test_a_line_without_a_product_cannot_even_be_built_for_fulfill(client):
+    """The guarantee moved from a runtime check inside `fulfill()` to the TYPE it
+    accepts, which is strictly stronger: the old check could be — and once was —
+    edited around at all three routes with zero test failures. A
+    `ResolvedSupplyLine` cannot be constructed without a product, so there is no
+    longer a value to hand to `fulfill()` that it would have to refuse."""
     import pytest
+    from pydantic import ValidationError
 
-    from fenceai.catalog.demo import demo_catalog
-    from fenceai.demand.derive import RequirementLine
-    from fenceai.fulfillment.fulfill import fulfill
+    from fenceai.fulfillment.lines import ResolvedSupplyLine
 
-    with pytest.raises(ValueError, match="no sku"):
-        fulfill([RequirementLine(id="req0001", engineering_qty=2, unit="cut",
-                                 cut_length_mm=1500, role="rail")], demo_catalog())
+    with pytest.raises(ValidationError):
+        ResolvedSupplyLine(id="req0001", engineering_qty=2, unit="cut",
+                           cut_length_mm=1500, role="rail")
 
 
 def test_a_run_generated_before_fence_models_refuses_with_a_code_not_english(client):
