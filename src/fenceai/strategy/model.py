@@ -33,6 +33,19 @@ class Post(BaseModel):
     # stands on and embeds nothing. (A strategy generated before this field
     # reads 0 for its ground posts too; regenerating restores the truth.)
     embed_mm: Mm = 0
+    # The other half of the same length check, and here for the same reason.
+    # `top_z_mm` is the elevation this post carries — the highest top of the bays
+    # that meet it — and `exposed_mm` is how much POST that takes above what it
+    # stands on, which on a tilted post is the longer of the two. Both are
+    # written by `_check_post_lengths` from the values it measured the product
+    # against, so a run that warns "this post is 200 mm short" cannot also be
+    # drawn with a post that looks fine.
+    #
+    # None means the check never measured this post: it has no adjacent bay (the
+    # node post of a run whose first bay is a gate). 0 would be a different
+    # claim — a post standing flush with what it stands on.
+    exposed_mm: Mm | None = None
+    top_z_mm: Mm | None = None
     tilt_deg: int = 0  # degrees from vertical; 0 = plumb (the default and the norm)
     pinned: bool = False
 

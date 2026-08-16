@@ -69,6 +69,19 @@ class Station(BaseModel):
     # than saying nothing.
     embed_mm: Mm = 0
     post_length_mm: Mm | None = None
+    # ... and how far it rises ABOVE that: `top_z_mm` is the elevation of the
+    # post top (the highest top of the bays that meet it), `exposed_mm` the
+    # length of post that reaches it — the tilt-corrected number, so on a leaning
+    # post the two differ. Copied from the strategy, where `_check_post_lengths`
+    # computed them; the drawing must not answer "what does this post carry" a
+    # second time, or a run that warns a post is 200 mm short draws it fine.
+    #
+    # None means no bay meets this post — the node post of a run whose first bay
+    # is a gate — so nothing measured it. A drawing must then place the top by
+    # some other rule of its own and say so; 0 is not that rule, it would read as
+    # a post flush with the ground.
+    exposed_mm: Mm | None = None
+    top_z_mm: Mm | None = None
     tilt_deg: int = 0
     reinforced: bool = False
     pinned: bool = False
@@ -389,6 +402,7 @@ def build_structure(
                 base_z_mm=post.base_z_mm if post.base_z_mm is not None else post.ground_z_mm,
                 embed_mm=post.embed_mm,
                 post_length_mm=_declared_post_length(catalog, post.sku),
+                exposed_mm=post.exposed_mm, top_z_mm=post.top_z_mm,
                 tilt_deg=post.tilt_deg, reinforced=post.reinforced, pinned=post.pinned,
                 parts=_merge_parts(parts.get(post.id, [])),
             ))

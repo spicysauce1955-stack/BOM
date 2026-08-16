@@ -394,3 +394,65 @@ def test_a_wall_mounted_fence_records_no_embedment_it_never_spent():
                 if n.action == "resolve_post_embedment"]
 
 
+def test_the_post_the_sheet_draws_is_the_post_the_length_check_measured():
+    """MAJOR 4. The macro drawing computed a post's top as `max(adjacent bay
+    tops)` in JS — the same question `_check_post_lengths` answers, minus the
+    tilt correction it does not have — so a run that warns a post is short drew
+    a post that looks fine.
+
+    Hand-derived: 1800 mm panels on flat ground, posts leaning 30°. The top sits
+    at 1800, but reaching it takes 1800 / cos 30° = 2078 mm of post, and with
+    600 mm buried that is 2678 mm against a 2600 mm POST-S.
+    """
+    from fenceai.fulfillment.pipeline import price_strategy
+    from fenceai.report.structure import build_structure
+    from fenceai.topology.model import PostTiltPayload
+    from tests.conftest import add_interval_event
+
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "tilt", 0, 6000,
+                       PostTiltPayload(mode="custom", tilt_deg=30))
+    catalog = demo_catalog()
+    result = generate(topo, demo_knowledge(), catalog)
+    priced = price_strategy(result.strategy, catalog, None,
+                            demand_skus=result.run.demand_skus)
+    report = build_structure(topo, result.strategy, priced.requirements, priced.bom,
+                             run_id="run-tilt", catalog=catalog)
+
+    stations = {s.element_id: s for s in report.sections[0].setting_out}
+    leaning = stations["post@run1:1500"]
+    assert (leaning.top_z_mm, leaning.exposed_mm, leaning.embed_mm) == (1800, 2078, 600)
+    # the sheet's number and the warning's number are one number
+    warning = next(w for w in result.strategy.warnings
+                   if w.params.get("element") == "post@run1:1500")
+    assert warning.code == "insufficient_post_length"
+    assert warning.params["required_mm"] == leaning.exposed_mm + leaning.embed_mm
+    # and a plumb node post reaches the same top with less post
+    assert (stations["post@node:n1"].top_z_mm,
+            stations["post@node:n1"].exposed_mm) == (1800, 1800)
+
+
+def test_a_post_with_no_bay_to_carry_says_nothing_rather_than_zero():
+    """`_check_post_lengths` skips a post with no adjacent span — the node post
+    of a run whose first bay is a gate — so nothing measured it. Reported as
+    None, because 0 would draw a post flush with the ground, which is a claim."""
+    from fenceai.fulfillment.pipeline import price_strategy
+    from fenceai.report.structure import build_structure
+    from fenceai.topology.model import GatePayload
+    from tests.conftest import add_point_event
+
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "g", 0,
+                    GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    catalog = demo_catalog()
+    result = generate(topo, demo_knowledge(), catalog)
+    priced = price_strategy(result.strategy, catalog, None,
+                            demand_skus=result.run.demand_skus)
+    report = build_structure(topo, result.strategy, priced.requirements, priced.bom,
+                             run_id="run-gate", catalog=catalog)
+
+    stations = {s.element_id: s for s in report.sections[0].setting_out}
+    hanging = stations["post@node:n1"]
+    assert (hanging.exposed_mm, hanging.top_z_mm) == (None, None)
+    assert hanging.embed_mm == 600, "it is still buried, and still drawn buried"
+    assert stations["post@run1:1000"].exposed_mm == 1800, "its neighbour carries a bay"

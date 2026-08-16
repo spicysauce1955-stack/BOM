@@ -1884,13 +1884,25 @@ def _check_post_lengths(
                 and post.station_mm in (sp.start_station_mm, sp.end_station_mm)
             ]
         if not adjacent:
+            # No bay meets this post — the node post of a run whose first bay is
+            # a gate — so there is no top to carry and `exposed_mm`/`top_z_mm`
+            # stay None. NOT 0: this check never measured this post, and a 0 on
+            # the setting-out sheet would draw it flat to the ground.
             continue
         stand_z = post.base_z_mm if post.base_z_mm is not None else post.ground_z_mm
-        exposed = max(top_of(sp) for sp in adjacent) - stand_z
+        top_z = max(top_of(sp) for sp in adjacent)
+        exposed = top_z - stand_z
         if post.tilt_deg:
             import math
 
             exposed = round(exposed / math.cos(math.radians(post.tilt_deg)))
+        # the two numbers this check just made, kept on the post so the drawing
+        # places its top from them instead of asking the same question again in
+        # another language (review finding 4). `top_z_mm` is where the top SITS
+        # — the highest bay top this post carries; `exposed_mm` is how much post
+        # that takes, which on a tilted post is the longer of the two.
+        post.top_z_mm = top_z
+        post.exposed_mm = exposed
         required = exposed + post.embed_mm
         product = catalog.products.get(post.sku)
         available = (product.attrs.get("length_mm") if product else None)
