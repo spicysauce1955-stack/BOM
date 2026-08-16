@@ -270,3 +270,195 @@ def test_the_bay_drawing_names_its_products_like_the_preview_does(client):
     assert members
     slats = [m for m in members if m["slot_key"] == "slat"]
     assert slats and all(m["sku"] == "SLAT-100" for m in slats)
+
+
+# --- the two-tier visualizer review ------------------------------------------
+#
+# A second review, of the arc that put the fence on two drawings. Its findings
+# are about what the GRAPH and the READ MODEL say, so they are tested here beside
+# the panel-wave defects rather than in the drawing that consumes them.
+
+def _channel_run():
+    """A section built entirely to M-SLAT@v2 — the model whose slats are cut to
+    1665 instead of 1800, which is the whole reason the version exists."""
+    from fenceai.fencemodel.demo import M_LEGACY, M_SLAT_V2
+
+    library = FenceModelLibrary(models=[M_LEGACY, M_SLAT, M_SLAT_V2])
+    return generate(straight_topology(6000), demo_knowledge(), demo_catalog(),
+                    models=library,
+                    default_model=FenceModelChoice(model_id="M-SLAT", version_pin=2))
+
+
+def test_the_length_a_slat_is_cut_to_is_derivable_from_the_decision_graph():
+    """MAJOR 3. `/explain` said "Panel M-SLAT@v2 built from 12 infill" and could
+    not say 1665 — the number the version exists for. `panel_height` and
+    `centre_to_centre` are functions of `create_span`'s payload, which is an
+    input edge of the panel node; `between_frame` is a function of the frame
+    slots' positions, their face heights and the two engagements, and none of
+    those appeared in any node.
+
+    Hand-derived, in a 1500 mm bay 1800 mm high:
+
+        start = 50 (channel centreline) + 60//2 (its face) − 15 (engagement) = 65
+        end   = 1750 (rail centreline)  − 40//2 (its face) + 0               = 1730
+        slat  = 1730 − 65                                                    = 1665
+    """
+    from fenceai.decisions.explain import explain_node
+
+    result = _channel_run()
+    node = next(n for n in result.graph.nodes if n.action == "resolve_panel")
+    slat = next(s for s in node.payload["slots"] if s["key"] == "slat")
+
+    assert (slat["length_mm"], slat["span_start_mm"]) == (1665, 65)
+    base, top = slat["between"]["base"], slat["between"]["top"]
+    assert (base["slot"], base["position_mm"], base["thickness_mm"],
+            base["engagement_mm"]) == ("bottom_channel", 50, 60, 15)
+    assert (top["slot"], top["position_mm"], top["thickness_mm"],
+            top["engagement_mm"]) == ("top_rail", 1750, 40, 0)
+    # the reported terms ARE the subtraction, so a reader can redo it
+    start = base["position_mm"] + base["thickness_mm"] // 2 - base["engagement_mm"]
+    end = top["position_mm"] - top["thickness_mm"] // 2 + top["engagement_mm"]
+    assert (start, end - start) == (slat["span_start_mm"], slat["length_mm"])
+    assert all(isinstance(v, int) for v in (start, end, slat["length_mm"]))
+
+    for lang, cut in (("en", "1665 mm"), ("he", '1665 מ"מ')):
+        assert cut in explain_node(result.graph, node, lang=lang)
+
+
+def test_the_rule_that_set_the_rail_count_reaches_the_panel_it_measured():
+    """MAJOR 3, the other half. `positions_mm` under a `Distributed` slot depend
+    on `rails_per_span`, so the rail count sits upstream of a `between_frame` cut
+    length — but `resolve_span_quantities` was emitted AFTER the span loop, and
+    the chain from a slat's length back to the rule that set the count existed
+    only as a shared `scope_refs`, which nothing can walk.
+    """
+    kb = demo_knowledge()
+    # scoped to the project, so it beats the demo's own K-RAILS on specificity
+    # rather than tying with it
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-THREE-RAILS", version=1, type="company_rule",
+        title="three rails", scope={"project_id": "proj_rails"},
+        actions=[SetParam(param="rails_per_span", value=3)]))
+    result = generate(straight_topology(6000), kb, demo_catalog(),
+                      project_id="proj_rails")
+
+    panel = next(n for n in result.graph.nodes if n.action == "resolve_panel")
+    quantities = next(n for n in result.graph.nodes
+                      if n.action == "resolve_span_quantities")
+    assert quantities.payload["rails_per_span"] == 3
+    inputs = [e.from_id for e in result.graph.in_edges(panel.id)]
+    assert quantities.id in inputs
+    # and the bay whose height the other length rules read, which reached this
+    # node only through a variant node — i.e. never, on a model without variants
+    span_node = next(n for n in result.graph.nodes_for_element(
+        result.strategy.spans[0].id) if n.action == "create_span")
+    assert span_node.id in inputs
+    # and so the governing version is reachable FROM the panel, not merely nearby
+    refs = {e.knowledge_ref for anc in result.graph.ancestors(panel.id)
+            for e in result.graph.in_edges(anc.id) if e.type == "governed_by"}
+    assert "K-THREE-RAILS@v1" in refs
+
+
+def test_the_embedment_that_is_drawn_cites_the_version_that_decided_it():
+    """MAJOR 6. `post_embed_mm` was resolved with its refs and written onto every
+    post, but `embed_refs` was cited ONLY in the failure branch — so in the
+    ordinary case no node recorded that 600 mm had been decided, or by which
+    rule. This arc promoted `embed_mm` to a persisted field and then to a
+    dimension on a drawing, so two versions of the rule drew two different
+    footings with no `defeated` edge anywhere.
+    """
+    from fenceai.decisions.explain import explain_node
+
+    result = generate(straight_topology(6000), demo_knowledge(), demo_catalog())
+    buried = [p.id for p in result.strategy.posts if p.mounting == "ground"]
+    node = next(n for n in result.graph.nodes
+                if n.action == "resolve_post_embedment")
+
+    assert node.payload["embed_mm"] == 600
+    assert sorted(node.scope_refs) == sorted(buried)
+    assert all(p.embed_mm == 600 for p in result.strategy.posts if p.id in buried)
+    governed = {e.knowledge_ref for e in result.graph.in_edges(node.id)
+                if e.type == "governed_by"}
+    assert governed == {"K-POST-EMBED@v1"}
+    for lang in ("en", "he"):
+        assert "600" in explain_node(result.graph, node, lang=lang)
+
+
+def test_a_wall_mounted_fence_records_no_embedment_it_never_spent():
+    """The other side of that node: a post bolted to a wall embeds nothing, so a
+    node claiming 600 mm underground would explain a footing that is not there."""
+    from fenceai.topology.model import BasePayload
+    from tests.conftest import add_interval_event
+
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "b", 0, 6000, BasePayload(surface="masonry_wall"))
+    result = generate(topo, demo_knowledge(), demo_catalog())
+
+    assert all(p.mounting == "masonry" for p in result.strategy.posts)
+    assert all(p.embed_mm == 0 for p in result.strategy.posts)
+    assert not [n for n in result.graph.nodes
+                if n.action == "resolve_post_embedment"]
+
+
+def test_the_post_the_sheet_draws_is_the_post_the_length_check_measured():
+    """MAJOR 4. The macro drawing computed a post's top as `max(adjacent bay
+    tops)` in JS — the same question `_check_post_lengths` answers, minus the
+    tilt correction it does not have — so a run that warns a post is short drew
+    a post that looks fine.
+
+    Hand-derived: 1800 mm panels on flat ground, posts leaning 30°. The top sits
+    at 1800, but reaching it takes 1800 / cos 30° = 2078 mm of post, and with
+    600 mm buried that is 2678 mm against a 2600 mm POST-S.
+    """
+    from fenceai.fulfillment.pipeline import price_strategy
+    from fenceai.report.structure import build_structure
+    from fenceai.topology.model import PostTiltPayload
+    from tests.conftest import add_interval_event
+
+    topo = straight_topology(6000)
+    add_interval_event(topo, "run1", "tilt", 0, 6000,
+                       PostTiltPayload(mode="custom", tilt_deg=30))
+    catalog = demo_catalog()
+    result = generate(topo, demo_knowledge(), catalog)
+    priced = price_strategy(result.strategy, catalog, None,
+                            demand_skus=result.run.demand_skus)
+    report = build_structure(topo, result.strategy, priced.requirements, priced.bom,
+                             run_id="run-tilt", catalog=catalog)
+
+    stations = {s.element_id: s for s in report.sections[0].setting_out}
+    leaning = stations["post@run1:1500"]
+    assert (leaning.top_z_mm, leaning.exposed_mm, leaning.embed_mm) == (1800, 2078, 600)
+    # the sheet's number and the warning's number are one number
+    warning = next(w for w in result.strategy.warnings
+                   if w.params.get("element") == "post@run1:1500")
+    assert warning.code == "insufficient_post_length"
+    assert warning.params["required_mm"] == leaning.exposed_mm + leaning.embed_mm
+    # and a plumb node post reaches the same top with less post
+    assert (stations["post@node:n1"].top_z_mm,
+            stations["post@node:n1"].exposed_mm) == (1800, 1800)
+
+
+def test_a_post_with_no_bay_to_carry_says_nothing_rather_than_zero():
+    """`_check_post_lengths` skips a post with no adjacent span — the node post
+    of a run whose first bay is a gate — so nothing measured it. Reported as
+    None, because 0 would draw a post flush with the ground, which is a claim."""
+    from fenceai.fulfillment.pipeline import price_strategy
+    from fenceai.report.structure import build_structure
+    from fenceai.topology.model import GatePayload
+    from tests.conftest import add_point_event
+
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "g", 0,
+                    GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    catalog = demo_catalog()
+    result = generate(topo, demo_knowledge(), catalog)
+    priced = price_strategy(result.strategy, catalog, None,
+                            demand_skus=result.run.demand_skus)
+    report = build_structure(topo, result.strategy, priced.requirements, priced.bom,
+                             run_id="run-gate", catalog=catalog)
+
+    stations = {s.element_id: s for s in report.sections[0].setting_out}
+    hanging = stations["post@node:n1"]
+    assert (hanging.exposed_mm, hanging.top_z_mm) == (None, None)
+    assert hanging.embed_mm == 600, "it is still buried, and still drawn buried"
+    assert stations["post@run1:1000"].exposed_mm == 1800, "its neighbour carries a bay"

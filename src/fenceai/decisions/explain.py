@@ -107,10 +107,22 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "select_supply_beat": " It costs {chosen_cents}c against {runner_up} at {runner_up_cents}c.",
         "select_supply_unbuildable": " {unbuildable} cannot supply this part at all.",
         "resolve_panel": "Panel {model_ref} built from {slots}.",
+        # the cut length, and — for a member measured against the panel's own
+        # frame — the two members it was measured between, so the number is
+        # arrived at in the prose rather than announced by it
+        "resolve_panel_cut": " {slot} is cut to {length_mm} {u}.",
+        "resolve_panel_between": (
+            " {slot} is cut to {length_mm} {u}, measured between {base_slot} at "
+            "{base_position_mm} {u} and {top_slot} at {top_position_mm} {u}; it "
+            "starts {span_start_mm} {u} up the panel."
+        ),
         "choose_vertical_mode": "Vertical mode '{mode}' chosen at {slope_permille}‰ grade.",
         "resolve_max_span": "Maximum span resolved to {value_mm} {u}.",
         "resolve_span_quantities": (
             "Quantities per span: {rails_per_span} rails, {screws_per_span} screws."
+        ),
+        "resolve_post_embedment": (
+            "Posts are set {embed_mm} {u} into the ground ({n} post(s))."
         ),
         "resolve_demand_products": (
             "Demand products: rail {rail_sku}, screws {screw_sku}, "
@@ -235,10 +247,19 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "select_supply_beat": " עלותו {chosen_cents} סנט מול {runner_up} ב-{runner_up_cents} סנט.",
         "select_supply_unbuildable": " {unbuildable} אינו יכול לספק את החלק הזה כלל.",
         "resolve_panel": "הפאנל {model_ref} נבנה מ-{slots}.",
+        "resolve_panel_cut": " {slot} נחתך ל-{length_mm} {u}.",
+        "resolve_panel_between": (
+            " {slot} נחתך ל-{length_mm} {u}, נמדד בין {base_slot} בגובה "
+            "{base_position_mm} {u} לבין {top_slot} בגובה {top_position_mm} {u}; "
+            "הוא מתחיל {span_start_mm} {u} מתחתית הפאנל."
+        ),
         "choose_vertical_mode": "נבחר מצב אנכי '{mode}' בשיפוע {slope_permille}‰.",
         "resolve_max_span": "המפתח המרבי נקבע ל-{value_mm} {u}.",
         "resolve_span_quantities": (
             "כמויות לכל מפתח: {rails_per_span} מוטות, {screws_per_span} ברגים."
+        ),
+        "resolve_post_embedment": (
+            "העמודים מוטמנים {embed_mm} {u} באדמה ({n} עמודים)."
         ),
         "resolve_demand_products": (
             "מוצרי הדרישה: מוט {rail_sku}, ברגים {screw_sku}, "
@@ -434,9 +455,28 @@ def explain_node(
             base = _fmt(t, "select_product", lang, units, slot=p.get("slot"),
                 sku=p.get("sku"), axis=p.get("axis"), value=p.get("value"))
         case "resolve_panel":
-            slots = ", ".join(f"{s['qty']} {s['role']}" for s in p.get("slots", []))
+            slot_payloads = p.get("slots", [])
+            slots = ", ".join(f"{s['qty']} {s['role']}" for s in slot_payloads)
             base = _fmt(t, "resolve_panel", lang, units,
                 model_ref=p.get("model_ref"), slots=slots)
+            # one fragment per slot that HAS a cut length, formatted rather than
+            # pre-joined: a length inside an already-built string would still say
+            # millimetres to a reader who asked for centimetres
+            for s in slot_payloads:
+                if s.get("length_mm") is None:
+                    continue
+                between = s.get("between") or {}
+                if "base" in between and "top" in between:
+                    base += _fmt(t, "resolve_panel_between", lang, units,
+                        slot=s["key"], length_mm=s["length_mm"],
+                        span_start_mm=s.get("span_start_mm"),
+                        base_slot=between["base"]["slot"],
+                        base_position_mm=between["base"]["position_mm"],
+                        top_slot=between["top"]["slot"],
+                        top_position_mm=between["top"]["position_mm"])
+                else:
+                    base += _fmt(t, "resolve_panel_cut", lang, units,
+                        slot=s["key"], length_mm=s["length_mm"])
         case "choose_vertical_mode":
             base = _fmt(t, "choose_vertical_mode", lang, units,
                 mode=p.get("mode"), slope_permille=p.get("slope_permille")
@@ -447,6 +487,9 @@ def explain_node(
             base = _fmt(t, "resolve_span_quantities", lang, units,
                 rails_per_span=p.get("rails_per_span"), screws_per_span=p.get("screws_per_span")
             )
+        case "resolve_post_embedment":
+            base = _fmt(t, "resolve_post_embedment", lang, units,
+                embed_mm=p.get("embed_mm"), n=p.get("n"))
         case "resolve_demand_products":
             base = _fmt(t, "resolve_demand_products", lang, units,
                 rail_sku=p.get("rail_sku"), screw_sku=p.get("screw_sku"),

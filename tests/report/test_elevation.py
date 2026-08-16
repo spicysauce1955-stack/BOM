@@ -361,3 +361,63 @@ def test_the_preview_carries_the_joint_details_it_priced():
     slats = [m for m in preview.elevation.members if m.slot_key == "slat"]
     assert slats and all(
         (m.seat_start_mm, m.seat_end_mm) == (65, 80) for m in slats)
+
+
+# --- the two-tier visualizer review -------------------------------------------
+
+def test_a_member_drawn_unseated_is_given_no_section_to_be_seated_in():
+    """MINOR 13. `_details` yielded from the spec fields alone, so a bay where
+    `_between_frame_extent` resolved nothing — the refs invert at this height —
+    drew the slat as a full-height rectangle with no seat while `details` still
+    claimed a 20 mm channel with a 15 mm engagement, which the joint inset then
+    dimensioned.
+
+    Hand-derived at a 120 mm panel height: the channel sits 50 up, the top rail
+    120 − 50 = 70 up, so the slat would start at 50 + 30 − 15 = 65 and end at
+    70 − 20 = 50 — fifteen millimetres of nothing.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    low = PanelContext(centre_width_mm=2500, clear_width_mm=2400, height_mm=120)
+    panel = resolve_panel(M_SLAT_V2.default_spec, low)
+    slat_slot = next(s for s in panel.slots if s.slot_key == "slat")
+    assert slat_slot.length_unresolved and slat_slot.span_start_mm is None
+
+    elevation = panel_elevation(panel, low.clear_width_mm, low.height_mm)
+    drawn = by_slot(elevation, "slat")
+    assert drawn, "the slats are still drawn — at the fallback full height"
+    assert all((m.y_mm, m.h_mm) == (0, 120) for m in drawn)
+    assert all(m.seat_start_mm is None and m.seat_end_mm is None for m in drawn)
+    assert elevation.details == [], "nothing to cut a section through"
+
+
+def test_the_clearance_against_the_post_is_the_fit_s_own_number():
+    """MINOR 10. `PanelElevation` carried the fitted gaps but not the fitted edge
+    margins, so a client dimensioning the clearance measured it off the drawn
+    rectangles — deriving a fitted number from a picture of itself.
+
+    Hand-derived over a 2400 mm opening of 100 mm slats with 20 mm gaps:
+    12 * 100 + 11 * 20 would leave room for more, and 20 members with 19 gaps
+    take 2000 + 380 = 2380, leaving 20 mm. M-SLAT spreads that into the gaps
+    (`excess="space"`), so both margins are 0; justified `center` with the
+    residual kept, the same 20 mm splits into 10 mm against each post.
+    """
+    spread = elevation_of(M_SLAT)
+    assert len(by_slot(spread, "slat")) == 20
+    assert (spread.edge_margin_start_mm, spread.edge_margin_end_mm) == (0, 0)
+    assert spread.residual_mm == 0
+    assert by_slot(spread, "slat")[0].x_mm == 0
+
+    model = M_SLAT.model_copy(deep=True)
+    model.default_spec.infill.justification = "center"
+    model.default_spec.infill.excess = "truncate"
+    centred = elevation_of(model)
+    assert len(by_slot(centred, "slat")) == 20
+    assert (centred.edge_margin_start_mm, centred.edge_margin_end_mm) == (10, 10)
+    assert centred.residual_mm == 0
+    assert centred.gaps_mm == [20] * 19, "the slack went to the ends, not the gaps"
+    # the drawing agrees with the number, which is the point of reporting it
+    slats = by_slot(centred, "slat")
+    assert slats[0].x_mm == centred.edge_margin_start_mm
+    assert (2400 - (slats[-1].x_mm + slats[-1].w_mm)
+            == centred.edge_margin_end_mm + centred.residual_mm)

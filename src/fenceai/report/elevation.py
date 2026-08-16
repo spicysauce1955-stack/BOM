@@ -108,6 +108,21 @@ class PanelElevation(BaseModel):
     # the fitted gaps, clear (face to face) — the number the sphere test measures
     # and the reason `fit_pattern` returns a LIST rather than one rounded value
     gaps_mm: list[Mm] = []
+    # ... and the two ends of the same fit: how much clear axis is left between
+    # the opening's edge and the first (last) member. Reported because they were
+    # DECIDED — `justification` folds the residual into them, so `center` puts
+    # the whole slack against the posts — and a client measuring them off the
+    # drawn rectangles instead was deriving a fitted number from a picture of
+    # itself (review finding 10).
+    #
+    # `residual_mm` is the axis nobody claimed: `start`/`spread_to_fit` leave it
+    # beyond the end margin, so the real clear distance at the far end is
+    # `edge_margin_end_mm + residual_mm` — the same sum `FitResult.openings_mm`
+    # makes, and the reason it travels beside them rather than being folded in
+    # here, where it would stop being the fit's own number.
+    edge_margin_start_mm: Mm = 0
+    edge_margin_end_mm: Mm = 0
+    residual_mm: Mm = 0
     # the joints worth drawing, riding on the elevation rather than on an endpoint
     # of their own — so the panel preview and a stored run's `Bay.elevation` carry
     # them by the same code path, and the detail beside a panel cannot say
@@ -128,11 +143,19 @@ def panel_elevation(
     )
     nominal = max(1, (min(width_mm, height_mm) * NOMINAL_THICKNESS_PERMILLE) // 1000)
 
+    # every infill slot of one panel carries the SAME `FitResult` — one fit is
+    # run across the pattern and handed to each member of it — so the fitted
+    # numbers are read from the first slot that has one and never re-read
+    fitted = False
     for slot in panel.slots:
         if slot.fit is not None:
             out.members.extend(_infill(slot, width_mm, height_mm, nominal))
-            if not out.gaps_mm:
+            if not fitted:
+                fitted = True
                 out.gaps_mm = list(slot.fit.gaps_mm)
+                out.edge_margin_start_mm = slot.fit.edge_margin_start_mm
+                out.edge_margin_end_mm = slot.fit.edge_margin_end_mm
+                out.residual_mm = slot.fit.residual_mm
         elif slot.positions_mm:
             out.members.extend(_frame(slot, width_mm, height_mm, nominal))
         # a slot with neither — a fixing — has no extent of its own to draw:
@@ -159,9 +182,20 @@ def _details(panel: ResolvedPanel):
     refused at load (`validate_model`), so reaching here means an unvalidated
     document, and inventing a receiving member for it would put a dimension on a
     drawing with nothing to measure it from.
+
+    And a third, which is about THIS bay rather than about the model: a member
+    whose extent never resolved. `_between_frame_extent` returns nothing when a
+    `count_param` collapses the referenced set or the refs invert at this bay's
+    height, and `_rect` then draws the member across the whole opening with no
+    seat. A detail beside that rectangle would dimension a 20 mm channel and a
+    15 mm engagement into a member the drawing shows sitting in neither (review
+    finding 13). The bay says so through the `panel_length_unresolved` warning,
+    which is a sentence rather than a section.
     """
     frame = {slot.slot_key: slot for slot in panel.slots if slot.slot_kind == "frame"}
     for slot in panel.slots:
+        if slot.length_unresolved or slot.span_start_mm is None:
+            continue
         for end, ref, engagement in (
             ("base", slot.base_ref, slot.base_engagement_mm),
             ("top", slot.top_ref, slot.top_engagement_mm),
