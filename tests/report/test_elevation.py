@@ -361,3 +361,33 @@ def test_the_preview_carries_the_joint_details_it_priced():
     slats = [m for m in preview.elevation.members if m.slot_key == "slat"]
     assert slats and all(
         (m.seat_start_mm, m.seat_end_mm) == (65, 80) for m in slats)
+
+
+# --- the two-tier visualizer review -------------------------------------------
+
+def test_a_member_drawn_unseated_is_given_no_section_to_be_seated_in():
+    """MINOR 13. `_details` yielded from the spec fields alone, so a bay where
+    `_between_frame_extent` resolved nothing — the refs invert at this height —
+    drew the slat as a full-height rectangle with no seat while `details` still
+    claimed a 20 mm channel with a 15 mm engagement, which the joint inset then
+    dimensioned.
+
+    Hand-derived at a 120 mm panel height: the channel sits 50 up, the top rail
+    120 − 50 = 70 up, so the slat would start at 50 + 30 − 15 = 65 and end at
+    70 − 20 = 50 — fifteen millimetres of nothing.
+    """
+    from fenceai.fencemodel.demo import M_SLAT_V2
+
+    low = PanelContext(centre_width_mm=2500, clear_width_mm=2400, height_mm=120)
+    panel = resolve_panel(M_SLAT_V2.default_spec, low)
+    slat_slot = next(s for s in panel.slots if s.slot_key == "slat")
+    assert slat_slot.length_unresolved and slat_slot.span_start_mm is None
+
+    elevation = panel_elevation(panel, low.clear_width_mm, low.height_mm)
+    drawn = by_slot(elevation, "slat")
+    assert drawn, "the slats are still drawn — at the fallback full height"
+    assert all((m.y_mm, m.h_mm) == (0, 120) for m in drawn)
+    assert all(m.seat_start_mm is None and m.seat_end_mm is None for m in drawn)
+    assert elevation.details == [], "nothing to cut a section through"
+
+

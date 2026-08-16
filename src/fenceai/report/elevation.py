@@ -159,9 +159,20 @@ def _details(panel: ResolvedPanel):
     refused at load (`validate_model`), so reaching here means an unvalidated
     document, and inventing a receiving member for it would put a dimension on a
     drawing with nothing to measure it from.
+
+    And a third, which is about THIS bay rather than about the model: a member
+    whose extent never resolved. `_between_frame_extent` returns nothing when a
+    `count_param` collapses the referenced set or the refs invert at this bay's
+    height, and `_rect` then draws the member across the whole opening with no
+    seat. A detail beside that rectangle would dimension a 20 mm channel and a
+    15 mm engagement into a member the drawing shows sitting in neither (review
+    finding 13). The bay says so through the `panel_length_unresolved` warning,
+    which is a sentence rather than a section.
     """
     frame = {slot.slot_key: slot for slot in panel.slots if slot.slot_kind == "frame"}
     for slot in panel.slots:
+        if slot.length_unresolved or slot.span_start_mm is None:
+            continue
         for end, ref, engagement in (
             ("base", slot.base_ref, slot.base_engagement_mm),
             ("top", slot.top_ref, slot.top_engagement_mm),
