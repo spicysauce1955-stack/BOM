@@ -15,7 +15,11 @@
 //     screw slot, and the API would refuse it after the click;
 //   * "in stock" means stock of THAT sku for THIS project, counted the way the
 //     cut planner counts it: whole units and reusable remnants are different
-//     things, and adding them together would promise a 300 mm offcut as a post.
+//     things, and adding them together would promise a 300 mm offcut as a post;
+//   * and it means what is left AFTER this run. The yard's four bars are not
+//     four bars available to a change of mind if the fence being priced has
+//     already been allocated all four — the first version of this drawer read
+//     the inventory alone and said "4" about a product with none to spare.
 //
 // DOM ownership: none. `assembly.js` owns `#assembly-drawer` and writes it; this
 // module is a pure producer of the HTML that goes in it and of the join behind
@@ -43,8 +47,9 @@ import { money, moneyDelta, roleWord, tu } from "./units.js";
  * Returns null when the preview has no such slot — which happens legitimately:
  * a fitted pattern can place none of a member, and a slot with no placed member
  * is not a part of this bay. */
-export function partOptions(preview, slotKey, products = {}, inventory = null,
-                            catalogue = null) {
+export function partOptions(preview, slotKey, {
+  products = {}, inventory = null, catalogue = null, allocations = null,
+} = {}) {
   const find = (doc) => (doc?.parts || []).concat(doc?.unsupplied || [])
     .find((p) => p.slot_key === slotKey);
   const part = find(preview);
@@ -52,6 +57,7 @@ export function partOptions(preview, slotKey, products = {}, inventory = null,
   // the unnarrowed candidate set, when the caller has one to offer
   const offered = find(catalogue)?.eligible_skus;
   const stock = stockBySku(inventory);
+  const spoken = committedBySku(allocations);
   const chosenPrice = unitPrice(products, part.sku);
   return {
     slot_key: part.slot_key,
@@ -79,11 +85,43 @@ export function partOptions(preview, slotKey, products = {}, inventory = null,
         delta_cents: price === null || chosenPrice === null
           ? null : price - chosenPrice,
         bought_as: product?.consumption?.kind || null,
+        // three facts, never one: what the yard holds, what this fence has
+        // already been given, and what is therefore left to change your mind
+        // with. A single netted figure hides why it is lower than the shelf.
         on_hand: stock.get(sku)?.units || 0,
-        remnants: stock.get(sku)?.remnants || [],
+        committed: spoken.get(sku)?.units || 0,
+        available: Math.max((stock.get(sku)?.units || 0)
+                            - (spoken.get(sku)?.units || 0), 0),
+        remnants: (stock.get(sku)?.remnants || [])
+          .filter((r) => !spoken.get(sku)?.remnant_ids?.has(r.id))
+          .map((r) => r.length_mm),
+        // an offcut this run is already cutting from is spent: the planner takes
+        // a remnant as a whole BIN, so half of one is not left over — whatever
+        // survives the cut comes back as a projected remnant, which is a
+        // different item and not stock on hand
+        committed_remnants: (stock.get(sku)?.remnants || [])
+          .filter((r) => spoken.get(sku)?.remnant_ids?.has(r.id)).length,
       };
     }),
   };
+}
+
+/** What THIS run has already been allocated, per sku.
+ *
+ * Units and remnants again stay apart, because the planner spends them
+ * differently: a unit allocation takes `qty` eaches off a stock item, while a
+ * remnant allocation takes the whole offcut as a bin to cut from — so the count
+ * that matters for a remnant is which ones are spoken for, not how many
+ * millimetres came out of them. */
+export function committedBySku(allocations) {
+  const out = new Map();
+  for (const a of allocations || []) {
+    if (!out.has(a.sku)) out.set(a.sku, { units: 0, remnant_ids: new Set() });
+    const row = out.get(a.sku);
+    if (a.length_used_mm) row.remnant_ids.add(a.inventory_item_id);
+    else row.units += a.qty || 0;
+  }
+  return out;
 }
 
 /** Whole units and reusable remnants, counted separately and never summed.
@@ -97,12 +135,15 @@ export function stockBySku(inventory) {
     if (!out.has(item.sku)) out.set(item.sku, { units: 0, remnants: [] });
     const row = out.get(item.sku);
     if (item.kind === "remnant") {
-      if (item.length_mm) row.remnants.push(item.length_mm);
+      // by ID as well as length: an allocation names the offcut it cuts from,
+      // and two offcuts of the same length are two different things to spend
+      if (item.length_mm) row.remnants.push({ id: item.id, length_mm: item.length_mm });
     } else {
       row.units += item.qty ?? 1;
     }
   }
-  for (const row of out.values()) row.remnants.sort((a, b) => a - b);
+  for (const row of out.values())
+    row.remnants.sort((a, b) => a.length_mm - b.length_mm);
   return out;
 }
 
@@ -180,12 +221,24 @@ function optionRow(option, locale, pinned) {
   };
   const material = [word("material", option.material),
                     word("finish", option.finish)].filter(Boolean).join(" · ");
-  const stock = option.on_hand
-    ? `<span class="num">${esc(String(option.on_hand))}</span>`
-    : `<span class="meta">${esc(t("drawer.none_on_hand"))}</span>`;
+  // AVAILABLE is the headline, because it is the number the question is about:
+  // "could I switch this part to that product". What the yard holds and what
+  // this fence already has are said underneath, so a reader who wonders why the
+  // figure is lower than the shelf can see the answer instead of doubting it.
+  const stock = option.available
+    ? `<span class="num">${esc(String(option.available))}</span>`
+    : `<span class="meta">${esc(t("drawer.none_available"))}</span>`;
+  const committed = option.committed
+    ? ` <span class="meta">${esc(t("drawer.committed",
+        { on_hand: option.on_hand, committed: option.committed }))}</span>`
+    : "";
   const remnants = option.remnants.length
     ? ` <span class="meta">${esc(tu("drawer.remnants",
         { n: option.remnants.length, longest_mm: option.remnants.at(-1) }))}</span>`
+    : "";
+  const spent = option.committed_remnants
+    ? ` <span class="meta">${esc(t("drawer.remnants_committed",
+        { n: option.committed_remnants }))}</span>`
     : "";
   return `<tr class="${option.chosen ? "selected" : ""}${
       option.sku === pinned ? " pinned" : ""}">
@@ -199,7 +252,7 @@ function optionRow(option, locale, pinned) {
     <td class="num">${option.price_cents === null ? "—" : esc(money(option.price_cents))}
       ${option.delta_cents ? `<br><span class="meta">${
           esc(moneyDelta(option.delta_cents))}</span>` : ""}</td>
-    <td>${stock}${remnants}</td>
+    <td>${stock}${committed}${remnants}${spent}</td>
     <td>${option.chosen
         ? `<span class="tag active">${esc(t("drawer.chosen"))}</span>`
         : `<button data-pick-sku="${esc(option.sku)}">${esc(t("drawer.use"))}</button>`}</td>

@@ -64,7 +64,7 @@ const twoWay = %(two_way)s;
 const pinned = %(pinned)s;
 
 const out = {};
-const slat = partOptions(preview, "slat", products, inventory);
+const slat = partOptions(preview, "slat", { products, inventory });
 out.slat = {
   role: slat.role, qty: slat.qty, length: slat.length_mm,
   options: slat.options.map((o) => ({
@@ -73,13 +73,14 @@ out.slat = {
     bought_as: o.bought_as, on_hand: o.on_hand, remnants: o.remnants,
   })),
 };
-out.rail_options = partOptions(preview, "rail", products, inventory)
+out.rail_options = partOptions(preview, "rail", { products, inventory })
   .options.map((o) => o.sku);
-out.missing_slot = partOptions(preview, "no-such-slot", products, inventory);
+out.missing_slot = partOptions(preview, "no-such-slot", { products, inventory });
 
 // stock: units and remnants are different things and are never summed
 out.stock = [...stockBySku(inventory).entries()]
-  .map(([sku, row]) => [sku, row.units, row.remnants]);
+  .map(([sku, row]) => [sku, row.units, row.remnants.map((r) => r.length_mm),
+                        row.remnants.map((r) => r.id)]);
 out.stock_of_nothing = [...stockBySku(null).entries()].length;
 
 // a colour only paints if it is a plain hex triple
@@ -99,7 +100,7 @@ out.html = {
 };
 
 // the alternatives, which are the drawer's reason to exist
-const rail = partOptions(twoWay, "rail", products, inventory);
+const rail = partOptions(twoWay, "rail", { products, inventory });
 out.two_way = {
   skus: rail.options.map((o) => o.sku),
   chosen: rail.options.filter((o) => o.chosen).map((o) => o.sku),
@@ -115,7 +116,7 @@ out.two_way_html = {
 };
 // once a product is PINNED its own eligibility is that product alone — correct
 // for pricing, useless as a list. The table is built from the unpinned baseline.
-const pinnedRail = partOptions(pinned, "rail", products, inventory, twoWay);
+const pinnedRail = partOptions(pinned, "rail", { products, inventory, catalogue: twoWay });
 out.pinned = {
   skus: pinnedRail.options.map((o) => o.sku),
   chosen: pinnedRail.options.filter((o) => o.chosen).map((o) => o.sku),
@@ -124,7 +125,7 @@ out.pinned = {
 };
 // and without the baseline it collapses, which is the defect this argument is about
 out.pinned_without_catalogue =
-  partOptions(pinned, "rail", products, inventory).options.map((o) => o.sku);
+  partOptions(pinned, "rail", { products, inventory }).options.map((o) => o.sku);
 
 // the per-unit price comes off the wire, not out of a second rounding here.
 // The rate is deliberately one the client's old formula would ALSO have got
@@ -132,7 +133,7 @@ out.pinned_without_catalogue =
 const bare = (p) => partOptions(
   { parts: [{ slot_key: "x", role: "rail", qty: 1, sku: "P",
               eligible_skus: ["P"] }] },
-  "x", { P: p }, null).options[0].price_cents;
+  "x", { products: { P: p } }).options[0].price_cents;
 out.rate_priced = {
   wire: 1850,
   shown: bare({ sku: "P", price_cents: 0, purchase_price_cents: 1850,
@@ -152,6 +153,29 @@ out.legacy_rate = bare({ sku: "P", price_cents: 0,
                          consumption: { kind: "divisible_linear",
                                         purchase_length_mm: 3000 } });
 
+// what is LEFT after this fence: the yard's four bars are not four bars to
+// change your mind with if this run has already been allocated three of them
+const allocated = [
+  { inventory_item_id: "i1", sku: "SLAT-100", qty: 3, length_used_mm: null },
+  { inventory_item_id: "i2", sku: "SLAT-100", qty: 0, length_used_mm: 850 },
+];
+const net = partOptions(preview, "slat", { products, inventory,
+                                           allocations: allocated }).options[0];
+out.net = {
+  on_hand: net.on_hand, committed: net.committed, available: net.available,
+  remnants: net.remnants, committed_remnants: net.committed_remnants,
+};
+out.net_html = drawerHtml(
+  partOptions(preview, "slat", { products, inventory, allocations: allocated }),
+  { locale: "en" });
+// over-allocation floors at zero rather than going negative
+out.over = partOptions(preview, "slat", { products, inventory, allocations: [
+  { inventory_item_id: "i1", sku: "SLAT-100", qty: 99, length_used_mm: null },
+] }).options[0].available;
+// and with no allocations at all, available is simply what is on hand
+out.no_allocations = partOptions(preview, "slat", { products, inventory })
+  .options[0];
+
 // a hostile catalog: the name is server text and must not become markup
 const hostile = JSON.parse(JSON.stringify(products));
 const anySku = slat.options[0].sku;
@@ -159,7 +183,7 @@ hostile[anySku].name = "<img src=x onerror=alert(1)>";
 hostile[anySku].name_i18n = {};
 hostile[anySku].attrs = { ...hostile[anySku].attrs, colour: "#fff;background:url(x)" };
 const hostileHtml = drawerHtml(
-  partOptions(preview, "slat", hostile, inventory), { locale: "en" });
+  partOptions(preview, "slat", { products: hostile, inventory }), { locale: "en" });
 out.hostile = {
   escaped: hostileHtml.includes("&lt;img") && !hostileHtml.includes("<img"),
   no_bad_swatch: !hostileHtml.includes("url(x)"),
@@ -244,9 +268,9 @@ def test_whole_units_and_offcuts_are_counted_separately(drawer):
     option = drawer["slat"]["options"][0]
     assert option["on_hand"] == 4
     assert option["remnants"] == [450, 900]   # sorted, longest last
-    stock = dict((sku, (units, rem)) for sku, units, rem in drawer["stock"])
-    assert stock["SLAT-100"] == (4, [450, 900])
-    assert stock["RAIL-3000"] == (2, [])      # an opened package is still units
+    stock = dict((sku, (units, rem, ids)) for sku, units, rem, ids in drawer["stock"])
+    assert stock["SLAT-100"] == (4, [450, 900], ["i3", "i2"])
+    assert stock["RAIL-3000"] == (2, [], [])  # an opened package is still units
     assert drawer["stock_of_nothing"] == 0
 
 
@@ -325,3 +349,43 @@ def test_the_per_unit_price_is_the_servers_and_not_a_second_rounding(drawer):
     # and a product fetched from a catalog that does not carry the field yet
     assert drawer["legacy_flat"] == 2500      # a flat price needs no derivation
     assert drawer["legacy_rate"] is None      # a rate without it is not a price
+
+
+# --- what is left after this run ------------------------------------------
+
+def test_availability_is_the_shelf_less_what_this_fence_already_takes(drawer):
+    """The yard's four bars are not four bars available to a change of mind if
+    the fence being priced has already been allocated three of them. The first
+    version of this column read the inventory alone and said "4" about a product
+    with one to spare."""
+    net = drawer["net"]
+    assert net["on_hand"] == 4
+    assert net["committed"] == 3
+    assert net["available"] == 1
+
+
+def test_an_offcut_this_run_is_cutting_from_is_not_offered_twice(drawer):
+    """The planner takes a remnant as a whole BIN, so half of one is not left
+    over: whatever survives comes back as a PROJECTED remnant, which is a
+    different item and not stock on hand."""
+    net = drawer["net"]
+    assert net["remnants"] == [450], "the 900 mm offcut is being cut from"
+    assert net["committed_remnants"] == 1
+
+
+def test_the_three_stock_facts_are_all_said_never_collapsed(drawer):
+    """A single netted figure answers "can I use this" and hides why it is lower
+    than the shelf — which is the question a reader asks next."""
+    html = drawer["net_html"]
+    assert "of 4 on hand, 3 already on this fence" in html
+    assert "already being cut from" in html
+
+
+def test_over_allocation_floors_at_none_rather_than_going_negative(drawer):
+    assert drawer["over"] == 0
+
+
+def test_with_nothing_allocated_availability_is_simply_the_shelf(drawer):
+    row = drawer["no_allocations"]
+    assert (row["on_hand"], row["committed"], row["available"]) == (4, 0, 4)
+    assert row["remnants"] == [450, 900]

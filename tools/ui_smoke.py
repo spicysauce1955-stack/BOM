@@ -696,8 +696,87 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
         check("back to as-generated restores the panel that was built",
               not restored["badge"] and restored["cost"] == cost_before)
 
+        # --- stock, net of what this fence already takes ----------------------
+        # LAST in this section, because it regenerates: the yard's offcuts are
+        # not offcuts available to a change of mind if this run is already
+        # cutting from them. The first version of this column read the inventory
+        # alone and said "2 offcuts" about a product with one to spare.
+        #
+        # Remnants rather than whole units, because the part under the drawer is
+        # bought by the LENGTH: the cut planner takes offcuts as bins and never
+        # touches `full_stock` of a divisible product, so stocking whole bars
+        # here would allocate nothing and the check would pass by measuring
+        # nothing.
+        sku = c.js(
+            "document.querySelector('#assembly-drawer .drawer-table tr.selected"
+            " .sku')?.textContent || ''")
+        c.js(f"""
+(async () => {{
+  const pid = document.getElementById('project-select').value;
+  await fetch(`/api/projects/${{pid}}/inventory`, {{
+    method: 'PUT', headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify({{ items: [
+      {{ id: 'smoke-off-1', sku: {sku!r}, kind: 'remnant', length_mm: 2600 }},
+      {{ id: 'smoke-off-2', sku: {sku!r}, kind: 'remnant', length_mm: 2400 }},
+    ] }}),
+  }});
+  return 'ok';
+}})()""")
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
-        time.sleep(0.3)
+        time.sleep(0.4)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(3.0)
+        c.js("document.querySelector('#tabs button[data-tab=\"assembly\"]').click(); 'ok'")
+        # a new run is a new bay, and opening the drawer before the tab has
+        # settled on it just clears the selection again — wait for the drawing,
+        # then for the drawer, rather than for the clock
+        wait_for(c, "document.querySelectorAll('#assembly-micro .elev-member').length")
+        time.sleep(1.2)
+        # Clear first, then select. Element ids are deterministic from the
+        # topology, so regenerating the SAME fence keeps the member the user had
+        # selected — which is right, and means a blind click here toggles it OFF.
+        c.js("""
+{ const svg = document.querySelector('#assembly-micro .elevation-svg');
+  const open = svg.querySelector('.elev-member.selected');
+  if (open) open.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  svg.querySelector('.elev-member')
+     .dispatchEvent(new MouseEvent('click', { bubbles: true })); }""")
+        wait_for(c,
+                 "document.querySelectorAll('#assembly-drawer .drawer-table tr').length")
+        netted = c.js(f"""
+(async () => {{
+  const pid = document.getElementById('project-select').value;
+  const runs = await (await fetch(`/api/projects/${{pid}}/runs`)).json();
+  const doc = await (await fetch(`/api/runs/${{runs[runs.length - 1].id}}/bom`)).json();
+  const cut = (doc.bom.allocations || [])
+    .filter(a => a.sku === {sku!r} && a.length_used_mm).length;
+  const row = [...document.querySelectorAll('#assembly-drawer .drawer-table tr')]
+    .find(tr => tr.querySelector('.sku')?.textContent === {sku!r});
+  return {{ cut, cell: row?.querySelectorAll('td')[4]?.textContent || '' }};
+}})()""")
+        # in Hebrew, like the rest of this suite: "none free · +2 offcuts already
+        # being cut from" — the offcuts on the shelf are the ones NOT already
+        # spoken for by this fence
+        check("the drawer reports offcuts net of the ones this fence is cutting from",
+              netted["cut"] > 0 and "שכבר נחתכות" in netted["cell"]
+              and f"+{netted['cut']}" in netted["cell"]
+              and "אין פנוי" in netted["cell"])
+        # and put the yard back: offcuts change the cut plan, and a later check
+        # reads one. A step that leaves the project different from how it found
+        # it makes every check after it depend on this one having run.
+        c.js("""
+(async () => {
+  const pid = document.getElementById('project-select').value;
+  await fetch(`/api/projects/${pid}/inventory`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [] }),
+  });
+  return 'ok';
+})()""")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.4)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(3.0)
 
         # --- quotes: snapshot, freeze, accept ---------------------------------
         # save-quote opens an inline label form (no window.prompt anymore)
