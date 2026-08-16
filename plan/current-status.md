@@ -880,3 +880,25 @@ do nothing or silently generate the old height. Spec corrected, with the reason.
 
 954 pytest · 155 golden scenarios · 158/158 smoke · compatibility gate
 byte-identical across the whole arc, including every fix above.
+
+## Stock netting (2026-08-16) — COMPLETE
+The last open finding of the review pass, and the only one where a user read a
+figure and got a wrong answer: the drawer's "in stock" column read the project's
+inventory alone, so a product whose every bar this run had already been allocated
+still reported the shelf count — on the one surface built for "could I switch this
+part to that product".
+
+Three facts now, never collapsed: what the yard holds, what this fence has already
+been given, and what is left. Units and offcuts stay apart here as everywhere else,
+because the planner spends them differently — a remnant allocation takes the WHOLE
+offcut as a bin, so half of one is never left over and whatever survives comes back
+as a projected remnant, a different item. The allocations ride on the /bom response
+the cost strip already fetches, so it costs no request.
+
+Two things the browser check taught, both kept as comments: element ids are
+deterministic from the topology, so regenerating the same fence KEEPS the member the
+user had selected (right behaviour, and a blind second click toggles it off); and a
+smoke step that leaves the project's inventory changed makes every later check depend
+on that step having run, so it puts the yard back.
+
+1045 pytest · 155 golden scenarios · 159/159 smoke · gate unmoved.
