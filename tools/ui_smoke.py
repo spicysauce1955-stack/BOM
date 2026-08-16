@@ -566,6 +566,141 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
         time.sleep(0.6)
         c.shot("26-assembly-macro.png")
 
+        # --- the assembly film: the fence going up in build order -------------
+        # The one thing on this tab that is not a drawing but a REVEAL of one:
+        # footings, then posts, then frame, then infill, then fixings, over
+        # rectangles both viewports have already placed. Nothing is moved and
+        # nothing is recomputed — which is why every check below reads the
+        # OPACITY class (`.anim-pending`) rather than any coordinate.
+        #
+        # Scoped to #assembly-play and to the .anim-part class it stamps: a
+        # check that counted things in the page at large would pass on the
+        # strength of the fence being drawn at all, which is the one thing this
+        # feature does not do.
+        film = c.js("""
+({ play: !!document.getElementById('btn-anim-play'),
+   scrub: !!document.getElementById('anim-scrub'),
+   caption: document.getElementById('anim-stage')?.textContent || '',
+   macro_parts: document.querySelectorAll('#assembly-macro .anim-part').length,
+   micro_parts: document.querySelectorAll('#assembly-micro .anim-part').length,
+   hidden: document.querySelectorAll('#assembly-macro .anim-pending').length
+         + document.querySelectorAll('#assembly-micro .anim-pending').length })""")
+        check("the assembly tab offers a film of what both viewports have drawn",
+              film["play"] and film["scrub"]
+              and film["macro_parts"] > 0 and film["micro_parts"] > 0)
+        # the resting state is the FINISHED fence: a tab whose drawing starts
+        # hidden until somebody presses play is a tab that looks broken
+        check("the fence is fully assembled until the film is asked for",
+              film["hidden"] == 0 and bool(film["caption"]))
+
+        # Scrubbed rather than watched: the ordering is a property of the film,
+        # not of how fast this machine runs, and a check that waited on a clock
+        # would be measuring the machine.
+        frames = c.js("""
+(() => {
+  const scrub = document.getElementById('anim-scrub');
+  const n = (sel) => document.querySelectorAll(sel).length;
+  const out = [];
+  for (let p = 0; p <= 1000; p += 25) {
+    scrub.value = String(p);
+    scrub.dispatchEvent(new Event('input', { bubbles: true }));
+    out.push({
+      parts: n('#assembly-macro .anim-part') + n('#assembly-micro .anim-part'),
+      hidden: n('#assembly-macro .anim-pending') + n('#assembly-micro .anim-pending'),
+      footing_wait: n('#assembly-macro .macro-footing.anim-pending'),
+      footings: n('#assembly-macro .macro-footing'),
+      post_wait: n('#assembly-macro .macro-post-face.anim-pending'),
+      posts: n('#assembly-macro .macro-post-face'),
+      rail_wait: n('#assembly-macro .macro-member[data-role="rail"].anim-pending'),
+      rails: n('#assembly-macro .macro-member[data-role="rail"]'),
+      caption: document.getElementById('anim-stage')?.textContent || '',
+    });
+  }
+  return out;
+})()""")
+        placed = [f["parts"] - f["hidden"] for f in frames]
+        check("scrubbing the film only ever adds parts to the drawing",
+              placed == sorted(placed) and placed[0] == 0
+              and placed[-1] == frames[-1]["parts"] and frames[-1]["parts"] > 20)
+        # THE claim, read off the drawing rather than off the schedule: while a
+        # footing is still to come no post is standing, and while a post is
+        # still to come no rail is up. The `any` clauses are the non-vacuity
+        # guard — an implementation that revealed everything at frame 1
+        # satisfies every `all` above trivially, and one that revealed each
+        # stage in a single jump satisfies the first two.
+        #
+        # Footings/posts/frame rather than the whole ladder because THIS fence
+        # is the default rail model and has no infill: the infill and fixings
+        # rungs are pinned in tests/web/test_animate_module.py, where a panel
+        # with slats in it costs nothing to construct.
+        check("the film builds in order: footings, then posts, then the frame",
+              frames[0]["footings"] > 0 and frames[0]["posts"] > 0
+              and frames[0]["rails"] > 0
+              and all(f["post_wait"] == f["posts"]
+                      for f in frames if f["footing_wait"] > 0)
+              and all(f["rail_wait"] == f["rails"]
+                      for f in frames if f["post_wait"] > 0)
+              and any(0 < f["footing_wait"] < f["footings"] for f in frames)
+              and any(f["post_wait"] > 0 and f["footing_wait"] == 0 for f in frames)
+              and any(f["rail_wait"] > 0 and f["post_wait"] == 0 for f in frames))
+        check("the film names the stage it is placing, and it changes",
+              len({f["caption"] for f in frames}) >= 3)
+
+        # the clock: play advances it, pause freezes it, and the button says which
+        c.js("""
+{ const s = document.getElementById('anim-scrub');
+  s.value = '0'; s.dispatchEvent(new Event('input', { bubbles: true })); }""")
+        idle_label = c.js("document.getElementById('btn-anim-play').textContent")
+        c.js("document.getElementById('btn-anim-play').click(); 'ok'")
+        time.sleep(0.7)
+        playing = c.js("""
+({ label: document.getElementById('btn-anim-play').textContent,
+   scrub: +document.getElementById('anim-scrub').value,
+   hidden: document.querySelectorAll('#assembly-macro .anim-pending').length
+         + document.querySelectorAll('#assembly-micro .anim-pending').length })""")
+        check("pressing play runs the clock and withholds what is not built yet",
+              playing["scrub"] > 0 and playing["hidden"] > 0
+              and playing["label"] != idle_label)
+        c.js("document.getElementById('btn-anim-play').click(); 'ok'")
+        time.sleep(0.15)
+        paused_at = c.js("+document.getElementById('anim-scrub').value")
+        time.sleep(0.9)
+        still = c.js("""
+({ scrub: +document.getElementById('anim-scrub').value,
+   label: document.getElementById('btn-anim-play').textContent })""")
+        check("pause really stops the clock",
+              still["scrub"] == paused_at and still["label"] != playing["label"])
+        c.shot("28-assembly-film.png")
+
+        # prefers-reduced-motion: no film offered at all, the fence shown
+        # finished, and the panel says why — a disabled button reads as broken
+        # rather than as respected, and a fence left half-hidden reads as a bug.
+        c.cmd("Emulation.setEmulatedMedia",
+              features=[{"name": "prefers-reduced-motion", "value": "reduce"}])
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.4)
+        c.js("document.querySelector('#tabs button[data-tab=\"assembly\"]').click(); 'ok'")
+        time.sleep(1.6)
+        calm = c.js("""
+({ play: !!document.getElementById('btn-anim-play'),
+   scrub: !!document.getElementById('anim-scrub'),
+   note: document.getElementById('anim-reduced')?.textContent || '',
+   parts: document.querySelectorAll('#assembly-macro .anim-part').length,
+   hidden: document.querySelectorAll('#assembly-macro .anim-pending').length
+         + document.querySelectorAll('#assembly-micro .anim-pending').length })""")
+        check("a reader who asked for less motion gets the finished fence, and is told why",
+              not calm["play"] and not calm["scrub"] and bool(calm["note"])
+              and calm["parts"] > 0 and calm["hidden"] == 0)
+        c.cmd("Emulation.setEmulatedMedia", features=[])
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.4)
+        c.js("document.querySelector('#tabs button[data-tab=\"assembly\"]').click(); 'ok'")
+        time.sleep(1.6)
+        check("the film comes back when motion is welcome again",
+              bool(c.js("!!document.getElementById('btn-anim-play')"))
+              and c.js("document.querySelectorAll('#assembly-micro .anim-pending')"
+                       ".length") == 0)
+
         # --- the part drawer, and a what-if that generates nothing ------------
         # Clicking a member asks "what is that made of, what else fits, do we
         # have any" — three documents joined on one sku. And the whole point of
