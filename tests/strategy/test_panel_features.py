@@ -513,3 +513,66 @@ def test_the_default_variant_sentence_renders_when_no_variant_applies():
     node = next(n for n in result.graph.nodes if n.action == "select_variant")
     assert "no variant" in explain_node(result.graph, node, lang="en").lower()
     assert "{" not in explain_node(result.graph, node, lang="he")
+
+
+# --- 5 · a length the bay cannot resolve --------------------------------------
+
+def _jointed_spec(count: int = 2) -> PanelSpec:
+    """A rail set with slats measured between its outermost two members — the
+    shape M-SLAT@v2 has, reduced to what this section is about."""
+    from fenceai.fencemodel.model import InfillSpec, Member
+
+    return PanelSpec(
+        frame=[FrameSlot(
+            key="rail", orientation="horizontal", thickness_mm=40,
+            placement=Distributed(count=count),
+            requirement=_rail_req(),
+        )],
+        infill=InfillSpec(orientation="vertical", pattern=[Member(
+            key="slat", width_mm=100, gap_after_mm=20,
+            base_ref="rail", top_ref="rail",
+            requirement=PartRequirement(
+                role="infill", qty=1, length_rule="between_frame",
+                eligibility=Eligibility(members=[EligibleItem(sku="SLAT-100")]),
+            ),
+        )]),
+    )
+
+
+def test_a_bay_that_cannot_measure_its_members_says_so_instead_of_pricing_none():
+    """One rail, and the slats are measured between the outermost two members of
+    that set — which is the same rail, so the two datums coincide and the face
+    correction takes what is left. The quiet failure this guards is not a wrong
+    length: it is NO length, and a divisible product asked for without one plans
+    no bars, prices at nothing, and reads to the parts ledger as demand covered
+    from stock — a quote missing a line rather than visibly wrong on one. Hence
+    `severity="error"`, alone among the panel checks.
+    """
+    result = _generate(_model(default_spec=_jointed_spec(count=1)))
+
+    slats = [s for span in result.strategy.spans for s in span.panel.slots
+             if s.slot_key == "slat"]
+    assert slats and all(s.length_mm is None for s in slats)
+
+    (warning,) = _warnings(result, "panel_length_unresolved")
+    assert warning.severity == "error"
+    assert warning.params["slot"] == "slat"
+    assert warning.params["model_ref"] == f"{MODEL_ID}@v1"
+    assert warning.params["n"] == len(result.strategy.spans)
+    assert set(warning.element_refs) == {s.id for s in result.strategy.spans}
+    node = result.graph.node(warning.decision_ref)
+    assert node.action == "panel_length_unresolved"
+    from fenceai.decisions.explain import explain_node
+    for lang in ("en", "he"):
+        line = explain_node(result.graph, node, lang=lang)
+        assert line and "{" not in line, (lang, line)
+
+
+def test_a_bay_that_measures_cleanly_files_no_such_warning():
+    """One warning per (model, slot) means the ordinary panel must produce
+    none — otherwise every jointed job would ship an error it has no cause for."""
+    result = _generate(_model(default_spec=_jointed_spec()))
+    slats = [s for span in result.strategy.spans for s in span.panel.slots
+             if s.slot_key == "slat"]
+    assert slats and all(s.length_mm and s.length_mm > 0 for s in slats)
+    assert not _warnings(result, "panel_length_unresolved")

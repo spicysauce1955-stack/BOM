@@ -40,7 +40,10 @@ import {
 
 // --- the closed vocabularies, read from fencemodel/model.py -------------------
 const ROLES = ["post", "cap", "concrete", "rail", "screw", "infill", "spacer"];
-const LENGTH_RULES = ["clear_between_posts", "centre_to_centre", "overlap", "panel_height"];
+const LENGTH_RULES = ["clear_between_posts", "centre_to_centre", "overlap", "panel_height",
+  // the one rule that reads the "starts at" / "ends at" selects below; under any
+  // other rule the schema now refuses a member that sets them
+  "between_frame"];
 const PLACEMENT_KINDS = ["distributed", "from_bottom", "from_top", "fraction"];
 const JUSTIFICATIONS = ["start", "end", "center", "spread_to_fit"];
 // `trim_last` and `extension_clip` are schema-expressible and NOT built

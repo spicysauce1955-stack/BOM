@@ -188,6 +188,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Fence model {model_ref} does not support {n} panel height(s) in "
             "section {run_id}: {heights_mm} {u}."
         ),
+        "panel_length_unresolved": (
+            "Model {model_ref} resolves no cut length for slot {slot} in {n} "
+            "bay(s) of section {run_id}."
+        ),
         "override_applied": "User override {override_id} applied ({action}).",
         "input_fact": "Input fact: {action} {payload}.",
         "generic": "{action}: {payload}",
@@ -308,6 +312,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "height_not_supported": (
             "דגם הגדר {model_ref} אינו תומך ב-{n} מגובהי הפאנל בקטע {run_id}: "
             "{heights_mm} {u}."
+        ),
+        "panel_length_unresolved": (
+            "דגם {model_ref} אינו מחשב אורך חיתוך עבור החריץ {slot} ב-{n} "
+            "מפתחים בקטע {run_id}."
         ),
         "override_applied": "דריסת משתמש {override_id} הוחלה ({action}).",
         "input_fact": "עובדת קלט: {action} {payload}.",
@@ -504,6 +512,10 @@ def explain_node(
             base = _fmt(t, "height_not_supported", lang, units,
                 model_ref=p.get("model_ref"), run_id=p.get("run_id"),
                 n=p.get("n"), heights_mm=p.get("heights_mm", []))
+        case "panel_length_unresolved":
+            base = _fmt(t, "panel_length_unresolved", lang, units,
+                model_ref=p.get("model_ref"), slot=p.get("slot"),
+                run_id=p.get("run_id"), n=p.get("n"))
         case action if action in _OVERRIDE_ACTIONS:
             base = _fmt(t, "override_applied", lang, units,
                 override_id=p.get("override_id"), action=node.action

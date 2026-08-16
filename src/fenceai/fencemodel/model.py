@@ -26,7 +26,25 @@ from fenceai.knowledge.ast import Expr
 
 _SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-LengthRule = Literal["clear_between_posts", "centre_to_centre", "overlap", "panel_height"]
+LengthRule = Literal[
+    "clear_between_posts", "centre_to_centre", "overlap", "panel_height",
+    # a member cut to fit BETWEEN two frame members, plus whatever seats into
+    # them. The only rule that reads `Member.base_ref`/`top_ref`.
+    "between_frame",
+]
+
+# How a member meets the one it lands on. The kind is a WORD for the shop and
+# the drawing; the millimetres beside it are what the cut list reads, which is
+# why `validate_model` refuses a kind whose numbers are all zero — "channel"
+# with no depth and no engagement is a butt joint wearing a better name.
+JointKind = Literal["butt", "channel", "groove", "bracket", "overlap"]
+
+# The two kinds whose mechanic the schema can express: a housing of some depth,
+# and a member seated into it. `bracket` and `overlap` are in the vocabulary
+# because the spec named them and are refused by `_unsupported_features` —
+# neither has a field that could make it mean anything, and a kind with no
+# numbers behind it is a butt joint wearing a better name.
+_HOUSED_JOINTS = frozenset({"channel", "groove"})
 
 
 # --- what a part IS, and which items may supply it ---------------------------
@@ -116,6 +134,18 @@ class FrameSlot(BaseModel):
     # undeclared, and the elevation read model says so (`declared=False`) rather
     # than drawing a nominal band that reads as measured.
     thickness_mm: Mm = 0
+    joint: JointKind = "butt"
+    # how deep this member RECEIVES an infill member — the U of a bottom channel,
+    # the groove routed into a top rail. Measured from the receiving face inwards,
+    # so it is bounded by nothing here and by `thickness_mm` in the shop; the
+    # refusal below is the part that has a datum: a channel inside a member of
+    # undeclared depth is a dimension with nothing to measure it from.
+    channel_depth_mm: Mm = 0
+    # clearance left at the BOTTOM of that channel, so the member can be tipped
+    # in. It shortens nothing by itself: what the member is cut to is the
+    # engagement it is authored with, and the margin is what the author must
+    # leave room for when choosing it.
+    insertion_margin_mm: Mm = 0
     requirement: PartRequirement
 
 
@@ -127,6 +157,12 @@ class Member(BaseModel):
     gap_after_mm: Mm = 0        # MAY be negative: an overlap (board-on-board)
     base_ref: str | None = None  # frame slot key this member starts at
     top_ref: str | None = None
+    joint: JointKind = "butt"
+    # how far this member seats INTO its base_ref / top_ref. Added back to the
+    # face-to-face distance, because the cut list wants the piece that is made,
+    # not the opening it fills.
+    base_engagement_mm: Mm = 0
+    top_engagement_mm: Mm = 0
     requirement: PartRequirement
 
 
@@ -266,6 +302,14 @@ def _can_supply_length(catalog: Catalog, sku: str) -> bool:
 # field can sit here unnoticed while only demo data writes it and become a
 # wrong answer the moment an editor puts it in front of an author, which is
 # exactly what an authoring wave is for finding.
+#
+# The joint wave (two-tier visualizer W2) added one and shrank it in the same
+# change, which is the honest account: `Member.base_ref`/`top_ref` were never in
+# this table although resolution had ignored them since phase 1 and the model
+# editor had been offering both selects to authors since W4 — the exact defect
+# the table exists to catch, missed. `between_frame` now reads them, so the
+# entry that belongs here is the NARROW one: the refs under any OTHER length
+# rule, where they still reach nothing.
 _UNSUPPORTED = "not yet supported (phase 2)"
 
 # The params a `layout_policy` contribution may name, because these are the ones
@@ -372,6 +416,58 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                 "resolve_panel always emits per-member component slots, so the "
                 "panel would be bought as its parts rather than as one unit"
             )
+        for holder in [*spec.frame, *(spec.infill.pattern if spec.infill else [])]:
+            if holder.joint in ("bracket", "overlap"):
+                # Named by the spec's vocabulary and given no field to mean
+                # anything with. A bracket joint's mechanic is a PRODUCT — the
+                # bracket — and `FrameSlot`/`Member` have nowhere to name one;
+                # an overlap's is a lap length, which is neither a channel depth
+                # (the receiving member is not housed) nor an engagement (the
+                # member is not seated in anything). So both would ride on the
+                # model, change no number, and be drawn as a mechanic the panel
+                # does not have. Refused rather than accepted-and-ignored, which
+                # is what this table is for.
+                errors.append(
+                    f"slot {holder.key}: joint={holder.joint!r} is "
+                    f"{_UNSUPPORTED}: nothing in the schema can give it a "
+                    "mechanic — a bracket needs a product and an overlap needs a "
+                    "lap length, and neither has a field — so the member would be "
+                    "cut exactly as a butt joint cuts it while the drawing "
+                    "claimed otherwise"
+                )
+
+        for member in (spec.infill.pattern if spec.infill else []):
+            seats = [n for n, mm in (("base_engagement_mm", member.base_engagement_mm),
+                                     ("top_engagement_mm", member.top_engagement_mm)) if mm]
+            if seats and member.requirement.length_rule != "between_frame":
+                # The other half of the same hole. `_length_for` adds an
+                # engagement under `between_frame` and under no other rule, so
+                # here the author has said how deep the member seats and the
+                # member is cut as though it seated nowhere.
+                errors.append(
+                    f"infill member {member.key!r}: "
+                    f"{' and '.join(seats)} with "
+                    f"length_rule={member.requirement.length_rule!r} is "
+                    f"{_UNSUPPORTED}: only 'between_frame' adds an engagement to "
+                    "the cut length, so the member would be cut as if it seated "
+                    "into nothing"
+                )
+            refs = [n for n, r in (("base_ref", member.base_ref),
+                                   ("top_ref", member.top_ref)) if r]
+            if refs and member.requirement.length_rule != "between_frame":
+                # `_length_for` reads the refs under `between_frame` and under no
+                # other rule, so here they are two carefully chosen frame slots
+                # that change nothing: the member is still cut to the panel
+                # height (or a bay width), and the author who said "starts at the
+                # bottom rail" gets a part that runs past it to the ground.
+                errors.append(
+                    f"infill member {member.key!r}: {' and '.join(refs)} with "
+                    f"length_rule={member.requirement.length_rule!r} is "
+                    f"{_UNSUPPORTED}: only 'between_frame' measures against the "
+                    "frame, so these refs would be read by nothing and the "
+                    "member would still be cut to the rule it declares"
+                )
+
         for key, req in _requirements(spec):
             if req.eligibility.group is not None:
                 # Never read: `resolve_supply` groups by the (sku, priority,
@@ -396,6 +492,144 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                     "never evaluated and never frozen into the run's snapshot, so "
                     "it would neither add nor remove a candidate"
                 )
+    return errors
+
+
+def _joint_errors(spec: PanelSpec) -> list[str]:
+    """Joint geometry that would cut a part to the wrong length.
+
+    Every one of these is arithmetic the resolver would otherwise perform
+    faithfully on a number the author cannot have meant — and the answer would
+    come out as a plain integer on a cut list, indistinguishable from a measured
+    one. The failure is per BAY, so a model published with any of them is wrong
+    on every panel of every job built to it until someone measures a piece.
+    """
+    errors: list[str] = []
+    frame_by_key = {s.key: s for s in spec.frame}
+
+    for slot in spec.frame:
+        if slot.channel_depth_mm > 0 and slot.thickness_mm == 0:
+            errors.append(
+                f"frame slot {slot.key!r}: channel_depth_mm="
+                f"{slot.channel_depth_mm} inside a member whose thickness_mm is "
+                "undeclared — the depth is measured from a face this model does "
+                "not have, so nothing could check it against the member it cuts "
+                "into. Declare thickness_mm, or drop the channel"
+            )
+        if 0 < slot.channel_depth_mm <= slot.insertion_margin_mm:
+            errors.append(
+                f"frame slot {slot.key!r}: insertion_margin_mm="
+                f"{slot.insertion_margin_mm} is not less than channel_depth_mm="
+                f"{slot.channel_depth_mm}, so the clearance swallows the whole "
+                "seat and the member would rest on nothing"
+            )
+        if 0 < slot.thickness_mm < slot.channel_depth_mm:
+            errors.append(
+                f"frame slot {slot.key!r}: channel_depth_mm="
+                f"{slot.channel_depth_mm} is deeper than the member it is cut "
+                f"into (thickness_mm={slot.thickness_mm}) — the channel would "
+                "come out the far side. Refused for the same reason an "
+                "engagement deeper than its channel is: both put a member "
+                "somewhere it cannot go, in a number that reads as measured"
+            )
+        if slot.joint in _HOUSED_JOINTS and slot.channel_depth_mm == 0:
+            errors.append(
+                f"frame slot {slot.key!r}: joint={slot.joint!r} with "
+                "channel_depth_mm=0 claims a mechanic the numbers do not have — "
+                "the drawing would show a housed joint and the cut list would "
+                "read as a butt one. Give the channel its depth, or call the "
+                "joint 'butt'"
+            )
+        if slot.requirement.length_rule == "between_frame":
+            errors.append(
+                f"frame slot {slot.key!r}: length_rule='between_frame' measures "
+                "a member against the FRAME, and a frame slot has no "
+                "base_ref/top_ref to measure between, so this slot would resolve "
+                "to no cut length at all"
+            )
+
+    infill_orientation = spec.infill.orientation if spec.infill else None
+    for member in (spec.infill.pattern if spec.infill else []):
+        rule = member.requirement.length_rule
+        if rule == "between_frame" and not (member.base_ref and member.top_ref):
+            errors.append(
+                f"infill member {member.key!r}: length_rule='between_frame' with "
+                f"base_ref={member.base_ref!r} and top_ref={member.top_ref!r} — "
+                "there is nothing to measure between, so the member would resolve "
+                "to no cut length and a divisible product would be bought and "
+                "priced as none at all"
+            )
+        for name, ref, engagement in (
+            ("base_ref", member.base_ref, member.base_engagement_mm),
+            ("top_ref", member.top_ref, member.top_engagement_mm),
+        ):
+            if ref is None:
+                continue
+            target = frame_by_key.get(ref)
+            if target is None:
+                # Deliberately not "unknown slot": a fixing key or another infill
+                # member is a plausible thing to type here and a placement is
+                # exactly what it does not have.
+                errors.append(
+                    f"infill member {member.key!r}: {name}={ref!r} is not a frame "
+                    "slot of this spec, so the member has no placed member to "
+                    "measure from — refs name frame slots only"
+                )
+                continue
+            if target.orientation == infill_orientation:
+                # A member is measured between the two frame members it CROSSES,
+                # and `placement_positions` places a horizontal slot up the
+                # height while a vertical one runs across the clear width. So a
+                # vertical slat referring to a vertical stile would be cut to a
+                # distance measured across the bay — a width, on a part that runs
+                # up it. Not in the wave's list of refusals and added anyway: the
+                # arithmetic below is orientation-blind by design (it reads
+                # positions, not axes), which makes this the one mistake it
+                # cannot notice, and the number it produces looks like every
+                # other length on the cut list.
+                errors.append(
+                    f"infill member {member.key!r}: {name}={ref!r} is a "
+                    f"{target.orientation} frame slot and the infill runs "
+                    f"{infill_orientation}, so they never cross — the member "
+                    "would be cut to a distance measured along the wrong axis of "
+                    "the panel. A member is measured between the frame members "
+                    "it crosses"
+                )
+                continue
+            # The seat has to fit in what is left of the channel ABOVE the
+            # clearance under it. Checked against the two together rather than
+            # against the depth alone: a 12 mm seat in a 12 mm channel with a
+            # 3 mm margin is a member bottoming out in a channel whose whole
+            # point is to keep 3 mm under it, and the depth-only check called
+            # that fine.
+            seat = target.channel_depth_mm - target.insertion_margin_mm
+            if engagement > seat:
+                errors.append(
+                    f"infill member {member.key!r}: seats {engagement} mm into "
+                    f"frame slot {ref!r}, which offers {seat} mm "
+                    f"(channel {target.channel_depth_mm} mm less "
+                    f"{target.insertion_margin_mm} mm of insertion clearance) — "
+                    f"the member would be cut {engagement - seat} mm too long on "
+                    "every bay and would stand proud of the frame it is meant to "
+                    "sit in"
+                )
+        housed = any(
+            frame_by_key[r].channel_depth_mm > 0
+            for r in (member.base_ref, member.top_ref) if r in frame_by_key
+        )
+        if member.joint != "butt" and not housed and not (
+                member.base_engagement_mm or member.top_engagement_mm):
+            # The conjunction the spec states: zero engagement AND no channel to
+            # engage. A member named `channel` that seats nothing into a slot
+            # that houses nothing is cut exactly as a butt joint cuts it, and
+            # would be DRAWN as a housed one.
+            errors.append(
+                f"infill member {member.key!r}: joint={member.joint!r} with no "
+                "engagement at either end and no channel in either frame slot "
+                "claims a mechanic the numbers do not have — the member is cut "
+                "exactly as a butt joint would cut it. Give it a "
+                "base_engagement_mm/top_engagement_mm, or call the joint 'butt'"
+            )
     return errors
 
 
@@ -438,6 +672,8 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                 )
 
     for spec in [model.default_spec, *(v.spec for v in model.variants)]:
+        errors += _joint_errors(spec)
+
         for member in (spec.infill.pattern if spec.infill else []):
             # `fit_pattern` walks the sequence adding a member then its gap. A
             # member that occupies no space, or one whose overlap swallows it

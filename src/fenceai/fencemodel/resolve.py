@@ -14,7 +14,7 @@ from fenceai.core.units import Mm
 from fenceai.fencemodel.fit import FitResult, fit_pattern
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, FenceModel, Fraction, FromBottom, FromTop,
-    HeightSupport, PanelSpec, PartRequirement,
+    HeightSupport, Member, PanelSpec, PartRequirement,
 )
 from fenceai.knowledge.ast import MissingField, evaluate_expr
 
@@ -50,6 +50,22 @@ class ResolvedSlot(BaseModel):
     qty: int
     length_mm: Mm | None = None
     length_basis: str | None = None
+    # This slot declares a length rule and the rule produced no length in THIS
+    # bay. Recorded rather than left as a bare `length_mm is None`, which a
+    # fixing and a cap share and mean nothing by: a divisible product asked for
+    # with no cut length plans no bars, so the panel would price that member at
+    # zero and the parts ledger would read the gap as demand covered from stock —
+    # a panel that silently costs nothing rather than one that visibly costs the
+    # wrong amount. `validate_model` closes that at authoring for the rules it
+    # can; `between_frame` depends on the bay, so the generator warns instead.
+    length_unresolved: bool = False
+    # Where this member starts along its OWN axis, in panel coordinates — set
+    # only by the one rule that fixes it (`between_frame`), None everywhere else,
+    # where a member spans the whole opening and 0 is the answer. It travels with
+    # the length because they are one calculation: the elevation draws the
+    # rectangle the cut list buys, or the picture starts lying about the panel it
+    # is derived from.
+    span_start_mm: Mm | None = None
     sku: str = ""                    # resolved by fulfillment, never here
     eligibility: Eligibility = Eligibility()
     fit: FitResult | None = None
@@ -165,15 +181,89 @@ def height_supported(support: HeightSupport, height_mm: Mm) -> bool:
     return (height_mm - support.min_mm) % support.step_mm == 0
 
 
+def _between_frame_extent(
+    member: Member, frame: dict[str, "ResolvedSlot"]
+) -> tuple[Mm, Mm] | None:
+    """(where this member starts in panel coordinates, how long it is cut).
+
+    Both from one calculation, because they are one fact and two of them would
+    drift: the elevation draws the rectangle the cut list buys, or the picture
+    starts lying about the panel it is derived from — which is the property
+    `report/elevation.py` opens by claiming.
+
+    A member cut to fit between two frame members, plus what disappears into
+    them:
+
+        (top_position - base_position)
+        - (top_thickness//2 + base_thickness//2)   # centreline to facing faces
+        + base_engagement + top_engagement          # what the joint swallows
+
+    The positions are READ off the frame slots this same panel already resolved,
+    never re-derived: `placement_positions` is THE rounding point for placement
+    (ADR-0002), and a second call here — over a span this function would have to
+    reconstruct from the orientation — is exactly how two implementations end up
+    a millimetre apart and move a rail out from under its own slats.
+
+    A placement gives a member's CENTRELINE, so half of each frame member's face
+    height is what stands between the two centrelines and the opening. An
+    undeclared thickness contributes 0 rather than a nominal: the elevation
+    already reports such a member as `declared=False`, and inventing a face
+    height here would put a measured-looking number on a cut list.
+
+    A frame slot with several positions is a rail SET (a `Distributed` ladder),
+    and "between the rails" means between the outermost two: the bottom rail is
+    the lowest position and the top rail the highest, which is what an author
+    naming one slot at both ends is asking for. Picking a middle rail would cut
+    every slat short by a bay's worth of ladder.
+    """
+    base_slot = frame.get(member.base_ref or "")
+    top_slot = frame.get(member.top_ref or "")
+    if base_slot is None or top_slot is None:
+        return None
+    if not base_slot.positions_mm or not top_slot.positions_mm:
+        # A `count_param` resolved the referenced set to nothing, so in THIS bay
+        # there is no member to seat into. Substituting the panel height would
+        # hand the cut list a length measured between things that are not there.
+        return None
+    # the member's own ends: the facing face of the base member, less however far
+    # it reaches past that face into the housing
+    start = (min(base_slot.positions_mm) + (base_slot.thickness_mm or 0) // 2
+             - member.base_engagement_mm)
+    end = (max(top_slot.positions_mm) - (top_slot.thickness_mm or 0) // 2
+           + member.top_engagement_mm)
+    length = end - start
+    if length <= 0:
+        # NOT clamped, and not returned. Two ways to arrive here and neither is
+        # decidable when the model is authored: refs the wrong way round (the
+        # editor offers both selects and which member is higher depends on the
+        # BAY's height), and a knowledge param collapsing a `Distributed` set to
+        # one position, where both ends become the same member and the face
+        # correction eats what is left. A negative number is not a shorter piece
+        # — `plan_cuts` packs it into a bar and certifies the plan optimal — so
+        # this bay has no resolvable length, and the caller says so.
+        return None
+    return (start, length)
+
+
 def _length_for(req: PartRequirement, ctx: PanelContext) -> Mm | None:
-    if req.length_rule is None:
+    """Every rule that can be answered from the BAY alone.
+
+    `between_frame` is not one of them: it measures against the panel's own
+    frame and fixes where the member sits as well as how long it is, so
+    `resolve_panel` resolves it through `_between_frame_extent` — with the frame
+    it just placed passed in, never reached for, so resolution stays a pure
+    function of its arguments. A frame slot that declares the rule (refused at
+    load) therefore gets no length here rather than quietly getting a width.
+    """
+    if req.length_rule is None or req.length_rule == "between_frame":
         return None
     if req.length_rule == "panel_height":
         # A member spanning the panel's full height — a picket, a slat, a baluster.
         # Constant in every vertical mode: a raked bay's top follows the grade and
         # its bottom follows the ground, so the two datums stay parallel, and a
-        # stepped bay is a rectangle. Only a member constrained to a frame slot
-        # (base_ref/top_ref) can vary along the bay, and that is not resolved yet.
+        # stepped bay is a rectangle. A member constrained to a frame slot
+        # (base_ref/top_ref) can vary along the bay, which is what `between_frame`
+        # above is for.
         #
         # The slope factor below deliberately does NOT apply: it corrects a
         # HORIZONTAL member for running along the grade, and a vertical member
@@ -322,6 +412,10 @@ def resolve_panel(
     `choose_variant`'s answer, and a resolver that re-derived it from `spec`
     would be a second implementation of the precedence rule."""
     slots: list[ResolvedSlot] = []
+    # The frame loop runs first and the infill loop reads its answer, because a
+    # `between_frame` member is measured against frame members that are already
+    # placed. Keyed by slot key, which is unique within a spec (`validate_model`).
+    frame: dict[str, ResolvedSlot] = {}
 
     for frame_slot in spec.frame:
         req = frame_slot.requirement
@@ -333,7 +427,7 @@ def resolve_panel(
         # clear width
         span = (ctx.height_mm if frame_slot.orientation == "horizontal"
                 else ctx.clear_width_mm)
-        slots.append(ResolvedSlot(
+        resolved = ResolvedSlot(
             slot_key=frame_slot.key, role=req.role, qty=count * req.qty,
             slot_kind="frame",
             length_mm=_length_for(req, ctx), length_basis=ctx.length_basis,
@@ -342,7 +436,9 @@ def resolve_panel(
             orientation=frame_slot.orientation,
             thickness_mm=frame_slot.thickness_mm or None,
             positions_mm=placement_positions(frame_slot.placement, count, span),
-        ))
+        )
+        slots.append(resolved)
+        frame[frame_slot.key] = resolved
 
     if spec.infill and spec.infill.pattern:
         axis = (ctx.clear_width_mm if spec.infill.orientation == "vertical"
@@ -363,11 +459,23 @@ def resolve_panel(
             eligibility, option_axis, option_value = _chosen_option(
                 member.requirement, ctx)
             eligibility, pinned = _pinned_sku(member.key, eligibility, ctx)
+            rule = member.requirement.length_rule
+            if rule == "between_frame":
+                extent = _between_frame_extent(member, frame)
+                span_start, length = extent if extent else (None, None)
+            else:
+                span_start, length = None, _length_for(member.requirement, ctx)
             slots.append(ResolvedSlot(
                 slot_key=member.key, role=member.requirement.role,
                 slot_kind="infill", qty=n * member.requirement.qty,
-                length_mm=_length_for(member.requirement, ctx),
-                length_basis=ctx.length_basis,
+                length_mm=length, span_start_mm=span_start,
+                length_unresolved=rule is not None and length is None,
+                # `between_frame` measures a distance INSIDE the panel, between
+                # two frame members that slope together, so the slope factor
+                # never applied to it — and stamping "slope" beside a number
+                # that ignores the slope says the opposite to every reader of
+                # the structure sheet.
+                length_basis="width" if rule == "between_frame" else ctx.length_basis,
                 eligibility=eligibility, fit=fit,
                 option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
                 orientation=spec.infill.orientation,

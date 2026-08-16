@@ -675,3 +675,50 @@ Embedment is therefore recorded BEFORE that skip, so 0 stays a fact (masonry) an
 means "not known".
 
 872 pytest · 145 golden scenarios · compatibility gate byte-identical.
+
+## Joint geometry (2026-08-14) — W2 of `specs/2026-08-14-two-tier-visualizer-design.md`
+`Member.base_ref`/`top_ref` had been on the schema since phase 1, read by nothing, and
+offered as two selects by the model editor since the authoring wave — a field that reads
+as honoured and is not, which is the defect `_UNSUPPORTED` exists to catch and the one it
+missed. The `between_frame` length rule closes it for the case a joint needs: a member cut
+to the opening between two frame members plus the engagements that disappear into them,
+with the positions READ off the frame slots the same panel already resolved rather than
+placed a second time. Under any other length rule the refs are now refused by name.
+
+`FrameSlot` gains `joint`/`channel_depth_mm`/`insertion_margin_mm` and `Member` gains
+`joint`/`base_engagement_mm`/`top_engagement_mm`, so a joint is data the CUT LIST depends
+on before it is anything on a drawing. Seven load-time refusals, each about a number that
+would otherwise be wrong on every bay and arrive looking measured — a 20 mm seat into a
+12 mm channel, a channel inside a member of undeclared depth, a `channel` kind with no
+depth and no engagement behind it.
+
+`M-SLAT` gains v2: the same line with its slats seated 15 mm into a 20 mm bottom channel,
+cutting 1665 mm where v1 cuts 1800 in the same 1800 mm bay. It is a DRAFT, and the seed
+stopped overriding a document's status to make that possible — an active v2 would answer
+every unpinned M-SLAT and move existing jobs onto a different cut list with nobody having
+published anything.
+
+Every default is zero and no shipped model declared the rule, so the compatibility gate is
+byte-identical with no regeneration.
+
+**What the adversarial pass changed, which was the important half.** The refusal set
+shipped without the one check that mattered most: a cut length must be POSITIVE. Refs the
+wrong way round (−1750 mm) and a knowledge param collapsing a rail set to one position
+(−20 mm) both validated clean, reached `plan_cuts`, and came back
+`certified_optimal=True` — a wrong number wearing an optimality certificate. Neither is
+decidable when the model is authored, so the resolver refuses to answer and the generator
+says so: `panel_length_unresolved`, `severity="error"`, one per (model, slot) per section.
+Alone among the panel checks it is an error, because every other one describes a fence
+built badly and this one describes a part not bought at all.
+
+The elevation was drawing the OPENING and the BOM was buying the MEMBER — 1800 against
+1665 on the model whose reason to exist is that 135 mm — while `report/elevation.py` opened
+by claiming the picture cannot drift from the numbers. `_between_frame_extent` now returns
+where the member starts as well as how long it is cut, one calculation for one fact, and
+the rectangle is placed from it. Four more refusals were one relation short (the insertion
+margin constrained nothing; a channel deeper than its own rail passed; `bracket`/`overlap`
+were unauthorable by accident and belong in the unbuilt table; an engagement under another
+length rule was still ignored), and the demo gave one SKU two different face heights — the
+channel is a different profile and now has its own product.
+
+903 pytest · 145 golden scenarios · gate unmoved.

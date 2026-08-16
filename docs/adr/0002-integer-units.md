@@ -32,3 +32,17 @@ convert by name (`*_mm`). Decision-graph prose is server-rendered, so `/explain`
 (`*_mm` → display value, `{u}` → unit word) to its templates; the stored graph is never
 touched by how it was read. Raw payload dicts inside `input_fact` lines stay verbatim mm —
 they are the record, not a sentence.
+
+### Half a face, per member (2026-08-14)
+`between_frame` (`fencemodel/resolve.py`) measures a member against the frame members it
+runs between, and a placement gives a CENTRELINE, so half of each frame member's face
+height stands between the two centrelines and the opening. The halving is integer
+division **per member** — `top//2 + base//2`, never `(top + base)//2` — and the difference
+is real: two 45 mm faces halve to 22 each, where the sum halves to 45. Same discipline as
+the slope-length rounding above: one named point, stated in the code and pinned by a
+hand-derived literal (`tests/fencemodel/test_joint_geometry.py`), because the number lands
+on a cut list where a millimetre is a piece that does not fit.
+
+The placement itself is NOT rounded a second time: `_between_frame_extent` reads the
+positions off the frame slots the same panel already resolved rather than calling
+`placement_positions` again. Two calls would be two implementations of one rounding point.

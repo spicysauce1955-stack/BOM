@@ -14,7 +14,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
-from fenceai.fencemodel.demo import demo_models
+from fenceai.fencemodel.demo import demo_model_versions
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.model import FenceModel
 from fenceai.fulfillment.fulfill import Inventory
@@ -345,22 +345,28 @@ class Store:
         rather than a special case in the generator. Keyed on (id, version) and
         never an overwrite: reopening a store must leave an expert's edits, and
         a retirement, exactly as they were found."""
-        for model in demo_models().values():
+        for model in demo_model_versions():
             present = self._conn.execute(
                 "SELECT 1 FROM fence_models WHERE model_id=? AND version=?",
                 (model.id, model.version),
             ).fetchone()
             if present:
                 continue
-            # Seeded active whatever the built-in says, since a seeded model
-            # nobody could select would be worse than no seed at all — and the
-            # column follows the document, never the other way round.
-            seeded = model.model_copy(update={"status": "active"})
+            # The column follows the DOCUMENT. It used to force "active" so that
+            # a seeded model nobody could select could not happen, which held
+            # while every built-in was the only version of its line; a built-in
+            # that ships a second version cannot be seeded that way, because
+            # `latest_active` is what an unpinned project resolves and the newer
+            # document would take over every existing job at the next generation
+            # without anyone publishing anything. Each line still seeds an active
+            # version — `demo_model_versions()` is what guarantees it — and a
+            # draft beside it is work an author can open, not a model nobody can
+            # select.
             self._conn.execute(
                 "INSERT INTO fence_models (model_id, version, status, doc) VALUES (?,?,?,?)",
-                (seeded.id, seeded.version, seeded.status, seeded.model_dump_json()),
+                (model.id, model.version, model.status, model.model_dump_json()),
             )
-            self._audit(actor, "seed_fence_model", seeded.ref)
+            self._audit(actor, "seed_fence_model", model.ref)
         self._conn.commit()
 
     # -- generation runs (append-only) -----------------------------------------

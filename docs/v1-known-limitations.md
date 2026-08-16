@@ -154,6 +154,38 @@ why, and what would end each deferral.
   surface that could hide the question. **Trigger:** options answered per bay
   rather than per selection.
 
+- **`joint="bracket"` and `joint="overlap"`.** Both are in the `JointKind`
+  vocabulary because the spec named them and neither has a field that could give
+  it a mechanic: a bracket's is a PRODUCT (and `FrameSlot`/`Member` have nowhere
+  to name one), an overlap's is a lap length, which is neither a channel depth
+  nor an engagement. Authored, they would change no number and be drawn as a
+  joint the panel does not have. **Trigger:** a catalog with a bracket in it, or
+  a lap-length field with a cut rule that reads it.
+
+- **The demo's M-SLAT@v2 is a seeded DRAFT, so the editor's "Edit" opens it.**
+  `draft_version` is the version the editor opens and `PUT …/draft` writes into
+  the highest existing draft, so on a fresh database an author's first save to
+  M-SLAT lands on the shipped joint demonstration and overwrites it. Seeding it
+  ACTIVE is worse — `latest_active` is what an unpinned project resolves, so
+  every existing M-SLAT job would move onto a different cut list at its next
+  generation with nobody having published anything — and giving it its own model
+  id would make it a different product line rather than a second version of one,
+  which is the thing being demonstrated. **Trigger:** an editor action that
+  starts a new draft beside an existing one, or a "shipped" flag that keeps a
+  seeded document out of the author's save slot.
+
+- **`Member.base_ref`/`top_ref` under any rule but `between_frame`.** Narrowed by
+  the joint wave (2026-08-14) from "never read at all", which is what they were
+  from phase 1 until then — refused by nothing while the model editor offered
+  both selects to authors, the exact defect `_UNSUPPORTED` exists to catch and
+  the one it missed. `between_frame` now reads them and cuts a member to the
+  opening between the two frame members plus its engagements; under
+  `panel_height` or a width rule they still reach nothing, so a member that says
+  "starts at the bottom rail" would run past it to the ground. **Trigger:** a
+  length rule that measures against the frame in some other way — a diagonal
+  brace between two rails is the obvious candidate, and it needs a second axis
+  the schema does not have.
+
 - **Phase 3: arc-flow over multiple stock lengths and sources.** ADR-0007 already
   names it, and the spec is explicit that it is a planned door rather than a
   dependency argument: "when a real catalog has eligibility groups worth

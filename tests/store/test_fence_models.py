@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from fenceai.fencemodel.demo import demo_models
+from fenceai.fencemodel.demo import demo_model_versions, demo_models
 from fenceai.fencemodel.model import FenceModel
 from fenceai.store.db import Store
 
@@ -108,6 +108,22 @@ def test_a_fresh_store_is_seeded_with_the_demo_models(tmp_path):
         assert seeded is not None
         assert seeded.status == "active"          # selectable without an extra step
         assert lib.latest_active(model_id) is not None
+    store.close()
+
+
+def test_a_seeded_draft_keeps_its_status_and_leaves_the_line_where_it_was(tmp_path):
+    """The seed follows the DOCUMENT. M-SLAT ships two versions — v1 published
+    and v2 a demonstration of the joint rule — and forcing every seeded row to
+    "active" would make v2 the answer to an unpinned M-SLAT, moving every
+    existing job onto a different cut list at its next generation. What a fresh
+    store must offer is a selectable version per line, which it still does."""
+    store = Store(str(tmp_path / "draft.db"))
+    lib = store.fence_model_library()
+
+    for m in demo_model_versions():
+        assert lib.get(m.id, m.version).status == m.status
+    assert lib.latest_active("M-SLAT").version == 1
+    assert lib.get("M-SLAT", 2).status == "draft"
     store.close()
 
 

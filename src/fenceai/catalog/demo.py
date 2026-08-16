@@ -65,6 +65,20 @@ def demo_catalog() -> Catalog:
             attrs={"material": "aluminium", "finish": "mill", "colour": "#cbd5e1"},
         ),
         Product(
+            # A different PROFILE, not a different length of the same one: the
+            # bottom member of M-SLAT@v2 is a U-channel the slats seat into, and
+            # its face height (60 mm) and 20 mm housing are properties of the
+            # section. Giving the rail a second face height on the slot that
+            # happened to need one would have made a single SKU 40 mm tall in
+            # one panel and 60 mm in another, and the cut length depends on it.
+            sku="CHANNEL-3000",
+            name="U-channel 3000 mm",
+            name_i18n={"he": 'תעלת U 3000 מ"מ'},
+            consumption=DivisibleLinear(purchase_length_mm=3000, kerf_mm=3,
+                                        min_reusable_remnant_mm=300),
+            price_cents=2400,
+        ),
+        Product(
             sku="SLAT-100",
             name="Slat 100 mm (6000 mm stock)",
             name_i18n={"he": 'שלב 100 מ"מ (מוט 6000)'},

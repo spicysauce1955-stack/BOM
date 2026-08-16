@@ -1229,6 +1229,15 @@ def _generate_run(
     # and drown every other warning in the list. Keyed by model ref because two
     # models may meet on one run and a message names the model it is about.
     unsupported_heights: dict[str, list[tuple[Mm, str]]] = {}
+    # Aggregated the same way and for the same reason. A slot that declares a
+    # length rule and resolves to no length in this bay is the QUIET failure:
+    # a divisible product with no cut length plans no bars, so the member is
+    # priced at nothing and the parts ledger reads the hole as demand covered
+    # from stock. `validate_model` catches that at authoring wherever it can,
+    # but a `between_frame` length depends on the bay — a knowledge param that
+    # empties the rail set, refs that invert at this height — so the only place
+    # left to say it is here. (model_ref, slot_key) -> span ids.
+    unmeasured_slots: dict[tuple[str, str], list[str]] = {}
     for seg_start, seg_end in zip(fixed_sorted, fixed_sorted[1:]):
         if any(gs <= seg_start and seg_end <= ge for gs, ge in gate_intervals):
             continue
@@ -1315,6 +1324,10 @@ def _generate_run(
             )
             if not height_supported(model.height_support, height):
                 unsupported_heights.setdefault(model.ref, []).append((height, span.id))
+            for slot in span.panel.slots:
+                if slot.length_unresolved:
+                    unmeasured_slots.setdefault(
+                        (model.ref, slot.slot_key), []).append(span.id)
             strategy.spans.append(span)
             span_ids.append(span.id)
             spans_by_model.setdefault(choice.key() if choice else None, []).append(span.id)
@@ -1536,6 +1549,31 @@ def _generate_run(
                         "heights_mm": ", ".join(str(h) for h in heights),
                         "n": len(heights),
                         "min_mm": heights[0], "max_mm": heights[-1]},
+            )
+        )
+
+    for (model_ref, slot_key), spans_affected in sorted(unmeasured_slots.items()):
+        # `severity="error"`, and the only panel check that is. Every other
+        # warning here describes a fence that will be built badly; this one
+        # describes a part that will not be PRICED at all, and a quote missing a
+        # line reads as cheaper rather than as incomplete.
+        affected = sorted(spans_affected)
+        node = builder.add(
+            "conflict", "panel_length_unresolved",
+            payload={"model_ref": model_ref, "slot": slot_key,
+                     "run_id": run.id, "n": len(affected)},
+            scope_refs=affected,
+        )
+        strategy.warnings.append(
+            StrategyWarning(
+                code="panel_length_unresolved", severity="error",
+                message=f"Model {model_ref} resolves no cut length for slot "
+                        f"{slot_key} in {len(affected)} bay(s) of section "
+                        f"{run.id}: the frame members it is measured between "
+                        f"leave nothing to measure",
+                element_refs=affected, decision_ref=node.id,
+                params={"model_ref": model_ref, "slot": slot_key,
+                        "run_id": run.id, "n": len(affected)},
             )
         )
 

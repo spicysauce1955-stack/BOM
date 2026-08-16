@@ -11,13 +11,19 @@ M-SLAT is the other kind: a real product line, free to be whatever the mechanism
 can express, and therefore the model that says what the mechanism can express.
 Both are built by a function taking their skus, because the structure is the
 model's and the products are the project's.
+
+It has two versions, which is the third kind of built-in: v1 is what every
+existing job resolved and must keep resolving, and v2 is the same line drawn
+with a joint. A version is immutable (ADR-0006), so demonstrating a new feature
+means adding a document, never editing v1 — a stored run stamped M-SLAT@v1 has
+to come back the same panel.
 """
 
 from __future__ import annotations
 
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FixingRule, FrameSlot,
-    InfillSpec, Member, PanelSpec, PartRequirement,
+    FromBottom, FromTop, InfillSpec, Member, PanelSpec, PartRequirement,
 )
 
 
@@ -126,9 +132,123 @@ def slat_model(
     )
 
 
+def channel_slat_model(
+    slat_sku: str = "SLAT-100",
+    rail_sku: str = "RAIL-3000",
+    channel_sku: str = "CHANNEL-3000",
+    screw_sku: str = "SCREW-S10",
+) -> FenceModel:
+    """M-SLAT v2: the same product line, built with a joint.
+
+    The slats sit in a 20 mm U-channel at the bottom and run up under a top
+    rail, so the cut length is the opening between the two members plus the
+    15 mm that disappears into the channel — 1665 mm in an 1800 mm bay, where
+    v1's `panel_height` slat is 1800. That difference is the whole point of the
+    version: the two panels draw the same and are cut 135 mm apart.
+
+    The 3 mm `insertion_margin_mm` is the clearance a fitter needs to tip a slat
+    into the channel before dropping it in. It shortens nothing on its own — what
+    the slat is cut to is the 15 mm engagement — but it is why the engagement is
+    15 and not 20, and the model is where that reason can be written down.
+
+    The fixings change with the joint rather than beside it: a slat held by a
+    channel is not screwed at the bottom, so `per_member_crossing` (v1's rule,
+    which counts every slat against every rail) would buy screws for a joint that
+    has none. One screw per slat, at the top rail.
+
+    Authored as a DRAFT, and that is a claim about publishing rather than about
+    the document. `latest_active` is what an unpinned project resolves, so
+    seeding this active would move every existing M-SLAT job onto a different cut
+    list at the next generation, silently — the exact change `preview_model_impact`
+    exists to put in front of someone first. A draft is selectable by pin,
+    previewable, and editable, which is everything a demonstration needs.
+    """
+    return FenceModel(
+        id="M-SLAT", version=2, status="draft",
+        name_i18n={"en": "Slat panel (channel)", "he": "פאנל שלבים (תעלה)"},
+        grade="residential",
+        default_spec=PanelSpec(
+            frame=[
+                FrameSlot(
+                    key="bottom_channel", orientation="horizontal",
+                    # A fixed height off the bay's bottom, not a distributed
+                    # position: the channel is where the slats land, so its
+                    # height is structure, and a knowledge param that moved it
+                    # would move every slat's cut length with it.
+                    placement=FromBottom(offset_mm=50),
+                    # the face height and the housing are the CHANNEL's, which is
+                    # why the slot names its own product rather than reusing the
+                    # rail: one SKU cannot be 40 mm tall in one panel and 60 in
+                    # another, and the slats' cut length depends on which it is.
+                    thickness_mm=60, joint="channel",
+                    channel_depth_mm=20, insertion_margin_mm=3,
+                    requirement=PartRequirement(
+                        role="rail", qty=1, length_rule="centre_to_centre",
+                        eligibility=Eligibility(
+                            members=[EligibleItem(sku=channel_sku, priority=1)]),
+                    ),
+                ),
+                FrameSlot(
+                    key="top_rail", orientation="horizontal",
+                    placement=FromTop(offset_mm=50),
+                    thickness_mm=40,
+                    requirement=PartRequirement(
+                        role="rail", qty=1, length_rule="centre_to_centre",
+                        eligibility=Eligibility(
+                            members=[EligibleItem(sku=rail_sku, priority=1)]),
+                    ),
+                ),
+            ],
+            infill=InfillSpec(
+                orientation="vertical",
+                justification="spread_to_fit", excess="space", edge_margin_mm=0,
+                pattern=[Member(
+                    key="slat", width_mm=100, gap_after_mm=20,
+                    base_ref="bottom_channel", top_ref="top_rail",
+                    # `channel` names the BASE joint, which is the one with a
+                    # mechanic; the top end butts under the rail and takes no
+                    # engagement. One kind per member is what the schema has, and
+                    # naming the end that changes the cut length is the honest
+                    # use of it — the two engagements are separate fields, so
+                    # nothing downstream has to read this kind as both ends.
+                    joint="channel", base_engagement_mm=15, top_engagement_mm=0,
+                    requirement=PartRequirement(
+                        role="infill", qty=1, length_rule="between_frame",
+                        eligibility=Eligibility(
+                            members=[EligibleItem(sku=slat_sku, priority=1)]),
+                    ),
+                )],
+            ),
+            fixings=[FixingRule(
+                key="screw", basis="per_member", qty_per_basis=1,
+                requirement=PartRequirement(
+                    role="screw", qty=1,
+                    eligibility=Eligibility(
+                        members=[EligibleItem(sku=screw_sku, priority=1)]),
+                ),
+            )],
+        ),
+    )
+
+
 M_LEGACY = legacy_model()
 M_SLAT = slat_model()
+M_SLAT_V2 = channel_slat_model()
 
 
 def demo_models() -> dict[str, FenceModel]:
+    """The built-in LINE: one document per id, the one an unpinned project gets.
+
+    Keyed by id, so it can hold exactly one version each — which is the right
+    shape for the question it answers ("what does choosing M-SLAT give me?") and
+    the wrong one for seeding, now that a built-in has two versions."""
     return {M_LEGACY.id: M_LEGACY, M_SLAT.id: M_SLAT}
+
+
+def demo_model_versions() -> list[FenceModel]:
+    """Every built-in DOCUMENT, including the ones that are not the active
+    version of their line — what a fresh store seeds, each with its own status.
+
+    An id's versions in ascending order, so a seed loop that stops early leaves a
+    line's history intact rather than its future."""
+    return [M_LEGACY, M_SLAT, M_SLAT_V2]
