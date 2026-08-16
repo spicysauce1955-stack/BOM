@@ -2066,9 +2066,12 @@ fetch('/api/fence-models').then(r => r.json())
       && slats.every((r, i) => i === 0 || box(r).left > box(slats[i - 1]).left),
   };
 })()""")
+        # 120 mm is the PITCH — a 100 mm slat plus its 20 mm gap, the figure a
+        # slat fence is actually specified by and the one neither the member
+        # width nor the gap states on its own
         check("the elevation reads the same way round in English, with English labels",
               en_drawn["slats"] == 21 and en_drawn["ascending"]
-              and set(en_drawn["dims"]) == {"2500 mm", "1800 mm", "20 mm"}
+              and set(en_drawn["dims"]) == {"2500 mm", "1800 mm", "20 mm", "120 mm"}
               and "20 gaps" in en_drawn["gaps"])
         c.shot("05b-panel-elevation-en.png")
 

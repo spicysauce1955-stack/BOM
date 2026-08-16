@@ -538,7 +538,10 @@ function renderMicro() {
   });
 
   const draw = host.querySelector("#assembly-micro-draw");
-  const svg = renderElevation(drawn, { onSelect: selectSlot });
+  // one dimension switch for both viewports: they are one drawing at two
+  // scales, and a tab where half the annotations vanish is a tab that looks
+  // broken rather than one that looks clean
+  const svg = renderElevation(drawn, { onSelect: selectSlot, annotations });
   if (!svg) {
     draw.innerHTML = `<div class="meta">${esc(t("elevation.empty"))}</div>`;
     return;
