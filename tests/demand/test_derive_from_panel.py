@@ -146,7 +146,7 @@ def test_a_ready_made_part_with_a_length_is_counted_in_eaches_on_both_sides():
     ])
     catalog = demo_catalog()
     assert catalog.products["POST-S"].consumption.kind == "indivisible_discrete"
-    assert catalog.products["POST-S"].attrs["length_mm"] == 2600
+    assert catalog.products["POST-S"].capabilities.length_mm == 2600
 
     reqs = derive_requirements(strategy, catalog)
     resolution = resolve_supply(reqs, catalog)

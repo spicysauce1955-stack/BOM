@@ -86,8 +86,8 @@ def test_the_posts_declare_the_width_they_are_seen_at():
     length runs into the ground and its face width runs across the drawing."""
     catalog = demo_catalog()
     for sku in ("POST-S", "POST-S-HD", "POST-M"):
-        width = catalog.product(sku).attrs.get("face_width_mm")
+        width = catalog.product(sku).capabilities.face_width_mm
         assert isinstance(width, int) and width > 0, sku
-    assert catalog.product("POST-S-HD").attrs["face_width_mm"] > \
-        catalog.product("POST-S").attrs["face_width_mm"], \
+    assert catalog.product("POST-S-HD").capabilities.face_width_mm > \
+        catalog.product("POST-S").capabilities.face_width_mm, \
         "the heavy-duty post is the heavier section, and the drawing shows it"

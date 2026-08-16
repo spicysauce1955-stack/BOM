@@ -17,7 +17,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from fenceai.catalog.model import Catalog, catalog_hash
+from fenceai.catalog.model import CATALOG_SCHEMA_VERSION, Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
@@ -115,7 +115,7 @@ def _declared_opening(catalog: Catalog, sku: str) -> Mm | None:
     """The opening width a catalog product declares it fits, or None if it says
     nothing — an undeclared product is never second-guessed."""
     product = catalog.products.get(sku)
-    value = product.attrs.get(KIT_OPENING_ATTR) if product else None
+    value = product.capabilities.opening_width_mm if product else None
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
@@ -205,6 +205,7 @@ def generate(
     )
     run_meta.catalog_skus = _skus_used(strategy, demand_skus)
     run_meta.catalog_hash = catalog_hash(catalog, run_meta.catalog_skus)
+    run_meta.catalog_schema_version = CATALOG_SCHEMA_VERSION
     # `policy` was already merged with DEFAULT_POLICY above, so the key always
     # exists — a `.get(..., "least_cost")` fallback here could never fire; direct
     # indexing says so instead of implying a fallback that is dead on arrival.
@@ -764,8 +765,8 @@ def _post_face_width(strategy: Strategy, run: Run, station: Mm, run_len: Mm,
     """
     post = _post_at(strategy, run, station, run_len)
     product = catalog.products.get(post.sku) if post is not None and post.sku else None
-    face = product.attrs.get("face_width_mm") if product is not None else None
-    return face if isinstance(face, int) else 0
+    face = product.capabilities.face_width_mm if product is not None else None
+    return face or 0
 
 
 def _generate_run(
@@ -1987,7 +1988,7 @@ def _check_post_lengths(
         post.exposed_mm = exposed
         required = exposed + post.embed_mm
         product = catalog.products.get(post.sku)
-        available = (product.attrs.get("length_mm") if product else None)
+        available = (product.capabilities.length_mm if product else None)
         if isinstance(available, int) and required > available:
             node = builder.add(
                 "conflict", "insufficient_post_length",

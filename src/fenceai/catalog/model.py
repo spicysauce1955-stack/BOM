@@ -13,6 +13,19 @@ from fenceai.core.units import Cents, Mm
 
 _SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+# The SHAPE of a Product, as part of what a run's `catalog_hash` means.
+#
+# The hash is computed over `model_dump()`, so adding a field changes it for
+# every product and every previously generated run refuses. That refusal is
+# correct — those runs cannot be re-read against a catalog they were not
+# resolved against — but `catalog_changed` is the wrong SENTENCE for it: nothing
+# was repriced and no product moved, the schema did, and a reader told the
+# catalog changed goes looking for a price edit that never happened.
+#
+# Bump this when Product's shape changes. It buys the honest message; it does
+# not avoid the migration, which is deliberate.
+CATALOG_SCHEMA_VERSION = "capabilities-v1"
+
 
 class Ratio(BaseModel):
     """Exact integer ratio for UoM / coverage conversion (never a bare float)."""
@@ -88,6 +101,37 @@ class LinearPrice(BaseModel):
 Pricing = Annotated[Union[FlatPrice, LinearPrice], Field(discriminator="kind")]
 
 
+class Capabilities(BaseModel):
+    """What DETERMINISTIC CODE may read about a product.
+
+    The rule: data consumed by deterministic logic is typed and versioned; data
+    used for display, annotation or forward-compatible metadata may stay in the
+    open `attrs` bag. A magic string key in Python is the defect —
+    `attrs.get("length_mm")` compiles whether or not anything ever sets it, a
+    typo is a silent `None`, and by the time it matters the number is on a cut
+    list.
+
+    Every field is optional because every one is a fact only SOME products have:
+    a rail declares no opening width, a gate kit no face width. `None` means "not
+    declared", which each reader answers in its own honest way — the elevation
+    draws a flagged nominal, `clear_opening_mm` narrows by nothing, the length
+    check measures against no stock.
+
+    Deliberately a flat record rather than a union of capability KINDS. Three
+    facts is not a taxonomy, and a union whose variants each hold one integer
+    would be machinery around nothing. It becomes one when a capability arrives
+    that genuinely carries a different shape.
+    """
+
+    # the piece a post is cut from — what `_check_post_lengths` measures against
+    length_mm: Mm | None = None
+    # the post's extent along the run, as SEEN. The clear opening between two
+    # posts is measured to these faces.
+    face_width_mm: Mm | None = None
+    # the gate opening a kit fits. Catalog DATA, never parsed from a sku.
+    opening_width_mm: Mm | None = None
+
+
 class Product(BaseModel):
     sku: str
     name: str
@@ -111,6 +155,7 @@ class Product(BaseModel):
     # string key in Python is the defect); data read by a predicate is data
     # reading data, and belongs here.
     attrs: dict[str, str | int | bool | list[int] | list[str]] = {}
+    capabilities: Capabilities = Capabilities()
 
     def display_name(self, lang: str) -> str:
         return self.name_i18n.get(lang) or self.name

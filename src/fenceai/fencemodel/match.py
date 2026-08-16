@@ -73,7 +73,21 @@ _RESERVED = ("sku", "consumption")
 
 
 def _item_ctx(product) -> dict:
-    return {**product.attrs, "sku": product.sku,
+    """Everything this item declares about itself, under one namespace.
+
+    Typed capabilities sit beside the open `attrs` bag rather than under a prefix
+    of their own: a predicate asks "how wide is its face", and where the catalog
+    happens to keep that answer is not the author's problem. Typing them for CODE
+    must not put them out of reach of DATA.
+
+    A capability the product does not declare is OMITTED, not passed as None —
+    `_covers` reads a missing field as "has not covered the requirement", which
+    is the honest answer for a post whose face width nobody recorded. A None
+    would compare as a value and quietly satisfy `!=`.
+    """
+    declared = {k: v for k, v in product.capabilities.model_dump().items()
+                if v is not None}
+    return {**product.attrs, **declared, "sku": product.sku,
             "consumption": product.consumption.kind}
 
 

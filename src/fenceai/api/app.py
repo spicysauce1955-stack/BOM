@@ -24,7 +24,7 @@ from fenceai.ai.claude import build_interpreter  # noqa: E402
 from fenceai.ai.stub import StubCritic, StubProposer
 from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import (
-    Catalog, Product, catalog_hash, purchase_price_cents,
+    CATALOG_SCHEMA_VERSION, Catalog, Product, catalog_hash, purchase_price_cents,
 )
 from fenceai.core.errors import GenerationFailure, ReadRefused, RequestRefused
 from fenceai.core.ids import new_id
@@ -158,6 +158,22 @@ def _fresh_catalog(result):
     # over the SAME set the run stamped, or the comparison is between two
     # different questions. An empty set means the run predates the narrowing and
     # is only comparable against the whole-catalog hash it was stamped with.
+    # The SHAPE first, because it explains a mismatch the content check would
+    # otherwise blame on a price edit that never happened. A run stamped under an
+    # older Product schema cannot be compared against today's hash at all — the
+    # two are hashes of different questions.
+    if (result.run.catalog_schema_version
+            and result.run.catalog_schema_version != CATALOG_SCHEMA_VERSION):
+        raise HTTPException(409, {
+            "code": "catalog_schema_changed",
+            "message": (
+                f"this run was generated when the catalog recorded "
+                f"{result.run.catalog_schema_version!r}; it now records "
+                f"{CATALOG_SCHEMA_VERSION!r}. Generate again to read it."
+            ),
+            "stamped": result.run.catalog_schema_version,
+            "current": CATALOG_SCHEMA_VERSION,
+        })
     current = catalog_hash(catalog, result.run.catalog_skus or None)
     if result.run.catalog_hash and current != result.run.catalog_hash:
         raise HTTPException(409, {

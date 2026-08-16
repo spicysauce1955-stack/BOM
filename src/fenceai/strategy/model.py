@@ -156,6 +156,10 @@ class GenerationRun(BaseModel):
     # catalog content hash at generation time — /bom and /structure refuse to
     # re-read a stored run against a catalog that no longer matches it
     catalog_hash: str = ""
+    # the Product SHAPE that hash was computed over. "" is a run generated before
+    # the shape was recorded, which is exactly the population a schema migration
+    # must be able to name.
+    catalog_schema_version: str = ""
     # the products this run actually named — what `catalog_hash` covers. Empty
     # means "hashed over the whole catalog", which is how a run stamped before
     # the hash was narrowed still reads: its stored hash is only comparable

@@ -118,7 +118,7 @@ def _elevation_for(span, bay_tag: str, resolved_sku: dict) -> PanelElevation | N
     client ends up branching on which endpoint it came from.
 
     Clear width is the centre-to-centre width until products carry a face width
-    (`attrs.face_width_mm`), which is the same approximation `resolve_panel` is
+    (`capabilities.face_width_mm`), which is the same approximation `resolve_panel` is
     handed at generation — so the drawing and the cut lengths agree about the
     opening even while both are waiting on the same catalog field.
     """
@@ -343,7 +343,7 @@ def _declared_post_length(catalog: Catalog | None, sku: str) -> Mm | None:
     guard mirrors `_check_post_lengths` exactly: a length the generator would not
     check against is a length this sheet will not draw against either."""
     product = catalog.products.get(sku) if catalog else None
-    length = product.attrs.get("length_mm") if product else None
+    length = product.capabilities.length_mm if product else None
     return length if isinstance(length, int) else None
 
 

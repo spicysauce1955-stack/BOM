@@ -1,5 +1,39 @@
 # Current status
 
+## Typed catalog capabilities, and a migration that says what it did (2026-08-16)
+Audit finding §4.2, with its hazard taken head-on. Three facts were read out of the
+open `attrs` bag by deterministic code: the post length the length check measures
+against, the post face the clear opening is measured to, and the opening a gate
+kit fits. `attrs.get("length_mm")` compiles whether or not anything sets it, a typo
+is a silent `None`, and by the time it matters the number is on a cut list.
+
+`Product.capabilities` is a typed record of exactly those three. Deliberately flat
+rather than a union of capability KINDS: three facts is not a taxonomy, and a union
+whose variants each hold one integer is machinery around nothing.
+
+**The rule, drawn precisely.** Data read by CODE is typed; data read by a
+PREDICATE or the UI stays in the open bag — material, finish and colour are the
+catalog's answer, not the code's. `_item_ctx` merges capabilities INTO the item
+namespace so a predicate asks "how wide is its face" without caring where the
+catalog keeps the answer; an undeclared capability is OMITTED rather than passed as
+None, so it raises `MissingField` and correctly fails to cover a requirement.
+
+**The migration is deliberate and legible.** `catalog_hash` is computed over
+`model_dump()`, so adding a field changes every product's hash and every
+previously generated run refuses. That refusal is correct — but `catalog_changed`
+is the wrong sentence for it: nothing was repriced, the schema moved, and a reader
+told the catalog changed goes hunting an edit that never happened. Runs now stamp
+`catalog_schema_version`, and a mismatch raises `catalog_schema_changed` with both
+versions and its own line in each locale bundle.
+
+**What the browser suite caught, for the fourth time this arc:** two JS readers
+still fetching the migrated keys out of `attrs` — the gate picker's declared
+opening and the macro view's post faces. Both silently fell back to a nominal, and
+1079 passing unit tests saw nothing.
+
+1079 pytest (+6) · 156 golden scenarios · 159/159 smoke · compatibility gate
+byte-identical (it carries no catalog hash).
+
 ## One line, one lifecycle state (2026-08-16) — W2b, option A
 Audit finding §1.7. `RequirementLine` was both states at once: demand emitted it
 with `sku=""` and `unit=""`, and `resolve_supply` filled them in by MUTATING the

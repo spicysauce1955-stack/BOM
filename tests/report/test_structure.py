@@ -8,6 +8,7 @@ quantities, with anything unpegged reported as unassigned rather than dropped.
 from __future__ import annotations
 
 from fenceai.catalog.demo import demo_catalog
+from fenceai.catalog.model import Capabilities
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
 from fenceai.fulfillment.supply import resolve_supply
@@ -299,7 +300,7 @@ def test_a_post_product_with_no_declared_length_yields_none():
     a setting-out drawing is worse than a missing one."""
     catalog = demo_catalog()
     catalog.products["POST-S"] = catalog.products["POST-S"].model_copy(
-        update={"attrs": {}})
+        update={"capabilities": Capabilities()})
     report, _, _, _ = _report(straight_topology(6000), catalog=catalog)
     stations = report.sections[0].setting_out
     assert stations

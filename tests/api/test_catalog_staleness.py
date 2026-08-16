@@ -80,7 +80,7 @@ def test_adding_an_unrelated_product_no_longer_refuses(client):
     that did not exist when it was generated can never change what it means."""
     run_id = generated(client)
     put_product(client, "GATE-KIT-2000", price_cents=25000,
-                attrs={"category": "gate", "opening_width_mm": 2000})
+                attrs={"category": "gate"}, capabilities={"opening_width_mm": 2000})
     assert client.get(f"/api/runs/{run_id}/bom").status_code == 200
     assert client.get(f"/api/runs/{run_id}/structure").status_code == 200
 
@@ -159,3 +159,23 @@ def test_an_eligibility_rival_counts_even_though_it_was_not_bought(client):
 
     put_product(client, "RAIL-3000", price_cents=1)   # the LOSER gets cheaper
     assert client.get(f"/api/runs/{run_id}/bom").status_code == 409
+
+
+def test_a_run_stamped_before_the_catalog_schema_moved_says_so(client, monkeypatch):
+    """The deliberate migration, made legible.
+
+    Adding a field to `Product` changes every product's content hash, so every
+    run generated beforehand refuses. `catalog_changed` would be a LIE about
+    that: nothing was repriced and no product moved — the schema did. A reader
+    who is told the catalog changed goes looking for a price edit that never
+    happened."""
+    from fenceai.api import app as app_module
+
+    run_id = generated(client)
+    # the migration as it actually happens: the run is stamped with the shape
+    # that was current when it was generated, and then Product gains a field
+    monkeypatch.setattr(app_module, "CATALOG_SCHEMA_VERSION", "capabilities-v2-future")
+
+    r = client.get(f"/api/runs/{run_id}/bom")
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "catalog_schema_changed"

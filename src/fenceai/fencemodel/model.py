@@ -287,7 +287,7 @@ def _can_supply_length(catalog: Catalog, sku: str) -> bool:
         return False
     if product.consumption.kind == "divisible_linear":
         return True
-    return isinstance(product.attrs.get("length_mm"), int)
+    return product.capabilities.length_mm is not None
 
 
 # Several schema fields are expressible ahead of the resolver that reads them —
@@ -762,7 +762,7 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                 elif req.length_rule is not None and not _can_supply_length(catalog, sku):
                     errors.append(
                         f"slot {key}: {sku} cannot supply a length "
-                        f"(not divisible, no attrs.length_mm)"
+                        f"(not divisible, declares no capabilities.length_mm)"
                     )
                 elif (req.length_rule is None
                       and catalog.products[sku].consumption.kind == "divisible_linear"):

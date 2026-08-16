@@ -162,7 +162,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 fetch('/api/catalog').then(r => r.json()).then(cat => {
   const sku = document.getElementById('pop-kit')?.value;
   const p = sku && cat.products[sku];
-  return p ? ((p.attrs || {}).opening_width_mm ?? null) : null;
+  return p ? ((p.capabilities || {}).opening_width_mm ?? null) : null;
 })""")
         width_field = c.js("document.getElementById('pop-width')?.value")
         check("the gate width offered is the kit's declared opening",
@@ -500,7 +500,7 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
         check("the macro drawing is dimensioned",
               macro["dims"] >= 2 * macro["bays"] + 1)
         check("the micro viewport assembles a panel beside it", macro["micro"] == 1)
-        # every demo post declares `attrs.face_width_mm`, so the nominal note must
+        # every demo post declares `capabilities.face_width_mm`, so the nominal note must
         # NOT be showing — which is what proves the catalog lookup happened at all
         # (the nominal and POST-S's real width are both 80 mm, so the drawing
         # looks identical either way)
