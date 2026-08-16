@@ -76,6 +76,7 @@ let previewSeq = 0;          // only the newest request may paint
 let whatIf = null;           // { height_mm, width_mm, slot_skus } — null = as built
 let drawerSlot = null;       // the slot the material drawer is open on
 let runBom = null;           // this run's BOM total, in cents
+let runAllocations = [];     // what this run already takes off the shelf
 
 const assemblyTabActive = () =>
   !!document.getElementById("tab-assembly")?.classList.contains("active");
@@ -791,13 +792,18 @@ function renderCost() {
 
 async function loadRunBom() {
   const runId = state.result?.run?.id;
-  if (!runId) { runBom = null; return; }
+  if (!runId) { runBom = null; runAllocations = []; return; }
   try {
     const doc = await apiGet(`/api/runs/${runId}/bom`);
     runBom = doc?.bom?.total_cents ?? null;
+    // the same response the total comes from: what this fence has already been
+    // given off the shelf, which is what makes the drawer's "available" mean
+    // available rather than "on the shelf before this job existed"
+    runAllocations = doc?.bom?.allocations || [];
   } catch {
     // a stale run refuses its money views, and the two viewports already say so
     runBom = null;
+    runAllocations = [];
   }
 }
 
@@ -816,8 +822,10 @@ function renderDrawer() {
   // the OPTIONS come from the unpinned baseline and the price from the current
   // preview: see partOptions — a pinned slot's own eligibility is the one
   // product that was pinned, which is right for pricing and useless as a list
-  const model = partOptions(preview, drawerSlot, products, inventory,
-                            basePreview || preview);
+  const model = partOptions(preview, drawerSlot, {
+    products, inventory, catalogue: basePreview || preview,
+    allocations: runAllocations,
+  });
   if (!model) { host.innerHTML = ""; return; }
   host.innerHTML = drawerHtml(model, {
     locale: currentLocale(), pinned: whatIf?.slot_skus?.[drawerSlot] || null,

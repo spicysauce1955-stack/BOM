@@ -675,13 +675,13 @@
   "drawer.material": "Material & finish",
   "drawer.bought_as": "Bought as",
   "drawer.unit_price": "Unit {c}",
-  "drawer.in_stock": "In stock",
+  "drawer.in_stock": "Available",
   "drawer.none_on_hand": "none",
   "drawer.remnants": "+{n} offcuts, longest {longest_mm} {u}",
   "drawer.chosen": "chosen",
   "drawer.use": "Use this",
   "drawer.no_options": "This slot names no eligible product.",
-  "drawer.stock_scope": "Stock is this project's own; there is no warehouse scope yet, so an offcut here cannot reach the next job.",
+  "drawer.stock_scope": "Availability is this project's stock, less what this fence has already been allocated. There is no warehouse scope yet, so an offcut here cannot reach the next job.",
   "drawer.unsupplied": "nothing can supply this",
   "consumption.indivisible_discrete": "whole units",
   "consumption.divisible_linear": "cut from stock lengths",
@@ -701,5 +701,8 @@
   "joint.kind.overlap": "overlap",
   "joint.dim.channel": "housing {len_mm} {u}",
   "joint.dim.engagement": "seated {len_mm} {u}",
-  "joint.dim.margin": "clearance {len_mm} {u}"
+  "joint.dim.margin": "clearance {len_mm} {u}",
+  "drawer.none_available": "none free",
+  "drawer.committed": "of {on_hand} on hand, {committed} already on this fence",
+  "drawer.remnants_committed": "+{n} offcuts already being cut from"
 }

@@ -675,13 +675,13 @@
   "drawer.material": "חומר וגימור",
   "drawer.bought_as": "אופן הרכישה",
   "drawer.unit_price": "{c} ליחידה",
-  "drawer.in_stock": "במלאי",
+  "drawer.in_stock": "זמין",
   "drawer.none_on_hand": "אין",
   "drawer.remnants": "+{n} שאריות, הארוכה {longest_mm} {u}",
   "drawer.chosen": "נבחר",
   "drawer.use": "השתמשו בזה",
   "drawer.no_options": "המשבצת הזו אינה מציינת מוצר כשיר.",
-  "drawer.stock_scope": "המלאי שייך לפרויקט הזה בלבד; אין עדיין היקף מחסן, ולכן שארית כאן אינה יכולה להגיע לעבודה הבאה.",
+  "drawer.stock_scope": "הזמינות היא מלאי הפרויקט הזה, בניכוי מה שכבר שובץ לגדר הזו. אין עדיין היקף מחסן, ולכן שארית כאן אינה יכולה להגיע לעבודה הבאה.",
   "drawer.unsupplied": "אין מוצר שיכול לספק",
   "consumption.indivisible_discrete": "יחידות שלמות",
   "consumption.divisible_linear": "נחתך ממוטות מלאי",
@@ -701,5 +701,8 @@
   "joint.kind.overlap": "חפיפה",
   "joint.dim.channel": "שיכון {len_mm} {u}",
   "joint.dim.engagement": "מושחל {len_mm} {u}",
-  "joint.dim.margin": "מרווח {len_mm} {u}"
+  "joint.dim.margin": "מרווח {len_mm} {u}",
+  "drawer.none_available": "אין פנוי",
+  "drawer.committed": "מתוך {on_hand} במלאי, {committed} כבר משובצים בגדר הזו",
+  "drawer.remnants_committed": "+{n} שאריות שכבר נחתכות"
 }
