@@ -666,7 +666,9 @@ function selectSlot(slotKey) {
 /** "M-SLAT@v1" -> { id: "M-SLAT", version: 1 }, or null.
  *
  * A run generated before fence models carries no model_ref at all, and a bay
- * from one gets no drawer rather than a drawer full of guesses. */
+ * from one gets no drawer rather than a drawer full of guesses. Kept as the test
+ * of "can this bay be previewed at all"; the preview itself is asked of the RUN
+ * (see below) and needs no model id from the client. */
 export function modelRefParts(ref) {
   const m = /^(.+)@v(\d+)$/.exec(String(ref || ""));
   return m ? { id: m[1], version: Number(m[2]) } : null;
@@ -679,17 +681,29 @@ function schedulePreview(delay = PREVIEW_DEBOUNCE_MS) {
 
 async function runPreview() {
   const bay = bayToDraw(getReport());
+  const runId = state.result?.run?.id;
   const ref = modelRefParts(bay?.elevation?.model_ref);
-  if (!ref) { preview = null; previewError = null; renderCost(); renderDrawer(); return; }
+  if (!ref || !runId) {
+    preview = null; previewError = null; renderCost(); renderDrawer(); return;
+  }
   const seq = ++previewSeq;
-  const body = {
-    height_mm: whatIf?.height_mm ?? bay.height_mm,
-    width_mm: whatIf?.width_mm ?? bay.width_mm,
-    slot_skus: whatIf?.slot_skus || {},
-  };
+  // Asked of the RUN, not of the model. The model-scoped route answers a
+  // question about a model at a size — under the default preset, against
+  // today's catalog, with none of the company-resolved quantities this bay was
+  // laid out with — and reading that answer as THIS bay is how the drawer came
+  // to mark one product "chosen" while the run had bought another, at half the
+  // price, under a tag that said "as generated". Everything the run decided is
+  // read off the run; the body carries only what a person is imagining.
+  const body = {};
+  if (whatIf) {
+    body.height_mm = whatIf.height_mm;
+    body.width_mm = whatIf.width_mm;
+    body.slot_skus = whatIf.slot_skus || {};
+  }
   try {
     const out = await apiSend(
-      "POST", `/api/fence-models/${encodeURIComponent(ref.id)}/${ref.version}/preview`,
+      "POST", `/api/runs/${encodeURIComponent(runId)}`
+        + `/bays/${encodeURIComponent(bay.element_id)}/panel-preview`,
       body, { quiet: true });
     if (seq !== previewSeq) return;      // a later request already answered
     preview = out;

@@ -595,6 +595,26 @@ fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
    priced: /\u20aa/.test(document.getElementById('assembly-drawer')?.textContent || '') })""")
         check("clicking a member opens its material & inventory drawer",
               drawer["rows"] >= 2 and drawer["chosen"] == 1 and drawer["priced"])
+        # The drawer's price is THIS BAY's, resolved the way the run resolved it
+        # — not the model's list price under the default preset. Pinned against
+        # the run's own BOM line for that sku, which is the number the drawer
+        # would otherwise contradict while calling itself "as generated".
+        priced_like_the_run = c.js("""
+(async () => {
+  const pid = document.getElementById('project-select').value;
+  const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
+  const runId = runs[runs.length - 1].id;
+  const doc = await (await fetch(`/api/runs/${runId}/bom`)).json();
+  const chosen = document.querySelector('#assembly-drawer .drawer-table tr.selected');
+  const sku = chosen?.querySelector('.sku')?.textContent || '';
+  const line = (doc.bom.lines || []).find(l => l.sku === sku);
+  const shown = chosen?.querySelectorAll('td.num')[0]?.textContent || '';
+  return { sku, in_bom: !!line, unit: line ? line.unit_price_cents : null, shown };
+})()""")
+        check("the drawer prices the part the run actually bought",
+              priced_like_the_run["in_bom"]
+              and str(priced_like_the_run["unit"] // 100)
+                  in priced_like_the_run["shown"])
         # the caveat is not optional: stock here cannot reach the next job
         # The other direction of the shared selection, and the headline of the
         # two-viewport design: a member picked in the panel lights up in EVERY
