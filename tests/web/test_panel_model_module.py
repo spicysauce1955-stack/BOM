@@ -1,4 +1,4 @@
-"""The model editor's document shapes (static/js/model-editor.js), in node —
+"""The fence model's document shapes (static/js/panel-model.js), in node —
 and then validated by the REAL schema they have to satisfy.
 
 The browser suite can only see what a whole authoring session produces. What
@@ -51,13 +51,13 @@ def _placement_kinds() -> set[str]:
 
 
 def _js_const(name: str) -> set[str]:
-    """A `const NAME = [...]` array out of model-editor.js — the values the
-    editor OFFERS, read from the editor rather than restated."""
+    """A `const NAME = [...]` array out of panel-model.js — the values the
+    editor OFFERS, read from the vocabulary rather than restated."""
     import re
 
-    src = (STATIC / "js" / "model-editor.js").read_text()
+    src = (STATIC / "js" / "panel-model.js").read_text()
     body = re.search(rf"const {name} = \[(.*?)\];", src, re.S)
-    assert body, f"{name} is no longer a const array in model-editor.js"
+    assert body, f"{name} is no longer a const array in panel-model.js"
     return set(re.findall(r'"([a-z_]+)"', body.group(1)))
 
 SCRIPT = """
@@ -67,17 +67,10 @@ import {
   draftCopyOf, duplicateOf, freeId, idCollision, specOf,
 } from "{module}";
 
-// model-editor.js reaches api.js, i18n.js and units.js, whose stateful halves
-// touch localStorage and the DOM at call time. Nothing under test does — the
-// exercised exports are pure — so a stub is enough to let the module load.
-globalThis.localStorage = {
-  s: {}, getItem: (k) => globalThis.localStorage.s[k] ?? null,
-  setItem: (k, v) => { globalThis.localStorage.s[k] = String(v); },
-};
-globalThis.document = {
-  getElementById: () => null, querySelectorAll: () => [], querySelector: () => null,
-  documentElement: {},
-};
+// No stubs: `panel-model.js` reaches nothing stateful. It used to need a fake
+// `localStorage` and a fake `document`, because these shapes lived beside the
+// editor's DOM — and a stub that is no longer needed is a claim about the module
+// that would stop being true silently.
 
 // what "+ Add slot", "+ Add product", "+ Add infill" and "+ Add fixing" build,
 // assembled into the smallest model an author can actually publish
@@ -156,8 +149,8 @@ console.log(JSON.stringify({
 def out(tmp_path_factory):
     if not shutil.which("node"):
         pytest.skip("node not available")
-    module = (STATIC / "js" / "model-editor.js").as_posix()
-    script = tmp_path_factory.mktemp("model-editor") / "run.mjs"
+    module = (STATIC / "js" / "panel-model.js").as_posix()
+    script = tmp_path_factory.mktemp("panel-model") / "run.mjs"
     script.write_text(SCRIPT.replace("{module}", module))
     proc = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
@@ -384,7 +377,7 @@ def test_the_editor_offers_only_the_excess_modes_the_resolver_honours():
 
     from fenceai.fencemodel.model import InfillSpec, _unsupported_features
 
-    src = (STATIC / "js" / "model-editor.js").read_text()
+    src = (STATIC / "js" / "panel-model.js").read_text()
     offered = set(re.findall(
         r'"([a-z_]+)"', re.search(r"const EXCESS = \[(.*?)\];", src, re.S).group(1)))
     schema = set(get_args(InfillSpec.model_fields["excess"].annotation))

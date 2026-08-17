@@ -33,163 +33,21 @@ import {
 import { loadModelListing, refreshModelListing } from "./fence-models.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
+import {
+  APPROVALS, AXIS_KINDS, BASES, COUNT_PARAMS, EXCESS, GRADES, JUSTIFICATIONS,
+  LENGTH_RULES, PLACEMENT_KINDS, ROLES, SWATCH_RE, blankModel, canChooseId,
+  defaultAxis, defaultEligibility, defaultEligibleMember, defaultFixing,
+  defaultInfill, defaultMember, defaultPlacement, defaultSlot, defaultVariant,
+  draftCopyOf, duplicateOf, freeId, idCollision, specOf,
+} from "./panel-model.js";
 import { emit, on } from "./state.js";
 import {
   fmt, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
 } from "./units.js";
 
-// --- the closed vocabularies, read from fencemodel/model.py -------------------
-const ROLES = ["post", "cap", "concrete", "rail", "screw", "infill", "spacer"];
-const LENGTH_RULES = ["clear_between_posts", "centre_to_centre", "overlap", "panel_height",
-  // the one rule that reads the "starts at" / "ends at" selects below; under any
-  // other rule the schema now refuses a member that sets them
-  "between_frame"];
-const PLACEMENT_KINDS = ["distributed", "from_bottom", "from_top", "fraction"];
-const JUSTIFICATIONS = ["start", "end", "center", "spread_to_fit"];
-// `trim_last` and `extension_clip` are schema-expressible and NOT built
-// (`model.py::_unsupported_features`: fit_pattern treats both exactly as
-// `truncate`, which is a different BOM). Offering them would author a model the
-// publish gate then refuses, so the editor offers what the resolver honours —
-// and an existing document carrying one still shows it, rather than being
-// silently rewritten to something it does not say.
-const EXCESS = ["truncate", "space"];
-const BASES = [
-  "per_member_crossing", "per_member", "per_end_member",
-  "per_gap", "per_frame_member", "per_panel",
-];
-const APPROVALS = ["auto", "suggest_only"];
-const GRADES = ["residential", "commercial", "industrial"];
-// `numeric` is schema-expressible and unbuilt, for the same reason `trim_last`
-// is: nothing reads `Axis.kind`, and resolution answers every axis out of its
-// declared `values`. W4 added the `_unsupported_features` entry that refuses it
-// — this list is the other half of that change.
-const AXIS_KINDS = ["enum"];
-// Knowledge params a count may defer to. The point of `count_param` is that
-// rail count stays DEFEASIBLE knowledge — a company rule may still win it — so
-// the field is offered as a param name and not as an authored integer.
-const COUNT_PARAMS = ["rails_per_span", "screws_per_span"];
-
-export const SWATCH_RE = /^#[0-9a-fA-F]{6}$/;
-
 const PREVIEW_DEBOUNCE_MS = 250;
 const DEFAULT_HEIGHT_MM = 1800;
 const DEFAULT_WIDTH_MM = 2500;
-
-// --- pure shapes (no DOM, no state): what a fresh row of each kind is --------
-
-export function blankModel(id) {
-  return {
-    id, version: 1, name_i18n: {}, grade: "residential", status: "draft",
-    height_support: { kind: "continuous", min_mm: 0, max_mm: 10000 },
-    layout_policy: [], option_axes: [],
-    default_spec: { frame: [], infill: null, fixings: [] },
-    variants: [],
-  };
-}
-
-export function defaultEligibility() {
-  return { members: [] };
-}
-
-// The ONE place a member is built, called by the "+ Add product" button and by
-// the test that judges its shape — a second literal in either would let them
-// agree with each other while disagreeing with the schema.
-//
-// `kind` is not decoration: `Eligibility.members` is a discriminated union, so
-// a member without it is a 422 `union_tag_not_found` on the whole document, and
-// the author is told only "the action failed".
-export function defaultEligibleMember(sku, priority = 1) {
-  return { kind: "catalog_item", sku: sku || "", priority, approval: "auto" };
-}
-
-export function defaultRequirement(role) {
-  return {
-    role, qty: 1, length_rule: null, overlap_mm: 0,
-    option_axis: null, sku_by_option: {}, eligibility: defaultEligibility(),
-  };
-}
-
-export function defaultPlacement(kind) {
-  switch (kind) {
-    case "from_bottom": return { kind, offset_mm: 0 };
-    case "from_top": return { kind, offset_mm: 0 };
-    case "fraction": return { kind, permille: 500 };
-    default:
-      return { kind: "distributed", count: 2, count_param: null,
-               bottom_inset_mm: 0, top_inset_mm: 0 };
-  }
-}
-
-export function defaultSlot(key) {
-  return {
-    key, orientation: "horizontal", placement: defaultPlacement("distributed"),
-    requirement: defaultRequirement("rail"),
-  };
-}
-
-export function defaultMember(key) {
-  return {
-    key, width_mm: 100, thickness_mm: 0, face_offset_mm: 0, gap_after_mm: 20,
-    base_ref: null, top_ref: null,
-    requirement: { ...defaultRequirement("infill"), length_rule: "panel_height" },
-  };
-}
-
-export function defaultInfill() {
-  return {
-    orientation: "vertical", pattern: [defaultMember("slat")],
-    justification: "spread_to_fit", excess: "space", edge_margin_mm: 0,
-    supply: "components",
-  };
-}
-
-export function defaultFixing(key) {
-  return {
-    key, basis: "per_panel", qty_per_basis: 1, qty_param: null,
-    requirement: defaultRequirement("screw"),
-  };
-}
-
-export function defaultAxis(key) {
-  return { key, label_i18n: {}, kind: "enum", values: [], available_when: null };
-}
-
-// A NEW variant starts from a condition that is already valid AST and already
-// says something ("panels 1800 and taller"), because the alternative — an empty
-// box — makes the first thing an author meets a 422 about a discriminator.
-export function defaultVariant() {
-  return {
-    condition: {
-      op: "cmp", cmp: ">=",
-      left: { op: "field", path: "panel.height_mm" },
-      right: { op: "lit", value: 1800 },
-    },
-    spec: { frame: [], infill: null, fixings: [] },
-  };
-}
-
-// A published version is NEVER mutated: editing one opens a COPY, and the
-// session that holds it carries no version, so the first save POSTs and the
-// SERVER assigns the next free one. The copy keeps the source's `version`
-// field — it is what the document said, the editor does not get to invent a
-// number, and nothing sends this one anywhere as an instruction.
-//
-// DEEP, and that is the load-bearing half: a shallow copy shares `default_spec`
-// with the document the library handed over, so the first keystroke would
-// rewrite the panel an accepted quote was priced against — in memory, where
-// nothing reports it.
-export function draftCopyOf(model) {
-  return { ...structuredClone(model), status: "draft" };
-}
-
-export function duplicateOf(model, newId) {
-  return { ...structuredClone(model), id: newId, version: 1, status: "draft" };
-}
-
-// The spec the row editors are pointed at: the default panel, or one variant's.
-export function specOf(model, index) {
-  return index < 0 ? model.default_spec : model.variants[index]?.spec;
-}
 
 // --- module state ------------------------------------------------------------
 
@@ -226,7 +84,7 @@ function sentence(key, params = {}) {
 
 export function initModelEditor() {
   document.getElementById("btn-model-new").addEventListener("click", () => {
-    openSession(blankModel(freeId("M-NEW")), null, { isNew: true });
+    openSession(blankModel(freeLibraryId("M-NEW")), null, { isNew: true });
   });
   document.getElementById("btn-model-save").addEventListener("click", async () => {
     if (!session || !commitAdvanced()) return;   // an invalid JSON box must not save silently
@@ -285,18 +143,10 @@ async function announceLibraryChange() {
   renderList();
 }
 
-// Ids are identifiers, never prose — no locale key. Uniqueness is not cosmetic:
-// a POST reusing an existing id does not create a model, it opens the NEXT
-// VERSION of that one, so duplicating twice would quietly turn the second copy
-// into v2 of the first. Takes the listing rather than reading it, so the rule
-// can be tested without a library.
-export function freeId(base, rows = listing) {
-  const taken = new Set((rows || []).map((r) => r.id));
-  if (!taken.has(base)) return base;
-  let n = 2;
-  while (taken.has(`${base}-${n}`)) n += 1;
-  return `${base}-${n}`;
-}
+// `panel-model.js` owns the rule and takes the rows it judges against — this is
+// the one place that knows WHICH rows, so the rule stays testable without a
+// library and every call site here still means "free in the library I hold".
+const freeLibraryId = (base) => freeId(base, listing);
 
 function sessionRef() {
   return session ? `${session.model.id}@v${session.version ?? "?"}` : "";
@@ -343,7 +193,7 @@ async function openForEdit(row) {
 
 async function openForDuplicate(row, version) {
   const doc = await loadVersion(row.id, version);
-  if (doc) openSession(duplicateOf(doc, freeId(`${row.id}-COPY`)), null,
+  if (doc) openSession(duplicateOf(doc, freeLibraryId(`${row.id}-COPY`)), null,
                        { isNew: true });
 }
 
@@ -356,29 +206,8 @@ function scheduleRepreview() {
   previewPending = setTimeout(refreshPreview, PREVIEW_DEBOUNCE_MS);
 }
 
-// The id already in the library, if the one being typed collides with it.
-//
-// Only a session that means to create a NEW model can collide. A draft copy of
-// a published version also carries no version number, and its id is the
-// existing model's ON PURPOSE — that is what makes the save land as that
-// model's next version. Reading "no version yet" as "must be new" refuses
-// exactly the save that "Edit" exists to make.
-// True only while this session could still choose its id: it means to create a
-// model AND has not yet been saved under one. After the first save the id is
-// the model's own, so it is in the listing BY DEFINITION and asking again would
-// refuse every later save of the thing just created.
-export const canChooseId = (s) => !!s?.isNew && s.version === null;
-
-// The id a save would collide with, or null. Pure, and exported, because the
-// four session kinds are easy to collapse into a wrong rule: "no version yet"
-// reads like "new", and a draft copy of a published version has no version
-// either — refusing THAT is refusing the save "Edit" exists to make.
-export function idCollision(session, rows) {
-  if (!canChooseId(session)) return null;
-  const id = (session.model?.id || "").trim();
-  return (rows || []).some((row) => row.id === id) ? id : null;
-}
-
+// The id the live session would collide with, or null — the rule itself lives
+// in `panel-model.js`, judged against the library this module holds.
 const idTaken = () => idCollision(session, listing);
 
 async function saveDraft({ quiet = false } = {}) {
@@ -725,7 +554,7 @@ function renderHead() {
   // taken id does the same damage.
   const idInput = el("input", { type: "text", "data-f": "id", dir: "ltr",
                                 class: "sku", size: 16, value: session.model.id });
-  if (!canChooseId()) idInput.disabled = true;
+  if (!canChooseId(session)) idInput.disabled = true;
   idInput.addEventListener("input", () => {
     session.model.id = idInput.value.trim();
     idInput.classList.toggle("invalid", !!idTaken());

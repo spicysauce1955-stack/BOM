@@ -273,20 +273,20 @@ def test_one_module_owns_each_shared_renderer():
     assert 'from "./builder-ui.js"' in editor and "skuSelect" in editor
 
 
-def test_every_value_the_model_editor_offers_has_a_word_in_both_bundles():
+def test_every_value_the_model_vocabulary_offers_has_a_word_in_both_bundles():
     """The editor renders its closed vocabularies through COMPUTED keys —
     `t("model.basis." + b)` and a dozen siblings — which key-parity scanning
     cannot see, because neither bundle contains the literal.
 
     This is the hole the other tests open: `test_the_editor_and_the_schema_agree
-    _on_the_closed_vocabularies` forces the editor's arrays to track `model.py`,
+    _on_the_closed_vocabularies` forces panel-model.js's arrays to track `model.py`,
     so adding a `LengthRule` makes the editor offer it automatically — and
     without this, that ships a green suite with a raw `model.length_rule.foo`
     on screen in both languages."""
     import re
 
     en, he = _bundles()
-    src = (STATIC / "js" / "model-editor.js").read_text()
+    src = (STATIC / "js" / "panel-model.js").read_text()
 
     def values(name):
         body = re.search(rf"const {name} = \[(.*?)\];", src, re.S)
