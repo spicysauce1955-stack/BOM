@@ -30,6 +30,10 @@ import { apiGet, apiSend, esc } from "./api.js";
 import {
   el, field, loadCatalogProducts, option, updateAdvancedUi,
 } from "./builder-ui.js";
+import {
+  CONDITION_CMPS, CONDITION_FIELDS, readSentence, writeSentence,
+} from "./condition-sentence.js";
+import { renderElevation } from "./elevation.js";
 import { loadModelListing, refreshModelListing } from "./fence-models.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
@@ -37,6 +41,7 @@ import { isDragging, renderCanvas } from "./panel-canvas.js";
 import {
   renderAxisEditor, renderInspector, SELECTION_NONE,
 } from "./panel-inspector.js";
+import { TEMPLATES } from "./panel-templates.js";
 import {
   GRADES, blankModel, canChooseId, defaultFixing, defaultInfill, defaultMember,
   defaultSlot, defaultVariant, draftCopyOf, duplicateOf, freeId, idCollision,
@@ -88,9 +93,7 @@ function sentence(key, params = {}) {
 // --- wiring ------------------------------------------------------------------
 
 export function initModelEditor() {
-  document.getElementById("btn-model-new").addEventListener("click", () => {
-    openSession(blankModel(freeLibraryId("M-NEW")), null, { isNew: true });
-  });
+  document.getElementById("btn-model-new").addEventListener("click", openGallery);
   document.getElementById("btn-model-save").addEventListener("click", async () => {
     if (!session || !commitAdvanced()) return;   // an invalid JSON box must not save silently
     const saved = await saveDraft();
@@ -114,6 +117,7 @@ export function initModelEditor() {
   document.getElementById("btn-model-close").addEventListener("click", () => {
     session = null; advancedOpen = false; preview = null; previewError = null;
     publishError = null; notice = null;
+    closeGallery();
     renderAll();
   });
   document.getElementById("btn-model-advanced").addEventListener("click", toggleAdvanced);
@@ -201,6 +205,71 @@ async function openForDuplicate(row, version) {
   const doc = await loadVersion(row.id, version);
   if (doc) openSession(duplicateOf(doc, freeLibraryId(`${row.id}-COPY`)), null,
                        { isNew: true });
+}
+
+// --- starting a new panel: the gallery ---------------------------------------
+//
+// "New model" opens a handful of curated starters rather than an empty
+// document, because an empty panel is the one shape from which nothing on the
+// canvas can be clicked. Each card is a REAL preview of the panel it would
+// open — priced through the same `/preview` route the editor uses, so a card
+// cannot show a panel the editor then disagrees with — and picking one lands an
+// ordinary independent draft, exactly as "Duplicate" already did.
+
+async function openGallery() {
+  const host = document.getElementById("model-gallery");
+  if (!host) return;
+  host.hidden = false;
+  host.innerHTML = `<h3>${esc(t("model.gallery_title"))}</h3>
+    <div class="meta">${esc(t("model.gallery_hint"))}</div>
+    <div class="template-cards"></div>`;
+  const cards = host.querySelector(".template-cards");
+  for (const template of TEMPLATES)
+    cards.appendChild(await templateCard(template));
+  cards.appendChild(blankCard());
+}
+
+function closeGallery() {
+  const host = document.getElementById("model-gallery");
+  if (host) { host.hidden = true; host.innerHTML = ""; }
+}
+
+async function templateCard(template) {
+  const card = el("button", { type: "button", class: "template-card",
+                              "data-template": template.key });
+  card.appendChild(el("b", { text: t(`model.template.${template.key}.name`) }));
+  const draw = el("div", { class: "template-draw" });
+  card.appendChild(draw);
+  card.appendChild(el("span", { class: "meta",
+                                text: t(`model.template.${template.key}.desc`) }));
+  card.addEventListener("click", () => {
+    closeGallery();
+    openSession(template.build(freeLibraryId(template.id_base)), null, { isNew: true });
+  });
+  // the card's picture comes from the same route the editor prices with; a card
+  // that failed to price simply shows its words, rather than a broken box
+  try {
+    const out = await apiSend("POST", "/api/fence-models/preview", {
+      model: template.build(template.id_base),
+      bay: { height_mm: heightMm, width_mm: widthMm },
+    }, { quiet: true });
+    const svg = renderElevation(out.elevation, { annotations: false, joints: false });
+    if (svg) draw.appendChild(svg);
+  } catch { /* the words are the card; the drawing is the bonus */ }
+  return card;
+}
+
+function blankCard() {
+  const card = el("button", { type: "button", class: "template-card",
+                              "data-template": "blank" });
+  card.appendChild(el("b", { text: t("model.template.blank.name") }));
+  card.appendChild(el("div", { class: "template-draw" }));
+  card.appendChild(el("span", { class: "meta", text: t("model.template.blank.desc") }));
+  card.addEventListener("click", () => {
+    closeGallery();
+    openSession(blankModel(freeLibraryId("M-NEW")), null, { isNew: true });
+  });
+  return card;
 }
 
 // --- saving, publishing, retiring -------------------------------------------
@@ -561,11 +630,16 @@ function renderSpecPicker() {
   }
   host.appendChild(row);
 
-  // A variant's condition is an `Expr` AST. A general AST editor is its own
-  // design round, and half of one is worse than none — so it gets exactly what
-  // the knowledge tab gives rule conditions: a JSON box and a hint that says so.
+  // A variant's condition is an `Expr` AST. The ONE shape every shipped model
+  // uses — a field compared to a literal — is a sentence; everything else keeps
+  // the JSON box, which is not a fallback to be designed away but the parity
+  // guarantee itself: a condition the sentence cannot say is left alone rather
+  // than rewritten into one it can.
   if (specIndex >= 0) {
     const variant = variants[specIndex];
+    host.appendChild(conditionSentence(variant));
+    const advanced = el("details", { class: "condition-advanced" },
+      el("summary", { text: t("model.condition_advanced") }));
     const hint = el("div", { class: "meta", text: t("model.variant_conditions_hint") });
     const ta = el("textarea", { id: "model-variant-condition", dir: "ltr", rows: 3, cols: 60 });
     ta.value = JSON.stringify(variant.condition ?? null, null, 2);
@@ -573,20 +647,70 @@ function renderSpecPicker() {
       try {
         variant.condition = JSON.parse(ta.value);
         ta.classList.remove("invalid");
-        touch();
+        touch({ rerender: true });   // the sentence above may now be able to say it
       } catch {
         // the box keeps the user's text; nothing is saved from it until it parses
         ta.classList.add("invalid");
       }
     });
-    host.append(hint, ta);
+    advanced.append(hint, ta);
+    host.appendChild(advanced);
   }
+}
+
+/** "Applies when panel height is at least 1800 mm" — three controls over the
+ *  same `Expr` the JSON box below holds.
+ *
+ *  A condition the sentence cannot read renders as a line saying so, with the
+ *  box beneath it in charge. Nothing is rewritten on the way past: opening the
+ *  editor on a document must not narrow it. */
+function conditionSentence(variant) {
+  const said = readSentence(variant.condition);
+  const wrap = el("div", { class: "builder-row condition-sentence" });
+  if (!said) {
+    wrap.appendChild(el("span", { class: "meta", text: t("model.condition_only_json") }));
+    return wrap;
+  }
+  const isLength = said.path.endsWith("_mm");
+  const write = () => {
+    variant.condition = writeSentence({
+      path: fieldSel.value, cmp: cmpSel.value,
+      // a length crosses the display-unit boundary here, like every other
+      // length field — a height typed as 180 in cm is 1800 mm in the condition
+      value: isLength ? (toMm(valueInput.value) ?? 0)
+                      : Math.round(valueInput.valueAsNumber || 0),
+    });
+    touch();
+  };
+  wrap.appendChild(el("span", { class: "meta", text: t("model.condition_applies_when") }));
+  const fieldSel = el("select", { "data-f": "condition_field" });
+  for (const path of CONDITION_FIELDS)
+    fieldSel.appendChild(option(path, t(`model.condition.field.${path}`), said.path === path));
+  if (!CONDITION_FIELDS.includes(said.path))
+    fieldSel.appendChild(option(said.path, said.path, true));
+  fieldSel.addEventListener("change", write);
+  wrap.appendChild(fieldSel);
+
+  const cmpSel = el("select", { "data-f": "condition_cmp" });
+  for (const cmp of CONDITION_CMPS)
+    cmpSel.appendChild(option(cmp, t(`model.condition.cmp.${cmp}`), said.cmp === cmp));
+  cmpSel.addEventListener("change", write);
+  wrap.appendChild(cmpSel);
+
+  const valueInput = el("input", {
+    type: "number", "data-f": "condition_value", step: isLength ? inputStep() : "1",
+    value: String(isLength ? toDisplayValue(said.value) : said.value),
+  });
+  valueInput.addEventListener("change", write);
+  wrap.appendChild(isLength ? field("model.condition_value_mm", valueInput)
+                            : field("model.condition_value", valueInput));
+  return wrap;
 }
 
 // --- what the panel is made of: the elements, and the one being edited -------
 //
-// The list is the SELECTOR the drawing will become: every rail, board and set
-// of screws as a chip, plus the buttons that add one. It stays beside the canvas
+// The list is the SELECTOR the drawing became: every rail, board and set of
+// screws as a chip, plus the buttons that add one. It stays beside the canvas
 // rather than being replaced by it, because two of the three cannot always be
 // clicked on the drawing — a set of screws with no fasteners placed yet has no
 // dot, and a panel being started has no rectangles at all.

@@ -250,6 +250,17 @@ input[type="number"] { direction: ltr; }
   border-inline-start: 1px solid #e2e8f0; padding-inline-start: 10px; }
 .canvas-toolbar { display: flex; gap: 6px; flex-wrap: wrap;
   margin-block-end: 6px; }
+/* the starter gallery: each card is a real preview of the panel it opens */
+.template-cards { display: flex; gap: 10px; flex-wrap: wrap;
+  margin-block-start: 8px; }
+.template-card { display: flex; flex-direction: column; gap: 4px;
+  inline-size: 190px; padding: 8px; text-align: start;
+  border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+  cursor: pointer; }
+.template-card:hover { border-color: #2563eb; background: #f8fafc; }
+.template-draw { block-size: 120px; direction: ltr; /* never mirrored */
+  display: flex; align-items: center; justify-content: center; }
+.template-draw .elevation-svg { max-block-size: 120px; }
 /* never mirrored: the first board of a panel is the first board in every
    language, and mirroring would reverse it against the plan drawn one tab over */
 #model-canvas { direction: ltr; }
