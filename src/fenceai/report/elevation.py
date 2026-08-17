@@ -62,6 +62,29 @@ class ElevationMember(BaseModel):
     seat_end_mm: Mm | None = None
 
 
+class ElevationFixing(BaseModel):
+    """Where one fixing rule's fasteners land, in panel coordinates.
+
+    A PLACE, never a screw: `qty` is how many fasteners the resolver counted for
+    this place, and a slot's places sum to exactly the `qty` on that slot. That
+    invariant is why this is derived here rather than drawn by the client — a
+    dot count worked out in the browser would eventually say twelve beside a BOM
+    line buying eight, on the one surface built so an author can see what
+    `per_member_crossing` does.
+
+    "A dot per screw would bury the panel" still holds, and this is not that: a
+    panel taking 96 screws is 32 places reading ×3.
+    """
+
+    slot_key: str
+    role: str
+    basis: str
+    index: int
+    x_mm: Mm
+    y_mm: Mm
+    qty: int
+
+
 class JointDetail(BaseModel):
     """One end of one member, where it lands — the numbers a section is drawn from.
 
@@ -128,6 +151,9 @@ class PanelElevation(BaseModel):
     # them by the same code path, and the detail beside a panel cannot say
     # something different from the detail beside the bay built to it.
     details: list[JointDetail] = []
+    # where the fasteners land, with a count on each place. Empty for a panel
+    # with no fixing rule, and for a run stored before the basis rode on the slot.
+    fixings: list[ElevationFixing] = []
 
 
 def panel_elevation(
@@ -159,9 +185,99 @@ def panel_elevation(
         elif slot.positions_mm:
             out.members.extend(_frame(slot, width_mm, height_mm, nominal))
         # a slot with neither — a fixing — has no extent of its own to draw:
-        # screws are counted, not drawn, and a dot per screw would bury the panel
+        # screws are counted, not drawn, and a dot per screw would bury the
+        # panel. Where they LAND is a place with a count on it, below.
     out.details = list(_details(panel))
+    out.fixings = list(_fixings(panel, out.members, width_mm, height_mm))
     return out
+
+
+def _fixings(panel: ResolvedPanel, members: list[ElevationMember],
+             width_mm: Mm, height_mm: Mm):
+    """The fastener places of every fixing slot.
+
+    Each basis names a set of PLACES on the drawing, and the slot's whole `qty`
+    is apportioned across them (remainder to the first, integer arithmetic, one
+    rounding) — so the drawing's total is the resolver's total for every basis
+    and every `qty_per_basis`, including the ones that do not divide.
+
+    Nothing is recomputed: the places are read off the rectangles this same
+    function has already placed. A slot whose basis names no place — a gap on a
+    single-board panel, a crossing on a panel with no frame — draws nothing
+    rather than a point somewhere plausible.
+    """
+    frame = [m for m in members if m.kind == "frame"]
+    infill = sorted((m for m in members if m.kind == "infill"),
+                    key=lambda m: (m.x_mm, m.y_mm))
+    for slot in panel.slots:
+        if slot.slot_kind != "fixing" or not slot.basis:
+            continue
+        places = _places(slot.basis, frame, infill, width_mm, height_mm)
+        if not places:
+            continue
+        shares = _apportion(slot.qty, [1] * len(places))
+        for index, ((x, y), qty) in enumerate(zip(places, shares)):
+            yield ElevationFixing(
+                slot_key=slot.slot_key, role=slot.role, basis=slot.basis,
+                index=index, x_mm=x, y_mm=y, qty=qty,
+            )
+
+
+def _places(basis: str, frame: list[ElevationMember], infill: list[ElevationMember],
+            width_mm: Mm, height_mm: Mm) -> list[tuple[Mm, Mm]]:
+    """Where one basis puts its fasteners, in panel coordinates.
+
+    The infill list arrives sorted along the axis it was fitted on, which is
+    what makes `per_gap` read across a vertical pattern and up a horizontal one
+    without either being special-cased.
+    """
+    def centre(m: ElevationMember) -> tuple[Mm, Mm]:
+        return (m.x_mm + m.w_mm // 2, m.y_mm + m.h_mm // 2)
+
+    if basis == "per_panel":
+        return [(width_mm // 2, height_mm // 2)]
+    if basis == "per_frame_member":
+        return [centre(m) for m in frame]
+    if basis == "per_member":
+        return [centre(m) for m in infill]
+    if basis == "per_end_member":
+        # first and last ALONG THE AXIS, and one member is one end, not two
+        return [centre(m) for m in ([infill[0]] if len(infill) == 1
+                                    else infill[:1] + infill[-1:])]
+    if basis == "per_gap":
+        return [((a.x_mm + a.w_mm + b.x_mm) // 2, (a.y_mm + a.h_mm + b.y_mm) // 2)
+                for a, b in zip(infill, infill[1:])]
+    if basis == "per_member_crossing":
+        return [place for m in infill for f in frame
+                if (place := _overlap_centre(m, f)) is not None]
+    return []
+
+
+def _overlap_centre(a: ElevationMember, b: ElevationMember) -> tuple[Mm, Mm] | None:
+    """Where two drawn members cross, or None when they do not touch.
+
+    A crossing that is not on the drawing is not a place to put a screw: a slat
+    seated between two rails crosses both, and one stopping short of the top
+    rail crosses one. Counting the second twice would be the drawing inventing a
+    fixing the resolver's own count does not contain — so the apportionment runs
+    over the crossings that ARE there, and a basis that finds none draws none.
+    """
+    x0, x1 = max(a.x_mm, b.x_mm), min(a.x_mm + a.w_mm, b.x_mm + b.w_mm)
+    y0, y1 = max(a.y_mm, b.y_mm), min(a.y_mm + a.h_mm, b.y_mm + b.h_mm)
+    if x1 < x0 or y1 < y0:
+        return None
+    return ((x0 + x1) // 2, (y0 + y1) // 2)
+
+
+def _apportion(total: int, weights: list[int]) -> list[int]:
+    """Split a count by weight, remainder to the first — so the places sum to
+    the whole exactly, for a `qty_per_basis` that does not divide evenly."""
+    denominator = sum(weights)
+    if denominator <= 0:
+        return [total if i == 0 else 0 for i in range(len(weights))]
+    shares = [(total * w) // denominator for w in weights]
+    shares[0] += total - sum(shares)
+    return shares
 
 
 def _details(panel: ResolvedPanel):

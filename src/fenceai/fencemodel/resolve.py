@@ -110,6 +110,12 @@ class ResolvedSlot(BaseModel):
     # whole cycle has to travel with each slot or the walk cannot be exact.
     cycle_widths_mm: list[Mm] = []
     cycle_gaps_mm: list[Mm] = []     # the AUTHORED gaps; the fitted ones are on `fit`
+    # fixing slots: which basis put this count where it is. A geometry PARAMETER
+    # exactly like `orientation` above — the elevation derives the fastener
+    # POINTS from it, and a read model obliged to guess a basis from a count
+    # would put screws where the fence has none. "" is a run stored before this
+    # field existed, and draws nothing rather than a guess.
+    basis: str = ""
     # --- the joint, carried for the same reason the geometry above is --------
     # A section through a joint is drawn from numbers that live on the SPEC
     # (`FrameSlot.channel_depth_mm`, `Member.base_engagement_mm`), and the read
@@ -599,7 +605,7 @@ def resolve_panel(
         eligibility, pinned = _pinned_sku(rule.key, eligibility, ctx)
         slots.append(ResolvedSlot(
             slot_key=rule.key, role=rule.requirement.role, slot_kind="fixing",
-            qty=per * basis,
+            qty=per * basis, basis=rule.basis,
             eligibility=eligibility,
             option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
         ))
