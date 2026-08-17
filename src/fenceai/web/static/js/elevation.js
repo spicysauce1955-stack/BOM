@@ -263,20 +263,21 @@ export function gapLine(elev) {
 
 // -------------------------------------------------------------- the drawing
 
-/** A `PanelElevation` as an `<svg>` element, or null when there is nothing to
- *  draw (a model with no members, or a bay from a run that predates panels).
+/** The drawing's box and scale, in viewBox units — the ONE transform.
  *
- *  `onSelect(slotKey)` fires when a member is clicked. The renderer never
- *  reaches out of its own SVG: which row that highlights is the CALLER's table
- *  and the caller's business. */
-export function renderElevation(elev, {
-  onSelect, annotations = true, joints = true,
-} = {}) {
+ * `renderElevation` computed this inline until the canvas needed to put drag
+ * handles on the very same rectangles. Two copies of a scale is a handle three
+ * pixels from the board it moves, so it is computed here and called from both.
+ * `null` when there is nothing to draw, which is the same condition the renderer
+ * refuses on.
+ *
+ * `annotations` changes the padding — a fitted-gap callout takes a lane above
+ * the panel — so a caller overlaying handles must pass the SAME options it
+ * renders with, and must read `y0` rather than assume `PAD_TOP`. */
+export function elevationLayout(elev, { annotations = true } = {}) {
   const w = elev?.width_mm || 0;
   const h = elev?.height_mm || 0;
-  const rects = elevationRects(elev);
-  if (!(w > 0) || !(h > 0) || !rects.length) return null;
-
+  if (!(w > 0) || !(h > 0) || !(elev?.members || []).length) return null;
   const dim = annotations ? gapDimension(elev) : null;
   const pitch = annotations ? pitchDimension(elev) : null;
   const margins = annotations ? edgeMargins(elev) : null;
@@ -294,12 +295,45 @@ export function renderElevation(elev, {
   // one scale for both axes: a drawing that stretched to fill its box would
   // make a 100 mm slat and a 20 mm gap look like the same thing
   const s = Math.min(MAX_DRAW_W / w, MAX_DRAW_H / h);
-  const dw = w * s;
-  const dh = h * s;
-  const x0 = PAD_START;
-  const y0 = padTop;
-  const vw = PAD_START + dw + padEnd;
-  const vh = padTop + dh + padBottom;
+  return {
+    s, x0: PAD_START, y0: padTop, w_mm: w, h_mm: h,
+    dw: w * s, dh: h * s, padBottom,
+    vw: PAD_START + w * s + padEnd, vh: padTop + h * s + padBottom,
+    dim, pitch, margins,
+  };
+}
+
+/** Panel millimetres -> viewBox units. Panel y counts UP from the bottom, so
+ *  this flips; `renderElevation`'s own `py` takes an already-flipped value from
+ *  `elevationRects` and does not. */
+export const layoutPx = (L, x_mm, y_mm) =>
+  [L.x0 + x_mm * L.s, L.y0 + (L.h_mm - y_mm) * L.s];
+
+/** ... and back, for a pointer landing on the drawing. */
+export const layoutMm = (L, x, y) =>
+  [Math.round((x - L.x0) / L.s), Math.round(L.h_mm - (y - L.y0) / L.s)];
+
+/** A `PanelElevation` as an `<svg>` element, or null when there is nothing to
+ *  draw (a model with no members, or a bay from a run that predates panels).
+ *
+ *  `onSelect(slotKey)` fires when a member is clicked. The renderer never
+ *  reaches out of its own SVG: which row that highlights is the CALLER's table
+ *  and the caller's business.
+ *
+ *  `fixings` draws the fastener places, and is OFF by default: the Panel and
+ *  Structure tabs answer "what is this panel made of", where a screw is a BOM
+ *  line; the canvas answers "what does per-member-crossing MEAN", where the
+ *  places are the only way to see it. */
+export function renderElevation(elev, {
+  onSelect, annotations = true, joints = true, fixings = false,
+} = {}) {
+  const L = elevationLayout(elev, { annotations });
+  const rects = elevationRects(elev);
+  if (!L || !rects.length) return null;
+
+  const { s, x0, y0, dw, dh, vw, vh, dim, pitch, margins } = L;
+  const w = L.w_mm;
+  const h = L.h_mm;
   const px = (mm) => x0 + mm * s;
   const py = (mm) => y0 + mm * s;
 
@@ -353,6 +387,23 @@ export function renderElevation(elev, {
       x: r(px(m.x_mm)), y: r(py(m.y_mm)),
       width: r(Math.max(m.w_mm * s, 0.5)), height: r(Math.max(m.h_mm * s, 0.5)),
     }, edges);
+
+  // The fastener PLACES, when the caller wants them. Each carries its own count
+  // (`report/elevation.py`), so a panel taking 96 screws is 32 dots reading ×3
+  // rather than a rash — "a dot per screw would bury the panel" is still true,
+  // and this is not that.
+  if (fixings) {
+    const group = el("g", { class: "elev-fixings" }, svg);
+    for (const f of elev.fixings || []) {
+      const [fx, fy] = layoutPx(L, f.x_mm, f.y_mm);
+      const dot = el("circle", {
+        class: "elev-fixing", cx: r(fx), cy: r(fy), r: 5,
+        "data-slot": f.slot_key, "data-index": String(f.index),
+      }, group);
+      // identifiers and a count, set as TEXT — a slot key never becomes markup
+      el("title", {}, dot).textContent = `${f.slot_key} ×${f.qty}`;
+    }
+  }
 
   if (annotations) {
     const widthRow = y0 + dh + 22 + (margins ? MARGIN_ROW : 0);

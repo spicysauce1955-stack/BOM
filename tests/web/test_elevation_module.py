@@ -49,8 +49,8 @@ globalThis.fetch = async (url) => ({
 import { setLocale } from "./js/i18n.js";
 import { setUnits } from "./js/units.js";
 import {
-  edgeMargins, elevationRects, gapDimension, gapLine, gapSummary, hasNominal,
-  pitchDimension,
+  edgeMargins, elevationLayout, elevationRects, gapDimension, gapLine, gapSummary,
+  hasNominal, layoutMm, layoutPx, pitchDimension,
 } from "./js/elevation.js";
 
 const SLAT = %(slat)s;
@@ -185,6 +185,16 @@ const flush = {
 };
 out.margins_flush = edgeMargins(flush);
 out.pitch_flush = pitchDimension(flush);   // only two members: no rhythm
+
+// --- the layout the canvas overlays its handles in -------------------------
+const layout = elevationLayout(SLAT);
+out.layout_round_trip = (() => {
+  const [x, y] = layoutPx(layout, 300, 900);
+  return layoutMm(layout, x, y);
+})();
+out.layout_origin = layoutPx(layout, 0, SLAT.height_mm);   // the panel top-left
+out.layout_top = layout.y0;
+out.layout_empty = elevationLayout({ members: [] });
 
 console.log(JSON.stringify(out));
 """
@@ -338,3 +348,29 @@ def test_the_edge_margin_is_the_fits_own_number_not_a_measurement(ev):
     assert drawn["start_mm"] == fit["start"]
     assert drawn["end_mm"] == fit["end"] + fit["residual"]
     assert fit["start"] > 0, "the fixture must actually inset its pattern"
+
+
+# --- the layout, shared with the canvas ---------------------------------------
+
+def test_the_layout_transform_inverts_exactly(ev):
+    """The canvas overlays drag handles in the drawing's own coordinates. A
+    second copy of this transform is how a handle ends up three pixels from the
+    board it moves, so it is computed once and exported."""
+    assert ev["layout_round_trip"] == [300, 900]
+
+
+def test_the_panel_origin_is_the_drawing_origin(ev):
+    """Panel y counts UP from the bottom; SVG y grows down. The top-left of the
+    panel is therefore the drawing's own origin — and that origin is NOT a
+    constant: a fitted-gap callout takes a lane above the panel and pushes it
+    down, which is exactly why an overlay must read the layout rather than
+    assume the padding."""
+    x, y = ev["layout_origin"]
+    assert round(x) == 58                       # PAD_START
+    assert round(y) == round(ev["layout_top"])
+
+
+def test_there_is_no_layout_for_a_panel_with_nothing_in_it(ev):
+    """The same condition the renderer refuses on — a model being started has no
+    drawing yet, and the canvas draws its own empty opening for that."""
+    assert ev["layout_empty"] is None

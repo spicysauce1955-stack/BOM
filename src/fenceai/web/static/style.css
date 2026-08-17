@@ -353,6 +353,9 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .elev-member.elev-nominal { fill-opacity: 0.45; }
 .elev-member.selected { stroke: #2563eb; stroke-width: 2.5; fill: #dbeafe; }
 .elev-member:hover { stroke: #2563eb; }
+/* a fastener PLACE, with its count in the title: never one dot per screw */
+.elev-fixing { fill: #f59e0b; stroke: #78350f; stroke-width: 1; }
+.elev-fixing.selected { fill: #2563eb; stroke: #1e3a8a; stroke-width: 2; }
 /* the housed end of a member: inside something, so it is hatched rather than
    filled — the elevation says THAT it is seated; the section says how */
 .elev-seat { fill: #64748b; fill-opacity: 0.28; stroke: #475569; stroke-width: 0.8;
