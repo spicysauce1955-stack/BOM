@@ -36,6 +36,11 @@
 //     anything else here rather than leaning on that check alone.
 
 import { el, field, option, skuSelect } from "./builder-ui.js";
+// the SVG builder (createElementNS). `builder-ui`'s `el` is createElement, and
+// `document.createElement("svg")` is an HTMLUnknownElement: it takes its CSS,
+// reports a computed width, holds its children — and paints nothing at all,
+// which is a defect no assertion about the DOM can see.
+import { el as svgEl } from "./geom.js";
 import { currentLocale, t } from "./i18n.js";
 import { gapForOverlap, overlapOf } from "./panel-canvas-geom.js";
 import {
@@ -379,17 +384,17 @@ const DIAGRAM_DOTS = {
 };
 
 function basisDiagram(basis) {
-  const svg = el("svg", { class: "basis-diagram", viewBox: "0 0 60 40",
-                          "aria-hidden": "true" });
+  const svg = svgEl("svg", { class: "basis-diagram", viewBox: "0 0 60 40",
+                             width: "90", height: "60", "aria-hidden": "true" });
   for (const y of [5, 29])
-    svg.appendChild(el("rect", { class: "basis-rail", x: "2", y: String(y),
-                                 width: "56", height: "6" }));
+    svgEl("rect", { class: "basis-rail", x: "2", y: String(y),
+                    width: "56", height: "6" }, svg);
   for (const x of [6, 26, 46])
-    svg.appendChild(el("rect", { class: "basis-board", x: String(x), y: "2",
-                                 width: "8", height: "36" }));
+    svgEl("rect", { class: "basis-board", x: String(x), y: "2",
+                    width: "8", height: "36" }, svg);
   for (const [cx, cy] of DIAGRAM_DOTS[basis] || [])
-    svg.appendChild(el("circle", { class: "basis-dot", cx: String(cx),
-                                   cy: String(cy), r: "3" }));
+    svgEl("circle", { class: "basis-dot", cx: String(cx), cy: String(cy),
+                      r: "3" }, svg);
   return svg;
 }
 

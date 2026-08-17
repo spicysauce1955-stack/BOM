@@ -2405,6 +2405,29 @@ document.querySelector('#model-parts tr[data-slot="slat"] td:nth-child(3)')
   handles: [...document.querySelectorAll('#model-canvas [data-handle]')]
     .map(h => h.dataset.handle),
 })""")
+        # A diagram that is PRESENT and 0x0 is the failure no DOM assertion sees:
+        # `document.createElement("svg")` builds an HTMLUnknownElement, which
+        # takes its CSS, reports a computed width, holds its children — and
+        # paints nothing. Only a laid-out box can tell the two apart, so the
+        # check is a rectangle rather than a selector.
+        c.js("""
+document.querySelector('#model-elements [data-element^="fixing:"]').click(); 'ok'""")
+        time.sleep(1.2)
+        diagram = c.js("""
+{
+  const d = document.querySelector('#model-inspector .basis-diagram');
+  const r = d && d.getBoundingClientRect();
+  ({tag: d && d.tagName, w: r ? Math.round(r.width) : 0,
+    h: r ? Math.round(r.height) : 0,
+    dots: document.querySelectorAll('#model-inspector .basis-dot').length});
+}""")
+        check("the basis diagram is drawn, not merely present",
+              diagram["tag"] == "svg" and diagram["w"] > 10
+              and diagram["h"] > 10 and diagram["dots"] > 0)
+        c.js("""
+document.querySelector('#model-elements [data-element^="fixing:"]').click(); 'ok'""")
+        time.sleep(0.8)
+
         check("a starter opens as a panel that is already drawn, with handles on it",
               drawn["members"] > 4
               and any(h.startswith("placement:") for h in drawn["handles"])
