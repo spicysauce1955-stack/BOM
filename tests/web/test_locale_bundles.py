@@ -316,6 +316,43 @@ def test_every_value_the_model_vocabulary_offers_has_a_word_in_both_bundles():
     assert not missing, missing
 
 
+# The vocabularies the canvas renders as a SENTENCE rather than as a label:
+# "Screws at: where every board meets every rail", not "basis: per_member_crossing".
+# The VALUES stay a typed, code-defined enum — fulfillment and resolution read
+# them, so adding one is a code change with tests. Only the PHRASING is data,
+# which is what makes it correctable without a release.
+SENTENCE_VOCABULARIES = [
+    ("BASES", "model.basis."),
+    ("PLACEMENT_KINDS", "model.placement."),
+    ("JUSTIFICATIONS", "model.justification."),
+    ("EXCESS", "model.excess."),
+    ("LENGTH_RULES", "model.length_rule."),
+]
+
+
+def test_every_sentence_vocabulary_value_has_both_a_label_and_a_phrasing():
+    """The canvas reads `model.basis.sentence.<v>`; the compact places still read
+    `model.basis.<v>`. A value carrying only one of the two renders either a raw
+    key inside a Hebrew sentence or a sentence where a chip should be — and
+    neither is visible to key-parity scanning, because both keys are computed."""
+    import re
+
+    en, he = _bundles()
+    src = (STATIC / "js" / "panel-model.js").read_text()
+    missing = []
+    for const, prefix in SENTENCE_VOCABULARIES:
+        body = re.search(rf"const {const} = \[(.*?)\];", src, re.S)
+        assert body, const
+        values = re.findall(r'"([a-z_]+)"', body.group(1))
+        assert values, const
+        for value in values:
+            for key in (f"{prefix}{value}", f"{prefix}sentence.{value}"):
+                for lang, table in (("en", en), ("he", he)):
+                    if key not in table:
+                        missing.append(f"{lang}:{key}")
+    assert not missing, missing
+
+
 def test_every_material_and_finish_in_the_catalog_has_a_word_in_both_bundles():
     """The material drawer renders `attrs.material` / `attrs.finish` through
     COMPUTED keys (`t("material." + value)`), which key-parity scanning cannot
