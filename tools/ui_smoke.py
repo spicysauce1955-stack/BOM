@@ -1079,12 +1079,58 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         check("selecting a part row lights up its members, raised over the ones in front",
               from_row["slots"] == ["rail"] and from_row["rows"] == ["rail"]
               and from_row["raised"])
+        # --- a routed line: the model's OWN post decides the opening ----------
+        # The one check that can see W3 end to end. `preview_panel` resolves
+        # M-VINYL's post from the bay's height, and the panel is then fitted
+        # across the opening between two of them (1500 - 90 = 1410) rather than
+        # across the centre-to-centre width. That is the whole difference between
+        # nine slats and ten, and no pytest test drives the route AND the drawing.
+        c.js("""
+{
+  const sel = document.getElementById('panel-model');
+  sel.value = 'M-VINYL'; sel.dispatchEvent(new Event('change'));
+  const w = document.getElementById('panel-width');
+  w.value = '1500'; w.dispatchEvent(new Event('input'));
+  const h = document.getElementById('panel-height');
+  h.value = '1800'; h.dispatchEvent(new Event('input'));
+}
+'ok'""")
+        time.sleep(2.0)
+        vinyl = c.js("""
+(() => {
+  const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')];
+  const rects = [...document.querySelectorAll('#panel-elevation .elev-member')];
+  return {
+    slots: rows.map(r => r.dataset.slot),
+    qty: Object.fromEntries(rows.map(r => [r.dataset.slot, Number(r.cells[2].textContent)])),
+    slats: rects.filter(r => r.dataset.slot === 'slat').length,
+    warnings: document.querySelectorAll('#tab-panel .warning').length,
+    head: document.querySelector('#panel-parts h3')?.textContent || '',
+  };
+})()""")
+        # nine, not ten: ten 150 mm boards need 1500 and the opening is 1410
+        check("the routed line is fitted across the opening its own post leaves",
+              vinyl["qty"].get("slat") == 9 and vinyl["slats"] == 9
+              and "M-VINYL@v1" in vinyl["head"])
+        # a board held in a channel top and bottom is not screwed, and the model
+        # says so by carrying no fixing rule at all
+        check("a channelled panel buys no screws and reports no gap",
+              vinyl["slots"] == ["rail", "slat"] and vinyl["warnings"] == 0)
+        c.shot("18c-panel-vinyl.png")
+
         # the panel is priced from the model, not from a fixed shape: M-LEGACY's
-        # two-slot panel and M-SLAT's three-slot one must not render the same
+        # two-slot panel and M-SLAT's three-slot one must not render the same.
+        # The bay goes back to the tab's own defaults with it: the display-unit
+        # checks below read the width field and the drawing's dimensions, and a
+        # size left behind by the block above would have them measuring it.
         c.js("""
 {
   const sel = document.getElementById('panel-model');
   sel.value = 'M-LEGACY'; sel.dispatchEvent(new Event('change'));
+  const w = document.getElementById('panel-width');
+  w.value = '2500'; w.dispatchEvent(new Event('input'));
+  const h = document.getElementById('panel-height');
+  h.value = '1800'; h.dispatchEvent(new Event('input'));
 }
 'ok'""")
         time.sleep(1.5)
@@ -1894,7 +1940,10 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         model_options = c.js("""
 [...(document.getElementById('pop-model')?.options || [])].map(o => o.value)""")
         check("the model tool offers the published models",
-              sorted(model_options or []) == ["M-LEGACY", "M-SLAT"])
+              # exact, not a subset: a model the library publishes and the tool
+              # does not offer is unreachable, and one it offers that is not
+              # published (M-SLAT@v2 is a draft) is a fence nobody can order
+              sorted(model_options or []) == ["M-LEGACY", "M-SLAT", "M-VINYL"])
         c.js("""
 {
   document.getElementById('pop-model').value = 'M-SLAT';
