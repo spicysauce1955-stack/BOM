@@ -1,5 +1,61 @@
 # Current status
 
+## W3 is finished — the routed vinyl case (2026-08-17)
+The three pieces `plan/open-work.md` §1 named, in order, plus the preview gap the
+last of them made closable.
+
+**The panel facts reach post matching, and the refusal is deleted in the same
+commit** (`288a1d7`). Height at the post's own station, the vertical mode the bay
+will be built to, the model id, and the rail positions those settle — no width of
+either kind, which is the cycle rule. `rail_positions_mm` is `placement_positions`'
+answer over the horizontal frame slots and never a second derivation, and the
+count it places is the KNOWLEDGE-resolved one: `_segment_view` is now the single
+construction of a model's knowledge view, so a bay and the post beside it cannot
+resolve different numbers.
+
+The cap gained what it had always been allowed to ask for — the post it caps.
+`test_a_cap_predicate_may_read_the_post_it_caps` had passed *validation* while
+`_model_post_skus` matched caps against an empty context, so such a cap matched
+nothing and came back None with nobody told.
+
+**One new refusal, where two features meet.** A variant conditioned on the bay's
+WIDTH cannot be evaluated at a post's station — a post stands between two bays
+that need not be the same width — so a model with one AND a post matched on
+`rail_positions_mm` would hand the DEFAULT spec's rails to the predicate. Refused
+at authoring; neither feature alone is.
+
+**M-VINYL and S16** (`edeb0d0`). The line that cannot be described without its
+post: its rails go THROUGH the post, into holes punched at the factory. Two
+routed posts sit in the demo catalog and only the fence's own height separates
+them, which is what makes the post an answer rather than a lookup. It buys no
+screws at all — a board held in a channel top and bottom is not fixed — and its
+60 mm residual goes to the two EDGES rather than into eight 7 mm slots between
+boards, which would not be a privacy fence.
+
+Two defects found by building it. `_skus_used` did not record `Post.cap_sku`:
+knowledge's `post_cap` rides in `demand_skus` and a MODEL's cap does not, so a run
+buying a cap recorded nothing that would make repricing it refuse the stored
+answer. And a post's and a cap's predicate are now checked against the namespaces
+the generator actually supplies — an unsupplied namespace does not error at
+generation, it matches nothing and falls through to the company default.
+
+**Boundary posts intersect** (`0c3472c`). Both models' post specs apply to the one
+post between them and the candidate set is their INTERSECTION — not an
+arbitration. The three codes spec §8 designed are built, and which term did the
+excluding is answered STRUCTURALLY (`match.sole_excluding_term`: drop one conjunct
+at a time; if exactly one drop admits somebody, that conjunct is the sole cause).
+No code anywhere knows what a routing attribute is called.
+
+**And the preview measures its own model's post** (`e033f01`), which is the gap
+this file recorded as closing "in W3, when the model owns its post". The caller
+now says only the height and the bay width, and the preview reaches the same
+opening, slats and cut lengths as the run.
+
+Mutation-verified twelve ways across the four commits; every mutation kills
+exactly the test that claims the behaviour.
+
+1152 pytest · 175 scenario tests · gate byte-identical (one file ADDED, `vinyl.json`).
+
 ## Note for archaeology: two concurrent agents, one working tree (2026-08-16)
 `11d3c99` ("feat(strategy): a model's post and cap reach the fence") also carries
 `animate.js`, `assembly.js`, `style.css`, `index.html` and both locale bundles —

@@ -1,47 +1,24 @@
 # Open work
 
-Handoff, 2026-08-16. Everything below is unstarted unless it says otherwise.
-State it follows from: `plan/current-status.md` (newest entry first) and
-`docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md`, whose
-§11 carries the wave plan with each wave's findings folded back in.
+Handoff, updated 2026-08-17. Everything below is unstarted unless it says
+otherwise. State it follows from: `plan/current-status.md` (newest entry first)
+and `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md`,
+whose §11 carries the wave plan with each wave's findings folded back in.
 
-`main` is green and pushed: **1106 pytest · 156 golden scenarios · 168/168 smoke ·
-compatibility gate byte-identical** except for the one deliberate, proved
-regeneration recorded in the spec's §9.
+`main` is green: **1152 pytest · 175 scenario tests · compatibility gate
+byte-identical** (plus `vinyl.json`, a new fixture, and the one deliberate proved
+regeneration recorded in the spec's §9).
 
 ---
 
-## 1. Finish W3 — the routed vinyl case
+## ~~1. Finish W3 — the routed vinyl case~~ — DONE, 2026-08-17
 
-The arc's whole reason to exist, and the only item here with code already half in
-place. Three pieces, in order:
-
-**1a. Supply the bay facts to post matching.** `POST_PREDICATE_PANEL_FACTS`
-declares what a post predicate may read; `_model_post_skus` matches against
-`item.*` alone, so any predicate naming a panel fact is REFUSED at authoring
-(`fencemodel/model.py`, "not yet supplied"). To turn it on, the generator has to
-know the bay height and rail positions at the post's own station before the post
-is chosen. Both are computable there — `_span_height` at the station, and
-`placement_positions` over the model's horizontal frame slots at that height —
-but `rails_per_span` comes from knowledge, so the helper needs `kb` and `scope`
-passed down. Delete the refusal in the same commit that supplies them.
-
-**1b. The routed vinyl demo model + golden scenario.** A vinyl line: a routed
-post, rails seated into it, slats housed in channelled rails (`between_frame`
-already does the cut-length half, from the joint wave). This is the acceptance
-test for the whole arc — `docs/scenarios/golden-scenarios.md` and
-`tests/scenarios/` change in the same commit, per the `golden-scenarios` skill.
-
-**1c. Boundary-post intersection.** A post between two segments built to
-different models: both post specs apply, and the candidate set is the
-INTERSECTION of their matched sets — not an arbitration. Empty intersection is a
-`post_spec_conflict` error naming the station and both models. Today
-`_model_post_skus` samples ONE model at the station, which is right for an
-interior post and silently picks a side at a boundary. Codes designed but not
-built: `post_routing_mismatch`, `post_spec_conflict`, `no_item_covers_part_spec`
-(spec §8) — each needs entries in BOTH locale bundles and a line in
-`REFUSAL_CODES` (`tests/web/test_locale_bundles.py`), which will fail you
-otherwise.
+All three pieces landed, plus the preview gap the last of them made closable:
+`288a1d7` (panel facts reach post matching; the authoring refusal deleted in the
+same commit), `edeb0d0` (M-VINYL and golden scenario S16), `0c3472c` (boundary
+posts intersect; the three §8 failure codes), `e033f01` (the panel preview
+measures its own model's post). See `plan/current-status.md` for what each
+decided and what building them found.
 
 ## 2. Assembly and installation instructions per panel (roadmap Admin 3)
 
@@ -90,7 +67,15 @@ persisted identity. Dispositions in
   `data-order`.
 - **Post candidate selection is sorted-first, not cost-based** (`_model_post_skus`).
   Defensible for an indivisible each; the line still carries its full eligibility
-  into demand, so the choice stays explainable there.
+  into demand, so the choice stays explainable there. Still true after W3, and
+  now visible: a routed line with two acceptable posts buys the alphabetically
+  first, and the intersection at a boundary is taken over sets, not over prices.
+- **A model's cap is matched against the MODEL's post, not the one finally
+  written.** `_make_post` puts a forced sku, a masonry mount and a gate
+  reinforcement ABOVE the model's post, so a cap whose predicate reads
+  `post.face_width_mm` reads the face of a post that situation replaced. Narrow —
+  it needs a predicate-matched cap AND a situational post at one station — but it
+  is a wrong answer rather than a missing one when it happens.
 - **Architecture fitness tests** (audit §5): forbidden imports, table inventory,
   port inventory, route inventory, hash field lists. The right answer to the whole
   class of drift the audit found. Best done once the import graph stops moving.
