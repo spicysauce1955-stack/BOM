@@ -768,19 +768,60 @@ def _post_slot_errors(post: PostSlot, catalog: Catalog) -> list[str]:
                     f"slot {post.key} ({what}): eligible sku {m.sku} is not in the "
                     f"catalog")
 
-    predicate = post.requirement.eligibility.predicate
-    if predicate is not None:
-        for path in sorted(field_paths(predicate)):
-            head, _, field = path.partition(".")
-            if head == "panel" and field not in POST_PREDICATE_PANEL_FACTS:
-                errors.append(
-                    f"slot {post.key}: a post predicate may not read "
-                    f"panel.{field} — the clear opening is measured TO the post "
-                    f"faces, so a post chosen by it would be choosing itself. A "
-                    f"post is resolved from the bay's HEIGHT, before any width is "
-                    f"known; readable: "
-                    + ", ".join(f"panel.{f}" for f in sorted(POST_PREDICATE_PANEL_FACTS))
-                )
+    for what, req in (("post", post.requirement), ("cap", post.cap)):
+        if req is not None and req.eligibility.predicate is not None:
+            errors += _post_namespace_errors(
+                post.key, what, req.eligibility.predicate, may_read_post=what == "cap",
+            )
+    return errors
+
+
+def _post_namespace_errors(
+    key: str, what: str, predicate: Expr, *, may_read_post: bool
+) -> list[str]:
+    """What a post's — or its cap's — predicate is allowed to know.
+
+    The generator supplies exactly three namespaces here: `item` (the candidate),
+    `panel` narrowed to `POST_PREDICATE_PANEL_FACTS`, and, for a CAP, the `post`
+    it caps. Anything else evaluates to a `MissingField`, which the matcher reads
+    as "has not covered the requirement" — so the predicate would match NOTHING
+    and the slot would fall silently through to the company default. Refused here,
+    where it is a typo an author can fix.
+
+    A post may not read `post`, and that is the cycle rule in its second form: a
+    post chosen by the post it is has no first answer. A cap may, because the post
+    is already chosen — which is the whole reason `cap` nests inside `PostSlot`.
+    """
+    errors: list[str] = []
+    for path in sorted(field_paths(predicate)):
+        head, _, field = path.partition(".")
+        if head == "item" or (head == "post" and may_read_post):
+            continue
+        if head == "panel" and field in POST_PREDICATE_PANEL_FACTS:
+            continue
+        if head == "panel":
+            errors.append(
+                f"slot {key} ({what}): may not read panel.{field} — the clear "
+                f"opening is measured TO the post faces, so a post chosen by it "
+                f"would be choosing itself. A post is resolved from the bay's "
+                f"HEIGHT, before any width is known; readable: "
+                + ", ".join(f"panel.{f}" for f in sorted(POST_PREDICATE_PANEL_FACTS))
+            )
+        elif head == "post":
+            errors.append(
+                f"slot {key} ({what}): a post may not be matched on post.{field} "
+                f"— it would be choosing itself. Only a CAP reads the post, "
+                f"because the post is chosen first"
+            )
+        else:
+            errors.append(
+                f"slot {key} ({what}): nothing supplies {path} when a post is "
+                f"resolved, so this predicate would match no product at all and "
+                f"the company default would answer instead. Readable: item.*"
+                + (", post.*" if may_read_post else "")
+                + ", " + ", ".join(f"panel.{f}"
+                                   for f in sorted(POST_PREDICATE_PANEL_FACTS))
+            )
     return errors
 
 

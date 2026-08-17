@@ -125,6 +125,27 @@ def test_the_refusal_names_what_a_post_predicate_may_read():
     assert any("rail_positions_mm" in e and "height_mm" in e for e in errs)
 
 
+def test_a_post_may_not_be_matched_on_the_post_it_is():
+    """The cycle rule in its second form. A cap reads the post because the post
+    was chosen first; a post reading one has no first answer."""
+    errs = validate_model(_model(_post(requirement=PartRequirement(
+        role="post", eligibility=Eligibility(predicate=Cmp(
+            cmp="==", left=FieldRef(path="post.face_width_mm"),
+            right=Lit(value=80)))))), demo_catalog())
+    assert any("choosing itself" in e for e in errs)
+
+
+def test_a_cap_predicate_reading_a_namespace_nobody_supplies_is_refused():
+    """`MissingField` is a NO in the matcher, so an unsupplied namespace does not
+    error at generation — it matches nothing, and the slot falls silently through
+    to the company default. The author is told here instead."""
+    errs = validate_model(_model(_post(cap=PartRequirement(
+        role="cap", eligibility=Eligibility(predicate=Cmp(
+            cmp="==", left=FieldRef(path="project.city"),
+            right=Lit(value="חיפה")))))), demo_catalog())
+    assert any("project.city" in e and "cap" in e for e in errs)
+
+
 def _routed_post() -> PostSlot:
     """A post matched on where the panel puts its rails — the routed-vinyl case."""
     return _post(requirement=PartRequirement(

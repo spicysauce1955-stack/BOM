@@ -1,0 +1,1088 @@
+{
+  "bom": {
+    "allocations": [],
+    "cut_plans": {
+      "RAIL-V-3000": {
+        "bars": [
+          {
+            "kerf_total_mm": 3,
+            "leftover_mm": 1497,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1500,
+                "requirement_id": "req0016"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 3,
+            "leftover_mm": 1497,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1500,
+                "requirement_id": "req0016"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 3,
+            "leftover_mm": 1497,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1500,
+                "requirement_id": "req0018"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 3,
+            "leftover_mm": 1497,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1500,
+                "requirement_id": "req0018"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 3,
+            "leftover_mm": 1497,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1500,
+                "requirement_id": "req0020"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 3,
+            "leftover_mm": 1497,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1500,
+                "requirement_id": "req0020"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 3,
+            "leftover_mm": 1497,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1500,
+                "requirement_id": "req0022"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          },
+          {
+            "kerf_total_mm": 3,
+            "leftover_mm": 1497,
+            "leftover_reusable": true,
+            "pieces": [
+              {
+                "length_mm": 1500,
+                "requirement_id": "req0022"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 3000
+          }
+        ],
+        "certified_optimal": true,
+        "lower_bound": 8,
+        "lp_lower_bound": 5,
+        "new_bar_count": 8,
+        "sku": "RAIL-V-3000",
+        "waste_mm": 0
+      },
+      "SLAT-V-150": {
+        "bars": [
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          },
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          },
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0017"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          },
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          },
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0019"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          },
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          },
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0021"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          },
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          },
+          {
+            "kerf_total_mm": 12,
+            "leftover_mm": 108,
+            "leftover_reusable": false,
+            "pieces": [
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              },
+              {
+                "length_mm": 1470,
+                "requirement_id": "req0023"
+              }
+            ],
+            "source": "new",
+            "stock_length_mm": 6000
+          }
+        ],
+        "certified_optimal": true,
+        "lower_bound": 9,
+        "lp_lower_bound": 9,
+        "new_bar_count": 9,
+        "sku": "SLAT-V-150",
+        "waste_mm": 972
+      }
+    },
+    "lines": [
+      {
+        "engineering_qty": 5,
+        "engineering_unit": "each",
+        "name": "Vinyl post cap 90 mm",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0002",
+          "req0005",
+          "req0008",
+          "req0011",
+          "req0014"
+        ],
+        "purchase_qty": 5,
+        "purchase_unit": "each",
+        "sku": "CAP-V-90",
+        "total_cents": 4500,
+        "unit_price_cents": 900
+      },
+      {
+        "engineering_qty": 5,
+        "engineering_unit": "application",
+        "name": "Concrete bag 25 kg",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0003",
+          "req0006",
+          "req0009",
+          "req0012",
+          "req0015"
+        ],
+        "purchase_qty": 3,
+        "purchase_unit": "bag",
+        "sku": "CONC-25",
+        "total_cents": 2400,
+        "unit_price_cents": 800
+      },
+      {
+        "engineering_qty": 5,
+        "engineering_unit": "each",
+        "name": "Routed vinyl post 1800",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0001",
+          "req0004",
+          "req0007",
+          "req0010",
+          "req0013"
+        ],
+        "purchase_qty": 5,
+        "purchase_unit": "each",
+        "sku": "POST-V-1800",
+        "total_cents": 49000,
+        "unit_price_cents": 9800
+      },
+      {
+        "engineering_qty": 8,
+        "engineering_unit": "cut",
+        "name": "Channelled vinyl rail 3000 mm",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0016",
+          "req0018",
+          "req0020",
+          "req0022"
+        ],
+        "purchase_qty": 8,
+        "purchase_unit": "bar",
+        "sku": "RAIL-V-3000",
+        "total_cents": 20800,
+        "unit_price_cents": 2600
+      },
+      {
+        "engineering_qty": 36,
+        "engineering_unit": "cut",
+        "name": "Vinyl slat 150 mm (6000 mm stock)",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0017",
+          "req0019",
+          "req0021",
+          "req0023"
+        ],
+        "purchase_qty": 9,
+        "purchase_unit": "bar",
+        "sku": "SLAT-V-150",
+        "total_cents": 43200,
+        "unit_price_cents": 4800
+      }
+    ],
+    "projected_remnants": [
+      {
+        "id": "remnant:RAIL-V-3000:1",
+        "kind": "remnant",
+        "length_mm": 1497,
+        "qty": 1,
+        "sku": "RAIL-V-3000"
+      },
+      {
+        "id": "remnant:RAIL-V-3000:2",
+        "kind": "remnant",
+        "length_mm": 1497,
+        "qty": 1,
+        "sku": "RAIL-V-3000"
+      },
+      {
+        "id": "remnant:RAIL-V-3000:3",
+        "kind": "remnant",
+        "length_mm": 1497,
+        "qty": 1,
+        "sku": "RAIL-V-3000"
+      },
+      {
+        "id": "remnant:RAIL-V-3000:4",
+        "kind": "remnant",
+        "length_mm": 1497,
+        "qty": 1,
+        "sku": "RAIL-V-3000"
+      },
+      {
+        "id": "remnant:RAIL-V-3000:5",
+        "kind": "remnant",
+        "length_mm": 1497,
+        "qty": 1,
+        "sku": "RAIL-V-3000"
+      },
+      {
+        "id": "remnant:RAIL-V-3000:6",
+        "kind": "remnant",
+        "length_mm": 1497,
+        "qty": 1,
+        "sku": "RAIL-V-3000"
+      },
+      {
+        "id": "remnant:RAIL-V-3000:7",
+        "kind": "remnant",
+        "length_mm": 1497,
+        "qty": 1,
+        "sku": "RAIL-V-3000"
+      },
+      {
+        "id": "remnant:RAIL-V-3000:8",
+        "kind": "remnant",
+        "length_mm": 1497,
+        "qty": 1,
+        "sku": "RAIL-V-3000"
+      }
+    ],
+    "total_cents": 119900,
+    "warnings": []
+  },
+  "requirements": [
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-V-1800"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0001",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n1"
+      ],
+      "role": "post",
+      "sku": "POST-V-1800",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CAP-V-90"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0002",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n1"
+      ],
+      "role": "cap",
+      "sku": "CAP-V-90",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0003",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n1"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-V-1800"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0004",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n2"
+      ],
+      "role": "post",
+      "sku": "POST-V-1800",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CAP-V-90"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0005",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n2"
+      ],
+      "role": "cap",
+      "sku": "CAP-V-90",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0006",
+      "length_basis": null,
+      "pegs": [
+        "post@node:n2"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-V-1800"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0007",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:1500"
+      ],
+      "role": "post",
+      "sku": "POST-V-1800",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CAP-V-90"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0008",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:1500"
+      ],
+      "role": "cap",
+      "sku": "CAP-V-90",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0009",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:1500"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-V-1800"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0010",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:3000"
+      ],
+      "role": "post",
+      "sku": "POST-V-1800",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CAP-V-90"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0011",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:3000"
+      ],
+      "role": "cap",
+      "sku": "CAP-V-90",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0012",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:3000"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "POST-V-1800"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0013",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:4500"
+      ],
+      "role": "post",
+      "sku": "POST-V-1800",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CAP-V-90"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0014",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:4500"
+      ],
+      "role": "cap",
+      "sku": "CAP-V-90",
+      "slot_key": "",
+      "unit": "each"
+    },
+    {
+      "cut_length_mm": null,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "CONC-25"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 1,
+      "id": "req0015",
+      "length_basis": null,
+      "pegs": [
+        "post@run1:4500"
+      ],
+      "role": "concrete",
+      "sku": "CONC-25",
+      "slot_key": "",
+      "unit": "application"
+    },
+    {
+      "cut_length_mm": 1500,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-V-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0016",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:0-1500"
+      ],
+      "role": "rail",
+      "sku": "RAIL-V-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1470,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SLAT-V-150"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 9,
+      "id": "req0017",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:0-1500"
+      ],
+      "role": "infill",
+      "sku": "SLAT-V-150",
+      "slot_key": "slat",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1500,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-V-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0018",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:1500-3000"
+      ],
+      "role": "rail",
+      "sku": "RAIL-V-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1470,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SLAT-V-150"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 9,
+      "id": "req0019",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:1500-3000"
+      ],
+      "role": "infill",
+      "sku": "SLAT-V-150",
+      "slot_key": "slat",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1500,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-V-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0020",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:3000-4500"
+      ],
+      "role": "rail",
+      "sku": "RAIL-V-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1470,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SLAT-V-150"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 9,
+      "id": "req0021",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:3000-4500"
+      ],
+      "role": "infill",
+      "sku": "SLAT-V-150",
+      "slot_key": "slat",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1500,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "RAIL-V-3000"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 2,
+      "id": "req0022",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:4500-6000"
+      ],
+      "role": "rail",
+      "sku": "RAIL-V-3000",
+      "slot_key": "rail",
+      "unit": "cut"
+    },
+    {
+      "cut_length_mm": 1470,
+      "eligibility": {
+        "group": null,
+        "members": [
+          {
+            "approval": "auto",
+            "kind": "catalog_item",
+            "priority": 1,
+            "sku": "SLAT-V-150"
+          }
+        ],
+        "predicate": null
+      },
+      "engineering_qty": 9,
+      "id": "req0023",
+      "length_basis": "width",
+      "pegs": [
+        "span@run1:4500-6000"
+      ],
+      "role": "infill",
+      "sku": "SLAT-V-150",
+      "slot_key": "slat",
+      "unit": "cut"
+    }
+  ]
+}

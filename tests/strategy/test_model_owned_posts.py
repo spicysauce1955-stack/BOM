@@ -106,7 +106,7 @@ def _routed_catalog(*routings: tuple[str, list[int]]) -> Catalog:
             sku=sku, name=f"Routed vinyl post {sku}",
             consumption=IndivisibleDiscrete(), price_cents=9000,
             attrs={"material": "vinyl", "routed_at_mm": heights},
-            capabilities=Capabilities(length_mm=2600, face_width_mm=90),
+            capabilities=Capabilities(length_mm=2600, face_width_mm=100),
         )
     return catalog
 
@@ -181,9 +181,9 @@ def test_the_rail_count_a_post_sees_is_the_one_knowledge_resolved():
 def test_a_cap_is_matched_against_the_post_it_caps():
     """Ordered, not circular, and the reason `cap` NESTS inside `PostSlot`: the
     post is chosen first, so the cap may ask how wide its face is. The routed post
-    is 90 mm; POST-CAP-90 fits it and POST-CAP-80 does not."""
+    is 100 mm; POST-CAP-100 fits it and POST-CAP-80 does not."""
     catalog = _routed_catalog(("POST-V-150", [150, 1650]))
-    for sku, face in (("POST-CAP-80", 80), ("POST-CAP-90", 90)):
+    for sku, face in (("POST-CAP-80", 80), ("POST-CAP-100", 100)):
         catalog.products[sku] = Product(
             sku=sku, name=f"Cap for {face} mm post",
             consumption=IndivisibleDiscrete(), price_cents=1200,
@@ -196,7 +196,7 @@ def test_a_cap_is_matched_against_the_post_it_caps():
     caps = [line for line in derive_requirements(
         result.strategy, catalog, policy=result.run.demand_skus) if line.role == "cap"]
     assert caps
-    assert all([m.sku for m in c.eligibility.members] == ["POST-CAP-90"] for c in caps)
+    assert all([m.sku for m in c.eligibility.members] == ["POST-CAP-100"] for c in caps)
 
 
 def test_the_post_is_recorded_on_the_run_like_any_other_choice():

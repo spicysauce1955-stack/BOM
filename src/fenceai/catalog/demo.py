@@ -94,6 +94,63 @@ def demo_catalog() -> Catalog:
             price_cents=5400,
             attrs={"material": "cedar", "finish": "stained", "colour": "#8b5e34"},
         ),
+        # --- the routed vinyl line (M-VINYL) ---------------------------------
+        # `routed_at_mm` is the heights at which this post is punched at the
+        # factory, and it is a LIST because no scalar holds it. It stays in the
+        # open `attrs` bag deliberately: no Python reads it, a PREDICATE does —
+        # data reading data. The typed `capabilities` record beside it is for the
+        # facts deterministic code consumes (the length check, the clear opening).
+        #
+        # Two posts rather than one, because a single routing would make the
+        # matcher a lookup: a 1800 mm panel puts its rails at 150 and 1650 and a
+        # 2100 mm panel at 150 and 1950, so the fence's own height decides which
+        # post can be assembled at all.
+        Product(
+            sku="POST-V-1800", name="Routed vinyl post 1800",
+            name_i18n={"he": 'עמוד PVC מחורץ 1800'},
+            consumption=IndivisibleDiscrete(), price_cents=9800,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
+                   "routed_at_mm": [150, 1650]},
+            capabilities=Capabilities(length_mm=2600, face_width_mm=90),
+        ),
+        Product(
+            sku="POST-V-2100", name="Routed vinyl post 2100",
+            name_i18n={"he": 'עמוד PVC מחורץ 2100'},
+            consumption=IndivisibleDiscrete(), price_cents=11500,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
+                   "routed_at_mm": [150, 1950]},
+            capabilities=Capabilities(length_mm=2900, face_width_mm=90),
+        ),
+        Product(
+            # `fits_face_mm` is what makes the cap's predicate answerable, and it
+            # is answerable only because the POST is chosen first — which is why
+            # `cap` nests inside `PostSlot` rather than sitting beside it.
+            sku="CAP-V-90", name="Vinyl post cap 90 mm",
+            name_i18n={"he": 'כיפת עמוד PVC 90 מ"מ'},
+            consumption=IndivisibleDiscrete(), price_cents=900,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
+                   "fits_face_mm": 90},
+        ),
+        Product(
+            # A channelled rail: its 18 mm groove is what the slats seat into, and
+            # its 60 mm face is half of what stands between the two centrelines
+            # and the slat's cut length. Both are properties of the SECTION, so
+            # they belong to this product and to the slot that names it.
+            sku="RAIL-V-3000", name="Channelled vinyl rail 3000 mm",
+            name_i18n={"he": 'מסילת PVC מחורצת 3000 מ"מ'},
+            consumption=DivisibleLinear(purchase_length_mm=3000, kerf_mm=3,
+                                        min_reusable_remnant_mm=300),
+            price_cents=2600,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc"},
+        ),
+        Product(
+            sku="SLAT-V-150", name="Vinyl slat 150 mm (6000 mm stock)",
+            name_i18n={"he": 'שלב PVC 150 מ"מ (מוט 6000)'},
+            consumption=DivisibleLinear(purchase_length_mm=6000, kerf_mm=3,
+                                        min_reusable_remnant_mm=300),
+            price_cents=4800,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc"},
+        ),
         Product(
             sku="SCREW-S10",
             name="Screw S10 (box of 20)",

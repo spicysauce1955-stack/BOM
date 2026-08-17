@@ -10,7 +10,8 @@ and one test below pins the boundary instead of asserting the number we want.
 from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import DivisibleLinear
 from fenceai.fencemodel.demo import (
-    M_LEGACY, M_SLAT, M_SLAT_V2, demo_model_versions, demo_models, slat_model,
+    M_LEGACY, M_SLAT, M_SLAT_V2, M_VINYL, demo_model_versions, demo_models,
+    slat_model,
 )
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.model import validate_model
@@ -32,8 +33,11 @@ def test_slat_model_validates_against_the_demo_catalog():
     assert validate_model(M_SLAT, demo_catalog()) == []
 
 
-def test_the_model_library_keeps_both_built_ins():
-    assert demo_models() == {"M-LEGACY": M_LEGACY, "M-SLAT": M_SLAT}
+def test_the_model_library_keeps_one_document_per_line():
+    """The ACTIVE version of each built-in line, which is what an unpinned
+    project resolves — M-SLAT@v2 is a draft and is deliberately absent."""
+    assert demo_models() == {"M-LEGACY": M_LEGACY, "M-SLAT": M_SLAT,
+                             "M-VINYL": M_VINYL}
     assert M_SLAT.ref == "M-SLAT@v1"
 
 

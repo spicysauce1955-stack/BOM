@@ -23,8 +23,9 @@ from __future__ import annotations
 
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FixingRule, FrameSlot,
-    FromBottom, FromTop, InfillSpec, Member, PanelSpec, PartRequirement,
+    FromBottom, FromTop, InfillSpec, Member, PanelSpec, PartRequirement, PostSlot,
 )
+from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
 
 
 def legacy_model(rail_sku: str = "RAIL-3000", screw_sku: str = "SCREW-S10") -> FenceModel:
@@ -231,9 +232,118 @@ def channel_slat_model(
     )
 
 
+def routed_vinyl_model(
+    slat_sku: str = "SLAT-V-150",
+    rail_sku: str = "RAIL-V-3000",
+) -> FenceModel:
+    """M-VINYL: the line that cannot be described without its post.
+
+    A screwed panel is a panel between two posts, and the posts are the company's
+    business. A routed vinyl fence is not: the rails do not sit ON the post, they
+    go THROUGH it, into holes punched at the factory at fixed heights. So the post
+    is part of the product, and it is the only part of it whose eligibility cannot
+    be authored as a list of SKUs — which routing is right depends on where THIS
+    bay puts its rails, and that is a number no author knows.
+
+    Hence the predicate, and hence the whole resolution order behind it:
+
+        height -> rail positions -> post -> clear width -> infill fit
+
+    A post whose routing disagrees with the panel is not a worse buy. It is a
+    fence that cannot be assembled — the holes are already punched — so the
+    requirement lives in the post part's SPEC and non-matching posts never become
+    candidates at all.
+
+    The cap reads the post it caps, which is answerable only because the post is
+    chosen first. That is the whole reason `cap` nests inside `PostSlot`.
+
+    **No fixings, and that is the model saying something true.** A slat held in a
+    channel top and bottom is not screwed; M-SLAT's `per_member_crossing` rule
+    would buy two screws per slat per rail for a joint that has none. A model that
+    carried a fixing rule "for symmetry" would put real money on a real BOM.
+
+    Both members are eligible for ONE product each, so this model demonstrates the
+    post spec rather than the supply objective — S15 owns that.
+    """
+    return FenceModel(
+        id="M-VINYL", version=1,
+        name_i18n={"en": "Routed vinyl privacy fence", "he": "גדר PVC מחורצת"},
+        grade="residential", status="active",
+        post=PostSlot(
+            key="post",
+            requirement=PartRequirement(
+                role="post",
+                eligibility=Eligibility(predicate=And(items=[
+                    Cmp(cmp="==", left=FieldRef(path="item.material"),
+                        right=Lit(value="vinyl")),
+                    # THE term of the arc. `panel.rail_positions_mm` is
+                    # `placement_positions`' answer for the frame slot below,
+                    # computed at this post's own station from the bay's height.
+                    Cmp(cmp="==", left=FieldRef(path="item.routed_at_mm"),
+                        right=FieldRef(path="panel.rail_positions_mm")),
+                ])),
+            ),
+            cap=PartRequirement(
+                role="cap",
+                eligibility=Eligibility(predicate=Cmp(
+                    cmp="==", left=FieldRef(path="item.fits_face_mm"),
+                    right=FieldRef(path="post.face_width_mm"))),
+            ),
+        ),
+        default_spec=PanelSpec(
+            frame=[FrameSlot(
+                key="rail", orientation="horizontal",
+                # ONE slot for both rails, insets and all, because the routing is
+                # a property of the SET: a post punched at 150 and 1650 is punched
+                # for a pair, and two slots placed independently could be moved
+                # apart by one edit while the post kept its holes. `count_param`
+                # stays, so a company rule asking for three rails is a fence that
+                # needs a three-hole post — and correctly finds none rather than
+                # quietly building on a two-hole one.
+                placement=Distributed(count=2, count_param="rails_per_span",
+                                      bottom_inset_mm=150, top_inset_mm=150),
+                thickness_mm=60, joint="channel",
+                channel_depth_mm=18, insertion_margin_mm=3,
+                requirement=PartRequirement(
+                    # centre_to_centre, and for once the reason is physical
+                    # rather than inherited: a routed rail does not stop at the
+                    # post's face, it goes THROUGH it. Cut to the post
+                    # centrelines, each end seats half a face deep into the hole
+                    # it was punched for. `clear_between_posts` would cut it to
+                    # the opening and leave nothing to seat.
+                    role="rail", qty=1, length_rule="centre_to_centre",
+                    eligibility=Eligibility(
+                        members=[EligibleItem(sku=rail_sku, priority=1)]),
+                ),
+            )],
+            infill=InfillSpec(
+                orientation="vertical",
+                # No gap and no spread. A privacy fence's boards interlock, so
+                # `space` — which would widen every gap to absorb the slack — is
+                # the one excess this panel must not have: eight 7 mm slots is
+                # not a privacy fence. `truncate` leaves the residual whole and
+                # `center` halves it into the two edges, where the post's own
+                # routed channel takes it up.
+                justification="center", excess="truncate", edge_margin_mm=0,
+                pattern=[Member(
+                    key="slat", width_mm=150, gap_after_mm=0,
+                    base_ref="rail", top_ref="rail",
+                    joint="channel", base_engagement_mm=15, top_engagement_mm=15,
+                    requirement=PartRequirement(
+                        role="infill", qty=1, length_rule="between_frame",
+                        eligibility=Eligibility(
+                            members=[EligibleItem(sku=slat_sku, priority=1)]),
+                    ),
+                )],
+            ),
+        ),
+    )
+
+
 M_LEGACY = legacy_model()
 M_SLAT = slat_model()
 M_SLAT_V2 = channel_slat_model()
+M_VINYL = routed_vinyl_model()
 
 
 def demo_models() -> dict[str, FenceModel]:
@@ -242,7 +352,7 @@ def demo_models() -> dict[str, FenceModel]:
     Keyed by id, so it can hold exactly one version each — which is the right
     shape for the question it answers ("what does choosing M-SLAT give me?") and
     the wrong one for seeding, now that a built-in has two versions."""
-    return {M_LEGACY.id: M_LEGACY, M_SLAT.id: M_SLAT}
+    return {M_LEGACY.id: M_LEGACY, M_SLAT.id: M_SLAT, M_VINYL.id: M_VINYL}
 
 
 def demo_model_versions() -> list[FenceModel]:
@@ -251,4 +361,4 @@ def demo_model_versions() -> list[FenceModel]:
 
     An id's versions in ascending order, so a seed loop that stops early leaves a
     line's history intact rather than its future."""
-    return [M_LEGACY, M_SLAT, M_SLAT_V2]
+    return [M_LEGACY, M_SLAT, M_SLAT_V2, M_VINYL]

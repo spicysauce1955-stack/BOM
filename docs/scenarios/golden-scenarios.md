@@ -114,6 +114,53 @@ than the shared demo catalog, because giving RAIL a second, cheaper-per-cut stoc
 in `demo_catalog()` would change S07's answer (S07 depends on RAIL-3000 being the
 only rail stock) and break the compatibility gate S01–S14 established.
 
+### S16 — A routed vinyl line: the post is part of the panel
+6000 mm straight run on soil, height intent 1800, built to **M-VINYL** (a
+built-in model, and the products below are in the shared demo catalog).
+
+A routed vinyl fence is the case a panel-only model cannot express: the rails do
+not sit on the post, they go **through** it, into holes punched at the factory.
+So M-VINYL declares a `PostSlot` whose eligibility is a PREDICATE rather than a
+list of SKUs — `item.material == "vinyl"` **and**
+`item.routed_at_mm == panel.rail_positions_mm` — and its cap is matched against
+the post already chosen (`item.fits_face_mm == post.face_width_mm`).
+
+Two vinyl posts are in the catalog and only the fence's own height separates
+them: POST-V-1800 is routed at [150, 1650] and POST-V-2100 at [150, 1950].
+
+Expect, in order (this is the resolution DAG, and the scenario exists to pin it):
+
+1. **height** 1800 per bay, from the height intent.
+2. **rail positions** [150, 1650] — `placement_positions` over the panel's one
+   horizontal frame slot (2 rails, `rails_per_span`, 150 mm inset top and bottom)
+   placed up that height.
+3. **post** POST-V-1800 at all 5 stations. POST-V-2100 is not a worse buy: its
+   holes are already punched 300 mm apart from where this panel puts its rails,
+   so it is a fence that cannot be assembled.
+4. **cap** CAP-V-90, because the chosen post's face is 90 mm.
+5. **clear opening** 1500 − 90 = **1410** per bay (one whole face is lost across
+   the two ends).
+6. **panel**: 4 bays of 1500; rails cut 1500 (centre_to_centre — a routed rail
+   runs to the post centreline, which is what the hole is for); 9 slats per bay
+   cut **1470** and starting at 165 in panel coordinates
+   ((1650 − 150) − (30 + 30) + 15 + 15, the two 60 mm rail faces less what seats
+   into each 18 mm channel); 9 × 150 = 1350 of the 1410 opening, and the 60 mm
+   residual halves into **30 mm at each edge** (`center` × `truncate`) where the
+   post's own routed channel takes it up — never into the gaps between boards,
+   which are 0.
+
+BOM: 5 × POST-V-1800, 5 × CAP-V-90, 3 × CONC-25 (5 posts × ½ bag, rounded up),
+8 × RAIL-V-3000 (8 cuts of 1500; two 1503 mm pieces need 3006 mm against a
+3003 mm capacity, so one cut per bar — the S15 arithmetic), 9 × SLAT-V-150
+(36 cuts of 1470; 4 × 1473 = 5892 ≤ 6003, so four per 6000 mm bar).
+Total **119 900** agorot. **No screws at all**: a board held in a channel top and
+bottom is not fixed, and a model carrying a fixing rule for symmetry would put
+real money on a real BOM.
+
+At height intent 2100 the same model and the same catalog give rails at
+[150, 1950], POST-V-2100, and a 1770 mm slat — which is what makes step 3 an
+answer rather than a lookup.
+
 ## Invariants checked across all scenarios
 
 - span width ≤ applicable hard maximum (unless authorized exception exists — none in demo KB)

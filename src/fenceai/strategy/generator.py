@@ -246,6 +246,11 @@ def _skus_used(strategy: Strategy, demand_skus: dict[str, str]) -> list[str]:
     for the stored answer to be re-checked rather than silently kept.
     """
     skus = {p.sku for p in strategy.posts if p.sku}
+    # The cap too, and it stopped being covered by `demand_skus` the moment a
+    # MODEL could name its own: knowledge's `post_cap` is in that dict, a model's
+    # cap is not, so a run buying CAP-V-90 recorded nothing that would make
+    # repricing CAP-V-90 refuse the stored answer.
+    skus |= {p.cap_sku for p in strategy.posts if p.cap_sku}
     skus |= {g.kit_sku for g in strategy.gates if g.kit_sku}
     skus |= set(demand_skus.values())
     for span in strategy.spans:

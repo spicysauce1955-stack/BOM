@@ -28,6 +28,7 @@ from tests.conftest import add_interval_event, add_point_event, straight_topolog
 
 LIBRARY = FenceModelLibrary(models=list(demo_models().values()))
 SLAT = FenceModelChoice(model_id="M-SLAT")
+VINYL = FenceModelChoice(model_id="M-VINYL")
 
 
 def _fixtures():
@@ -77,10 +78,18 @@ def _fixtures():
     add_point_event(slat_raked, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
     add_point_event(slat_raked, "run1", "z1", 6000, ElevationSamplePayload(z_mm=1000))
 
+    # M-VINYL (S16). The only fixture whose POST and CAP are chosen by a
+    # predicate rather than named, and the only one with no fixings at all — so
+    # the traceability chain over a spec-matched post, and the Sigma(parts) = BOM
+    # identity over a panel that buys no screws, are outside this battery
+    # without it.
+    vinyl = straight_topology(6000)
+
     return {
         "plain": (plain, [], None),
         "slope": (slope, [], None),
         "slat": (slat_plain, [], None, SLAT),
+        "vinyl": (vinyl, [], None, VINYL),
         "slat_raked": (
             slat_raked,
             [Override(id="ov_rake", run_id="run1",
