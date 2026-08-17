@@ -24,9 +24,11 @@ from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
 from fenceai.fencemodel.match import (
-    chosen_post_facts, match_eligibility, match_spec, panel_facts, post_panel_facts,
+    chosen_post_facts, item_value, match_eligibility, match_spec, panel_facts,
+    post_panel_facts, sole_excluding_term,
 )
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
+from fenceai.knowledge.ast import field_paths
 from fenceai.fencemodel.resolve import (
     PanelContext, ResolvedPanel, choose_variant, choose_variant_by, clear_opening_mm,
     height_supported, rail_positions_mm, resolve_panel,
@@ -523,19 +525,63 @@ def _run_post_facts(
     return facts, res, refs, defeated
 
 
+@dataclass(frozen=True)
+class _PostSide:
+    """One bay a post stands beside.
+
+    `sample_station` is a station INSIDE that bay, which is where the MODEL is
+    sampled; `station` is the post's own, which is where the panel facts are
+    asked. The two differ by a millimetre at the bay that ENDS here, because
+    `fence_model_at` is half-open and answers for the bay that STARTS at a
+    station — the same convention every other station question uses.
+    """
+
+    facts: _PostFacts
+    station: Mm
+    sample_station: Mm
+
+
+def _post_sides(facts: _PostFacts, station: Mm, run_len: Mm) -> list[_PostSide]:
+    """The bays an interior post of one run stands between — one at each end of
+    the run, two everywhere else."""
+    sides = []
+    if station > 0:
+        sides.append(_PostSide(facts, station, station - 1))
+    if station < run_len:
+        sides.append(_PostSide(facts, station, station))
+    return sides
+
+
+@dataclass(frozen=True)
+class _ModelPost:
+    """What the model(s) at one post asked for, and what could not be supplied.
+
+    The cap's failure travels rather than being raised, because a cap is cosmetic:
+    every other unsupplied slot is a warning and an `unresolved` line, and a post
+    is the exception (without one there is no fence to be one part short of).
+    """
+
+    post_sku: str | None = None
+    cap_sku: str | None = None
+    cap_unsupplied: str | None = None   # the model ref that asked for a cap
+
+
 def _model_post_skus(
     library: FenceModelLibrary,
     default_model: FenceModelChoice | None,
-    station: Mm,
     catalog: Catalog,
-    facts: _PostFacts,
-) -> tuple[str | None, str | None]:
-    """The post and cap the MODEL at this station asks for, if it asks.
+    sides: list[_PostSide],
+) -> _ModelPost:
+    """The post and cap the MODEL(S) at this post ask for, if any of them asks.
 
-    Sampled at the POST'S OWN station rather than gathered from the bays either
-    side. A post stands at one place, and `fence_model_at` answers for that place
-    with the same half-open convention every other station question uses — so the
-    answer cannot depend on which neighbouring bay happened to be resolved first.
+    A post at a `fence_model` boundary — or a node post shared by two runs — is
+    adjacent to bays built to two different models, and BOTH of their post specs
+    apply to the one post. This is not an arbitration: the candidate set is the
+    INTERSECTION of their matched sets, an item covering both is the ordinary case
+    and the whole point of matching by spec, and an empty intersection is a true
+    fact about that fence rather than a tie to be broken. One side opinionated and
+    the other `post=None` leaves the opinionated side's spec, because None is no
+    opinion; neither opinionated leaves the knowledge path untouched.
 
     The cap is matched against the post ALREADY CHOSEN, which is the whole reason
     `cap` nests inside `PostSlot`. It is the model's post it reads, not whatever
@@ -549,26 +595,130 @@ def _model_post_skus(
     rather than faked — a post line still carries its full eligibility into
     demand, so the choice remains explainable there.
     """
-    choice = fence_model_at(facts.topo, facts.run, station) or default_model
-    if choice is None:
-        return None, None
-    model = library.resolve(choice.model_id, choice.version_pin)
-    if model is None or model.post is None:
-        return None, None
+    claims: list[tuple[FenceModel, dict, list[str]]] = []
+    for side in sides:
+        choice = (fence_model_at(side.facts.topo, side.facts.run, side.sample_station)
+                  or default_model)
+        if choice is None:
+            continue
+        model = library.resolve(choice.model_id, choice.version_pin)
+        if model is None or model.post is None:
+            continue
+        if any(m.ref == model.ref for m, _, _ in claims):
+            continue        # both bays are the same model: one claim, not two
+        panel = side.facts.at(model, side.station)
+        claims.append((model, panel, _matched(
+            model.post.requirement.eligibility, catalog, panel)))
+    if not claims:
+        return _ModelPost()
 
-    panel = facts.at(model, station)
+    station = sides[0].station
+    posts = sorted(set.intersection(*(set(skus) for _, _, skus in claims)))
+    if not posts:
+        raise _no_post_failure(claims, catalog, station)
+    chosen = catalog.products.get(posts[0])
 
-    def first(req, extra: dict) -> str | None:
-        if req is None:
-            return None
-        resolved = match_eligibility(req.eligibility, catalog, {**panel, **extra})
-        return resolved.members[0].sku if resolved.members else None
-
-    post_sku = first(model.post.requirement, {})
-    chosen = catalog.products.get(post_sku) if post_sku else None
-    return post_sku, first(
-        model.post.cap, chosen_post_facts(chosen) if chosen is not None else {}
+    caps: list[tuple[str, list[str]]] = []
+    for model, panel, _ in claims:
+        if model.post.cap is None:
+            continue        # this line has no opinion about caps
+        caps.append((model.ref, _matched(
+            model.post.cap.eligibility, catalog,
+            {**panel, **(chosen_post_facts(chosen) if chosen is not None else {})},
+        )))
+    if not caps:
+        return _ModelPost(post_sku=posts[0])
+    agreed = sorted(set.intersection(*(set(skus) for _, skus in caps)))
+    return _ModelPost(
+        post_sku=posts[0],
+        cap_sku=agreed[0] if agreed else None,
+        cap_unsupplied=None if agreed else ", ".join(sorted(ref for ref, _ in caps)),
     )
+
+
+def _cap_unsupplied(
+    strategy: Strategy, model_post: _ModelPost, post_id: str, station: Mm,
+) -> None:
+    """A model asked for a cap and nothing in the catalog covers the spec.
+
+    The same code as the post's failure and a different severity, which is the
+    whole distinction: a cap is cosmetic, so this is a note on an answer rather
+    than a refusal of it."""
+    if model_post.cap_unsupplied is None:
+        return
+    strategy.warnings.append(StrategyWarning(
+        code="no_item_covers_part_spec", severity="warning",
+        message=f"No item in the catalog covers {model_post.cap_unsupplied}'s cap "
+                f"specification at station {station}; the post is uncapped.",
+        params={"model": model_post.cap_unsupplied, "station_mm": station,
+                "slot_key": "cap", "role": "cap"},
+        element_refs=[post_id],
+    ))
+
+
+def _matched(eligibility, catalog: Catalog, facts: dict) -> list[str]:
+    return [m.sku for m in match_eligibility(eligibility, catalog, facts).members]
+
+
+def _no_post_failure(
+    claims: list[tuple[FenceModel, dict, list[str]]], catalog: Catalog, station: Mm,
+) -> GenerationFailure:
+    """Which of the two post errors this is. They do not overlap, and the
+    distinction is the whole value of the diagnostic.
+
+    A post is an ERROR and not a warning, unlike every other unsupplied slot: an
+    unsupplied rail is a panel visibly one part short, and a post is not a line
+    item — without one there is no fence to be short of.
+    """
+    empty = [(model, panel) for model, panel, skus in claims if not skus]
+    if not empty:
+        # Every side found candidates and no product satisfies them all. Not an
+        # arbitration and not a near miss — a genuine disagreement between two
+        # product lines about the post that has to serve both.
+        refs = ", ".join(sorted(m.ref for m, _, _ in claims))
+        return GenerationFailure(
+            f"The bays either side of station {station} are built to {refs}, and no "
+            f"post in the catalog satisfies both specifications.",
+            code="post_spec_conflict", station_mm=station, models=refs,
+        )
+    model, panel = empty[0]
+    predicate = model.post.requirement.eligibility.predicate
+    diagnosis = (sole_excluding_term(predicate, catalog, panel)
+                 if predicate is not None else None)
+    if diagnosis is not None:
+        term, near_miss = diagnosis
+        paths = sorted(field_paths(term))
+        if "panel.rail_positions_mm" in paths:
+            # Routing ALONE excluded every candidate. A routed post's holes are
+            # punched at the factory, so this is not a worse choice — it is a
+            # fence that cannot be assembled, and the sentence can name both
+            # position sets because exactly one term is responsible for the gap.
+            wanted = _mm_list(panel["panel"]["rail_positions_mm"])
+            found = sorted({
+                _mm_list(item_value(catalog.products[sku], path))
+                for sku in near_miss for path in paths if path.startswith("item.")
+            })
+            return GenerationFailure(
+                f"The panel at station {station} wants rails at {wanted}, and "
+                f"{model.ref}'s posts are routed at {'; '.join(found)}.",
+                code="post_routing_mismatch", station_mm=station, model=model.ref,
+                # semicolons BETWEEN products, commas WITHIN one position set —
+                # "200, 1700, 250, 1750" reads as one four-hole post
+                wanted=wanted, routed="; ".join(found),
+            )
+    return GenerationFailure(
+        f"No item in the catalog covers {model.ref}'s post specification at "
+        f"station {station}.",
+        code="no_item_covers_part_spec", station_mm=station, model=model.ref,
+        slot_key=model.post.key, role=model.post.requirement.role,
+    )
+
+
+def _mm_list(value) -> str:
+    """A position set as a sentence fragment. Deliberately unitless: the client
+    renders `{...}` values in the reader's display unit, and a literal "mm" here
+    would keep saying mm after they switch to cm."""
+    return ", ".join(str(v) for v in value) if isinstance(value, list) else str(value)
 
 
 def _make_post(
@@ -723,19 +873,23 @@ def _generate_node_posts(
             payload={"node_id": node.id, "x_mm": node.x_mm, "y_mm": node.y_mm,
                      "runs": len(touches)},
         )
-        # A node post belongs to `run0` — the first incident run by id, which is
-        # also the run whose station the post is placed at. Its panel facts are
-        # asked of that run for the same reason its model is: a terminus is one
-        # place, and one place has one answer.
-        node_post_sku, node_cap_sku = (
-            _model_post_skus(
-                library, default_model, station0, catalog,
-                _run_post_facts(topology, run0, kb, scope, overrides, policy)[0],
+        # A node post is adjacent to a bay on EVERY run that touches it, and all
+        # of their models claim it — the same intersection an interior boundary
+        # post gets. The facts are asked per run, because a terminus of one run
+        # and the mid-run station of another need not be at the same height.
+        model_post = _ModelPost()
+        if library is not None:
+            model_post = _model_post_skus(
+                library, default_model, catalog,
+                [_PostSide(
+                    _run_post_facts(topology, r, kb, scope, overrides, policy)[0],
+                    s, s if s == 0 else s - 1,
+                ) for r, s in touches],
             )
-            if library is not None else (None, None))
+        _cap_unsupplied(strategy, model_post, f"post@node:{node.id}", station0)
         post = _make_post(
             builder, kb, scope,
-            model_post=node_post_sku, model_cap=node_cap_sku,
+            model_post=model_post.post_sku, model_cap=model_post.cap_sku,
             post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
             station=station0, kind=kind, surface=surface,
             ground_z_mm=ground_z(topology, run0, station0),
@@ -1331,11 +1485,12 @@ def _generate_run(
                 ).id
             )
         tilt_deg, tilt_ev = (0, None) if kind == "gate" else _post_tilt_at(topo, run, station)
-        fixed_post_sku, fixed_cap_sku = _model_post_skus(
-            library, default_model, station, catalog, post_facts)
+        model_post = _model_post_skus(
+            library, default_model, catalog, _post_sides(post_facts, station, length))
+        _cap_unsupplied(strategy, model_post, f"post@{run.id}:{station}", station)
         post = _make_post(
             builder, kb, scope,
-            model_post=fixed_post_sku, model_cap=fixed_cap_sku,
+            model_post=model_post.post_sku, model_cap=model_post.cap_sku,
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
             station=station, kind=kind, surface=surface,
             ground_z_mm=ground_z(topo, run, station),
@@ -1620,11 +1775,12 @@ def _generate_run(
                     ).id
                 )
             tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
-            line_post_sku, line_cap_sku = _model_post_skus(
-                library, default_model, s, catalog, post_facts)
+            model_post = _model_post_skus(
+                library, default_model, catalog, _post_sides(post_facts, s, length))
+            _cap_unsupplied(strategy, model_post, f"post@{run.id}:{s}", s)
             post = _make_post(
                 builder, kb, scope,
-                model_post=line_post_sku, model_cap=line_cap_sku,
+                model_post=model_post.post_sku, model_cap=model_post.cap_sku,
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
                 station=s, kind="line", surface=surface,
                 ground_z_mm=ground_z(topo, run, s),

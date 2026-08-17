@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from fenceai.catalog.model import Catalog
 from fenceai.fencemodel.model import Eligibility, EligibleItem, PanelSpec
-from fenceai.knowledge.ast import MissingField, evaluate_expr
+from fenceai.knowledge.ast import And, MissingField, evaluate_expr, lookup
 
 if TYPE_CHECKING:
     from fenceai.fencemodel.resolve import PanelContext
@@ -91,6 +91,17 @@ def _item_ctx(product) -> dict:
             "consumption": product.consumption.kind}
 
 
+def item_value(product, path: str):
+    """The value a predicate reading `path` would see on this product.
+
+    Exists so a caller diagnosing a failed match reads the item exactly as the
+    matcher did — through `_item_ctx`, capabilities merged and undeclared fields
+    absent — rather than reaching into `attrs` and getting a different answer for
+    the same question.
+    """
+    return lookup({"item": _item_ctx(product)}, path)
+
+
 def panel_facts(ctx: "PanelContext") -> dict:
     """What a predicate may know about the bay it is being fitted to.
 
@@ -106,6 +117,37 @@ def panel_facts(ctx: "PanelContext") -> dict:
         "clear_width_mm": ctx.clear_width_mm,
         "vertical": ctx.vertical,
     }}
+
+
+def sole_excluding_term(
+    predicate, catalog: Catalog, facts: dict,
+) -> tuple[object, list[str]] | None:
+    """Which single TERM of a predicate excluded every candidate, and who it hit.
+
+    `(term, near-miss skus)` when dropping exactly ONE conjunct admits somebody,
+    and `None` otherwise — either because the predicate is not a conjunction, or
+    because more than one term is doing the excluding, or because dropping any
+    one of them still admits nobody.
+
+    That distinction is the whole value of the diagnostic and it mirrors the split
+    the codebase already draws between `no_feasible_item` ("candidates were tried
+    and none fits") and `no_eligible_item` ("nothing is a candidate"): "your posts
+    are routed 50 mm from where this panel wants its rails" is actionable, and
+    "no post found" is a mystery. A merged answer would be the mystery.
+    """
+    if not isinstance(predicate, And) or len(predicate.items) < 2:
+        return None
+    found: tuple[object, list[str]] | None = None
+    for index, term in enumerate(predicate.items):
+        rest = And(items=[t for j, t in enumerate(predicate.items) if j != index])
+        skus = [m.sku for m in
+                match_eligibility(Eligibility(predicate=rest), catalog, facts).members]
+        if not skus:
+            continue
+        if found is not None:
+            return None     # more than one term is a discriminator; no single cause
+        found = (term, skus)
+    return found
 
 
 def post_panel_facts(

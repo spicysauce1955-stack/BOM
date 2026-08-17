@@ -38,6 +38,12 @@ WARNING_CODES = [
     "pattern_residual_large",
     "span_not_exact",
     "exact_span_over_max",
+    # A model asked for a CAP nothing covers. The same code appears in
+    # REFUSAL_CODES below, and the two are not a duplication: for a post it is a
+    # refusal (without one there is no fence), for a cap it is a note on an
+    # answer (a post without a cap is still a fence). Two severities, two
+    # sentences, one fact.
+    "no_item_covers_part_spec",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 
@@ -67,6 +73,15 @@ REFUSAL_CODES = [
     # refusal the user causes by clicking, so it must say which slot and which
     # product rather than "the action failed (422)".
     "sku_not_eligible",
+    # A model's post specification that no product satisfies. `post_spec_conflict`
+    # is two models disagreeing about the post between them;
+    # `post_routing_mismatch` is ROUTING alone excluding every candidate, which
+    # is a fence that cannot be assembled rather than a worse buy; and
+    # `no_item_covers_part_spec` is the generic case. A single merged code would
+    # leave "no post found" a mystery, which is what they exist to avoid.
+    "post_spec_conflict",
+    "post_routing_mismatch",
+    "no_item_covers_part_spec",
 ]
 
 

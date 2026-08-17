@@ -289,6 +289,19 @@ slot today produces a warning and an `unresolved` line — a panel visibly one p
 short. A post is not a line item; without one there is no fence to be short of. A
 cap is cosmetic and keeps the existing behaviour.
 
+**As built, with one narrowing.** `no_item_covers_part_spec` is raised for a POST
+and warned for a CAP; every ORDINARY slot keeps `no_eligible_item` /
+`no_feasible_item`, which already draw the same distinction one layer down and
+carry the `unresolved` line with them. Giving those slots a third code would have
+been a second name for a fact they already report.
+
+Which term did the excluding is answered structurally, by
+`match.sole_excluding_term`: drop one conjunct of the predicate at a time, and if
+exactly ONE of those drops admits somebody, that conjunct is the sole cause. So
+`post_routing_mismatch` fires when that conjunct reads `panel.rail_positions_mm`,
+and no code anywhere knows what a routing attribute is called — the params are
+read back off the near-miss items through the same `item` view the matcher used.
+
 ---
 
 ## 9. Compatibility — the gate moves, deliberately
