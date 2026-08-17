@@ -250,6 +250,19 @@ input[type="number"] { direction: ltr; }
   border-inline-start: 1px solid #e2e8f0; padding-inline-start: 10px; }
 .canvas-toolbar { display: flex; gap: 6px; flex-wrap: wrap;
   margin-block-end: 6px; }
+/* never mirrored: the first board of a panel is the first board in every
+   language, and mirroring would reverse it against the plan drawn one tab over */
+#model-canvas { direction: ltr; }
+.panel-canvas-svg { max-block-size: 520px; }
+.canvas-empty { font-size: 15px; fill: #64748b; }
+.canvas-handle { fill: #fff; stroke: #2563eb; stroke-width: 2; cursor: grab;
+  touch-action: none; }
+.canvas-handle.dragging { cursor: grabbing; fill: #dbeafe; }
+.canvas-handle[data-axis="y"] { cursor: ns-resize; }
+.canvas-handle[data-axis="x"] { cursor: ew-resize; }
+.canvas-ghost { stroke: #2563eb; stroke-width: 1.5; stroke-dasharray: 6 4;
+  pointer-events: none; }
+.canvas-readout { font-size: 20px; fill: #1d4ed8; pointer-events: none; }
 .element-chips { display: flex; gap: 6px; flex-wrap: wrap;
   margin-block-end: 8px; }
 .element-chip { display: inline-flex; gap: 5px; align-items: baseline;

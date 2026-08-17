@@ -33,6 +33,7 @@ import {
 import { loadModelListing, refreshModelListing } from "./fence-models.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
+import { isDragging, renderCanvas } from "./panel-canvas.js";
 import {
   renderAxisEditor, renderInspector, SELECTION_NONE,
 } from "./panel-inspector.js";
@@ -452,6 +453,7 @@ function renderForm() {
   renderHead();
   renderSpecPicker();
   renderElements();
+  renderCanvasPane();
   renderInspectorPane();
   renderAxisPane();
 }
@@ -606,8 +608,53 @@ const selectionEquals = (a, b) => a?.kind === b?.kind && a?.key === b?.key;
 function selectElement(next) {
   selection = selectionEquals(selection, next) ? SELECTION_NONE : next;
   renderElements();
+  renderCanvasPane();
   renderInspectorPane();
-  emit("panel-selection-changed", selection);
+}
+
+// The drawing, with everything a pointer can do to it. A commit writes ONE
+// authored number and then re-prices, which is the same `touch()` every field
+// in the inspector goes through — a drag is an edit like any other, and in
+// particular it does not save.
+function renderCanvasPane() {
+  const host = document.getElementById("model-canvas");
+  if (!host) return;
+  renderCanvas(host, {
+    elev: preview?.elevation,
+    spec: specOf(session.model, specIndex),
+    selection,
+  }, { onSelect: selectElement, onCommit: commitDrag });
+}
+
+function commitDrag(handle, value) {
+  const spec = specOf(session.model, specIndex);
+  if (!spec) return;
+  switch (value.kind) {
+    case "placement": {
+      const slot = (spec.frame || []).find((s) => s.key === handle.slot_key);
+      if (slot) slot.placement = value.placement;
+      break;
+    }
+    case "width": {
+      const member = (spec.infill?.pattern || []).find((m) => m.key === handle.slot_key);
+      if (member) member.width_mm = value.width_mm;
+      break;
+    }
+    case "gap": {
+      const member = (spec.infill?.pattern || []).find((m) => m.key === handle.slot_key);
+      if (member) member.gap_after_mm = value.gap_after_mm;
+      break;
+    }
+    case "margin":
+      if (spec.infill) spec.infill.edge_margin_mm = value.edge_margin_mm;
+      break;
+    default:
+      return;
+  }
+  // the inspector's number fields are live readouts of the drag, so they are
+  // rebuilt with it — the drawing waits for the re-price, which is the server's
+  // answer about where the board actually ended up
+  touch({ rerender: true });
 }
 
 function renderElements() {
@@ -761,6 +808,10 @@ function renderPreview() {
   const body = document.getElementById("model-preview-body");
   if (!body) return;
   body.innerHTML = session ? previewBodyHtml() : "";
+  // A re-price landing mid-drag would rebuild the SVG the pointer is captured
+  // on, and the capture would go with it — the board would stop following the
+  // hand. The commit re-renders; until then the handle moves locally.
+  if (session && !isDragging()) renderCanvasPane();
 }
 
 function previewBodyHtml() {
