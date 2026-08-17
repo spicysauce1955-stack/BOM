@@ -36,9 +36,14 @@ from pydantic import BaseModel
 from fenceai.catalog.model import Catalog
 from fenceai.core.errors import ReadRefused
 from fenceai.core.units import Cents, Mm, slope_len_mm
-from fenceai.fencemodel.match import match_spec, panel_facts
+from fenceai.fencemodel.match import (
+    match_eligibility, match_spec, panel_facts, post_panel_facts,
+)
 from fenceai.fencemodel.model import FenceModel, validate_model
-from fenceai.fencemodel.resolve import PanelContext, ResolvedPanel, resolve_panel, select_variant
+from fenceai.fencemodel.resolve import (
+    PanelContext, ResolvedPanel, clear_opening_mm, rail_positions_mm, resolve_panel,
+    select_variant,
+)
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.report.elevation import PanelElevation, panel_elevation
 from fenceai.strategy.model import GenerationResult, Span, Strategy, StrategyWarning
@@ -124,20 +129,36 @@ def preview_panel(
     catalog: Catalog,
     preset: str = "least_cost",
 ) -> PanelPreview:
-    clear = request.clear_width_mm if request.clear_width_mm is not None else request.width_mm
     slope = request.slope_len_mm if request.slope_len_mm is not None else request.width_mm
-    ctx = PanelContext(
-        centre_width_mm=request.width_mm,
-        clear_width_mm=clear,
-        height_mm=request.height_mm,
-        vertical=request.vertical,
-        length_basis=request.length_basis,
-        slope_len_mm=slope,
-        params=request.params,
-        options=dict(request.options),
-        slot_skus=dict(request.slot_skus),
-    )
-    spec, variant_index = select_variant(model, ctx)
+
+    def _ctx(clear_width_mm: Mm) -> PanelContext:
+        return PanelContext(
+            centre_width_mm=request.width_mm,
+            clear_width_mm=clear_width_mm,
+            height_mm=request.height_mm,
+            vertical=request.vertical,
+            length_basis=request.length_basis,
+            slope_len_mm=slope,
+            params=request.params,
+            options=dict(request.options),
+            slot_skus=dict(request.slot_skus),
+        )
+
+    # Provisional: the clear opening is measured TO the post faces, and which
+    # post stands there is not known until the spec is. That is the resolution
+    # DAG, and a preview follows it rather than short-cutting it — a model-scoped
+    # preview fitted at the centre-to-centre width was fitting the panel across
+    # an opening that includes half a post at each end, which is the defect W1
+    # closed for the fence and left open here.
+    clear = request.clear_width_mm if request.clear_width_mm is not None else request.width_mm
+    spec, variant_index = select_variant(model, _ctx(clear))
+    post_note: StrategyWarning | None = None
+    if request.clear_width_mm is None and model.post is not None:
+        face, post_note = _preview_post_face(model, spec, request, catalog)
+        clear = clear_opening_mm(request.width_mm, face, face)
+        # a variant is chosen from height, width and vertical mode — none of
+        # which the opening moved — so the spec above still stands
+    ctx = _ctx(clear)
     # the same matcher generation runs, so a spec-declared slot previews
     # as the products it will actually be built from
     spec = match_spec(spec, catalog, panel_facts(ctx))
@@ -176,10 +197,46 @@ def preview_panel(
         elevation=panel_elevation(drawn, clear, request.height_mm),
         parts=parts,
         unsupplied=[_part(line, None) for line in priced.unresolved],
-        warnings=priced.warnings,
+        warnings=priced.warnings + ([post_note] if post_note is not None else []),
         invalid=validate_model(model, catalog),
         total_cents=priced.bom.total_cents,
     )
+
+
+def _preview_post_face(
+    model: FenceModel, spec, request: "PreviewRequest", catalog: Catalog,
+) -> tuple[Mm, StrategyWarning | None]:
+    """How much of this imagined bay is post rather than opening.
+
+    The model's own post, matched exactly as generation matches it — the same
+    `post_panel_facts` over the same `rail_positions_mm`, so a routed line
+    previews against the post it will actually be built with. The preview has no
+    project and therefore no neighbours, so there is no intersection to take: one
+    model claims both ends, which is what a model-scoped preview IS.
+
+    A post nothing covers contributes NO face rather than a nominal, and says so.
+    Generation refuses that fence outright; a preview must not, because a draft
+    being edited is half-written by definition — but a silent fall-back to the
+    centre-to-centre width would be the preview lying about the bay.
+    """
+    matched = match_eligibility(
+        model.post.requirement.eligibility, catalog,
+        post_panel_facts(
+            model_id=model.id, height_mm=request.height_mm, vertical=request.vertical,
+            rail_positions_mm=rail_positions_mm(spec, request.height_mm, request.params),
+        ),
+    ).members
+    if not matched:
+        return 0, StrategyWarning(
+            code="no_item_covers_part_spec", severity="warning",
+            message=f"No item in the catalog covers {model.ref}'s post "
+                    f"specification, so this bay is drawn at its centre-to-centre "
+                    f"width rather than the opening between two posts.",
+            params={"model": model.ref, "station_mm": 0,
+                    "slot_key": model.post.key, "role": model.post.requirement.role},
+        )
+    product = catalog.products.get(matched[0].sku)
+    return (product.capabilities.face_width_mm or 0) if product else 0, None
 
 
 # -- a bay of a stored run ----------------------------------------------------

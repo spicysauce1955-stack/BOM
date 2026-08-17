@@ -12,7 +12,7 @@ import pytest
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.core.errors import RequestRefused
-from fenceai.fencemodel.demo import M_LEGACY, M_SLAT
+from fenceai.fencemodel.demo import M_LEGACY, M_SLAT, M_VINYL
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
     PartRequirement,
@@ -366,3 +366,56 @@ def test_a_spec_declared_slot_previews_as_the_products_it_will_be_built_from():
     parts = by_slot(preview(model, height_mm=1800, width_mm=2500))
     assert parts["rail"].sku == "RAIL-3000"
     assert parts["rail"].qty > 0
+
+
+# --- a model that owns its post prices its own opening -------------------------
+
+def test_a_model_that_owns_its_post_previews_the_opening_between_two_of_them():
+    """The gap W1 left open here and W3 closes. The clear opening is measured TO
+    the post faces, and a model-scoped preview used to have no posts to measure —
+    so it fitted the panel across the full centre-to-centre width, half a post too
+    wide at each end. M-VINYL's post is 90 mm, so a 1500 mm bay opens 1410."""
+    shown = preview(M_VINYL, height_mm=1800, width_mm=1500)
+    assert shown.clear_width_mm == 1410
+    assert shown.warnings == []
+
+
+def test_the_preview_and_the_fence_agree_about_a_routed_line():
+    """The governing property of this module, on the model the arc exists for:
+    the caller says only the height and the bay width, and the preview arrives at
+    the same opening, the same slats and the same cut lengths the run does —
+    without being told the opening, because the model knows its own post."""
+    result = generate(
+        straight_topology(1500), demo_knowledge(), demo_catalog(),
+        models=FenceModelLibrary(models=[M_VINYL]),
+        default_model=FenceModelChoice(model_id="M-VINYL"),
+    )
+    span = result.strategy.spans[0]
+    shown = preview(M_VINYL, height_mm=span.height_mm, width_mm=span.width_mm,
+                    params={"rails_per_span": span.rail_count})
+    assert shown.clear_width_mm == span.clear_width_mm
+    real = {r.slot_key: r for r in price_strategy(
+        result.strategy, demo_catalog(),
+        demand_skus=result.run.demand_skus).requirements if r.slot_key}
+    for key, part in by_slot(shown).items():
+        assert (part.qty, part.length_mm, part.sku) == (
+            real[key].engineering_qty, real[key].cut_length_mm, real[key].sku), key
+
+
+def test_a_post_nothing_covers_narrows_by_nothing_and_says_so():
+    """A draft being edited is half-written by definition, so a preview must not
+    refuse where generation does. It must not fall back silently either: an
+    unmatched post contributes NO face and a warning, rather than a nominal that
+    reads as measured."""
+    shown = preview(M_VINYL, height_mm=1234, width_mm=1500)   # no post routed there
+    assert shown.clear_width_mm == 1500
+    assert [w.code for w in shown.warnings] == ["no_item_covers_part_spec"]
+    assert shown.warnings[0].params["role"] == "post"
+
+
+def test_a_caller_that_names_the_opening_is_still_believed():
+    """`bay_preview_plan` carries a stored bay's own face allowance over rather
+    than re-measuring it — imagining a wider bay does not change which posts bound
+    it — so an explicit `clear_width_mm` must never be second-guessed."""
+    shown = preview(M_VINYL, height_mm=1800, width_mm=1500, clear_width_mm=1300)
+    assert shown.clear_width_mm == 1300
