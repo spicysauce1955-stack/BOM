@@ -1,5 +1,75 @@
 # Current status
 
+## The Models tab is a canvas (2026-08-17)
+Spec `docs/superpowers/specs/2026-08-17-panel-canvas-design.md`, plan
+`docs/superpowers/plans/2026-08-17-panel-canvas.md`. The user's complaint, in
+their words: *"the whole creating and editing fence panels is really unintuitive
+and unnecessarily complex and nerdish."* W4 was not wrong — it was scoped, on the
+record, as an expert tool, and it delivered exactly that. What it delivered was
+the codebase's internal vocabulary as the only way to say what an expert means:
+`basis`, `justification`, `placement.kind`, a `gap_after_mm` whose NEGATIVE value
+is what board-on-board IS, and a raw `Expr` AST in a textarea.
+
+**The drawing is now the editor.** Click a rail, a board or a fastener on the
+panel and its properties render as sentences in a side inspector; drag a handle
+and the authored number moves. The drawing is still entirely the server's —
+`renderElevation` paints what `report/elevation.py` placed, and the new
+`panel-canvas.js` lays handles over it through a shared `elevationLayout`,
+because two copies of a scale is a handle three pixels from the board it moves.
+
+**What a drag writes is pure, and tested in node** (`panel-canvas-geom.js`,
+beside `base-top.js`'s precedent). Two rules there are load-bearing and invisible
+in a screenshot. A WIDTH is read absolutely and a GAP as a DELTA: `excess=space`
+spends the leftover on the gaps, so the drawn gap is not the authored one and
+reading it back would make the first pixel of every drag jump by the spread. And
+a drag cannot author what the publish gate refuses — `validate_model` bounds the
+member's net advance, so the handle stops where the gate would. A `distributed`
+slot has no per-member position at all, only two insets, so its interior rails
+get NO handle and the inspector says why in a sentence.
+
+**Three decisions taken against the spec, and why.**
+
+*Fasteners are derived on the server.* The spec wanted clickable dots and
+promised no backend change; `report/elevation.py` deliberately emitted no fixing
+geometry ("screws are counted, not drawn"). Both could not hold. `PanelElevation`
+now carries fastener PLACES with a count on each, and the slot's whole `qty` is
+apportioned across them — so `sum(place.qty) == slot.qty` by construction, for
+every basis and every `qty_per_basis` including the ones that do not divide. A
+dot count worked out in JS would eventually say twelve beside a BOM line buying
+eight, on the one surface built so an author can see what `per_member_crossing`
+means. `ResolvedSlot.basis` carries the rule; a run stored before it draws
+nothing rather than a guess.
+
+*Five structures, not five product families.* The spec named privacy
+tongue-and-groove, picket, semi-privacy dogear, horizontal slat and ranch rail.
+T&G and dogear are board PROFILES — this model does not express them and this
+catalog does not supply them, and a starter naming a SKU that does not exist
+previews as a gap and is then refused at the publish gate. The gallery ships
+vertical slat, picket, board-on-board, horizontal boards and ranch rail, each a
+structure over products that exist, each judged in the suite by `validate_model`
+AND a real preview with nothing unsupplied. Every card is a real drawing of the
+panel it opens, priced through the same route the editor prices with.
+
+*Id, name, grade, the variant picker and the option axes stay a settings strip.*
+None of them is a thing you can click on a drawing.
+
+**The vocabularies stayed typed; only the phrasing became data.** Each value now
+carries a second, sentence-length locale key beside its label
+(`model.basis.sentence.per_member_crossing`), correctable without a release,
+while which basis kinds exist at all is still a code change with tests. Both
+halves are computed keys, invisible to parity scanning, so the guard shipped with
+them. `gap_after_mm`'s sign is gone from the surface — a checkbox and a positive
+amount — and no `min` reaches the amount, because the bound that is real is the
+net advance and a `min="0"` there deletes two product families.
+
+**Four new modules, and the reason for each split.** `panel-model.js` holds the
+vocabulary and the document shapes, because three surfaces read them and
+importing them from the editor would make a cycle. `panel-canvas-geom.js` and
+`condition-sentence.js` are pure and node-tested. `panel-inspector.js` and
+`panel-canvas.js` build detached DOM and report through callbacks — the contract
+`renderElevation` already had, and what keeps two modules under `#tab-models`
+from being two owners of it.
+
 ## W3 is finished — the routed vinyl case (2026-08-17)
 The three pieces `plan/open-work.md` §1 named, in order, plus the preview gap the
 last of them made closable.

@@ -2101,10 +2101,27 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 
         c.js("document.querySelector('#tabs button[data-tab=\"models\"]').click(); 'ok'")
         time.sleep(1.5)
+        # "New model" is a gallery of starters now, each card a REAL preview of
+        # the panel it opens — a card that only named a structure would be a
+        # name, and the point of the gallery is that you can see what you get.
         c.click(*c.element_center("#btn-model-new"))
-        time.sleep(0.8)
-        # name it, then build the smallest publishable panel out of the rows:
-        # one rail slot, cut centre-to-centre, supplied by RAIL-3000
+        time.sleep(4.0)
+        gallery = c.js("""
+({
+  cards: [...document.querySelectorAll('#model-gallery .template-card')]
+    .map(b => b.dataset.template),
+  drawn: [...document.querySelectorAll('#model-gallery .template-card')]
+    .filter(b => b.querySelector('svg .elev-member')).length,
+})""")
+        check("New model offers starters that are already drawn panels",
+              len(gallery["cards"]) >= 5 and "blank" in gallery["cards"]
+              and gallery["drawn"] >= 5)
+        c.shot("21a-models-gallery.png")
+        # this block builds M-SMOKE from nothing, so it takes the blank card
+        c.click(*c.element_center('#model-gallery [data-template="blank"]'))
+        time.sleep(1.2)
+        # name it, then build the smallest publishable panel: one rail slot,
+        # cut centre-to-centre, supplied by RAIL-3000
         c.js("""
 {
   const id = document.querySelector('#model-head [data-f="id"]');
@@ -2115,25 +2132,26 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 'ok'""")
         time.sleep(1.0)
         c.click(*c.element_center("#btn-model-add-slot"))
-        time.sleep(0.6)
+        time.sleep(1.0)
+        # adding an element SELECTS it, so the inspector is already pointed at
+        # the thing that was just made — the fields below are its own
         c.js("""
 {
-  const g = document.querySelector('#model-frame [data-slot-row="0"]');
-  const key = g.querySelector('[data-f="key"]');
+  const key = document.querySelector('#model-inspector [data-f="key"]');
   key.value = 'rail'; key.dispatchEvent(new Event('input'));
-  const rule = g.querySelector('[data-f="length_rule"]');
+  const rule = document.querySelector('#model-inspector [data-f="length_rule"]');
   rule.value = 'centre_to_centre'; rule.dispatchEvent(new Event('change'));
 }
 'ok'""")
-        time.sleep(0.8)
+        time.sleep(1.0)
         c.js("""
-document.querySelector('#model-frame [data-slot-row="0"] [data-act="add-eligible"]').click();
+document.querySelector('#model-inspector [data-act="add-eligible"]').click();
 'ok'""")
-        time.sleep(0.6)
+        time.sleep(0.8)
         c.js("""
 {
   const sel = document.querySelector(
-    '#model-frame [data-slot-row="0"] [data-eligible-row="0"] [data-f="sku"]');
+    '#model-inspector [data-eligible-row="0"] [data-f="sku"]');
   sel.value = 'RAIL-3000'; sel.dispatchEvent(new Event('change'));
 }
 'ok'""")
@@ -2149,7 +2167,7 @@ fetch('/api/fence-models').then(r => r.json()).then(l => l.map(x => x.id).join('
             "document.getElementById('model-preview-total')?.textContent || ''")
         check("an unsaved model is priced anyway",
               "₪" in priced_unsaved and priced_unsaved.strip() != "")
-        c.shot("21-models-editor.png")
+        c.shot("21-models-canvas.png")
         c.click(*c.element_center("#btn-model-publish"))
         time.sleep(2.5)
         smoke_row = c.js("""
@@ -2211,7 +2229,7 @@ document.querySelector('#model-list [data-model="M-SMOKE"] [data-act="edit"]').c
 ({
   editor_shown: !document.getElementById('model-editor').hidden,
   json_hidden: document.getElementById('model-json').hidden,
-  rows: document.querySelectorAll('#model-frame [data-slot-row]').length,
+  rows: document.querySelectorAll('#model-elements .element-chip').length,
 })""")
         check("the Advanced-JSON exit is never gated on the JSON being valid",
               escaped["editor_shown"] is True and escaped["json_hidden"] is True
@@ -2230,7 +2248,7 @@ document.querySelector('#model-list [data-model="M-SMOKE"] [data-act="edit"]').c
         time.sleep(0.8)
         c.js("""
 {
-  const w = document.querySelector('#model-infill [data-member-row="0"] [data-f="width_mm"]');
+  const w = document.querySelector('#model-inspector [data-f="width_mm"]');
   w.value = '25'; w.dispatchEvent(new Event('change'));
 }
 'ok'""")
@@ -2241,7 +2259,7 @@ document.querySelector('#model-list [data-model="M-SMOKE"] [data-act="edit"]').c
 fetch('/api/fence-models/M-SMOKE/2').then(r => r.json())
   .then(m => m.default_spec.infill.pattern[0].width_mm)""")
         cm_field = c.js("""
-document.querySelector('#model-infill [data-member-row="0"] [data-f="width_mm"]')?.value""")
+document.querySelector('#model-inspector [data-f="width_mm"]')?.value""")
         check("a length typed in cm is stored as millimetres and reads back in cm",
               cm_width == 250 and str(cm_field) == "25")
         c.click(*c.element_center("#btn-units"))    # back to mm for what follows
@@ -2253,9 +2271,11 @@ document.querySelector('#model-infill [data-member-row="0"] [data-f="width_mm"]'
         # drop the length rule while a DIVISIBLE product supplies the slot: the
         # slot would be neither cut nor priced, which validate_model refuses
         c.js("""
+document.querySelector('#model-elements [data-element="frame:rail"]').click(); 'ok'""")
+        time.sleep(1.0)
+        c.js("""
 {
-  const rule = document.querySelector(
-    '#model-frame [data-slot-row="0"] [data-f="length_rule"]');
+  const rule = document.querySelector('#model-inspector [data-f="length_rule"]');
   rule.value = ''; rule.dispatchEvent(new Event('change'));
 }
 'ok'""")
@@ -2310,9 +2330,11 @@ document.querySelector('#model-list [data-model="M-SLAT"] [data-act="edit"]').cl
 'ok'""")
         time.sleep(1.5)
         c.js("""
+document.querySelector('#model-elements [data-element="infill:slat"]').click(); 'ok'""")
+        time.sleep(1.0)
+        c.js("""
 {
-  const gap = document.querySelector(
-    '#model-infill [data-member-row="0"] [data-f="gap_after_mm"]');
+  const gap = document.querySelector('#model-inspector [data-f="gap_after_mm"]');
   gap.value = '60'; gap.dispatchEvent(new Event('change'));
 }
 'ok'""")
@@ -2347,8 +2369,7 @@ fetch('/api/fence-models').then(r => r.json())
         # slats at a 300 mm gap fit far fewer times across the same bay.
         c.js("""
 {
-  const gap = document.querySelector(
-    '#model-infill [data-member-row="0"] [data-f="gap_after_mm"]');
+  const gap = document.querySelector('#model-inspector [data-f="gap_after_mm"]');
   gap.value = '300'; gap.dispatchEvent(new Event('change'));
 }
 'ok'""")
@@ -2365,6 +2386,166 @@ document.querySelector('#model-parts tr[data-slot="slat"] td:nth-child(3)')
               and slats_60.isdigit() and slats_300.isdigit()
               and int(slats_60) > int(slats_300) > 0)
         c.shot("24-models-preview.png")
+
+        # --- the canvas: the drawing IS the editor ----------------------------
+        # Everything above drove the inspector. What the canvas claims on top of
+        # that is that the DRAWING can be edited directly — and, crucially, that
+        # it is a VIEW over the same model rather than a second answer to what a
+        # panel is. Driven on a starter, because a starter arrives already drawn.
+        c.click(*c.element_center("#btn-model-close"))
+        time.sleep(0.8)
+        c.click(*c.element_center("#btn-model-new"))
+        time.sleep(4.0)
+        c.click(*c.element_center('#model-gallery [data-template="slat"]'))
+        time.sleep(3.0)
+        drawn = c.js("""
+({
+  members: document.querySelectorAll('#model-canvas .elev-member').length,
+  dots: document.querySelectorAll('#model-canvas .elev-fixing').length,
+  handles: [...document.querySelectorAll('#model-canvas [data-handle]')]
+    .map(h => h.dataset.handle),
+})""")
+        check("a starter opens as a panel that is already drawn, with handles on it",
+              drawn["members"] > 4
+              and any(h.startswith("placement:") for h in drawn["handles"])
+              and any(h.startswith("width:") for h in drawn["handles"]))
+
+        # the fasteners on the drawing are PLACES with a count on each, derived
+        # by the same read model the BOM line comes from — so they cannot
+        # disagree with it. A drawing showing twelve dots beside a line buying
+        # eight screws is the exact drift this is derived server-side to prevent.
+        fastened = c.js("""
+{
+  const dots = [...document.querySelectorAll('#model-canvas .elev-fixing')];
+  const each = dots.map(d => Number((d.querySelector('title')?.textContent || '')
+    .split('\u00d7')[1] || 0));
+  const row = document.querySelector('#model-parts tr[data-slot="screw"] td:nth-child(3)');
+  ({dots: dots.length, drawn: each.reduce((a, b) => a + b, 0),
+    counted: Number(row?.textContent.trim() || -1)});
+}""")
+        check("the fasteners drawn total exactly the screws counted",
+              fastened["dots"] > 0 and fastened["drawn"] == fastened["counted"])
+
+        # dragging a rail writes the AUTHORED number, and the drawing follows the
+        # re-price rather than the pointer — the panel is refitted by the server.
+        rail_before = c.js("""
+{
+  const r = [...document.querySelectorAll('#model-canvas .elev-member')]
+    .find(m => m.dataset.slot === 'rail');
+  ({y: Number(r.getAttribute('y'))});
+}""")
+        hx, hy = c.element_center('#model-canvas [data-handle^="placement:"]')
+        c.drag(hx, hy, hx, hy - 70)
+        time.sleep(3.0)
+        rail_after = c.js("""
+{
+  const r = [...document.querySelectorAll('#model-canvas .elev-member')]
+    .find(m => m.dataset.slot === 'rail');
+  ({y: Number(r.getAttribute('y'))});
+}""")
+        c.click(*c.element_center("#btn-model-advanced"))
+        time.sleep(0.8)
+        dragged_doc = c.js("JSON.parse(document.getElementById('model-json').value)")
+        c.click(*c.element_center("#btn-model-advanced"))
+        time.sleep(1.5)
+        placement = dragged_doc["default_spec"]["frame"][0]["placement"]
+        check("dragging a rail writes the placement, and the drawing follows it",
+              placement["bottom_inset_mm"] > 0
+              and rail_after["y"] < rail_before["y"])
+
+        # the overlap is a CHECKBOX, and a negative gap underneath it. The sign
+        # was the thing an author had to remember from a hint; the control
+        # remembers it, and the document still says the thing that makes
+        # board-on-board expressible at all.
+        c.js("""
+document.querySelector('#model-elements [data-element="infill:slat"]').click(); 'ok'""")
+        time.sleep(1.2)
+        c.js("""
+{
+  const box = document.querySelector('#model-inspector [data-f="overlaps"]');
+  box.checked = true; box.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.5)
+        c.js("""
+{
+  const amount = document.querySelector('#model-inspector [data-f="gap_after_mm"]');
+  amount.value = '30'; amount.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(2.0)
+        c.click(*c.element_center("#btn-model-advanced"))
+        time.sleep(0.8)
+        overlapped = c.js("JSON.parse(document.getElementById('model-json').value)")
+        c.click(*c.element_center("#btn-model-advanced"))
+        time.sleep(1.5)
+        check("an overlap is a checkbox, and a negative gap underneath it",
+              overlapped["default_spec"]["infill"]["pattern"][0]["gap_after_mm"] == -30)
+
+        # the preference list IS the priority: dropping a row renumbers from 1,
+        # so the order it reads in and the order it resolves in cannot disagree
+        c.js("""
+document.querySelector('#model-inspector [data-act="add-eligible"]').click(); 'ok'""")
+        time.sleep(1.2)
+        c.js("""
+{
+  const sel = document.querySelector(
+    '#model-inspector [data-eligible-row="1"] [data-f="sku"]');
+  sel.value = 'SLAT-V-150'; sel.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.5)
+        # drag row 1 onto row 0 — a DataTransfer the drop handler reads back
+        c.js("""
+{
+  const list = document.querySelectorAll('#model-inspector .pref-item');
+  const dt = new DataTransfer();
+  dt.setData('text/plain', '1');
+  list[0].dispatchEvent(new DragEvent('drop', {bubbles: true, dataTransfer: dt}));
+}
+'ok'""")
+        time.sleep(2.0)
+        c.click(*c.element_center("#btn-model-advanced"))
+        time.sleep(0.8)
+        reordered = c.js("JSON.parse(document.getElementById('model-json').value)")
+        c.click(*c.element_center("#btn-model-advanced"))
+        time.sleep(1.5)
+        members = (reordered["default_spec"]["infill"]["pattern"][0]
+                   ["requirement"]["eligibility"]["members"])
+        check("reordering the preference list renumbers priority from 1",
+              [m["sku"] for m in members] == ["SLAT-V-150", "SLAT-100"]
+              and [m["priority"] for m in members] == [1, 2])
+
+        # --- and the whole claim: a VIEW, not a second source of truth --------
+        # The canvas computes no geometry: every rectangle on it is one
+        # `report/elevation.py` placed, from the same resolved slots the priced
+        # table below is derived from. So the two have to agree about how many
+        # boards this panel has — and they can only disagree if something in the
+        # browser started working the answer out for itself.
+        agreement = c.js("""
+{
+  const drawn = [...document.querySelectorAll('#model-canvas .elev-member')]
+    .filter(m => m.dataset.slot === 'slat').length;
+  const row = document.querySelector('#model-parts tr[data-slot="slat"] td:nth-child(3)');
+  ({drawn, counted: Number(row?.textContent.trim() || -1)});
+}""")
+        check("the canvas is a view over the model, not a second answer",
+              agreement["drawn"] > 0
+              and agreement["drawn"] == agreement["counted"])
+
+        # ... and what it authored is a model the gate takes, which is the other
+        # half: a surface that produced a document the backend refuses would be
+        # a view of nothing.
+        c.click(*c.element_center("#btn-model-publish"))
+        time.sleep(3.0)
+        published = c.js("""
+fetch('/api/fence-models').then(r => r.json())
+  .then(l => l.find(x => x.id === 'M-SLAT-NEW') || null)""")
+        check("a panel authored entirely on the canvas publishes",
+              bool(published) and published["active_version"] is not None)
+        c.shot("25-models-canvas-published.png")
+        c.click(*c.element_center("#btn-model-close"))
+        time.sleep(0.8)
 
         # --- retire: the one destructive transition in the library -------------
         # It removes a model from every picker in the app, and nothing in the UI

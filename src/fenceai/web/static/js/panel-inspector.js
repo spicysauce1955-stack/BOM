@@ -53,6 +53,11 @@ export const SELECTION_NONE = { kind: "panel", key: null };
 // never read outside one — an inspector rendered without a host has no edits to
 // report.
 let notify = () => {};
+// ... and "the thing being edited is now called something else", which is a
+// different event: the selection is BY KEY, so a rename with nobody told leaves
+// the inspector pointed at a name nothing has — reporting that the element you
+// are looking at is gone.
+let rename = () => {};
 
 // --- field builders ----------------------------------------------------------
 
@@ -108,6 +113,23 @@ export function choice(obj, key, values, labelFor, labelKey,
  * an enum that has not moved. */
 function sentenceChoice(obj, key, values, prefix, labelKey, opts = {}) {
   return choice(obj, key, values, (v) => t(`${prefix}sentence.${v}`), labelKey, opts);
+}
+
+/** The element's own key.
+ *
+ * Not `text(obj, "key", …)`: a rename has to travel, because the selection is
+ * by key and everything holding one — the chips, the drawing's `data-slot`, the
+ * inspector itself — would otherwise still be pointing at the old name one
+ * keystroke later. */
+function keyField(obj, kind) {
+  const i = el("input", { type: "text", "data-f": "key", dir: "ltr", class: "sku",
+                          size: 10, value: obj.key ?? "" });
+  i.addEventListener("input", () => {
+    obj.key = i.value;
+    rename({ kind, key: obj.key });
+    notify();
+  });
+  return field("model.key", i);
 }
 
 function removeButton(onclick) {
@@ -449,10 +471,11 @@ export function renderAxisEditor(host, { model, onChange = () => {} } = {}) {
  * it rather than leaving the inspector pointed at nothing. */
 export function renderInspector(host, {
   selection = SELECTION_NONE, spec, model, products = {},
-  onChange = () => {}, onRemove = () => {},
+  onChange = () => {}, onRemove = () => {}, onRename = () => {},
 } = {}) {
   if (!host) return;
   notify = onChange;
+  rename = onRename;
   host.innerHTML = "";
   if (!spec || !model) return;
   const ctx = { products, model, spec, onRemove };
@@ -481,7 +504,7 @@ function frameInspector(host, key, ctx) {
   host.appendChild(title);
 
   const place = row(
-    text(slot, "key", "model.key", { size: 10, ltr: true }),
+    keyField(slot, "frame"),
     sentenceChoice(slot, "orientation", ["horizontal", "vertical"],
       "model.orientation.", "model.orientation", { rerender: true }));
   const kindSel = el("select", { class: "builder-kind", "data-f": "placement" });
@@ -541,7 +564,7 @@ function infillInspector(host, key, ctx) {
 
   const frameKeys = (ctx.spec.frame || []).map((s) => s.key);
   host.appendChild(group("model.inspect.this_board",
-    row(text(member, "key", "model.key", { size: 10, ltr: true }),
+    row(keyField(member, "infill"),
         num(member, "width_mm", "model.width_mm", { length: true, min: 1 })),
     gapControl(member),
     row(num(member, "face_offset_mm", "model.face_offset_mm", { length: true }),
@@ -565,7 +588,7 @@ function fixingInspector(host, key, ctx) {
       ctx.onRemove({ kind: "fixing", key });
     })));
   host.appendChild(group("model.inspect.where",
-    row(text(fix, "key", "model.key", { size: 10, ltr: true }),
+    row(keyField(fix, "fixing"),
         sentenceChoice(fix, "basis", BASES, "model.basis.", "model.basis",
           { rerender: true })),
     basisDiagram(fix.basis),

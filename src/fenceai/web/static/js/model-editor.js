@@ -47,7 +47,7 @@ import {
   defaultSlot, defaultVariant, draftCopyOf, duplicateOf, freeId, idCollision,
   specOf,
 } from "./panel-model.js";
-import { emit, on } from "./state.js";
+import { on } from "./state.js";
 import {
   fmt, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
 } from "./units.js";
@@ -859,6 +859,10 @@ async function renderInspectorPane() {
     model: session.model,
     onChange: touch,
     onRemove: () => { selection = SELECTION_NONE; touch({ rerender: true }); },
+    // a rename moves the selection with it: everything that holds one holds a
+    // KEY, so without this the next repaint reports the element being edited as
+    // no longer there
+    onRename: (next) => { selection = next; renderElements(); },
   });
 }
 
