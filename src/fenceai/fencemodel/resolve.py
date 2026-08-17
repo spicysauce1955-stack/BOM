@@ -166,6 +166,11 @@ class VariantChoice(BaseModel):
 
 
 def choose_variant(model: FenceModel, ctx: PanelContext) -> VariantChoice:
+    """Which variant this BAY is built to. See `choose_variant_by` for the rule."""
+    return choose_variant_by(model, ctx.condition_ctx())
+
+
+def choose_variant_by(model: FenceModel, cond_ctx: dict) -> VariantChoice:
     """Authored order, first satisfied condition wins — deliberately not
     'specificity', which is undefined for a bare Expr and would have two
     implementers counting different things.
@@ -175,11 +180,18 @@ def choose_variant(model: FenceModel, ctx: PanelContext) -> VariantChoice:
     `defeated` edge. Its own decision node is the whole trace (fence-model spec
     §"The shape of the thing"), which is why the losers are reported here rather
     than left to be reconstructed by a second evaluation somewhere else.
+
+    It takes the condition CONTEXT rather than a `PanelContext` because a post is
+    resolved at its own station, where the bay's width does not exist yet — and a
+    caller obliged to invent one would be inventing the answer. A condition
+    naming a fact the context does not carry is "not applicable" (below), and
+    `validate_model` refuses the one combination where that would silently give a
+    post the wrong panel's rails.
     """
     failed: list[int] = []
     for index, variant in enumerate(model.variants):
         try:
-            satisfied = evaluate_expr(variant.condition, ctx.condition_ctx())
+            satisfied = evaluate_expr(variant.condition, cond_ctx)
         except MissingField:
             # a condition naming a field this context never supplies is "not
             # applicable", exactly as it is in the knowledge evaluator
@@ -318,8 +330,38 @@ def _length_for(req: PartRequirement, ctx: PanelContext) -> Mm | None:
     return base
 
 
-def _qty(count: int, param: str | None, ctx: PanelContext) -> int:
-    return ctx.params.get(param, count) if param else count
+def _qty(count: int, param: str | None, params: dict[str, int]) -> int:
+    """A model's contributed default, or the knowledge param that beat it.
+
+    Takes the params MAPPING rather than the whole context because a post is
+    resolved before any bay exists, and `rail_positions_mm` needs this same
+    arithmetic there — a second `params.get(...)` written out at that call site
+    would be a second place for the count to come from.
+    """
+    return params.get(param, count) if param else count
+
+
+def rail_positions_mm(spec: PanelSpec, height_mm: Mm, params: dict[str, int]) -> list[Mm]:
+    """Where this panel's HORIZONTAL frame members sit, in panel coordinates.
+
+    Defined once, here: the placement positions of the panel's horizontal frame
+    slots (y = 0 at the bottom of the opening), sorted ascending, with a
+    `Distributed` slot contributing every one of its positions. It is
+    `placement_positions`' answer and never a second derivation of it.
+
+    This is what a routed post's predicate is matched against, and it is settled
+    by the bay's HEIGHT alone — which is what keeps the resolution order a DAG:
+
+        height -> rail positions -> post -> clear width -> infill fit
+    """
+    out: list[Mm] = []
+    for slot in spec.frame:
+        if slot.orientation != "horizontal":
+            continue
+        count = (_qty(slot.placement.count, slot.placement.count_param, params)
+                 if isinstance(slot.placement, Distributed) else 1)
+        out += placement_positions(slot.placement, count, height_mm)
+    return sorted(out)
 
 
 def placement_positions(placement, count: int, span_mm: Mm) -> list[Mm]:
@@ -456,7 +498,7 @@ def resolve_panel(
 
     for frame_slot in spec.frame:
         req = frame_slot.requirement
-        count = (_qty(frame_slot.placement.count, frame_slot.placement.count_param, ctx)
+        count = (_qty(frame_slot.placement.count, frame_slot.placement.count_param, ctx.params)
                  if isinstance(frame_slot.placement, Distributed) else 1)
         eligibility, option_axis, option_value = _chosen_option(req, ctx)
         eligibility, pinned = _pinned_sku(frame_slot.key, eligibility, ctx)
@@ -541,7 +583,7 @@ def resolve_panel(
     member_count = sum(s.qty for s in slots if s.fit is not None)
     placed_count = next((s.fit.count for s in slots if s.fit is not None), 0)
     for rule in spec.fixings:
-        per = _qty(rule.qty_per_basis, rule.qty_param, ctx)
+        per = _qty(rule.qty_per_basis, rule.qty_param, ctx.params)
         basis = {
             "per_panel": 1,
             "per_frame_member": frame_count,

@@ -108,6 +108,39 @@ def panel_facts(ctx: "PanelContext") -> dict:
     }}
 
 
+def post_panel_facts(
+    *, model_id: str, height_mm: int, vertical: str, rail_positions_mm: list[int],
+) -> dict:
+    """What a POST's predicate may know about the bay it stands beside.
+
+    A strictly smaller set than `panel_facts`, and the difference is the cycle
+    rule: a bay's clear opening is measured TO its posts' faces, so a post chosen
+    BY that opening would be choosing itself. Everything here is settled from the
+    bay's HEIGHT, before any post is known, which is what makes the resolution
+    order a DAG.
+
+    The keys are `POST_PREDICATE_PANEL_FACTS` — the set `validate_model` refuses
+    a post predicate for reading outside of. Two statements of one set would drift
+    the moment either moved, so a test pins them equal.
+    """
+    return {"panel": {
+        "model_id": model_id,
+        "height_mm": height_mm,
+        "vertical": vertical,
+        "rail_positions_mm": rail_positions_mm,
+    }}
+
+
+def chosen_post_facts(product) -> dict:
+    """What a CAP's predicate may know: the post it caps, already chosen.
+
+    Ordered, not circular — which is the whole reason `cap` nests inside
+    `PostSlot`. A cap asks about its post because the post was resolved first;
+    nothing ever asks a post about its cap.
+    """
+    return {"post": _item_ctx(product)}
+
+
 def match_spec(spec: PanelSpec, catalog: Catalog, facts: dict) -> PanelSpec:
     """Every spec-declared eligibility in one panel spec, resolved once.
 

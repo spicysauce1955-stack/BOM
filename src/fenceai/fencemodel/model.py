@@ -233,6 +233,11 @@ class PostSlot(BaseModel):
 # either a hang or an arbitrary answer that reads as measured. Deliberately the
 # same shape as SERIES_SCOPED_PARAMS: a closed set of names, a refusal, and a
 # stated reason for the boundary.
+#
+# `match.post_panel_facts` is what SUPPLIES these, and a test pins the two equal.
+# A name declared readable here and not supplied there would be the worst of both:
+# the predicate matches nothing, and the post falls silently through to the
+# company default — a model quietly not getting the post it asked for.
 POST_PREDICATE_PANEL_FACTS = frozenset({
     "height_mm", "rail_positions_mm", "vertical", "model_id",
 })
@@ -767,23 +772,7 @@ def _post_slot_errors(post: PostSlot, catalog: Catalog) -> list[str]:
     if predicate is not None:
         for path in sorted(field_paths(predicate)):
             head, _, field = path.partition(".")
-            if head == "panel" and field in POST_PREDICATE_PANEL_FACTS:
-                # DESIGNED and not yet supplied. `_model_post_skus` resolves a
-                # post from its own station, where the bay's height and rail
-                # positions are not yet computed, so it matches against `item.*`
-                # alone. A predicate reading one of these would therefore match
-                # NOTHING and fall silently through to the company default — a
-                # model quietly not getting the post it asked for. Refused by
-                # name until the generator supplies them, which is the same rule
-                # `_UNSUPPORTED` applies to every other designed-not-built field.
-                errors.append(
-                    f"slot {post.key}: panel.{field} is not yet supplied to post "
-                    f"matching — a post is resolved at its own station, before "
-                    f"any bay is laid out, so this predicate would match nothing "
-                    f"and the company default would answer instead. Match on "
-                    f"item.* for now"
-                )
-            elif head == "panel":
+            if head == "panel" and field not in POST_PREDICATE_PANEL_FACTS:
                 errors.append(
                     f"slot {post.key}: a post predicate may not read "
                     f"panel.{field} — the clear opening is measured TO the post "
@@ -792,6 +781,45 @@ def _post_slot_errors(post: PostSlot, catalog: Catalog) -> list[str]:
                     f"known; readable: "
                     + ", ".join(f"panel.{f}" for f in sorted(POST_PREDICATE_PANEL_FACTS))
                 )
+    return errors
+
+
+# What a VARIANT condition may read while still being answerable at a post's own
+# station: the post-time panel facts that `PanelContext.condition_ctx` also
+# supplies. `panel.width_mm` is the one it excludes, and deliberately — a post
+# stands between two bays that need not be the same width, so there is no width
+# to answer with.
+_POST_TIME_CONDITION_PATHS = frozenset({"panel.height_mm", "panel.vertical"})
+
+
+def _variant_reach_errors(model: FenceModel) -> list[str]:
+    """A post matched on rail positions must be matched on the RIGHT rails.
+
+    Which spec a bay is built to is `choose_variant`'s answer, and at a post's
+    station it is answered from the height and the vertical mode alone. A variant
+    that turns on the bay's WIDTH cannot be evaluated there — it would come back
+    "not applicable", the default spec's rails would be handed to the predicate,
+    and the post would be matched against a panel the fence does not build.
+
+    Refused only when the two features actually meet: a model may have
+    width-conditioned variants, or a post predicate reading `rail_positions_mm`,
+    and neither alone is a problem.
+    """
+    if model.post is None:
+        return []
+    predicate = model.post.requirement.eligibility.predicate
+    if predicate is None or "panel.rail_positions_mm" not in field_paths(predicate):
+        return []
+    errors: list[str] = []
+    for index, variant in enumerate(model.variants):
+        for path in sorted(field_paths(variant.condition) - _POST_TIME_CONDITION_PATHS):
+            errors.append(
+                f"variant {index}: its condition reads {path}, which is not known "
+                f"at a post's own station — and slot {model.post.key} is matched on "
+                f"panel.rail_positions_mm, so the post would be chosen against the "
+                f"DEFAULT spec's rails while the bay is built to this variant's. "
+                f"Readable there: " + ", ".join(sorted(_POST_TIME_CONDITION_PATHS))
+            )
     return errors
 
 
@@ -807,6 +835,7 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
     errors += _unsupported_features(model)
     if model.post is not None:
         errors += _post_slot_errors(model.post, catalog)
+        errors += _variant_reach_errors(model)
 
     for axis in model.option_axes:
         for value in axis.values:

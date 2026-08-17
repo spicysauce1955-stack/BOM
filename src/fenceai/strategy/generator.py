@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from fenceai.catalog.model import CATALOG_SCHEMA_VERSION, Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
@@ -23,11 +23,13 @@ from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
-from fenceai.fencemodel.match import match_eligibility, match_spec, panel_facts
+from fenceai.fencemodel.match import (
+    chosen_post_facts, match_eligibility, match_spec, panel_facts, post_panel_facts,
+)
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import (
-    PanelContext, ResolvedPanel, choose_variant, clear_opening_mm, height_supported,
-    resolve_panel,
+    PanelContext, ResolvedPanel, choose_variant, choose_variant_by, clear_opening_mm,
+    height_supported, rail_positions_mm, resolve_panel,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.evaluator import (
@@ -157,8 +159,8 @@ def generate(
     )
 
     _generate_node_posts(
-        topology, knowledge, scope, catalog, overrides, builder, strategy, applied,
-        models, default_model,
+        topology, knowledge, scope, catalog, overrides, policy, builder, strategy,
+        applied, models, default_model,
     )
     # every fence model actually drawn from, across all runs — part of the run id
     # (a model swap changes what the run means even though the digest's other
@@ -408,13 +410,120 @@ def _stand_z(topo: Topology, run: Run, station: Mm) -> Mm:
 
 
 
+def _forced_vertical(force_vertical_ovs: list[Override], station: Mm) -> Override | None:
+    """The `force_vertical` override covering this station, if one does.
+
+    One matcher, two consumers: a bay, which records the override as applied and
+    writes a decision node for it, and a post's panel facts, which only READ the
+    mode the bay will be built to. A second copy of the interval test would be a
+    second place for the two to disagree about which bays an override covers.
+    """
+    for ov in force_vertical_ovs:
+        d = ov.directive
+        if d.start_station_mm <= station <= d.end_station_mm:
+            return ov
+    return None
+
+
+@dataclass(frozen=True)
+class _PostFacts:
+    """The panel facts a post's predicate may read, answerable at any station.
+
+    Built once per run and asked per post, because everything it needs is either
+    a property of the run (its knowledge scope, its vertical mode, its policy) or
+    a question of the station (height, and therefore rail positions).
+
+    THE cycle rule lives in what this class does NOT carry: no width, of either
+    kind. A bay's clear opening is measured to its posts' faces, so a post chosen
+    by that opening would be choosing itself. Everything below follows from the
+    bay's HEIGHT, which is settled before any post is known:
+
+        height -> rail positions -> post -> clear width -> infill fit
+    """
+
+    topo: Topology
+    run: Run
+    kb: KnowledgeBase
+    scope: dict[str, str]
+    run_ctx: dict
+    policy: dict
+    vertical: str
+    force_vertical: list[Override]
+    # model ref -> the count params its panels resolve under. Memoised because a
+    # run asks this once per POST and the answer is per model: the knowledge
+    # resolution behind `rails_per_span` is the same call `segment_model` makes.
+    _params: dict[str, dict[str, int]] = dataclass_field(default_factory=dict)
+
+    def at(self, model: FenceModel, station: Mm) -> dict:
+        gz = ground_z(self.topo, self.run, station)
+        height, _src, _extra = _span_height(
+            self.topo, self.run, station, gz, gz, self.policy
+        )
+        ov = _forced_vertical(self.force_vertical, station)
+        vertical = ov.directive.mode if ov is not None else self.vertical
+        # Which spec, asked with what a post's station can answer. A variant whose
+        # condition reads the bay's WIDTH comes back "not applicable" here, which
+        # is why `validate_model` refuses that variant on a model whose post is
+        # matched on `rail_positions_mm` — the alternative is a post chosen
+        # against rails the fence does not build.
+        spec = choose_variant_by(
+            model, {"panel": {"height_mm": height, "vertical": vertical}}
+        ).spec
+        return post_panel_facts(
+            model_id=model.id, height_mm=height, vertical=vertical,
+            rail_positions_mm=rail_positions_mm(spec, height, self.count_params(model)),
+        )
+
+    def count_params(self, model: FenceModel) -> dict[str, int]:
+        cached = self._params.get(model.ref)
+        if cached is None:
+            seg_kb, seg_ctx = _segment_view(self.kb, self.scope, self.run_ctx, model)
+            cached = {
+                "rails_per_span": _resolve_quantity(
+                    seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN)[0],
+                "screws_per_span": _resolve_quantity(
+                    seg_kb, seg_ctx, "screws_per_span", DEFAULT_SCREWS_PER_SPAN)[0],
+            }
+            self._params[model.ref] = cached
+        return cached
+
+
+def _run_post_facts(
+    topo: Topology,
+    run: Run,
+    kb: KnowledgeBase,
+    scope: dict[str, str],
+    overrides: list[Override],
+    policy: dict,
+) -> tuple[_PostFacts, Resolution, list[str], list[str]]:
+    """One construction of a run's post facts, and the vertical resolution behind
+    them: `(facts, resolution, governing refs, defeated refs)`.
+
+    Node posts are generated before any run is walked and take only the first
+    value; `_generate_run` takes all four, because the `choose_vertical_mode` node
+    it writes cites the refs and reports the conflicts. Resolving the mode twice
+    for one run would be two answers that could differ.
+    """
+    run_ctx = {"length_mm": run_length(topo, run),
+               "slope_permille": max_slope_permille(topo, run)}
+    vertical, refs, defeated, res = _vertical_mode(
+        kb, {"scope": bind_scope(scope), "run": run_ctx}, run_ctx["slope_permille"]
+    )
+    facts = _PostFacts(
+        topo=topo, run=run, kb=kb, scope=scope, run_ctx=run_ctx, policy=policy,
+        vertical=vertical,
+        force_vertical=[ov for ov in overrides if ov.run_id == run.id
+                        and ov.directive.kind == "force_vertical"],
+    )
+    return facts, res, refs, defeated
+
+
 def _model_post_skus(
     library: FenceModelLibrary,
     default_model: FenceModelChoice | None,
-    topo: Topology,
-    run: Run,
     station: Mm,
     catalog: Catalog,
+    facts: _PostFacts,
 ) -> tuple[str | None, str | None]:
     """The post and cap the MODEL at this station asks for, if it asks.
 
@@ -423,26 +532,38 @@ def _model_post_skus(
     with the same half-open convention every other station question uses — so the
     answer cannot depend on which neighbouring bay happened to be resolved first.
 
+    The cap is matched against the post ALREADY CHOSEN, which is the whole reason
+    `cap` nests inside `PostSlot`. It is the model's post it reads, not whatever
+    `_make_post` finally writes: a masonry or gate-reinforced post is doing a
+    different job and beats the model's choice, and a cap is the model's answer
+    about the model's post.
+
     Choosing among several matched candidates is `sorted-first`, not cost-based:
     a post is one line and the cut-plan coupling that makes `select_supply` worth
     running does not apply to an indivisible each. Recorded in the limitations
     rather than faked — a post line still carries its full eligibility into
     demand, so the choice remains explainable there.
     """
-    choice = fence_model_at(topo, run, station) or default_model
+    choice = fence_model_at(facts.topo, facts.run, station) or default_model
     if choice is None:
         return None, None
     model = library.resolve(choice.model_id, choice.version_pin)
     if model is None or model.post is None:
         return None, None
 
-    def first(req) -> str | None:
+    panel = facts.at(model, station)
+
+    def first(req, extra: dict) -> str | None:
         if req is None:
             return None
-        resolved = match_eligibility(req.eligibility, catalog, {})
+        resolved = match_eligibility(req.eligibility, catalog, {**panel, **extra})
         return resolved.members[0].sku if resolved.members else None
 
-    return first(model.post.requirement), first(model.post.cap)
+    post_sku = first(model.post.requirement, {})
+    chosen = catalog.products.get(post_sku) if post_sku else None
+    return post_sku, first(
+        model.post.cap, chosen_post_facts(chosen) if chosen is not None else {}
+    )
 
 
 def _make_post(
@@ -522,6 +643,7 @@ def _generate_node_posts(
     scope: dict[str, str],
     catalog: Catalog,
     overrides: list[Override],
+    policy: dict,
     builder: GraphBuilder,
     strategy: Strategy,
     applied: set[str],
@@ -596,8 +718,15 @@ def _generate_node_posts(
             payload={"node_id": node.id, "x_mm": node.x_mm, "y_mm": node.y_mm,
                      "runs": len(touches)},
         )
+        # A node post belongs to `run0` — the first incident run by id, which is
+        # also the run whose station the post is placed at. Its panel facts are
+        # asked of that run for the same reason its model is: a terminus is one
+        # place, and one place has one answer.
         node_post_sku, node_cap_sku = (
-            _model_post_skus(library, default_model, topology, run0, station0, catalog)
+            _model_post_skus(
+                library, default_model, station0, catalog,
+                _run_post_facts(topology, run0, kb, scope, overrides, policy)[0],
+            )
             if library is not None else (None, None))
         post = _make_post(
             builder, kb, scope,
@@ -703,6 +832,13 @@ class _SegmentModel:
 LEGACY_MODEL_ID = "M-LEGACY"
 LEGACY_MODEL_VERSION = 1
 
+# The counts a model contributes when no knowledge names them. Constants because
+# a bay and the POST beside it must resolve the same number: the rail count
+# decides where the rails sit, and a routed post is matched against exactly those
+# positions. Two spellings of `2` would be a post routed for a panel nobody built.
+DEFAULT_RAILS_PER_SPAN = 2
+DEFAULT_SCREWS_PER_SPAN = 8
+
 
 def _policy_knowledge(model: FenceModel) -> list[KnowledgeVersion]:
     """A model's `layout_policy` as knowledge versions scoped to its own series.
@@ -738,6 +874,48 @@ def _policy_knowledge(model: FenceModel) -> list[KnowledgeVersion]:
         )
         for c in model.layout_policy
     ]
+
+
+def _segment_view(
+    kb: KnowledgeBase, scope: dict[str, str], run_ctx: dict, model: FenceModel,
+) -> tuple[KnowledgeBase, dict]:
+    """The knowledge and the context a model's numbers resolve under.
+
+    `series` is the dimension a knowledge rule needs to say "spans exactly 1800 on
+    that product line", and a model's own `layout_policy` joins the base as
+    knowledge rather than through a private channel. The run's KnowledgeBase is
+    never mutated — `generate()` does not touch its inputs — so this is a per-model
+    VIEW of it and one model's asks cannot survive into the next.
+
+    One function because two callers ask the same question about one model: the
+    segment that lays out its bays, and the post that stands beside them.
+    """
+    seg_kb = (KnowledgeBase(versions=[*kb.versions, *_policy_knowledge(model)])
+              if model.layout_policy else kb)
+    return seg_kb, {"scope": bind_scope(scope, {"series": model.id}), "run": run_ctx}
+
+
+def _vertical_mode(
+    kb: KnowledgeBase, ctx: dict, slope_permille: int,
+) -> tuple[str, list[str], list[str], Resolution]:
+    """This run's vertical mode: (mode, governing refs, defeated refs, resolution).
+
+    Pulled out of `_generate_run` because a post's panel facts need the answer
+    BEFORE the run's own decision node is written — a post is resolved before any
+    bay exists, and `panel.vertical` is one of the facts its predicate may read.
+    The caller still owns the node and the conflicts; this owns the answer, so
+    there is exactly one of it.
+    """
+    vert_firings = preference_firings(kb, ctx, {"prefer_vertical"})
+    modes = {a.mode for f in vert_firings for a in f.actions if a.kind == "prefer_vertical"}
+    res: Resolution = evaluator_resolve(
+        vert_firings, "vertical_mode", values_agree=len(modes) <= 1
+    )
+    if res.winner:
+        mode = next(a.mode for a in res.winner.actions if a.kind == "prefer_vertical")
+        return (mode, [res.winner.version.ref],
+                [f.version.ref for f in res.firings if f.defeated_by], res)
+    return ("level" if slope_permille == 0 else "raked", [], [], res)
 
 
 def _pick_model(
@@ -881,19 +1059,11 @@ def _generate_run(
         _validate_resolved_model(model, catalog)
         # `series` is the dimension a knowledge rule needs to say "spans exactly
         # 1800 on that product line" — blocked until a model id was a fact of
-        # generation (plan/current-status.md, the two blocked dimensions).
-        seg_ctx = {
-            "scope": bind_scope(scope, {"series": model.id}),
-            "run": ctx["run"],
-        }
-        # The model's layout policy joins the knowledge BEFORE anything under
-        # this scope is resolved — a contribution added after `max_span_mm` had
-        # resolved would be a contribution that never applied. The run's own
-        # KnowledgeBase is never mutated (generate() does not touch its inputs):
-        # this is a per-segment view of it, so one model's asks cannot survive
-        # into the next segment's resolution.
-        seg_kb = (KnowledgeBase(versions=[*kb.versions, *_policy_knowledge(model)])
-                  if model.layout_policy else kb)
+        # generation (plan/current-status.md, the two blocked dimensions). The
+        # model's layout policy joins the knowledge BEFORE anything under this
+        # scope is resolved: a contribution added after `max_span_mm` had resolved
+        # would be a contribution that never applied.
+        seg_kb, seg_ctx = _segment_view(kb, scope, ctx["run"], model)
         select_node = builder.add(
             "selection", "select_model",
             payload={"model_ref": model.ref, "source": source,
@@ -926,8 +1096,10 @@ def _generate_run(
                               if a.kind == "set_param")
             exact_span_ref = exact_res.winner.version.ref
 
-        rails, rails_refs = _resolve_quantity(seg_kb, seg_ctx, "rails_per_span", 2)
-        screws, screws_refs = _resolve_quantity(seg_kb, seg_ctx, "screws_per_span", 8)
+        rails, rails_refs = _resolve_quantity(
+            seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN)
+        screws, screws_refs = _resolve_quantity(
+            seg_kb, seg_ctx, "screws_per_span", DEFAULT_SCREWS_PER_SPAN)
 
         sm = _SegmentModel(
             model=model,
@@ -1025,7 +1197,6 @@ def _generate_run(
     # -- overrides addressed to this run ---------------------------------------
     pinned_stations: dict[Mm, Override] = {}
     suppress_ovs: list[Override] = []
-    force_vertical_ovs: list[Override] = []
     for ov in overrides:
         if ov.run_id != run.id:
             continue
@@ -1034,8 +1205,9 @@ def _generate_run(
             pinned_stations[d.station_mm] = ov
         elif d.kind == "suppress_post":
             suppress_ovs.append(ov)
-        elif d.kind == "force_vertical":
-            force_vertical_ovs.append(ov)
+    # `force_vertical` is collected by `_run_post_facts` below, because a POST's
+    # panel facts read the mode it forces too — one list, so a bay and the post
+    # beside it cannot disagree about which overrides cover them.
 
     corners = corner_stations(topo, run)
     transitions = base_transition_stations(topo, run)
@@ -1072,6 +1244,16 @@ def _generate_run(
     fixed_sorted = sorted(fixed)
 
     reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope)
+
+    # -- the panel facts every post of this run is matched against -------------
+    # Resolved here rather than beside the `choose_vertical_mode` node below,
+    # because the first post is created on the next line and a post predicate may
+    # read `panel.vertical`. The node still belongs where the graph already puts
+    # it; what moves is the answer, which is now asked once and used twice.
+    post_facts, vert_res, vertical_refs, vertical_defeated = _run_post_facts(
+        topo, run, kb, scope, overrides, policy
+    )
+    vertical = post_facts.vertical
 
     # -- interior fixed posts --------------------------------------------------
     for station in fixed_sorted:
@@ -1145,7 +1327,7 @@ def _generate_run(
             )
         tilt_deg, tilt_ev = (0, None) if kind == "gate" else _post_tilt_at(topo, run, station)
         fixed_post_sku, fixed_cap_sku = _model_post_skus(
-            library, default_model, topo, run, station, catalog)
+            library, default_model, station, catalog, post_facts)
         post = _make_post(
             builder, kb, scope,
             model_post=fixed_post_sku, model_cap=fixed_cap_sku,
@@ -1237,24 +1419,11 @@ def _generate_run(
                 inputs=[placed.id, gate_fact_id],
             )
 
-    # -- vertical mode: slot-resolved, never loop-overwritten ------------------
-    default_vertical = "level" if slope_permille == 0 else "raked"
-    vert_firings = preference_firings(kb, ctx, {"prefer_vertical"})
-    modes = {a.mode for f in vert_firings for a in f.actions if a.kind == "prefer_vertical"}
-    vert_res: Resolution = evaluator_resolve(
-        vert_firings, "vertical_mode", values_agree=len(modes) <= 1
-    )
+    # -- vertical mode: the NODE. The answer was resolved before the first post,
+    # because a post's predicate may read `panel.vertical` and a post stands
+    # before any bay does; the node and its conflicts stay here, where the graph
+    # already puts them.
     _surface_conflicts(vert_res.conflicts, builder, strategy)
-    if vert_res.winner:
-        vertical = next(
-            a.mode for a in vert_res.winner.actions if a.kind == "prefer_vertical"
-        )
-        vertical_refs = [vert_res.winner.version.ref]
-        vertical_defeated = [f.version.ref for f in vert_res.firings if f.defeated_by]
-    else:
-        vertical = default_vertical
-        vertical_refs = []
-        vertical_defeated = []
     vertical_node = builder.add(
         "vertical", "choose_vertical_mode",
         payload={"mode": vertical, "slope_permille": slope_permille},
@@ -1284,18 +1453,18 @@ def _generate_run(
     fv_nodes: dict[str, str] = {}  # override id -> decision node id
 
     def span_vertical(mid: Mm) -> tuple[str, str | None]:
-        for ov in force_vertical_ovs:
-            d = ov.directive
-            if d.start_station_mm <= mid <= d.end_station_mm:
-                applied.add(ov.id)
-                if ov.id not in fv_nodes:
-                    fv_nodes[ov.id] = builder.add(
-                        "override_applied", "force_vertical",
-                        payload={"override_id": ov.id, "mode": d.mode,
-                                 "interval": [d.start_station_mm, d.end_station_mm]},
-                    ).id
-                return d.mode, fv_nodes[ov.id]
-        return vertical, None
+        ov = _forced_vertical(post_facts.force_vertical, mid)
+        if ov is None:
+            return vertical, None
+        d = ov.directive
+        applied.add(ov.id)
+        if ov.id not in fv_nodes:
+            fv_nodes[ov.id] = builder.add(
+                "override_applied", "force_vertical",
+                payload={"override_id": ov.id, "mode": d.mode,
+                         "interval": [d.start_station_mm, d.end_station_mm]},
+            ).id
+        return d.mode, fv_nodes[ov.id]
 
     # -- span quantities (resolved here so demand needs no knowledge access) ---
     # (rails_per_span / screws_per_span moved into segment_model: they are resolved
@@ -1447,7 +1616,7 @@ def _generate_run(
                 )
             tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
             line_post_sku, line_cap_sku = _model_post_skus(
-                library, default_model, topo, run, s, catalog)
+                library, default_model, s, catalog, post_facts)
             post = _make_post(
                 builder, kb, scope,
                 model_post=line_post_sku, model_cap=line_cap_sku,

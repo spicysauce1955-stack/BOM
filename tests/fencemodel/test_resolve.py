@@ -5,7 +5,9 @@ from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
     PartRequirement, Variant,
 )
-from fenceai.fencemodel.resolve import PanelContext, resolve_panel, select_variant
+from fenceai.fencemodel.resolve import (
+    PanelContext, choose_variant_by, rail_positions_mm, resolve_panel, select_variant,
+)
 from fenceai.knowledge.ast import Cmp, FieldRef, Lit
 
 RAIL = PartRequirement(
@@ -292,3 +294,57 @@ def test_select_variant_and_resolve_panel_pin_together():
     spec, index = select_variant(model, ctx)
     assert index == 0
     assert resolve_panel(spec, ctx) == resolve_panel(LEGACY, ctx)
+
+
+# --- rail positions: the fact a routed post is matched against ----------------
+
+def test_rail_positions_are_the_resolved_count_placed_up_the_height():
+    """The one derivation, and it is `placement_positions`' answer. The count is
+    the knowledge-resolved one, because a company rule saying three rails moves
+    where every rail sits — and a post routed for two would then not fit."""
+    spec = PanelSpec(frame=[FrameSlot(
+        key="rail", orientation="horizontal",
+        placement=Distributed(count=2, count_param="rails_per_span",
+                              bottom_inset_mm=150, top_inset_mm=150),
+        requirement=RAIL)])
+    assert rail_positions_mm(spec, 1800, {}) == [150, 1650]
+    assert rail_positions_mm(spec, 1800, {"rails_per_span": 3}) == [150, 900, 1650]
+    assert rail_positions_mm(spec, 2100, {}) == [150, 1950]
+
+
+def test_only_horizontal_frame_slots_are_rails():
+    """A vertical frame member is a stile, and it is placed across the clear
+    WIDTH — a number a post may not read, because its own face helps define it.
+    Including one here would put the cycle back."""
+    spec = PanelSpec(frame=[
+        FrameSlot(key="rail", orientation="horizontal",
+                  placement=Distributed(count=2), requirement=RAIL),
+        FrameSlot(key="stile", orientation="vertical",
+                  placement=Distributed(count=2), requirement=RAIL),
+    ])
+    assert rail_positions_mm(spec, 1800, {}) == [0, 1800]
+
+
+def test_rail_positions_agree_with_the_panel_that_gets_resolved():
+    """The point of the whole exercise: the positions a post is matched against
+    must be the positions the bay is built to. Asserted against `resolve_panel`'s
+    own answer rather than against a literal, so a change to placement cannot
+    move one without the other."""
+    ctx = _ctx(params={"rails_per_span": 3})
+    panel = resolve_panel(LEGACY, ctx)
+    assert rail_positions_mm(LEGACY, ctx.height_mm, ctx.params) == sorted(
+        p for slot in panel.slots for p in slot.positions_mm
+        if slot.orientation == "horizontal")
+
+
+def test_a_variant_condition_the_context_cannot_answer_is_not_applicable():
+    """`choose_variant_by` takes the condition CONTEXT because a post is resolved
+    at its own station, where the bay's width does not exist. A width-conditioned
+    variant is therefore skipped there — which is why `validate_model` refuses
+    that variant on a model whose post is matched on the rails."""
+    model = FenceModel(
+        id="basic", version=1, default_spec=TALLER,
+        variants=[Variant(condition=WIDTH_1500, spec=LEGACY)],
+    )
+    assert choose_variant_by(model, {"panel": {"width_mm": 1500}}).spec is LEGACY
+    assert choose_variant_by(model, {"panel": {"height_mm": 1800}}).spec is TALLER
