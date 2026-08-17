@@ -70,6 +70,44 @@ importing them from the editor would make a cycle. `panel-canvas-geom.js` and
 `renderElevation` already had, and what keeps two modules under `#tab-models`
 from being two owners of it.
 
+**The two reviews then found the thing the green suite could not**
+(`docs/reviews/panel-canvas-review-response.md`). The fastener invariant was held
+by FUDGING: `_fixings` apportioned a slot's whole `qty` across whatever places
+the geometry yielded, so `sum == qty` was true by definition of the
+apportionment and said nothing about the drawing. Where it bit is
+`per_member_crossing`, which `resolve.py` counts arithmetically (members × frame
+members) while a drawing can only mark crossings that exist — a panel with
+vertical stiles beside vertical slats is counted for 80 and has 42, and the
+apportionment put a plausible "×2" on the real ones to absorb 38 that are
+nowhere. The apportionment is gone: `qty_per_basis` rides on the slot so a place
+holds a DECIDED count, and whatever has no place is REPORTED
+(`fixings_unplaced`, surfaced in the inspector) rather than folded in. The
+invariant is now `places + unplaced == qty`, by construction.
+
+`PLANNING_BEHAVIOR_VERSION` is `planning-v2`: `Span.panel` is persisted and the
+digest is inputs-only, so without the bump an existing project regenerates to
+the same run id, `INSERT OR IGNORE` keeps the document that predates the fields,
+and its bays draw no fasteners for ever with nothing a user can do about it.
+
+Five tests passed with the behaviour they name deleted — each verified by
+mutation, and each now fails: a `writeSentence` that ignored the author's
+comparison, two subset-checked vocabularies, three of four placement arms free
+to mutate their argument, the drag's floors asserted as constants copied out of
+the JS rather than through `validate_model`, and three starters with no
+distinguishing number (ranch rail could ship with two rails). `panel-canvas.js`
+had no test at all; `valueFor` is pure, so it is exported and node-tested — and
+writing that test caught a fixture error of my own within the hour.
+
+Plus nine smaller frontend defects the reviews named: duplicate element keys
+reachable from the add buttons, a rail rename orphaning the boards that name it,
+the inspector offering `between_frame` on a frame slot, a predicate-driven
+eligibility rendering as "no products" beside a button that would author the one
+combination the loader refuses, a drag that lost its pointerup freezing the
+canvas for the session, and a readout showing the pointer rather than the number
+being written.
+
+1222 pytest · 178/178 smoke · scenarios unchanged.
+
 ## W3 is finished — the routed vinyl case (2026-08-17)
 The three pieces `plan/open-work.md` §1 named, in order, plus the preview gap the
 last of them made closable.

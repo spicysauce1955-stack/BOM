@@ -806,6 +806,14 @@ function renderElements() {
 
 const ELEMENT_WORD = { frame: "rail", infill: "board", fixing: "screws" };
 
+// A key minted from the list's LENGTH repeats itself: add three, remove one,
+// add again. `validate_model` refuses the duplicate at the gate, and before it
+// does, everything that addresses an element by key — the chips, the drawing's
+// `data-slot`, the drag handles — silently targets the first of the two. Same
+// rule `freeId` holds for model ids, over the keys of one panel.
+const freeElementKey = (spec, base) => freeId(base, elementsOf(spec).map(
+  (e) => ({ id: e.key })));
+
 // The add buttons keep the ids they had as row-list subheads: they are the same
 // actions, and the browser suite addresses them by name.
 function addBar(spec) {
@@ -817,7 +825,7 @@ function addBar(spec) {
   };
   bar.appendChild(button("btn-model-add-slot", "model.add_slot", () => {
     spec.frame ??= [];
-    const slot = defaultSlot(`slot${spec.frame.length + 1}`);
+    const slot = defaultSlot(freeElementKey(spec, "slot"));
     spec.frame.push(slot);
     selection = { kind: "frame", key: slot.key };
     touch({ rerender: true });
@@ -831,7 +839,7 @@ function addBar(spec) {
     }));
   if (spec.infill) {
     bar.appendChild(button("btn-model-add-member", "model.add_member", () => {
-      const member = defaultMember(`member${spec.infill.pattern.length + 1}`);
+      const member = defaultMember(freeElementKey(spec, "member"));
       spec.infill.pattern.push(member);
       selection = { kind: "infill", key: member.key };
       touch({ rerender: true });
@@ -839,7 +847,7 @@ function addBar(spec) {
   }
   bar.appendChild(button("btn-model-add-fixing", "model.add_fixing", () => {
     spec.fixings ??= [];
-    const fixing = defaultFixing(`fix${spec.fixings.length + 1}`);
+    const fixing = defaultFixing(freeElementKey(spec, "fix"));
     spec.fixings.push(fixing);
     selection = { kind: "fixing", key: fixing.key };
     touch({ rerender: true });
@@ -857,6 +865,9 @@ async function renderInspectorPane() {
     selection, products,
     spec: specOf(session.model, specIndex),
     model: session.model,
+    // the drawing the server just returned, so the inspector can say what it
+    // could not place — never to measure anything off
+    elevation: preview?.elevation,
     onChange: touch,
     onRemove: () => { selection = SELECTION_NONE; touch({ rerender: true }); },
     // a rename moves the selection with it: everything that holds one holds a

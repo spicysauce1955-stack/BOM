@@ -102,7 +102,13 @@ DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_co
 # materialization identity this system does not have yet (see the backend audit
 # response, §1.5) — putting it in the DESIGN digest would deepen exactly the
 # conflation that finding is about.
-PLANNING_BEHAVIOR_VERSION = "planning-v1"
+# v2: a resolved fixing slot carries its `basis` and `qty_per_basis`, from which
+# the elevation derives where the fasteners land. Panel resolution's OUTPUT
+# therefore changed for unchanged inputs, which is exactly what this constant is
+# for — without the bump an existing project regenerates to the same run id,
+# `save_run`'s INSERT OR IGNORE keeps the document that predates the fields, and
+# its bays draw no fasteners for ever with no user action able to repair it.
+PLANNING_BEHAVIOR_VERSION = "planning-v2"
 RUN_DIGEST_VERSION = "digest-v1"
 
 # The catalog attribute by which a product declares the opening width it fits.

@@ -297,17 +297,19 @@ def test_the_swatch_field_refuses_anything_but_plain_hex(out):
                             ("#a1b2c3;background:url(x)", False)]:
         assert bool(_SWATCH.match(value)) is expected, value
 
-    # and the STYLE assignment is guarded by it. The regex being correct is not
-    # the claim — `chip.style.background = value.swatch` reaching an unchecked
-    # string is the defect, and it leaves SWATCH_RE untouched.
+    # and EVERY style assignment is guarded by it. The regex being correct is
+    # not the claim — a `style.background` reaching an unchecked string is the
+    # defect, and it leaves SWATCH_RE untouched. Scanned across the whole module
+    # rather than one function, because this surface grew a SECOND sink (the
+    # product chip beside each preference row, painted from `attrs.colour`) and
+    # a scan aimed at one function by name cannot see the next one.
     src = (STATIC / "js" / "panel-inspector.js").read_text()
-    body = src[src.index("function swatchField"):]
-    body = body[:body.index("\n}\n")]
-    assign = re.search(r"\.style\.background\s*=\s*([^;]+);", body)
-    assert assign, "swatchField no longer paints a chip — re-read this test"
-    assert "SWATCH_RE.test" in assign.group(1), (
-        "the colour written to style must be one that matched the pattern, "
-        f"got: {assign.group(1).strip()}")
+    sinks = re.findall(r"\.style\.background\s*=\s*([^;]+);", src)
+    assert len(sinks) >= 2, ("every colour sink must be scanned; found", sinks)
+    for sink in sinks:
+        assert "SWATCH_RE.test" in sink, (
+            "the colour written to style must be one that matched the pattern, "
+            f"got: {sink.strip()}")
 
 
 def test_the_editor_and_the_schema_agree_on_the_closed_vocabularies():

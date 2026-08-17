@@ -121,15 +121,28 @@ function sentenceChoice(obj, key, values, prefix, labelKey, opts = {}) {
  * by key and everything holding one — the chips, the drawing's `data-slot`, the
  * inspector itself — would otherwise still be pointing at the old name one
  * keystroke later. */
-function keyField(obj, kind) {
+function keyField(obj, kind, spec) {
   const i = el("input", { type: "text", "data-f": "key", dir: "ltr", class: "sku",
                           size: 10, value: obj.key ?? "" });
   i.addEventListener("input", () => {
+    const was = obj.key;
     obj.key = i.value;
+    // A board names the rails it starts and stops at BY KEY. Renaming a rail
+    // and leaving those behind authors a document the gate refuses with English
+    // authoring text, for an edit that looked like a rename — so the references
+    // move with it.
+    if (kind === "frame") reref(spec, was, obj.key);
     rename({ kind, key: obj.key });
     notify();
   });
   return field("model.key", i);
+}
+
+function reref(spec, was, now) {
+  for (const member of spec?.infill?.pattern || []) {
+    if (member.base_ref === was) member.base_ref = now;
+    if (member.top_ref === was) member.top_ref = now;
+  }
 }
 
 function removeButton(onclick) {
@@ -181,7 +194,7 @@ export function gapControl(member) {
 
 // --- a requirement and the products that may answer it -----------------------
 
-function requirementRows(req, { products, model }) {
+function requirementRows(req, { products, model, spec }, kind) {
   const box = el("div", { class: "builder-sub" });
   if (!req) return box;
   req.eligibility ??= { members: [] };
@@ -190,7 +203,14 @@ function requirementRows(req, { products, model }) {
   const first = row();
   first.appendChild(choice(req, "role", ROLES, roleWord, "model.role"));
   first.appendChild(num(req, "qty", "model.qty", { min: 0 }));
-  first.appendChild(sentenceChoice(req, "length_rule", LENGTH_RULES,
+  // `between_frame` is the one rule that reads a member's base/top refs, and a
+  // FRAME slot has none — the schema refuses it there, so it is not offered
+  // there. Same principle as the narrowed `excess` list: offering a value the
+  // gate then refuses invites an author into a document they can only fix by
+  // undoing the choice the editor invited.
+  const rules = kind === "frame"
+    ? LENGTH_RULES.filter((r) => r !== "between_frame") : LENGTH_RULES;
+  first.appendChild(sentenceChoice(req, "length_rule", rules,
     "model.length_rule.", "model.length_rule",
     { rerender: true, nullKey: "model.length_rule.none" }));
   if (req.length_rule === "overlap")
@@ -199,7 +219,7 @@ function requirementRows(req, { products, model }) {
   first.appendChild(choice(req, "option_axis", axes, (k) => k, "model.option_axis",
     { rerender: true, nullKey: "model.option_axis.none" }));
   box.appendChild(first);
-  box.appendChild(eligibilityList(req, { products, model }));
+  box.appendChild(eligibilityList(req, { products }));
 
   // A slot binds to AT MOST ONE axis, and then names a SKU per axis value. The
   // SKU must be one of the eligible members — anything else is a product the
@@ -234,14 +254,16 @@ function requirementRows(req, { products, model }) {
  * whole list from 1, which is the only arrangement where the two can never
  * disagree. The numbers still exist in the document; they have simply stopped
  * being something a person types. */
-function eligibilityList(req, { products, model }) {
+function eligibilityList(req, { products }) {
   const box = el("div", { class: "pref-box" });
   box.appendChild(row(
     el("span", { class: "meta", text: t("model.prefer_order") }),
     addProductButton(req, products)));
   const members = req.eligibility.members;
   if (!members.length) {
-    box.appendChild(el("div", { class: "meta", text: t("model.prefer_none") }));
+    box.appendChild(el("div", { class: "meta",
+      text: t(req.eligibility.predicate ? "model.prefer_predicate"
+                                        : "model.prefer_none") }));
     return box;
   }
   const list = el("ul", { class: "pref-list" });
@@ -304,6 +326,14 @@ const renumber = (members) => members.forEach((m, i) => { m.priority = i + 1; })
 function addProductButton(req, products) {
   const b = el("button", { type: "button", "data-act": "add-eligible",
                            text: t("model.add_eligible") });
+  // an eligibility that declares a PREDICATE may not also name members — the
+  // loader refuses the pair — so the button that would author that combination
+  // is offered as refused rather than as available
+  if (req.eligibility.predicate) {
+    b.disabled = true;
+    b.title = t("model.prefer_predicate");
+    return b;
+  }
   b.addEventListener("click", () => {
     req.eligibility.members.push(defaultEligibleMember(
       Object.keys(products).sort()[0], req.eligibility.members.length + 1));
@@ -413,6 +443,9 @@ function i18nLabelField(obj, labelKey) {
 export function renderAxisEditor(host, { model, onChange = () => {} } = {}) {
   if (!host) return;
   notify = onChange;
+  // an axis is not a selection, so nothing here renames one — but leaving the
+  // last inspector render's callback installed is a loaded gun in module state
+  rename = () => {};
   host.innerHTML = "";
   model.option_axes ??= [];
   const axes = model.option_axes;
@@ -470,7 +503,7 @@ export function renderAxisEditor(host, { model, onChange = () => {} } = {}) {
  * when the selected thing is deleted, so the caller can drop the selection with
  * it rather than leaving the inspector pointed at nothing. */
 export function renderInspector(host, {
-  selection = SELECTION_NONE, spec, model, products = {},
+  selection = SELECTION_NONE, spec, model, products = {}, elevation = null,
   onChange = () => {}, onRemove = () => {}, onRename = () => {},
 } = {}) {
   if (!host) return;
@@ -478,7 +511,7 @@ export function renderInspector(host, {
   rename = onRename;
   host.innerHTML = "";
   if (!spec || !model) return;
-  const ctx = { products, model, spec, onRemove };
+  const ctx = { products, model, spec, elevation, onRemove };
   switch (selection?.kind) {
     case "frame": return frameInspector(host, selection.key, ctx);
     case "infill": return infillInspector(host, selection.key, ctx);
@@ -504,7 +537,7 @@ function frameInspector(host, key, ctx) {
   host.appendChild(title);
 
   const place = row(
-    keyField(slot, "frame"),
+    keyField(slot, "frame", ctx.spec),
     sentenceChoice(slot, "orientation", ["horizontal", "vertical"],
       "model.orientation.", "model.orientation", { rerender: true }));
   const kindSel = el("select", { class: "builder-kind", "data-f": "placement" });
@@ -539,10 +572,12 @@ function frameInspector(host, key, ctx) {
     host.appendChild(el("div", { class: "meta",
       text: t("model.inspect.interior_not_placeable") }));
   host.appendChild(group("model.inspect.made_of",
-    requirementRows(slot.requirement, ctx)));
+    requirementRows(slot.requirement, ctx, "frame")));
 }
 
 function infillInspector(host, key, ctx) {
+  // the whole pane rebuilds on a rule change, because "starts at"/"ends at"
+  // appear and disappear with it
   const infill = ctx.spec.infill;
   const member = (infill?.pattern || []).find((m) => m.key === key);
   if (!member) return missing(host, "model.inspect.gone");
@@ -563,18 +598,25 @@ function infillInspector(host, key, ctx) {
         num(infill, "edge_margin_mm", "model.edge_margin_mm", { length: true }))));
 
   const frameKeys = (ctx.spec.frame || []).map((s) => s.key);
+  const sizes = row(
+    num(member, "face_offset_mm", "model.face_offset_mm", { length: true }),
+    num(member, "thickness_mm", "model.thickness_mm", { length: true, min: 0 }));
+  // "starts at" / "ends at" are read by ONE length rule, and the schema refuses
+  // a member that sets them under any other — so they are offered under that
+  // one. The rule itself lives a group down, where the board's products are.
+  if (member.requirement?.length_rule === "between_frame") {
+    sizes.appendChild(choice(member, "base_ref", frameKeys, (k) => k, "model.base_ref",
+      { nullKey: "model.ref_none" }));
+    sizes.appendChild(choice(member, "top_ref", frameKeys, (k) => k, "model.top_ref",
+      { nullKey: "model.ref_none" }));
+  }
   host.appendChild(group("model.inspect.this_board",
-    row(keyField(member, "infill"),
+    row(keyField(member, "infill", ctx.spec),
         num(member, "width_mm", "model.width_mm", { length: true, min: 1 })),
     gapControl(member),
-    row(num(member, "face_offset_mm", "model.face_offset_mm", { length: true }),
-        num(member, "thickness_mm", "model.thickness_mm", { length: true, min: 0 }),
-        choice(member, "base_ref", frameKeys, (k) => k, "model.base_ref",
-          { nullKey: "model.ref_none" }),
-        choice(member, "top_ref", frameKeys, (k) => k, "model.top_ref",
-          { nullKey: "model.ref_none" }))));
+    sizes));
   host.appendChild(group("model.inspect.made_of",
-    requirementRows(member.requirement, ctx)));
+    requirementRows(member.requirement, ctx, "infill")));
 }
 
 function fixingInspector(host, key, ctx) {
@@ -588,15 +630,30 @@ function fixingInspector(host, key, ctx) {
       ctx.onRemove({ kind: "fixing", key });
     })));
   host.appendChild(group("model.inspect.where",
-    row(keyField(fix, "fixing"),
+    row(keyField(fix, "fixing", ctx.spec),
         sentenceChoice(fix, "basis", BASES, "model.basis.", "model.basis",
           { rerender: true })),
     basisDiagram(fix.basis),
+    unplacedNote(fix.key, ctx.elevation),
     row(num(fix, "qty_per_basis", "model.qty_per_basis", { min: 0 }),
         choice(fix, "qty_param", COUNT_PARAMS, (v) => tu("action.param." + v),
           "model.qty_param", { nullKey: "model.count_param_none" }))));
   host.appendChild(group("model.inspect.made_of",
-    requirementRows(fix.requirement, ctx)));
+    requirementRows(fix.requirement, ctx, "fixing")));
+}
+
+/** "12 of these are not drawn", when the drawing could not place them all.
+ *
+ * `per_member_crossing` is counted as members x frame members, so a panel with
+ * members that never cross — stiles beside slats — buys fasteners for crossings
+ * that are nowhere on the drawing. The read model reports the leftover rather
+ * than thickening the dots that ARE there, and this is where an author asking
+ * "where do my screws go" finds out that some of them have no answer. */
+function unplacedNote(key, elevation) {
+  const left = (elevation?.fixings_unplaced || []).find((u) => u.slot_key === key);
+  return el("div", { class: "meta inspect-unplaced" },
+    ...(left ? [el("span", { text: t("model.fixings_unplaced", { n: left.qty }) })]
+             : []));
 }
 
 function panelInspector(host, ctx) {

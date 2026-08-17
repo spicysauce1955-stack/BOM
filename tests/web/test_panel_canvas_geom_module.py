@@ -66,7 +66,18 @@ out.vertical = placementFromDrag({kind: "from_bottom", offset_mm: 0}, {
   x_mm: 600, y_mm: 0,
 });
 
-// the input is never mutated
+// the input is never mutated — EVERY arm, not only the one that returns early.
+// Undo/redo restores a snapshot of the document, and a transform that edited its
+// argument has already spent the value that snapshot holds.
+out.untouched = ["from_bottom", "from_top", "fraction", "distributed"].map((kind) => {
+  const before = {kind: "distributed", count: 3, count_param: null,
+                  bottom_inset_mm: 11, top_inset_mm: 22,
+                  offset_mm: 33, permille: 44};
+  before.kind = kind;
+  placementFromDrag(before, {orientation: "horizontal", index: 0, count: 3,
+                             height_mm: H, width_mm: W, x_mm: 700, y_mm: 700});
+  return before;
+});
 out.placement_input_untouched = dist;
 
 // --- width is absolute -----------------------------------------------------
@@ -90,6 +101,21 @@ out.overlap_of = [overlapOf({gap_after_mm: 20}), overlapOf({gap_after_mm: -40}),
                   overlapOf({gap_after_mm: 0})];
 out.gap_for_overlap = [gapForOverlap(false, 20), gapForOverlap(true, 40),
                        gapForOverlap(true, -40)];
+
+// --- what a drag at its limit AUTHORS, for the gate to judge ---------------
+// The floors above are re-statements of the arithmetic. What matters is that the
+// document they produce is one `validate_model` accepts, and that one step past
+// them is one it refuses — the two are joined by a comment today and by pytest
+// below.
+const AT_THE_FLOOR = (() => {
+  const m = {key: "board", width_mm: 140, gap_after_mm: -120};
+  return {
+    width_mm: widthFromDrag(m, {x_mm: 0, member_x_mm: 300}),   // driven far under
+    gap_after_mm: gapFromDrag({key: "board", width_mm: 100, gap_after_mm: 20},
+                              {delta_mm: -9999}),
+  };
+})();
+out.at_the_floor = AT_THE_FLOOR;
 
 // --- handles: one per authored number a drag can reach --------------------
 const ELEV = {
@@ -187,12 +213,65 @@ def test_a_vertical_frame_slot_is_placed_across_the_panel(g):
     assert g["vertical"] == {"kind": "from_bottom", "offset_mm": 600}
 
 
-def test_the_placement_handed_in_is_never_mutated(g):
+def test_no_placement_arm_edits_the_object_it_was_handed(g):
     """Undo/redo restores a snapshot of the document; a transform that edited
-    its argument would have already spent the value the snapshot holds."""
+    its argument has already spent the value the snapshot holds.
+
+    EVERY arm, because only one of the four returns its argument early and a
+    fixture that exercised that one alone would pass with the other three
+    writing through."""
+    for kind, before in zip(["from_bottom", "from_top", "fraction", "distributed"],
+                            g["untouched"]):
+        assert before["offset_mm"] == 33, kind
+        assert before["permille"] == 44, kind
+        assert before["bottom_inset_mm"] == 11, kind
+        assert before["top_inset_mm"] == 22, kind
     assert g["placement_input_untouched"] == {
         "kind": "distributed", "count": 3, "count_param": None,
         "bottom_inset_mm": 0, "top_inset_mm": 0}
+
+
+def _judge(width_mm: int, gap_after_mm: int) -> list[str]:
+    """One board of that width and that gap, through the real publish gate."""
+    from fenceai.catalog.demo import demo_catalog
+    from fenceai.fencemodel.model import FenceModel, validate_model
+
+    model = FenceModel.model_validate({
+        "id": "M-DRAG", "version": 1,
+        "default_spec": {"infill": {
+            "orientation": "vertical",
+            "pattern": [{"key": "board", "width_mm": width_mm,
+                         "gap_after_mm": gap_after_mm,
+                         # a real product, so the only thing left for the gate
+                         # to object to is the advance this test is about
+                         "requirement": {"role": "infill",
+                                         "length_rule": "panel_height",
+                                         "eligibility": {"members": [
+                                             {"kind": "catalog_item",
+                                              "sku": "SLAT-100"}]}}}],
+        }},
+    })
+    return validate_model(model, demo_catalog())
+
+
+def test_a_drag_at_its_limit_authors_a_model_the_publish_gate_accepts(g):
+    """The rule the module header calls load-bearing, joined to the gate that
+    states it rather than to a constant copied out of the JS.
+
+    `validate_model` bounds a member's net advance and the floors in
+    `widthFromDrag`/`gapFromDrag` exist to stop a handle reaching past it.
+    Asserting 121 and -99 only re-states the arithmetic; asserting that the
+    document those produce is one the gate TAKES, and that one millimetre
+    further is one it REFUSES, is what fails if either side moves alone."""
+    floor = g["at_the_floor"]
+    assert _judge(floor["width_mm"], -120) == [], (
+        "a drag stopped at the width floor must author a publishable panel")
+    assert any("never advance" in e for e in _judge(floor["width_mm"] - 1, -120)), (
+        "one millimetre past the floor must be what the gate refuses — if it is "
+        "not, the floor is in the wrong place")
+
+    assert _judge(100, floor["gap_after_mm"]) == []
+    assert any("never advance" in e for e in _judge(100, floor["gap_after_mm"] - 1))
 
 
 def test_a_width_is_read_absolutely(g):

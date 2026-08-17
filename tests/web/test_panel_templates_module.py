@@ -97,6 +97,39 @@ def test_the_five_starters_are_five_different_panels(out):
     assert len(set(drawn.values())) == len(drawn)
 
 
+def test_each_starter_is_the_fence_its_card_names(out):
+    """"They differ from each other" is not the claim — that passes with a
+    picket shipping a 20 mm gap and a ranch rail shipping two rails, which makes
+    the first a duplicate of the slat card and the second a different product.
+    Each card's own defining number, pinned."""
+    spec = lambda key: out["templates"][key]["default_spec"]   # noqa: E731
+
+    # a picket fence IS a slat fence with a gap bigger than a hand, and centred
+    picket = spec("picket")["infill"]
+    assert picket["pattern"][0]["gap_after_mm"] == 70
+    assert picket["justification"] == "center" and picket["excess"] == "truncate"
+    assert (picket["pattern"][0]["gap_after_mm"]
+            > spec("slat")["infill"]["pattern"][0]["gap_after_mm"] * 3)
+
+    # a ranch rail is rails and the view through them: three, and no infill
+    ranch = spec("ranch")
+    assert ranch["infill"] is None
+    assert len(ranch["frame"]) == 1
+    assert ranch["frame"][0]["placement"]["count"] == 3
+
+    # board-on-board is a TWO-member cycle, one of them set back off the face
+    boards = spec("board_on_board")["infill"]["pattern"]
+    assert len(boards) == 2
+    assert sorted(m["face_offset_mm"] for m in boards) == [-18, 0]
+
+    # the horizontal starter cuts to the OPENING, which is what turning a board
+    # sideways changes about it
+    assert (spec("horizontal")["infill"]["pattern"][0]["requirement"]["length_rule"]
+            == "clear_between_posts")
+    assert spec("slat")["infill"]["pattern"][0]["requirement"]["length_rule"] \
+        == "panel_height"
+
+
 def test_the_overlapping_starter_really_overlaps(out):
     """Board-on-board is the case the negative gap exists for, and a starter
     that quietly authored a positive one would leave the whole product family

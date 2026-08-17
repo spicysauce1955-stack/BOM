@@ -53,6 +53,11 @@ export function renderCanvas(host, { elev, spec, selection } = {}, {
   onSelect = () => {}, onCommit = () => {},
 } = {}) {
   if (!host) return null;
+  // A repaint replaces the SVG the pointer was captured on, so a drag in
+  // progress is over whether or not its pointerup ever arrives. Not clearing it
+  // left `isDragging()` true for the rest of the session, and the caller — which
+  // uses it to decide whether to repaint — stopped repainting for good.
+  drag = null;
   host.innerHTML = "";
   const svg = renderElevation(elev, { fixings: true });
   if (!svg) {
@@ -192,8 +197,13 @@ function pointerMm(svg, layout, ev) {
 
 /** The authored value this drag would write, and the number to show while it is
  *  being dragged. `null` when the handle cannot write anything — an interior
- *  rail of a distributed slot, whose position is not authored anywhere. */
-function valueFor(handle, spec, elev, start, at) {
+ *  rail of a distributed slot, whose position is not authored anywhere.
+ *
+ *  Exported because it is pure and it is where the two rules that matter meet:
+ *  which authored field each handle kind writes, and that a WIDTH reads the
+ *  pointer absolutely while a GAP and a MARGIN read the distance it moved. A
+ *  browser can only show that something changed. */
+export function valueFor(handle, spec, elev, start, at) {
   switch (handle.kind) {
     case "placement": {
       const slot = (spec.frame || []).find((s) => s.key === handle.slot_key);
@@ -206,8 +216,12 @@ function valueFor(handle, spec, elev, start, at) {
         x_mm: at[0], y_mm: at[1],
       });
       if (JSON.stringify(placement) === JSON.stringify(slot.placement)) return null;
+      // the number being WRITTEN, not where the pointer is: a `from_top` rail
+      // dragged to 640 above the panel bottom authors 1160 down from the top,
+      // and a readout showing 640 would disagree with the field it is about to
+      // put 1160 into
       return { kind: "placement", placement,
-               readout_mm: handle.axis === "x" ? at[0] : at[1] };
+               readout_mm: authoredLength(placement, elev, slot, handle) };
     }
     case "width": {
       const member = memberOf(spec, handle.slot_key);
@@ -235,6 +249,29 @@ function valueFor(handle, spec, elev, start, at) {
     }
     default:
       return null;
+  }
+}
+
+/** What a placement's own number reads as, in millimetres.
+ *
+ * `fraction` has no millimetre of its own — it is a permille of the height — so
+ * it reports the height it lands at, which is the one figure a person dragging
+ * it is watching. */
+function authoredLength(placement, elev, slot, handle) {
+  const axisLen = slot.orientation === "vertical" ? elev.width_mm : elev.height_mm;
+  switch (placement.kind) {
+    case "from_bottom":
+    case "from_top":
+      return placement.offset_mm;
+    case "fraction":
+      return Math.round((placement.permille * axisLen) / 1000);
+    case "distributed":
+      // the inset on the side that was grabbed — the other one did not move,
+      // and reporting it would read as the drag having done nothing
+      return handle.index === 0
+        ? (placement.bottom_inset_mm || 0) : (placement.top_inset_mm || 0);
+    default:
+      return 0;
   }
 }
 

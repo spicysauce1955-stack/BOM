@@ -339,6 +339,15 @@ SENTENCE_VOCABULARIES = [
     ("LENGTH_RULES", "model.length_rule."),
 ]
 
+# ... and the two the inspector renders as sentences from LITERALS rather than
+# from a const array, which the scan above cannot see. Deleting these from both
+# bundles passes key parity and every other test, and the select then renders a
+# raw `model.orientation.sentence.vertical` in both languages.
+LITERAL_SENTENCE_KEYS = [
+    "model.orientation.sentence.horizontal", "model.orientation.sentence.vertical",
+    "model.approval.sentence.auto", "model.approval.sentence.suggest_only",
+]
+
 
 def test_every_sentence_vocabulary_value_has_both_a_label_and_a_phrasing():
     """The canvas reads `model.basis.sentence.<v>`; the compact places still read
@@ -360,7 +369,32 @@ def test_every_sentence_vocabulary_value_has_both_a_label_and_a_phrasing():
                 for lang, table in (("en", en), ("he", he)):
                     if key not in table:
                         missing.append(f"{lang}:{key}")
+    for key in LITERAL_SENTENCE_KEYS:
+        for lang, table in (("en", en), ("he", he)):
+            if key not in table:
+                missing.append(f"{lang}:{key}")
     assert not missing, missing
+
+
+def test_the_inspector_renders_its_vocabularies_as_sentences():
+    """The keys existing is half of it: nothing else notices if the inspector
+    stops ASKING for them.
+
+    `sentenceChoice` is the one place that turns a value into its phrasing, and
+    a version of it that fell back to the label key would leave every bundle
+    entry above unreachable — the whole "a closed enum reads as a sentence"
+    feature gone, with a green suite and a UI that still works."""
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    body = src[src.index("function sentenceChoice"):]
+    body = body[:body.index("\n}\n")]
+    assert "sentence." in body, (
+        "sentenceChoice must render the phrasing key, not the label key")
+    # ... and every vocabulary that HAS a phrasing is rendered with one. Two
+    # spellings are legitimate: handed to `sentenceChoice` as a prefix, or built
+    # inline where the control does more than set a field (the placement select
+    # rebuilds the whole placement object on change).
+    for const, prefix in SENTENCE_VOCABULARIES:
+        assert f'"{prefix}"' in src or f"{prefix}sentence." in src, (const, prefix)
 
 
 def test_every_material_and_finish_in_the_catalog_has_a_word_in_both_bundles():

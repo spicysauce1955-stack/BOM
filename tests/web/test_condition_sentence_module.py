@@ -95,6 +95,19 @@ def test_anything_the_sentence_cannot_say_reads_as_nothing(s):
     assert s["not_a_sentence"] == [None, None, None, None]
 
 
+def test_every_written_condition_says_what_the_author_picked(s):
+    """The comparison and the field the author chose, in the document.
+
+    "It validates and returns a bool" is not the claim: a `writeSentence` that
+    ignored `cmp` entirely and wrote `>=` every time satisfies that, and turns
+    every variant an author writes into the same one — silently, because the
+    select still shows what they picked."""
+    assert [raw["cmp"] for raw in s["written"]] == s["cmps"]
+    assert all(raw["left"] == {"op": "field", "path": "panel.width_mm"}
+               for raw in s["written"])
+    assert all(raw["right"] == {"op": "lit", "value": 2400} for raw in s["written"])
+
+
 def test_every_written_condition_is_an_expression_the_backend_accepts(s):
     """What the round trip alone does not claim: pydantic has to take it, and
     the evaluator has to answer it."""
@@ -113,6 +126,20 @@ def test_an_unknown_comparison_falls_back_rather_than_being_written(s):
     assert s["unknown_cmp"]["cmp"] == ">="
 
 
+def test_every_numeric_fact_a_bay_carries_is_offered(s):
+    """The other direction: a field the context supplies and the sentence does
+    not offer is a variant an author cannot write at all, and nothing else would
+    notice it going missing."""
+    from fenceai.fencemodel.resolve import PanelContext
+
+    supplied = PanelContext(centre_width_mm=2500, clear_width_mm=2400,
+                            height_mm=1800).condition_ctx()
+    numeric = {f"{head}.{key}"
+               for head, facts in supplied.items()
+               for key, value in facts.items() if isinstance(value, int)}
+    assert set(s["fields"]) == numeric
+
+
 def test_the_offered_fields_are_facts_a_bay_actually_carries(s):
     """A path nothing supplies is a variant that never fires — `choose_variant`
     treats a missing field as "not applicable" rather than as an error, so the
@@ -127,6 +154,18 @@ def test_the_offered_fields_are_facts_a_bay_actually_carries(s):
         assert tail in supplied[head], path
         assert isinstance(supplied[head][tail], int), (
             f"{path} is not a number, so it does not belong in a numeric sentence")
+
+
+def test_the_comparisons_offered_are_exactly_the_schemas_own(s):
+    """EQUALITY, in both directions. A subset assertion passes with the list
+    narrowed to one — five comparisons vanish from the variant editor and every
+    test stays green — which is the trap `test_panel_model_module` documents for
+    the other closed vocabularies."""
+    from typing import get_args
+
+    from fenceai.knowledge.ast import Cmp
+
+    assert set(s["cmps"]) == set(get_args(Cmp.model_fields["cmp"].annotation))
 
 
 def test_the_comparisons_offered_are_the_ones_the_evaluator_honours(s):
