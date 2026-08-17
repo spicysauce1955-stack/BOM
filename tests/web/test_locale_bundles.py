@@ -268,9 +268,19 @@ def test_one_module_owns_each_shared_renderer():
     # One definition is only half of it: a module that stops IMPORTING the
     # shared renderer and inlines its own innerHTML defines nothing new and
     # diverges anyway, which is the failure the docstring is actually about.
+    #
+    # The Models tab is two modules now — the editor owns the session and the
+    # publish gate, the inspector owns the controls over one selected element —
+    # so each is checked for the renderer it is the caller OF. Asserting both
+    # against the editor alone would pass with the inspector growing its own
+    # product picker, which is precisely the divergence being guarded.
     editor = sources["model-editor.js"]
+    inspector = sources["panel-inspector.js"]
     assert 'from "./impact.js"' in editor and "renderImpactReport" in editor
-    assert 'from "./builder-ui.js"' in editor and "skuSelect" in editor
+    assert 'from "./builder-ui.js"' in inspector and "skuSelect" in inspector
+    assert "skuSelect" not in editor, (
+        "the product picker belongs to the inspector; a second caller in the "
+        "editor is a second answer to how a product is named")
 
 
 def test_every_value_the_model_vocabulary_offers_has_a_word_in_both_bundles():

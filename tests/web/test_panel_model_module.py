@@ -213,23 +213,24 @@ def test_every_placement_kind_builds_the_arm_it_names(out):
     assert built["distributed"].count > 0 and built["distributed"].count_param is None
 
 
-def test_a_negative_gap_is_offered_by_the_field_itself(out):
+def test_a_negative_gap_is_offered_by_the_control_itself(out):
     """A negative `gap_after_mm` is an OVERLAP, and board-on-board and shadowbox
-    are exactly that. The claim is about the FIELD: `num()` writes a `min`
-    attribute when it is given one, so the one thing that keeps a negative gap
-    typable is that the gap-after call passes none. Asserting that a value the
-    test itself set to -40 is still -40 proves nothing and stays green through
-    exactly the "tidy" the module header warns about.
+    are exactly that. The claim is about the CONTROL: it now shows a checkbox
+    and a POSITIVE amount, so the one thing that keeps an overlap reachable is
+    that the sign comes from `gapForOverlap` and no `min` bounds the amount.
+    Asserting that a value the test itself set to -40 is still -40 proves
+    nothing and stays green through exactly the "tidy" the module header warns
+    about.
 
     The bound that does exist is on the member's net advance, and it lives in
     `validate_model` — checked here against the same numbers."""
-    import re
-
-    src = (STATIC / "js" / "model-editor.js").read_text()
-    calls = dict(re.findall(r'num\(member, "(\w+)", "[^"]+", \{([^}]*)\}', src))
-    assert "gap_after_mm" in calls and "width_mm" in calls, calls
-    assert "min" not in calls["gap_after_mm"], (
-        "a min on gap-after deletes board-on-board and shadowbox from the editor")
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    body = src[src.index("export function gapControl"):]
+    body = body[:body.index("\n}\n")]
+    assert "gapForOverlap(" in body, (
+        "the sign must come from the shared helper, not from a second rule here")
+    assert "min" not in body, (
+        "a min on the gap amount deletes board-on-board and shadowbox from the editor")
 
     board = out["board_on_board"]
     model = FenceModel.model_validate(out["authored"])
@@ -299,7 +300,7 @@ def test_the_swatch_field_refuses_anything_but_plain_hex(out):
     # and the STYLE assignment is guarded by it. The regex being correct is not
     # the claim — `chip.style.background = value.swatch` reaching an unchecked
     # string is the defect, and it leaves SWATCH_RE untouched.
-    src = (STATIC / "js" / "model-editor.js").read_text()
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
     body = src[src.index("function swatchField"):]
     body = body[:body.index("\n}\n")]
     assign = re.search(r"\.style\.background\s*=\s*([^;]+);", body)

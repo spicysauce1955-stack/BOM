@@ -28,17 +28,18 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import {
-  el, field, loadCatalogProducts, option, skuSelect, updateAdvancedUi,
+  el, field, loadCatalogProducts, option, updateAdvancedUi,
 } from "./builder-ui.js";
 import { loadModelListing, refreshModelListing } from "./fence-models.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
 import {
-  APPROVALS, AXIS_KINDS, BASES, COUNT_PARAMS, EXCESS, GRADES, JUSTIFICATIONS,
-  LENGTH_RULES, PLACEMENT_KINDS, ROLES, SWATCH_RE, blankModel, canChooseId,
-  defaultAxis, defaultEligibility, defaultEligibleMember, defaultFixing,
-  defaultInfill, defaultMember, defaultPlacement, defaultSlot, defaultVariant,
-  draftCopyOf, duplicateOf, freeId, idCollision, specOf,
+  renderAxisEditor, renderInspector, SELECTION_NONE,
+} from "./panel-inspector.js";
+import {
+  GRADES, blankModel, canChooseId, defaultFixing, defaultInfill, defaultMember,
+  defaultSlot, defaultVariant, draftCopyOf, duplicateOf, freeId, idCollision,
+  specOf,
 } from "./panel-model.js";
 import { emit, on } from "./state.js";
 import {
@@ -55,6 +56,9 @@ let listing = [];
 let session = null;      // { model, version | null, invalid, saveError, published }
 let specIndex = -1;      // -1 = default_spec, else variants[specIndex].spec
 let advancedOpen = false;
+// which thing on the panel the inspector is editing — a chip on the element
+// list today, a rectangle on the drawing once the canvas lands
+let selection = SELECTION_NONE;
 let heightMm = DEFAULT_HEIGHT_MM;
 let widthMm = DEFAULT_WIDTH_MM;
 let preview = null;
@@ -158,6 +162,7 @@ function sessionRef() {
 function openSession(model, version, { isNew = false } = {}) {
   session = { model, version, isNew, invalid: null, saveError: null, dirty: false };
   specIndex = -1;
+  selection = SELECTION_NONE;
   advancedOpen = false;
   preview = null;
   previewError = null;
@@ -446,62 +451,9 @@ function renderForm() {
   if (!session) return;
   renderHead();
   renderSpecPicker();
-  renderFrame();
-  renderInfill();
-  renderFixings();
-  renderAxes();
-}
-
-// --- field builders (shared by every row list below) -------------------------
-//
-// Each writes ONE field of the live document and then debounces a save, and
-// each carries `data-f="<field name>"`. That attribute is not decoration: the
-// row lists are generated, so a test (or a person reading the DOM) has no other
-// stable way to name "the length rule of the first frame slot" — and positional
-// selectors are exactly the kind that keep passing after a field moves.
-
-// `length` means the value is millimetres at rest and shown in the display
-// unit. The conversion happens here and nowhere else, so a width typed in cm is
-// stored as mm and reads back as the same width.
-function num(obj, key, labelKey, { length = false, min = null, onCommit = null } = {}) {
-  const raw = obj[key] ?? "";
-  const attrs = { type: "number", "data-f": key, step: length ? inputStep() : "1",
-                  value: raw === "" || !length ? raw : toDisplayValue(raw) };
-  // `min` is a number in the FIELD, so on a length it crosses the same boundary
-  // the value does — a raw `min="1"` means 1 mm in mm and 10 mm in cm.
-  if (min !== null) attrs.min = length ? toDisplayValue(min) : min;
-  const i = el("input", attrs);
-  i.addEventListener("change", () => {
-    obj[key] = length ? (toMm(i.value) ?? 0) : Math.round(i.valueAsNumber || 0);
-    (onCommit || touch)();
-  });
-  return field(labelKey, i);
-}
-
-function text(obj, key, labelKey, { size = 16, ltr = false, nullable = false } = {}) {
-  const i = el("input", { type: "text", "data-f": key, dir: ltr ? "ltr" : "auto", size,
-                          class: ltr ? "sku" : null, value: obj[key] ?? "" });
-  i.addEventListener("input", () => {
-    const v = i.value.trim();
-    obj[key] = nullable && !v ? null : i.value;
-    touch();
-  });
-  return field(labelKey, i);
-}
-
-function choice(obj, key, values, labelFor, labelKey, { rerender = false, nullKey = null } = {}) {
-  const s = el("select", { "data-f": key });
-  if (nullKey) s.appendChild(option("", t(nullKey), obj[key] === null || obj[key] === undefined));
-  for (const v of values) s.appendChild(option(v, labelFor(v), obj[key] === v));
-  // a value the resolver does not honour is never OFFERED, but a document that
-  // already carries one must not be silently rewritten by opening the editor
-  if (obj[key] && !values.includes(obj[key]))
-    s.appendChild(option(obj[key], obj[key], true));
-  s.addEventListener("change", () => {
-    obj[key] = s.value === "" ? null : s.value;
-    touch({ rerender });
-  });
-  return field(labelKey, s);
+  renderElements();
+  renderInspectorPane();
+  renderAxisPane();
 }
 
 // An edit changes the document and re-prices it. It does NOT save: a draft the
@@ -519,17 +471,6 @@ function removeButton(onclick) {
                            title: t("common.remove"), text: "✕" });
   b.addEventListener("click", onclick);
   return b;
-}
-
-function subhead(titleKey, addKey, onAdd, addId = null) {
-  const head = el("div", { class: "builder-head" },
-    el("b", { text: t(titleKey) }));
-  if (addKey) {
-    const b = el("button", { type: "button", id: addId, text: t(addKey) });
-    b.addEventListener("click", onAdd);
-    head.appendChild(b);
-  }
-  return head;
 }
 
 // --- the model head: id, name, grade ----------------------------------------
@@ -572,8 +513,18 @@ function renderHead() {
   });
   row.appendChild(field("model.name", nameInput));
 
-  row.appendChild(choice(session.model, "grade", GRADES,
-    (g) => t("model.grade." + g), "model.grade"));
+  // The grade is written here rather than through the inspector's `choice`,
+  // small as it is: those builders report their edits through a `notify` the
+  // inspector sets per render, and a caller outside that render would be
+  // reporting into whatever the last one happened to leave behind.
+  const grade = el("select", { "data-f": "grade" });
+  for (const g of GRADES)
+    grade.appendChild(option(g, t("model.grade." + g), session.model.grade === g));
+  grade.addEventListener("change", () => {
+    session.model.grade = grade.value;
+    touch();
+  });
+  row.appendChild(field("model.grade", grade));
   host.appendChild(row);
 }
 
@@ -630,317 +581,119 @@ function renderSpecPicker() {
   }
 }
 
-// --- frame slots -------------------------------------------------------------
+// --- what the panel is made of: the elements, and the one being edited -------
+//
+// The list is the SELECTOR the drawing will become: every rail, board and set
+// of screws as a chip, plus the buttons that add one. It stays beside the canvas
+// rather than being replaced by it, because two of the three cannot always be
+// clicked on the drawing — a set of screws with no fasteners placed yet has no
+// dot, and a panel being started has no rectangles at all.
 
-async function renderFrame() {
-  // the catalog is awaited BEFORE the host is cleared, so two renders racing
-  // each other rebuild the list rather than appending a second copy of it
-  const products = await loadCatalogProducts();
-  const host = document.getElementById("model-frame");
-  const spec = specOf(session?.model, specIndex);
-  host.innerHTML = "";
-  if (!spec) return;
-  spec.frame ??= [];
-  host.appendChild(subhead("model.frame", "model.add_slot", () => {
-    spec.frame.push(defaultSlot(`slot${spec.frame.length + 1}`));
-    touch({ rerender: true });
-  }, "btn-model-add-slot"));
-  spec.frame.forEach((slot, idx) => {
-    // the slot and the requirement it carries are ONE thing to read and to
-    // address, so they share a group rather than sitting as loose siblings
-    const group = el("div", { class: "builder-group", "data-slot-row": String(idx) });
-    const row = el("div", { class: "builder-row" });
-    row.appendChild(text(slot, "key", "model.key", { size: 10, ltr: true }));
-    row.appendChild(choice(slot, "orientation", ["horizontal", "vertical"],
-      (v) => t("model.orientation." + v), "model.orientation"));
+const ELEMENT_KINDS = ["frame", "infill", "fixing"];
 
-    const kindSel = el("select", { class: "builder-kind" });
-    for (const k of PLACEMENT_KINDS)
-      kindSel.appendChild(option(k, t("model.placement." + k), slot.placement?.kind === k));
-    kindSel.addEventListener("change", () => {
-      slot.placement = defaultPlacement(kindSel.value);
-      touch({ rerender: true });
-    });
-    row.appendChild(field("model.placement", kindSel));
-
-    const p = slot.placement || {};
-    if (p.kind === "distributed") {
-      row.appendChild(num(p, "count", "model.count", { min: 0 }));
-      // a knowledge PARAM, not an authored integer: rail count ladders with
-      // height and a company rule must still be able to win it
-      row.appendChild(choice(p, "count_param", COUNT_PARAMS,
-        (v) => tu("action.param." + v), "model.count_param",
-        { nullKey: "model.count_param_none" }));
-      row.appendChild(num(p, "bottom_inset_mm", "model.bottom_inset_mm", { length: true }));
-      row.appendChild(num(p, "top_inset_mm", "model.top_inset_mm", { length: true }));
-    } else if (p.kind === "fraction") {
-      row.appendChild(num(p, "permille", "model.permille", { min: 0 }));
-    } else if (p.kind) {
-      row.appendChild(num(p, "offset_mm", "model.offset_mm", { length: true }));
-    }
-    row.appendChild(removeButton(() => {
-      spec.frame.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    group.append(row, requirementRows(slot.requirement, products));
-    host.appendChild(group);
-  });
+/** Every element of the live spec, in the order the panel is read in. */
+function elementsOf(spec) {
+  if (!spec) return [];
+  return [
+    ...(spec.frame || []).map((s) => ({ kind: "frame", key: s.key })),
+    ...(spec.infill?.pattern || []).map((m) => ({ kind: "infill", key: m.key })),
+    ...(spec.fixings || []).map((f) => ({ kind: "fixing", key: f.key })),
+  ];
 }
 
-// --- infill ------------------------------------------------------------------
+const selectionEquals = (a, b) => a?.kind === b?.kind && a?.key === b?.key;
 
-async function renderInfill() {
-  const products = await loadCatalogProducts();
-  const host = document.getElementById("model-infill");
-  const spec = specOf(session?.model, specIndex);
-  host.innerHTML = "";
-  if (!spec) return;
-  const has = !!spec.infill;
-  const head = subhead("model.infill", null);
-  const toggle = el("button", { type: "button", id: "btn-model-toggle-infill",
-                                text: t(has ? "model.remove_infill" : "model.add_infill") });
-  toggle.addEventListener("click", () => {
-    spec.infill = has ? null : defaultInfill();
-    touch({ rerender: true });
-  });
-  head.appendChild(toggle);
-  host.appendChild(head);
-  if (!has) return;
-
-  const infill = spec.infill;
-  const row = el("div", { class: "builder-row" });
-  row.appendChild(choice(infill, "orientation", ["vertical", "horizontal"],
-    (v) => t("model.orientation." + v), "model.orientation"));
-  row.appendChild(choice(infill, "justification", JUSTIFICATIONS,
-    (v) => t("model.justification." + v), "model.justification"));
-  row.appendChild(choice(infill, "excess", EXCESS,
-    (v) => t("model.excess." + v), "model.excess"));
-  row.appendChild(num(infill, "edge_margin_mm", "model.edge_margin_mm", { length: true }));
-  host.appendChild(row);
-
-  infill.pattern ??= [];
-  host.appendChild(subhead("model.pattern", "model.add_member", () => {
-    infill.pattern.push(defaultMember(`member${infill.pattern.length + 1}`));
-    touch({ rerender: true });
-  }, "btn-model-add-member"));
-  const frameKeys = (spec.frame || []).map((s) => s.key);
-  infill.pattern.forEach((member, idx) => {
-    const group = el("div", { class: "builder-group", "data-member-row": String(idx) });
-    const mrow = el("div", { class: "builder-row" });
-    mrow.appendChild(text(member, "key", "model.key", { size: 10, ltr: true }));
-    mrow.appendChild(num(member, "width_mm", "model.width_mm", { length: true, min: 1 }));
-    // NO min: a negative gap is an OVERLAP, and board-on-board and shadowbox are
-    // exactly that. `validate_model` bounds width + gap (the member's net
-    // advance) instead, which is the quantity that must stay positive.
-    mrow.appendChild(num(member, "gap_after_mm", "model.gap_after_mm", { length: true }));
-    mrow.appendChild(num(member, "face_offset_mm", "model.face_offset_mm", { length: true }));
-    mrow.appendChild(num(member, "thickness_mm", "model.thickness_mm", { length: true, min: 0 }));
-    mrow.appendChild(choice(member, "base_ref", frameKeys, (k) => k, "model.base_ref",
-      { nullKey: "model.ref_none" }));
-    mrow.appendChild(choice(member, "top_ref", frameKeys, (k) => k, "model.top_ref",
-      { nullKey: "model.ref_none" }));
-    mrow.appendChild(removeButton(() => {
-      infill.pattern.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    group.append(mrow,
-      el("div", { class: "meta", text: t("model.gap_after_hint") }),
-      requirementRows(member.requirement, products));
-    host.appendChild(group);
-  });
+function selectElement(next) {
+  selection = selectionEquals(selection, next) ? SELECTION_NONE : next;
+  renderElements();
+  renderInspectorPane();
+  emit("panel-selection-changed", selection);
 }
 
-// --- fixings -----------------------------------------------------------------
-
-async function renderFixings() {
-  const products = await loadCatalogProducts();
-  const host = document.getElementById("model-fixings");
-  const spec = specOf(session?.model, specIndex);
+function renderElements() {
+  const host = document.getElementById("model-elements");
+  if (!host) return;
   host.innerHTML = "";
+  const spec = specOf(session.model, specIndex);
   if (!spec) return;
-  spec.fixings ??= [];
-  host.appendChild(subhead("model.fixings", "model.add_fixing", () => {
-    spec.fixings.push(defaultFixing(`fix${spec.fixings.length + 1}`));
-    touch({ rerender: true });
-  }, "btn-model-add-fixing"));
-  spec.fixings.forEach((fix, idx) => {
-    const group = el("div", { class: "builder-group", "data-fixing-row": String(idx) });
-    const row = el("div", { class: "builder-row" });
-    row.appendChild(text(fix, "key", "model.key", { size: 10, ltr: true }));
-    row.appendChild(choice(fix, "basis", BASES, (b) => t("model.basis." + b), "model.basis"));
-    row.appendChild(num(fix, "qty_per_basis", "model.qty_per_basis", { min: 0 }));
-    row.appendChild(choice(fix, "qty_param", COUNT_PARAMS,
-      (v) => tu("action.param." + v), "model.qty_param", { nullKey: "model.count_param_none" }));
-    row.appendChild(removeButton(() => {
-      spec.fixings.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    group.append(row, requirementRows(fix.requirement, products));
-    host.appendChild(group);
-  });
-}
-
-// --- a requirement + its eligibility -----------------------------------------
-
-function requirementRows(req, products) {
-  const box = el("div", { class: "builder-sub" });
-  if (!req) return box;
-  req.eligibility ??= defaultEligibility();
-  req.eligibility.members ??= [];
-
-  const row = el("div", { class: "builder-row" });
-  row.appendChild(choice(req, "role", ROLES, roleWord, "model.role"));
-  row.appendChild(num(req, "qty", "model.qty", { min: 0 }));
-  row.appendChild(choice(req, "length_rule", LENGTH_RULES,
-    (r) => t("model.length_rule." + r), "model.length_rule",
-    { rerender: true, nullKey: "model.length_rule.none" }));
-  if (req.length_rule === "overlap")
-    row.appendChild(num(req, "overlap_mm", "model.overlap_mm", { length: true }));
-  const axes = (session.model.option_axes || []).map((a) => a.key);
-  row.appendChild(choice(req, "option_axis", axes, (k) => k, "model.option_axis",
-    { rerender: true, nullKey: "model.option_axis.none" }));
-  box.appendChild(row);
-
-  // eligibility: an ORDERED list, because `priority` is the company's stated
-  // preference and the order it is read in is part of the answer
-  const eligibility = el("div", { class: "builder-row" });
-  eligibility.appendChild(el("span", { class: "meta", text: t("model.eligibility") }));
-  const add = el("button", { type: "button", "data-act": "add-eligible",
-                             text: t("model.add_eligible") });
-  add.addEventListener("click", () => {
-    req.eligibility.members.push(defaultEligibleMember(
-      Object.keys(products).sort()[0], req.eligibility.members.length + 1));
-    touch({ rerender: true });
-  });
-  eligibility.appendChild(add);
-  box.appendChild(eligibility);
-
-  req.eligibility.members.forEach((member, idx) => {
-    const mrow = el("div", { class: "builder-row", "data-eligible-row": String(idx) });
-    member.kind ??= "catalog_item";
-    const picker = skuSelect(products, member.sku, false,
-      (v) => { member.sku = v; touch({ rerender: true }); });
-    picker.dataset.f = "sku";
-    mrow.appendChild(field("knowledge.builder.sku", picker));
-    mrow.appendChild(num(member, "priority", "model.priority", { min: 1 }));
-    mrow.appendChild(choice(member, "approval", APPROVALS,
-      (a) => t("model.approval." + a), "model.approval"));
-    mrow.appendChild(removeButton(() => {
-      req.eligibility.members.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    box.appendChild(mrow);
-  });
-
-  // A slot binds to AT MOST ONE axis, and then names a SKU per axis value. The
-  // SKU must be one of the eligible members — anything else is a product the
-  // slot was never allowed to use, and `validate_model` says so.
-  if (req.option_axis) {
-    const axis = (session.model.option_axes || []).find((a) => a.key === req.option_axis);
-    req.sku_by_option ??= {};
-    for (const value of axis?.values || []) {
-      const vrow = el("div", { class: "builder-row" });
-      vrow.appendChild(el("span", { class: "meta",
-        text: t("model.sku_for_option", { option: valueLabel(value) }) }));
-      const skus = req.eligibility.members.map((m) => m.sku).filter(Boolean);
-      const sel = el("select");
-      sel.appendChild(option("", t("model.ref_none"), !req.sku_by_option[value.key]));
-      for (const sku of skus)
-        sel.appendChild(option(sku, sku, req.sku_by_option[value.key] === sku));
-      sel.addEventListener("change", () => {
-        if (sel.value) req.sku_by_option[value.key] = sel.value;
-        else delete req.sku_by_option[value.key];
-        touch();
-      });
-      vrow.appendChild(sel);
-      box.appendChild(vrow);
-    }
+  host.appendChild(addBar(spec));
+  const chips = el("div", { class: "element-chips" });
+  for (const item of elementsOf(spec)) {
+    const chip = el("button", {
+      type: "button", class: `element-chip element-${item.kind}`,
+      "data-element": `${item.kind}:${item.key}`,
+    }, el("span", { class: "meta", text: t(`model.inspect.${ELEMENT_WORD[item.kind]}`) }),
+       el("bdi", { class: "sku", text: item.key }));
+    if (selectionEquals(selection, item)) chip.classList.add("selected");
+    chip.addEventListener("click", () => selectElement(item));
+    chips.appendChild(chip);
   }
-  return box;
+  if (!elementsOf(spec).length)
+    chips.appendChild(el("span", { class: "meta", text: t("canvas.empty_hint") }));
+  host.appendChild(chips);
 }
 
-const valueLabel = (value) =>
-  value.label_i18n?.[currentLocale()] || value.label_i18n?.en || value.key;
+const ELEMENT_WORD = { frame: "rail", infill: "board", fixing: "screws" };
 
-// --- option axes -------------------------------------------------------------
-
-function renderAxes() {
-  const host = document.getElementById("model-axes");
-  host.innerHTML = "";
-  session.model.option_axes ??= [];
-  const axes = session.model.option_axes;
-  host.appendChild(subhead("model.axes", "model.add_axis", () => {
-    axes.push(defaultAxis(`axis${axes.length + 1}`));
+// The add buttons keep the ids they had as row-list subheads: they are the same
+// actions, and the browser suite addresses them by name.
+function addBar(spec) {
+  const bar = el("div", { class: "canvas-toolbar" });
+  const button = (id, key, onClick) => {
+    const b = el("button", { type: "button", id, text: t(key) });
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  bar.appendChild(button("btn-model-add-slot", "model.add_slot", () => {
+    spec.frame ??= [];
+    const slot = defaultSlot(`slot${spec.frame.length + 1}`);
+    spec.frame.push(slot);
+    selection = { kind: "frame", key: slot.key };
     touch({ rerender: true });
-  }, "btn-model-add-axis"));
-  axes.forEach((axis, idx) => {
-    const row = el("div", { class: "builder-row", "data-axis-row": String(idx) });
-    row.appendChild(text(axis, "key", "model.key", { size: 12, ltr: true }));
-    row.appendChild(i18nLabelField(axis, "model.label"));
-    row.appendChild(choice(axis, "kind", AXIS_KINDS,
-      (k) => t("model.axis_kind." + k), "model.axis_kind"));
-    const add = el("button", { type: "button", "data-act": "add-axis-value",
-                               text: t("model.add_axis_value") });
-    add.addEventListener("click", () => {
-      axis.values ??= [];
-      axis.values.push({ key: `v${axis.values.length + 1}`, label_i18n: {}, swatch: null });
-      touch({ rerender: true });
-    });
-    row.appendChild(add);
-    row.appendChild(removeButton(() => {
-      axes.splice(idx, 1);
+  }));
+  bar.appendChild(button("btn-model-toggle-infill",
+    spec.infill ? "model.remove_infill" : "model.add_infill", () => {
+      spec.infill = spec.infill ? null : defaultInfill();
+      selection = spec.infill
+        ? { kind: "infill", key: spec.infill.pattern[0].key } : SELECTION_NONE;
       touch({ rerender: true });
     }));
-    host.appendChild(row);
-    for (const [vIdx, value] of (axis.values || []).entries()) {
-      const vrow = el("div", { class: "builder-row", "data-axis-value-row": String(vIdx) });
-      vrow.appendChild(text(value, "key", "model.key", { size: 10, ltr: true }));
-      vrow.appendChild(i18nLabelField(value, "model.label"));
-      vrow.appendChild(swatchField(value));
-      vrow.appendChild(removeButton(() => {
-        axis.values.splice(vIdx, 1);
-        touch({ rerender: true });
-      }));
-      host.appendChild(vrow);
-    }
+  if (spec.infill) {
+    bar.appendChild(button("btn-model-add-member", "model.add_member", () => {
+      const member = defaultMember(`member${spec.infill.pattern.length + 1}`);
+      spec.infill.pattern.push(member);
+      selection = { kind: "infill", key: member.key };
+      touch({ rerender: true });
+    }));
+  }
+  bar.appendChild(button("btn-model-add-fixing", "model.add_fixing", () => {
+    spec.fixings ??= [];
+    const fixing = defaultFixing(`fix${spec.fixings.length + 1}`);
+    spec.fixings.push(fixing);
+    selection = { kind: "fixing", key: fixing.key };
+    touch({ rerender: true });
+  }));
+  return bar;
+}
+
+// The catalog is awaited BEFORE the host is written, so two renders racing each
+// other rebuild the pane rather than leaving a half-built one behind.
+async function renderInspectorPane() {
+  const products = await loadCatalogProducts();
+  const host = document.getElementById("model-inspector");
+  if (!host || !session) return;
+  renderInspector(host, {
+    selection, products,
+    spec: specOf(session.model, specIndex),
+    model: session.model,
+    onChange: touch,
+    onRemove: () => { selection = SELECTION_NONE; touch({ rerender: true }); },
   });
 }
 
-function i18nLabelField(obj, labelKey) {
-  const i = el("input", { type: "text", dir: "auto", size: 16,
-                          value: obj.label_i18n?.[currentLocale()] || "" });
-  i.addEventListener("input", () => {
-    obj.label_i18n = { ...obj.label_i18n, [currentLocale()]: i.value };
-    touch();
-  });
-  return field(labelKey, i);
-}
-
-// A swatch reaches a CSS colour, which is a STYLE context: esc() would not make
-// a bad value safe there. The backend validates `^#[0-9a-fA-F]{6}$` at model
-// load and that check is NOT weakened — the field simply refuses anything else,
-// so the author is told at the keystroke rather than at the publish gate.
-function swatchField(value) {
-  const wrap = el("span", { class: "builder-field" });
-  const chip = el("span", { class: "swatch-chip" });
-  const i = el("input", { type: "text", dir: "ltr", class: "sku", size: 9,
-                          placeholder: "#rrggbb", value: value.swatch || "" });
-  const paint = () => {
-    // only ever a string that MATCHED the pattern reaches the style property
-    chip.style.background = SWATCH_RE.test(value.swatch || "") ? value.swatch : "transparent";
-  };
-  i.addEventListener("input", () => {
-    const v = i.value.trim();
-    const ok = v === "" || SWATCH_RE.test(v);
-    i.classList.toggle("invalid", !ok);
-    if (!ok) return;                 // a half-typed "#ab" is not a colour yet
-    value.swatch = v === "" ? null : v;
-    paint();
-    touch();
-  });
-  paint();
-  wrap.append(el("span", { class: "meta", text: t("model.swatch") }), i, chip);
-  return wrap;
+function renderAxisPane() {
+  renderAxisEditor(document.getElementById("model-axes"),
+                   { model: session.model, onChange: touch });
 }
 
 // --- the live preview, beside the editor -------------------------------------

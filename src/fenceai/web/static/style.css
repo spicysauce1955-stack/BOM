@@ -236,8 +236,46 @@ input[type="number"] { direction: ltr; }
 
 /* fence model editor: the same builder rows, plus a live preview beside them */
 .models-row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
-.models-row > #model-form { flex: 3 1 560px; }
+.models-row > #model-form { flex: 3 1 640px; }
 .models-row > #model-preview { flex: 2 1 340px; }
+
+/* ---------- the panel canvas and its inspector (js/panel-canvas.js,
+   js/panel-inspector.js) ------------------------------------------------------
+   The drawing IS the editor: the canvas selects, the inspector edits what is
+   selected. Two columns, wrapping, following the .models-row convention. */
+#model-editor { display: flex; gap: 10px; align-items: flex-start;
+  flex-wrap: wrap; }
+#model-canvas-pane { flex: 3 1 420px; min-inline-size: 0; }
+#model-inspector { flex: 2 1 300px; min-inline-size: 280px;
+  border-inline-start: 1px solid #e2e8f0; padding-inline-start: 10px; }
+.canvas-toolbar { display: flex; gap: 6px; flex-wrap: wrap;
+  margin-block-end: 6px; }
+.element-chips { display: flex; gap: 6px; flex-wrap: wrap;
+  margin-block-end: 8px; }
+.element-chip { display: inline-flex; gap: 5px; align-items: baseline;
+  border: 1px solid #cbd5e1; border-radius: 12px; padding: 2px 10px;
+  background: #f8fafc; cursor: pointer; }
+.element-chip:hover { border-color: #2563eb; }
+.element-chip.selected { border-color: #2563eb; background: #dbeafe; }
+.inspect-title { display: flex; gap: 6px; align-items: baseline;
+  margin-block-end: 6px; }
+.inspect-group { margin-block: 8px; }
+.inspect-head { display: block; color: #475569; font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.04em; margin-block-end: 2px; }
+/* the preference list IS the priority, so it is ordered by dragging and the
+   numbers are written from the order — never typed */
+.pref-list { list-style: none; margin: 4px 0; padding: 0; }
+.pref-item { display: flex; gap: 6px; align-items: center; padding: 3px 4px;
+  border: 1px solid #e2e8f0; border-radius: 4px; margin-block-end: 3px;
+  background: #fff; }
+.pref-item.dragging { opacity: 0.5; }
+.pref-grip { cursor: grab; color: #94a3b8; }
+/* an illustration of the VOCABULARY, not of this panel: three boards and two
+   rails whatever the model says, because the question is what a basis MEANS */
+.basis-diagram { inline-size: 90px; block-size: 60px; direction: ltr; }
+.basis-rail { fill: #a8b4c4; stroke: #475569; stroke-width: 0.6; }
+.basis-board { fill: #d7dee7; stroke: #475569; stroke-width: 0.6; }
+.basis-dot { fill: #f59e0b; stroke: #78350f; stroke-width: 0.6; }
 .builder-head { display: flex; gap: 8px; align-items: center; margin-block: 8px 2px;
   padding-block-start: 6px; border-block-start: 1px solid #e2e8f0; }
 /* a requirement belongs to the row above it: indented on the reading side, so
