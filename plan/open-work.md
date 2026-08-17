@@ -5,7 +5,7 @@ otherwise. State it follows from: `plan/current-status.md` (newest entry first)
 and `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md`,
 whose §11 carries the wave plan with each wave's findings folded back in.
 
-`main` is green: **1152 pytest · 175 scenario tests · compatibility gate
+`main` is green: **1152 pytest · 175 scenario tests · 170/170 smoke · compatibility gate
 byte-identical** (plus `vinyl.json`, a new fixture, and the one deliberate proved
 regeneration recorded in the spec's §9).
 
@@ -93,11 +93,15 @@ persisted identity. Dispositions in
   another's branch; one agent's `git add -A` stages another's in-progress files.
   It happened here — see the archaeology note in `current-status.md`. Give each
   agent its own worktree, or let exactly one agent touch git; stage by path.
-- **The browser suite is a release gate, not a nicety.** It has now caught five
+- **The browser suite is a release gate, not a nicety.** It has now caught six
   defects in this arc that pytest structurally could not — a user-visible parts
   ordering change, two JS readers left on migrated catalog keys, a rail painting
-  black, a stale bay preview. `TestClient` serialises requests, so no pytest test
-  can see the concurrency class at all.
+  black, a stale bay preview, and a new built-in model absent from the tool that
+  offers them. `TestClient` serialises requests, so no pytest test can see the
+  concurrency class at all. It is also FLAKY under load: one run of this arc
+  reported 32 unrelated failures from the first generation onward and the next
+  clean run passed 170/170. Re-run before believing a broad collapse; believe a
+  single localised failure immediately.
 - **A new user-visible code needs BOTH locale bundles** and a line in the
   `REFUSAL_CODES`/`WARNING_CODES` list; the guard scans `api/app.py` and both
   `code="..."` spellings.

@@ -54,7 +54,12 @@ opening, slats and cut lengths as the run.
 Mutation-verified twelve ways across the four commits; every mutation kills
 exactly the test that claims the behaviour.
 
-1152 pytest · 175 scenario tests · gate byte-identical (one file ADDED, `vinyl.json`).
+1152 pytest · 175 scenario tests · 170/170 smoke · gate byte-identical (one file
+ADDED, `vinyl.json`). The browser suite caught two things pytest could not: the
+model tool's picker list, which is asserted EXACTLY because a published model it
+does not offer is unreachable, and — in the check written for this arc — that the
+routed panel fits nine slats across the opening its own post leaves rather than
+ten across the centre-to-centre width.
 
 ## Note for archaeology: two concurrent agents, one working tree (2026-08-16)
 `11d3c99` ("feat(strategy): a model's post and cap reach the fence") also carries
