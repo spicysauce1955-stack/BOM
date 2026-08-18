@@ -121,14 +121,17 @@ def test_a_corner_turns_the_routing_ninety_degrees(knowledge, catalog):
               Run(id="runB", start_node_id="n2", end_node_id="n3")],
     )
     result = generate(topo, knowledge, catalog, models=LIBRARY, default_model=VINYL)
-    by_kind = {}
-    for post in result.strategy.posts:
-        by_kind.setdefault(post.kind, set()).add(post.sku)
-    assert by_kind == {
-        "end": {"POST-V-1800-END"},
-        "corner": {"POST-V-1800-CORNER"},
-        "line": {"POST-V-1800"},
-    }
+    # BY STATION, not as a set of kinds. Asked as a set, this assertion passes on
+    # a fence that never turns — a straight line drawn with an intermediate click
+    # also yields one end/corner/line of each, and the test named "a corner turns
+    # the routing ninety degrees" would be green on it.
+    at = {post.id: (post.kind, post.sku) for post in result.strategy.posts}
+    assert at["post@node:n1"] == ("end", "POST-V-1800-END")
+    assert at["post@node:n2"] == ("corner", "POST-V-1800-CORNER"), (
+        "the post where the fence actually turns")
+    assert at["post@node:n3"] == ("end", "POST-V-1800-END")
+    assert all(v == ("line", "POST-V-1800")
+               for k, v in at.items() if not k.startswith("post@node:"))
 
 
 def test_the_cap_is_matched_against_the_post_already_chosen(vinyl):
@@ -281,3 +284,94 @@ def test_a_junction_is_refused_generically_and_not_as_a_routing_problem(
     assert exc.value.code == "no_item_covers_part_spec"
     assert exc.value.params["station_mm"] == 4000
     assert exc.value.params["slot_key"] == "post"
+
+
+# --- a node is a corner only if the fence turns there --------------------------
+#
+# `finishDraft` makes ONE RUN PER DRAWN SEGMENT, so every intermediate click on a
+# straight line is a two-run node. While `kind` was a label that cost nothing;
+# it is a PART NUMBER now, and a vinyl corner post is routed on two ADJACENT
+# faces — so a straight node called a corner buys a post that physically cannot
+# receive both its rails, priced and on the BOM.
+
+
+def _two_run_topology(bend_to: tuple[int, int]):
+    """Two runs meeting at n2: straight through, or turning to `bend_to`."""
+    return Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=3000, y_mm=0),
+               Node(id="n3", x_mm=bend_to[0], y_mm=bend_to[1])],
+        runs=[Run(id="r1", start_node_id="n1", end_node_id="n2"),
+              Run(id="r2", start_node_id="n2", end_node_id="n3")],
+    )
+
+
+def _node_post(result, node_id="n2"):
+    return next(p for p in result.strategy.posts if p.id == f"post@node:{node_id}")
+
+
+def test_a_straight_line_drawn_as_two_clicks_buys_no_corner_post(knowledge, catalog):
+    """The ordinary drawing gesture. Two collinear runs meet at 180 degrees, so
+    the post between them is a LINE post — routed on two opposite faces, which is
+    what two panels arriving from opposite directions need."""
+    result = generate(_two_run_topology((6000, 0)), knowledge, catalog,
+                      models=LIBRARY, default_model=VINYL)
+    post = _node_post(result)
+    assert post.kind == "line"
+    assert post.sku == "POST-V-1800", "a straight node must not buy a corner post"
+
+
+def test_a_node_that_really_turns_is_still_a_corner(knowledge, catalog):
+    """The contrast, so the fix above cannot be 'call every node a line post'."""
+    result = generate(_two_run_topology((3000, 3000)), knowledge, catalog,
+                      models=LIBRARY, default_model=VINYL)
+    post = _node_post(result)
+    assert post.kind == "corner"
+    assert post.sku == "POST-V-1800-CORNER"
+
+
+def test_the_turn_threshold_is_the_one_interior_vertices_already_use(knowledge, catalog):
+    """A node and an interior vertex are the same geometry in two shapes, and two
+    thresholds would make the same bend a corner on one and not the other."""
+    import math
+
+    from fenceai.topology.station import CORNER_ANGLE_DEG
+
+    # a bend just inside the threshold reads as straight; just outside, a corner
+    for turn_deg, expected in ((CORNER_ANGLE_DEG - 5, "line"),
+                               (CORNER_ANGLE_DEG + 5, "corner")):
+        rad = math.radians(turn_deg)
+        far = (3000 + round(3000 * math.cos(rad)), round(3000 * math.sin(rad)))
+        result = generate(_two_run_topology(far), knowledge, catalog,
+                          models=LIBRARY, default_model=VINYL)
+        assert _node_post(result).kind == expected, turn_deg
+
+
+def test_a_gate_post_takes_the_single_face_variant(knowledge, catalog):
+    """`gate` is mapped to `single` deliberately — a gate post meets ONE panel
+    through one routed face, and the leaf hangs on hardware. The mapping is
+    argued at length in the demo and in the doc, and nothing exercised it: with
+    `gate` unmapped the run fails generation with the SAME refusal S16 uses to
+    prove the junction gap is deliberate, so the doc's distinction between
+    "mapped" and "deliberately unmapped" was unverifiable.
+
+    Kills: dropping "gate" from the end arm of M-VINYL's position mapping.
+    """
+    from fenceai.topology.model import GatePayload
+
+    from tests.conftest import add_point_event
+
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "gate1", 3000,
+                    GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    # It generates AT ALL — that is the load-bearing part. `_model_post_skus`
+    # evaluates the model's post predicate at every station including a gate's,
+    # and raises before `_make_post` gets to apply its precedence. So with `gate`
+    # unmapped the predicate admits nothing there and the whole run dies with
+    # `post_routing_mismatch`.
+    result = generate(topo, knowledge, catalog, models=LIBRARY, default_model=VINYL)
+    gates = [p for p in result.strategy.posts if p.kind == "gate"]
+    assert gates, "the gate must place its own posts"
+    # ... and what it actually STANDS is the reinforced post knowledge supplies:
+    # gate reinforcement outranks the model's post, which is why the mapping's
+    # job here is admitting a candidate rather than choosing the final sku.
+    assert {p.sku for p in gates} == {"POST-S-HD"}

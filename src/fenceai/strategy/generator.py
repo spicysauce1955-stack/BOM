@@ -68,8 +68,10 @@ from fenceai.topology.station import (
     corner_stations,
     ground_z,
     max_slope_permille,
+    node_turn_deg,
     run_length,
 )
+from fenceai.topology.station import CORNER_ANGLE_DEG
 
 # "fewest_new_stock" here (pre-ADR-0007) predates fulfillment/supply.py's Preset
 # vocabulary (`Literal["least_cost", "honour_priority"]`, added later in
@@ -893,7 +895,22 @@ def _generate_node_posts(
             )
 
         run0, station0 = touches[0]
-        kind = "end" if len(touches) == 1 else ("corner" if len(touches) == 2 else "junction")
+        # A two-run node is a corner only if the fence actually TURNS there.
+        # `finishDraft` makes one run per drawn segment, so every intermediate
+        # click on a straight line is a two-run node — and while `kind` was only
+        # a label, calling those corners cost nothing. It is a PART NUMBER now:
+        # a vinyl corner post is routed on two ADJACENT faces, so a straight
+        # node classified `corner` buys a post that physically cannot receive
+        # both its rails, priced and on the BOM. Same threshold, and the same
+        # measurement, as the interior-vertex path in `corner_stations`.
+        if len(touches) == 1:
+            kind = "end"
+        elif len(touches) == 2:
+            kind = ("corner"
+                    if node_turn_deg(topology, node.id, touches) > CORNER_ANGLE_DEG
+                    else "line")
+        else:
+            kind = "junction"
         fact = builder.add(
             "input_fact", "topology_node",
             payload={"node_id": node.id, "x_mm": node.x_mm, "y_mm": node.y_mm,

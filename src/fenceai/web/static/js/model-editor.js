@@ -48,6 +48,7 @@ import {
   specOf,
 } from "./panel-model.js";
 import { on } from "./state.js";
+import { warningRowHtml } from "./warnings.js";
 import {
   fmt, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
 } from "./units.js";
@@ -1063,11 +1064,31 @@ function renderPreview() {
   if (session && !isDragging()) renderCanvasPane();
 }
 
+// What the preview WARNED about, above the priced table.
+//
+// The post note has existed since the preview learned to measure its own
+// model's post — "a preview must not silently fall back to the centre-to-centre
+// width, that would be the preview lying about the bay" — and it has never been
+// rendered on the one surface it was written for. `panel.js` had the renderer;
+// this tab simply never called it.
+function previewWarningsHtml() {
+  const list = preview?.warnings || [];
+  if (!list.length) return "";
+  let html = `<div class="panel" id="model-preview-warnings">
+    <h3>${esc(t("panel.warnings_title"))}</h3>`;
+  for (const w of list) html += warningRowHtml(w, { pegs: t("panel.this_panel") });
+  return html + "</div>";
+}
+
 function previewBodyHtml() {
   if (previewError)
     return `<div class="panel meta">${esc(t(previewError))}</div>`;
   if (!preview) return `<div class="panel meta">${esc(t("panel.computing"))}</div>`;
-  let html = `<div class="panel" id="model-parts">
+  // the warnings FIRST, because they change how the table beneath must be read:
+  // a bay drawn at its centre-to-centre width is priced across an opening it
+  // will not have
+  let html = previewWarningsHtml();
+  html += `<div class="panel" id="model-parts">
     <h3>${esc(t("panel.parts_title"))} — <bdi class="sku">${esc(preview.model_ref)}</bdi></h3>
     <div class="meta">${sentence("panel.bay_line",
       { width_mm: preview.width_mm, height_mm: preview.height_mm })}</div>

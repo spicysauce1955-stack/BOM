@@ -2540,6 +2540,76 @@ document.querySelector('#model-elements [data-element="infill:slat"]').click(); 
         check("an overlap is a checkbox, and a negative gap underneath it",
               overlapped["default_spec"]["infill"]["pattern"][0]["gap_after_mm"] == -30)
 
+        # DEFERRED, and every one of them. The pytest guards for this are source
+        # greps — they stayed green with a control replaced by a comment, and with
+        # the raw justification/excess row wrapped in `false ? … :`. Only the
+        # rendered DOM can tell "moved" from "deleted", so the whole set is
+        # enumerated here, inside the disclosure, in the real browser.
+        # a chip click TOGGLES, so "click the board" is not the same as "have the
+        # board selected" — ask for the state, do not assume it
+        c.js("""
+{
+  const chip = document.querySelector('#model-elements [data-element^="infill:"]');
+  const showing = () => !!document.querySelector('#model-inspector [data-f="width_mm"]');
+  if (!showing()) chip.click();
+}
+'ok'""")
+        time.sleep(1.4)
+        advanced = c.js("""
+{
+  const inside = (f) => {
+    const el = document.querySelector(`#model-inspector [data-f="${f}"]`);
+    return !!(el && el.closest('details.inspect-advanced'));
+  };
+  // `base_ref`/`top_ref` are NOT here on purpose: they are offered only under
+  // `between_frame`, the one rule that reads them, so on a board cut to the
+  // panel height their absence is the "never offer what the gate refuses" rule
+  // working. Everything else is unconditional.
+  const want = ['role', 'length_rule', 'option_axis', 'face_offset_mm',
+                'thickness_mm', 'justification', 'excess'];
+  // no claim about the disclosure's open state here: it PERSISTS across
+  // renders, and by this point in the session the author has opened it. That it
+  // starts shut is asserted where a fresh element is first selected.
+  ({board: !!document.querySelector('#model-inspector [data-f="width_mm"]'),
+    refs_hidden_under_this_rule:
+      !document.querySelector('#model-inspector [data-f="base_ref"]'),
+    missing: want.filter((f) => !inside(f))});
+}""")
+        check("every deferred control is inside Advanced, not deleted",
+              advanced["board"] is True and advanced["missing"] == []
+              and advanced["refs_hidden_under_this_rule"] is True)
+
+        # ... and the raw pair really RENDERS, which is what keeps the four
+        # spacing combinations the segmented control cannot say reachable
+        pairs = c.js("""
+{
+  const box = document.querySelector('#model-inspector .inspect-advanced');
+  if (box) box.open = true;
+  const opts = (f) => {
+    const el = document.querySelector(`#model-inspector [data-f="${f}"]`);
+    return el ? [...el.options].map((o) => o.value).filter(Boolean) : [];
+  };
+  ({justification: opts('justification'), excess: opts('excess')});
+}""")
+        check("all eight spacing pairs are reachable, not merely mentioned",
+              len(pairs["justification"]) == 4 and len(pairs["excess"]) == 2)
+
+        # the disclosure must SURVIVE a rebuild — every edit re-renders the pane,
+        # and a version that slams it shut loses the author's place on each
+        # keystroke. Asserting only "shut on first render" cannot see that.
+        c.js("""
+{
+  const w = document.querySelector('#model-inspector [data-f="width_mm"]');
+  w.value = '120'; w.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(1.5)
+        check("the Advanced disclosure stays open across a re-render",
+              c.js("""(() => {
+                const box = document.querySelector('#model-inspector .inspect-advanced');
+                return !!box && box.open === true;
+              })()""") is True)
+
         # the preference list IS the priority: dropping a row renumbers from 1,
         # so the order it reads in and the order it resolves in cannot disagree.
         # It lives behind Advanced now — the default screen carries ONE product

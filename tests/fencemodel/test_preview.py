@@ -409,7 +409,7 @@ def test_a_post_nothing_covers_narrows_by_nothing_and_says_so():
     reads as measured."""
     shown = preview(M_VINYL, height_mm=1234, width_mm=1500)   # no post routed there
     assert shown.clear_width_mm == 1500
-    assert [w.code for w in shown.warnings] == ["no_item_covers_part_spec"]
+    assert [w.code for w in shown.warnings] == ["no_item_covers_post_spec"]
     assert shown.warnings[0].params["role"] == "post"
 
 
@@ -434,7 +434,13 @@ def test_the_preview_draws_the_post_it_measured_the_opening_to():
                             demo_catalog())
     posts = preview.elevation.posts
     assert [p.side for p in posts] == ["start", "end"]
-    assert all(p.sku.startswith("POST-V-") for p in posts)
+    # EXACTLY the line post, not merely "some routed post". The preview names
+    # `kind="line"` deliberately — a representative bay of the run — and
+    # `startswith("POST-V-")` is satisfied by the end and corner variants too,
+    # so it could not see that choice change under it. They are different skus
+    # at different prices.
+    assert [p.kind for p in posts] == ["line", "line"]
+    assert {p.sku for p in posts} == {"POST-V-1800"}
     # the face it drew is the face it measured the opening with
     assert preview.clear_width_mm == 2500 - posts[0].w_mm
 

@@ -555,6 +555,11 @@ function eligibilityList(req, { products }) {
       ev.preventDefault();
       const from = Number(ev.dataTransfer.getData("text/plain"));
       if (!Number.isInteger(from) || from === idx) return;
+      // Remove, then insert at the TARGET'S index: the dragged row takes the
+      // slot of the row it was dropped on, in both directions. Reviewed as an
+      // off-by-one on downward drags; it is not. Removing first does shift the
+      // later indices, and that shift is exactly what makes "insert at idx"
+      // land on the target's slot rather than after it.
       const [moved] = members.splice(from, 1);
       members.splice(idx, 0, moved);
       renumber(members);

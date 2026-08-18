@@ -37,9 +37,43 @@ globalThis.localStorage = {
   s: {}, getItem: (k) => globalThis.localStorage.s[k] ?? null,
   setItem: (k, v) => { globalThis.localStorage.s[k] = String(v); },
 };
+// A minimum SVG DOM, so the RENDERER can be exercised and not only the pure
+// helpers around it. The clamp that would draw a flanking post inside the
+// opening lives in `drawPosts`, which no assertion could reach without this.
+function makeEl(tag) {
+  const node = {
+    tagName: tag, children: [], attrs: {}, textContent: "",
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+    appendChild(child) { this.children.push(child); return child; },
+    append(...kids) { this.children.push(...kids); },
+    addEventListener() {},
+    classList: {
+      add(...names) {
+        const have = (node.attrs.class || "").split(/\s+/).filter(Boolean);
+        node.attrs.class = [...new Set([...have, ...names])].join(" ");
+      },
+      toggle() {},
+    },
+    querySelectorAll(sel) {
+      const want = sel.replace(/^\./, "").split(".");
+      const hits = [];
+      const walk = (n) => {
+        const have = (n.attrs.class || "").split(/\s+/).filter(Boolean);
+        if (want.every((w) => have.includes(w))) hits.push(n);
+        n.children.forEach(walk);
+      };
+      this.children.forEach(walk);
+      return hits;
+    },
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
+  };
+  return node;
+}
 globalThis.document = {
   getElementById: () => null,
   querySelectorAll: () => [],
+  createElementNS: (_ns, tag) => makeEl(tag),
   documentElement: {},
 };
 globalThis.fetch = async (url) => ({
@@ -50,7 +84,7 @@ import { setLocale } from "./js/i18n.js";
 import { setUnits } from "./js/units.js";
 import {
   edgeMargins, elevationLayout, elevationRects, gapDimension, gapLine, gapSummary,
-  hasNominal, layoutMm, layoutPx, pitchDimension,
+  hasNominal, layoutMm, layoutPx, pitchDimension, renderElevation,
 } from "./js/elevation.js";
 
 const SLAT = %(slat)s;
@@ -196,12 +230,13 @@ out.layout_origin = layoutPx(layout, 0, SLAT.height_mm);   // the panel top-left
 out.layout_top = layout.y0;
 out.layout_empty = elevationLayout({ members: [] });
 
+
 // --- the posts the bay stands between --------------------------------------
 const WITH_POSTS = { ...SLAT, posts: [
   {side: "start", kind: "line", x_mm: -90, w_mm: 90, h_mm: SLAT.height_mm,
-   cap_h_mm: 40, sku: "POST-V-1800", cap_sku: "CAP-V-90"},
+   cap_h_mm: 40, sku: "POST-V-1800", cap_sku: "CAP-V-90", cap_declared: false},
   {side: "end", kind: "corner", x_mm: SLAT.width_mm, w_mm: 90, h_mm: SLAT.height_mm,
-   cap_h_mm: 40, sku: "POST-V-1800", cap_sku: "CAP-V-90"},
+   cap_h_mm: 40, sku: "POST-V-1800", cap_sku: "CAP-V-90", cap_declared: false},
 ]};
 out.post_layout_off = (() => {
   const L = elevationLayout(WITH_POSTS);
@@ -212,6 +247,25 @@ out.post_layout_on = (() => {
   const [left] = layoutPx(L, -90, 0);
   const [right] = layoutPx(L, SLAT.width_mm + 90, 0);
   return {x0: L.x0, vw: L.vw, s: L.s, left, right, postPad: L.postPad};
+})();
+
+// --- the posts as DRAWN, not merely as laid out ----------------------------
+// The clamp both docstrings name as the failure mode can only happen in the
+// renderer, and nothing exercised the renderer.
+out.drawn_posts = (() => {
+  const svg = renderElevation(WITH_POSTS, { posts: true, annotations: false });
+  const rects = [...svg.querySelectorAll(".elev-post")].map((r) => ({
+    x: Number(r.getAttribute("x")), w: Number(r.getAttribute("width")),
+    side: r.getAttribute("data-side"),
+  }));
+  const opening = svg.querySelector(".elev-opening");
+  return { rects, opening_x: Number(opening.getAttribute("x")),
+           caps: svg.querySelectorAll(".elev-cap").length,
+           nominal_caps: svg.querySelectorAll(".elev-cap.elev-nominal").length };
+})();
+out.posts_off_by_default = (() => {
+  const svg = renderElevation(WITH_POSTS, { annotations: false });
+  return svg.querySelectorAll(".elev-post").length;
 })();
 
 console.log(JSON.stringify(out));
@@ -420,3 +474,31 @@ def test_the_whole_bay_shares_one_scale(ev):
     off, on = ev["post_layout_off"], ev["post_layout_on"]
     assert on["s"] < off["s"], "the scale must absorb the posts"
     assert on["s"] > off["s"] * 0.9, "and not by shrinking the panel dramatically"
+
+
+def test_the_start_post_is_DRAWN_left_of_the_opening(ev):
+    """The clamp both docstrings name as the failure mode, tested where it can
+    actually happen: `Math.max(post.x_mm, 0)` in the renderer draws the post over
+    the first board and shifts the bay a post-width across. The producer-side
+    tests cannot see it — they assert the number the renderer is handed."""
+    drawn = ev["drawn_posts"]
+    start = next(r for r in drawn["rects"] if r["side"] == "start")
+    end = next(r for r in drawn["rects"] if r["side"] == "end")
+    assert start["x"] + start["w"] <= drawn["opening_x"] + 0.5, (
+        "the start post must be drawn OUTSIDE the opening, to its left")
+    assert end["x"] >= drawn["opening_x"], "and the end post to its right"
+    assert start["x"] != end["x"], "both posts drawn on the same side"
+
+
+def test_an_invented_cap_height_is_drawn_as_a_nominal(ev):
+    """The catalog carries no cap height, so the one drawn is invented. A cap
+    painted exactly like a measured face claims a precision nothing has."""
+    drawn = ev["drawn_posts"]
+    assert drawn["caps"] == 2
+    assert drawn["nominal_caps"] == 2, "an invented size must say so"
+
+
+def test_the_posts_are_off_unless_the_caller_asks(ev):
+    """The Panel and Structure tabs answer what a panel is made OF. Turning the
+    posts on for them would change two drawings nobody asked to change."""
+    assert ev["posts_off_by_default"] == 0

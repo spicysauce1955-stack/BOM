@@ -163,6 +163,21 @@ const lone = {...ELEV, members: [ELEV.members[0], ELEV.members[1], ELEV.members[
 out.lone_board_handles = handlesFor(lone, SPEC)
   .filter((h) => h.slot_key === "slat").map((h) => h.kind);
 
+// a TWO-member pattern (board-on-board): the margin is one number on the
+// infill, so it gets one handle however many members there are
+const PAIR_ELEV = {...ELEV, members: [
+  ...ELEV.members.slice(0, 2),
+  {slot_key: "back", role: "infill", kind: "infill", index: 0,
+   x_mm: 40, y_mm: 0, w_mm: 100, h_mm: H},
+  {slot_key: "front", role: "infill", kind: "infill", index: 0,
+   x_mm: 110, y_mm: 0, w_mm: 100, h_mm: H},
+]};
+const PAIR_SPEC = {...SPEC, infill: {orientation: "vertical", edge_margin_mm: 40,
+  pattern: [{key: "back", width_mm: 100, gap_after_mm: -30},
+            {key: "front", width_mm: 100, gap_after_mm: -30}]}};
+out.pair_margins = handlesFor(PAIR_ELEV, PAIR_SPEC)
+  .filter((h) => h.kind === "margin").map((h) => [h.slot_key, h.x_mm]);
+
 out.snap = [snap(103), snap(107), snap(-103), SNAP_MM];
 
 console.log(JSON.stringify(out));
@@ -347,3 +362,15 @@ def test_a_lone_board_has_a_width_and_a_margin_but_no_gap(g):
 
 def test_snapping_is_five_millimetres(g):
     assert g["snap"] == [105, 105, -105, 5]
+
+
+def test_a_two_board_pattern_gets_one_margin_handle_not_two(g):
+    """`edge_margin_mm` lives on the INFILL, not on a member. One handle per
+    NUMBER is the module's own rule, and a board-on-board pattern was getting
+    one per member — both writing the same value, and the second sitting
+    nowhere near the margin it moved.
+
+    It rides the OUTERMOST board, because that is the edge the margin measures
+    to."""
+    assert len(g["pair_margins"]) == 1, g["pair_margins"]
+    assert g["pair_margins"][0] == ["back", 40], "the margin belongs to the outer board"

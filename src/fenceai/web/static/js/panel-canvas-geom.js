@@ -176,10 +176,19 @@ export function handlesFor(elev, spec) {
                  y_mm: vertical
                    ? cy : Math.round((first.y_mm + first.h_mm + next.y_mm) / 2) });
     }
-    out.push({ id: `margin:${member.key}:0`, kind: "margin", slot_key: member.key,
-               index: 0, axis,
-               x_mm: vertical ? first.x_mm : cx,
-               y_mm: vertical ? cy : first.y_mm });
+    // `edge_margin_mm` lives on the INFILL, not on a member, so it gets ONE
+    // handle however many members the pattern has — on the outermost drawn
+    // board, which is the edge the margin actually measures to. A board-on-board
+    // pattern was getting one per member, all writing the same number, and the
+    // second sat nowhere near the margin it moved.
+    if (!out.some((h) => h.kind === "margin")
+        && along(first) === Math.min(...members
+          .filter((m) => m.kind === "infill").map(along))) {
+      out.push({ id: `margin:${member.key}:0`, kind: "margin", slot_key: member.key,
+                 index: 0, axis,
+                 x_mm: vertical ? first.x_mm : cx,
+                 y_mm: vertical ? cy : first.y_mm });
+    }
   }
   return out;
 }

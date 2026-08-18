@@ -153,9 +153,10 @@ def preview_panel(
     clear = request.clear_width_mm if request.clear_width_mm is not None else request.width_mm
     spec, variant_index = select_variant(model, _ctx(clear))
     post_note: StrategyWarning | None = None
-    post_sku, post_face = "", 0
+    post_sku, post_face, post_panel = "", 0, {}
     if request.clear_width_mm is None and model.post is not None:
-        face, post_sku, post_note = _preview_post_face(model, spec, request, catalog)
+        face, post_sku, post_panel, post_note = _preview_post_face(
+            model, spec, request, catalog)
         post_face = face
         clear = clear_opening_mm(request.width_mm, face, face)
         # a variant is chosen from height, width and vertical mode — none of
@@ -199,7 +200,7 @@ def preview_panel(
         elevation=panel_elevation(
             drawn, clear, request.height_mm,
             posts=_preview_posts(model, post_sku, post_face, clear,
-                             request.height_mm, spec, request, catalog)),
+                                 request.height_mm, post_panel, catalog)),
         parts=parts,
         unsupplied=[_part(line, None) for line in priced.unresolved],
         warnings=priced.warnings + ([post_note] if post_note is not None else []),
@@ -215,7 +216,7 @@ NOMINAL_CAP_PERMILLE = 25
 
 def _preview_posts(
     model: FenceModel, sku: str, face_mm: Mm, clear_mm: Mm, height_mm: Mm,
-    spec, request: "PreviewRequest", catalog: Catalog,
+    panel: dict, catalog: Catalog,
 ) -> list[ElevationPost]:
     """The two posts this imagined bay stands between.
 
@@ -230,7 +231,7 @@ def _preview_posts(
     """
     if not sku or face_mm <= 0:
         return []      # no post matched: draw none rather than a nominal one
-    cap_sku = _preview_cap_sku(model, spec, request, catalog, sku)
+    cap_sku = _preview_cap_sku(model, panel, catalog, sku)
     cap_h = (height_mm * NOMINAL_CAP_PERMILLE) // 1000 if cap_sku else 0
     return [
         ElevationPost(
@@ -243,12 +244,18 @@ def _preview_posts(
 
 
 def _preview_cap_sku(
-    model: FenceModel, spec, request: "PreviewRequest", catalog: Catalog, post_sku: str,
+    model: FenceModel, panel: dict, catalog: Catalog, post_sku: str,
 ) -> str:
     """Which cap this post takes, matched the way generation matches it.
 
     A cap's predicate reads the POST it caps, which is only answerable because
     the post was chosen first — so this runs after, never beside.
+
+    It is handed the PANEL facts as well as the post, exactly as
+    `_model_post_skus` does. `_post_namespace_errors` explicitly lets a cap read
+    `panel.height_mm` and its siblings, so matching over the post alone made a
+    legal cap predicate match nothing HERE and match in the fence — a preview
+    reporting a gap the fence does not have.
     """
     if model.post is None or model.post.cap is None:
         return ""
@@ -257,14 +264,14 @@ def _preview_cap_sku(
         return ""
     matched = match_eligibility(
         model.post.cap.eligibility, catalog,
-        chosen_post_facts(product, {"kind": "line"}),
+        {**panel, **chosen_post_facts(product, panel["post"])},
     ).members
     return matched[0].sku if matched else ""
 
 
 def _preview_post_face(
     model: FenceModel, spec, request: "PreviewRequest", catalog: Catalog,
-) -> tuple[Mm, str, StrategyWarning | None]:
+) -> tuple[Mm, str, dict, StrategyWarning | None]:
     """How much of this imagined bay is post rather than opening, and which post.
 
     The model's own post, matched exactly as generation matches it — the same
@@ -291,17 +298,21 @@ def _preview_post_face(
     being edited is half-written by definition — but a silent fall-back to the
     centre-to-centre width would be the preview lying about the bay.
     """
+    facts = post_panel_facts(
+        model_id=model.id, height_mm=request.height_mm, vertical=request.vertical,
+        rail_positions_mm=rail_positions_mm(spec, request.height_mm, request.params),
+        kind="line",
+    )
     matched = match_eligibility(
-        model.post.requirement.eligibility, catalog,
-        post_panel_facts(
-            model_id=model.id, height_mm=request.height_mm, vertical=request.vertical,
-            rail_positions_mm=rail_positions_mm(spec, request.height_mm, request.params),
-            kind="line",
-        ),
+        model.post.requirement.eligibility, catalog, facts,
     ).members
     if not matched:
-        return 0, "", StrategyWarning(
-            code="no_item_covers_part_spec", severity="warning",
+        # Its OWN code. `no_item_covers_part_spec` is the CAP's, and its sentence
+        # says the post is uncapped — so an author whose POST spec matches
+        # nothing was told about a cap, and the natural repair is to delete the
+        # wrong conjunct.
+        return 0, "", facts, StrategyWarning(
+            code="no_item_covers_post_spec", severity="warning",
             message=f"No item in the catalog covers {model.ref}'s post "
                     f"specification, so this bay is drawn at its centre-to-centre "
                     f"width rather than the opening between two posts.",
@@ -310,7 +321,7 @@ def _preview_post_face(
         )
     product = catalog.products.get(matched[0].sku)
     face = (product.capabilities.face_width_mm or 0) if product else 0
-    return face, matched[0].sku, None
+    return face, matched[0].sku, facts, None
 
 
 # -- a bay of a stored run ----------------------------------------------------

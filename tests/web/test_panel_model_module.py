@@ -425,6 +425,60 @@ def test_only_a_session_creating_a_model_refuses_a_taken_id(out):
 # that reads as harmless to restore.
 
 
+def _rename_through_the_module(was: str, now: str) -> dict:
+    """Run the real `applyRename` over a spec whose board names a rail twice."""
+    import json as _json
+    import subprocess as _sp
+
+    module = (STATIC / "js" / "panel-inspector.js").as_posix()
+    script = f"""
+globalThis.localStorage = {{ getItem: () => null, setItem: () => {{}} }};
+globalThis.document = {{ getElementById: () => null, querySelectorAll: () => [],
+  querySelector: () => null, documentElement: {{}},
+  createElement: () => ({{ style: {{}}, classList: {{ add(){{}}, toggle(){{}} }},
+    append(){{}}, appendChild(){{}}, addEventListener(){{}}, setAttribute(){{}} }}),
+  createElementNS: () => ({{ setAttribute(){{}}, appendChild(){{}} }}) }};
+import {{ applyRename }} from "{module}";
+const spec = {{
+  frame: [{{key: "{was}", orientation: "horizontal",
+           placement: {{kind: "distributed", count: 2}},
+           requirement: {{role: "rail"}}}}],
+  infill: {{orientation: "vertical", pattern: [
+    {{key: "slat", width_mm: 100, gap_after_mm: 20,
+      base_ref: "{was}", top_ref: "{was}",
+      requirement: {{role: "infill", length_rule: "between_frame"}}}}]}},
+  fixings: [],
+}};
+applyRename(spec, "frame", "{was}", "{now}");
+console.log(JSON.stringify(spec));
+"""
+    proc = _sp.run(["node", "--input-type=module", "-e", script],
+                   capture_output=True, text=True, cwd=STATIC)
+    assert proc.returncode == 0, proc.stderr
+    return _json.loads(proc.stdout)
+
+
+def _judge_renamed(spec: dict) -> None:
+    """The renamed document, through the gate that refuses a dangling ref."""
+    model = FenceModel.model_validate({
+        "id": "M-RENAME", "version": 1,
+        "default_spec": {
+            **spec,
+            "frame": [{**spec["frame"][0], "requirement": {
+                "role": "rail", "length_rule": "centre_to_centre",
+                "eligibility": {"members": [
+                    {"kind": "catalog_item", "sku": "RAIL-3000"}]}}}],
+            "infill": {**spec["infill"], "pattern": [{
+                **spec["infill"]["pattern"][0],
+                "requirement": {"role": "infill", "length_rule": "between_frame",
+                                "eligibility": {"members": [
+                                    {"kind": "catalog_item", "sku": "SLAT-100"}]}}}]},
+        },
+    })
+    assert validate_model(model, demo_catalog()) == [], (
+        "a rename that orphans a ref authors a document the gate refuses")
+
+
 def test_the_key_is_no_longer_a_field_and_the_rename_still_carries_its_refs():
     """Nothing in the trade names a board, so the `key` stopped being a field:
     it is generated, displayed as "Rail"/"Board 2", and renamed behind a
@@ -441,9 +495,18 @@ def test_the_key_is_no_longer_a_field_and_the_rename_still_carries_its_refs():
 
     assert "function keyField" not in inspector, (
         "the permanent key field is the control this pane was cut down to lose")
-    body = inspector[inspector.index("export function applyRename"):]
-    body = body[:body.index("\n}\n")]
-    assert "reref(" in body, "a rename must carry base_ref/top_ref with it"
+    # RUN it, do not grep it. `applyRename` is exported and is a pure transform
+    # over a plain object, and asserting that the word "reref(" appears in its
+    # body stayed green with the `top_ref` half of reref deleted — which is the
+    # exact defect this test is named for.
+    renamed = _rename_through_the_module("rail", "top-rail")
+    member = renamed["infill"]["pattern"][0]
+    assert renamed["frame"][0]["key"] == "top-rail"
+    assert member["base_ref"] == "top-rail", "base_ref left behind by the rename"
+    assert member["top_ref"] == "top-rail", "top_ref left behind by the rename"
+    # ... and the document it produces is one the publish gate takes, which is
+    # the property the refs exist for
+    _judge_renamed(renamed)
     # ... and uniqueness, which belongs to the module holding the whole key set
     rename = editor[editor.index("function finishRename"):]
     rename = rename[:rename.index("\n}\n")]

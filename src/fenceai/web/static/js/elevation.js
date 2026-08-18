@@ -113,7 +113,8 @@ export function gapSummary(elev) {
 /** True when any drawn member's face size is a nominal the read model invented.
  *  The drawing has to say so, or it claims a precision the catalog does not have. */
 export function hasNominal(elev) {
-  return (elev?.members || []).some((m) => m.declared === false);
+  return (elev?.members || []).some((m) => m.declared === false)
+    || (elev?.posts || []).some((p) => p.declared === false || p.cap_declared === false);
 }
 
 /** One gap to dimension on the drawing, in PANEL coordinates, or null.
@@ -538,7 +539,11 @@ function drawPosts(svg, L, elev) {
       [post.kind, post.sku].filter(Boolean).join(" \u00b7 ") || "post";
     if (post.cap_h_mm > 0) {
       const cap = el("rect", {
-        class: "elev-cap", x: r(x), y: r(y),
+        // the catalog carries no cap height, so the one drawn is invented — and
+        // a drawing that paints an invented size exactly like a measured one is
+        // claiming a precision it does not have
+        class: `elev-cap${post.cap_declared === false ? " elev-nominal" : ""}`,
+        x: r(x), y: r(y),
         width: r(Math.max(post.w_mm * L.s, 0.5)),
         height: r(Math.max(post.cap_h_mm * L.s, 0.5)),
         "data-slot": "cap", "data-side": post.side,

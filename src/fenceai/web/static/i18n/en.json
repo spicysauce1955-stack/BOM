@@ -753,6 +753,7 @@
   "assembly.gate_height_unknown": "A gate opening is drawn without a leaf where no neighbouring bay states a height.",
   "assembly.simplified": "Panels are drawn as blocks on this run — too many members to read at this scale.",
   "warning.no_item_covers_part_spec": "No product in the catalogue covers the cap specification of {model} at station {station_mm} — the post there is uncapped",
+  "warning.no_item_covers_post_spec": "No product in the catalogue covers the post specification of {model} — this bay is drawn at its centre-to-centre width rather than the opening between two posts",
   "error.no_item_covers_part_spec": "No product in the catalogue covers the {role} specification of model {model} at station {station_mm}. A fence cannot be built without a post there: add a product that meets the specification, or change the model's {slot_key} slot.",
   "error.post_spec_conflict": "The bays either side of station {station_mm} are built to different models ({models}), and no post in the catalogue satisfies both specifications. Both apply to the one post that stands between them, so either the models must agree or the boundary must move.",
   "error.post_routing_mismatch": "The panel at station {station_mm} puts its rails at {wanted}, and the posts of model {model} are routed at {routed}. The holes are punched at the factory, so this fence cannot be assembled — change the height, the rail count, or the post product.",

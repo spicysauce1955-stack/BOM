@@ -114,6 +114,35 @@ def corner_stations(topo: Topology, run: Run) -> list[Mm]:
     return corners
 
 
+def node_turn_deg(topo: Topology, node_id: str, touches: list[tuple[Run, Mm]]) -> float:
+    """How far the fence turns AT a node where exactly two runs meet.
+
+    The same measurement `corner_stations` makes at an interior vertex, at the
+    one place the geometry lives in a different shape: a vertex has its two
+    neighbours inside one run's point list, a node has one in each of two runs.
+
+    Drawing a straight fence with an intermediate click produces exactly this —
+    `finishDraft` makes one run per segment — so without the angle the node is
+    indistinguishable from a right-angle corner, and a fence that never turns
+    reads as one that turns twice.
+    """
+    def _away(run: Run, station: Mm) -> tuple[Mm, Mm]:
+        """The point this run heads towards, leaving the node."""
+        points = run_points(topo, run)
+        return points[1] if station == 0 else points[-2]
+
+    node = topo.node(node_id)
+    here = (node.x_mm, node.y_mm)
+    (run_a, station_a), (run_b, station_b) = touches
+    a = _away(run_a, station_a)
+    b = _away(run_b, station_b)
+    # both vectors point AWAY from the node, so a straight-through node has them
+    # opposed (180 degrees) — the turn is how far that falls short of straight
+    ang1 = math.atan2(here[1] - a[1], here[0] - a[0])
+    ang2 = math.atan2(b[1] - here[1], b[0] - here[0])
+    return abs(math.degrees((ang2 - ang1 + math.pi) % (2 * math.pi) - math.pi))
+
+
 def max_slope_permille(topo: Topology, run: Run) -> int:
     """Steepest grade (permille, int) across consecutive ground samples (node
     elevations + events — endpoint-only slope would read an up-then-down run as

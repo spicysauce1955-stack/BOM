@@ -44,6 +44,10 @@ WARNING_CODES = [
     # answer (a post without a cap is still a fence). Two severities, two
     # sentences, one fact.
     "no_item_covers_part_spec",
+    # ... and the POST's own. The line above is the CAP's, and its sentence says
+    # the post is uncapped — reusing it for a post nothing covers told an author
+    # about a cap and pointed the repair at the wrong conjunct.
+    "no_item_covers_post_spec",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 
@@ -124,6 +128,10 @@ def test_backend_code_list_is_current():
         src / "ai" / "stub.py",
         src / "fulfillment" / "supply.py",
         src / "fencemodel" / "resolve.py",
+        # the PREVIEW emits codes too, and was invisible to this guard — the
+        # same hole the routes had, found the same way (a new code shipped with
+        # no locale entry because nothing scanned the file that raised it)
+        src / "fencemodel" / "preview.py",
         src / "demand" / "derive.py",
         # the ROUTES emit codes too, in HTTP detail bodies, and they were
         # invisible to this guard twice over: the file was not scanned, and a
