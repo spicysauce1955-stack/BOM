@@ -250,6 +250,7 @@ def _judge(width_mm: int, gap_after_mm: int) -> list[str]:
     """One board of that width and that gap, through the real publish gate."""
     from fenceai.catalog.demo import demo_catalog
     from fenceai.fencemodel.model import FenceModel, validate_model
+    from fenceai.parts.model import PartLibrary
 
     model = FenceModel.model_validate({
         "id": "M-DRAG", "version": 1,
@@ -266,7 +267,11 @@ def _judge(width_mm: int, gap_after_mm: int) -> list[str]:
                                               "sku": "SLAT-100"}]}}}],
         }},
     })
-    return validate_model(model, demo_catalog())
+    # The net-advance rule is part-DERIVED — a member's width arrives from the part
+    # its slot names — so `validate_model` skips it without a library. This document
+    # names no part, so resolution leaves the authored width alone and the empty
+    # library is simply the caller saying it can answer the question.
+    return validate_model(model, demo_catalog(), PartLibrary())
 
 
 def test_a_drag_at_its_limit_authors_a_model_the_publish_gate_accepts(g):

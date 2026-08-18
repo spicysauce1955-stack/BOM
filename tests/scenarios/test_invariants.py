@@ -24,9 +24,15 @@ from fenceai.topology.model import (
 from fenceai.fencemodel.demo import demo_models
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.selection import FenceModelChoice
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
 from tests.conftest import add_interval_event, add_point_event, straight_topology
 
 LIBRARY = FenceModelLibrary(models=list(demo_models().values()))
+# The part library those models name. Supplied at every `generate` that supplies a
+# model library, because that is what the API does: a slot names a part, and a run
+# with no library resolves a panel of 0 mm members.
+PARTS = PartLibrary(parts=demo_parts())
 SLAT = FenceModelChoice(model_id="M-SLAT")
 VINYL = FenceModelChoice(model_id="M-VINYL")
 
@@ -121,7 +127,7 @@ def spine(request):
     choice = model[0] if model else None
     knowledge, catalog = demo_knowledge(), demo_catalog()
     result = generate(topo, knowledge, catalog, overrides=overrides,
-                      models=LIBRARY, default_model=choice)
+                      models=LIBRARY, parts=PARTS, default_model=choice)
     reqs = derive_requirements(result.strategy, catalog)
     reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
@@ -133,7 +139,7 @@ def rerun(spine):
     """Regenerate the whole spine from the same inputs (real determinism check)."""
     _, _, _, catalog, (topo, overrides, inventory, knowledge, choice) = spine
     result = generate(topo, knowledge, catalog, overrides=overrides,
-                      models=LIBRARY, default_model=choice)
+                      models=LIBRARY, parts=PARTS, default_model=choice)
     reqs = derive_requirements(result.strategy, catalog)
     reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
@@ -275,7 +281,7 @@ def test_no_generated_run_carries_a_pinned_product(name):
     """
     topo, overrides, inventory, *model = _fixtures()[name]
     result = generate(topo, demo_knowledge(), demo_catalog(), overrides=overrides,
-                      models=LIBRARY, default_model=model[0] if model else None)
+                      models=LIBRARY, parts=PARTS, default_model=model[0] if model else None)
     pinned = [(sp.id, slot.slot_key, slot.pinned_sku)
               for sp in result.strategy.spans
               for slot in (sp.panel.slots if sp.panel else [])

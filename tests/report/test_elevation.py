@@ -12,20 +12,33 @@ from __future__ import annotations
 import pytest
 
 from fenceai.catalog.demo import demo_catalog
-from fenceai.fencemodel.demo import M_LEGACY, M_SLAT
+from fenceai.fencemodel.demo import M_LEGACY, M_SLAT, M_SLAT_V2
 from fenceai.fencemodel.model import (
     Distributed, EligibleItem, Eligibility, FrameSlot, FromBottom, FromTop,
     Fraction, PartRequirement, validate_model,
 )
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
 from fenceai.fencemodel.resolve import PanelContext, placement_positions, resolve_panel
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary, SpecField
+from fenceai.parts.resolve import resolve_model_parts
 from fenceai.report.elevation import ElevationMember, panel_elevation
 
 BAY = PanelContext(centre_width_mm=2500, clear_width_mm=2400, height_mm=1800)
 
 
+# A member's width and a frame member's face height are the PART's now, so a
+# drawing made from an authored document draws 0 mm bands. Resolution is where those
+# numbers arrive, and it is upstream of `resolve_panel` exactly as it is in
+# `generate` — a model naming no part passes through it untouched.
+PARTS = PartLibrary(parts=demo_parts())
+SLAT = resolve_model_parts(M_SLAT, PARTS)[0]
+SLAT_V2 = resolve_model_parts(M_SLAT_V2, PARTS)[0]
+
+
 def elevation_of(model, ctx=BAY):
-    return panel_elevation(resolve_panel(model.default_spec, ctx),
+    resolved, _ = resolve_model_parts(model, PARTS)
+    return panel_elevation(resolve_panel(resolved.default_spec, ctx),
                            ctx.clear_width_mm, ctx.height_mm)
 
 
@@ -76,7 +89,7 @@ def test_placement_is_integer_and_rounds_exactly_once():
 def test_the_slat_panel_draws_every_slat_it_bought():
     elevation = elevation_of(M_SLAT)
     slats = by_slot(elevation, "slat")
-    resolved = next(s for s in resolve_panel(M_SLAT.default_spec, BAY).slots
+    resolved = next(s for s in resolve_panel(SLAT.default_spec, BAY).slots
                     if s.slot_key == "slat")
     assert len(slats) == resolved.qty, "the drawing and the BOM disagree on count"
     assert all(m.w_mm == 100 for m in slats), "the slats are drawn at their real width"
@@ -346,7 +359,7 @@ def test_a_panel_with_no_fixing_rule_draws_no_fasteners():
 def test_a_resolved_panel_that_predates_the_basis_draws_no_fasteners():
     """A run stored before `basis` rode on the slot carries "" — and a drawing
     that guessed a basis for it would put screws where that fence has none."""
-    panel = resolve_panel(M_SLAT.default_spec, BAY)
+    panel = resolve_panel(SLAT.default_spec, BAY)
     for slot in panel.slots:
         if slot.slot_kind == "fixing":
             slot.basis = ""
@@ -382,7 +395,7 @@ def test_the_preview_hands_back_a_drawing_that_names_its_products():
     """A rectangle and its price are the same part, so the drawing carries the
     sku the preview resolved rather than making the client join them."""
     preview = preview_panel(M_SLAT, PreviewRequest(height_mm=1800, width_mm=2500),
-                            demo_catalog())
+                            demo_catalog(), part_library=PARTS)
     slats = [m for m in preview.elevation.members if m.slot_key == "slat"]
     assert slats and all(m.sku == "SLAT-100" for m in slats)
     part = next(p for p in preview.parts if p.slot_key == "slat")
@@ -430,7 +443,7 @@ def test_a_seated_slat_is_drawn_as_the_piece_the_bom_buys():
     """
     from fenceai.fencemodel.demo import M_SLAT_V2
 
-    panel = resolve_panel(M_SLAT_V2.default_spec, BAY)
+    panel = resolve_panel(SLAT_V2.default_spec, BAY)
     elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
     slat_slot = next(s for s in panel.slots if s.slot_key == "slat")
 
@@ -461,9 +474,9 @@ def top_seated_model():
     product line would — it exists so the top-engagement branch is reached by a
     test instead of by a customer.
     """
-    from fenceai.fencemodel.demo import M_SLAT_V2
-
-    model = M_SLAT_V2.model_copy(deep=True)
+    # RESOLVED first: the faces and widths this drawing measures are the parts',
+    # and the edits below are about JOINTS, which stay the panel's.
+    model = resolve_model_parts(M_SLAT_V2, PARTS)[0]
     channel, rail = model.default_spec.frame
     channel.joint, channel.channel_depth_mm, channel.insertion_margin_mm = "butt", 0, 0
     rail.joint, rail.channel_depth_mm, rail.insertion_margin_mm = "groove", 20, 2
@@ -564,9 +577,18 @@ def test_a_detail_with_a_nominal_thickness_is_not_declared():
     detail = elevation_of(M_SLAT_V2).details[0]
     assert detail.member_thickness_mm == 0 and detail.declared is False
 
-    model = M_SLAT_V2.model_copy(deep=True)
-    model.default_spec.infill.pattern[0].thickness_mm = 18
-    measured = elevation_of(model).details[0]
+    # How thick the piece is, is the PART's fact — the same move the face height
+    # made — so declaring it means publishing a part that declares it, not writing
+    # a number onto the panel that names one.
+    thick = PartLibrary(parts=[
+        p.model_copy(deep=True, update={
+            "spec": [*p.spec, SpecField(key="thickness_mm", value=18, agree="==",
+                                        unit="mm")]})
+        if p.id == "infill-slat-100" else p
+        for p in demo_parts()])
+    measured = panel_elevation(
+        resolve_panel(resolve_model_parts(M_SLAT_V2, thick)[0].default_spec, BAY),
+        BAY.clear_width_mm, BAY.height_mm).details[0]
     assert measured.member_thickness_mm == 18 and measured.declared is True
 
 
@@ -593,7 +615,7 @@ def test_the_preview_carries_the_joint_details_it_priced():
     from fenceai.fencemodel.demo import M_SLAT_V2
 
     preview = preview_panel(M_SLAT_V2, PreviewRequest(height_mm=1800, width_mm=2500),
-                            demo_catalog())
+                            demo_catalog(), part_library=PARTS)
     assert [d.key for d in preview.elevation.details] == ["slat@bottom_channel"]
     assert preview.elevation.details[0].engagement_mm == 15
     slats = [m for m in preview.elevation.members if m.slot_key == "slat"]
@@ -617,7 +639,7 @@ def test_a_member_drawn_unseated_is_given_no_section_to_be_seated_in():
     from fenceai.fencemodel.demo import M_SLAT_V2
 
     low = PanelContext(centre_width_mm=2500, clear_width_mm=2400, height_mm=120)
-    panel = resolve_panel(M_SLAT_V2.default_spec, low)
+    panel = resolve_panel(SLAT_V2.default_spec, low)
     slat_slot = next(s for s in panel.slots if s.slot_key == "slat")
     assert slat_slot.length_unresolved and slat_slot.span_start_mm is None
 
@@ -693,7 +715,7 @@ def test_the_start_post_sits_OUTSIDE_the_opening():
     """x is negative on the start side, and that is the whole contract: the post
     occupies the millimetres BEFORE the panel begins. A renderer that clamped it
     to zero would draw the post over the first board and shift the bay."""
-    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+    elevation = panel_elevation(resolve_panel(SLAT.default_spec, BAY),
                                 BAY.clear_width_mm, BAY.height_mm,
                                 posts=_posts(BAY.clear_width_mm))
     start = next(p for p in elevation.posts if p.side == "start")
@@ -706,7 +728,7 @@ def test_the_start_post_sits_OUTSIDE_the_opening():
 def test_the_posts_span_the_bay_at_its_centres():
     """Face to face across both posts is the centre-to-centre width the run was
     laid out at — the number the drawing must not disagree with."""
-    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+    elevation = panel_elevation(resolve_panel(SLAT.default_spec, BAY),
                                 BAY.clear_width_mm, BAY.height_mm,
                                 posts=_posts(BAY.clear_width_mm))
     start = next(p for p in elevation.posts if p.side == "start")
@@ -719,7 +741,7 @@ def test_a_post_carries_which_post_it_is():
     """`kind` is the fact a vinyl line is ordered by — end, line and corner posts
     are routed on different faces and are different SKUs. It rides on the
     drawing so the surface can name the part it is showing."""
-    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+    elevation = panel_elevation(resolve_panel(SLAT.default_spec, BAY),
                                 BAY.clear_width_mm, BAY.height_mm,
                                 posts=_posts(BAY.clear_width_mm))
     assert [p.kind for p in elevation.posts] == ["line", "corner"]
@@ -730,7 +752,7 @@ def test_posts_do_not_disturb_anything_else_on_the_drawing():
     """The panel is unchanged by what stands beside it — the boards were fitted
     into the opening, and the opening did not move."""
     without = elevation_of(M_SLAT)
-    with_posts = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+    with_posts = panel_elevation(resolve_panel(SLAT.default_spec, BAY),
                                  BAY.clear_width_mm, BAY.height_mm,
                                  posts=_posts(BAY.clear_width_mm))
     assert with_posts.members == without.members

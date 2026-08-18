@@ -41,19 +41,19 @@ def demo_catalog() -> Catalog:
                 # drawing needs it to draw a post at its real width instead of a
                 # nominal band. A product without it still draws (nominal, and
                 # said so), which is why it is an attr and not a required field.
-                attrs={"material": "galvanised_steel", "finish": "mill",
+                attrs={"type": "post", "material": "galvanised_steel", "finish": "mill",
                        "colour": "#9ca3af"}, capabilities=Capabilities(length_mm=2600, face_width_mm=80)),
         Product(sku="POST-S-HD", name="Heavy-duty ground post", name_i18n={"he": "עמוד מחוזק"},
                 consumption=IndivisibleDiscrete(), price_cents=4200,
-                attrs={"material": "galvanised_steel", "finish": "powder_coated",
+                attrs={"type": "post", "material": "galvanised_steel", "finish": "powder_coated",
                        "colour": "#374151"}, capabilities=Capabilities(length_mm=2600, face_width_mm=100)),
         Product(sku="POST-M", name="Masonry post/bracket", name_i18n={"he": "עמוד קיר"},
                 consumption=IndivisibleDiscrete(), price_cents=3100,
-                attrs={"material": "steel",
+                attrs={"type": "post", "material": "steel",
                        "finish": "powder_coated", "colour": "#374151"}, capabilities=Capabilities(face_width_mm=60)),
         Product(sku="POST-CAP", name="Post cap", name_i18n={"he": "כיפת עמוד"},
                 consumption=IndivisibleDiscrete(), price_cents=300,
-                attrs={"material": "aluminium", "finish": "powder_coated",
+                attrs={"type": "cap", "material": "aluminium", "finish": "powder_coated",
                        "colour": "#374151"}),
         Product(
             sku="RAIL-3000",
@@ -61,7 +61,12 @@ def demo_catalog() -> Catalog:
             name_i18n={"he": 'מוט מסילה 3000 מ"מ'},
             consumption=DivisibleLinear(purchase_length_mm=3000, kerf_mm=3, min_reusable_remnant_mm=300),
             price_cents=1800,
-            attrs={"material": "aluminium", "finish": "mill", "colour": "#cbd5e1"},
+            # `thickness_mm` is the face height M-SLAT@v2's top rail already drew
+            # this section at. Migration writes it onto the PRODUCT because that is
+            # what the model was already claiming, and a `thickness_mm ==` row on
+            # the part has to be answerable by the item or it excludes it.
+            attrs={"type": "rail", "thickness_mm": 40,
+                   "material": "aluminium", "finish": "mill", "colour": "#cbd5e1"},
         ),
         Product(
             # A different PROFILE, not a different length of the same one: the
@@ -76,6 +81,7 @@ def demo_catalog() -> Catalog:
             consumption=DivisibleLinear(purchase_length_mm=3000, kerf_mm=3,
                                         min_reusable_remnant_mm=300),
             price_cents=2400,
+            attrs={"type": "rail", "thickness_mm": 60},
         ),
         Product(
             sku="SLAT-100",
@@ -92,7 +98,11 @@ def demo_catalog() -> Catalog:
             consumption=DivisibleLinear(purchase_length_mm=6000, kerf_mm=3,
                                         min_reusable_remnant_mm=300),
             price_cents=5400,
-            attrs={"material": "cedar", "finish": "stained", "colour": "#8b5e34"},
+            # 100 is the width M-SLAT drew this slat at before the part library
+            # existed. The model was already claiming it; migration writes it where
+            # it belongs, so the part and the item agree by quoting one fact.
+            attrs={"type": "infill", "width_mm": 100,
+                   "material": "cedar", "finish": "stained", "colour": "#8b5e34"},
         ),
         # --- the routed vinyl line (M-VINYL) ---------------------------------
         # `routed_at_mm` is the heights at which this post is punched at the
@@ -129,16 +139,16 @@ def demo_catalog() -> Catalog:
             sku="POST-V-1800", name="Routed vinyl post 1800, line (2 opposite faces)",
             name_i18n={"he": 'עמוד PVC מחורץ 1800 — ביניים (2 פאות נגדיות)'},
             consumption=IndivisibleDiscrete(), price_cents=9800,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "routed_at_mm": [150, 1650], "routed_faces": "opposite"},
+            attrs={"type": "post", "material": "vinyl", "finish": "smooth",
+                   "colour": "#f8fafc", "routed_at_mm": [150, 1650], "routed_faces": "opposite"},
             capabilities=Capabilities(length_mm=2600, face_width_mm=90),
         ),
         Product(
             sku="POST-V-1800-END", name="Routed vinyl post 1800, end (1 face)",
             name_i18n={"he": 'עמוד PVC מחורץ 1800 — קצה (פאה אחת)'},
             consumption=IndivisibleDiscrete(), price_cents=9500,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "routed_at_mm": [150, 1650], "routed_faces": "single"},
+            attrs={"type": "post", "material": "vinyl", "finish": "smooth",
+                   "colour": "#f8fafc", "routed_at_mm": [150, 1650], "routed_faces": "single"},
             capabilities=Capabilities(length_mm=2600, face_width_mm=90),
         ),
         Product(
@@ -146,24 +156,24 @@ def demo_catalog() -> Catalog:
             name="Routed vinyl post 1800, corner (2 adjacent faces)",
             name_i18n={"he": 'עמוד PVC מחורץ 1800 — פינה (2 פאות סמוכות)'},
             consumption=IndivisibleDiscrete(), price_cents=9800,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "routed_at_mm": [150, 1650], "routed_faces": "adjacent"},
+            attrs={"type": "post", "material": "vinyl", "finish": "smooth",
+                   "colour": "#f8fafc", "routed_at_mm": [150, 1650], "routed_faces": "adjacent"},
             capabilities=Capabilities(length_mm=2600, face_width_mm=90),
         ),
         Product(
             sku="POST-V-2100", name="Routed vinyl post 2100, line (2 opposite faces)",
             name_i18n={"he": 'עמוד PVC מחורץ 2100 — ביניים (2 פאות נגדיות)'},
             consumption=IndivisibleDiscrete(), price_cents=11500,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "routed_at_mm": [150, 1950], "routed_faces": "opposite"},
+            attrs={"type": "post", "material": "vinyl", "finish": "smooth",
+                   "colour": "#f8fafc", "routed_at_mm": [150, 1950], "routed_faces": "opposite"},
             capabilities=Capabilities(length_mm=2900, face_width_mm=90),
         ),
         Product(
             sku="POST-V-2100-END", name="Routed vinyl post 2100, end (1 face)",
             name_i18n={"he": 'עמוד PVC מחורץ 2100 — קצה (פאה אחת)'},
             consumption=IndivisibleDiscrete(), price_cents=11200,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "routed_at_mm": [150, 1950], "routed_faces": "single"},
+            attrs={"type": "post", "material": "vinyl", "finish": "smooth",
+                   "colour": "#f8fafc", "routed_at_mm": [150, 1950], "routed_faces": "single"},
             capabilities=Capabilities(length_mm=2900, face_width_mm=90),
         ),
         Product(
@@ -171,8 +181,8 @@ def demo_catalog() -> Catalog:
             name="Routed vinyl post 2100, corner (2 adjacent faces)",
             name_i18n={"he": 'עמוד PVC מחורץ 2100 — פינה (2 פאות סמוכות)'},
             consumption=IndivisibleDiscrete(), price_cents=11500,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "routed_at_mm": [150, 1950], "routed_faces": "adjacent"},
+            attrs={"type": "post", "material": "vinyl", "finish": "smooth",
+                   "colour": "#f8fafc", "routed_at_mm": [150, 1950], "routed_faces": "adjacent"},
             capabilities=Capabilities(length_mm=2900, face_width_mm=90),
         ),
         Product(
@@ -182,8 +192,8 @@ def demo_catalog() -> Catalog:
             sku="CAP-V-90", name="Vinyl post cap 90 mm",
             name_i18n={"he": 'כיפת עמוד PVC 90 מ"מ'},
             consumption=IndivisibleDiscrete(), price_cents=900,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "fits_face_mm": 90},
+            attrs={"type": "cap", "material": "vinyl", "finish": "smooth",
+                   "colour": "#f8fafc", "fits_face_mm": 90},
         ),
         Product(
             # A channelled rail: its 18 mm groove is what the slats seat into, and
@@ -195,7 +205,28 @@ def demo_catalog() -> Catalog:
             consumption=DivisibleLinear(purchase_length_mm=3000, kerf_mm=3,
                                         min_reusable_remnant_mm=300),
             price_cents=2600,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc"},
+            attrs={"type": "rail", "thickness_mm": 60, "width_mm": 38,
+                   "material": "vinyl", "finish": "smooth", "colour": "#f8fafc"},
+        ),
+        Product(
+            # The SECOND product of the vinyl 38 rail section, and the only reason
+            # it exists: every other demo slot names exactly one SKU, so a part with
+            # a real choice to make had nothing to choose between and the alternatives
+            # the drawer offers were rendered by an empty list. `rail-38-vinyl` in
+            # `parts/demo.py` is specified by width and material rather than by SKU,
+            # and admits both this and RAIL-V-3000.
+            #
+            # VINYL, and that is not decoration. golden-scenarios.md:112 records that
+            # a second stock of RAIL-3000 would change S07's answer — S07 depends on
+            # RAIL-3000 being the only aluminium rail stock — so the alternative is
+            # added on the line that carries no such pin.
+            sku="RAIL-V-3600", name="Channelled vinyl rail 3600 mm",
+            name_i18n={"he": 'מסילת PVC מחורצת 3600 מ"מ'},
+            consumption=DivisibleLinear(purchase_length_mm=3600, kerf_mm=3,
+                                        min_reusable_remnant_mm=300),
+            price_cents=3050,
+            attrs={"type": "rail", "thickness_mm": 60, "width_mm": 38,
+                   "material": "vinyl", "finish": "smooth", "colour": "#f8fafc"},
         ),
         Product(
             sku="SLAT-V-150", name="Vinyl slat 150 mm (6000 mm stock)",
@@ -203,7 +234,8 @@ def demo_catalog() -> Catalog:
             consumption=DivisibleLinear(purchase_length_mm=6000, kerf_mm=3,
                                         min_reusable_remnant_mm=300),
             price_cents=4800,
-            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc"},
+            attrs={"type": "infill", "width_mm": 150,
+                   "material": "vinyl", "finish": "smooth", "colour": "#f8fafc"},
         ),
         Product(
             sku="SCREW-S10",
@@ -211,7 +243,8 @@ def demo_catalog() -> Catalog:
             name_i18n={"he": "בורג S10 (קופסה של 20)"},
             consumption=PackagedDiscrete(qty_per_package=20),
             price_cents=450,
-            attrs={"material": "steel", "finish": "mill", "colour": "#6b7280"},
+            attrs={"type": "screw", "material": "steel", "finish": "mill",
+                   "colour": "#6b7280"},
         ),
         Product(
             sku="CONC-25",
@@ -223,7 +256,8 @@ def demo_catalog() -> Catalog:
                 application="per_post_footing",
             ),
             price_cents=800,
-            attrs={"material": "concrete", "finish": "raw", "colour": "#94a3b8"},
+            attrs={"type": "concrete", "material": "concrete", "finish": "raw",
+                   "colour": "#94a3b8"},
         ),
         Product(
             sku="GATE-KIT-1000",
@@ -238,16 +272,17 @@ def demo_catalog() -> Catalog:
             ),
             price_cents=18500,
             # the opening this kit fits: fit is catalog DATA, never parsed from the sku
-            attrs={"category": "gate", "material": "aluminium", "finish": "powder_coated",
+            attrs={"type": "gate", "category": "gate", "material": "aluminium",
+                   "finish": "powder_coated",
                    "colour": "#374151"}, capabilities=Capabilities(opening_width_mm=1000),
         ),
         Product(sku="GATE-LEAF-1000", name="Gate leaf 1000 mm", name_i18n={"he": 'כנף שער 1000 מ"מ'},
                 consumption=IndivisibleDiscrete(), price_cents=12000,
-                attrs={"material": "aluminium", "finish": "powder_coated",
+                attrs={"type": "gate", "material": "aluminium", "finish": "powder_coated",
                        "colour": "#374151"}),
         Product(sku="HINGE-SET", name="Hinge set", name_i18n={"he": "סט צירים"},
                 consumption=IndivisibleDiscrete(), price_cents=2200,
-                attrs={"material": "aluminium", "finish": "anodised",
+                attrs={"type": "fixing", "material": "aluminium", "finish": "anodised",
                        "colour": "#d1d5db"}),
         # no material, no finish, no colour: the ordinary case the drawer must
         # leave blank rather than guess at

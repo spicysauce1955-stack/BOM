@@ -15,6 +15,7 @@ import threading
 from datetime import datetime, timezone
 
 from fenceai.fencemodel.demo import demo_model_versions
+from fenceai.parts.demo import demo_parts
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.model import FenceModel
 from fenceai.fulfillment.fulfill import Inventory
@@ -131,6 +132,11 @@ class Store:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript("PRAGMA journal_mode=WAL;" + _SCHEMA)
         self._conn.commit()
+        # Parts BEFORE models: a seeded model names a part_id, and a store whose
+        # models arrived first would, for the length of one call, hold a published
+        # model that resolves to nothing. Nothing reads the store between the two
+        # lines today, and the ordering is the cheap way to keep that true.
+        self.seed_parts()
         self.seed_fence_models()
 
     def close(self) -> None:
@@ -371,6 +377,28 @@ class Store:
                 (model.id, model.version, model.status, model.model_dump_json()),
             )
             self._audit(actor, "seed_fence_model", model.ref)
+        self._conn.commit()
+
+    def seed_parts(self, actor: str = "seed") -> None:
+        """The library the built-in models name, seeded on the same terms as they
+        are: keyed on (id, version), never an overwrite.
+
+        A part is EDITABLE — that is the whole point of the shared entity — so
+        re-seeding one would undo an expert's published fix on every restart, and
+        `save_part` would refuse it anyway once the version is active. The check is
+        here so a reopened store is silent rather than raising."""
+        for part in demo_parts():
+            present = self._conn.execute(
+                "SELECT 1 FROM parts WHERE part_id=? AND version=?",
+                (part.id, part.version),
+            ).fetchone()
+            if present:
+                continue
+            self._conn.execute(
+                "INSERT INTO parts (part_id, version, status, doc) VALUES (?,?,?,?)",
+                (part.id, part.version, part.status, part.model_dump_json()),
+            )
+            self._audit(actor, "seed_part", part.ref)
         self._conn.commit()
 
     # -- parts (drafts mutable, published versions frozen) ---------------------

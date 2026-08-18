@@ -21,10 +21,19 @@ from fenceai.fencemodel.resolve import PanelContext, resolve_panel
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion, SetParam
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
+from fenceai.parts.resolve import resolve_model_parts
 from fenceai.report.elevation import panel_elevation
 from fenceai.strategy.generator import generate
 from fenceai.strategy.layout import layout_segment
 from tests.conftest import straight_topology
+
+
+# The library the built-in models name. A width and a face height are the part's
+# now, so a test that hands `resolve_panel` an authored document hands it a member
+# 0 mm wide — resolution is where those numbers arrive, upstream of everything here.
+PARTS = PartLibrary(parts=demo_parts())
 
 
 @pytest.fixture()
@@ -111,7 +120,11 @@ def test_pinning_the_legacy_version_that_does_exist_still_works():
 # --- MAJOR 3: a multi-member pattern drew a wrong picture ---------------------
 
 def two_member_model():
-    model = slat_model().model_copy(deep=True)
+    # RESOLVED, then edited: the widths below are the subject of this test, and a
+    # second resolution would overwrite them with the part's. That is the same
+    # order generation runs in — resolve, then read — with the edit standing in for
+    # a part that declares 200.
+    model, _ = resolve_model_parts(slat_model(), PARTS)
     narrow = Member(
         key="narrow", width_mm=50, gap_after_mm=20,
         requirement=PartRequirement(
@@ -166,7 +179,7 @@ def test_a_truncated_residual_at_the_far_end_is_an_opening_too():
 
 
 def test_a_gap_against_a_post_trips_the_sphere_test():
-    model = slat_model().model_copy(deep=True)
+    model, _ = resolve_model_parts(slat_model(), PARTS)
     model.default_spec.infill.justification = "center"
     model.default_spec.infill.excess = "truncate"
     model.default_spec.infill.pattern[0].width_mm = 300
@@ -224,7 +237,7 @@ def test_the_preview_rows_sum_to_the_total_when_two_slots_share_a_product():
     model.default_spec.frame = [top, bottom]
 
     preview = preview_panel(model, PreviewRequest(height_mm=1800, width_mm=2500),
-                            demo_catalog())
+                            demo_catalog(), part_library=PARTS)
     rows = {p.slot_key: p for p in preview.parts}
     assert {"rail_top", "rail_bottom"} <= set(rows)
     assert sum(p.total_cents for p in preview.parts) == preview.total_cents
@@ -235,7 +248,8 @@ def test_the_preview_rows_sum_to_the_total_when_two_slots_share_a_product():
 
 def test_the_ordinary_one_slot_per_product_panel_is_unchanged():
     preview = preview_panel(M_SLAT, PreviewRequest(height_mm=1800, width_mm=2500),
-                            demo_catalog())
+                            demo_catalog(), part_library=PARTS)
+    assert preview.parts
     assert sum(p.total_cents for p in preview.parts) == preview.total_cents
     assert all(p.shares_sku_with == [] for p in preview.parts)
     assert all(p.purchase_qty > 0 for p in preview.parts)
@@ -248,7 +262,8 @@ def test_the_preview_reports_that_the_model_it_drew_is_invalid():
     exactly what the unsupported-feature table exists to prevent."""
     model = slat_model().model_copy(deep=True)
     model.default_spec.infill.supply = "assembly"     # still refused at load
-    preview = preview_panel(model, PreviewRequest(), demo_catalog())
+    preview = preview_panel(model, PreviewRequest(), demo_catalog(),
+                            part_library=PARTS)
     assert preview.invalid, "the preview claims a model generation would refuse"
     assert preview.parts, "and still shows what it can"
 
@@ -285,7 +300,7 @@ def _channel_run():
 
     library = FenceModelLibrary(models=[M_LEGACY, M_SLAT, M_SLAT_V2])
     return generate(straight_topology(6000), demo_knowledge(), demo_catalog(),
-                    models=library,
+                    models=library, parts=PARTS,
                     default_model=FenceModelChoice(model_id="M-SLAT", version_pin=2))
 
 

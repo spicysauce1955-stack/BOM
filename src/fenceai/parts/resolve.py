@@ -55,6 +55,14 @@ def resolve_model_parts(
     resolved = model.model_copy(deep=True)
     uses: dict[str, PartUse] = {}
     for key, requirement in part_requirements(resolved):
+        if not requirement.part_id:
+            # A slot that names no part keeps the eligibility it was authored with.
+            # The one production case is `routed_vinyl_model`'s post and cap, whose
+            # predicates compare against a fact about the BAY — a `SpecField` is
+            # `item.<key> <agree> <literal>` and a part cannot declare where this
+            # panel puts its rails. Overwriting it here with the conjunction of
+            # nothing would admit every vinyl post at every station.
+            continue
         part = library.latest_active(requirement.part_id)
         if part is None:
             raise ValueError(
@@ -63,6 +71,9 @@ def resolve_model_parts(
             )
         requirement.eligibility = requirement.eligibility.model_copy(
             update={"predicate": compile_spec(part), "members": []})
+        # Filled, never authored — the part is the one authority on what a piece is,
+        # and `ResolvedSlot.role` / `demand.derive` read it downstream.
+        requirement.role = part.type
         uses[part.id] = PartUse(part_id=part.id, version=part.version,
                                 content_hash=content_hash(part))
     _apply_dimensions(resolved, library)
@@ -124,6 +135,11 @@ def _apply_dimensions(model: FenceModel, library: PartLibrary) -> None:
     measured.
     """
     for holder in _dimension_holders(model):
+        if not holder.requirement.part_id:
+            # Names no part, so nothing here is the authority on its dimensions and
+            # whatever the document already carries stands. Zeroing it would erase a
+            # number this function never supplied a replacement for.
+            continue
         # No `if part is None` guard: every requirement here already passed
         # through the loop in `resolve_model_parts`, which raises for any
         # part_id with no active version before this function is ever called.

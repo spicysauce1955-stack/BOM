@@ -108,9 +108,27 @@ class PartRequirement(BaseModel):
     `eligibility` is not authored here and carries no default a person writes: it is
     filled by `parts.resolve.resolve_model_parts` and cleared by the matcher, which
     is the same lifetime it has always had downstream.
+
+    `role` has the SAME lifetime, and for the same reason: it is not authored here
+    either, it is filled by `resolve_model_parts` from the part's `type`. Role left
+    AUTHORING when the part became the thing that says what a piece is — a slot
+    saying "rail" beside a part_id naming a screw part would be two authorities over
+    one word — but it did not leave the system: `ResolvedSlot.role` is required, and
+    `demand/derive.py` and the decision graph both read it. `""` is what an
+    unresolved document carries, exactly as an empty `Eligibility` is.
+
+    `part_id` defaults to `""`, which means *this slot names no part*. That is not
+    an authoring convenience: `routed_vinyl_model`'s post and cap agree with a fact
+    about the BAY (`item.routed_at_mm == panel.rail_positions_mm`), and a `SpecField`
+    is always `item.<key> <agree> <literal>` — a part cannot declare a fact about the
+    panel it has not been placed in. Those two slots keep their authored predicate and
+    `resolve_model_parts` leaves them alone. `validate_model` still refuses a slot
+    that names no part AND declares no eligibility, so the empty default cannot be a
+    silent way to author nothing.
     """
 
-    part_id: str
+    part_id: str = ""
+    role: str = ""
     qty: int = 1
     length_rule: LengthRule | None = None
     overlap_mm: Mm = 0
@@ -759,7 +777,8 @@ def _part_errors(
     from fenceai.parts.validate import validate_part
 
     errors: list[str] = []
-    for part_id in sorted({req.part_id for _, req in part_requirements(model)}):
+    named = {req.part_id for _, req in part_requirements(model) if req.part_id}
+    for part_id in sorted(named):
         # Never None: `resolve_model_parts` raised for any part_id with no active
         # version before this function could be reached.
         errors += validate_part(library.latest_active(part_id), catalog)
@@ -840,10 +859,17 @@ def _post_slot_errors(post: PostSlot, catalog: Catalog) -> list[str]:
         if req.eligibility.predicate is not None:
             errors += _predicate_errors(f"{post.key} ({what})", req.eligibility, catalog)
             continue
-        # No emptiness rule here any more: a slot's products come from the part it
-        # names, `parts.resolve` fills the predicate above, and an unresolved
-        # document has an empty list for a reason that is not an authoring error.
-        # `validate_model` runs `validate_part` for the same refusal, one level down.
+        # The emptiness rule is narrowed rather than dropped: a slot's products come
+        # from the part it names, `parts.resolve` fills the predicate above, and an
+        # unresolved document has an empty list for a reason that is not an authoring
+        # error — `validate_part` carries that refusal one level down. A slot naming
+        # NO part and declaring nothing is the old case exactly, and it is still the
+        # one that would publish cleanly and then fail on every job.
+        if not req.part_id and not req.eligibility.members:
+            errors.append(
+                f"slot {post.key} ({what}): names no part and declares no eligible "
+                "product, so nothing could ever be bought for it"
+            )
         for m in req.eligibility.members:
             if m.sku not in catalog.products:
                 errors.append(
@@ -1047,11 +1073,21 @@ def validate_model(
                 # that are IN the catalog and satisfy the requirement
                 continue
             # A slot with neither a predicate nor members is an UNRESOLVED slot,
-            # not an empty one: its products come from the part it names. The
-            # refusal that used to live here — a slot nothing can supply publishes
-            # cleanly and then reports `no_eligible_item` on every bay of every job
-            # built to it — is now `validate_part`'s, in the same voice and at the
-            # same moment, over the object that actually says what may supply it.
+            # not an empty one — PROVIDED it names a part, because that is where
+            # its products come from. The refusal that used to live here — a slot
+            # nothing can supply publishes cleanly and then reports
+            # `no_eligible_item` on every bay of every job built to it — is now
+            # `validate_part`'s, in the same voice and at the same moment, over the
+            # object that actually says what may supply it.
+            #
+            # A slot that names NO part and declares nothing is still the old
+            # refusal's case, and it is the one the empty `part_id` default could
+            # otherwise let through silently.
+            if not req.part_id and not skus:
+                errors.append(
+                    f"slot {key}: names no part and declares no eligible product, "
+                    "so nothing could ever be bought for it"
+                )
             for sku in skus:
                 if sku not in catalog.products:
                     errors.append(f"slot {key}: eligible sku {sku} is not in the catalog")

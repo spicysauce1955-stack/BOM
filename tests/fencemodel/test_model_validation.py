@@ -3,6 +3,7 @@ loads rather than trusted at every resolution."""
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+from fenceai.parts.model import PartLibrary
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
     PartRequirement, validate_model,
@@ -125,10 +126,18 @@ def _infill_model(**member_kw) -> FenceModel:
     )))
 
 
+# The three rules below are part-DERIVED — a member's width and a frame member's
+# face arrive from the part the slot names — so `validate_model` skips them without
+# a library rather than refusing the whole portfolio for numbers it has not looked
+# up yet. These fixtures name no part, so resolution leaves their authored numbers
+# exactly as written; the empty library is how the caller says "I can answer that".
+_RESOLVED = PartLibrary()
+
+
 def test_a_zero_width_member_is_rejected():
     """`fit_pattern` places members while the next one still fits; a member with
     no width fits for ever. Nothing bounded width_mm before."""
-    errs = validate_model(_infill_model(width_mm=0), demo_catalog())
+    errs = validate_model(_infill_model(width_mm=0), demo_catalog(), _RESOLVED)
     assert any("width_mm must be positive" in e for e in errs)
 
 
@@ -137,7 +146,7 @@ def test_a_member_whose_overlap_swallows_it_whole_is_rejected():
     at least as big as the member is a pattern that never advances — infinitely
     many slats in one bay, which used to hang generate()."""
     errs = validate_model(_infill_model(width_mm=100, gap_after_mm=-100),
-                          demo_catalog())
+                          demo_catalog(), _RESOLVED)
     assert any("never advance" in e for e in errs)
 
 
@@ -492,7 +501,8 @@ def test_an_engagement_deeper_than_the_channel_cuts_the_member_too_long():
 def test_a_channel_inside_an_undeclared_member_has_no_datum():
     """`thickness_mm=0` is "undeclared" everywhere else in this schema, so a
     depth measured into it is measured from a face the model does not have."""
-    errs = validate_model(_jointed(frame_kw={"thickness_mm": 0}), demo_catalog())
+    errs = validate_model(_jointed(frame_kw={"thickness_mm": 0}), demo_catalog(),
+                          _RESOLVED)
     assert any("thickness_mm is undeclared" in e for e in errs), errs
 
 

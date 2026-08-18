@@ -31,12 +31,15 @@ from fenceai.fencemodel.demo import M_VINYL
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.pipeline import price_strategy
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
 from fenceai.core.errors import GenerationFailure
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import Node, Run, Topology
 from tests.conftest import straight_topology
 
 LIBRARY = FenceModelLibrary(models=[M_VINYL])
+PARTS = PartLibrary(parts=demo_parts())
 VINYL = FenceModelChoice(model_id="M-VINYL")
 
 
@@ -44,7 +47,7 @@ def _run(knowledge, catalog, *, height_mm: int | None = None):
     return generate(
         straight_topology(6000), knowledge, catalog,
         policy={"default_height_mm": height_mm} if height_mm else None,
-        models=LIBRARY, default_model=VINYL,
+        models=LIBRARY, parts=PARTS, default_model=VINYL,
     )
 
 
@@ -120,7 +123,7 @@ def test_a_corner_turns_the_routing_ninety_degrees(knowledge, catalog):
         runs=[Run(id="runA", start_node_id="n1", end_node_id="n2"),
               Run(id="runB", start_node_id="n2", end_node_id="n3")],
     )
-    result = generate(topo, knowledge, catalog, models=LIBRARY, default_model=VINYL)
+    result = generate(topo, knowledge, catalog, models=LIBRARY, parts=PARTS, default_model=VINYL)
     # BY STATION, not as a set of kinds. Asked as a set, this assertion passes on
     # a fence that never turns — a straight line drawn with an intermediate click
     # also yields one end/corner/line of each, and the test named "a corner turns
@@ -280,7 +283,7 @@ def test_a_junction_is_refused_generically_and_not_as_a_routing_problem(
               Run(id="runC", start_node_id="n2", end_node_id="n4")],
     )
     with pytest.raises(GenerationFailure) as exc:
-        generate(topo, knowledge, catalog, models=LIBRARY, default_model=VINYL)
+        generate(topo, knowledge, catalog, models=LIBRARY, parts=PARTS, default_model=VINYL)
     assert exc.value.code == "no_item_covers_part_spec"
     assert exc.value.params["station_mm"] == 4000
     assert exc.value.params["slot_key"] == "post"
@@ -314,7 +317,7 @@ def test_a_straight_line_drawn_as_two_clicks_buys_no_corner_post(knowledge, cata
     the post between them is a LINE post — routed on two opposite faces, which is
     what two panels arriving from opposite directions need."""
     result = generate(_two_run_topology((6000, 0)), knowledge, catalog,
-                      models=LIBRARY, default_model=VINYL)
+                      models=LIBRARY, parts=PARTS, default_model=VINYL)
     post = _node_post(result)
     assert post.kind == "line"
     assert post.sku == "POST-V-1800", "a straight node must not buy a corner post"
@@ -323,7 +326,7 @@ def test_a_straight_line_drawn_as_two_clicks_buys_no_corner_post(knowledge, cata
 def test_a_node_that_really_turns_is_still_a_corner(knowledge, catalog):
     """The contrast, so the fix above cannot be 'call every node a line post'."""
     result = generate(_two_run_topology((3000, 3000)), knowledge, catalog,
-                      models=LIBRARY, default_model=VINYL)
+                      models=LIBRARY, parts=PARTS, default_model=VINYL)
     post = _node_post(result)
     assert post.kind == "corner"
     assert post.sku == "POST-V-1800-CORNER"
@@ -342,7 +345,7 @@ def test_the_turn_threshold_is_the_one_interior_vertices_already_use(knowledge, 
         rad = math.radians(turn_deg)
         far = (3000 + round(3000 * math.cos(rad)), round(3000 * math.sin(rad)))
         result = generate(_two_run_topology(far), knowledge, catalog,
-                          models=LIBRARY, default_model=VINYL)
+                          models=LIBRARY, parts=PARTS, default_model=VINYL)
         assert _node_post(result).kind == expected, turn_deg
 
 
@@ -368,7 +371,7 @@ def test_a_gate_post_takes_the_single_face_variant(knowledge, catalog):
     # and raises before `_make_post` gets to apply its precedence. So with `gate`
     # unmapped the predicate admits nothing there and the whole run dies with
     # `post_routing_mismatch`.
-    result = generate(topo, knowledge, catalog, models=LIBRARY, default_model=VINYL)
+    result = generate(topo, knowledge, catalog, models=LIBRARY, parts=PARTS, default_model=VINYL)
     gates = [p for p in result.strategy.posts if p.kind == "gate"]
     assert gates, "the gate must place its own posts"
     # ... and what it actually STANDS is the reinforced post knowledge supplies:

@@ -20,7 +20,14 @@ from fenceai.learning.impact import (
     preview_model_impact,
 )
 from fenceai.knowledge.model import KnowledgeVersion, SetParam
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
 from tests.conftest import straight_topology
+
+
+# What M-SLAT's slots name. Without it every previewed job is regenerated from an
+# unresolved document — no widths, no products — and every delta comes out zero.
+PARTS = PartLibrary(parts=demo_parts())
 
 
 def library() -> FenceModelLibrary:
@@ -46,7 +53,7 @@ def wider_slats(gap_mm: int):
 def test_widening_the_slat_gap_is_reported_as_a_change_to_the_jobs_that_use_it():
     report = preview_model_impact(
         wider_slats(60), library(), demo_knowledge(), demo_catalog(),
-        [case(FenceModelChoice(model_id="M-SLAT"))],
+        [case(FenceModelChoice(model_id="M-SLAT"))], PARTS,
     )
     assert report.hypothetical_ref == "M-SLAT@v2"
     assert report.projects_checked == 1
@@ -91,7 +98,7 @@ def test_the_old_active_version_is_retired_in_the_hypothesis():
 def test_previewing_the_same_model_again_reports_nothing():
     report = preview_model_impact(
         M_SLAT.model_copy(deep=True), library(), demo_knowledge(), demo_catalog(),
-        [case(FenceModelChoice(model_id="M-SLAT"))],
+        [case(FenceModelChoice(model_id="M-SLAT"))], PARTS,
     )
     assert report.projects_affected == 0
 
@@ -117,7 +124,7 @@ def test_a_knowledge_preview_regenerates_a_job_under_its_own_model():
     )
     def delta_for(choice):
         report = preview_impact(hypothetical, kb, demo_catalog(),
-                                [case(choice)], library())
+                                [case(choice)], library(), PARTS)
         return report.impacts[0].bom_delta_cents
 
     slat = delta_for(FenceModelChoice(model_id="M-SLAT"))

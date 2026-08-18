@@ -18,6 +18,8 @@ from fenceai.fencemodel.model import (
     PartRequirement,
 )
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.strategy.generator import generate
 from fenceai.fencemodel.library import FenceModelLibrary
@@ -26,8 +28,15 @@ from fenceai.fulfillment.pipeline import price_strategy
 from tests.conftest import straight_topology
 
 
+# The library the built-in models name. A preview resolves parts exactly as
+# generation does — that is the property this file exists to keep — so every call
+# here hands it the same library the route does.
+PARTS = PartLibrary(parts=demo_parts())
+
+
 def preview(model, **kw):
-    return preview_panel(model, PreviewRequest(**kw), demo_catalog())
+    return preview_panel(model, PreviewRequest(**kw), demo_catalog(),
+                         part_library=PARTS)
 
 
 def by_slot(result):
@@ -214,7 +223,7 @@ def test_the_preview_agrees_with_what_generation_actually_builds():
     # comparison is bay to bay
     result = generate(
         straight_topology(1700), demo_knowledge(), demo_catalog(),
-        models=FenceModelLibrary(models=[M_SLAT]),
+        models=FenceModelLibrary(models=[M_SLAT]), parts=PARTS,
         default_model=FenceModelChoice(model_id="M-SLAT"),
     )
     span = result.strategy.spans[0]
@@ -275,7 +284,7 @@ def test_a_stored_bays_plan_re_resolves_the_panel_that_run_stored():
     ])
     result = generate(
         topo, kb, demo_catalog(),
-        models=FenceModelLibrary(models=[M_SLAT]),
+        models=FenceModelLibrary(models=[M_SLAT]), parts=PARTS,
         default_model=FenceModelChoice(model_id="M-SLAT"),
     )
     span = result.strategy.spans[0]
@@ -284,7 +293,9 @@ def test_a_stored_bays_plan_re_resolves_the_panel_that_run_stored():
     plan = bay_preview_plan(result, span.id)
     assert (plan.model_id, plan.version) == ("M-SLAT", M_SLAT.version)
     shown = preview_panel(M_SLAT, plan.request, demo_catalog(),
-                          preset=result.run.objective_preset)
+                          preset=result.run.objective_preset,
+                          part_library=PARTS,
+                          part_snapshot=result.run.part_snapshot)
     assert shown.panel == span.panel
 
 
@@ -294,7 +305,7 @@ def test_a_bay_of_another_run_is_not_a_bay_of_this_one():
     from fenceai.fencemodel.preview import bay_preview_plan
 
     result = generate(straight_topology(1700), demo_knowledge(), demo_catalog(),
-                      models=FenceModelLibrary(models=[M_SLAT]),
+                      models=FenceModelLibrary(models=[M_SLAT]), parts=PARTS,
                       default_model=FenceModelChoice(model_id="M-SLAT"))
     assert bay_preview_plan(result, "span@elsewhere:0-1700") is None
     assert bay_preview_plan(result, result.strategy.posts[0].id) is None
@@ -387,7 +398,7 @@ def test_the_preview_and_the_fence_agree_about_a_routed_line():
     without being told the opening, because the model knows its own post."""
     result = generate(
         straight_topology(1500), demo_knowledge(), demo_catalog(),
-        models=FenceModelLibrary(models=[M_VINYL]),
+        models=FenceModelLibrary(models=[M_VINYL]), parts=PARTS,
         default_model=FenceModelChoice(model_id="M-VINYL"),
     )
     span = result.strategy.spans[0]
@@ -431,7 +442,7 @@ def test_the_preview_draws_the_post_it_measured_the_opening_to():
     from fenceai.fencemodel.demo import M_VINYL
 
     preview = preview_panel(M_VINYL, PreviewRequest(height_mm=1800, width_mm=2500),
-                            demo_catalog())
+                            demo_catalog(), part_library=PARTS)
     posts = preview.elevation.posts
     assert [p.side for p in posts] == ["start", "end"]
     # EXACTLY the line post, not merely "some routed post". The preview names
@@ -451,7 +462,7 @@ def test_the_start_post_is_drawn_outside_the_opening():
     from fenceai.fencemodel.demo import M_VINYL
 
     preview = preview_panel(M_VINYL, PreviewRequest(height_mm=1800, width_mm=2500),
-                            demo_catalog())
+                            demo_catalog(), part_library=PARTS)
     start, end = preview.elevation.posts
     assert start.x_mm == -start.w_mm and start.x_mm < 0
     assert end.x_mm == preview.clear_width_mm
@@ -464,7 +475,7 @@ def test_a_model_with_no_post_draws_no_post():
     from fenceai.fencemodel.demo import M_SLAT
 
     preview = preview_panel(M_SLAT, PreviewRequest(height_mm=1800, width_mm=2500),
-                            demo_catalog())
+                            demo_catalog(), part_library=PARTS)
     assert preview.elevation.posts == []
 
 
@@ -476,7 +487,7 @@ def test_a_cap_is_drawn_at_a_nominal_and_says_so():
     from fenceai.fencemodel.demo import M_VINYL
 
     preview = preview_panel(M_VINYL, PreviewRequest(height_mm=1800, width_mm=2500),
-                            demo_catalog())
+                            demo_catalog(), part_library=PARTS)
     post = preview.elevation.posts[0]
     assert post.cap_sku == "CAP-V-90"
     assert post.cap_h_mm > 0 and post.cap_declared is False
