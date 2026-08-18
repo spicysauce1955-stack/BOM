@@ -69,30 +69,22 @@ def resolve_model_parts(
     return resolved, sorted(uses.values(), key=lambda u: u.sort_key())
 
 
-def resolve_model_parts_at(
-    model: FenceModel, library: PartLibrary, snapshot: list[PartUse]
-) -> FenceModel:
-    """Resolve against the versions a RUN recorded, not against what is current.
-
-    `bay_preview_plan` reloads a model by the version the run STAMPED, explicitly
-    never `latest_active`, because the drawer once marked one product chosen while
-    the run had bought another. An unpinned `part_id` inside that stamped document
-    reopens the identical bug by a new door: the document is pinned and the part it
-    names is not.
-
-    An empty snapshot falls back to `latest_active`: that is a run generated before
-    parts existed, and it is the only honest answer for one.
-    """
-    resolved, _ = resolve_model_parts(model, library_at(library, snapshot))
-    return resolved
-
-
 def library_at(library: PartLibrary, snapshot: list[PartUse]) -> PartLibrary:
     """The library as one run saw it — exactly the versions it stamped.
 
-    Separate from `resolve_model_parts_at` because a caller that also VALIDATES the
-    run's document needs the same pinned view: validating against today's parts
-    while drawing the run's would be the same two-authorities defect one level up.
+    Resolving against a RUN's parts is `resolve_model_parts(model, library_at(...))`
+    — two calls rather than one wrapper, because the caller that needs this also
+    needs the pinned library ITSELF: `preview_panel` validates the document against
+    the same versions it draws, and validating against today's parts while drawing
+    the run's would be the same two-authorities defect one level up. A wrapper
+    returning only the document would be an entry point no production path could
+    use, standing in front of the one they do.
+
+    This is what closes the trap `bay_preview_plan` half-closed: it reloads a model
+    by the version the run STAMPED, explicitly never `latest_active`, because the
+    drawer once marked one product chosen while the run had bought another — and an
+    unpinned `part_id` inside that stamped document reopens the identical bug by a
+    new door.
 
     An empty snapshot returns the library UNCHANGED, which is the fallback to
     `latest_active` — a run generated before parts existed. Pinning to nothing would
