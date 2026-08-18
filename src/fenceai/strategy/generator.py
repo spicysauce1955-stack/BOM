@@ -181,9 +181,13 @@ def generate(
         governed_by=demand_refs,
     )
 
+    # One part resolution per model ref for the WHOLE run, shared by every post
+    # match. `resolve_model_parts` is pure in `(model, parts)` and `parts` does not
+    # move during a generation, so this is a memo and not a second answer.
+    resolved_posts: dict[str, FenceModel] = {}
     _generate_node_posts(
         topology, knowledge, scope, catalog, overrides, policy, builder, strategy,
-        applied, models, default_model, parts,
+        applied, models, default_model, parts, resolved_posts,
     )
     # every fence model actually drawn from, across all runs — part of the run id
     # (a model swap changes what the run means even though the digest's other
@@ -197,7 +201,7 @@ def generate(
         _generate_run(
             topology, run, knowledge, scope, catalog, overrides, policy,
             builder, strategy, applied, demand_skus, models_used,
-            models, default_model, parts, parts_used,
+            models, default_model, parts, parts_used, resolved_posts,
         )
 
     _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
@@ -621,6 +625,7 @@ def _model_post_skus(
     catalog: Catalog,
     parts: PartLibrary | None,
     sides: list[_PostSide],
+    resolved: dict[str, FenceModel] | None = None,
 ) -> _ModelPost:
     """The post and cap the MODEL(S) at this post ask for, if any of them asks.
 
@@ -646,6 +651,14 @@ def _model_post_skus(
     running does not apply to an indivisible each. Recorded in the limitations
     rather than faked — a post line still carries its full eligibility into
     demand, so the choice remains explainable there.
+
+    `resolved` is the run's part-resolution memo, threaded in for the same reason
+    `segment_model` keeps one: resolving a document is a `model_copy(deep=True)`
+    plus a recompile of every part spec, and this function ran it once per post
+    SIDE — 135 resolutions for 68 posts on a 120 m run, half of them thrown away
+    by the dedup on the very next line. The memo changes nothing about what is
+    computed: `resolve_model_parts` is a pure function of `(model, parts)`, and
+    `parts` is one library for the whole run.
     """
     claims: list[tuple[FenceModel, dict, list[str]]] = []
     for side in sides:
@@ -656,14 +669,18 @@ def _model_post_skus(
         model = library.resolve(choice.model_id, choice.version_pin)
         if model is None or model.post is None:
             continue
+        # Asked BEFORE resolution now, where it costs nothing: resolution copies
+        # the document and never touches its id or version, so the ref it dedupes
+        # on is the same either way — and the side whose claim is dropped no
+        # longer pays for a resolution first.
+        if any(m.ref == model.ref for m, _, _ in claims):
+            continue        # both bays are the same model: one claim, not two
         # The post slot's predicate comes from the part it names, so the document is
         # compiled BEFORE it is matched — here as well as in `segment_model`, because
         # a node post is the one match that does not reach the model through a
         # segment. Nothing about the DAG moves: this is still strictly upstream of
         # `_matched`, which is where `match_spec`'s covering rule lives.
-        model, _ = _with_parts(model, parts)
-        if any(m.ref == model.ref for m, _, _ in claims):
-            continue        # both bays are the same model: one claim, not two
+        model = _post_model(model, parts, resolved)
         panel = side.facts.at(model, side.station, side.kind)
         claims.append((model, panel, _matched(
             model.post.requirement.eligibility, catalog, panel)))
@@ -694,6 +711,31 @@ def _model_post_skus(
         cap_sku=agreed[0] if agreed else None,
         cap_unsupplied=None if agreed else ", ".join(sorted(ref for ref, _ in caps)),
     )
+
+
+def _post_model(
+    model: FenceModel, parts: PartLibrary | None, resolved: dict | None
+) -> FenceModel:
+    """The resolved document for a post match, memoised per run.
+
+    The returned document is SHARED between every post that reaches the same
+    model ref, which is safe only because nothing on this path writes to it:
+    `_PostFacts.at` and `_matched` read the spec and the eligibility and return
+    new objects. It is the same bargain `segment_model` already makes when it
+    hands one `_SegmentModel` to every bay of a segment.
+
+    `resolved is None` is a caller with no memo — the behaviour before the memo
+    existed, kept so the function is testable without one.
+    """
+    if parts is None or resolved is None:
+        return _with_parts(model, parts)[0]
+    hit = resolved.get(model.ref)
+    if hit is None:
+        # Never caches a failure: `_with_parts` raises for a part with no active
+        # version, and that refusal has to reach every post that asks, not just
+        # the first.
+        hit = resolved[model.ref] = _with_parts(model, parts)[0]
+    return hit
 
 
 def _cap_unsupplied(
@@ -865,6 +907,7 @@ def _generate_node_posts(
     library: FenceModelLibrary | None = None,
     default_model: FenceModelChoice | None = None,
     parts: PartLibrary | None = None,
+    resolved_posts: dict | None = None,
 ) -> None:
     touches_by_node: dict[str, list[tuple[Run, Mm]]] = {}
     for run in topology.runs:
@@ -961,6 +1004,7 @@ def _generate_node_posts(
                     _run_post_facts(topology, r, kb, scope, overrides, policy)[0],
                     s, s if s == 0 else s - 1, kind,
                 ) for r, s in touches],
+                resolved_posts,
             )
         _cap_unsupplied(strategy, model_post, f"post@node:{node.id}", station0)
         post = _make_post(
@@ -1045,15 +1089,24 @@ def _validate_resolved_model(
     draws against a Conflict (`core/errors.py`, knowledge-system.md). The route
     already maps it to 422.
 
-    Cost: O(model) — slots x eligibility members, plus axes x values, with
-    catalog access by dict lookup only. It does not touch the topology, so it
-    does not grow with the fence: it runs once per distinct model CHOICE on a run
-    (memoised in `segment_model`), never once per segment and never once per
-    span — a run built entirely to one model validates once. Measured on this machine:
-    2.1 us for `M-LEGACY` against 0.85 ms for a four-bay `generate()` (0.24%),
-    and 0.04% of a 60-bay one, where it is still a single call. No caching
-    needed — and a cache keyed on a model that `legacy_model()` rebuilds per
-    call would cost more than the check it skipped.
+    Cost: it does not touch the topology, so it does not grow with the fence — it
+    runs once per distinct model CHOICE on a run (memoised in `segment_model`),
+    never once per segment and never once per span, and a run built entirely to
+    one model validates once.
+
+    It is NOT O(model) any more, and the `M-LEGACY` measurement this paragraph used
+    to quote was the one model that could never show it: a model naming no part
+    reaches the catalog by dict lookup only, and it still costs 2.9 us. A model
+    whose slots name PARTS asks the matcher "would anything satisfy this?" per
+    slot, which is a full-catalog scan — 334 us for `M-VINYL` against a four-bay
+    `generate()` of 3.3 ms (10%), and 23 ms against a 4623-product catalog. That
+    is the price of refusing at authoring what would otherwise be
+    `no_eligible_item` on every bay of every job, and the scan itself is what
+    `match._item_ctx`'s memo made affordable.
+
+    Still no cache HERE, and now for a reason that survives the numbers: the memo
+    that would pay for itself is one over the model choice, and `segment_model`
+    already holds it.
     """
     errors = validate_model(model, catalog, parts)
     if not errors:
@@ -1289,6 +1342,7 @@ def _generate_run(
     default_model: FenceModelChoice | None,
     parts: PartLibrary | None,
     parts_used: list[PartUse],
+    resolved_posts: dict | None = None,
 ) -> None:
     length = run_length(topo, run)
     slope_permille = max_slope_permille(topo, run)
@@ -1616,7 +1670,7 @@ def _generate_run(
         tilt_deg, tilt_ev = (0, None) if kind == "gate" else _post_tilt_at(topo, run, station)
         model_post = _model_post_skus(
             library, default_model, catalog, parts,
-            _post_sides(post_facts, station, length, kind))
+            _post_sides(post_facts, station, length, kind), resolved_posts)
         _cap_unsupplied(strategy, model_post, f"post@{run.id}:{station}", station)
         post = _make_post(
             builder, kb, scope,
@@ -1907,7 +1961,7 @@ def _generate_run(
             tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
             model_post = _model_post_skus(
                 library, default_model, catalog, parts,
-                _post_sides(post_facts, s, length, "line"))
+                _post_sides(post_facts, s, length, "line"), resolved_posts)
             _cap_unsupplied(strategy, model_post, f"post@{run.id}:{s}", s)
             post = _make_post(
                 builder, kb, scope,

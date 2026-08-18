@@ -109,7 +109,42 @@ def _covers_fn(item_value, part_value, *, ctx=None) -> bool:
     return need <= have
 
 
+# `_item_ctx` memoised by the identity of the PRODUCT it describes.
+#
+# Migrating authored member lists to predicates turned matching into a full-catalog
+# scan per slot per bay: on a 120 m run against a 4623-product catalog that is
+# 957 000 calls, 2.35 s of a 2.5 s generation, almost all of it a `model_dump()` of
+# three optional integers. The context is a pure function of the product, so this
+# computes the same dict fewer times and nothing else.
+#
+# Keyed by the product's IDENTITY rather than by its sku, because a catalog is
+# mutated by REPLACING a product (`catalog.products[sku] = ...`, the /api/catalog
+# route and half the strategy tests) — an sku key would serve the old answer for
+# the new product, which is the one failure a memo must not have. The product is
+# held STRONGLY beside its context so its id cannot be recycled underneath the key
+# while the entry lives; `products` are documents that are replaced and never
+# edited in place, which is what makes identity a sound key at all.
+#
+# Cleared wholesale at a bound rather than evicted one at a time: this is a memo
+# over one generation's catalog, not a cache anybody is tuning, and a fresh catalog
+# arrives with every request.
+_ITEM_CTX: dict[int, tuple[object, dict]] = {}
+_ITEM_CTX_MAX = 20_000
+
+
 def _item_ctx(product) -> dict:
+    key = id(product)
+    hit = _ITEM_CTX.get(key)
+    if hit is not None and hit[0] is product:
+        return hit[1]
+    ctx = _build_item_ctx(product)
+    if len(_ITEM_CTX) >= _ITEM_CTX_MAX:
+        _ITEM_CTX.clear()
+    _ITEM_CTX[key] = (product, ctx)
+    return ctx
+
+
+def _build_item_ctx(product) -> dict:
     """Everything this item declares about itself, under one namespace.
 
     Typed capabilities sit beside the open `attrs` bag rather than under a prefix

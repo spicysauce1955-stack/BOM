@@ -250,3 +250,33 @@ def test_field_paths_sees_through_a_function_call():
 def test_an_unregistered_function_raises_rather_than_passing():
     with pytest.raises(MissingField):
         evaluate_expr(FnCall(name="nope", args=[]), {})
+
+
+# --- the item context is memoised, per PRODUCT (fix wave, F6) -----------------
+
+def test_the_item_context_is_computed_once_per_product():
+    """Predicates turned matching into a full-catalog scan per slot per bay —
+    957 000 `_item_ctx` calls on one 120 m run against a realistic catalog, almost
+    all of them a `model_dump()` of three optional integers already computed."""
+    item = Product(sku="P", name="P", consumption=IndivisibleDiscrete(),
+                   attrs={"material": "vinyl"})
+    assert _item_ctx(item) is _item_ctx(item)
+
+
+def test_replacing_a_product_under_the_same_sku_is_not_served_the_old_context():
+    """The one failure a memo must not have. A catalog is edited by REPLACING a
+    product — `catalog.products[sku] = ...`, which is what the /api/catalog route
+    and half the strategy tests do — so a memo keyed by sku would answer the new
+    product's question with the old product's facts, and the run would buy against
+    a spec nobody wrote."""
+    old = Product(sku="P", name="P", consumption=IndivisibleDiscrete(),
+                  attrs={"material": "vinyl"})
+    new = Product(sku="P", name="P", consumption=IndivisibleDiscrete(),
+                  attrs={"material": "aluminium"})
+    catalog = Catalog.of(old)
+    wants_vinyl = Eligibility(predicate=Cmp(
+        cmp="==", left=FieldRef(path="item.material"), right=Lit(value="vinyl")))
+
+    assert [m.sku for m in match_eligibility(wants_vinyl, catalog, {}).members] == ["P"]
+    catalog.products["P"] = new
+    assert match_eligibility(wants_vinyl, catalog, {}).members == []

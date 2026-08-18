@@ -208,3 +208,44 @@ def test_the_same_version_saying_something_else_is_a_different_run():
     assert bom_of(before).model_dump() == bom_of(after).model_dump()
     assert [s.panel.model_dump() for s in before.strategy.spans] \
         == [s.panel.model_dump() for s in after.strategy.spans]
+
+
+# --- resolution is memoised, not repeated (fix wave, F5) ----------------------
+
+def resolutions(length_mm: int) -> int:
+    """How many times one generation resolves a model's parts.
+
+    Built to M-VINYL, because it is the demo model that OWNS A POST: a model with
+    `post=None` never reaches `_model_post_skus`' resolution at all, so measuring
+    this on M-SLAT would report 1 whatever the post path did.
+    """
+    from fenceai.fencemodel.demo import M_VINYL
+    import fenceai.strategy.generator as G
+
+    calls = []
+    real = G.resolve_model_parts
+
+    def counted(model, library):
+        calls.append(model.ref)
+        return real(model, library)
+
+    G.resolve_model_parts = counted
+    try:
+        generate(straight_topology(length_mm), demo_knowledge(), demo_catalog(),
+                 models=FenceModelLibrary(models=[M_LEGACY, M_SLAT, M_VINYL]),
+                 default_model=FenceModelChoice(model_id="M-VINYL"), parts=parts())
+    finally:
+        G.resolve_model_parts = real
+    return len(calls)
+
+
+def test_a_longer_fence_of_one_model_resolves_its_parts_no_more_often():
+    """`_model_post_skus` resolved the whole document — a deep copy plus a recompile
+    of every part spec — once per post SIDE, and the dedup that throws half of them
+    away ran on the line AFTER. 135 resolutions for 68 posts on a 120 m run.
+
+    Asserted as a property rather than a number: whatever it costs, it must not
+    grow with the fence. The bays and posts of a run built to one model are all
+    asking one question."""
+    short, long = resolutions(5000), resolutions(40000)
+    assert short == long, f"{short} -> {long}: resolution grows with the fence"
