@@ -19,9 +19,24 @@ def test_every_demo_part_is_valid_against_the_demo_catalog():
 
 
 def test_every_slot_of_every_demo_model_names_a_part_that_resolves():
+    """Resolution raising is the refusal, but "it did not raise" is not an
+    assertion — a `resolve_model_parts` that returned the document untouched would
+    have passed this test unchanged. What it must actually do is fill EVERY named
+    slot: a variant missed leaves a bay reporting `no_eligible_item` only at the
+    heights that hit it, which is the worst shape this bug can take."""
     lib = library()
+    filled = 0
     for model in demo_model_versions():
-        resolve_model_parts(model, lib)   # raises if any part_id has no active version
+        resolved, uses = resolve_model_parts(model, lib)
+        named = [(key, req) for key, req in part_requirements(resolved) if req.part_id]
+        for key, req in named:
+            assert req.eligibility.predicate is not None, f"{model.ref} {key}"
+            assert req.role, f"{model.ref} {key} has no role"
+        assert {u.part_id for u in uses} == {req.part_id for _key, req in named}
+        filled += len(named)
+    # M-LEGACY names no part on purpose, so "every model" is not "some model":
+    # the count is what stops this passing on a resolver that filled nothing
+    assert filled == 9
 
 
 def test_a_migrated_part_emits_no_type_row():
@@ -34,7 +49,18 @@ def test_a_migrated_part_emits_no_type_row():
 
 
 def test_a_migrated_part_carries_its_type_on_the_entity():
-    assert {p.type for p in demo_parts()} >= {"rail", "screw", "infill"}
+    """By id, and by equality: `{types} >= {…}` passes if `infill-slat-100.type`
+    flipped to "rail", which is the fact this test is named for."""
+    assert {p.id: p.type for p in demo_parts()} == {
+        "rail-rail-3000": "rail",
+        "rail-rail-3000-40": "rail",
+        "rail-channel-3000": "rail",
+        "rail-rail-v-3000": "rail",
+        "infill-slat-100": "infill",
+        "infill-slat-v-150": "infill",
+        "screw-screw-s10": "screw",
+        "rail-38-vinyl": "rail",
+    }
 
 
 def test_the_sku_list_migrated_as_among_not_covers():
@@ -63,11 +89,15 @@ def test_no_product_is_drawn_at_two_widths():
 
 
 def test_a_migrated_part_still_admits_exactly_the_sku_it_used_to_name():
+    """EXACTLY, which is what the name claims. Every sku-bearing demo part matches
+    its list one-for-one, so `>=` bought nothing and cost the whole point: a
+    predicate widened to admit a second product would have passed the one test
+    written to catch it."""
     catalog = demo_catalog()
     for part in demo_parts():
         sku_fields = [f for f in part.spec if f.key == "sku"]
         if sku_fields:
-            assert set(matching_skus(part, catalog)) >= set(sku_fields[0].value), part.ref
+            assert matching_skus(part, catalog) == sorted(sku_fields[0].value), part.ref
 
 
 def test_the_demo_seeds_one_part_with_several_eligible_items():
@@ -266,7 +296,10 @@ def test_a_fresh_store_seeds_the_library_its_models_name(tmp_path):
     lib = store.part_library()
     assert {p.id for p in lib.parts} == {p.id for p in demo_parts()}
     for model in store.fence_model_library().models:
-        resolve_model_parts(model, lib)
+        resolved, _ = resolve_model_parts(model, lib)
+        assert all(req.eligibility.predicate is not None
+                   for _key, req in part_requirements(resolved) if req.part_id), \
+            f"{model.ref} has a named slot the seeded library did not fill"
 
 
 def test_reopening_a_store_does_not_overwrite_an_edited_part(tmp_path):

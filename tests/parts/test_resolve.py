@@ -187,3 +187,29 @@ def test_variants_are_resolved_too():
     resolved, uses = resolve_model_parts(m, library(rail()))
     assert resolved.variants[0].spec.frame[0].requirement.eligibility.predicate is not None
     assert len(uses) == 1  # deduplicated: one part, named twice
+
+
+def test_resolution_leaves_no_members_behind_it():
+    """The part is the authority, so nothing a slot was carrying may survive it.
+
+    Assigned rather than authored: `PartRequirement` now refuses `part_id` beside
+    an authored member list, and this is the one way a slot can be carrying members
+    when it reaches resolution — a document that has already been through the
+    MATCHER, which fills `members` and clears `predicate`. Resolving that document
+    again without clearing them would hand the panel a stale candidate set beside a
+    fresh predicate, and `_predicate_errors` reads exactly that pair as the "says it
+    both ways" refusal.
+    """
+    from fenceai.fencemodel.model import EligibleItem
+
+    m = model()
+    req = m.default_spec.frame[0].requirement
+    req.eligibility.members = [EligibleItem(sku="STALE", approval="suggest_only")]
+    req.eligibility.predicate = None
+
+    resolved, _ = resolve_model_parts(m, library(rail()))
+    after = resolved.default_spec.frame[0].requirement.eligibility
+    assert after.members == []
+    assert after.predicate is not None
+    # and the caller's document is untouched — `generate()` is pure
+    assert [x.sku for x in req.eligibility.members] == ["STALE"]

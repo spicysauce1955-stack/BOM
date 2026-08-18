@@ -492,3 +492,61 @@ def test_a_cap_is_drawn_at_a_nominal_and_says_so():
     assert post.cap_sku == "CAP-V-90"
     assert post.cap_h_mm > 0 and post.cap_declared is False
     assert post.declared is True, "the post face IS product data"
+
+
+# --- a part that admits more than one product (fix wave, T2) ------------------
+
+def multi_candidate_model() -> FenceModel:
+    """TEST-LOCAL, deliberately. `rail-38-vinyl` is the one demo part specified by
+    what it IS rather than by SKU, so it is the only one with alternatives to
+    offer — and wiring it into a demo model would swap a 3000 mm aluminium rail
+    for a vinyl one in every M-SLAT bay ever generated, which the compatibility
+    gate forbids.
+
+    Without a model naming it, nothing in the suite drove
+    `compile_spec -> match_spec -> more than one member -> pin`: the drawer's two
+    candidates came from an authored `EligibleItem` list, and the migration test
+    asserted only that the fixture EXISTS.
+    """
+    return FenceModel(
+        id="M-MULTI", version=1, name_i18n={"en": "Two vinyl rails"},
+        default_spec=PanelSpec(frame=[FrameSlot(
+            key="rail", orientation="horizontal",
+            placement=Distributed(count=2),
+            requirement=PartRequirement(part_id="rail-38-vinyl", qty=1,
+                                        length_rule="centre_to_centre"),
+        )]),
+    )
+
+
+def test_a_part_specified_by_spec_offers_every_product_that_covers_it():
+    """The whole chain, end to end: the part's spec compiles to a predicate, the
+    matcher covers the catalog with it, and TWO products come back — which is the
+    state the drawer's alternatives exist for and the state nothing reached."""
+    result = preview(multi_candidate_model(), height_mm=1800, width_mm=2500)
+    rail = by_slot(result)["rail"]
+    assert rail.eligible_skus == ["RAIL-V-3000", "RAIL-V-3600"]
+    assert rail.role == "rail", "filled from the part's type, never authored"
+    assert rail.sku == "RAIL-V-3000", "least_cost picks the cheaper cut"
+    assert result.total_cents == 5200
+
+
+def test_pinning_the_alternative_prices_the_alternative():
+    """The offer is only real if taking it changes the number. `_pinned_sku`
+    narrows the matched set exactly as an option axis does — it never bypasses
+    eligibility, which is why the pin has to name a member the PART admits."""
+    result = preview(multi_candidate_model(), height_mm=1800, width_mm=2500,
+                     slot_skus={"rail": "RAIL-V-3600"})
+    rail = by_slot(result)["rail"]
+    assert rail.sku == "RAIL-V-3600"
+    assert result.total_cents == 6100
+
+
+def test_pinning_a_product_the_part_does_not_admit_is_refused():
+    """A pin that could smuggle in a product the part's spec excludes would make
+    the spec advisory. RAIL-3000 is aluminium and 40 mm; the part asks for 38 mm
+    vinyl."""
+    with pytest.raises(RequestRefused) as e:
+        preview(multi_candidate_model(), height_mm=1800, width_mm=2500,
+                slot_skus={"rail": "RAIL-3000"})
+    assert e.value.code == "sku_not_eligible"

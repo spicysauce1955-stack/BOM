@@ -127,3 +127,84 @@ def test_the_run_id_does_not_move_when_the_snapshot_does_not():
         if p.id == "rail-38-vinyl" else p
         for p in demo_parts()])
     assert run().run.id == run(unnamed).run.id
+
+
+# --- the order a run stamps (fix wave, T3) ------------------------------------
+
+def two_model_run(part_library=None):
+    """One fence, two models, so the snapshot is assembled from TWO segments.
+
+    That is what makes the order a real question. `resolve_model_parts` already
+    returns each model's own uses sorted, so a single-model run stamps a sorted
+    list whether `generate()` sorts or not — the ordering test has to reach a run
+    where the walk order and the sort order genuinely disagree.
+    """
+    from fenceai.fencemodel.demo import M_VINYL
+    from fenceai.topology.model import FenceModelPayload
+    from tests.conftest import add_interval_event
+
+    topo = straight_topology(5000)
+    add_interval_event(topo, "run1", "ev_m", 0, 2500,
+                       FenceModelPayload(model_id="M-VINYL"))
+    return generate(topo, demo_knowledge(), demo_catalog(),
+                    models=FenceModelLibrary(models=[M_LEGACY, M_SLAT, M_VINYL]),
+                    default_model=SLAT,
+                    parts=part_library if part_library is not None else parts())
+
+
+def test_a_generated_run_stamps_its_snapshot_in_sort_key_order():
+    """The stored order is a digest input, so it decides the run id — and the walk
+    order is not it. M-VINYL is laid out first and contributes
+    `rail-rail-v-3000` before M-SLAT contributes `rail-rail-3000`, so an unsorted
+    snapshot and a sorted one are different lists for the same fence.
+    """
+    snapshot = two_model_run().run.part_snapshot
+    assert [u.part_id for u in snapshot] == [
+        "infill-slat-100", "infill-slat-v-150",
+        "rail-rail-3000", "rail-rail-v-3000", "screw-screw-s10",
+    ]
+    assert snapshot == sorted(snapshot, key=type(snapshot[0]).sort_key)
+
+
+def test_one_part_reached_from_two_segments_is_stamped_once():
+    """Deduped, because the same part reached through two segments is one fact
+    about the run — and a repeated entry would split the digest between two
+    identical fences depending on how the walk happened to go."""
+    snapshot = two_model_run().run.part_snapshot
+    assert len({(u.part_id, u.version) for u in snapshot}) == len(snapshot)
+    # M-SLAT and M-VINYL both reach `screw-screw-s10`? they do not — but M-SLAT
+    # is the model of BOTH bays right of the change, and it is reached twice
+    assert sum(1 for u in snapshot if u.part_id == "rail-rail-3000") == 1
+
+
+def test_the_same_version_saying_something_else_is_a_different_run():
+    """What `content_hash` is actually for, now that the docstring says so.
+
+    A version NUMBER is not enough on its own: two libraries can both call a part
+    `rail-rail-3000@v1` and mean different documents, and `(part_id, version)` alone
+    would hash them to one run — whose second INSERT OR IGNORE drops silently, so
+    every later read serves the first run's answer for the second run's fence.
+
+    The edit is deliberately one that changes NOTHING about the fence: RAIL-3000 is
+    the only aluminium rail the sku row already admitted, so the BOM, the panels and
+    the geometry are identical and the run id is the only thing this test could be
+    measuring.
+    """
+    from fenceai.parts.model import SpecField
+
+    edited = PartLibrary(parts=[
+        p.model_copy(deep=True, update={
+            "spec": [*p.spec, SpecField(key="material", value="aluminium")]})
+        if p.id == "rail-rail-3000" else p
+        for p in demo_parts()])
+
+    before, after = run(), run(edited)
+    assert [u.version for u in after.run.part_snapshot] == \
+        [u.version for u in before.run.part_snapshot], "no version moved"
+    assert [u.content_hash for u in after.run.part_snapshot] != \
+        [u.content_hash for u in before.run.part_snapshot]
+    assert before.run.id != after.run.id
+
+    assert bom_of(before).model_dump() == bom_of(after).model_dump()
+    assert [s.panel.model_dump() for s in before.strategy.spans] \
+        == [s.panel.model_dump() for s in after.strategy.spans]
