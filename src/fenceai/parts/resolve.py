@@ -10,18 +10,10 @@ from __future__ import annotations
 
 import hashlib
 
-from fenceai.fencemodel.model import FenceModel, PanelSpec, PartRequirement
+from fenceai.fencemodel.model import FenceModel, Member, PartRequirement, spec_requirements
 from fenceai.parts.compile import compile_spec
 from fenceai.parts.model import Part, PartLibrary
 from fenceai.strategy.model import PartUse
-
-
-def _spec_requirements(spec: PanelSpec) -> list[tuple[str, PartRequirement]]:
-    out = [(s.key, s.requirement) for s in spec.frame]
-    if spec.infill:
-        out += [(m.key, m.requirement) for m in spec.infill.pattern]
-    out += [(f.key, f.requirement) for f in spec.fixings]
-    return out
 
 
 def part_requirements(model: FenceModel) -> list[tuple[str, PartRequirement]]:
@@ -29,12 +21,14 @@ def part_requirements(model: FenceModel) -> list[tuple[str, PartRequirement]]:
 
     A variant missed here would leave a slot with no predicate and the bay would
     report `no_eligible_item` only at the heights that hit that variant, which is
-    the worst shape a bug of this kind can take.
+    the worst shape a bug of this kind can take. Walks each spec via the SAME
+    `spec_requirements` `validate_model` uses — a second copy of that walk is
+    exactly this kind of drift hazard, applied to itself.
     """
-    out = _spec_requirements(model.default_spec)
+    out = spec_requirements(model.default_spec)
     for index, variant in enumerate(model.variants):
         out += [(f"variant{index}.{key}", req)
-                for key, req in _spec_requirements(variant.spec)]
+                for key, req in spec_requirements(variant.spec)]
     if model.post is not None:
         out.append(("post", model.post.requirement))
         if model.post.cap is not None:
@@ -72,7 +66,7 @@ def resolve_model_parts(
         uses[part.id] = PartUse(part_id=part.id, version=part.version,
                                 content_hash=content_hash(part))
     _apply_dimensions(resolved, library)
-    return resolved, sorted(uses.values(), key=lambda u: (u.part_id, u.version))
+    return resolved, sorted(uses.values(), key=lambda u: u.sort_key())
 
 
 def _apply_dimensions(model: FenceModel, library: PartLibrary) -> None:
@@ -89,10 +83,11 @@ def _apply_dimensions(model: FenceModel, library: PartLibrary) -> None:
     measured.
     """
     for holder in _dimension_holders(model):
+        # No `if part is None` guard: every requirement here already passed
+        # through the loop in `resolve_model_parts`, which raises for any
+        # part_id with no active version before this function is ever called.
         part = library.latest_active(holder.requirement.part_id)
-        if part is None:
-            continue
-        if hasattr(holder, "width_mm"):
+        if isinstance(holder, Member):
             holder.width_mm = part.width_mm or 0
         holder.thickness_mm = part.thickness_mm or 0
 

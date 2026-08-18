@@ -364,7 +364,14 @@ class FenceModel(BaseModel):
 
 # --- load-time validation ----------------------------------------------------
 
-def _requirements(spec: PanelSpec) -> list[tuple[str, PartRequirement]]:
+def spec_requirements(spec: PanelSpec) -> list[tuple[str, PartRequirement]]:
+    """Every requirement a single spec carries: frame, infill, fixings.
+
+    Public because `parts.resolve.part_requirements` walks the same structure
+    to fill predicates from parts, and a second copy of this walk is exactly
+    the drift hazard `part_requirements`'s own docstring warns about for
+    variants: one copy feeding validation and one feeding resolution, free to
+    disagree about what a spec's requirements are."""
     out = [(s.key, s.requirement) for s in spec.frame]
     if spec.infill:
         out += [(m.key, m.requirement) for m in spec.infill.pattern]
@@ -565,7 +572,7 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                     "member would still be cut to the rule it declares"
                 )
 
-        for key, req in _requirements(spec):
+        for key, req in spec_requirements(spec):
             if req.eligibility.group is not None:
                 # Never read: `resolve_supply` groups by the (sku, priority,
                 # approval) SIGNATURE of the usable members and by nothing else.
@@ -737,7 +744,7 @@ def unknown_skus(model: FenceModel, catalog: Catalog) -> list[str]:
     return sorted({
         m.sku
         for spec in [model.default_spec, *(v.spec for v in model.variants)]
-        for _, req in _requirements(spec)
+        for _, req in spec_requirements(spec)
         for m in req.eligibility.members
         if m.sku not in catalog.products
     })
@@ -961,7 +968,7 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                     "never advance"
                 )
 
-        reqs = _requirements(spec)
+        reqs = spec_requirements(spec)
         seen: set[str] = set()
         for key, _ in reqs:
             if key in seen:

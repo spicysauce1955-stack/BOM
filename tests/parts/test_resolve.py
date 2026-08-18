@@ -76,20 +76,37 @@ def test_the_part_supplies_the_width_the_panel_draws():
     assert resolved.default_spec.infill.pattern[0].width_mm == 38
 
 
-def test_a_part_declaring_no_dimension_leaves_it_undeclared():
-    """0 is what the elevation already renders as declared=False — a flag, not a
-    nominal band that reads as measured."""
+def test_a_declared_dimension_lands_on_the_slot_and_a_bare_one_leaves_it_undeclared():
+    """`FrameSlot.thickness_mm` already defaults to 0, so a test that only ever
+    authors a bare part passes even if the write in `_apply_dimensions` were
+    deleted outright — a 0-by-construction assertion this codebase has been
+    bitten by before. This exercises both halves: a part that DOES declare
+    `thickness_mm` must land its actual value, and only a genuinely bare part
+    reads as 0 — which is what the elevation renders as `declared=False`, a
+    flag, not a nominal band that reads as measured."""
+    declared = Part(id="rail-38", version=1, type="rail",
+                     spec=[SpecField(key="thickness_mm", value=19, agree="==", unit="mm")])
+    resolved, _ = resolve_model_parts(model(), library(declared))
+    assert resolved.default_spec.frame[0].thickness_mm == 19
+
     bare = Part(id="rail-38", version=1, type="rail",
                 spec=[SpecField(key="material", value="vinyl", agree="==")])
-    resolved, _ = resolve_model_parts(model(), library(bare))
-    assert resolved.default_spec.frame[0].thickness_mm == 0
+    resolved_bare, _ = resolve_model_parts(model(), library(bare))
+    assert resolved_bare.default_spec.frame[0].thickness_mm == 0
 
 
 def test_the_stored_model_is_not_mutated():
-    """generate() is pure (ADR-0004). Resolution returns a new document."""
+    """generate() is pure (ADR-0004). Resolution returns a new document —
+    including `_apply_dimensions`'s write, which `predicate` alone would not
+    catch: a leak there writes THROUGH to the original's `width_mm`/
+    `thickness_mm` without ever touching `eligibility`."""
+    from fenceai.fencemodel.model import InfillSpec, Member
     original = model()
+    original.default_spec.infill = InfillSpec(orientation="vertical", pattern=[
+        Member(key="slat", requirement=PartRequirement(part_id="rail-38"))])
     resolve_model_parts(original, library(rail()))
     assert original.default_spec.frame[0].requirement.eligibility.predicate is None
+    assert original.default_spec.infill.pattern[0].width_mm == 0
 
 
 def test_a_part_with_no_active_version_is_refused_by_name():

@@ -287,7 +287,7 @@ def match_spec(spec: PanelSpec, catalog: Catalog, facts: dict) -> PanelSpec:
 
 def _holders(spec: PanelSpec) -> list:
     """Everything in a spec that carries a requirement. Mirrors
-    `model._requirements`, which returns keys rather than the objects to mutate."""
+    `model.spec_requirements`, which returns keys rather than the objects to mutate."""
     return [
         *spec.frame,
         *(spec.infill.pattern if spec.infill else []),
