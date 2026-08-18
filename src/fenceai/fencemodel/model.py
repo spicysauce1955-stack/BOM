@@ -16,13 +16,16 @@ that one really would go nowhere.
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
 from fenceai.knowledge.ast import Expr, field_paths
+
+if TYPE_CHECKING:      # `parts.resolve` imports this module; the runtime imports
+    from fenceai.parts.model import PartLibrary   # are deferred into the functions
 
 _SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -593,8 +596,14 @@ def _unsupported_features(model: FenceModel) -> list[str]:
     return errors
 
 
-def _joint_errors(spec: PanelSpec) -> list[str]:
+def _joint_errors(spec: PanelSpec, *, dimensions_known: bool = True) -> list[str]:
     """Joint geometry that would cut a part to the wrong length.
+
+    `dimensions_known` is False when the caller has no part library: a member's
+    thickness is filled by `parts.resolve` and is 0 in the authored document, so
+    the rules that read it would refuse every channelled slot in the portfolio for
+    a fact that has not been looked up yet. Skipped rather than guessed — see
+    `validate_model`.
 
     Every one of these is arithmetic the resolver would otherwise perform
     faithfully on a number the author cannot have meant — and the answer would
@@ -606,7 +615,7 @@ def _joint_errors(spec: PanelSpec) -> list[str]:
     frame_by_key = {s.key: s for s in spec.frame}
 
     for slot in spec.frame:
-        if slot.channel_depth_mm > 0 and slot.thickness_mm == 0:
+        if dimensions_known and slot.channel_depth_mm > 0 and slot.thickness_mm == 0:
             errors.append(
                 f"frame slot {slot.key!r}: channel_depth_mm="
                 f"{slot.channel_depth_mm} inside a member whose thickness_mm is "
@@ -731,6 +740,32 @@ def _joint_errors(spec: PanelSpec) -> list[str]:
     return errors
 
 
+def _part_errors(
+    model: FenceModel, catalog: Catalog, library: PartLibrary
+) -> list[str]:
+    """Every part this model names, checked where the specification now lives.
+
+    This is what replaced the slot-level "no eligible product". Members are a
+    MATCHING-time artifact and resolution does not populate them, so that rule
+    could no longer pass for any model — it would refuse the whole portfolio for an
+    empty list that is empty by design. The guardrail is not dropped, it moves one
+    level down: a part no product covers is refused by `validate_part`, in the
+    voice this function already used and at the same moment.
+
+    Deduped by part_id, because one part backing four slots is one fact about the
+    library and an author cannot fix it four times.
+    """
+    from fenceai.parts.resolve import part_requirements
+    from fenceai.parts.validate import validate_part
+
+    errors: list[str] = []
+    for part_id in sorted({req.part_id for _, req in part_requirements(model)}):
+        # Never None: `resolve_model_parts` raised for any part_id with no active
+        # version before this function could be reached.
+        errors += validate_part(library.latest_active(part_id), catalog)
+    return errors
+
+
 def unknown_skus(model: FenceModel, catalog: Catalog) -> list[str]:
     """Eligible SKUs this catalog does not stock — the ONE validation failure a
     user can cause without authoring a model.
@@ -805,11 +840,10 @@ def _post_slot_errors(post: PostSlot, catalog: Catalog) -> list[str]:
         if req.eligibility.predicate is not None:
             errors += _predicate_errors(f"{post.key} ({what})", req.eligibility, catalog)
             continue
-        if not req.eligibility.members:
-            errors.append(
-                f"slot {post.key} ({what}): no eligible product, so nothing could "
-                f"ever supply it"
-            )
+        # No emptiness rule here any more: a slot's products come from the part it
+        # names, `parts.resolve` fills the predicate above, and an unresolved
+        # document has an empty list for a reason that is not an authoring error.
+        # `validate_model` runs `validate_part` for the same refusal, one level down.
         for m in req.eligibility.members:
             if m.sku not in catalog.products:
                 errors.append(
@@ -923,12 +957,38 @@ def _variant_reach_errors(model: FenceModel) -> list[str]:
     return errors
 
 
-def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
+def validate_model(
+    model: FenceModel, catalog: Catalog, library: PartLibrary | None = None
+) -> list[str]:
     """Every reason this model cannot be used, as English strings for the author.
 
     Checked once at load so resolution can trust the data. These are authoring
-    errors, not user-facing warnings, so they carry no code+params."""
+    errors, not user-facing warnings, so they carry no code+params.
+
+    `library` RESOLVES the model before any of it is read, because three of these
+    rules ask about numbers a slot no longer carries: a member's width, a frame
+    member's thickness and a slot's eligible products all arrive from the part the
+    slot names. Validating the authored document for those is validating a document
+    nobody builds — it refuses every model in the portfolio for facts that have not
+    been looked up yet.
+
+    `None` means the caller has no library and therefore cannot answer those three.
+    They are SKIPPED, not guessed and not failed: every other rule — the option
+    axes, the refs, the joint arithmetic that reads only authored numbers, the
+    unbuilt features — still runs, and a caller with a library gets the lot.
+
+    A part with no active version ends the check immediately. Nothing further is
+    answerable about a document that cannot be resolved, and a page of consequential
+    errors underneath the one real cause is how an author is sent to the wrong file.
+    """
     errors: list[str] = []
+    if library is not None:
+        from fenceai.parts.resolve import resolve_model_parts
+        try:
+            model, _ = resolve_model_parts(model, library)
+        except ValueError as e:
+            return [str(e)]
+        errors += _part_errors(model, catalog, library)
     axis_keys = {a.key for a in model.option_axes}
     axis_values = {a.key: {v.key for v in a.values} for a in model.option_axes}
 
@@ -946,9 +1006,13 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                 )
 
     for spec in [model.default_spec, *(v.spec for v in model.variants)]:
-        errors += _joint_errors(spec)
+        errors += _joint_errors(spec, dimensions_known=library is not None)
 
-        for member in (spec.infill.pattern if spec.infill else []):
+        # Part-derived, so unanswerable without a library: `Member.width_mm` is 0
+        # in the authored document and filled by `parts.resolve`, and a width of 0
+        # trips both rules below on every infill member ever authored.
+        pattern = spec.infill.pattern if (spec.infill and library is not None) else []
+        for member in pattern:
             # `fit_pattern` walks the sequence adding a member then its gap. A
             # member that occupies no space, or one whose overlap swallows it
             # whole, makes that walk stand still — infinitely many members in a
@@ -982,16 +1046,12 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                 # about authored ones, and the matcher only ever selects products
                 # that are IN the catalog and satisfy the requirement
                 continue
-            if not skus:
-                # A slot nothing can supply publishes cleanly and then reports
-                # `no_eligible_item` on every bay of every job built to it. The
-                # author is the only person who can say what belongs here, and
-                # the moment they can say it is now — not when an estimator finds
-                # a panel one part short in a quote.
-                errors.append(
-                    f"slot {key}: no eligible product, so nothing could ever "
-                    f"supply it"
-                )
+            # A slot with neither a predicate nor members is an UNRESOLVED slot,
+            # not an empty one: its products come from the part it names. The
+            # refusal that used to live here — a slot nothing can supply publishes
+            # cleanly and then reports `no_eligible_item` on every bay of every job
+            # built to it — is now `validate_part`'s, in the same voice and at the
+            # same moment, over the object that actually says what may supply it.
             for sku in skus:
                 if sku not in catalog.products:
                     errors.append(f"slot {key}: eligible sku {sku} is not in the catalog")
