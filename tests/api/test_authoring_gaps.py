@@ -11,13 +11,14 @@ from fastapi.testclient import TestClient
 
 from fenceai.api.app import app
 from fenceai.catalog.demo import demo_catalog
-from fenceai.fencemodel.demo import M_SLAT, slat_model
+from fenceai.fencemodel.demo import M_SLAT
 from fenceai.fencemodel.library import FenceModelLibrary
-from fenceai.fencemodel.model import Eligibility, validate_model
+from fenceai.fencemodel.model import validate_model
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import DefaultComponent, KnowledgeVersion
 from fenceai.learning.impact import ImpactCase, preview_model_impact
+from fenceai.parts.demo import demo_parts
 from tests.conftest import straight_topology
 
 
@@ -47,7 +48,12 @@ def draft_body(model_id="M-GAP", count=2):
 def test_a_slot_with_no_eligible_product_cannot_be_published(client):
     """It used to publish fine and then report `no_eligible_item` on every bay of
     every job built to it. The author is the only person who can say what belongs
-    there, and the moment they can say it is while they are authoring."""
+    there, and the moment they can say it is while they are authoring.
+
+    The rule SPLIT when a slot started naming a part. This body names no part and
+    lists no member, so it is still refused here — that is the half `validate_model`
+    kept. The other half, a slot that names a part no product covers, moved to
+    `validate_part`; the test below is the one that follows it there."""
     body = draft_body()
     body["default_spec"]["frame"][0]["requirement"]["eligibility"]["members"] = []
     created = client.post("/api/fence-models", json=body).json()
@@ -57,11 +63,41 @@ def test_a_slot_with_no_eligible_product_cannot_be_published(client):
     assert r.status_code == 422
 
 
-def test_the_error_names_the_slot_so_it_can_be_found():
-    model = slat_model().model_copy(deep=True)
-    model.default_spec.frame[0].requirement.eligibility = Eligibility(members=[])
-    errors = validate_model(model, demo_catalog())
-    assert any("rail" in e and "no eligible product" in e for e in errors)
+def test_the_refusal_followed_the_spec_onto_the_part_and_names_it():
+    """WHERE this rule lives moved, and the old assertion would re-assert a rule
+    the design retired.
+
+    `validate_model` no longer refuses a slot with an empty member list: members
+    are a MATCHING-time artifact and `parts.resolve` does not populate them, so
+    that rule could not pass for any migrated model — it would refuse the whole
+    portfolio for a list that is empty by design. The equivalent refusal is now
+    `validate_part`'s "no product in the catalog covers this spec", raised over the
+    object that actually says what may supply the slot, at the same moment and in
+    the same voice.
+
+    What is lost is the SLOT's name, and it is not lost: `validate_model` runs
+    `validate_part` for every part its model names, so an author reading the model's
+    errors still sees it — named by the part, which is where the fix has to be made.
+    A part backing four slots is one fact about the library, and an author cannot
+    fix it four times.
+    """
+    from fenceai.parts.model import Part, PartLibrary, SpecField
+    from fenceai.parts.validate import validate_part
+
+    # the part M-SLAT's rail slot names, republished as a spec nothing stocks
+    unfillable = Part(id="rail-rail-3000", version=1, type="rail",
+                      spec=[SpecField(key="sku", value=["NO-SUCH-RAIL"],
+                                      agree="among")])
+    assert any("no product in the catalog covers this spec" in e
+               for e in validate_part(unfillable, demo_catalog()))
+
+    library = PartLibrary(parts=[unfillable, *demo_parts()[1:]])
+    errors = validate_model(M_SLAT, demo_catalog(), library)
+    assert any("rail-rail-3000@v1" in e and "no product in the catalog covers" in e
+               for e in errors), errors
+    # and the slot that names it is still buildable the moment the PART is fixed
+    assert validate_model(M_SLAT, demo_catalog(),
+                          PartLibrary(parts=demo_parts())) == []
 
 
 # --- 2: one broken project took the whole portfolio preview down --------------
