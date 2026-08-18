@@ -198,3 +198,29 @@ meaning underneath the reader.
 **Standing.** This was proposed as an ease-of-use improvement and **rejected by the
 user**; the smoke suite counts a project's runs across a dimension change to prove it
 never fires.
+
+---
+
+## What V1 deliberately defers
+
+A deferral is a choice too, and it belongs next to the others rather than in a list of
+its own. Each of these is absent on purpose; the trigger is what would make it right.
+
+| Deferred | Trigger to revisit |
+|---|---|
+| Multi-user, auth, concurrent editing | A second simultaneous estimator |
+| Postgres | The same trigger — SQLite is one writer, one process (ADR-0008) |
+| Embeddings / semantic search | Knowledge bases past the size a person can scan |
+| CP-SAT and arc-flow cut planning | Plans FFD leaves provably far from the bound (ADR-0007) |
+| 2D sheet cutting | A model whose infill is cut from sheet rather than from bar |
+| Arcs in plan geometry | ADR-0003 reserves `segment_kind` for it |
+| IFC export | A customer who consumes one |
+| Reservation / ATP beyond flags | Inventory that more than one job draws down at once |
+
+**Portfolio impact preview left this list.** It is shipped — `learning/impact.py`,
+`preview_impact` / `preview_model_impact`, reporting `projects_checked` and
+`projects_affected` — and runs synchronously inside the review endpoint, over one
+process and a serialized store. That is a real scaling limit, and it is recorded in
+`docs/v1-known-limitations.md` rather than by leaving a deferral list claiming the
+feature does not exist. A stale deferral reads as a missing feature, which is the more
+expensive of the two mistakes.

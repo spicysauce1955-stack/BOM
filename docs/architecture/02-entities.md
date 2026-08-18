@@ -91,6 +91,30 @@ bug in both languages.
 **Duplicate ids are refused at the model boundary**, so a bad PUT is a 422 rather
 than geometry that silently merges two objects downstream.
 
+**Stationing is derived, never stored.** A run's stations are the cumulative plan
+(chord) length over `[start_node, *interior_vertices, end_node]`. A vertex is a
+structural **corner** when its turn angle exceeds `CORNER_ANGLE_DEG = 15.0`
+(`topology/station.py:16`), which a `corner_override` point event can flip either way.
+Segments are straight only — ADR-0003 reserves `segment_kind` for arcs.
+
+**Ground is interpolated, the fence top-line is derived.** `ground(s)` is
+piecewise-linear over the run's `elevation_sample` events and defaults to `z = 0`
+where there are none. The top of the fence is never stored (ADR-0003) — it falls out
+of the height intents, the top-line mode and the ground.
+
+**`base_top` is the general top profile of a BUILT base** (a wall, a concrete plinth);
+`wall_profile` is the two-point linear special case that predates it. Two consecutive
+points at the same `pos_permille` are a vertical **step**, and the right-hand side wins
+at the boundary.
+
+`lock` is an **authoring** constraint on the segment that *starts* at its point:
+`level` holds that segment at one absolute elevation, with `z_mm` compensating for the
+ground underneath, and `step` holds it vertical. The editor re-imposes locks after
+every edit, so *"make this stretch horizontal"* survives later dragging until the user
+frees it. The generator and `base_top_at()` read the resulting **geometry** and never
+the lock itself — the lock is how the shape was authored, not a fact about the built
+base.
+
 ---
 
 ## Catalog — products as consumption behaviour
@@ -110,8 +134,14 @@ classDiagram
         +Consumption consumption
         +Cents price_cents
         +Pricing pricing
+        +Capabilities capabilities
         +dict attrs
         +display_name(lang)
+    }
+    class Capabilities {
+        +Mm length_mm
+        +Mm face_width_mm
+        +Mm opening_width_mm
     }
     class Consumption {
         <<abstract>>
@@ -142,6 +172,7 @@ classDiagram
     }
 
     Catalog *-- Product
+    Product *-- Capabilities
     Product --> Consumption
     Product --> Pricing
     Consumption <|-- IndivisibleDiscrete
@@ -159,9 +190,31 @@ footing and explode a gate kit. `purchase_price_cents()` is the single read and 
 one rounding point; a rate-priced product may not also carry a flat price, because
 two fields that can each claim to be the price is a lie waiting to happen.
 
-**`attrs` is an open bag on purpose.** What a product is made of is the catalog's
-answer, not the code's — a company that stocks bamboo adds a product and a locale
-word, not a release.
+**Two places to put a product fact, and the split is the point.**
+`Capabilities` is what **deterministic code** may read: `length_mm` (what
+`_check_post_lengths` measures against), `face_width_mm` (the post's extent as seen,
+which the clear opening is measured to) and `opening_width_mm` (the gate opening a
+kit fits). Typed, optional, versioned. `attrs` is the open bag for everything read by
+a *predicate* or a *person* — `material`, `finish`, `colour`, a routed post's hole
+heights as a list.
+
+The rule, in `catalog/model.py:104`: **a magic string key in Python is the defect.**
+`attrs.get("length_mm")` compiles whether or not anything ever sets it, a typo is a
+silent `None`, and by the time it matters the number is on a cut list. Data read by
+code gets a field; data read by data stays in the bag, because an eligibility
+predicate names the keys it reads and a company stocking a new kind of thing should
+add a product and a rule, not a release.
+
+`None` on a capability means **not declared**, and each reader answers that in its own
+honest way — the elevation draws a flagged nominal, `clear_opening_mm` narrows by
+nothing, the length check measures against no stock. A gate event with no `kit_sku`
+takes the kit whose `opening_width_mm` equals the opening; if no product declares a
+fit the strategy says `no_gate_kit` rather than inventing a SKU. **A SKU is an opaque
+id — never parse a dimension out of it**, or the system only works for one catalog's
+naming convention.
+
+`Capabilities` is deliberately a flat record and not a union of capability kinds:
+three facts is not a taxonomy.
 
 ---
 
@@ -396,6 +449,7 @@ classDiagram
         +int tilt_deg
         +bool reinforced
         +bool pinned
+        +str cap_sku
     }
     class Span {
         +str id
@@ -414,6 +468,14 @@ classDiagram
         +Mm start_station_mm
         +Mm end_station_mm
         +str kit_sku
+    }
+    class StrategyWarning {
+        +str code
+        +str severity
+        +str message
+        +dict params
+        +list~str~ element_refs
+        +str decision_ref
     }
     class GenerationRun {
         +str id
@@ -450,12 +512,20 @@ classDiagram
     Strategy *-- Post
     Strategy *-- Span
     Strategy *-- Gate
+    Strategy *-- StrategyWarning
     DecisionGraph *-- DecisionNode
     DecisionGraph *-- DecisionEdge
     DecisionNode ..> Post : scope_refs
     DecisionNode ..> Span : scope_refs
     GenerationRun ..> Strategy : identity of inputs
 ```
+
+**`GenerationRun.id` is a content hash over the identity of the inputs** — topology
+revision, knowledge snapshot, overrides, policy, model snapshot, catalog hash and
+objective preset. Anything that changes what the run *means* has to be in that list,
+because the runs table is append-only (`INSERT OR IGNORE`, `store/db.py:376`) and a
+reused id would serve a stale stored document. `catalog_hash` is also **checked**, not
+merely stamped, on every later read.
 
 Node kinds: `input_fact`, `rule_firing`, `structural`, `selection`, `vertical`,
 `mounting`, `quantity`, `conflict`, `assumption`, `override_applied`, `failure`.
@@ -466,11 +536,44 @@ Edge types: `derived_from`, `governed_by`, `defeated`, `input_from`,
 an earlier ordinal. A `defeated` edge cites the **losing** version, which is what
 lets the UI say *"this rule would have applied, and this one beat it."*
 
+**Post kinds:** `end`, `corner`, `line`, `gate`, `junction`, `transition`.
+
 **Post fields carry the check that wrote them.** `embed_mm`, `exposed_mm` and
 `top_z_mm` are written by `_check_post_lengths` from the same values it measured the
 product against, so a run that warns *"this post is 200 mm short"* cannot also be
 drawn with a post that looks fine. `None` means "never measured" — a different claim
 from `0`.
+
+`embed_mm` is the exception that proves the rule: it is recorded for every post
+**before** the check's adjacency skip, so a post with no bay to measure against (the
+node post of a run whose first bay is a gate) is still buried. `0` there is a *fact* —
+masonry, bolted to what it stands on, embedding nothing — not a blank.
+
+**A fence on a built base stands ON it.** Where a wall or concrete base carries the
+fence, the panels rest on the base top and so does the post: `base_z_mm` is the
+elevation the post **stands on**, while `ground_z_mm` stays the true ground, which is
+what embedment is measured into. `base_z_mm = None` means "same as the ground" — soil,
+and every strategy generated before the field existed. So the post-length check
+measures the exposed length from `base_z_mm` rather than down through the wall, and
+only a `ground`-mounted post spends length on embedment
+(`tests/strategy/test_built_base_posts.py`).
+
+**Posts are plumb by default** — vertical to earth, which is construction reality. A
+section may opt into tilt with a `post_tilt` interval event: `perpendicular` (derived
+from the local ground gradient, clamped ±45°) or `custom` degrees. Gate posts and node
+posts always stay plumb: gates must hang plumb to swing, corners are braced plumb.
+Tilt lengthens the post axis (exposed / cos θ in the length check), and tilt combined
+with stepped panels is surfaced as a design-intent warning (`tilted_stepped`). Sloped
+ground is absorbed by the **panels** — raked or stepped — never by tilting structure.
+The consequences are all rule-driven rather than hard-coded: K-POST-EMBED with the
+product's declared `length_mm`, K-MAX-GAP for stepped-panel gaps, K-GATE-SLOPE for
+gate openings needing near-level ground, K-STEP-POST and K-MAX-STEP for vertical
+ground steps (`tests/scenarios/test_vertical_ground.py`).
+
+**Warnings carry structure, not a sentence.** `message` is an English *fallback*; the
+contract is `code` + `params`, which each client renders in the reader's language. A
+new code needs entries in **both** locale bundles or `tests/web/test_locale_bundles.py`
+fails.
 
 ---
 
@@ -712,9 +815,16 @@ classDiagram
         +list~Candidate~ candidates
     }
     class Override {
+        +str id
+        +str run_id
+        +Directive directive
+        +str status
+        +str origin
+        +str origin_ref
+    }
+    class Directive {
+        <<abstract>>
         +str kind
-        +Mm station_mm
-        +str run_ref
     }
     class Correction {
         +str id
@@ -733,6 +843,7 @@ classDiagram
 
     Project *-- Annotation
     Project *-- Override
+    Override --> Directive
     Project --> FenceModelChoice
     Annotation *-- InterpretationRecord
     Correction ..> Project
@@ -746,7 +857,20 @@ first-class event whose `source` is the interpretation record id, so the chain b
 to the human's words survives.
 
 **An override is anchored to `(run_id, station, kind)`** — never to a generated
-element id, which does not survive regeneration.
+element id, which does not survive regeneration. The station lives on the
+**directive**, which is a closed discriminated union of exactly five
+(`strategy/overrides.py`):
+
+| Directive | Says |
+|---|---|
+| `PinPost{station_mm}` | there is a post here, whatever the layout wanted |
+| `SuppressPost{station_mm}` | there is not |
+| `ForcePostSku{station_mm, sku}` | this post is that product |
+| `ForceMounting{station_mm, mounting}` | ground or masonry |
+| `ForceVertical{start_station_mm, end_station_mm, mode}` | level, stepped or raked |
+
+`status` goes `active` → `orphaned` when the geometry moves out from under the anchor,
+and `origin` records whether a human wrote it or a correction did.
 
 **A correction never becomes an active rule.** It proposes a `candidate`, which is
 inert until a reviewer approves, edits, restricts its scope, or rejects it.

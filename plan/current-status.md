@@ -96,8 +96,7 @@ disclosure, and the disclosure starts shut.
 procedure, docs moved with the numbers.
 
 ## The Models tab is a canvas (2026-08-17)
-Spec `docs/superpowers/specs/2026-08-17-panel-canvas-design.md`, plan
-`docs/superpowers/plans/2026-08-17-panel-canvas.md`. The user's complaint, in
+Spec `docs/superpowers/specs/2026-08-17-panel-canvas-design.md`. The user's complaint, in
 their words: *"the whole creating and editing fence panels is really unintuitive
 and unnecessarily complex and nerdish."* W4 was not wrong — it was scoped, on the
 record, as an expert tool, and it delivered exactly that. What it delivered was

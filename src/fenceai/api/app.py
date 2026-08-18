@@ -1,4 +1,4 @@
-"""FastAPI application — composition root (system-design.md API surface).
+"""FastAPI application — composition root (04-backend.md API surface).
 
 The API orchestrates persistence and the pure domain functions; no domain logic
 lives here. AI adapters are selected once at startup (stub by default, ADR-0009).

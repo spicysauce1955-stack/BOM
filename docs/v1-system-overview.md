@@ -32,7 +32,7 @@ Post at station 2000 mm (gate, ground mount, POST-S-HD) on soil base. Governed b
 
 ## Where the docs are
 
-Architecture: `docs/architecture/` (module map in `system-design.md`). Decisions:
+Architecture: `docs/architecture/` (module map in `01-domains.md`). Decisions:
 `docs/adr/0001–0010`. Research: `docs/research/`. Behavioral contract:
 `docs/scenarios/golden-scenarios.md` ⇄ `tests/scenarios/`. Review history:
 `docs/reviews/`. Run instructions: `docs/v1-runbook.md`. Limits:
