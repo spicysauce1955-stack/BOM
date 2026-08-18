@@ -276,9 +276,11 @@ classDiagram
         +PartRequirement requirement
     }
     class PartRequirement {
+        +str part_id
         +str role
         +int qty
         +str length_rule
+        +Mm overlap_mm
         +str option_axis
         +dict sku_by_option
         +Eligibility eligibility
@@ -322,6 +324,7 @@ classDiagram
     Eligibility *-- EligibleItem
     FenceModelChoice ..> FenceModel : resolves to
     FenceModel ..> ResolvedPanel : resolve_panel(spec, ctx)
+    PartRequirement ..> Part : latest_active(part_id)
 ```
 
 **A choice is not a model.** `FenceModelChoice` is a reference plus option answers,
@@ -335,6 +338,101 @@ stay reproducible.
 resolver does not honour is refused at load, by name, with the reason. Deleting an
 entry is how a wave turns a feature on — and the resolver change and the entry's
 removal are the same commit.
+
+**`PartRequirement.part_id` is unpinned, and `role`/`eligibility` are resolved, not
+authored.** A slot stores `part_id`, never `part_id@version`; generation resolves
+`latest_active` and the run stamps what it resolved (`GenerationRun.part_snapshot`,
+below) — the same reason `FenceModelChoice.version_pin=None` follows the newest
+version rather than freezing one. `role` and `eligibility` carry the same lifetime
+`eligibility` already had before parts existed: `parts.resolve.resolve_model_parts`
+fills `eligibility` from the part's spec (compiled to an `Expr` and matched against
+the catalog, exactly as an authored `Eligibility.predicate` always was) and fills
+`role` from the resolved part's `type` — a slot no longer states "rail" in its own
+words, because a `part_id` naming a screw beside an authored `role` reading "rail"
+would be two authorities over one word. `""` is what an unresolved document carries
+for both. Two slots keep an authored `Eligibility` and `part_id=""` (*names no
+part*) instead: `routed_vinyl_model`'s post and cap agree with a fact about the
+**bay**, not the item (`item.routed_at_mm == panel.rail_positions_mm`), and a part's
+`SpecField` only ever compiles to `item.<key> <agree> <literal>` — there is no
+field-reference right-hand side for it to express that with
+(`docs/superpowers/specs/2026-08-18-part-library-design.md` §5, §7).
+
+---
+
+## Parts — what a piece is, named once and shared
+
+`src/fenceai/parts/model.py`
+
+```mermaid
+classDiagram
+    class Part {
+        +str id
+        +int version
+        +str status
+        +str type
+        +dict name_i18n
+        +list~SpecField~ spec
+        +ref() str
+        +display_name(lang) str
+        +dimensions dict~str_Mm~
+        +width_mm Mm
+        +thickness_mm Mm
+    }
+    class PartType {
+        +str key
+        +dict label_i18n
+        +label(lang) str
+    }
+    class SpecField {
+        +str key
+        +value
+        +Agree agree
+        +str unit
+    }
+    class PartLibrary {
+        +list~Part~ parts
+        +latest_active(part_id) Part
+        +by_ref(part_id, version) Part
+    }
+
+    Part *-- SpecField
+    PartLibrary *-- Part
+    Part ..> PartType : type
+```
+
+**A third citizen of the pattern knowledge objects and fence models already
+follow**: immutable versions, a `status` transition guard (`draft` → `active` →
+`retired`), a run stamps what it resolved (ADR-0006). A `Part` is what a piece
+**is** — a rail's width, a screw's thread, a rail stock's stock length — stated as
+`spec: list[SpecField]`, each field a sentence read left to right about the ITEM:
+`item.<key> <agree> <value>` (`==`, `!=`, `>=`, `<=`, `among`, `between`, or
+`supplies` for consumption-aware length matching, carrying no value because a part
+cannot declare its own length — the bay's `length_rule` does, per bay).
+
+**`PartType` is the filing vocabulary, shared by parts AND products** (a Product's
+`type` lives in `attrs`, not a typed field — see below). Entity rather than a
+Python enum for the same reason `catalog/demo.py`'s materials are data: a company
+that stocks a new kind of thing adds a row, not a release.
+
+**A dimension is derived, never stored** (`Part.dimensions`, `width_mm`,
+`thickness_mm`): `unit == "mm"`, `agree == "=="`, an int value, read off `spec` at
+call time. A stored dimension beside the spec field that produces it would be two
+authorities over one number — the exact defect a model drawing 38 while buying 45
+used to be.
+
+**The unpinned-reference bargain, stated once.** A `FrameSlot` / `Member` /
+`FixingRule` names a part by `id`, never by `id@version` — `PartRequirement.part_id`
+above. Generation resolves `latest_active`, so fixing a rail's spec once reaches
+every model that names it, without republishing any of them; that is the entire
+reason the part is a shared entity rather than a template copied into each model.
+The price is the one `FenceModel`'s own unpinned `FenceModelChoice` already pays:
+an **ACTIVE model version no longer means one fixed thing forever**, because the
+part beneath an unchanged model version can move between two generations of the
+identical fence. `GenerationRun.part_snapshot` is what keeps an **old** run
+honest regardless — a run is stamped with the exact part versions (and a content
+hash, for a still-mutable draft) it actually resolved, so publishing a part cannot
+retroactively change what an already-generated run meant. Only the NEXT run drawn
+from that model sees the new part.
 
 ---
 
@@ -485,8 +583,14 @@ classDiagram
         +dict demand_skus
         +str objective_preset
         +list~ModelUse~ model_snapshot
+        +list~PartUse~ part_snapshot
         +str catalog_hash
         +list~str~ catalog_skus
+    }
+    class PartUse {
+        +str part_id
+        +int version
+        +str content_hash
     }
     class DecisionGraph {
         +list~DecisionNode~ nodes
@@ -517,15 +621,29 @@ classDiagram
     DecisionGraph *-- DecisionEdge
     DecisionNode ..> Post : scope_refs
     DecisionNode ..> Span : scope_refs
+    GenerationRun *-- PartUse
     GenerationRun ..> Strategy : identity of inputs
 ```
 
 **`GenerationRun.id` is a content hash over the identity of the inputs** — topology
-revision, knowledge snapshot, overrides, policy, model snapshot, catalog hash and
-objective preset. Anything that changes what the run *means* has to be in that list,
-because the runs table is append-only (`INSERT OR IGNORE`, `store/db.py:376`) and a
-reused id would serve a stale stored document. `catalog_hash` is also **checked**, not
-merely stamped, on every later read.
+revision, knowledge snapshot, overrides, policy, model snapshot, part snapshot,
+catalog hash and objective preset. Anything that changes what the run *means* has to
+be in that list, because the runs table is append-only (`INSERT OR IGNORE`,
+`store/db.py:376`) and a reused id would serve a stale stored document. `catalog_hash`
+is also **checked**, not merely stamped, on every later read.
+
+**`part_snapshot` mirrors `model_snapshot` field for field** (`PartUse`, one entry
+per resolved part) and, like it, belongs in the digest: two runs of the identical
+model document mean different fences the moment a part named by unpinned `id` moves.
+Its arrival bumped `RUN_DIGEST_VERSION` to `digest-v2` — a genuinely new digest
+input cannot join without changing the id it feeds, or the digest would be lying.
+**Newly generated runs get new ids; stored runs keep theirs and stay readable** —
+nothing re-hashes a run already in the table, and `part_snapshot` defaults to `[]`
+for one generated before parts existed, the same readable-old-runs convention
+`catalog_skus = []` already uses for "hashed over the whole catalog". `[]` needs no
+migration and no validator, because it is the default. `content_hash` exists
+because a **draft** part is mutable — a version number alone would not say what a
+run drawn from a draft actually read.
 
 Node kinds: `input_fact`, `rule_firing`, `structural`, `selection`, `vertical`,
 `mounting`, `quantity`, `conflict`, `assumption`, `override_applied`, `failure`.
