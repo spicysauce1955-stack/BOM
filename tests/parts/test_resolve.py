@@ -159,7 +159,9 @@ def test_part_requirements_reaches_frame_infill_fixings_and_post():
                              placement=Distributed(count=2),
                              requirement=PartRequirement(part_id="a"))],
             infill=InfillSpec(orientation="vertical", pattern=[
-                Member(key="slat", width_mm=100,
+                # authors no width: a slot naming a part authors none of the
+                # dimensions the part fills (`Member._dimensions_are_the_parts`)
+                Member(key="slat",
                        requirement=PartRequirement(part_id="b"))]),
             fixings=[FixingRule(key="screw", basis="per_member_crossing",
                                 qty_per_basis=1,

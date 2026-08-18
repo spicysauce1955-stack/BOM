@@ -174,3 +174,66 @@ def test_a_slot_with_no_predicate_and_no_members_is_not_an_authoring_error():
     """It is an UNRESOLVED slot. Refusing it was refusing every model in the
     portfolio for the shape resolution is supposed to fill."""
     assert not any("no eligible product" in e for e in validate_model(model(), catalog()))
+
+
+# --- the authoring gate a part-named slot used to walk past (fix wave M1/M2/M8) --
+
+def test_a_part_named_slot_still_answers_for_its_option_axis():
+    """After resolution EVERY part slot carries a predicate, so the loop's
+    `continue` past the option checks was the normal path and not the rare one.
+    `resolve._chosen_option` cites both of these BY NAME as load-time guarantees,
+    and without them it fell through to `unnarrowed` — the user's option choice
+    silently ignored rather than refused."""
+    m = model()
+    req = m.default_spec.frame[0].requirement
+    req.option_axis = "colour_that_does_not_exist"
+    req.sku_by_option = {"white": "NOT-A-SKU"}
+    errors = validate_model(m, catalog(), library())
+    assert any("option_axis colour_that_does_not_exist is not declared" in e
+               for e in errors), errors
+    assert any("NOT-A-SKU" in e and "not an eligible member" in e
+               for e in errors), errors
+
+
+def test_a_part_named_slot_still_answers_for_its_length_rule():
+    """The same `continue` dropped `_can_supply_length`. A rail part that admits
+    the screw asks a `centre_to_centre` cut of a product that cannot be cut."""
+    screw_rail = Part(id="rail-steel", version=1, type="rail",
+                      spec=[SpecField(key="material", value="steel", agree="==")])
+    errors = validate_model(model(rail_part="rail-steel"), catalog(),
+                            library(extra=[screw_rail]))
+    assert any("SCREW-S10" in e and "cannot supply a length" in e
+               for e in errors), errors
+
+
+def test_a_slot_cannot_name_a_part_and_also_author_what_it_is():
+    """Accepted, validated clean, and then silently destroyed: resolution
+    overwrites `eligibility` and `role` for every part slot, so a `suggest_only`
+    approval a human insisted on went out with the rest of the members list."""
+    from fenceai.fencemodel.model import Eligibility, EligibleItem
+
+    with pytest.raises(ValueError, match="eligibility.members"):
+        PartRequirement(part_id="rail-40", eligibility=Eligibility(
+            members=[EligibleItem(sku="RAIL-3000", approval="suggest_only")]))
+    with pytest.raises(ValueError, match="role"):
+        PartRequirement(part_id="rail-40", role="screw")
+    # a slot that names NO part authors all of it, which is what M-LEGACY's rail
+    # and M-VINYL's post do
+    assert PartRequirement(role="rail").role == "rail"
+
+
+def test_a_holder_cannot_name_a_part_and_also_author_the_dimension_it_fills():
+    """`_apply_dimensions` writes `part.thickness_mm or 0` unconditionally, so a
+    part declaring no thickness ZEROED an authored one — and 0 is not neutral
+    here, it is what the elevation renders as `declared=False`."""
+    with pytest.raises(ValueError, match="thickness_mm"):
+        FrameSlot(key="rail", orientation="horizontal",
+                  placement=Distributed(count=2), thickness_mm=40,
+                  requirement=PartRequirement(part_id="rail-40"))
+    with pytest.raises(ValueError, match="width_mm"):
+        Member(key="slat", width_mm=100,
+               requirement=PartRequirement(part_id="slat-100"))
+    # naming no part leaves the authored number alone — `_apply_dimensions` skips
+    # it for the same reason
+    assert Member(key="slat", width_mm=100,
+                  requirement=PartRequirement(role="infill")).width_mm == 100

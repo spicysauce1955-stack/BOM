@@ -81,3 +81,26 @@ def test_ref_and_display_name():
 def test_part_type_carries_a_localised_label():
     t = PartType(key="rail", label_i18n={"en": "Rails", "he": "שלבים"})
     assert t.label("he") == "שלבים"
+
+
+def test_a_set_valued_agreement_refuses_a_scalar():
+    """`_LIST_VALUED` named this invariant and nothing enforced it. `among` with a
+    string compiles to `In(options=['w','h','i','t','e'])` — a part that publishes
+    clean and matches nothing, on every bay of every job; with an int it raises
+    TypeError out of compilation, which reaches the author as a 500."""
+    for value in ("white", 38):
+        with pytest.raises(ValueError, match="takes a LIST"):
+            SpecField(key="colour", value=value, agree="among")
+    with pytest.raises(ValueError, match="takes a LIST"):
+        SpecField(key="width_mm", value=38, agree="between", unit="mm")
+    # the list forms are untouched
+    assert SpecField(key="colour", value=["white"], agree="among").value == ["white"]
+    assert SpecField(key="width_mm", value=[30, 40], agree="between",
+                     unit="mm").value == [30, 40]
+
+
+def test_covers_still_takes_a_scalar():
+    """`covers` is deliberately NOT list-valued: a scalar on either side is a
+    one-element set, which is what lets one operator serve "my token is among
+    yours" and "your holes include mine"."""
+    assert SpecField(key="finishes", value="black", agree="covers").value == "black"

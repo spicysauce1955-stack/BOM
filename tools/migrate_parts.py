@@ -254,10 +254,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {part.id}: already {existing.ref}, unchanged")
             continue
         version = store.next_part_version(part.id)
-        store.save_part(part.model_copy(update={"version": version}),
-                        actor="migrate_parts")
-        if version > 1:
-            store.set_part_status(part.id, version, "active", actor="migrate_parts")
+        # Saved as a DRAFT and then activated, never saved active. A part id with
+        # an existing active version would otherwise end with two, and `save_part`
+        # refuses that: activation is the act that retires the predecessor, and it
+        # is the only one that does. Unconditional rather than branched on
+        # `version > 1` — the branch is what left the second-version path untested
+        # on every fresh database, and it aborted AFTER committing the second active
+        # row on every database that was not.
+        store.save_part(
+            part.model_copy(update={"version": version, "status": "draft"}),
+            actor="migrate_parts")
+        store.set_part_status(part.id, version, "active", actor="migrate_parts")
         written += 1
     for model in rewritten:
         store._conn.execute(

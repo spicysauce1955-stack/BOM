@@ -64,9 +64,21 @@ class SpecField(BaseModel):
             return self
         if self.value is None:
             raise ValueError(f"{self.key}: {self.agree} needs a value")
+        if self.agree in _LIST_VALUED and not isinstance(self.value, list):
+            # The set-valued agreements read the value AS a set, and every python
+            # scalar this field accepts is either iterable the wrong way or not
+            # iterable at all. `among` with `"white"` compiles to
+            # `In(options=['w','h','i','t','e'])` — a part that publishes clean and
+            # then matches nothing, on every bay of every job; with an int it raises
+            # `TypeError` out of compilation, which reaches the author as a 500.
+            # Checked against the constant that names the invariant, so a third
+            # set-valued agreement cannot be added without arriving here.
+            raise ValueError(
+                f"{self.key}: `{self.agree}` takes a LIST of values, got "
+                f"{type(self.value).__name__}"
+            )
         if self.agree == "between":
-            if (not isinstance(self.value, list) or len(self.value) != 2
-                    or not all(isinstance(v, int) for v in self.value)):
+            if (len(self.value) != 2 or not all(isinstance(v, int) for v in self.value)):
                 raise ValueError(f"{self.key}: `between` takes exactly two ints")
         return self
 

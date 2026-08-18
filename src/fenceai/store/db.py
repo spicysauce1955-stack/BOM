@@ -403,8 +403,6 @@ class Store:
 
     # -- parts (drafts mutable, published versions frozen) ---------------------
 
-    _PART_STATUSES = ("draft", "active", "retired")
-
     def save_part(self, part: Part, actor: str = "system") -> None:
         """A draft may be rewritten in place; anything published is frozen.
 
@@ -412,6 +410,22 @@ class Store:
         rather than a validation of one caller — the same reason `save_fence_model`
         carries it. A run stamps `(part_id, version)` and re-reading it must give
         back the spec that run resolved.
+
+        `Part.status` DEFAULTS to `"active"`, so this method is a second door into
+        the state `set_part_status` guards, and it has to carry the same two
+        invariants or the guard is decorative:
+
+        * **one active version per id.** `set_part_status` retires the predecessor
+          precisely so `latest_active` is never ambiguous; saving `x@v2` as active
+          beside an active `x@v1` leaves two, and `latest_active`'s `max(version)`
+          then hides the older one instead of reporting the contradiction.
+          Refused rather than silently retiring the predecessor here: a save is not
+          a publication, and retiring a version is a lifecycle act with its own
+          audit line.
+        * **a published part earns its refusals now.** Same moment and same voice as
+          `set_part_status`, for the reason `validate_part`'s docstring gives: a part
+          that publishes cleanly and reports `no_eligible_item` on every bay of every
+          job has told the author nothing.
         """
         row = self._conn.execute(
             "SELECT status FROM parts WHERE part_id=? AND version=?",
@@ -422,6 +436,21 @@ class Store:
                 f"{part.ref} is {row[0]}; its content is immutable "
                 "(publish a new version, or change only its status)"
             )
+        if part.status == "active":
+            others = [
+                v for (v,) in self._conn.execute(
+                    "SELECT version FROM parts WHERE part_id=? AND status='active'",
+                    (part.id,),
+                ).fetchall()
+                if v != part.version
+            ]
+            if others:
+                raise ValueError(
+                    f"{part.ref} would be a second active version beside "
+                    f"{', '.join(f'{part.id}@v{v}' for v in sorted(others))} — save "
+                    "it as a draft and activate it, so its predecessor is retired"
+                )
+        self._refuse_invalid_part(part)
         self._conn.execute(
             "INSERT INTO parts (part_id, version, status, doc) VALUES (?,?,?,?) "
             "ON CONFLICT(part_id, version) DO UPDATE SET "
@@ -452,7 +481,16 @@ class Store:
     def set_part_status(
         self, part_id: str, version: int, status: str, actor: str = "system"
     ) -> None:
-        """Activating retires the predecessor, so `latest_active` is never ambiguous."""
+        """Activating retires the predecessor, so `latest_active` is never ambiguous.
+
+        Wrapped in the same try/except/rollback as `replace_active_version` and
+        `apply_review_outcome`, and for the identical reason: this is a
+        MULTI-statement write behind one `commit()`. If the final write raised, the
+        retires above it sat uncommitted on the connection and the NEXT store call's
+        `commit()` landed them — an id left with ZERO active versions, and every
+        model naming that part failing generation with nothing in the audit log to
+        say which call did it.
+        """
         part = self.load_part(part_id, version)
         if part is None:
             raise ValueError(f"{part_id}@v{version} not found")
@@ -466,21 +504,68 @@ class Store:
             # invariant — the same placement `save_fence_model`'s immutability refusal
             # argues for. Note it checks ACTIVE models only: a draft naming a part it
             # is about to stop naming must not block the retirement.
-            naming = self._models_naming_part(part_id)
+            #
+            # The question is asked of the ID, not of this version, because that is
+            # what a model names: `part_id` is unpinned and resolution takes
+            # `latest_active`. So retiring one version while ANOTHER stays active
+            # takes nothing away from any slot — which is the ordinary way an
+            # abandoned draft is discarded, and refusing it left every draft of an
+            # in-use part stuck forever, `draft -> {active, retired}` being the only
+            # transitions it has.
+            leaves_none = not any(
+                v != version for (v,) in self._conn.execute(
+                    "SELECT version FROM parts WHERE part_id=? AND status='active'",
+                    (part_id,),
+                ).fetchall()
+            )
+            naming = self._models_naming_part(part_id) if leaves_none else []
             if naming:
                 raise ValueError(
                     f"{part.ref} is still named by {', '.join(naming)} — retiring it "
                     "would leave those slots with nothing eligible"
                 )
         if status == "active":
-            for row in self._conn.execute(
-                "SELECT version FROM parts WHERE part_id=? AND status='active'",
-                (part_id,),
-            ).fetchall():
-                if row[0] != version:
-                    self._set_part_status_nocommit(part_id, row[0], "retired", actor)
-        self._set_part_status_nocommit(part_id, version, status, actor)
-        self._conn.commit()
+            # Same moment and same voice as `save_part`: what a part earns at
+            # authoring time it must earn at the one act that makes it the answer
+            # every model naming its id resolves to.
+            self._refuse_invalid_part(part.model_copy(update={"status": status}))
+        try:
+            if status == "active":
+                for row in self._conn.execute(
+                    "SELECT version FROM parts WHERE part_id=? AND status='active'",
+                    (part_id,),
+                ).fetchall():
+                    if row[0] != version:
+                        self._set_part_status_nocommit(part_id, row[0], "retired", actor)
+            self._set_part_status_nocommit(part_id, version, status, actor)
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+    def _refuse_invalid_part(self, part: Part) -> None:
+        """The authoring refusals a PUBLISHED part earns, at the moment it publishes.
+
+        `validate_part`'s docstring promises "refusals a part earns at authoring
+        time" and design §3.3 promises the same, but its only caller was
+        `validate_model` — i.e. GENERATION, which hands the author a 422 on a job
+        they were pricing instead of a refusal on the part they were writing.
+
+        A draft is exempt by `validate_part` itself: that is what lets an author
+        write a spec before the item exists. No catalog means no answer rather than
+        a wrong one — the same `library is None` bargain `validate_model` strikes,
+        for a store that has not been seeded yet.
+        """
+        if part.status == "draft":
+            return
+        catalog = self.load_catalog()
+        if catalog is None:
+            return
+        from fenceai.parts.validate import validate_part
+
+        errors = validate_part(part, catalog)
+        if errors:
+            raise ValueError("; ".join(errors))
 
     def _models_naming_part(self, part_id: str) -> list[str]:
         from fenceai.parts.resolve import part_requirements
@@ -495,6 +580,7 @@ class Store:
     ) -> None:
         part = self.load_part(part_id, version)
         part.status = status  # type: ignore[assignment]
+        part = Part.model_validate(part.model_dump())  # re-validate the Literal
         self._conn.execute(
             "UPDATE parts SET status=?, doc=? WHERE part_id=? AND version=?",
             (status, part.model_dump_json(), part_id, version),

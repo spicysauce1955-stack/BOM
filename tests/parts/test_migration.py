@@ -330,3 +330,41 @@ def test_the_tool_refuses_a_contradiction_and_writes_nothing(tmp_path):
         stored = reopened.load_fence_model(model_id, 1)
         assert all(req.part_id == "" for _key, req in part_requirements(stored)), \
             f"{model_id} was rewritten behind a refusal"
+
+
+def test_the_tool_publishes_a_second_version_without_leaving_two_active(tmp_path):
+    """The branch a fresh database can never reach, and the one that mattered.
+
+    On any store whose part already says something else, migration takes the
+    "spec differs -> new version" path. It saved that version with `Part.status`'s
+    default — `active` — beside an active predecessor, committed it, and only then
+    called `set_part_status(..., "active")`, which raised
+    `illegal status transition active -> active`. The tool aborted AFTER the write:
+    two active versions of one id, and the models never rewritten.
+    """
+    from fenceai.parts.model import SpecField
+    from fenceai.store.db import Store
+    from tools.migrate_parts import main
+
+    path = str(tmp_path / "m.db")
+    store = Store(path)
+    # the store's seeded `rail-rail-3000@v1` says exactly what migration would
+    # write, so move it: v2 declares a material the migrated spec does not
+    seeded = store.load_part("rail-rail-3000", 1)
+    store.save_part(seeded.model_copy(update={
+        "version": 2, "status": "draft",
+        "spec": [*seeded.spec, SpecField(key="material", value="aluminium")]}))
+    store.set_part_status("rail-rail-3000", 2, "active")
+    store.save_fence_model(_pre_migration_model("M-OLD", "SLAT-100", 100))
+    store.close()
+
+    assert main([path, "--write"]) == 0
+    store = Store(path)
+    versions = {p.version: p.status for p in store.part_library().parts
+                if p.id == "rail-rail-3000"}
+    assert versions == {1: "retired", 2: "retired", 3: "active"}
+    # and the models really were rewritten, which is what the abort used to lose
+    migrated = store.load_fence_model("M-OLD", 1)
+    assert {key: req.part_id for key, req in part_requirements(migrated)} == {
+        "rail": "rail-rail-3000", "slat": "infill-slat-100"}
+    resolve_model_parts(migrated, store.part_library())

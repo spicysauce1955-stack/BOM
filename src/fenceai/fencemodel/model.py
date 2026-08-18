@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
@@ -136,6 +136,45 @@ class PartRequirement(BaseModel):
     sku_by_option: dict[str, str] = {}
     eligibility: Eligibility = Eligibility()
 
+    @model_validator(mode="after")
+    def _part_or_authored(self) -> "PartRequirement":
+        """Naming a part and authoring what it is are exclusive — on the AUTHORED
+        document, which is the only place the two can both be true.
+
+        Not a style rule. `resolve_model_parts` OVERWRITES `eligibility` and `role`
+        for every slot that names a part, so a document carrying both was accepted,
+        validated clean, and then had the authored half deleted without a word: a
+        slot naming `rail-rail-3000` beside an `EligibleItem(sku="RAIL-40",
+        approval="suggest_only")` resolved to `members=[]`, and a human sign-off
+        flag went with it. `_predicate_errors`' refusal of "a predicate AND members"
+        could never fire on such a slot either, because resolution wiped the
+        evidence before validation read it.
+
+        Enforced HERE rather than in `validate_model` because it is a fact about the
+        document, answerable with no catalog and no library — and because the
+        resolver's own writes must not have to route around a check that only ever
+        applies before it runs. Assignment is deliberately not validated (pydantic's
+        default): `resolve_model_parts` assigns the resolved eligibility and role
+        onto a copy, and that copy is the one document where both are true and
+        should be.
+        """
+        if not self.part_id:
+            return self
+        said = [
+            name for name, authored in (
+                ("eligibility.members", bool(self.eligibility.members)),
+                ("eligibility.predicate", self.eligibility.predicate is not None),
+                ("role", bool(self.role)),
+            ) if authored
+        ]
+        if said:
+            raise ValueError(
+                f"slot names part {self.part_id!r} and also authors "
+                f"{', '.join(said)} — the part is the one authority on what a piece "
+                "is, and resolution would overwrite what is written here"
+            )
+        return self
+
 
 # --- placement ---------------------------------------------------------------
 
@@ -173,6 +212,33 @@ Placement = Annotated[
 
 # --- the panel ---------------------------------------------------------------
 
+def _refuse_authored_dimensions(holder, keys: tuple[str, ...]):
+    """A holder that names a part must author none of the dimensions the part fills.
+
+    The other half of `PartRequirement._part_or_authored`, one level up, because
+    these fields sit on the HOLDER and not on the requirement. `_apply_dimensions`
+    writes `part.width_mm or 0` and `part.thickness_mm or 0` unconditionally, so a
+    part declaring no thickness silently ZEROED a thickness the author had written —
+    and 0 is not a neutral value here, it is what the elevation renders as
+    `declared=False`. The migration only dodged it by minting
+    `rail-rail-3000-40`; the next author would have lost the number with nothing
+    said. Refused where it is still fixable: put the dimension on the part, which is
+    the one authority that says how wide a rail is.
+    """
+    if not holder.requirement.part_id:
+        # Nothing here is the authority on this holder's dimensions, so whatever
+        # the document carries stands — the same case `_apply_dimensions` skips.
+        return holder
+    said = [k for k in keys if getattr(holder, k)]
+    if said:
+        raise ValueError(
+            f"{holder.key!r} names part {holder.requirement.part_id!r} and also "
+            f"authors {', '.join(said)} — declare the dimension on the part, or the "
+            "panel draws one number and buys another"
+        )
+    return holder
+
+
 class FrameSlot(BaseModel):
     key: str
     orientation: Literal["horizontal", "vertical"]
@@ -195,6 +261,10 @@ class FrameSlot(BaseModel):
     insertion_margin_mm: Mm = 0
     requirement: PartRequirement
 
+    @model_validator(mode="after")
+    def _dimensions_are_the_parts(self) -> "FrameSlot":
+        return _refuse_authored_dimensions(self, ("thickness_mm",))
+
 
 class Member(BaseModel):
     key: str
@@ -215,6 +285,10 @@ class Member(BaseModel):
     base_engagement_mm: Mm = 0
     top_engagement_mm: Mm = 0
     requirement: PartRequirement
+
+    @model_validator(mode="after")
+    def _dimensions_are_the_parts(self) -> "Member":
+        return _refuse_authored_dimensions(self, ("width_mm", "thickness_mm"))
 
 
 class InfillSpec(BaseModel):
@@ -804,17 +878,37 @@ def unknown_skus(model: FenceModel, catalog: Catalog) -> list[str]:
     })
 
 
-def _predicate_errors(key: str, eligibility: Eligibility, catalog: Catalog) -> list[str]:
-    """A slot that declares what it NEEDS rather than naming products.
+def predicate_skus(eligibility: Eligibility, catalog: Catalog) -> list[str] | None:
+    """Which products a spec-declared slot could be built from, or None if unknowable.
 
     The import is deferred because `match.py` imports this module for
-    `Eligibility`/`EligibleItem`. Validation asking the matcher "would anything
-    satisfy this?" is the right direction — the alternative is a second copy of
-    the covering rule here, which is how the two would eventually disagree about
-    what counts as a match.
+    `Eligibility`/`EligibleItem`. Asking the MATCHER rather than walking the catalog
+    here is the whole point — a second copy of the covering rule is how the two
+    would eventually disagree about what counts as a match — and it is the same
+    reason `parts.validate.matching_skus` is expressed in terms of this function
+    rather than repeating the walk a third time.
+
+    `None`, distinct from `[]`: the predicate asks about the bay it is being fitted
+    to, which does not exist yet. "Nothing is eligible" would be a false answer to a
+    question nobody asked; `no_eligible_item` still reports it per bay.
     """
     from fenceai.fencemodel.match import match_eligibility
 
+    if any(p.split(".", 1)[0] != "item" for p in field_paths(eligibility.predicate)):
+        return None
+    return [m.sku for m in match_eligibility(eligibility, catalog, {}).members]
+
+
+def _predicate_errors(
+    key: str, eligibility: Eligibility, admitted: list[str] | None
+) -> list[str]:
+    """A slot that declares what it NEEDS rather than naming products.
+
+    `admitted` is `predicate_skus`' answer, passed IN rather than computed here
+    because the caller needs the same list for the slot rules below it — an option
+    naming a product this slot cannot buy, a length no candidate can cut. Matching
+    the catalog twice for one slot would be the cost of hiding that.
+    """
     errors: list[str] = []
     if eligibility.members:
         errors.append(
@@ -823,13 +917,9 @@ def _predicate_errors(key: str, eligibility: Eligibility, catalog: Catalog) -> l
             "intersecting the two lists has more than one defensible reading"
         )
         return errors
-    reads = field_paths(eligibility.predicate)
-    if any(p.split(".", 1)[0] != "item" for p in reads):
-        # The predicate asks about the bay it is being fitted to, which does not
-        # exist yet. Refusing it here for failing a question nobody asked would
-        # be worse than the gap: `no_eligible_item` still reports it per bay.
+    if admitted is None:
         return errors
-    if not match_eligibility(eligibility, catalog, {}).members:
+    if not admitted:
         errors.append(
             f"slot {key}: no item in the catalog covers this spec, so nothing "
             "could ever supply it. Same reason an empty member list is refused — "
@@ -1067,23 +1157,34 @@ def validate_model(
         for key, req in reqs:
             skus = [m.sku for m in req.eligibility.members]
             if req.eligibility.predicate is not None:
-                errors += _predicate_errors(key, req.eligibility, catalog)
-                # a predicate slot names no skus of its own; the checks below are
-                # about authored ones, and the matcher only ever selects products
-                # that are IN the catalog and satisfy the requirement
-                continue
-            # A slot with neither a predicate nor members is an UNRESOLVED slot,
-            # not an empty one — PROVIDED it names a part, because that is where
-            # its products come from. The refusal that used to live here — a slot
-            # nothing can supply publishes cleanly and then reports
-            # `no_eligible_item` on every bay of every job built to it — is now
-            # `validate_part`'s, in the same voice and at the same moment, over the
-            # object that actually says what may supply it.
-            #
-            # A slot that names NO part and declares nothing is still the old
-            # refusal's case, and it is the one the empty `part_id` default could
-            # otherwise let through silently.
-            if not req.part_id and not skus:
+                # After resolution EVERY part-named slot lands here — the normal
+                # path, not the rare one — so `continue`ing past the rules below
+                # dropped four of them on the whole portfolio: an option_axis naming
+                # an axis the model does not declare, an option naming a product the
+                # slot cannot buy, and both directions of the length_rule check. All
+                # four are about the SLOT and hold however its eligibility was said.
+                # The narrowing in `resolve._chosen_option` cites the first two BY
+                # NAME as load-time guarantees, and with them gone it fell through to
+                # `unnarrowed` — the user's colour choice silently ignored.
+                admitted = predicate_skus(req.eligibility, catalog)
+                errors += _predicate_errors(key, req.eligibility, admitted)
+                # A predicate names no skus of ITS own; the products it admits are
+                # what the matcher admits. `None` (the predicate asks about a bay
+                # that does not exist yet) leaves the sku-driven rules unanswerable,
+                # which is not the same as failing them.
+                skus = admitted if admitted is not None else []
+            elif not req.part_id and not skus:
+                # A slot with neither a predicate nor members is an UNRESOLVED slot,
+                # not an empty one — PROVIDED it names a part, because that is where
+                # its products come from. The refusal that used to live here — a slot
+                # nothing can supply publishes cleanly and then reports
+                # `no_eligible_item` on every bay of every job built to it — is now
+                # `validate_part`'s, in the same voice and at the same moment, over
+                # the object that actually says what may supply it.
+                #
+                # A slot that names NO part and declares nothing is still the old
+                # refusal's case, and it is the one the empty `part_id` default could
+                # otherwise let through silently.
                 errors.append(
                     f"slot {key}: names no part and declares no eligible product, "
                     "so nothing could ever be bought for it"
