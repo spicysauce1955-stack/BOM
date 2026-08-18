@@ -196,6 +196,24 @@ out.layout_origin = layoutPx(layout, 0, SLAT.height_mm);   // the panel top-left
 out.layout_top = layout.y0;
 out.layout_empty = elevationLayout({ members: [] });
 
+// --- the posts the bay stands between --------------------------------------
+const WITH_POSTS = { ...SLAT, posts: [
+  {side: "start", kind: "line", x_mm: -90, w_mm: 90, h_mm: SLAT.height_mm,
+   cap_h_mm: 40, sku: "POST-V-1800", cap_sku: "CAP-V-90"},
+  {side: "end", kind: "corner", x_mm: SLAT.width_mm, w_mm: 90, h_mm: SLAT.height_mm,
+   cap_h_mm: 40, sku: "POST-V-1800", cap_sku: "CAP-V-90"},
+]};
+out.post_layout_off = (() => {
+  const L = elevationLayout(WITH_POSTS);
+  return {x0: L.x0, vw: L.vw, s: L.s};
+})();
+out.post_layout_on = (() => {
+  const L = elevationLayout(WITH_POSTS, {posts: true});
+  const [left] = layoutPx(L, -90, 0);
+  const [right] = layoutPx(L, SLAT.width_mm + 90, 0);
+  return {x0: L.x0, vw: L.vw, s: L.s, left, right, postPad: L.postPad};
+})();
+
 console.log(JSON.stringify(out));
 """
 
@@ -374,3 +392,31 @@ def test_there_is_no_layout_for_a_panel_with_nothing_in_it(ev):
     """The same condition the renderer refuses on — a model being started has no
     drawing yet, and the canvas draws its own empty opening for that."""
     assert ev["layout_empty"] is None
+
+
+def test_showing_the_posts_makes_room_for_them(ev):
+    """The start post sits at a NEGATIVE x — it occupies the millimetres before
+    the opening — so the box has to grow or it is drawn over the height
+    dimension. Off by default, so every existing drawing is untouched."""
+    off, on = ev["post_layout_off"], ev["post_layout_on"]
+    assert off["x0"] == 58, "with posts hidden the origin is the plain padding"
+    assert on["x0"] > off["x0"], "showing them pushes the opening across"
+    assert on["postPad"] > 0
+
+
+def test_a_flanking_post_is_drawn_inside_the_box(ev):
+    """Both posts have to LAND on the canvas. A layout that made room at one end
+    only would put the start post off the left edge, which is invisible rather
+    than wrong-looking — the failure mode this pins."""
+    on = ev["post_layout_on"]
+    assert on["left"] >= 0, "the start post falls off the drawing"
+    assert on["right"] <= on["vw"], "the end post falls off the drawing"
+
+
+def test_the_whole_bay_shares_one_scale(ev):
+    """A bay must not resize the instant its posts are shown: the scale is taken
+    over the panel PLUS the posts, so the drawing gets slightly smaller rather
+    than the posts being drawn at a different scale from the boards."""
+    off, on = ev["post_layout_off"], ev["post_layout_on"]
+    assert on["s"] < off["s"], "the scale must absorb the posts"
+    assert on["s"] > off["s"] * 0.9, "and not by shrinking the panel dramatically"

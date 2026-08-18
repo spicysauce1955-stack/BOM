@@ -243,6 +243,29 @@ POST_PREDICATE_PANEL_FACTS = frozenset({
 })
 
 
+# What a POST's eligibility predicate may know about ITSELF — not about the
+# product it is choosing, which is the cycle rule below, but about the STATION.
+#
+# `kind` is not derived from the panel at any point: it is a fact of the
+# topology — this node ends a run, that one turns a corner, the rest sit mid-run
+# — and it is settled before a bay is laid out, let alone resolved. So it sits
+# outside the DAG above rather than inside it, and it is readable for that
+# reason alone.
+#
+# It has to be readable because a routed post is cut at the factory and its
+# position decides WHICH FACES are cut: an end post on one face, a line post on
+# two opposite faces, a corner post on two adjacent ones. Without it a product
+# line names ONE post SKU for a whole run, and every end and every corner is
+# ordered wrong — which is precisely why a manufacturer asks for the layout
+# before it will quote.
+#
+# `mounting` is not here, though it is settled as early: it is resolved from
+# knowledge inside `_make_post` after the model's post is chosen, and a
+# `force_mounting` override can move it, so reading it here would mean resolving
+# it twice in two places. See `match.post_panel_facts` for the whole reason.
+POST_PREDICATE_POST_FACTS = frozenset({"kind"})
+
+
 # --- the model ---------------------------------------------------------------
 
 class OptionValue(BaseModel):
@@ -782,15 +805,18 @@ def _post_namespace_errors(
     """What a post's — or its cap's — predicate is allowed to know.
 
     The generator supplies exactly three namespaces here: `item` (the candidate),
-    `panel` narrowed to `POST_PREDICATE_PANEL_FACTS`, and, for a CAP, the `post`
-    it caps. Anything else evaluates to a `MissingField`, which the matcher reads
-    as "has not covered the requirement" — so the predicate would match NOTHING
-    and the slot would fall silently through to the company default. Refused here,
-    where it is a typo an author can fix.
+    `panel` narrowed to `POST_PREDICATE_PANEL_FACTS`, and `post` — narrowed to
+    `POST_PREDICATE_POST_FACTS` for a post, and the whole item it caps for a CAP.
+    Anything else evaluates to a `MissingField`, which the matcher reads as "has
+    not covered the requirement" — so the predicate would match NOTHING and the
+    slot would fall silently through to the company default. Refused here, where
+    it is a typo an author can fix.
 
-    A post may not read `post`, and that is the cycle rule in its second form: a
-    post chosen by the post it is has no first answer. A cap may, because the post
-    is already chosen — which is the whole reason `cap` nests inside `PostSlot`.
+    A post may read where it STANDS and not what it IS, and that is the cycle
+    rule in its second form: a post chosen by the post it is has no first answer,
+    while a post chosen by the corner it turns has one before the fence is laid
+    out. A cap reads the whole post, because the post is already chosen — which
+    is the whole reason `cap` nests inside `PostSlot`.
     """
     errors: list[str] = []
     for path in sorted(field_paths(predicate)):
@@ -798,6 +824,8 @@ def _post_namespace_errors(
         if head == "item" or (head == "post" and may_read_post):
             continue
         if head == "panel" and field in POST_PREDICATE_PANEL_FACTS:
+            continue
+        if head == "post" and field in POST_PREDICATE_POST_FACTS:
             continue
         if head == "panel":
             errors.append(
@@ -810,15 +838,21 @@ def _post_namespace_errors(
         elif head == "post":
             errors.append(
                 f"slot {key} ({what}): a post may not be matched on post.{field} "
-                f"— it would be choosing itself. Only a CAP reads the post, "
-                f"because the post is chosen first"
+                f"— it would be choosing itself. A post reads only where it "
+                f"STANDS ("
+                + ", ".join(f"post.{f}" for f in sorted(POST_PREDICATE_POST_FACTS))
+                + "), which the topology settles before any bay is laid out; "
+                f"everything the post IS is read by the CAP, because the post is "
+                f"chosen first"
             )
         else:
             errors.append(
                 f"slot {key} ({what}): nothing supplies {path} when a post is "
                 f"resolved, so this predicate would match no product at all and "
                 f"the company default would answer instead. Readable: item.*"
-                + (", post.*" if may_read_post else "")
+                + (", post.*" if may_read_post else
+                   ", " + ", ".join(f"post.{f}"
+                                    for f in sorted(POST_PREDICATE_POST_FACTS)))
                 + ", " + ", ".join(f"panel.{f}"
                                    for f in sorted(POST_PREDICATE_PANEL_FACTS))
             )

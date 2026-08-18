@@ -39,7 +39,7 @@ import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
 import { isDragging, renderCanvas } from "./panel-canvas.js";
 import {
-  renderAxisEditor, renderInspector, SELECTION_NONE,
+  applyRename, elementLabel, renderAxisEditor, renderInspector, SELECTION_NONE,
 } from "./panel-inspector.js";
 import { TEMPLATES } from "./panel-templates.js";
 import {
@@ -65,6 +65,16 @@ let advancedOpen = false;
 // which thing on the panel the inspector is editing — a chip on the element
 // list today, a rectangle on the drawing once the canvas lands
 let selection = SELECTION_NONE;
+// the chip whose name is being typed over, or null. A rename is a MODE and not
+// a field: an element has no name of its own to show a permanent box for, and
+// the eighteen controls this pane was measured at started with one.
+let renaming = null;
+// when the click that COMPLETES a double-click stops counting as a selection.
+// A timestamp and not a flag: the completing click lands on the rename box that
+// has already replaced the chip, so a flag set there is never cleared by the
+// handler it was set for — and the next chip click, whenever it came, was
+// swallowed instead.
+let suppressChipUntil = 0;
 let heightMm = DEFAULT_HEIGHT_MM;
 let widthMm = DEFAULT_WIDTH_MM;
 let preview = null;
@@ -122,6 +132,27 @@ export function initModelEditor() {
   });
   document.getElementById("btn-model-advanced").addEventListener("click", toggleAdvanced);
 
+  // The rename, opened by the SECOND MOUSEDOWN rather than by `dblclick`, and
+  // delegated to the host rather than bound to a chip. Both halves are the same
+  // defect, measured in a browser: the first click selects, `renderElements`
+  // rebuilds every chip, and by the time the pair completes the node the first
+  // click landed on is detached — so `dblclick` fires at the nearest common
+  // ancestor of two targets that no longer share a tree, and never reached a
+  // chip at all. `detail` is counted by the browser from position and time, not
+  // from node identity, so it survives the repaint that the double-click itself
+  // causes. Bound here once because the host outlives every chip in it.
+  document.getElementById("model-elements").addEventListener("mousedown", (ev) => {
+    if (ev.detail < 2 || renaming) return;
+    const chip = ev.target.closest?.(".element-chip");
+    if (!chip) return;
+    ev.preventDefault();
+    // ... and the click that completes the pair must not also toggle the
+    // selection, which would repaint the box being typed into out of existence
+    suppressChipUntil = Date.now() + 400;
+    const [kind, ...rest] = chip.dataset.element.split(":");
+    beginRename({ kind, key: rest.join(":") });
+  });
+
   on("tab-changed", (tab) => { if (tab === "models") openModelsTab(); });
   const relocalize = () => { if (modelsTabActive()) renderAll(); };
   on("locale-changed", relocalize);
@@ -168,6 +199,7 @@ function openSession(model, version, { isNew = false } = {}) {
   session = { model, version, isNew, invalid: null, saveError: null, dirty: false };
   specIndex = -1;
   selection = SELECTION_NONE;
+  renaming = null;
   advancedOpen = false;
   preview = null;
   previewError = null;
@@ -731,6 +763,7 @@ const selectionEquals = (a, b) => a?.kind === b?.kind && a?.key === b?.key;
 
 function selectElement(next) {
   selection = selectionEquals(selection, next) ? SELECTION_NONE : next;
+  renaming = null;
   renderElements();
   renderCanvasPane();
   renderInspectorPane();
@@ -790,13 +823,24 @@ function renderElements() {
   host.appendChild(addBar(spec));
   const chips = el("div", { class: "element-chips" });
   for (const item of elementsOf(spec)) {
+    if (selectionEquals(renaming, item)) {
+      chips.appendChild(renameField(spec, item));
+      continue;
+    }
+    // The chip carries the GENERATED name — "Rail", "Board 2" — because nothing
+    // in the trade names a board, and the schema key is an identifier the author
+    // never chose. It is still on the chip, in the title, for the person who
+    // has to read a `base_ref` or a part table beside it.
     const chip = el("button", {
       type: "button", class: `element-chip element-${item.kind}`,
       "data-element": `${item.kind}:${item.key}`,
-    }, el("span", { class: "meta", text: t(`model.inspect.${ELEMENT_WORD[item.kind]}`) }),
-       el("bdi", { class: "sku", text: item.key }));
+      title: `${item.key} — ${t("model.rename_hint")}`,
+    }, el("span", { text: elementLabel(spec, item.kind, item.key) }));
     if (selectionEquals(selection, item)) chip.classList.add("selected");
-    chip.addEventListener("click", () => selectElement(item));
+    chip.addEventListener("click", () => {
+      if (Date.now() < suppressChipUntil) return;
+      selectElement(item);
+    });
     chips.appendChild(chip);
   }
   if (!elementsOf(spec).length)
@@ -804,7 +848,63 @@ function renderElements() {
   host.appendChild(chips);
 }
 
-const ELEMENT_WORD = { frame: "rail", infill: "board", fixing: "screws" };
+// --- renaming an element -----------------------------------------------------
+//
+// The key stopped being a field and became a mode. What did NOT change is what
+// a rename has to do: keys stay unique (`freeElementKey`'s rule, over the other
+// elements), and every `base_ref`/`top_ref` pointing at the old name moves with
+// it (`applyRename`, which owns that half in panel-inspector.js). Losing either
+// authors a document the publish gate refuses, for an edit that looked like a
+// rename.
+
+function beginRename(item) {
+  renaming = item;
+  renderElements();
+  const input = document.querySelector('#model-elements [data-f="key"]');
+  input?.focus();
+  input?.select();
+}
+
+function renameField(spec, item) {
+  const input = el("input", { type: "text", "data-f": "key", dir: "ltr",
+                              class: "sku element-rename", size: 12,
+                              value: item.key });
+  // Enter commits and blur commits, and the commit re-renders — so without this
+  // the blur that FOLLOWS the Enter commits a second time, against a chip whose
+  // key has already moved
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    finishRename(spec, item, input.value);
+  };
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); commit(); }
+    else if (ev.key === "Escape") { done = true; renaming = null; renderElements(); }
+  });
+  input.addEventListener("blur", commit);
+  return input;
+}
+
+function finishRename(spec, item, typed) {
+  renaming = null;
+  const want = String(typed || "").trim();
+  if (!spec || !want || want === item.key) return renderElements();
+  // unique among the OTHER elements: a key minted against the whole list would
+  // refuse the element its own name back
+  const others = elementsOf(spec)
+    .filter((e) => !selectionEquals(e, item))
+    .map((e) => ({ id: e.key }));
+  const key = freeId(want, others);
+  applyRename(spec, item.kind, item.key, key);
+  // The renamed element becomes the selected one, unconditionally. Not merely
+  // "carry the selection if it was already there": the FIRST click of the
+  // double-click toggles the chip OFF, so by the time a rename completes the
+  // selection is nothing and a conditional restore never fires — you name a
+  // board and the inspector drops the board you just named.
+  selection = { kind: item.kind, key };
+  touch({ rerender: true });
+}
 
 // A key minted from the list's LENGTH repeats itself: add three, remove one,
 // add again. `validate_model` refuses the duplicate at the gate, and before it
@@ -870,10 +970,9 @@ async function renderInspectorPane() {
     elevation: preview?.elevation,
     onChange: touch,
     onRemove: () => { selection = SELECTION_NONE; touch({ rerender: true }); },
-    // a rename moves the selection with it: everything that holds one holds a
-    // KEY, so without this the next repaint reports the element being edited as
-    // no longer there
-    onRename: (next) => { selection = next; renderElements(); },
+    // the posts and the cap have no chip and no spec key, so the inspector is
+    // the only thing that can route to them
+    onSelect: selectElement,
   });
 }
 
@@ -906,6 +1005,17 @@ async function refreshPreview() {
     previewError = "model.preview_failed";
   }
   renderPreview();
+  // The inspector's derived readouts — the margin the fit actually left, the
+  // rails it actually drew — are read off THIS answer, which lands a re-price
+  // after the edit that moved them. Without this they show the panel before the
+  // edit, which is worse than showing nothing.
+  //
+  // Not while the author is in the pane: `num()` commits on `change`, which
+  // Enter fires without blurring, so a rebuild here would take the caret out of
+  // the field they are still standing in. The disclosure's own open state
+  // survives the rebuild — panel-inspector.js keeps it.
+  if (!document.getElementById("model-inspector")
+        ?.contains(document.activeElement)) renderInspectorPane();
 }
 
 // The bay the preview is imagined into. Rendered ONLY when the session, the

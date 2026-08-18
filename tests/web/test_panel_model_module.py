@@ -416,3 +416,93 @@ def test_only_a_session_creating_a_model_refuses_a_taken_id(out):
         "editing a published version must save under its own id, or Edit cannot "
         "produce the next version")
     assert collisions["existing_draft"] is None
+
+
+# ---- the four deletions the pane was measured against ------------------------
+#
+# Describing ONE board took eighteen controls; the trade describes a whole panel
+# with about six. Each test below pins one of the four cuts, and each is a cut
+# that reads as harmless to restore.
+
+
+def test_the_key_is_no_longer_a_field_and_the_rename_still_carries_its_refs():
+    """Nothing in the trade names a board, so the `key` stopped being a field:
+    it is generated, displayed as "Rail"/"Board 2", and renamed behind a
+    double-click on the chip.
+
+    What must NOT be lost with it is what the old `keyField` did. A board names
+    the rails it starts and stops at BY KEY, so a rename that leaves those
+    behind authors a document `validate_model` refuses — with English authoring
+    text, for an edit that looked like a rename. And a key minted twice is
+    silently the FIRST of the two everywhere that addresses an element by name.
+    """
+    inspector = (STATIC / "js" / "panel-inspector.js").read_text()
+    editor = (STATIC / "js" / "model-editor.js").read_text()
+
+    assert "function keyField" not in inspector, (
+        "the permanent key field is the control this pane was cut down to lose")
+    body = inspector[inspector.index("export function applyRename"):]
+    body = body[:body.index("\n}\n")]
+    assert "reref(" in body, "a rename must carry base_ref/top_ref with it"
+    # ... and uniqueness, which belongs to the module holding the whole key set
+    rename = editor[editor.index("function finishRename"):]
+    rename = rename[:rename.index("\n}\n")]
+    assert "freeId(" in rename and "applyRename(" in rename
+    assert "dblclick" in editor, "the rename has to be reachable from the chip"
+
+
+def test_all_eight_spacing_pairs_stay_reachable_after_the_segmented_control():
+    """`justification` x `excess` is eight combinations for one decision, and two
+    segments say four of them. The other four are not a capability the editor
+    gets to delete: a value the editor cannot show is a document it would
+    silently rewrite.
+
+    So the raw pair is still offered, over the WHOLE vocabulary — which is what
+    makes "reachable" true rather than merely "preserved". The narrowed
+    REMAINDERS list is fine; it is a subset of one segment, not the source of
+    the select.
+    """
+    import re
+
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    assert "export function spacingMode" in src
+    assert re.search(r'"justification",\s*JUSTIFICATIONS', src), (
+        "the raw justification select must offer the whole vocabulary")
+    assert re.search(r'"excess",\s*EXCESS', src), (
+        "the raw excess select must offer the whole vocabulary")
+    # the segments themselves, so a control that quietly stopped writing one of
+    # the pairs it claims is not green
+    mode = src[src.index("export function spacingMode"):]
+    mode = mode[:mode.index("\n}\n")]
+    assert '"spread_to_fit"' in mode and '"space"' in mode and '"truncate"' in mode
+
+
+def test_a_zero_is_shown_as_the_figure_the_panel_actually_produced():
+    """A field reading `0` for an edge margin teaches nothing: the fit spread the
+    leftover and the boards stand 37 mm off the post. The derived readout is
+    what says so — and the one thing that must stay true of it is that DISPLAYING
+    a derived value never AUTHORS it. `derivedNum` writes to `input.value`; only
+    the change listener inside `num()` writes to the document."""
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    body = src[src.index("function derivedNum"):]
+    body = body[:body.index("\n}\n")]
+    assert "input.value" in body and "obj[key] =" not in body, (
+        "a derived figure that writes itself into the document rewrites every "
+        "model merely opened in the editor")
+    # and the two the requirement names by hand
+    assert "drawnMargin(" in src and "model.derived.rails" in src
+
+
+def test_the_deferred_fields_are_deferred_and_not_removed():
+    """Advanced is a disclosure, not a delete. Every field that left the default
+    screen is still authored somewhere, and the summary counts what is set —
+    a field an author cannot find is a field they have lost."""
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    for f in ("role", "length_rule", "overlap_mm", "option_axis", "sku_by_option",
+              "face_offset_mm", "thickness_mm", "base_ref", "top_ref"):
+        assert f in src, f
+    assert "function advancedBox" in src and "function advancedCount" in src
+    badge = src[src.index("function advancedBox"):]
+    badge = badge[:badge.index("\n}\n")]
+    assert "model.advanced_set" in badge, (
+        "a disclosure holding something the author set must say so")

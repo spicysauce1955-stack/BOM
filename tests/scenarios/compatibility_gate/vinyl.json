@@ -392,23 +392,37 @@
         "unit_price_cents": 800
       },
       {
-        "engineering_qty": 5,
+        "engineering_qty": 3,
         "engineering_unit": "each",
-        "name": "Routed vinyl post 1800",
+        "name": "Routed vinyl post 1800, line (2 opposite faces)",
         "notes": [],
         "overage_qty": 0,
         "pegs": [
-          "req0001",
-          "req0004",
           "req0007",
           "req0010",
           "req0013"
         ],
-        "purchase_qty": 5,
+        "purchase_qty": 3,
         "purchase_unit": "each",
         "sku": "POST-V-1800",
-        "total_cents": 49000,
+        "total_cents": 29400,
         "unit_price_cents": 9800
+      },
+      {
+        "engineering_qty": 2,
+        "engineering_unit": "each",
+        "name": "Routed vinyl post 1800, end (1 face)",
+        "notes": [],
+        "overage_qty": 0,
+        "pegs": [
+          "req0001",
+          "req0004"
+        ],
+        "purchase_qty": 2,
+        "purchase_unit": "each",
+        "sku": "POST-V-1800-END",
+        "total_cents": 19000,
+        "unit_price_cents": 9500
       },
       {
         "engineering_qty": 8,
@@ -505,7 +519,7 @@
         "sku": "RAIL-V-3000"
       }
     ],
-    "total_cents": 119900,
+    "total_cents": 119300,
     "warnings": []
   },
   "requirements": [
@@ -518,7 +532,7 @@
             "approval": "auto",
             "kind": "catalog_item",
             "priority": 1,
-            "sku": "POST-V-1800"
+            "sku": "POST-V-1800-END"
           }
         ],
         "predicate": null
@@ -530,7 +544,7 @@
         "post@node:n1"
       ],
       "role": "post",
-      "sku": "POST-V-1800",
+      "sku": "POST-V-1800-END",
       "slot_key": "",
       "unit": "each"
     },
@@ -593,7 +607,7 @@
             "approval": "auto",
             "kind": "catalog_item",
             "priority": 1,
-            "sku": "POST-V-1800"
+            "sku": "POST-V-1800-END"
           }
         ],
         "predicate": null
@@ -605,7 +619,7 @@
         "post@node:n2"
       ],
       "role": "post",
-      "sku": "POST-V-1800",
+      "sku": "POST-V-1800-END",
       "slot_key": "",
       "unit": "each"
     },

@@ -452,6 +452,12 @@ class _PostFacts:
     bay's HEIGHT, which is settled before any post is known:
 
         height -> rail positions -> post -> clear width -> infill fit
+
+    The post's own KIND is passed to `at()` rather than held here, because it is
+    the one fact that varies per STATION and not per run: end, corner, line, gate
+    or transition is what decides which faces a routed post is cut on, and it
+    comes from the topology rather than from any bay — so it joins the facts
+    without joining the cycle.
     """
 
     topo: Topology
@@ -467,7 +473,7 @@ class _PostFacts:
     # resolution behind `rails_per_span` is the same call `segment_model` makes.
     _params: dict[str, dict[str, int]] = dataclass_field(default_factory=dict)
 
-    def at(self, model: FenceModel, station: Mm) -> dict:
+    def at(self, model: FenceModel, station: Mm, kind: str) -> dict:
         gz = ground_z(self.topo, self.run, station)
         height, _src, _extra = _span_height(
             self.topo, self.run, station, gz, gz, self.policy
@@ -485,6 +491,7 @@ class _PostFacts:
         return post_panel_facts(
             model_id=model.id, height_mm=height, vertical=vertical,
             rail_positions_mm=rail_positions_mm(spec, height, self.count_params(model)),
+            kind=kind,
         )
 
     def count_params(self, model: FenceModel) -> dict[str, int]:
@@ -545,16 +552,25 @@ class _PostSide:
     facts: _PostFacts
     station: Mm
     sample_station: Mm
+    kind: str
 
 
-def _post_sides(facts: _PostFacts, station: Mm, run_len: Mm) -> list[_PostSide]:
+def _post_sides(
+    facts: _PostFacts, station: Mm, run_len: Mm, kind: str,
+) -> list[_PostSide]:
     """The bays an interior post of one run stands between — one at each end of
-    the run, two everywhere else."""
+    the run, two everywhere else.
+
+    `kind` is the post's, not the side's: one post has one position, and both
+    sides of it are being asked about the SAME post. Passed down rather than
+    re-derived here, so the kind a predicate matches on is the kind the element
+    is finally written with.
+    """
     sides = []
     if station > 0:
-        sides.append(_PostSide(facts, station, station - 1))
+        sides.append(_PostSide(facts, station, station - 1, kind))
     if station < run_len:
-        sides.append(_PostSide(facts, station, station))
+        sides.append(_PostSide(facts, station, station, kind))
     return sides
 
 
@@ -582,8 +598,10 @@ def _model_post_skus(
 
     A post at a `fence_model` boundary — or a node post shared by two runs — is
     adjacent to bays built to two different models, and BOTH of their post specs
-    apply to the one post. This is not an arbitration: the candidate set is the
-    INTERSECTION of their matched sets, an item covering both is the ordinary case
+    apply to the one post — both asked about the same station and the same
+    POSITION, because a corner is a corner to whichever line is turning it. This
+    is not an arbitration: the candidate set is the INTERSECTION of their matched
+    sets, an item covering both is the ordinary case
     and the whole point of matching by spec, and an empty intersection is a true
     fact about that fence rather than a tie to be broken. One side opinionated and
     the other `post=None` leaves the opinionated side's spec, because None is no
@@ -612,7 +630,7 @@ def _model_post_skus(
             continue
         if any(m.ref == model.ref for m, _, _ in claims):
             continue        # both bays are the same model: one claim, not two
-        panel = side.facts.at(model, side.station)
+        panel = side.facts.at(model, side.station, side.kind)
         claims.append((model, panel, _matched(
             model.post.requirement.eligibility, catalog, panel)))
     if not claims:
@@ -630,7 +648,9 @@ def _model_post_skus(
             continue        # this line has no opinion about caps
         caps.append((model.ref, _matched(
             model.post.cap.eligibility, catalog,
-            {**panel, **(chosen_post_facts(chosen) if chosen is not None else {})},
+            {**panel,
+             **(chosen_post_facts(chosen, panel["post"])
+                if chosen is not None else {})},
         )))
     if not caps:
         return _ModelPost(post_sku=posts[0])
@@ -889,7 +909,7 @@ def _generate_node_posts(
                 library, default_model, catalog,
                 [_PostSide(
                     _run_post_facts(topology, r, kb, scope, overrides, policy)[0],
-                    s, s if s == 0 else s - 1,
+                    s, s if s == 0 else s - 1, kind,
                 ) for r, s in touches],
             )
         _cap_unsupplied(strategy, model_post, f"post@node:{node.id}", station0)
@@ -1492,7 +1512,8 @@ def _generate_run(
             )
         tilt_deg, tilt_ev = (0, None) if kind == "gate" else _post_tilt_at(topo, run, station)
         model_post = _model_post_skus(
-            library, default_model, catalog, _post_sides(post_facts, station, length))
+            library, default_model, catalog,
+            _post_sides(post_facts, station, length, kind))
         _cap_unsupplied(strategy, model_post, f"post@{run.id}:{station}", station)
         post = _make_post(
             builder, kb, scope,
@@ -1782,7 +1803,8 @@ def _generate_run(
                 )
             tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
             model_post = _model_post_skus(
-                library, default_model, catalog, _post_sides(post_facts, s, length))
+                library, default_model, catalog,
+                _post_sides(post_facts, s, length, "line"))
             _cap_unsupplied(strategy, model_post, f"post@{run.id}:{s}", s)
             post = _make_post(
                 builder, kb, scope,

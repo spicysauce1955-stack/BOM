@@ -2135,10 +2135,45 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(1.0)
         # adding an element SELECTS it, so the inspector is already pointed at
         # the thing that was just made — the fields below are its own
+        # The key stopped being a field: an element is CALLED "Rail" and the
+        # schema key is generated. Renaming is a mode behind a double-click on
+        # the chip, so the suite reaches it the way a person does.
+        chip = c.element_center('#model-elements [data-element^="frame:"]')
+        c.dblclick(*chip)
+        time.sleep(0.5)
         c.js("""
 {
-  const key = document.querySelector('#model-inspector [data-f="key"]');
-  key.value = 'rail'; key.dispatchEvent(new Event('input'));
+  const key = document.querySelector('#model-elements [data-f="key"]');
+  key.value = 'rail';
+  key.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+}
+'ok'""")
+        time.sleep(1.0)
+        # ... and the length rule is DEFERRED BEHIND ADVANCED, not deleted — so
+        # the suite has to open it the way a person does. Reaching straight for
+        # the control would pass whether it was deferred or deleted, which is the
+        # distinction this whole change turns on.
+        # DEFERRED, not deleted — and the difference has to be asserted
+        # structurally. A closed <details> keeps its children queryable, and
+        # this Chrome still reports a laid-out box for content it is hiding
+        # (verified against a freshly-built control <details> on the same page),
+        # so neither "is it in the DOM" nor "does it have a height" can tell the
+        # two apart. What CAN: the control lives inside the disclosure, and the
+        # disclosure starts shut.
+        deferred = c.js("""
+{
+  const rule = document.querySelector('#model-inspector [data-f="length_rule"]');
+  const box = rule && rule.closest('details.inspect-advanced');
+  const shut = box ? box.open === false : null;
+  if (box) box.open = true;
+  ({rule: !!rule, inside_advanced: !!box, starts_shut: shut});
+}""")
+        check("the length rule is deferred behind Advanced, not deleted",
+              deferred["rule"] and deferred["inside_advanced"]
+              and deferred["starts_shut"] is True)
+        time.sleep(0.6)
+        c.js("""
+{
   const rule = document.querySelector('#model-inspector [data-f="length_rule"]');
   rule.value = 'centre_to_centre'; rule.dispatchEvent(new Event('change'));
 }
@@ -2506,7 +2541,16 @@ document.querySelector('#model-elements [data-element="infill:slat"]').click(); 
               overlapped["default_spec"]["infill"]["pattern"][0]["gap_after_mm"] == -30)
 
         # the preference list IS the priority: dropping a row renumbers from 1,
-        # so the order it reads in and the order it resolves in cannot disagree
+        # so the order it reads in and the order it resolves in cannot disagree.
+        # It lives behind Advanced now — the default screen carries ONE product
+        # picker, because a board is usually supplied by one thing.
+        c.js("""
+{
+  const box = document.querySelector('#model-inspector .inspect-advanced');
+  if (box) box.open = true;
+}
+'ok'""")
+        time.sleep(0.6)
         c.js("""
 document.querySelector('#model-inspector [data-act="add-eligible"]').click(); 'ok'""")
         time.sleep(1.2)

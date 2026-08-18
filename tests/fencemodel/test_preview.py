@@ -419,3 +419,59 @@ def test_a_caller_that_names_the_opening_is_still_believed():
     it — so an explicit `clear_width_mm` must never be second-guessed."""
     shown = preview(M_VINYL, height_mm=1800, width_mm=1500, clear_width_mm=1300)
     assert shown.clear_width_mm == 1300
+
+
+# --- the posts the previewed bay stands between -------------------------------
+
+def test_the_preview_draws_the_post_it_measured_the_opening_to():
+    """The opening is measured TO the post faces, so the preview already had to
+    choose a post to know the width. Drawing it costs nothing new — and until
+    now the two parts of a fence with no editor were also the two with nowhere
+    on the drawing to click."""
+    from fenceai.fencemodel.demo import M_VINYL
+
+    preview = preview_panel(M_VINYL, PreviewRequest(height_mm=1800, width_mm=2500),
+                            demo_catalog())
+    posts = preview.elevation.posts
+    assert [p.side for p in posts] == ["start", "end"]
+    assert all(p.sku.startswith("POST-V-") for p in posts)
+    # the face it drew is the face it measured the opening with
+    assert preview.clear_width_mm == 2500 - posts[0].w_mm
+
+
+def test_the_start_post_is_drawn_outside_the_opening():
+    """Negative x is the contract: the post occupies the millimetres BEFORE the
+    panel. Clamped to zero it would sit over the first board."""
+    from fenceai.fencemodel.demo import M_VINYL
+
+    preview = preview_panel(M_VINYL, PreviewRequest(height_mm=1800, width_mm=2500),
+                            demo_catalog())
+    start, end = preview.elevation.posts
+    assert start.x_mm == -start.w_mm and start.x_mm < 0
+    assert end.x_mm == preview.clear_width_mm
+
+
+def test_a_model_with_no_post_draws_no_post():
+    """M-SLAT says nothing about its posts — the company's own standard applies,
+    and inventing one on the drawing would show a part this model never asked
+    for."""
+    from fenceai.fencemodel.demo import M_SLAT
+
+    preview = preview_panel(M_SLAT, PreviewRequest(height_mm=1800, width_mm=2500),
+                            demo_catalog())
+    assert preview.elevation.posts == []
+
+
+def test_a_cap_is_drawn_at_a_nominal_and_says_so():
+    """The catalog carries no cap height. The drawing needs one to show a cap at
+    all, so it invents a proportion and flags it — exactly the bargain a rail's
+    undeclared face height already strikes. The post's own face is real data and
+    stays declared, which is why these are two flags and not one."""
+    from fenceai.fencemodel.demo import M_VINYL
+
+    preview = preview_panel(M_VINYL, PreviewRequest(height_mm=1800, width_mm=2500),
+                            demo_catalog())
+    post = preview.elevation.posts[0]
+    assert post.cap_sku == "CAP-V-90"
+    assert post.cap_h_mm > 0 and post.cap_declared is False
+    assert post.declared is True, "the post face IS product data"

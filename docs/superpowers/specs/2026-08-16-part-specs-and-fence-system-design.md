@@ -225,6 +225,46 @@ why. This is deliberately the same shape as `SERIES_SCOPED_PARAMS`
 (`fencemodel/model.py:327`): a closed set of names, a refusal, and a stated reason
 for the boundary.
 
+**Amendment (W3c): the post also reads WHERE IT STANDS.** Step 3's context is
+`{item, panel, post}`, and the third namespace is the post's own position:
+
+```python
+POST_PREDICATE_POST_FACTS = frozenset({"kind"})
+```
+
+This is not a relaxation of the cycle rule; it is outside it. A post's kind comes
+from the **topology** — this node ends a run, that one turns a corner, the rest
+sit mid-run — and it is settled before a bay is laid out, let alone resolved, so
+it adds no edge to the DAG above. It is necessary because a routed post is cut at
+the factory and which FACES are cut is decided by exactly this: one face at an
+end, two opposite mid-run, two adjacent at a corner. Without it a product line can
+only name ONE post SKU for a whole run, and every end post and every corner post
+is ordered wrong — which is why a manufacturer asks for the layout before it will
+quote a routed line.
+
+The refusal is narrowed rather than removed: a post may read `post.kind` and still
+may NOT read `post.face_width_mm` or anything else the candidate declares, because
+*that* would be the post choosing itself. A **cap** still reads the whole post
+(item attrs and position both, position winning on a name clash), because the post
+is chosen first.
+
+`mounting` is deliberately absent though it is settled as early. It is resolved
+from knowledge inside `_make_post` **after** the model's post is chosen and a
+`force_mounting` override can move it, so reading it here would mean resolving it
+twice in two places with no guarantee the answers agree. Mounting already reaches
+the BOM on its own path. If a line ever needs it, resolve it once at the call
+sites and pass it in.
+
+Catalog side: routing stays **data**. A routed product declares `routed_at_mm`
+(heights) and `routed_faces` (`single` | `opposite` | `adjacent`), and no code
+anywhere knows either name or that "adjacent" means a corner — the model's
+predicate maps `post.kind` onto `item.routed_faces` and a company with a
+three-face post adds a product and edits a rule, not a release. Keep the position
+term a **separate conjunct** from the routing term: `sole_excluding_term` names
+the one term that excluded everybody, and merging them merges
+`post_routing_mismatch` ("your posts are punched 300 mm from where this bay wants
+its rails") with the generic `no_item_covers_part_spec` into one useless sentence.
+
 **`PanelContext` gains `post_face_width_start_mm` and `post_face_width_end_mm`**, so
 `clear_width_mm` becomes `centre − ½·face_start − ½·face_end`. The two ends are
 separate because a corner post and a line post need not be the same product. A post
@@ -277,7 +317,11 @@ the whole value of the diagnostic:
   the sentence can say *"the panel wants rails at 150 and 1650; this line's posts
   are routed at 200 and 1700."*
 * `no_item_covers_part_spec` — nothing covered the spec, and routing was not the
-  sole discriminator. The generic case; it names the slot, role and model.
+  sole discriminator. The generic case; it names the slot, role and model. W3c's
+  worked example is a **junction**: three runs meeting needs a post cut on three
+  faces, the position term alone excludes every candidate, and that term says
+  nothing about rail positions — so the honest answer is this code and not a
+  routing sentence about heights that were never the problem.
 
 This mirrors the split the codebase already draws between `no_feasible_item`
 ("candidates were tried and none fits") and `no_eligible_item` ("nothing is a

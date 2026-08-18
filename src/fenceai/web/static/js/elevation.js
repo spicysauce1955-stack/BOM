@@ -274,10 +274,17 @@ export function gapLine(elev) {
  * `annotations` changes the padding — a fitted-gap callout takes a lane above
  * the panel — so a caller overlaying handles must pass the SAME options it
  * renders with, and must read `y0` rather than assume `PAD_TOP`. */
-export function elevationLayout(elev, { annotations = true } = {}) {
+export function elevationLayout(elev, { annotations = true, posts = false } = {}) {
   const w = elev?.width_mm || 0;
   const h = elev?.height_mm || 0;
   if (!(w > 0) || !(h > 0) || !(elev?.members || []).length) return null;
+  // The posts stand OUTSIDE the opening — the start one at a negative x — so the
+  // box has to grow to hold them, or they are drawn over the height dimension.
+  // Their width is in millimetres like everything else, so it scales with the
+  // drawing rather than being a fixed inset.
+  const flanking = posts ? (elev.posts || []) : [];
+  const postMm = flanking.reduce((most, p) => Math.max(most, p.w_mm || 0), 0);
+  const capMm = flanking.reduce((most, p) => Math.max(most, p.cap_h_mm || 0), 0);
   const dim = annotations ? gapDimension(elev) : null;
   const pitch = annotations ? pitchDimension(elev) : null;
   const margins = annotations ? edgeMargins(elev) : null;
@@ -294,11 +301,16 @@ export function elevationLayout(elev, { annotations = true } = {}) {
   const padBottom = PAD_BOTTOM + (margins ? MARGIN_ROW : 0);
   // one scale for both axes: a drawing that stretched to fill its box would
   // make a 100 mm slat and a 20 mm gap look like the same thing
-  const s = Math.min(MAX_DRAW_W / w, MAX_DRAW_H / h);
+  // one scale over the WHOLE drawing, posts included, so a bay does not change
+  // scale the moment its posts are shown
+  const s = Math.min(MAX_DRAW_W / (w + 2 * postMm), MAX_DRAW_H / (h + capMm));
+  const postPad = postMm * s;
+  const capPad = capMm * s;
   return {
-    s, x0: PAD_START, y0: padTop, w_mm: w, h_mm: h,
-    dw: w * s, dh: h * s, padBottom,
-    vw: PAD_START + w * s + padEnd, vh: padTop + h * s + padBottom,
+    s, x0: PAD_START + postPad, y0: padTop + capPad, w_mm: w, h_mm: h,
+    dw: w * s, dh: h * s, padBottom, postPad, capPad,
+    vw: PAD_START + postPad + w * s + postPad + padEnd,
+    vh: padTop + capPad + h * s + padBottom,
     dim, pitch, margins,
   };
 }
@@ -325,9 +337,9 @@ export const layoutMm = (L, x, y) =>
  *  line; the canvas answers "what does per-member-crossing MEAN", where the
  *  places are the only way to see it. */
 export function renderElevation(elev, {
-  onSelect, annotations = true, joints = true, fixings = false,
+  onSelect, annotations = true, joints = true, fixings = false, posts = false,
 } = {}) {
-  const L = elevationLayout(elev, { annotations });
+  const L = elevationLayout(elev, { annotations, posts });
   const rects = elevationRects(elev);
   if (!L || !rects.length) return null;
 
@@ -342,6 +354,9 @@ export function renderElevation(elev, {
     class: "elevation-svg",
     preserveAspectRatio: "xMidYMid meet",
   });
+  // The posts FIRST, so the opening and everything fitted into it paints over
+  // them — a post is behind the panel it carries, not in front of it.
+  if (posts) drawPosts(svg, L, elev);
   el("rect", { class: "elev-opening", x: r(x0), y: r(y0), width: r(dw), height: r(dh) }, svg);
 
   const body = el("g", { class: "elev-members" }, svg);
@@ -495,6 +510,42 @@ function drawGap(svg, dim, { px, py, w, h, y0, lane = 0, cls = "elev-gap-dim" })
   const cy = (y1 + y2) / 2;
   el("text", { class: "elev-dim-label", x: r(x + 16), y: r(cy), "text-anchor": "middle",
                transform: `rotate(-90 ${r(x + 16)} ${r(cy)})` }, g).textContent = label;
+}
+
+/** The posts the bay stands between, and their caps.
+ *
+ * `x_mm` is negative on the start side and that is the contract — the post
+ * occupies the millimetres BEFORE the opening. Clamping it to zero would draw
+ * the post over the first board and shift the whole bay a post-width across.
+ *
+ * A post is selectable like any member (`data-slot`), because the two parts of
+ * a fence that had no editor were exactly the two with nowhere to click. */
+function drawPosts(svg, L, elev) {
+  const group = el("g", { class: "elev-posts" }, svg);
+  for (const post of elev.posts || []) {
+    const [x, y] = layoutPx(L, post.x_mm, post.h_mm + (post.cap_h_mm || 0));
+    const [, base] = layoutPx(L, post.x_mm, 0);
+    const rect = el("rect", {
+      class: `elev-post${post.declared === false ? " elev-nominal" : ""}`,
+      x: r(x), y: r(y + (post.cap_h_mm || 0) * L.s),
+      width: r(Math.max(post.w_mm * L.s, 0.5)),
+      height: r(Math.max(base - y - (post.cap_h_mm || 0) * L.s, 0.5)),
+      "data-slot": post.sku ? `post:${post.side}` : "post",
+      "data-side": post.side,
+    }, group);
+    // identifiers only, and as TEXT — a sku never becomes markup or paint
+    el("title", {}, rect).textContent =
+      [post.kind, post.sku].filter(Boolean).join(" \u00b7 ") || "post";
+    if (post.cap_h_mm > 0) {
+      const cap = el("rect", {
+        class: "elev-cap", x: r(x), y: r(y),
+        width: r(Math.max(post.w_mm * L.s, 0.5)),
+        height: r(Math.max(post.cap_h_mm * L.s, 0.5)),
+        "data-slot": "cap", "data-side": post.side,
+      }, group);
+      el("title", {}, cap).textContent = post.cap_sku || "cap";
+    }
+  }
 }
 
 const r = (n) => Math.round(n * 10) / 10;

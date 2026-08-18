@@ -15,8 +15,9 @@ from __future__ import annotations
 from fenceai.catalog.demo import demo_catalog
 from fenceai.fencemodel.match import post_panel_facts
 from fenceai.fencemodel.model import (
-    POST_PREDICATE_PANEL_FACTS, Distributed, Eligibility, EligibleItem, FenceModel,
-    FrameSlot, PanelSpec, PartRequirement, PostSlot, Variant, validate_model,
+    POST_PREDICATE_PANEL_FACTS, POST_PREDICATE_POST_FACTS, Distributed, Eligibility,
+    EligibleItem, FenceModel, FrameSlot, PanelSpec, PartRequirement, PostSlot,
+    Variant, validate_model,
 )
 from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
 
@@ -87,11 +88,53 @@ def test_the_readable_set_is_exactly_what_the_generator_supplies():
     """Two statements of one set drift the moment either moves — and the drift is
     silent in the worst direction: a fact declared readable but never supplied
     makes a predicate match NOTHING, and the post falls through to the company
-    default with nobody told."""
+    default with nobody told.
+
+    Both namespaces, because both are declared: `panel` narrowed by the cycle
+    rule, and `post` — where this one stands.
+    """
     supplied = post_panel_facts(
         model_id="M", height_mm=1800, vertical="level", rail_positions_mm=[0, 1800],
-    )["panel"]
-    assert set(supplied) == POST_PREDICATE_PANEL_FACTS
+        kind="line",
+    )
+    assert set(supplied) == {"panel", "post"}
+    assert set(supplied["panel"]) == POST_PREDICATE_PANEL_FACTS
+    assert set(supplied["post"]) == POST_PREDICATE_POST_FACTS
+
+
+def test_a_post_predicate_may_read_where_it_stands():
+    """The routed-post fact. WHICH FACES a post is cut on is decided by its
+    position in the layout — one face at an end, two opposite mid-run, two
+    adjacent at a corner — so a line whose posts are routed cannot name its post
+    without reading `post.kind`.
+
+    It is readable and `panel.clear_width_mm` is not, and the difference is not
+    taste: a post's kind comes from the TOPOLOGY and is settled before any bay is
+    laid out, so it sits outside the resolution DAG rather than inside it.
+
+    Kills: removing `post.kind` from `POST_PREDICATE_POST_FACTS`, which would
+    refuse the only predicate that can order an end post correctly.
+    """
+    reads = Cmp(cmp="==", left=FieldRef(path="post.kind"), right=Lit(value="end"))
+    errs = validate_model(_model(_post(requirement=PartRequirement(
+        role="post", eligibility=Eligibility(predicate=reads)))), demo_catalog())
+    assert errs == [], f"post.kind was refused: {errs}"
+
+
+def test_every_name_declared_readable_about_the_post_is_accepted():
+    """The same guard `POST_PREDICATE_PANEL_FACTS` gets, on the second set: a
+    name an author is told they may read and is then refused for reading is worse
+    than no set at all.
+
+    Kills: adding a fact to `POST_PREDICATE_POST_FACTS` and to `post_panel_facts`
+    without teaching `_post_namespace_errors` about it.
+    """
+    for field in POST_PREDICATE_POST_FACTS:
+        reads = Cmp(cmp="==", left=FieldRef(path=f"post.{field}"),
+                    right=Lit(value="anything"))
+        errs = validate_model(_model(_post(requirement=PartRequirement(
+            role="post", eligibility=Eligibility(predicate=reads)))), demo_catalog())
+        assert errs == [], f"post.{field} was refused: {errs}"
 
 
 def test_a_post_predicate_on_the_item_alone_is_fine():
@@ -127,12 +170,54 @@ def test_the_refusal_names_what_a_post_predicate_may_read():
 
 def test_a_post_may_not_be_matched_on_the_post_it_is():
     """The cycle rule in its second form. A cap reads the post because the post
-    was chosen first; a post reading one has no first answer."""
+    was chosen first; a post reading one has no first answer.
+
+    `post` being readable at all is what makes this worth pinning twice: opening
+    the namespace for WHERE a post stands must not open it for WHAT it is, and
+    the refusal must still name what may be read instead.
+
+    Kills: widening the post namespace to `post.*` (e.g. by giving a post the
+    cap's `may_read_post`) rather than to the declared set.
+    """
     errs = validate_model(_model(_post(requirement=PartRequirement(
         role="post", eligibility=Eligibility(predicate=Cmp(
             cmp="==", left=FieldRef(path="post.face_width_mm"),
             right=Lit(value=80)))))), demo_catalog())
     assert any("choosing itself" in e for e in errs)
+    assert any("post.kind" in e for e in errs)
+
+
+def test_a_post_predicate_reading_a_namespace_nobody_supplies_is_still_refused():
+    """The `post` namespace is now partly open, and an unknown HEAD must not
+    ride in on that. `MissingField` is a NO in the matcher, so this would match
+    nothing and fall silently through to the company default.
+
+    Kills: allowing any `post.*` path, and dropping the head check entirely.
+    """
+    errs = validate_model(_model(_post(requirement=PartRequirement(
+        role="post", eligibility=Eligibility(predicate=Cmp(
+            cmp="==", left=FieldRef(path="station.kind"),
+            right=Lit(value="end")))))), demo_catalog())
+    assert any("station.kind" in e for e in errs)
+    assert any("post.kind" in e for e in errs)   # and it says what to read instead
+
+
+def test_a_post_may_not_be_matched_on_a_position_fact_nobody_supplies():
+    """`post.mounting` is the near miss this refusal exists for: it is settled as
+    early as the kind is, and it is deliberately NOT supplied (it is resolved
+    from knowledge after the post is chosen, and a `force_mounting` override can
+    move it — see `match.post_panel_facts`). Declared-but-unsupplied is the one
+    failure mode the two-sets-pinned-equal test cannot catch on its own, so the
+    boundary is asserted from the other side too.
+
+    Kills: hand-waving `post.mounting` into `POST_PREDICATE_POST_FACTS` without
+    supplying it — which would make the predicate match nothing at all.
+    """
+    errs = validate_model(_model(_post(requirement=PartRequirement(
+        role="post", eligibility=Eligibility(predicate=Cmp(
+            cmp="==", left=FieldRef(path="post.mounting"),
+            right=Lit(value="masonry")))))), demo_catalog())
+    assert any("post.mounting" in e for e in errs)
 
 
 def test_a_cap_predicate_reading_a_namespace_nobody_supplies_is_refused():

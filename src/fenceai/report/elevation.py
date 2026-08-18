@@ -89,6 +89,43 @@ class ElevationFixing(BaseModel):
     qty: int
 
 
+class ElevationPost(BaseModel):
+    """A post flanking the bay, and the cap on top of it.
+
+    NOT part of the panel, and that is why the drawing has never had one: the
+    panel spans the CLEAR OPENING between two posts, because that is what the
+    boards are fitted into. The posts stand outside it.
+
+    They are handed IN rather than derived here, and the reason is the cycle
+    rule `resolve.py` is built around — a bay's opening is measured to the post
+    faces, so a bay that worked out its own posts would be choosing them by a
+    width they decide. Which post stands at each end is settled by the RUN, and
+    the caller that knows the run passes it.
+
+    `x_mm` is in panel coordinates, so the start post's is NEGATIVE: it occupies
+    the millimetres before the opening begins. A client that clamps it to zero
+    draws the post inside the panel and every board a post-width to the right.
+    """
+
+    side: Literal["start", "end"]
+    kind: str = ""                 # end | line | corner | gate — from the run
+    x_mm: Mm                       # negative on the start side (outside the opening)
+    y_mm: Mm = 0
+    w_mm: Mm                       # the post's face width
+    h_mm: Mm
+    sku: str = ""
+    # `declared=False` says the size is a NOMINAL the read model invented rather
+    # than product data, exactly as a rail's face height already does.
+    declared: bool = True
+    cap_sku: str = ""
+    cap_h_mm: Mm = 0
+    # The post's FACE is product data; a cap's height is not — the catalog does
+    # not carry one. Two flags rather than one, because collapsing them would
+    # either call a measured face invented or call an invented cap measured, and
+    # this drawing's whole contract is that it says which of the two a size is.
+    cap_declared: bool = True
+
+
 class UnplacedFixing(BaseModel):
     """Fasteners this bay buys that the drawing cannot put anywhere.
 
@@ -184,6 +221,10 @@ class PanelElevation(BaseModel):
     # every geometry — which is what stops the drawing from ever stating a
     # different number of fasteners from the BOM line beside it.
     fixings_unplaced: list[UnplacedFixing] = []
+    # the posts this bay stands between, when the caller knows them. Empty is
+    # the honest answer for a model-scoped drawing with no run behind it — and
+    # for every stored run generated before this existed.
+    posts: list[ElevationPost] = []
 
 
 def panel_elevation(
@@ -192,10 +233,12 @@ def panel_elevation(
     height_mm: Mm,
     span_id: str = "",
     bay_tag: str = "",
+    posts: "list[ElevationPost] | None" = None,
 ) -> PanelElevation:
     out = PanelElevation(
         span_id=span_id, bay_tag=bay_tag, model_ref=panel.model_ref,
         width_mm=width_mm, height_mm=height_mm,
+        posts=list(posts or []),
     )
     nominal = max(1, (min(width_mm, height_mm) * NOMINAL_THICKNESS_PERMILLE) // 1000)
 

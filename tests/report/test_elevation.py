@@ -659,3 +659,80 @@ def test_the_clearance_against_the_post_is_the_fit_s_own_number():
     assert slats[0].x_mm == centred.edge_margin_start_mm
     assert (2400 - (slats[-1].x_mm + slats[-1].w_mm)
             == centred.edge_margin_end_mm + centred.residual_mm)
+
+
+# --- the posts the bay stands between ----------------------------------------
+#
+# The panel spans the CLEAR OPENING, so the posts have never been on the
+# drawing — which also means the two parts of a fence with no editor were the
+# two parts with nowhere to click. They are handed in rather than derived: which
+# post stands at each end is settled by the run, and a bay that worked its own
+# posts out would be choosing them by a width they decide (resolve.py's cycle).
+
+
+def _posts(width_mm=2400, face=90, height=1800):
+    from fenceai.report.elevation import ElevationPost
+
+    return [
+        ElevationPost(side="start", kind="line", x_mm=-face, w_mm=face,
+                      h_mm=height, sku="POST-V-1800", cap_sku="CAP-V-90",
+                      cap_h_mm=40),
+        ElevationPost(side="end", kind="corner", x_mm=width_mm, w_mm=face,
+                      h_mm=height, sku="POST-V-1800", cap_sku="CAP-V-90",
+                      cap_h_mm=40),
+    ]
+
+
+def test_a_drawing_with_no_run_behind_it_has_no_posts():
+    """The honest answer for a model-scoped preview, and for every run stored
+    before this existed. Inventing a post would draw a part nobody bought."""
+    assert elevation_of(M_SLAT).posts == []
+
+
+def test_the_start_post_sits_OUTSIDE_the_opening():
+    """x is negative on the start side, and that is the whole contract: the post
+    occupies the millimetres BEFORE the panel begins. A renderer that clamped it
+    to zero would draw the post over the first board and shift the bay."""
+    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+                                BAY.clear_width_mm, BAY.height_mm,
+                                posts=_posts(BAY.clear_width_mm))
+    start = next(p for p in elevation.posts if p.side == "start")
+    end = next(p for p in elevation.posts if p.side == "end")
+    assert start.x_mm + start.w_mm == 0, "the start post ends where the panel begins"
+    assert end.x_mm == BAY.clear_width_mm, "the end post begins where the panel ends"
+    assert start.x_mm < 0
+
+
+def test_the_posts_span_the_bay_at_its_centres():
+    """Face to face across both posts is the centre-to-centre width the run was
+    laid out at — the number the drawing must not disagree with."""
+    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+                                BAY.clear_width_mm, BAY.height_mm,
+                                posts=_posts(BAY.clear_width_mm))
+    start = next(p for p in elevation.posts if p.side == "start")
+    end = next(p for p in elevation.posts if p.side == "end")
+    drawn = (end.x_mm + end.w_mm) - start.x_mm
+    assert drawn == BAY.clear_width_mm + 2 * start.w_mm
+
+
+def test_a_post_carries_which_post_it_is():
+    """`kind` is the fact a vinyl line is ordered by — end, line and corner posts
+    are routed on different faces and are different SKUs. It rides on the
+    drawing so the surface can name the part it is showing."""
+    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+                                BAY.clear_width_mm, BAY.height_mm,
+                                posts=_posts(BAY.clear_width_mm))
+    assert [p.kind for p in elevation.posts] == ["line", "corner"]
+    assert all(p.cap_sku == "CAP-V-90" for p in elevation.posts)
+
+
+def test_posts_do_not_disturb_anything_else_on_the_drawing():
+    """The panel is unchanged by what stands beside it — the boards were fitted
+    into the opening, and the opening did not move."""
+    without = elevation_of(M_SLAT)
+    with_posts = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+                                 BAY.clear_width_mm, BAY.height_mm,
+                                 posts=_posts(BAY.clear_width_mm))
+    assert with_posts.members == without.members
+    assert with_posts.gaps_mm == without.gaps_mm
+    assert with_posts.fixings == without.fixings

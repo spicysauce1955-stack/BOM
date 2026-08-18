@@ -122,11 +122,32 @@ A routed vinyl fence is the case a panel-only model cannot express: the rails do
 not sit on the post, they go **through** it, into holes punched at the factory.
 So M-VINYL declares a `PostSlot` whose eligibility is a PREDICATE rather than a
 list of SKUs — `item.material == "vinyl"` **and**
-`item.routed_at_mm == panel.rail_positions_mm` — and its cap is matched against
-the post already chosen (`item.fits_face_mm == post.face_width_mm`).
+`item.routed_at_mm == panel.rail_positions_mm` **and** a `post.kind` → routed-face
+mapping (below) — and its cap is matched against the post already chosen
+(`item.fits_face_mm == post.face_width_mm`).
 
-Two vinyl posts are in the catalog and only the fence's own height separates
-them: POST-V-1800 is routed at [150, 1650] and POST-V-2100 at [150, 1950].
+The factory cuts before the post ships, so it decides two things and both are
+the fence's, not the post's: at what HEIGHTS to punch, and WHICH FACES to cut.
+The catalog therefore carries six routed posts, two heights × three positions,
+each declaring `routed_at_mm` and `routed_faces`:
+
+| position | `routed_faces` | 1800 | 2100 |
+|---|---|---|---|
+| line (2 faces, 180°) | `opposite` | POST-V-1800 (9800c) | POST-V-2100 (11 500c) |
+| end (1 face) | `single` | POST-V-1800-END (9500c) | POST-V-2100-END (11 200c) |
+| corner (2 faces, 90°) | `adjacent` | POST-V-1800-CORNER (9800c) | POST-V-2100-CORNER (11 500c) |
+
+All six are the same extrusion: 90 mm face, 2600/2900 mm long. A variant is a
+different CUT, so mixing positions along a run does not change the bay — only
+the price of the routing that was skipped moves.
+
+M-VINYL maps position to routing as data, in the predicate: `end` and `gate` take
+`single` (one panel meets the post; a gate leaf hangs off hardware, not through a
+hole), `line` and `transition` take `opposite` (a bay each side, at 180°), and
+`corner` takes `adjacent`. `junction` is deliberately unmapped — three runs
+meeting needs a post cut on three faces and this line does not make one, so the
+generator refuses that fence by name (see the refusals below) instead of standing
+a two-face post where three panels have to land.
 
 Expect, in order (this is the resolution DAG, and the scenario exists to pin it):
 
@@ -134,10 +155,16 @@ Expect, in order (this is the resolution DAG, and the scenario exists to pin it)
 2. **rail positions** [150, 1650] — `placement_positions` over the panel's one
    horizontal frame slot (2 rails, `rails_per_span`, 150 mm inset top and bottom)
    placed up that height.
-3. **post** POST-V-1800 at all 5 stations. POST-V-2100 is not a worse buy: its
-   holes are already punched 300 mm apart from where this panel puts its rails,
-   so it is a fence that cannot be assembled.
-4. **cap** CAP-V-90, because the chosen post's face is 90 mm.
+3. **post** — the height picks the routing and the POSITION picks the faces, so
+   the 5 stations are **not one SKU**: POST-V-1800-END at stations 0 and 6000
+   (each is the end of the run, routed on one face) and POST-V-1800 at 1500, 3000
+   and 4500 (routed on two opposite faces). POST-V-2100 and its variants are not
+   a worse buy: their holes are already punched 300 mm from where this panel puts
+   its rails, so they are a fence that cannot be assembled. This is the fact a
+   manufacturer states outright — the layout has to be known before the posts can
+   be ordered, because a 14-post run is 2 end + 11 line + 1 corner.
+4. **cap** CAP-V-90 at all 5, because every variant's face is 90 mm — the cap
+   reads the post already chosen, and here the three variants agree.
 5. **clear opening** 1500 − 90 = **1410** per bay (one whole face is lost across
    the two ends).
 6. **panel**: 4 bays of 1500; rails cut 1500 (centre_to_centre — a routed rail
@@ -149,17 +176,35 @@ Expect, in order (this is the resolution DAG, and the scenario exists to pin it)
    post's own routed channel takes it up — never into the gaps between boards,
    which are 0.
 
-BOM: 5 × POST-V-1800, 5 × CAP-V-90, 3 × CONC-25 (5 posts × ½ bag, rounded up),
-8 × RAIL-V-3000 (8 cuts of 1500; two 1503 mm pieces need 3006 mm against a
-3003 mm capacity, so one cut per bar — the S15 arithmetic), 9 × SLAT-V-150
-(36 cuts of 1470; 4 × 1473 = 5892 ≤ 6003, so four per 6000 mm bar).
-Total **119 900** agorot. **No screws at all**: a board held in a channel top and
-bottom is not fixed, and a model carrying a fixing rule for symmetry would put
-real money on a real BOM.
+BOM: 3 × POST-V-1800 (29 400c), 2 × POST-V-1800-END (19 000c), 5 × CAP-V-90,
+3 × CONC-25 (5 posts × ½ bag, rounded up), 8 × RAIL-V-3000 (8 cuts of 1500; two
+1503 mm pieces need 3006 mm against a 3003 mm capacity, so one cut per bar — the
+S15 arithmetic), 9 × SLAT-V-150 (36 cuts of 1470; 4 × 1473 = 5892 ≤ 6003, so four
+per 6000 mm bar). Total **119 300** agorot. **No screws at all**: a board held in
+a channel top and bottom is not fixed, and a model carrying a fixing rule for
+symmetry would put real money on a real BOM.
 
 At height intent 2100 the same model and the same catalog give rails at
-[150, 1950], POST-V-2100, and a 1770 mm slat — which is what makes step 3 an
-answer rather than a lookup.
+[150, 1950], POST-V-2100 mid-run with POST-V-2100-END at the two termini, and a
+1770 mm slat — which is what makes step 3 an answer rather than a lookup.
+
+On an L-shape (runs 0→4000 and 4000→3000, one model) the corner node resolves to
+**POST-V-1800-CORNER**, the two far termini to POST-V-1800-END, and every
+interior station to POST-V-1800: one topology, three products, and the position
+is the only thing separating them.
+
+**The two refusals**, which stay distinct because the position term and the
+routing term are separate conjuncts and `sole_excluding_term` names only the ONE
+that excluded everybody:
+
+* height intent 2000 → rails at [150, 1850], nothing is routed there →
+  `post_routing_mismatch` at station 0, `wanted = "150, 1850"`,
+  `routed = "150, 1650; 150, 1950"`. Routing alone is the discriminator, so the
+  sentence can name both position sets.
+* a junction where three runs meet → the position term alone excludes everybody
+  and it says nothing about rail positions, so the honest answer is the generic
+  `no_item_covers_part_spec` at that station rather than a routing sentence about
+  heights that are not the problem.
 
 ## Invariants checked across all scenarios
 

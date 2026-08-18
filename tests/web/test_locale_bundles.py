@@ -397,6 +397,44 @@ def test_the_inspector_renders_its_vocabularies_as_sentences():
         assert f'"{prefix}"' in src or f"{prefix}sentence." in src, (const, prefix)
 
 
+# The keys the inspector builds by CONCATENATION once the `key` field was
+# deleted and the zeros became derived readouts. None of them is a literal in
+# either bundle, so key-parity scanning is blind to all of them:
+#
+#   * `model.inspect.${word}` — an element is now CALLED "Rail" / "Board 2" /
+#     "Fixings", built from what it is plus where it sits, and the word comes
+#     from this family. Losing one renders `model.inspect.board` as the name of
+#     every board in a Hebrew UI.
+#   * `model.${side}` — a distributed slot's two insets.
+#   * `model.element_n` and the `model.derived.*` sentences — the number and the
+#     reason beside a figure the panel already answered.
+COMPUTED_INSPECTOR_KEYS = [
+    "model.inspect.rail", "model.inspect.board", "model.inspect.screws",
+    "model.bottom_inset_mm", "model.top_inset_mm",
+    "model.element_n", "model.rename_hint",
+    "model.derived.margin", "model.derived.at", "model.derived.rails",
+    "model.derived.from_param",
+]
+
+
+def test_the_generated_element_name_and_its_derived_readouts_have_words():
+    en, he = _bundles()
+    missing = sorted(f"{lang}:{k}" for lang, table in (("en", en), ("he", he))
+                     for k in COMPUTED_INSPECTOR_KEYS if k not in table)
+    assert not missing, missing
+
+
+def test_the_element_word_family_is_the_one_the_inspector_asks_for():
+    """The keys existing is half of it — the other half is that `elementLabel`
+    still builds its name out of THIS family. A version that fell back to the
+    raw key would leave every entry above unreachable, with a green suite and a
+    pane that has quietly gone back to naming boards `slat`."""
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    body = src[src.index("export function elementLabel"):]
+    body = body[:body.index("\n}\n")]
+    assert "model.inspect." in body and "model.element_n" in body
+
+
 def test_every_material_and_finish_in_the_catalog_has_a_word_in_both_bundles():
     """The material drawer renders `attrs.material` / `attrs.finish` through
     COMPUTED keys (`t("material." + value)`), which key-parity scanning cannot

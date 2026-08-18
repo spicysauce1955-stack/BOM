@@ -59,7 +59,7 @@ export function renderCanvas(host, { elev, spec, selection } = {}, {
   // uses it to decide whether to repaint — stopped repainting for good.
   drag = null;
   host.innerHTML = "";
-  const svg = renderElevation(elev, { fixings: true });
+  const svg = renderElevation(elev, { fixings: true, posts: true });
   if (!svg) {
     host.appendChild(emptyOpening());
     return null;
@@ -67,7 +67,9 @@ export function renderCanvas(host, { elev, spec, selection } = {}, {
   svg.classList.add("panel-canvas-svg");
   host.appendChild(svg);
 
-  const layout = elevationLayout(elev);
+  // the SAME options the drawing was rendered with — the posts change the
+  // padding, and a layout that disagreed would put every handle off its board
+  const layout = elevationLayout(elev, { posts: true });
   mountHandles(svg, layout, elev, spec, onCommit);
   wireSelection(svg, spec, onSelect);
   applySelection(svg, selection);
@@ -98,6 +100,11 @@ function emptyOpening() {
  * the spec selects the panel: it belongs to a variant or a version the editor is
  * no longer pointed at, and inventing an element for it would be worse. */
 export function selectionForSlot(spec, slotKey) {
+  // the two parts a fence has that the panel does not: they carry their own
+  // marker rather than a spec key, because they belong to the MODEL's post slot
+  if (slotKey === "cap") return { kind: "cap", key: "cap" };
+  if (slotKey === "post" || String(slotKey).startsWith("post:"))
+    return { kind: "post", key: "post" };
   if ((spec?.frame || []).some((s) => s.key === slotKey))
     return { kind: "frame", key: slotKey };
   if ((spec?.infill?.pattern || []).some((m) => m.key === slotKey))
