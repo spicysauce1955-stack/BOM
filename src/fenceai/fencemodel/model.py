@@ -352,12 +352,9 @@ def _requirements(spec: PanelSpec) -> list[tuple[str, PartRequirement]]:
 
 
 def _can_supply_length(catalog: Catalog, sku: str) -> bool:
+    from fenceai.fencemodel.match import stock_length_mm
     product = catalog.products.get(sku)
-    if product is None:
-        return False
-    if product.consumption.kind == "divisible_linear":
-        return True
-    return product.capabilities.length_mm is not None
+    return product is not None and stock_length_mm(product) is not None
 
 
 # Several schema fields are expressible ahead of the resolver that reads them —

@@ -20,9 +20,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fenceai.catalog.model import Catalog
+from fenceai.catalog.model import Catalog, DivisibleLinear
+from fenceai.core.units import Mm
 from fenceai.fencemodel.model import Eligibility, EligibleItem, PanelSpec
-from fenceai.knowledge.ast import And, MissingField, evaluate_expr, lookup
+from fenceai.knowledge.ast import (
+    And, MissingField, evaluate_expr, lookup, register_function,
+)
 
 if TYPE_CHECKING:
     from fenceai.fencemodel.resolve import PanelContext
@@ -69,7 +72,41 @@ def match_eligibility(
 #
 # Reserved rather than merged politely: if an attrs key shadowed one of these,
 # two products could disagree about what `item.consumption` even means.
-_RESERVED = ("sku", "consumption")
+_RESERVED = ("sku", "consumption", "stock_length_mm")
+
+
+def stock_length_mm(product) -> Mm | None:
+    """How long a piece can you get from ONE purchase unit — the single definition.
+
+    Bar stock carries it on its consumption (`purchase_length_mm`); a fixed piece
+    carries it as a capability. Before this, neither was reachable by a predicate —
+    `_item_ctx` merged attrs, capabilities, sku and consumption KIND, so a bar's
+    length was invisible — while `_can_supply_length` reached into the consumption
+    object for it. Two definitions of one fact would disagree the moment either
+    moved, so `_can_supply_length` is now expressed in terms of this one.
+
+    None means "declares no length anywhere", and `_item_ctx` OMITS the key rather
+    than passing None: a None would compare as a value and quietly satisfy `>= 0`.
+    """
+    if isinstance(product.consumption, DivisibleLinear):
+        return product.consumption.purchase_length_mm
+    return product.capabilities.length_mm
+
+
+@register_function("covers")
+def _covers_fn(item_value, part_value, *, ctx=None) -> bool:
+    """The ITEM's declared set includes everything the PART declares.
+
+    A scalar on either side is a one-element set, which is what lets one operator
+    serve "my token is among yours" and "your holes include mine" without the author
+    telling them apart. Its mirror — the item's value is one of the ones the part
+    lists — is `among`, and that one compiles to `In` because there the computed side
+    is the item. Two operators, because neither subsumes the other: `covers` asks
+    about a set the ITEM declares, `among` about a set the PART declares.
+    """
+    have = set(item_value) if isinstance(item_value, list) else {item_value}
+    need = set(part_value) if isinstance(part_value, list) else {part_value}
+    return need <= have
 
 
 def _item_ctx(product) -> dict:
@@ -87,8 +124,12 @@ def _item_ctx(product) -> dict:
     """
     declared = {k: v for k, v in product.capabilities.model_dump().items()
                 if v is not None}
-    return {**product.attrs, **declared, "sku": product.sku,
-            "consumption": product.consumption.kind}
+    ctx = {**product.attrs, **declared, "sku": product.sku,
+           "consumption": product.consumption.kind}
+    length = stock_length_mm(product)
+    if length is not None:
+        ctx["stock_length_mm"] = length
+    return ctx
 
 
 def item_value(product, path: str):
