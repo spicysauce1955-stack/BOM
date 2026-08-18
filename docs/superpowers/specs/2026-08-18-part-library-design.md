@@ -244,12 +244,41 @@ precisely because it wants the other side computed.
 
 * a duplicate `key` — two authorities over one field;
 * `supplies` on a field with no `unit: "mm"`, or carrying a value;
-* `between` whose value is not a two-int list;
+* a **set-valued** agreement (`among`, `between`) whose value is not a list, and a
+  `between` whose list is not two ints. Stated over the set of set-valued
+  agreements rather than over `between` alone, so a third one cannot be added
+  without arriving here: `among` with a bare string compiles to
+  `In(options=['w','h','i','t','e'])` and publishes clean while matching nothing;
 * a **published** part whose spec no product in the catalog satisfies, in the voice
   `validate_model` already uses for a slot with no eligible product.
 
 A **draft** may hold anything. That is the existing draft bargain, and it is what lets
 an author write a spec before the item exists.
+
+**Where it runs.** At the STORE, on the two calls that publish: `save_part` for any
+non-draft status, and `set_part_status(..., "active")`. Not only at generation —
+`validate_model` calls it too, but reaching it there means the author is handed a 422
+on a job they were pricing rather than a refusal on the part they were writing, which
+is the opposite of what "refusals a part earns at authoring time" promises. The store
+answers `None` from `load_catalog()` by skipping the catalog-dependent refusal, the
+same `library is None` bargain `validate_model` strikes.
+
+**The two invariants that live beside it in the store**, because `Part.status`
+defaults to `"active"` and `save_part` is therefore a second door into the state
+`set_part_status` guards:
+
+* **one active version per id.** `save_part` refuses inserting a second one — a save
+  is not a publication, and retiring a predecessor is a lifecycle act with its own
+  audit line. Publishing is `save_part(draft)` then `set_part_status(active)`.
+* **retirement is refused only when it would leave the id with NO active version.**
+  A model names the id, unpinned, and resolution takes `latest_active`; retiring one
+  version while another stays active takes nothing from any slot. Asking the question
+  of the VERSION left every abandoned draft of an in-use part stuck forever, `draft ->
+  {active, retired}` being the only transitions it has.
+
+`set_part_status` is a multi-statement write behind one `commit()`, so it carries the
+same `try/except BaseException: rollback()` as `replace_active_version` and
+`apply_review_outcome`.
 
 ---
 
@@ -346,6 +375,17 @@ when it derives a `RequirementLine`. Deleting the field outright breaks every on
 those reads; the part's `type` is still "the same fact, said once" — said once on the
 `Part`, and copied onto the resolved slot at generation time rather than authored
 twice.
+
+**Naming a part and authoring what it is are exclusive, and refused on the AUTHORED
+document.** `PartRequirement` itself rejects a `part_id` beside authored
+`eligibility.members`, an authored `eligibility.predicate` or an authored `role`; and
+`FrameSlot`/`Member` reject a `part_id` beside an authored `thickness_mm`/`width_mm`.
+Without that, resolution overwrote the authored half without a word — a slot naming
+`rail-rail-3000` beside an `EligibleItem(sku="RAIL-40", approval="suggest_only")`
+resolved to `members=[]`, taking a human sign-off flag with it, and a part declaring
+no thickness silently ZEROED an authored one (0 being what the elevation renders as
+`declared=False`, not a neutral value). The refusal cannot live in `validate_model`,
+which reads the document AFTER resolution has already wiped the evidence.
 
 **`Eligibility` and `EligibleItem` themselves survive unchanged.** They stop being
 something an author writes on a slot and remain what they always were downstream: the

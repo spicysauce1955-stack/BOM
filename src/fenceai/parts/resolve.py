@@ -37,9 +37,13 @@ def part_requirements(model: FenceModel) -> list[tuple[str, PartRequirement]]:
 
 
 def content_hash(part: Part) -> str:
-    """Why a version number is not enough: a DRAFT is mutable. Versions are immutable
-    only once active, so a run that drew on a draft needs the content. Not a new
-    precaution — `ModelUse.content_hash` already takes it one level up."""
+    """Why a version number is not enough — and not the draft reason it used to give.
+
+    A draft is mutable, but `resolve_model_parts` resolves `latest_active` and
+    nothing else, so no run ever drew on one. What the hash actually guards is a
+    version number REUSED: two libraries that both call something `rail-3000@v1`
+    and mean different documents. See `PartUse.content_hash` for what goes wrong
+    then, and why it is worth sixteen characters."""
     return hashlib.sha256(part.model_dump_json().encode()).hexdigest()[:16]
 
 

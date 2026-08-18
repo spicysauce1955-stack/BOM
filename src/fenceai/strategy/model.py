@@ -145,11 +145,21 @@ class ModelUse(BaseModel):
 class PartUse(BaseModel):
     """One part, as a run actually resolved it — `parts.resolve`'s report.
 
-    `content_hash` is here for the same reason `ModelUse.content_hash` is: a draft
-    version's document may move under a fixed `(part_id, version)`, so the number
-    alone is not enough to say what a run drew on. An active version's hash is
-    redundant with its immutability but costs nothing to carry, and a uniform shape
-    is what lets `GenerationRun.part_snapshot` (Task 7) stamp both alike.
+    `content_hash` guards against a version NUMBER being reused. It is NOT the
+    draft argument `ModelUse.content_hash` makes — that one is true of a model and
+    false of a part: `resolve_model_parts` resolves `latest_active` and nothing
+    else, so a draft is never in a snapshot and a draft moving under a fixed
+    `(part_id, version)` is a thing no run can observe.
+
+    What a run CAN observe is two libraries that both call something
+    `rail-3000@v1` and mean different documents — a restored database, an import,
+    a seed that diverged from the one a run was generated against. Without the
+    hash those two runs share a digest, the second `INSERT OR IGNORE` drops
+    silently, and every later read serves the first run's answer for the second
+    run's fence. That is the failure, and it is the reason the field is a digest
+    input rather than a decoration. Defensive, in the honest sense: nothing in
+    this codebase reuses a version number today, and the cost of carrying the
+    hash is sixteen characters against a corruption nothing else would report.
     """
 
     part_id: str

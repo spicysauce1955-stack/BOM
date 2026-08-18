@@ -91,7 +91,10 @@ def test_the_refusal_followed_the_spec_onto_the_part_and_names_it():
     assert any("no product in the catalog covers this spec" in e
                for e in validate_part(unfillable, demo_catalog()))
 
-    library = PartLibrary(parts=[unfillable, *demo_parts()[1:]])
+    # by NAME, not by position: `demo_parts()[1:]` meant reordering the demo library
+    # silently changed which part this test replaced and which it left alone
+    library = PartLibrary(parts=[unfillable, *(p for p in demo_parts()
+                                               if p.id != "rail-rail-3000")])
     errors = validate_model(M_SLAT, demo_catalog(), library)
     assert any("rail-rail-3000@v1" in e and "no product in the catalog covers" in e
                for e in errors), errors

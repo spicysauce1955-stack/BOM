@@ -27,11 +27,6 @@ Agree = Literal["==", "!=", ">=", "<=", "supplies", "covers", "among", "between"
 # The agreements whose value is a SET the part declares, not a scalar.
 _LIST_VALUED = frozenset({"among", "between"})
 
-# The two keys code knows by name. Everything else is matched and never drawn — the
-# rule `Capabilities` already states: data read by CODE is typed and named, data read
-# by a predicate stays open.
-DRAWN_KEYS = ("width_mm", "thickness_mm")
-
 
 class SpecField(BaseModel):
     """One declared fact, and how an item must agree with it.

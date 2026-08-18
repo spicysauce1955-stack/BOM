@@ -11,7 +11,8 @@ from __future__ import annotations
 from collections import Counter
 
 from fenceai.catalog.model import Catalog
-from fenceai.fencemodel.match import _covers
+from fenceai.fencemodel.match import match_eligibility
+from fenceai.fencemodel.model import Eligibility
 from fenceai.parts.compile import compile_spec
 from fenceai.parts.model import Part
 
@@ -19,13 +20,22 @@ from fenceai.parts.model import Part
 def matching_skus(part: Part, catalog: Catalog, facts: dict | None = None) -> list[str]:
     """Which products this part's spec admits, sorted by SKU.
 
-    Sorted because `resolve_supply` groups by the members' (sku, priority, approval)
-    signature and grouping decides which product is chosen — cut planning is not
-    additive — so a varying order would change the answer and not merely the JSON.
+    Asks the MATCHER rather than walking the catalog itself, which is not a
+    tidying: this function used to carry its own copy of `match_eligibility`'s
+    walk, copy-pasted reasoning and all, and two copies of the covering rule are
+    how the two would eventually disagree about what counts as a match — a part
+    publishing clean here and reporting `no_eligible_item` on every bay there. It
+    is the same defect the branch already fixed once by promoting `_requirements`
+    to `spec_requirements`.
+
+    The sort comes from the matcher for the same reason the matcher sorts:
+    `resolve_supply` groups by the members' (sku, priority, approval) signature and
+    grouping decides which product is chosen — cut planning is not additive — so a
+    varying order would change the answer and not merely the JSON.
     """
-    predicate = compile_spec(part)
-    return [sku for sku in sorted(catalog.products)
-            if _covers(predicate, catalog.products[sku], facts or {})]
+    matched = match_eligibility(
+        Eligibility(predicate=compile_spec(part)), catalog, facts or {})
+    return [m.sku for m in matched.members]
 
 
 def validate_part(part: Part, catalog: Catalog) -> list[str]:

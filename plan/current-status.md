@@ -1485,3 +1485,50 @@ not merely in intent.
 
 1378 pytest · 183 golden scenarios · 183/183 smoke · gate byte-identical on BOM,
 decision graph and resolved geometry — run id moved, by design, on `digest-v2`.
+
+**The fix wave (same day).** Three reviews — architecture-critic, a mutation-based
+test review, and a whole-branch read — produced twenty findings, worked in four
+commits. The correctness half had one shape repeated six times: a second door into a
+state something else was guarding. `Part.status` defaults to `"active"`, so
+`save_part` was a door into the state `set_part_status` guards, and the migration tool
+walked through it — committing a second active version and only then raising
+`active -> active`, aborting AFTER the write on every database that was not fresh.
+`set_part_status` was the only multi-statement writer in `db.py` with no rollback, so
+a failed activation left the predecessor's retire for the next call to commit and the
+id ended with ZERO active versions. Its retirement refusal asked about the VERSION
+where a model names the ID, which left every abandoned draft of an in-use part stuck
+forever. `validate_part` had no caller but generation, against its own docstring:
+authors got a 422 on a job they were pricing instead of a refusal on the part they
+were writing. And `_LIST_VALUED` — a constant naming an invariant — was dead, so
+`among` with a bare string compiled to `In(['w','h','i','t','e'])` and published clean.
+
+**The one that was hiding in plain sight.** After resolution, "this slot declares a
+predicate" is EVERY part-named slot — the normal path, not the rare one — and
+`validate_model` `continue`d past four authoring rules on it. `resolve._chosen_option`
+cites two of them BY NAME as load-time guarantees, so with them gone it fell through
+to `unnarrowed` and a user's option choice was silently ignored. Separately, a slot
+naming a part while ALSO authoring `members`/`role`/a dimension validated clean and
+was then overwritten by resolution — a `suggest_only` flag a human had insisted on
+deleted without a word. Both refusals now sit on the authored document, which is the
+only place the two can both be true.
+
+**Performance, measured on the same 120 m run against a 4623-product catalog: 2.92 s
+-> 1.53 s.** `_model_post_skus` re-resolved the whole document once per post SIDE with
+the dedup on the next line throwing half of them away — 135 resolutions for 68 posts,
+now 2. `_item_ctx` was recomputed once per (slot, product) pair, 957 000 times per
+run, almost all of it a `model_dump()` of three optional integers; memoised by the
+product's IDENTITY rather than its sku, because a catalog is edited by REPLACING a
+product and an sku key would answer the new product's question with the old product's
+facts. Same run id, same BOM, same decision graph.
+
+**The test net closed where mutations walked through it.** Four gaps were confirmed by
+applying the mutation, watching the new test fail, and reverting: the run-pinned bay
+preview (dropping `part_snapshot` at the route AND neutering `library_at` both left
+the suite green — the drawer-shows-one-thing trap, one level in from where
+`bay_preview_plan` closed it); the multi-candidate part, wired to no model, so nothing
+drove `compile_spec -> match_spec -> more than one member -> pin`; the snapshot
+ordering, asserted on a hand-built list rather than a generated run; and clearing
+authored members during resolution. Four locale keys nothing emits were DELETED rather
+than left as furniture — slice 1B adds them back with their emitters.
+
+1403 pytest · 183 golden scenarios · compatibility gate untouched.

@@ -30,26 +30,7 @@ meaning of the empty default rather than an oversight.
 
 from __future__ import annotations
 
-from fenceai.parts.model import Part, PartType, SpecField
-
-
-def demo_part_types() -> list[PartType]:
-    """The filing vocabulary, shared by parts and products.
-
-    Wider than the parts below, because it also files the CATALOG: a company's
-    posts, caps and concrete are things it stocks whether or not a demo model has
-    yet named a part for them, and the Parts tab groups both sides by this key.
-    """
-    return [
-        PartType(key="rail", label_i18n={"en": "Rails", "he": "שלבים"}),
-        PartType(key="screw", label_i18n={"en": "Fixings", "he": "אמצעי חיבור"}),
-        PartType(key="infill", label_i18n={"en": "Boards", "he": "קרשים"}),
-        PartType(key="post", label_i18n={"en": "Posts", "he": "עמודים"}),
-        PartType(key="cap", label_i18n={"en": "Caps", "he": "כובעים"}),
-        PartType(key="concrete", label_i18n={"en": "Concrete", "he": "בטון"}),
-        PartType(key="gate", label_i18n={"en": "Gates", "he": "שערים"}),
-        PartType(key="fixing", label_i18n={"en": "Hardware", "he": "פרזול"}),
-    ]
+from fenceai.parts.model import Part, SpecField
 
 
 def demo_parts() -> list[Part]:
