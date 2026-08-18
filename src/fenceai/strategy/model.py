@@ -175,6 +175,13 @@ class GenerationRun(BaseModel):
     # the fence models this run actually drew from — part of what "generated from"
     # means, so it belongs in the run id (run identity, task 10)
     model_snapshot: list[ModelUse] = []
+    # the parts this run resolved — a model names a part_id and NOT a version, so
+    # two runs of the identical model document mean different fences the moment a
+    # part moves. That makes this part of what "generated from" means, and it goes
+    # into the run id on `model_snapshot`'s argument. `[]` is a run generated
+    # before parts existed and needs no validator, because it is the default —
+    # the same readable-old-runs convention `catalog_skus` keeps.
+    part_snapshot: list[PartUse] = []
     # catalog content hash at generation time — /bom and /structure refuse to
     # re-read a stored run against a catalog that no longer matches it
     catalog_hash: str = ""

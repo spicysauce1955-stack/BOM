@@ -59,6 +59,7 @@ from fenceai.project.model import Annotation, Project
 from fenceai.report.structure import build_structure
 from fenceai.store.db import Store
 from fenceai.strategy.generator import LEGACY_MODEL_ID, generate
+from fenceai.strategy.model import PartUse
 from fenceai.strategy.overrides import Override
 from fenceai.topology.model import Topology
 
@@ -335,6 +336,8 @@ def generate_route(project_id: str):
             overrides=project.overrides, policy=project.policy, project_id=project.id,
             models=state.store.fence_model_library(),
             default_model=project.fence_model,
+            # threaded in, never read from inside: `generate()` is pure (ADR-0004)
+            parts=state.store.part_library(),
         )
     except GenerationFailure as e:
         # code + params when the failure carries them, exactly as the read routes
@@ -641,7 +644,8 @@ def preview_knowledge_impact(body: "KnowledgeCreate") -> ImpactReport:
         attributed_to=body.author, status="draft",
     )
     return preview_impact(hypo, state.store.knowledge_base(), state.store.load_catalog(),
-                          _impact_cases(), state.store.fence_model_library())
+                          _impact_cases(), state.store.fence_model_library(),
+                          state.store.part_library())
 
 
 @app.post("/api/candidates/{object_id}/{version}/preview")
@@ -654,7 +658,8 @@ def preview_candidate_impact(object_id: str, version: int) -> ImpactReport:
     if cand is None or cand.status != "proposed":
         raise HTTPException(404, "candidate not found or not reviewable")
     return preview_impact(activated_copy(cand), kb, state.store.load_catalog(),
-                          _impact_cases(), state.store.fence_model_library())
+                          _impact_cases(), state.store.fence_model_library(),
+                          state.store.part_library())
 
 
 
@@ -676,7 +681,10 @@ def _model_errors(model: FenceModel) -> dict | None:
     UI renders a sentence rather than English authoring text. The unknown-sku case
     gets its own code because it is the one a user causes by typing, and it names
     what they typed."""
-    errors = validate_model(model, state.store.load_catalog())
+    # With the library, because three of `validate_model`'s rules read numbers a
+    # slot no longer carries — they arrive from the part it names, and the authored
+    # document is not the document a bay is built from.
+    errors = validate_model(model, state.store.load_catalog(), state.store.part_library())
     if not errors:
         return None
     missing = unknown_skus(model, state.store.load_catalog())
@@ -772,7 +780,7 @@ def preview_fence_model_impact(model: FenceModel) -> ImpactReport:
     """
     return preview_model_impact(
         model, state.store.fence_model_library(), state.store.knowledge_base(),
-        state.store.load_catalog(), _impact_cases(),
+        state.store.load_catalog(), _impact_cases(), state.store.part_library(),
     )
 
 
@@ -845,16 +853,23 @@ def _refusal(e: ValueError) -> HTTPException:
 def _preview_or_refuse(
     model: FenceModel, bay: PreviewRequest,
     catalog: Catalog | None = None, preset: str = "least_cost",
+    part_snapshot: list[PartUse] | None = None,
 ) -> PanelPreview:
     """`catalog` and `preset` are arguments rather than lookups because a bay of
     a stored run is priced against the catalog that run was generated with and
     under the objective preset it was generated under — see `preview_run_bay`.
-    A model-scoped preview has neither, and asks the library for both."""
+    A model-scoped preview has neither, and asks the library for both.
+
+    `part_snapshot` is the third of the same kind: the part VERSIONS a stored run
+    resolved. Absent, the preview resolves `latest_active`, which is the right
+    answer for a question about a model and the wrong one about a bay."""
     try:
         return preview_panel(
             model, bay,
             catalog if catalog is not None else state.store.load_catalog(),
             preset=preset,
+            part_library=state.store.part_library(),
+            part_snapshot=part_snapshot,
         )
     except ValueError as e:
         raise _refusal(e)
@@ -940,7 +955,8 @@ def preview_run_bay(run_id: str, element_id: str, body: BayPreviewRequest) -> Pa
     model = state.store.load_fence_model(plan.model_id, plan.version)
     if model is None:
         raise HTTPException(404, f"{plan.model_id}@v{plan.version} not found")
-    return _preview_or_refuse(model, plan.request, catalog, result.run.objective_preset)
+    return _preview_or_refuse(model, plan.request, catalog, result.run.objective_preset,
+                              result.run.part_snapshot)
 
 
 @app.put("/api/projects/{project_id}/fence-model")

@@ -21,6 +21,7 @@ from fenceai.fencemodel.model import FenceModel
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
+from fenceai.parts.model import PartLibrary
 from fenceai.strategy.generator import generate
 from fenceai.strategy.model import Strategy
 from fenceai.strategy.overrides import Override
@@ -149,11 +150,15 @@ def _failure(e: GenerationFailure) -> ImpactFailure:
 
 
 def _spine(topology, kb, catalog, overrides, inventory, project_id="",
-           models=None, default_model=None, policy=None):
+           models=None, default_model=None, policy=None, parts=None):
     # project_id is a bound scope dimension during generation — a project-scoped
-    # rule must behave in the preview exactly as it will in the real run
+    # rule must behave in the preview exactly as it will in the real run. `parts`
+    # travels for the same reason: a slot's products come from the part it names,
+    # so a preview regenerating without the library is pricing a different fence
+    # from the one Generate would build.
     result = generate(topology, kb, catalog, overrides=overrides, project_id=project_id,
-                      models=models, default_model=default_model, policy=policy)
+                      models=models, default_model=default_model, policy=policy,
+                      parts=parts)
     # the SAME pipeline the read routes run, not a fourth hand-rolled copy of it:
     # a preview that priced a job differently from /bom would be worse than no
     # preview at all
@@ -192,6 +197,7 @@ def preview_model_impact(
     kb: KnowledgeBase,
     catalog: Catalog,
     cases: list[ImpactCase],
+    parts: PartLibrary | None = None,
 ) -> ImpactReport:
     """"This change would affect N of your projects", for a fence model.
 
@@ -203,7 +209,7 @@ def preview_model_impact(
     """
     return _preview(
         hypothetical.ref, kb, kb, catalog, cases,
-        library, hypothetical_library(library, hypothetical),
+        library, hypothetical_library(library, hypothetical), parts,
     )
 
 
@@ -213,13 +219,14 @@ def preview_impact(
     catalog: Catalog,
     cases: list[ImpactCase],
     library: FenceModelLibrary | None = None,
+    parts: PartLibrary | None = None,
 ) -> ImpactReport:
     """Regenerate every case under (current KB) vs (KB with the hypothetical
     version active) and report per-project diffs. Deterministic; read-only."""
     library = library or FenceModelLibrary()
     return _preview(
         hypothetical.ref, kb, hypothetical_kb(kb, hypothetical), catalog, cases,
-        library, library,
+        library, library, parts,
     )
 
 
@@ -231,6 +238,7 @@ def _preview(
     cases: list[ImpactCase],
     library_before: FenceModelLibrary,
     library_after: FenceModelLibrary,
+    parts: PartLibrary | None = None,
 ) -> ImpactReport:
     """One regenerate-and-diff, whichever of the two inputs is the hypothesis.
 
@@ -247,6 +255,7 @@ def _preview(
             strategy_before, bom_before = _spine(
                 case.topology, kb_before, catalog, case.overrides, case.inventory,
                 case.project_id, library_before, case.fence_model, case.policy,
+                parts,
             )
         except (GenerationFailure, ValueError) as e:
             # The project cannot generate as it STANDS — a broken rule, a SKU
@@ -265,6 +274,7 @@ def _preview(
             strategy_after, bom_after = _spine(
                 case.topology, kb_after, catalog, case.overrides, case.inventory,
                 case.project_id, library_after, case.fence_model, case.policy,
+                parts,
             )
         except GenerationFailure as e:
             impact.generation_failure = _failure(e)

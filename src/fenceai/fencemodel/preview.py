@@ -40,13 +40,17 @@ from fenceai.fencemodel.match import (
     chosen_post_facts, match_eligibility, match_spec, panel_facts, post_panel_facts,
 )
 from fenceai.fencemodel.model import FenceModel, validate_model
+from fenceai.parts.model import PartLibrary
+from fenceai.parts.resolve import library_at, resolve_model_parts
 from fenceai.fencemodel.resolve import (
     PanelContext, ResolvedPanel, clear_opening_mm, rail_positions_mm, resolve_panel,
     select_variant,
 )
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.report.elevation import ElevationPost, PanelElevation, panel_elevation
-from fenceai.strategy.model import GenerationResult, Span, Strategy, StrategyWarning
+from fenceai.strategy.model import (
+    GenerationResult, PartUse, Span, Strategy, StrategyWarning,
+)
 
 PREVIEW_SPAN_ID = "span@preview:0-0"
 
@@ -128,7 +132,30 @@ def preview_panel(
     request: PreviewRequest,
     catalog: Catalog,
     preset: str = "least_cost",
+    # `part_library`, not `parts`: this function already has a local `parts` — the
+    # priced rows it returns — and one name for two things here would be silent
+    # (the shadowed one is only read further down).
+    part_library: PartLibrary | None = None,
+    part_snapshot: list[PartUse] | None = None,
 ) -> PanelPreview:
+    """`part_library` and `part_snapshot` are ARGUMENTS, for the same reason `catalog` and
+    `preset` are: a bay of a stored run is previewed against the parts that run
+    resolved, and a model-scoped preview against today's. This function stays pure
+    of the store, and the route decides which question is being asked.
+
+    `part_snapshot` pins those versions. `bay_preview_plan` already reloads the
+    model document by the version the run STAMPED and never `latest_active`,
+    because the drawer once marked one product chosen while the run had bought
+    another; an unpinned `part_id` inside that pinned document is the same bug by a
+    new door. Empty (or absent) falls back to `latest_active`, which is the only
+    honest answer for a run generated before parts existed.
+    """
+    if part_library is not None:
+        # Compiling the part references is strictly upstream of `match_spec` below
+        # — the same position it holds in `generator.segment_model`, so a preview
+        # and a run resolve the same document in the same order.
+        part_library = library_at(part_library, part_snapshot or [])
+        model, _ = resolve_model_parts(model, part_library)
     slope = request.slope_len_mm if request.slope_len_mm is not None else request.width_mm
 
     def _ctx(clear_width_mm: Mm) -> PanelContext:
@@ -204,7 +231,11 @@ def preview_panel(
         parts=parts,
         unsupplied=[_part(line, None) for line in priced.unresolved],
         warnings=priced.warnings + ([post_note] if post_note is not None else []),
-        invalid=validate_model(model, catalog),
+        # Already resolved above when a library was given, and `validate_model`
+        # resolves again against the SAME (pinned) library — idempotent, and it
+        # keeps "which document is validated" one function's business rather than
+        # a contract between two.
+        invalid=validate_model(model, catalog, part_library),
         total_cents=priced.bom.total_cents,
     )
 

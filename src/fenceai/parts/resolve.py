@@ -69,6 +69,55 @@ def resolve_model_parts(
     return resolved, sorted(uses.values(), key=lambda u: u.sort_key())
 
 
+def resolve_model_parts_at(
+    model: FenceModel, library: PartLibrary, snapshot: list[PartUse]
+) -> FenceModel:
+    """Resolve against the versions a RUN recorded, not against what is current.
+
+    `bay_preview_plan` reloads a model by the version the run STAMPED, explicitly
+    never `latest_active`, because the drawer once marked one product chosen while
+    the run had bought another. An unpinned `part_id` inside that stamped document
+    reopens the identical bug by a new door: the document is pinned and the part it
+    names is not.
+
+    An empty snapshot falls back to `latest_active`: that is a run generated before
+    parts existed, and it is the only honest answer for one.
+    """
+    resolved, _ = resolve_model_parts(model, library_at(library, snapshot))
+    return resolved
+
+
+def library_at(library: PartLibrary, snapshot: list[PartUse]) -> PartLibrary:
+    """The library as one run saw it — exactly the versions it stamped.
+
+    Separate from `resolve_model_parts_at` because a caller that also VALIDATES the
+    run's document needs the same pinned view: validating against today's parts
+    while drawing the run's would be the same two-authorities defect one level up.
+
+    An empty snapshot returns the library UNCHANGED, which is the fallback to
+    `latest_active` — a run generated before parts existed. Pinning to nothing would
+    hand back an empty library and refuse the document for naming parts, which is
+    the opposite of what having no snapshot means.
+
+    COPIES each part rather than re-labelling it in place: `library` belongs to the
+    caller, and flipping a retired version back to active on the shared object would
+    make a preview of an old run change what every later reader of that library sees
+    — a read that writes, through the one door nobody would think to look at.
+
+    A version this run resolved may since have been retired, and it is still what the
+    run resolved, so the copy is `active` — the only status `latest_active` looks at.
+    A part in the snapshot that has since been DELETED is absent here, and
+    `resolve_model_parts` refuses by name rather than quietly resolving today's.
+    """
+    if not snapshot:
+        return library
+    return PartLibrary(parts=[
+        part.model_copy(deep=True, update={"status": "active"})
+        for use in snapshot
+        if (part := library.by_ref(use.part_id, use.version)) is not None
+    ])
+
+
 def _apply_dimensions(model: FenceModel, library: PartLibrary) -> None:
     """Write the part's dimensions onto the holders that draw them.
 

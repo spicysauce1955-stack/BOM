@@ -42,12 +42,15 @@ from fenceai.knowledge.evaluator import (
     resolve_param,
 )
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
+from fenceai.parts.model import PartLibrary
+from fenceai.parts.resolve import resolve_model_parts
 from fenceai.strategy.layout import boundaries, layout_segment
 from fenceai.strategy.model import (
     Gate,
     GenerationResult,
     GenerationRun,
     ModelUse,
+    PartUse,
     Post,
     Span,
     Strategy,
@@ -111,7 +114,12 @@ DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_co
 # `save_run`'s INSERT OR IGNORE keeps the document that predates the fields, and
 # its bays draw no fasteners for ever with no user action able to repair it.
 PLANNING_BEHAVIOR_VERSION = "planning-v2"
-RUN_DIGEST_VERSION = "digest-v1"
+# v2: `part_snapshot` joined the digest's inputs. A model names a part_id and not a
+# version, so two runs of the identical model document — same id, same content hash
+# — are different fences once a part moves under them. Without the bump they hash
+# the same and `save_run`'s INSERT OR IGNORE serves the first one's document for the
+# second one's fence.
+RUN_DIGEST_VERSION = "digest-v2"
 
 # The catalog attribute by which a product declares the opening width it fits.
 # Fit is DATA, like Product.attrs["length_mm"] for posts: a SKU is an opaque id and
@@ -150,7 +158,12 @@ def generate(
     project_id: str = "",
     models: FenceModelLibrary | None = None,
     default_model: FenceModelChoice | None = None,
+    parts: PartLibrary | None = None,
 ) -> GenerationResult:
+    """`parts` is threaded in exactly as `models` is, and for the same reason:
+    `generate()` is pure (ADR-0004), so it may not reach for a store. `None` means
+    the caller has no library — the model documents are then used exactly as
+    authored, which is what every call site predating parts meant."""
     overrides = overrides or []
     models = models or FenceModelLibrary()
     policy = {**DEFAULT_POLICY, **(policy or {})}
@@ -170,17 +183,21 @@ def generate(
 
     _generate_node_posts(
         topology, knowledge, scope, catalog, overrides, policy, builder, strategy,
-        applied, models, default_model,
+        applied, models, default_model, parts,
     )
     # every fence model actually drawn from, across all runs — part of the run id
     # (a model swap changes what the run means even though the digest's other
     # inputs are untouched)
     models_used: list[ModelUse] = []
+    # and every part those models named, at the version this run resolved. Same
+    # argument one level down: a model names a part_id and not a version, so the
+    # part is the other half of "which document did this fence come from".
+    parts_used: list[PartUse] = []
     for run in topology.runs:
         _generate_run(
             topology, run, knowledge, scope, catalog, overrides, policy,
             builder, strategy, applied, demand_skus, models_used,
-            models, default_model,
+            models, default_model, parts, parts_used,
         )
 
     _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
@@ -216,6 +233,13 @@ def generate(
     run_meta.model_snapshot = sorted(
         {u.sort_key(): u for u in models_used}.values(), key=ModelUse.sort_key
     )
+    # - part_snapshot: which part version each named slot resolved to. Deduped and
+    #   sorted for the same reason the models are: the same part reached through
+    #   two segments is one fact about the run, and an order that varied with the
+    #   walk would split the digest between two identical fences.
+    run_meta.part_snapshot = sorted(
+        {u.sort_key(): u for u in parts_used}.values(), key=PartUse.sort_key
+    )
     run_meta.catalog_skus = _skus_used(strategy, demand_skus)
     run_meta.catalog_hash = catalog_hash(catalog, run_meta.catalog_skus)
     run_meta.catalog_schema_version = CATALOG_SCHEMA_VERSION
@@ -234,6 +258,7 @@ def generate(
             [project_id, topology.model_dump(), run_meta.knowledge_snapshot,
              [o.model_dump() for o in overrides], policy,
              [u.model_dump() for u in run_meta.model_snapshot], run_meta.catalog_hash,
+             [u.model_dump() for u in run_meta.part_snapshot],
              run_meta.objective_preset,
              PLANNING_BEHAVIOR_VERSION, RUN_DIGEST_VERSION],
             sort_keys=True, default=str,
@@ -594,6 +619,7 @@ def _model_post_skus(
     library: FenceModelLibrary,
     default_model: FenceModelChoice | None,
     catalog: Catalog,
+    parts: PartLibrary | None,
     sides: list[_PostSide],
 ) -> _ModelPost:
     """The post and cap the MODEL(S) at this post ask for, if any of them asks.
@@ -630,6 +656,12 @@ def _model_post_skus(
         model = library.resolve(choice.model_id, choice.version_pin)
         if model is None or model.post is None:
             continue
+        # The post slot's predicate comes from the part it names, so the document is
+        # compiled BEFORE it is matched — here as well as in `segment_model`, because
+        # a node post is the one match that does not reach the model through a
+        # segment. Nothing about the DAG moves: this is still strictly upstream of
+        # `_matched`, which is where `match_spec`'s covering rule lives.
+        model, _ = _with_parts(model, parts)
         if any(m.ref == model.ref for m, _, _ in claims):
             continue        # both bays are the same model: one claim, not two
         panel = side.facts.at(model, side.station, side.kind)
@@ -832,6 +864,7 @@ def _generate_node_posts(
     applied: set[str],
     library: FenceModelLibrary | None = None,
     default_model: FenceModelChoice | None = None,
+    parts: PartLibrary | None = None,
 ) -> None:
     touches_by_node: dict[str, list[tuple[Run, Mm]]] = {}
     for run in topology.runs:
@@ -923,7 +956,7 @@ def _generate_node_posts(
         model_post = _ModelPost()
         if library is not None:
             model_post = _model_post_skus(
-                library, default_model, catalog,
+                library, default_model, catalog, parts,
                 [_PostSide(
                     _run_post_facts(topology, r, kb, scope, overrides, policy)[0],
                     s, s if s == 0 else s - 1, kind,
@@ -949,7 +982,41 @@ def _generate_node_posts(
 
 # --- per-run generation --------------------------------------------------------
 
-def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
+def _with_parts(
+    model: FenceModel, parts: PartLibrary | None
+) -> tuple[FenceModel, list[PartUse]]:
+    """The model document with its part references compiled into predicates.
+
+    Strictly UPSTREAM of every `match_spec`/`_matched` below, which is the point:
+    the `height -> rail positions -> post -> clear width -> infill` DAG does not
+    move, and neither does anything else in this module's ordering. Compilation
+    happens, and then everything downstream is what it was.
+
+    `parts is None` returns the document untouched — a caller with no library gets
+    exactly the behaviour it had before parts existed. Returns a NEW document
+    (`resolve_model_parts` copies), because `generate()` is pure and the library's
+    stored model must not acquire a resolved predicate as a side effect of a run.
+
+    The `ValueError` is the one a part with no active version raises.
+    `_validate_resolved_model` normally reports it first, in the voice a route can
+    render; this is the net under the paths that never validated — a node post
+    resolves its model before any segment does.
+    """
+    if parts is None:
+        return model, []
+    try:
+        return resolve_model_parts(model, parts)
+    except ValueError as e:
+        raise GenerationFailure(
+            f"fence model {model.ref} cannot be used: {e}",
+            code="fence_model_invalid",
+            model_ref=model.ref, errors=str(e), n=1,
+        )
+
+
+def _validate_resolved_model(
+    model: FenceModel, catalog: Catalog, parts: PartLibrary | None = None
+) -> None:
     """The production caller `validate_model` did not have.
 
     Models are only ever built by `legacy_model()`, which bypassed validation
@@ -988,7 +1055,7 @@ def _validate_resolved_model(model: FenceModel, catalog: Catalog) -> None:
     needed — and a cache keyed on a model that `legacy_model()` rebuilds per
     call would cost more than the check it skipped.
     """
-    errors = validate_model(model, catalog)
+    errors = validate_model(model, catalog, parts)
     if not errors:
         return
     # The failure a USER can cause gets a code its locale bundle can render: a
@@ -1220,6 +1287,8 @@ def _generate_run(
     models_used: list[ModelUse],
     library: FenceModelLibrary,
     default_model: FenceModelChoice | None,
+    parts: PartLibrary | None,
+    parts_used: list[PartUse],
 ) -> None:
     length = run_length(topo, run)
     slope_permille = max_slope_permille(topo, run)
@@ -1258,7 +1327,17 @@ def _generate_run(
         effective = choice or default_model
         options = dict(effective.options) if effective else {}
         model, source = _pick_model(library, choice, default_model, demand_skus)
-        _validate_resolved_model(model, catalog)
+        # Validation reads the document a bay will actually be built from, so it
+        # resolves the same references this line does — see `validate_model`. It
+        # runs first because it is the one that reports a broken part reference
+        # with a code a route can render.
+        _validate_resolved_model(model, catalog, parts)
+        # The model's part references become predicates HERE, at the moment the
+        # document is chosen for a segment, and the resolved document is what every
+        # line below uses. Upstream of `match_spec` and of `resolve_panel`: the
+        # `height -> rail positions -> post -> clear width -> infill` DAG is
+        # untouched, and so is the order of this function's phases.
+        model, part_uses = _with_parts(model, parts)
         # `series` is the dimension a knowledge rule needs to say "spans exactly
         # 1800 on that product line" — blocked until a model id was a fact of
         # generation (plan/current-status.md, the two blocked dimensions). The
@@ -1322,6 +1401,13 @@ def _generate_run(
         )
         resolved[key] = sm
         models_used.append(sm.use)
+        # Recorded from the SEGMENT, not from the library: a part reached by no bay
+        # of this fence was not resolved by this run, and a snapshot naming it would
+        # claim the run depended on something it never read.
+        # `.extend`, never `+=`: an augmented assignment inside this closure would
+        # rebind the name as a LOCAL of `segment_model` and lose the run's list
+        # entirely — the snapshot would come out empty on every run.
+        parts_used.extend(part_uses)
         return sm
 
     # -- gates -----------------------------------------------------------------
@@ -1529,7 +1615,7 @@ def _generate_run(
             )
         tilt_deg, tilt_ev = (0, None) if kind == "gate" else _post_tilt_at(topo, run, station)
         model_post = _model_post_skus(
-            library, default_model, catalog,
+            library, default_model, catalog, parts,
             _post_sides(post_facts, station, length, kind))
         _cap_unsupplied(strategy, model_post, f"post@{run.id}:{station}", station)
         post = _make_post(
@@ -1820,7 +1906,7 @@ def _generate_run(
                 )
             tilt_deg, _tilt_ev = _post_tilt_at(topo, run, s)
             model_post = _model_post_skus(
-                library, default_model, catalog,
+                library, default_model, catalog, parts,
                 _post_sides(post_facts, s, length, "line"))
             _cap_unsupplied(strategy, model_post, f"post@{run.id}:{s}", s)
             post = _make_post(
