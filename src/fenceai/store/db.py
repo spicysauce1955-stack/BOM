@@ -20,6 +20,7 @@ from fenceai.fencemodel.model import FenceModel
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.learning.model import Correction
+from fenceai.parts.model import Part, PartLibrary
 from fenceai.project.model import Project
 from fenceai.strategy.model import GenerationResult
 
@@ -31,6 +32,9 @@ CREATE TABLE IF NOT EXISTS knowledge_versions (
 CREATE TABLE IF NOT EXISTS fence_models (
     model_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
     doc TEXT NOT NULL, PRIMARY KEY (model_id, version));
+CREATE TABLE IF NOT EXISTS parts (
+    part_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
+    doc TEXT NOT NULL, PRIMARY KEY (part_id, version));
 CREATE TABLE IF NOT EXISTS generation_runs (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, created_at TEXT NOT NULL,
     doc TEXT NOT NULL);
@@ -368,6 +372,86 @@ class Store:
             )
             self._audit(actor, "seed_fence_model", model.ref)
         self._conn.commit()
+
+    # -- parts (drafts mutable, published versions frozen) ---------------------
+
+    _PART_STATUSES = ("draft", "active", "retired")
+
+    def save_part(self, part: Part, actor: str = "system") -> None:
+        """A draft may be rewritten in place; anything published is frozen.
+
+        The refusal belongs here and not in a route, because it is the invariant
+        rather than a validation of one caller — the same reason `save_fence_model`
+        carries it. A run stamps `(part_id, version)` and re-reading it must give
+        back the spec that run resolved.
+        """
+        row = self._conn.execute(
+            "SELECT status FROM parts WHERE part_id=? AND version=?",
+            (part.id, part.version),
+        ).fetchone()
+        if row is not None and row[0] != "draft":
+            raise ValueError(
+                f"{part.ref} is {row[0]}; its content is immutable "
+                "(publish a new version, or change only its status)"
+            )
+        self._conn.execute(
+            "INSERT INTO parts (part_id, version, status, doc) VALUES (?,?,?,?) "
+            "ON CONFLICT(part_id, version) DO UPDATE SET "
+            "status=excluded.status, doc=excluded.doc",
+            (part.id, part.version, part.status, part.model_dump_json()),
+        )
+        self._audit(actor, "save_part", part.ref)
+        self._conn.commit()
+
+    def load_part(self, part_id: str, version: int) -> Part | None:
+        row = self._conn.execute(
+            "SELECT doc FROM parts WHERE part_id=? AND version=?", (part_id, version),
+        ).fetchone()
+        return Part.model_validate_json(row[0]) if row else None
+
+    def part_library(self) -> PartLibrary:
+        rows = self._conn.execute(
+            "SELECT doc FROM parts ORDER BY part_id, version"
+        ).fetchall()
+        return PartLibrary(parts=[Part.model_validate_json(r[0]) for r in rows])
+
+    def next_part_version(self, part_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT MAX(version) FROM parts WHERE part_id=?", (part_id,),
+        ).fetchone()
+        return (row[0] or 0) + 1
+
+    def set_part_status(
+        self, part_id: str, version: int, status: str, actor: str = "system"
+    ) -> None:
+        """Activating retires the predecessor, so `latest_active` is never ambiguous."""
+        part = self.load_part(part_id, version)
+        if part is None:
+            raise ValueError(f"{part_id}@v{version} not found")
+        if status not in self._STATUS_TRANSITIONS.get(part.status, set()):
+            raise ValueError(
+                f"illegal status transition {part.status} -> {status} for {part.ref}"
+            )
+        if status == "active":
+            for row in self._conn.execute(
+                "SELECT version FROM parts WHERE part_id=? AND status='active'",
+                (part_id,),
+            ).fetchall():
+                if row[0] != version:
+                    self._set_part_status_nocommit(part_id, row[0], "retired", actor)
+        self._set_part_status_nocommit(part_id, version, status, actor)
+        self._conn.commit()
+
+    def _set_part_status_nocommit(
+        self, part_id: str, version: int, status: str, actor: str
+    ) -> None:
+        part = self.load_part(part_id, version)
+        part.status = status  # type: ignore[assignment]
+        self._conn.execute(
+            "UPDATE parts SET status=?, doc=? WHERE part_id=? AND version=?",
+            (status, part.model_dump_json(), part_id, version),
+        )
+        self._audit(actor, f"part_status:{status}", part.ref)
 
     # -- generation runs (append-only) -----------------------------------------
 
