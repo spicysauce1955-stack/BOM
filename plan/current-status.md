@@ -1,5 +1,208 @@
 # Current status
 
+## A post is chosen by where it stands (2026-08-18)
+Prompted by the user, twice: the canvas was still *"extremely unintuitive and not
+comfortable"*, and then *"but what about poles, upper and lower bars, rails,
+caps?"* — the question that broke the redesign open. Researched the trade rather
+than guessing, and the domain answered three things the schema did not.
+
+**The blocking gap: a post predicate could not see which post it is.** A vinyl
+post is routed at the factory and WHICH FACES are cut depends on where it stands
+— end (one face), line (two opposite), corner (two adjacent). Manufacturers say
+it outright: you must know the layout before ordering. `post_panel_facts` handed
+a predicate four facts and position was not among them, so M-VINYL named ONE post
+sku for a whole run and every end and corner post was ordered wrong.
+
+The omission was principled but over-broad. It protects a real cycle — a bay's
+opening is measured TO the post faces, so a post chosen BY that opening chooses
+itself — but a post's KIND comes from the TOPOLOGY, not from the panel, and is
+settled before any of it. `post.kind` is now readable
+(`POST_PREDICATE_POST_FACTS`, beside the panel set the cycle rule still bounds);
+the catalog carries six routed posts (two heights x three positions) keyed on a
+`routed_faces` attribute no code knows the name of; M-VINYL maps position to
+routing AS DATA in its predicate, kept a separate conjunct so
+`sole_excluding_term` can still name which term excluded everybody.
+
+Two calls worth keeping. `gate` takes the single-face post rather than a blank
+one: a blank post has no `routed_at_mm`, so the routing conjunct would fail and
+every gate on a vinyl run would become a generation failure. `junction` is
+deliberately unmapped — three runs meeting needs a three-face post this line does
+not make, so it refuses by name rather than standing a two-face post where three
+panels land. S16 moved 119 900 -> 119 300 (two terminus posts skip 300c of
+routing each); only `vinyl.json` moved in the compatibility gate.
+
+**The parts with no editor at all.** `model.post` and `model.post.cap` were
+reachable only through the raw JSON box — and because the panel spans the clear
+opening BETWEEN the posts, the two parts with no controls were also the two
+literally off the drawing. The elevation now carries them: `x_mm` is NEGATIVE on
+the start side, because the post occupies the millimetres before the opening, and
+a renderer that clamped it to zero would draw the post over the first board. The
+box grows to hold them at ONE scale, so a bay does not resize the moment its
+posts appear. They are clickable, and the pane says "chosen by a rule rather than
+a list" for a predicate-driven post — or offers to specify one for a model that
+says nothing about its posts.
+
+**The inspector: eighteen controls to six.** Describing one board took eighteen,
+and the first asked the author to invent an identifier. The trade specifies a
+panel with about six; Figma lays out a row of things with four and folds "spread
+them out" into `gap: Auto` rather than a matrix. So the `key` field is gone
+(elements are auto-named; renaming is a double-click on the chip and still
+carries `base_ref`/`top_ref`); `justification` x `excess` collapses into one
+Even/Exactly segment with all EIGHT pairs still reachable and a pair no segment
+matches saying so; blank-and-zero fields became visible DERIVED readouts with
+their reason, which display without ever authoring; and role, cut-to, option
+axis, face offset, thickness and the refs sit behind one Advanced disclosure that
+badges how many non-default values it holds.
+
+**What the research corrected.** Vinyl picket and semi-privacy DO have gaps —
+fixed by where the rail was routed, so derived and read-only rather than absent.
+Pre-routed posts are a property of the product LINE, not of vinyl; bracket
+systems are common, with a different fit tolerance. The bottom rail's steel
+insert is height-conditional. And wood is less free than assumed: board width is
+a discrete sku, rail count follows height (2 under 5ft, 3 at 5-7ft, 4 at 8ft).
+
+**Three things found and deliberately not built.**
+* **Chain link has no panel object.** Its authored unit is a STRETCH between
+  terminal posts, and its BOM is driven by terminal count and hook-ups, not by
+  sections. Forcing it into the panel editor would be a larger modelling error
+  than the vinyl gap field that started this.
+* **A rail cannot carry its companion part.** `FrameSlot` has exactly one
+  `requirement`, and a real vinyl bottom rail is the rail PLUS the galvanised
+  channel inside it.
+* **ISPSC 305.2 couples two rules we model independently.** Rails 45 in apart
+  allow a 4 in gap; rails CLOSER than that require 1.75 in. We hold
+  `max_clear_gap_mm` and `min_rail_separation_mm` (= 1143 = 45 in) as separate
+  refusals, so a compliant pool fence with close rails and tight pickets is
+  refused. The error direction is safe; the fix is a knowledge pack under the
+  golden-scenarios procedure.
+
+**Four defects the browser found that green suites did not.** Two were patches
+of mine landing in the wrong function after an agent rewrote around them — one
+put `rename = onRename` inside the AXIS editor, which threw on every model open
+while `tests/web` stayed green. Renaming an element dropped the selection (the
+first click of a double-click toggles the chip off, so a conditional restore
+never fired). And the app seeds the catalog only into an EMPTY database, so a
+catalog change never reaches an existing `fenceai.db` — which is why the first
+browser check showed no posts at all.
+
+One method note, because it cost time: "assert a laid-out rectangle" catches an
+element that was never rendered (the 0x0 basis diagram), but it CANNOT tell a
+deferred control from a shown one — Chrome still reports a box for
+`content-visibility: hidden`, verified against a control `<details>` built on the
+same page. Deferral is asserted structurally instead: the control sits inside the
+disclosure, and the disclosure starts shut.
+
+1248 pytest · 180/180 smoke · scenarios updated through the golden-scenarios
+procedure, docs moved with the numbers.
+
+## The Models tab is a canvas (2026-08-17)
+Spec `docs/superpowers/specs/2026-08-17-panel-canvas-design.md`, plan
+`docs/superpowers/plans/2026-08-17-panel-canvas.md`. The user's complaint, in
+their words: *"the whole creating and editing fence panels is really unintuitive
+and unnecessarily complex and nerdish."* W4 was not wrong — it was scoped, on the
+record, as an expert tool, and it delivered exactly that. What it delivered was
+the codebase's internal vocabulary as the only way to say what an expert means:
+`basis`, `justification`, `placement.kind`, a `gap_after_mm` whose NEGATIVE value
+is what board-on-board IS, and a raw `Expr` AST in a textarea.
+
+**The drawing is now the editor.** Click a rail, a board or a fastener on the
+panel and its properties render as sentences in a side inspector; drag a handle
+and the authored number moves. The drawing is still entirely the server's —
+`renderElevation` paints what `report/elevation.py` placed, and the new
+`panel-canvas.js` lays handles over it through a shared `elevationLayout`,
+because two copies of a scale is a handle three pixels from the board it moves.
+
+**What a drag writes is pure, and tested in node** (`panel-canvas-geom.js`,
+beside `base-top.js`'s precedent). Two rules there are load-bearing and invisible
+in a screenshot. A WIDTH is read absolutely and a GAP as a DELTA: `excess=space`
+spends the leftover on the gaps, so the drawn gap is not the authored one and
+reading it back would make the first pixel of every drag jump by the spread. And
+a drag cannot author what the publish gate refuses — `validate_model` bounds the
+member's net advance, so the handle stops where the gate would. A `distributed`
+slot has no per-member position at all, only two insets, so its interior rails
+get NO handle and the inspector says why in a sentence.
+
+**Three decisions taken against the spec, and why.**
+
+*Fasteners are derived on the server.* The spec wanted clickable dots and
+promised no backend change; `report/elevation.py` deliberately emitted no fixing
+geometry ("screws are counted, not drawn"). Both could not hold. `PanelElevation`
+now carries fastener PLACES with a count on each, and the slot's whole `qty` is
+apportioned across them — so `sum(place.qty) == slot.qty` by construction, for
+every basis and every `qty_per_basis` including the ones that do not divide. A
+dot count worked out in JS would eventually say twelve beside a BOM line buying
+eight, on the one surface built so an author can see what `per_member_crossing`
+means. `ResolvedSlot.basis` carries the rule; a run stored before it draws
+nothing rather than a guess.
+
+*Five structures, not five product families.* The spec named privacy
+tongue-and-groove, picket, semi-privacy dogear, horizontal slat and ranch rail.
+T&G and dogear are board PROFILES — this model does not express them and this
+catalog does not supply them, and a starter naming a SKU that does not exist
+previews as a gap and is then refused at the publish gate. The gallery ships
+vertical slat, picket, board-on-board, horizontal boards and ranch rail, each a
+structure over products that exist, each judged in the suite by `validate_model`
+AND a real preview with nothing unsupplied. Every card is a real drawing of the
+panel it opens, priced through the same route the editor prices with.
+
+*Id, name, grade, the variant picker and the option axes stay a settings strip.*
+None of them is a thing you can click on a drawing.
+
+**The vocabularies stayed typed; only the phrasing became data.** Each value now
+carries a second, sentence-length locale key beside its label
+(`model.basis.sentence.per_member_crossing`), correctable without a release,
+while which basis kinds exist at all is still a code change with tests. Both
+halves are computed keys, invisible to parity scanning, so the guard shipped with
+them. `gap_after_mm`'s sign is gone from the surface — a checkbox and a positive
+amount — and no `min` reaches the amount, because the bound that is real is the
+net advance and a `min="0"` there deletes two product families.
+
+**Four new modules, and the reason for each split.** `panel-model.js` holds the
+vocabulary and the document shapes, because three surfaces read them and
+importing them from the editor would make a cycle. `panel-canvas-geom.js` and
+`condition-sentence.js` are pure and node-tested. `panel-inspector.js` and
+`panel-canvas.js` build detached DOM and report through callbacks — the contract
+`renderElevation` already had, and what keeps two modules under `#tab-models`
+from being two owners of it.
+
+**The two reviews then found the thing the green suite could not**
+(`docs/reviews/panel-canvas-review-response.md`). The fastener invariant was held
+by FUDGING: `_fixings` apportioned a slot's whole `qty` across whatever places
+the geometry yielded, so `sum == qty` was true by definition of the
+apportionment and said nothing about the drawing. Where it bit is
+`per_member_crossing`, which `resolve.py` counts arithmetically (members × frame
+members) while a drawing can only mark crossings that exist — a panel with
+vertical stiles beside vertical slats is counted for 80 and has 42, and the
+apportionment put a plausible "×2" on the real ones to absorb 38 that are
+nowhere. The apportionment is gone: `qty_per_basis` rides on the slot so a place
+holds a DECIDED count, and whatever has no place is REPORTED
+(`fixings_unplaced`, surfaced in the inspector) rather than folded in. The
+invariant is now `places + unplaced == qty`, by construction.
+
+`PLANNING_BEHAVIOR_VERSION` is `planning-v2`: `Span.panel` is persisted and the
+digest is inputs-only, so without the bump an existing project regenerates to
+the same run id, `INSERT OR IGNORE` keeps the document that predates the fields,
+and its bays draw no fasteners for ever with nothing a user can do about it.
+
+Five tests passed with the behaviour they name deleted — each verified by
+mutation, and each now fails: a `writeSentence` that ignored the author's
+comparison, two subset-checked vocabularies, three of four placement arms free
+to mutate their argument, the drag's floors asserted as constants copied out of
+the JS rather than through `validate_model`, and three starters with no
+distinguishing number (ranch rail could ship with two rails). `panel-canvas.js`
+had no test at all; `valueFor` is pure, so it is exported and node-tested — and
+writing that test caught a fixture error of my own within the hour.
+
+Plus nine smaller frontend defects the reviews named: duplicate element keys
+reachable from the add buttons, a rail rename orphaning the boards that name it,
+the inspector offering `between_frame` on a frame slot, a predicate-driven
+eligibility rendering as "no products" beside a button that would author the one
+combination the loader refuses, a drag that lost its pointerup freezing the
+canvas for the session, and a readout showing the pointer rather than the number
+being written.
+
+1222 pytest · 178/178 smoke · scenarios unchanged.
+
 ## W3 is finished — the routed vinyl case (2026-08-17)
 The three pieces `plan/open-work.md` §1 named, in order, plus the preview gap the
 last of them made closable.

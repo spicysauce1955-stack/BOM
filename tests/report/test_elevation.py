@@ -9,14 +9,17 @@ flagged as such rather than passed off as measured.
 
 from __future__ import annotations
 
+import pytest
+
 from fenceai.catalog.demo import demo_catalog
 from fenceai.fencemodel.demo import M_LEGACY, M_SLAT
 from fenceai.fencemodel.model import (
-    Distributed, FromBottom, FromTop, Fraction, validate_model,
+    Distributed, EligibleItem, Eligibility, FrameSlot, FromBottom, FromTop,
+    Fraction, PartRequirement, validate_model,
 )
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
 from fenceai.fencemodel.resolve import PanelContext, placement_positions, resolve_panel
-from fenceai.report.elevation import panel_elevation
+from fenceai.report.elevation import ElevationMember, panel_elevation
 
 BAY = PanelContext(centre_width_mm=2500, clear_width_mm=2400, height_mm=1800)
 
@@ -116,8 +119,243 @@ def test_an_undeclared_face_height_is_flagged_not_passed_off_as_measured():
 
 
 def test_screws_are_counted_not_drawn():
-    """A dot per screw would bury the panel it is fixing."""
+    """A dot per screw would bury the panel it is fixing.
+
+    Fasteners are not MEMBERS: they have no extent, so they get no rectangle.
+    Where they land is a separate list with a count on each point — see below."""
     assert by_slot(elevation_of(M_SLAT), "screw") == []
+
+
+# --- fasteners: places, never screws ------------------------------------------
+#
+# What the canvas needs to make `per_member_crossing` mean something, and the
+# reason it is derived HERE rather than drawn by the client: a dot count worked
+# out in JS would eventually say twelve beside a BOM line buying eight, on the
+# one surface built so an author can see what a basis does.
+
+
+def _fixing_model(basis: str, qty_per_basis: int = 1):
+    """M_SLAT with its screw rule re-based, so one fixture exercises all six."""
+    model = M_SLAT.model_copy(deep=True)
+    rule = model.default_spec.fixings[0]
+    model.default_spec.fixings[0] = rule.model_copy(
+        update={"basis": basis, "qty_per_basis": qty_per_basis, "qty_param": None})
+    return model
+
+
+def _fixing_slot(panel, key="screw"):
+    return next(s for s in panel.slots if s.slot_key == key)
+
+
+@pytest.mark.parametrize("basis", [
+    "per_panel", "per_frame_member", "per_member", "per_end_member", "per_gap",
+    "per_member_crossing",
+])
+def test_the_drawn_fasteners_total_exactly_what_the_resolver_counted(basis):
+    """The property the points exist to keep: a drawing showing twelve dots
+    beside a BOM line buying eight screws would be a picture disagreeing with
+    the numbers it is derived from. On THIS panel every counted fastener has a
+    place, so nothing is left over — the geometry that does leave some over is
+    the test below."""
+    model = _fixing_model(basis, qty_per_basis=3)
+    panel = resolve_panel(model.default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    drawn = [f for f in elevation.fixings if f.slot_key == "screw"]
+    assert drawn, basis
+    assert sum(f.qty for f in drawn) == _fixing_slot(panel).qty
+    assert elevation.fixings_unplaced == []
+    assert all(f.basis == basis for f in drawn)
+    # a place holds a DECIDED count, never a share: three per occurrence of the
+    # basis is three at each place, not "three times the count, spread about"
+    assert all(f.qty % 3 == 0 for f in drawn), [f.qty for f in drawn]
+
+
+def _stiled(basis: str, qty_per_basis: int = 1):
+    """M_SLAT with a pair of vertical stiles added beside its vertical slats.
+
+    The geometry `per_member_crossing` cannot honestly draw: `resolve.py` counts
+    crossings as members x frame members, and a stile parallel to a slat crosses
+    it nowhere. Half the counted crossings do not exist on the drawing.
+    """
+    model = _fixing_model(basis, qty_per_basis)
+    model.default_spec.frame.append(FrameSlot(
+        key="stile", orientation="vertical", placement=Distributed(count=2),
+        requirement=PartRequirement(
+            role="rail", qty=1, length_rule="panel_height",
+            eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")])),
+    ))
+    return model
+
+
+def test_each_basis_puts_its_fasteners_where_its_name_says():
+    """The totals reconcile by construction, so they cannot see a place that is
+    in the wrong POSITION — swapping two bases' place sets leaves every sum
+    exactly right and teaches the author the opposite of the truth, on the one
+    surface built to teach it."""
+    rails = by_slot(elevation_of(_fixing_model("per_frame_member")), "rail")
+    on_rails = elevation_of(_fixing_model("per_frame_member")).fixings
+    bands = [(r.y_mm, r.y_mm + r.h_mm) for r in rails]
+    assert len(on_rails) == len(rails)
+    assert all(any(lo <= f.y_mm <= hi for lo, hi in bands) for f in on_rails)
+
+    boards = by_slot(elevation_of(_fixing_model("per_member")), "slat")
+    on_boards = elevation_of(_fixing_model("per_member")).fixings
+    spans = [(m.x_mm, m.x_mm + m.w_mm) for m in boards]
+    assert len(on_boards) == len(boards)
+    assert all(any(lo <= f.x_mm <= hi for lo, hi in spans) for f in on_boards)
+    # ... and NOT on a rail line, which is what per_member_crossing would give
+    assert {f.y_mm for f in on_boards} == {900}     # the boards' own centre
+
+    middle = elevation_of(_fixing_model("per_panel")).fixings
+    assert [(f.x_mm, f.y_mm) for f in middle] == [(1200, 900)]
+
+
+def test_a_member_that_only_touches_a_rail_is_still_fixed_to_it():
+    """The boundary the fixture geometry hides: M_SLAT's slats run the full
+    height and genuinely overlap both rails, so nothing exercises a board whose
+    end lands exactly ON a rail face — which is what `between_frame` with no
+    engagement produces. A crossing test that demanded a strict overlap would
+    draw no fasteners at all for that panel."""
+    from fenceai.report.elevation import _overlap_centre
+
+    rail = ElevationMember(slot_key="rail", role="rail", index=0, kind="frame",
+                           x_mm=0, y_mm=0, w_mm=2400, h_mm=60)
+    seated = ElevationMember(slot_key="slat", role="infill", index=0, kind="infill",
+                             x_mm=100, y_mm=60, w_mm=100, h_mm=1680)
+    assert _overlap_centre(seated, rail) == (150, 60), "a touching end is a landing"
+    apart = seated.model_copy(update={"y_mm": 61})
+    assert _overlap_centre(apart, rail) is None
+
+
+def test_a_single_board_has_one_end_not_two():
+    """`per_end_member` counts `min(placed_count, 2)`: one board is one end. Two
+    places on the same board would be the drawing claiming a fastener the
+    resolver never counted — and, with both at the same point, invisibly."""
+    model = _fixing_model("per_end_member")
+    # one board, as wide as the opening: the fit places exactly one
+    model.default_spec.infill.pattern[0].width_mm = 2000
+    model.default_spec.infill.pattern[0].gap_after_mm = 2000
+    panel = resolve_panel(model.default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    assert len(by_slot(elevation, "slat")) == 1
+    assert len(elevation.fixings) == 1
+    assert sum(f.qty for f in elevation.fixings) == _fixing_slot(panel).qty
+    assert elevation.fixings_unplaced == []
+
+
+def test_a_basis_that_counts_nothing_buys_nothing_and_draws_nothing():
+    """The zero case, and the reason it needs no `unplaced` entry: a panel with
+    no frame has no crossings to COUNT, so `resolve_panel` never makes the slot
+    — the fence buys no screws and the drawing shows none. The two agree by
+    never having disagreed, which is the shape worth pinning: an `unplaced`
+    line here would report fasteners nobody bought."""
+    model = _fixing_model("per_member_crossing")
+    model.default_spec.frame = []
+    panel = resolve_panel(model.default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    assert not [s for s in panel.slots if s.slot_kind == "fixing"]
+    assert elevation.fixings == []
+    assert elevation.fixings_unplaced == []
+
+
+def test_a_fastener_with_nowhere_to_go_is_reported_not_spread_over_the_others():
+    """The failure this design exists to refuse.
+
+    A panel with vertical stiles beside vertical slats is COUNTED for crossings
+    between them, and those crossings are nowhere on the drawing. Sharing the
+    total across the crossings that ARE there would put a plausible "x2" on each
+    one — a number nothing decided, on the one surface built to explain what the
+    basis does. So the leftovers are stated (foundation §15: represent unknowns
+    rather than fabricate certainty), and the two still reconcile exactly.
+    """
+    panel = resolve_panel(_stiled("per_member_crossing").default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    slot = _fixing_slot(panel)
+    drawn = sum(f.qty for f in elevation.fixings)
+    left = [u for u in elevation.fixings_unplaced if u.slot_key == "screw"]
+    assert left, "the stile crossings do not exist and must be reported"
+    assert drawn + left[0].qty == slot.qty
+    assert left[0].basis == "per_member_crossing"
+    # every drawn place is a REAL crossing: one fastener each, none inflated to
+    # absorb a crossing that is not there
+    assert {f.qty for f in elevation.fixings} == {1}
+
+
+def test_a_place_stands_for_every_piece_that_is_there():
+    """A slot with `qty=2` is two pieces at one position — a batten pair, a board
+    front and back — and the elevation draws ONE rectangle for them. The bases
+    that count PARTS have to weight the place by what stands there, or a panel
+    whose rails come in pairs draws half its fixings and calls the rest
+    unplaceable."""
+    model = _fixing_model("per_frame_member")
+    model.default_spec.frame[0].requirement.qty = 2
+    panel = resolve_panel(model.default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    assert elevation.fixings_unplaced == []
+    assert sum(f.qty for f in elevation.fixings) == _fixing_slot(panel).qty
+
+
+def test_a_fixing_that_buys_nothing_places_nothing():
+    """`qty_per_basis` has no lower bound and a `qty_param` may resolve to 0. A
+    dot holding no fastener draws exactly like one that does."""
+    panel = resolve_panel(_fixing_model("per_member", qty_per_basis=0)
+                          .default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    assert elevation.fixings == []
+    assert elevation.fixings_unplaced == []
+
+
+def test_a_fastener_point_sits_inside_the_opening():
+    elevation = elevation_of(_fixing_model("per_member_crossing"))
+    for f in elevation.fixings:
+        assert 0 <= f.x_mm <= BAY.clear_width_mm
+        assert 0 <= f.y_mm <= BAY.height_mm
+
+
+def test_per_crossing_puts_a_point_where_a_board_meets_a_rail():
+    """The basis nobody can picture from its name. Two rails and N slats is 2N
+    crossings, and every point is on a rail's own band."""
+    model = _fixing_model("per_member_crossing")
+    panel = resolve_panel(model.default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    slats = by_slot(elevation, "slat")
+    rails = by_slot(elevation, "rail")
+    points = [f for f in elevation.fixings if f.slot_key == "screw"]
+    assert len(points) == len(slats) * len(rails)
+    bands = [(r.y_mm, r.y_mm + r.h_mm) for r in rails]
+    assert all(any(lo <= f.y_mm <= hi for lo, hi in bands) for f in points)
+
+
+def test_per_gap_puts_a_point_between_two_boards_and_never_on_one():
+    model = _fixing_model("per_gap")
+    panel = resolve_panel(model.default_spec, BAY)
+    elevation = panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm)
+    slats = sorted(by_slot(elevation, "slat"), key=lambda m: m.x_mm)
+    points = sorted(elevation.fixings, key=lambda f: f.x_mm)
+    assert len(points) == len(slats) - 1
+    for point, left, right in zip(points, slats, slats[1:]):
+        assert left.x_mm + left.w_mm <= point.x_mm <= right.x_mm
+
+
+def test_a_panel_with_no_fixing_rule_draws_no_fasteners():
+    model = M_SLAT.model_copy(deep=True)
+    model.default_spec.fixings = []
+    assert elevation_of(model).fixings == []
+
+
+def test_a_resolved_panel_that_predates_the_basis_draws_no_fasteners():
+    """A run stored before `basis` rode on the slot carries "" — and a drawing
+    that guessed a basis for it would put screws where that fence has none."""
+    panel = resolve_panel(M_SLAT.default_spec, BAY)
+    for slot in panel.slots:
+        if slot.slot_kind == "fixing":
+            slot.basis = ""
+    assert panel_elevation(panel, BAY.clear_width_mm, BAY.height_mm).fixings == []
+
+
+def test_fasteners_are_deterministic():
+    model = _fixing_model("per_member_crossing")
+    assert elevation_of(model) == elevation_of(model)
 
 
 def test_the_legacy_panel_draws_its_two_rails_and_no_infill():
@@ -421,3 +659,80 @@ def test_the_clearance_against_the_post_is_the_fit_s_own_number():
     assert slats[0].x_mm == centred.edge_margin_start_mm
     assert (2400 - (slats[-1].x_mm + slats[-1].w_mm)
             == centred.edge_margin_end_mm + centred.residual_mm)
+
+
+# --- the posts the bay stands between ----------------------------------------
+#
+# The panel spans the CLEAR OPENING, so the posts have never been on the
+# drawing — which also means the two parts of a fence with no editor were the
+# two parts with nowhere to click. They are handed in rather than derived: which
+# post stands at each end is settled by the run, and a bay that worked its own
+# posts out would be choosing them by a width they decide (resolve.py's cycle).
+
+
+def _posts(width_mm=2400, face=90, height=1800):
+    from fenceai.report.elevation import ElevationPost
+
+    return [
+        ElevationPost(side="start", kind="line", x_mm=-face, w_mm=face,
+                      h_mm=height, sku="POST-V-1800", cap_sku="CAP-V-90",
+                      cap_h_mm=40),
+        ElevationPost(side="end", kind="corner", x_mm=width_mm, w_mm=face,
+                      h_mm=height, sku="POST-V-1800", cap_sku="CAP-V-90",
+                      cap_h_mm=40),
+    ]
+
+
+def test_a_drawing_with_no_run_behind_it_has_no_posts():
+    """The honest answer for a model-scoped preview, and for every run stored
+    before this existed. Inventing a post would draw a part nobody bought."""
+    assert elevation_of(M_SLAT).posts == []
+
+
+def test_the_start_post_sits_OUTSIDE_the_opening():
+    """x is negative on the start side, and that is the whole contract: the post
+    occupies the millimetres BEFORE the panel begins. A renderer that clamped it
+    to zero would draw the post over the first board and shift the bay."""
+    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+                                BAY.clear_width_mm, BAY.height_mm,
+                                posts=_posts(BAY.clear_width_mm))
+    start = next(p for p in elevation.posts if p.side == "start")
+    end = next(p for p in elevation.posts if p.side == "end")
+    assert start.x_mm + start.w_mm == 0, "the start post ends where the panel begins"
+    assert end.x_mm == BAY.clear_width_mm, "the end post begins where the panel ends"
+    assert start.x_mm < 0
+
+
+def test_the_posts_span_the_bay_at_its_centres():
+    """Face to face across both posts is the centre-to-centre width the run was
+    laid out at — the number the drawing must not disagree with."""
+    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+                                BAY.clear_width_mm, BAY.height_mm,
+                                posts=_posts(BAY.clear_width_mm))
+    start = next(p for p in elevation.posts if p.side == "start")
+    end = next(p for p in elevation.posts if p.side == "end")
+    drawn = (end.x_mm + end.w_mm) - start.x_mm
+    assert drawn == BAY.clear_width_mm + 2 * start.w_mm
+
+
+def test_a_post_carries_which_post_it_is():
+    """`kind` is the fact a vinyl line is ordered by — end, line and corner posts
+    are routed on different faces and are different SKUs. It rides on the
+    drawing so the surface can name the part it is showing."""
+    elevation = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+                                BAY.clear_width_mm, BAY.height_mm,
+                                posts=_posts(BAY.clear_width_mm))
+    assert [p.kind for p in elevation.posts] == ["line", "corner"]
+    assert all(p.cap_sku == "CAP-V-90" for p in elevation.posts)
+
+
+def test_posts_do_not_disturb_anything_else_on_the_drawing():
+    """The panel is unchanged by what stands beside it — the boards were fitted
+    into the opening, and the opening did not move."""
+    without = elevation_of(M_SLAT)
+    with_posts = panel_elevation(resolve_panel(M_SLAT.default_spec, BAY),
+                                 BAY.clear_width_mm, BAY.height_mm,
+                                 posts=_posts(BAY.clear_width_mm))
+    assert with_posts.members == without.members
+    assert with_posts.gaps_mm == without.gaps_mm
+    assert with_posts.fixings == without.fixings

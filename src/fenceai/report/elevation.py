@@ -62,6 +62,90 @@ class ElevationMember(BaseModel):
     seat_end_mm: Mm | None = None
 
 
+class ElevationFixing(BaseModel):
+    """Where one fixing rule's fasteners land, in panel coordinates.
+
+    A PLACE, never a screw: `qty` is `qty_per_basis` times the number of parts
+    this place stands for — a figure the resolver DECIDED, never a share of the
+    slot's total spread over whatever places happened to be found. Anything the
+    drawing cannot place lands on `PanelElevation.fixings_unplaced` instead, so
+    a slot's places plus its unplaced count come to exactly its `qty`.
+
+    That is why this is derived here rather than drawn by the client: a dot count
+    worked out in the browser would eventually say twelve beside a BOM line
+    buying eight, on the one surface built so an author can see what
+    `per_member_crossing` does.
+
+    "A dot per screw would bury the panel" still holds, and this is not that: a
+    panel taking 96 screws is 32 places reading ×3.
+    """
+
+    slot_key: str
+    role: str
+    basis: str
+    index: int
+    x_mm: Mm
+    y_mm: Mm
+    qty: int
+
+
+class ElevationPost(BaseModel):
+    """A post flanking the bay, and the cap on top of it.
+
+    NOT part of the panel, and that is why the drawing has never had one: the
+    panel spans the CLEAR OPENING between two posts, because that is what the
+    boards are fitted into. The posts stand outside it.
+
+    They are handed IN rather than derived here, and the reason is the cycle
+    rule `resolve.py` is built around — a bay's opening is measured to the post
+    faces, so a bay that worked out its own posts would be choosing them by a
+    width they decide. Which post stands at each end is settled by the RUN, and
+    the caller that knows the run passes it.
+
+    `x_mm` is in panel coordinates, so the start post's is NEGATIVE: it occupies
+    the millimetres before the opening begins. A client that clamps it to zero
+    draws the post inside the panel and every board a post-width to the right.
+    """
+
+    side: Literal["start", "end"]
+    kind: str = ""                 # end | line | corner | gate — from the run
+    x_mm: Mm                       # negative on the start side (outside the opening)
+    y_mm: Mm = 0
+    w_mm: Mm                       # the post's face width
+    h_mm: Mm
+    sku: str = ""
+    # `declared=False` says the size is a NOMINAL the read model invented rather
+    # than product data, exactly as a rail's face height already does.
+    declared: bool = True
+    cap_sku: str = ""
+    cap_h_mm: Mm = 0
+    # The post's FACE is product data; a cap's height is not — the catalog does
+    # not carry one. Two flags rather than one, because collapsing them would
+    # either call a measured face invented or call an invented cap measured, and
+    # this drawing's whole contract is that it says which of the two a size is.
+    cap_declared: bool = True
+
+
+class UnplacedFixing(BaseModel):
+    """Fasteners this bay buys that the drawing cannot put anywhere.
+
+    `per_member_crossing` is counted arithmetically — members x frame members —
+    so a panel with vertical stiles beside vertical slats is counted for
+    crossings that do not exist. The drawing can only mark the crossings that
+    are there, and the honest answer to the rest is to say how many were left
+    over, not to fold them into the ones that are (foundation §15: represent
+    unknowns instead of fabricating certainty).
+
+    A slot appears here only when something is left: an empty list is a panel
+    whose fixings are entirely accounted for on the drawing.
+    """
+
+    slot_key: str
+    role: str
+    basis: str
+    qty: int
+
+
 class JointDetail(BaseModel):
     """One end of one member, where it lands — the numbers a section is drawn from.
 
@@ -128,6 +212,19 @@ class PanelElevation(BaseModel):
     # them by the same code path, and the detail beside a panel cannot say
     # something different from the detail beside the bay built to it.
     details: list[JointDetail] = []
+    # where the fasteners land, with a DECIDED count on each place. Empty for a
+    # panel with no fixing rule, and for a run stored before the basis rode on
+    # the slot.
+    fixings: list[ElevationFixing] = []
+    # ... and the ones no place could be found for. Per fixing slot,
+    # `sum(place.qty) + unplaced.qty == slot.qty` exactly, for every basis and
+    # every geometry — which is what stops the drawing from ever stating a
+    # different number of fasteners from the BOM line beside it.
+    fixings_unplaced: list[UnplacedFixing] = []
+    # the posts this bay stands between, when the caller knows them. Empty is
+    # the honest answer for a model-scoped drawing with no run behind it — and
+    # for every stored run generated before this existed.
+    posts: list[ElevationPost] = []
 
 
 def panel_elevation(
@@ -136,10 +233,12 @@ def panel_elevation(
     height_mm: Mm,
     span_id: str = "",
     bay_tag: str = "",
+    posts: "list[ElevationPost] | None" = None,
 ) -> PanelElevation:
     out = PanelElevation(
         span_id=span_id, bay_tag=bay_tag, model_ref=panel.model_ref,
         width_mm=width_mm, height_mm=height_mm,
+        posts=list(posts or []),
     )
     nominal = max(1, (min(width_mm, height_mm) * NOMINAL_THICKNESS_PERMILLE) // 1000)
 
@@ -159,9 +258,143 @@ def panel_elevation(
         elif slot.positions_mm:
             out.members.extend(_frame(slot, width_mm, height_mm, nominal))
         # a slot with neither — a fixing — has no extent of its own to draw:
-        # screws are counted, not drawn, and a dot per screw would bury the panel
+        # screws are counted, not drawn, and a dot per screw would bury the
+        # panel. Where they LAND is a place with a count on it, below.
     out.details = list(_details(panel))
+    out.fixings, out.fixings_unplaced = _fixings(
+        panel, out.members, width_mm, height_mm)
     return out
+
+
+def _fixings(panel: ResolvedPanel, members: list[ElevationMember],
+             width_mm: Mm, height_mm: Mm):
+    """The fastener places of every fixing slot, and what could not be placed.
+
+    Each place carries a DECIDED count — `qty_per_basis` times the number of
+    parts that place stands for — never a share of the slot's total spread over
+    whatever places happened to be found. The difference matters, and it is the
+    whole reason `qty_per_basis` rides on the slot:
+
+      `per_member_crossing` counts crossings ARITHMETICALLY (members x frame
+      members, `resolve.py`), which on a panel with vertical stiles beside
+      vertical slats counts pairs that never meet. The drawing can only place
+      the crossings that are THERE. Apportioning the arithmetic total across
+      those would put a plausible "x2" on real crossings to absorb pairs that do
+      not exist — a number nothing decided, on the one surface built to explain
+      what the basis does.
+
+    So the fasteners a place cannot be found for are REPORTED (foundation §15:
+    represent unknowns instead of fabricating certainty), and the sum over a
+    slot's places plus its unplaced count is exactly the slot's `qty` — by
+    construction, for every basis and every geometry.
+
+    Nothing is recomputed: the places are read off the rectangles this same
+    function has already placed.
+    """
+    frame = [m for m in members if m.kind == "frame"]
+    infill = sorted((m for m in members if m.kind == "infill"),
+                    key=lambda m: (m.x_mm, m.y_mm))
+    parts = _parts_per_rect(panel, members)
+    placed: list[ElevationFixing] = []
+    unplaced: list[UnplacedFixing] = []
+    for slot in panel.slots:
+        if slot.slot_kind != "fixing" or not slot.basis or not slot.qty_per_basis:
+            continue
+        drawn = 0
+        for index, (x, y, weight) in enumerate(
+                _places(slot.basis, frame, infill, width_mm, height_mm, parts)):
+            qty = slot.qty_per_basis * weight
+            if qty <= 0:
+                continue      # a place holding no fastener is not a place
+            drawn += qty
+            placed.append(ElevationFixing(
+                slot_key=slot.slot_key, role=slot.role, basis=slot.basis,
+                index=index, x_mm=x, y_mm=y, qty=qty,
+            ))
+        if slot.qty - drawn > 0:
+            unplaced.append(UnplacedFixing(
+                slot_key=slot.slot_key, role=slot.role, basis=slot.basis,
+                qty=slot.qty - drawn,
+            ))
+    return placed, unplaced
+
+
+def _parts_per_rect(panel: ResolvedPanel, members: list[ElevationMember]) -> dict:
+    """How many physical pieces each drawn rectangle stands for.
+
+    A slot with `qty=2` is two pieces at one position — a batten pair, a board
+    front and back — and the elevation draws ONE rectangle for them. The bases
+    that count PARTS (`per_member`, `per_frame_member`, and the crossings between
+    them) must therefore weight a place by what stands there, or a panel whose
+    rails come in pairs would draw half its fixings and report the other half
+    unplaceable. The bases that count POSITIONS (`per_end_member`, `per_gap`)
+    weight 1, because that is what the resolver counted.
+
+    Keyed by `(slot_key, index)` — the pair that names a rectangle on the wire.
+    """
+    counts: dict[str, int] = {}
+    for m in members:
+        counts[m.slot_key] = counts.get(m.slot_key, 0) + 1
+    per_slot = {
+        slot.slot_key: max(1, slot.qty // counts[slot.slot_key])
+        for slot in panel.slots
+        if slot.slot_kind in ("frame", "infill") and counts.get(slot.slot_key)
+    }
+    return {(m.slot_key, m.index): per_slot.get(m.slot_key, 1) for m in members}
+
+
+def _places(basis: str, frame: list[ElevationMember], infill: list[ElevationMember],
+            width_mm: Mm, height_mm: Mm, parts: dict):
+    """Where one basis puts its fasteners: (x, y, weight) in panel coordinates.
+
+    The infill list arrives sorted along the axis it was fitted on, which is
+    what makes `per_gap` read across a vertical pattern and up a horizontal one
+    without either being special-cased.
+    """
+    def centre(m: ElevationMember) -> tuple[Mm, Mm]:
+        return (m.x_mm + m.w_mm // 2, m.y_mm + m.h_mm // 2)
+
+    def weight(m: ElevationMember) -> int:
+        return parts.get((m.slot_key, m.index), 1)
+
+    if basis == "per_panel":
+        return [(width_mm // 2, height_mm // 2, 1)]
+    if basis == "per_frame_member":
+        return [(*centre(m), weight(m)) for m in frame]
+    if basis == "per_member":
+        return [(*centre(m), weight(m)) for m in infill]
+    if basis == "per_end_member":
+        # first and last ALONG THE AXIS — a placement question, so one each, and
+        # one member is one end rather than two
+        ends = [infill[0]] if len(infill) == 1 else infill[:1] + infill[-1:]
+        return [(*centre(m), 1) for m in ends]
+    if basis == "per_gap":
+        return [((a.x_mm + a.w_mm + b.x_mm) // 2,
+                 (a.y_mm + a.h_mm + b.y_mm) // 2, 1)
+                for a, b in zip(infill, infill[1:])]
+    if basis == "per_member_crossing":
+        return [(*place, weight(m) * weight(f))
+                for m in infill for f in frame
+                if (place := _overlap_centre(m, f)) is not None]
+    return []
+
+
+def _overlap_centre(a: ElevationMember, b: ElevationMember) -> tuple[Mm, Mm] | None:
+    """Where two drawn members cross, or None when they do not touch.
+
+    A crossing that is not on the drawing is not a place to put a screw: a slat
+    seated between two rails crosses both, one stopping short of the top rail
+    crosses one, and two parallel members cross nowhere at all. The last case is
+    not hypothetical — `resolve.py` counts crossings as members x frame members,
+    so a panel with vertical stiles beside vertical slats is counted for
+    crossings that do not exist. They come back as UNPLACED rather than as a
+    heavier count on the crossings that do.
+    """
+    x0, x1 = max(a.x_mm, b.x_mm), min(a.x_mm + a.w_mm, b.x_mm + b.w_mm)
+    y0, y1 = max(a.y_mm, b.y_mm), min(a.y_mm + a.h_mm, b.y_mm + b.h_mm)
+    if x1 < x0 or y1 < y0:
+        return None
+    return ((x0 + x1) // 2, (y0 + y1) // 2)
 
 
 def _details(panel: ResolvedPanel):

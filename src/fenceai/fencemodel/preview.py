@@ -37,7 +37,7 @@ from fenceai.catalog.model import Catalog
 from fenceai.core.errors import ReadRefused
 from fenceai.core.units import Cents, Mm, slope_len_mm
 from fenceai.fencemodel.match import (
-    match_eligibility, match_spec, panel_facts, post_panel_facts,
+    chosen_post_facts, match_eligibility, match_spec, panel_facts, post_panel_facts,
 )
 from fenceai.fencemodel.model import FenceModel, validate_model
 from fenceai.fencemodel.resolve import (
@@ -45,7 +45,7 @@ from fenceai.fencemodel.resolve import (
     select_variant,
 )
 from fenceai.fulfillment.pipeline import price_strategy
-from fenceai.report.elevation import PanelElevation, panel_elevation
+from fenceai.report.elevation import ElevationPost, PanelElevation, panel_elevation
 from fenceai.strategy.model import GenerationResult, Span, Strategy, StrategyWarning
 
 PREVIEW_SPAN_ID = "span@preview:0-0"
@@ -153,8 +153,11 @@ def preview_panel(
     clear = request.clear_width_mm if request.clear_width_mm is not None else request.width_mm
     spec, variant_index = select_variant(model, _ctx(clear))
     post_note: StrategyWarning | None = None
+    post_sku, post_face, post_panel = "", 0, {}
     if request.clear_width_mm is None and model.post is not None:
-        face, post_note = _preview_post_face(model, spec, request, catalog)
+        face, post_sku, post_panel, post_note = _preview_post_face(
+            model, spec, request, catalog)
+        post_face = face
         clear = clear_opening_mm(request.width_mm, face, face)
         # a variant is chosen from height, width and vertical mode — none of
         # which the opening moved — so the spec above still stands
@@ -194,7 +197,10 @@ def preview_panel(
         width_mm=request.width_mm,
         clear_width_mm=clear,
         panel=panel,
-        elevation=panel_elevation(drawn, clear, request.height_mm),
+        elevation=panel_elevation(
+            drawn, clear, request.height_mm,
+            posts=_preview_posts(model, post_sku, post_face, clear,
+                                 request.height_mm, post_panel, catalog)),
         parts=parts,
         unsupplied=[_part(line, None) for line in priced.unresolved],
         warnings=priced.warnings + ([post_note] if post_note is not None else []),
@@ -203,10 +209,70 @@ def preview_panel(
     )
 
 
+# A cap's height is not in the catalog, so the drawing invents one and flags it —
+# the same bargain `NOMINAL_THICKNESS_PERMILLE` strikes for a rail's face height.
+NOMINAL_CAP_PERMILLE = 25
+
+
+def _preview_posts(
+    model: FenceModel, sku: str, face_mm: Mm, clear_mm: Mm, height_mm: Mm,
+    panel: dict, catalog: Catalog,
+) -> list[ElevationPost]:
+    """The two posts this imagined bay stands between.
+
+    Both are the SAME post, and that is what a model-scoped preview is: there is
+    no run, so no station of one is an end or a corner, and `_preview_post_face`
+    already chose the representative `line` post the run is mostly made of. They
+    are reported at both ends anyway, because the thing an author is looking at
+    is a bay, and a bay with a post at one end is not one.
+
+    `x_mm` is in PANEL coordinates, so the start post's is negative: it occupies
+    the millimetres before the opening begins.
+    """
+    if not sku or face_mm <= 0:
+        return []      # no post matched: draw none rather than a nominal one
+    cap_sku = _preview_cap_sku(model, panel, catalog, sku)
+    cap_h = (height_mm * NOMINAL_CAP_PERMILLE) // 1000 if cap_sku else 0
+    return [
+        ElevationPost(
+            side=side, kind="line", x_mm=x, w_mm=face_mm, h_mm=height_mm,
+            sku=sku, declared=True,
+            cap_sku=cap_sku, cap_h_mm=cap_h, cap_declared=False,
+        )
+        for side, x in (("start", -face_mm), ("end", clear_mm))
+    ]
+
+
+def _preview_cap_sku(
+    model: FenceModel, panel: dict, catalog: Catalog, post_sku: str,
+) -> str:
+    """Which cap this post takes, matched the way generation matches it.
+
+    A cap's predicate reads the POST it caps, which is only answerable because
+    the post was chosen first — so this runs after, never beside.
+
+    It is handed the PANEL facts as well as the post, exactly as
+    `_model_post_skus` does. `_post_namespace_errors` explicitly lets a cap read
+    `panel.height_mm` and its siblings, so matching over the post alone made a
+    legal cap predicate match nothing HERE and match in the fence — a preview
+    reporting a gap the fence does not have.
+    """
+    if model.post is None or model.post.cap is None:
+        return ""
+    product = catalog.products.get(post_sku)
+    if product is None:
+        return ""
+    matched = match_eligibility(
+        model.post.cap.eligibility, catalog,
+        {**panel, **chosen_post_facts(product, panel["post"])},
+    ).members
+    return matched[0].sku if matched else ""
+
+
 def _preview_post_face(
     model: FenceModel, spec, request: "PreviewRequest", catalog: Catalog,
-) -> tuple[Mm, StrategyWarning | None]:
-    """How much of this imagined bay is post rather than opening.
+) -> tuple[Mm, str, dict, StrategyWarning | None]:
+    """How much of this imagined bay is post rather than opening, and which post.
 
     The model's own post, matched exactly as generation matches it — the same
     `post_panel_facts` over the same `rail_positions_mm`, so a routed line
@@ -214,21 +280,39 @@ def _preview_post_face(
     project and therefore no neighbours, so there is no intersection to take: one
     model claims both ends, which is what a model-scoped preview IS.
 
+    That same missing project is why the post's KIND has to be named here rather
+    than looked up: there is no run, so no station of one is an end or a corner.
+    `"line"` is the deliberate choice, and it is a claim about what is being
+    previewed — a REPRESENTATIVE bay of the line, and the posts a run is mostly
+    made of are line posts. The alternatives are worse in both directions:
+    passing no kind at all would make a position-aware predicate match NOTHING
+    and every preview of such a model would warn that its own post is
+    unsupplied, and picking `"end"` would preview the bay a run has exactly two
+    of. The face this returns is the only thing the preview spends it on, and a
+    line's routed variants differ in which faces are CUT rather than in how wide
+    they are — so the opening drawn here is the opening at every station of the
+    run, whatever position each post turns out to stand at.
+
     A post nothing covers contributes NO face rather than a nominal, and says so.
     Generation refuses that fence outright; a preview must not, because a draft
     being edited is half-written by definition — but a silent fall-back to the
     centre-to-centre width would be the preview lying about the bay.
     """
+    facts = post_panel_facts(
+        model_id=model.id, height_mm=request.height_mm, vertical=request.vertical,
+        rail_positions_mm=rail_positions_mm(spec, request.height_mm, request.params),
+        kind="line",
+    )
     matched = match_eligibility(
-        model.post.requirement.eligibility, catalog,
-        post_panel_facts(
-            model_id=model.id, height_mm=request.height_mm, vertical=request.vertical,
-            rail_positions_mm=rail_positions_mm(spec, request.height_mm, request.params),
-        ),
+        model.post.requirement.eligibility, catalog, facts,
     ).members
     if not matched:
-        return 0, StrategyWarning(
-            code="no_item_covers_part_spec", severity="warning",
+        # Its OWN code. `no_item_covers_part_spec` is the CAP's, and its sentence
+        # says the post is uncapped — so an author whose POST spec matches
+        # nothing was told about a cap, and the natural repair is to delete the
+        # wrong conjunct.
+        return 0, "", facts, StrategyWarning(
+            code="no_item_covers_post_spec", severity="warning",
             message=f"No item in the catalog covers {model.ref}'s post "
                     f"specification, so this bay is drawn at its centre-to-centre "
                     f"width rather than the opening between two posts.",
@@ -236,7 +320,8 @@ def _preview_post_face(
                     "slot_key": model.post.key, "role": model.post.requirement.role},
         )
     product = catalog.products.get(matched[0].sku)
-    return (product.capabilities.face_width_mm or 0) if product else 0, None
+    face = (product.capabilities.face_width_mm or 0) if product else 0
+    return face, matched[0].sku, facts, None
 
 
 # -- a bay of a stored run ----------------------------------------------------

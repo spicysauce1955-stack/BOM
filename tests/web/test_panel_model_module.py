@@ -1,4 +1,4 @@
-"""The model editor's document shapes (static/js/model-editor.js), in node —
+"""The fence model's document shapes (static/js/panel-model.js), in node —
 and then validated by the REAL schema they have to satisfy.
 
 The browser suite can only see what a whole authoring session produces. What
@@ -51,13 +51,13 @@ def _placement_kinds() -> set[str]:
 
 
 def _js_const(name: str) -> set[str]:
-    """A `const NAME = [...]` array out of model-editor.js — the values the
-    editor OFFERS, read from the editor rather than restated."""
+    """A `const NAME = [...]` array out of panel-model.js — the values the
+    editor OFFERS, read from the vocabulary rather than restated."""
     import re
 
-    src = (STATIC / "js" / "model-editor.js").read_text()
+    src = (STATIC / "js" / "panel-model.js").read_text()
     body = re.search(rf"const {name} = \[(.*?)\];", src, re.S)
-    assert body, f"{name} is no longer a const array in model-editor.js"
+    assert body, f"{name} is no longer a const array in panel-model.js"
     return set(re.findall(r'"([a-z_]+)"', body.group(1)))
 
 SCRIPT = """
@@ -67,17 +67,10 @@ import {
   draftCopyOf, duplicateOf, freeId, idCollision, specOf,
 } from "{module}";
 
-// model-editor.js reaches api.js, i18n.js and units.js, whose stateful halves
-// touch localStorage and the DOM at call time. Nothing under test does — the
-// exercised exports are pure — so a stub is enough to let the module load.
-globalThis.localStorage = {
-  s: {}, getItem: (k) => globalThis.localStorage.s[k] ?? null,
-  setItem: (k, v) => { globalThis.localStorage.s[k] = String(v); },
-};
-globalThis.document = {
-  getElementById: () => null, querySelectorAll: () => [], querySelector: () => null,
-  documentElement: {},
-};
+// No stubs: `panel-model.js` reaches nothing stateful. It used to need a fake
+// `localStorage` and a fake `document`, because these shapes lived beside the
+// editor's DOM — and a stub that is no longer needed is a claim about the module
+// that would stop being true silently.
 
 // what "+ Add slot", "+ Add product", "+ Add infill" and "+ Add fixing" build,
 // assembled into the smallest model an author can actually publish
@@ -156,8 +149,8 @@ console.log(JSON.stringify({
 def out(tmp_path_factory):
     if not shutil.which("node"):
         pytest.skip("node not available")
-    module = (STATIC / "js" / "model-editor.js").as_posix()
-    script = tmp_path_factory.mktemp("model-editor") / "run.mjs"
+    module = (STATIC / "js" / "panel-model.js").as_posix()
+    script = tmp_path_factory.mktemp("panel-model") / "run.mjs"
     script.write_text(SCRIPT.replace("{module}", module))
     proc = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
@@ -220,23 +213,24 @@ def test_every_placement_kind_builds_the_arm_it_names(out):
     assert built["distributed"].count > 0 and built["distributed"].count_param is None
 
 
-def test_a_negative_gap_is_offered_by_the_field_itself(out):
+def test_a_negative_gap_is_offered_by_the_control_itself(out):
     """A negative `gap_after_mm` is an OVERLAP, and board-on-board and shadowbox
-    are exactly that. The claim is about the FIELD: `num()` writes a `min`
-    attribute when it is given one, so the one thing that keeps a negative gap
-    typable is that the gap-after call passes none. Asserting that a value the
-    test itself set to -40 is still -40 proves nothing and stays green through
-    exactly the "tidy" the module header warns about.
+    are exactly that. The claim is about the CONTROL: it now shows a checkbox
+    and a POSITIVE amount, so the one thing that keeps an overlap reachable is
+    that the sign comes from `gapForOverlap` and no `min` bounds the amount.
+    Asserting that a value the test itself set to -40 is still -40 proves
+    nothing and stays green through exactly the "tidy" the module header warns
+    about.
 
     The bound that does exist is on the member's net advance, and it lives in
     `validate_model` — checked here against the same numbers."""
-    import re
-
-    src = (STATIC / "js" / "model-editor.js").read_text()
-    calls = dict(re.findall(r'num\(member, "(\w+)", "[^"]+", \{([^}]*)\}', src))
-    assert "gap_after_mm" in calls and "width_mm" in calls, calls
-    assert "min" not in calls["gap_after_mm"], (
-        "a min on gap-after deletes board-on-board and shadowbox from the editor")
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    body = src[src.index("export function gapControl"):]
+    body = body[:body.index("\n}\n")]
+    assert "gapForOverlap(" in body, (
+        "the sign must come from the shared helper, not from a second rule here")
+    assert "min" not in body, (
+        "a min on the gap amount deletes board-on-board and shadowbox from the editor")
 
     board = out["board_on_board"]
     model = FenceModel.model_validate(out["authored"])
@@ -303,17 +297,19 @@ def test_the_swatch_field_refuses_anything_but_plain_hex(out):
                             ("#a1b2c3;background:url(x)", False)]:
         assert bool(_SWATCH.match(value)) is expected, value
 
-    # and the STYLE assignment is guarded by it. The regex being correct is not
-    # the claim — `chip.style.background = value.swatch` reaching an unchecked
-    # string is the defect, and it leaves SWATCH_RE untouched.
-    src = (STATIC / "js" / "model-editor.js").read_text()
-    body = src[src.index("function swatchField"):]
-    body = body[:body.index("\n}\n")]
-    assign = re.search(r"\.style\.background\s*=\s*([^;]+);", body)
-    assert assign, "swatchField no longer paints a chip — re-read this test"
-    assert "SWATCH_RE.test" in assign.group(1), (
-        "the colour written to style must be one that matched the pattern, "
-        f"got: {assign.group(1).strip()}")
+    # and EVERY style assignment is guarded by it. The regex being correct is
+    # not the claim — a `style.background` reaching an unchecked string is the
+    # defect, and it leaves SWATCH_RE untouched. Scanned across the whole module
+    # rather than one function, because this surface grew a SECOND sink (the
+    # product chip beside each preference row, painted from `attrs.colour`) and
+    # a scan aimed at one function by name cannot see the next one.
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    sinks = re.findall(r"\.style\.background\s*=\s*([^;]+);", src)
+    assert len(sinks) >= 2, ("every colour sink must be scanned; found", sinks)
+    for sink in sinks:
+        assert "SWATCH_RE.test" in sink, (
+            "the colour written to style must be one that matched the pattern, "
+            f"got: {sink.strip()}")
 
 
 def test_the_editor_and_the_schema_agree_on_the_closed_vocabularies():
@@ -384,7 +380,7 @@ def test_the_editor_offers_only_the_excess_modes_the_resolver_honours():
 
     from fenceai.fencemodel.model import InfillSpec, _unsupported_features
 
-    src = (STATIC / "js" / "model-editor.js").read_text()
+    src = (STATIC / "js" / "panel-model.js").read_text()
     offered = set(re.findall(
         r'"([a-z_]+)"', re.search(r"const EXCESS = \[(.*?)\];", src, re.S).group(1)))
     schema = set(get_args(InfillSpec.model_fields["excess"].annotation))
@@ -420,3 +416,156 @@ def test_only_a_session_creating_a_model_refuses_a_taken_id(out):
         "editing a published version must save under its own id, or Edit cannot "
         "produce the next version")
     assert collisions["existing_draft"] is None
+
+
+# ---- the four deletions the pane was measured against ------------------------
+#
+# Describing ONE board took eighteen controls; the trade describes a whole panel
+# with about six. Each test below pins one of the four cuts, and each is a cut
+# that reads as harmless to restore.
+
+
+def _rename_through_the_module(was: str, now: str) -> dict:
+    """Run the real `applyRename` over a spec whose board names a rail twice."""
+    import json as _json
+    import subprocess as _sp
+
+    module = (STATIC / "js" / "panel-inspector.js").as_posix()
+    script = f"""
+globalThis.localStorage = {{ getItem: () => null, setItem: () => {{}} }};
+globalThis.document = {{ getElementById: () => null, querySelectorAll: () => [],
+  querySelector: () => null, documentElement: {{}},
+  createElement: () => ({{ style: {{}}, classList: {{ add(){{}}, toggle(){{}} }},
+    append(){{}}, appendChild(){{}}, addEventListener(){{}}, setAttribute(){{}} }}),
+  createElementNS: () => ({{ setAttribute(){{}}, appendChild(){{}} }}) }};
+import {{ applyRename }} from "{module}";
+const spec = {{
+  frame: [{{key: "{was}", orientation: "horizontal",
+           placement: {{kind: "distributed", count: 2}},
+           requirement: {{role: "rail"}}}}],
+  infill: {{orientation: "vertical", pattern: [
+    {{key: "slat", width_mm: 100, gap_after_mm: 20,
+      base_ref: "{was}", top_ref: "{was}",
+      requirement: {{role: "infill", length_rule: "between_frame"}}}}]}},
+  fixings: [],
+}};
+applyRename(spec, "frame", "{was}", "{now}");
+console.log(JSON.stringify(spec));
+"""
+    proc = _sp.run(["node", "--input-type=module", "-e", script],
+                   capture_output=True, text=True, cwd=STATIC)
+    assert proc.returncode == 0, proc.stderr
+    return _json.loads(proc.stdout)
+
+
+def _judge_renamed(spec: dict) -> None:
+    """The renamed document, through the gate that refuses a dangling ref."""
+    model = FenceModel.model_validate({
+        "id": "M-RENAME", "version": 1,
+        "default_spec": {
+            **spec,
+            "frame": [{**spec["frame"][0], "requirement": {
+                "role": "rail", "length_rule": "centre_to_centre",
+                "eligibility": {"members": [
+                    {"kind": "catalog_item", "sku": "RAIL-3000"}]}}}],
+            "infill": {**spec["infill"], "pattern": [{
+                **spec["infill"]["pattern"][0],
+                "requirement": {"role": "infill", "length_rule": "between_frame",
+                                "eligibility": {"members": [
+                                    {"kind": "catalog_item", "sku": "SLAT-100"}]}}}]},
+        },
+    })
+    assert validate_model(model, demo_catalog()) == [], (
+        "a rename that orphans a ref authors a document the gate refuses")
+
+
+def test_the_key_is_no_longer_a_field_and_the_rename_still_carries_its_refs():
+    """Nothing in the trade names a board, so the `key` stopped being a field:
+    it is generated, displayed as "Rail"/"Board 2", and renamed behind a
+    double-click on the chip.
+
+    What must NOT be lost with it is what the old `keyField` did. A board names
+    the rails it starts and stops at BY KEY, so a rename that leaves those
+    behind authors a document `validate_model` refuses — with English authoring
+    text, for an edit that looked like a rename. And a key minted twice is
+    silently the FIRST of the two everywhere that addresses an element by name.
+    """
+    inspector = (STATIC / "js" / "panel-inspector.js").read_text()
+    editor = (STATIC / "js" / "model-editor.js").read_text()
+
+    assert "function keyField" not in inspector, (
+        "the permanent key field is the control this pane was cut down to lose")
+    # RUN it, do not grep it. `applyRename` is exported and is a pure transform
+    # over a plain object, and asserting that the word "reref(" appears in its
+    # body stayed green with the `top_ref` half of reref deleted — which is the
+    # exact defect this test is named for.
+    renamed = _rename_through_the_module("rail", "top-rail")
+    member = renamed["infill"]["pattern"][0]
+    assert renamed["frame"][0]["key"] == "top-rail"
+    assert member["base_ref"] == "top-rail", "base_ref left behind by the rename"
+    assert member["top_ref"] == "top-rail", "top_ref left behind by the rename"
+    # ... and the document it produces is one the publish gate takes, which is
+    # the property the refs exist for
+    _judge_renamed(renamed)
+    # ... and uniqueness, which belongs to the module holding the whole key set
+    rename = editor[editor.index("function finishRename"):]
+    rename = rename[:rename.index("\n}\n")]
+    assert "freeId(" in rename and "applyRename(" in rename
+    assert "dblclick" in editor, "the rename has to be reachable from the chip"
+
+
+def test_all_eight_spacing_pairs_stay_reachable_after_the_segmented_control():
+    """`justification` x `excess` is eight combinations for one decision, and two
+    segments say four of them. The other four are not a capability the editor
+    gets to delete: a value the editor cannot show is a document it would
+    silently rewrite.
+
+    So the raw pair is still offered, over the WHOLE vocabulary — which is what
+    makes "reachable" true rather than merely "preserved". The narrowed
+    REMAINDERS list is fine; it is a subset of one segment, not the source of
+    the select.
+    """
+    import re
+
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    assert "export function spacingMode" in src
+    assert re.search(r'"justification",\s*JUSTIFICATIONS', src), (
+        "the raw justification select must offer the whole vocabulary")
+    assert re.search(r'"excess",\s*EXCESS', src), (
+        "the raw excess select must offer the whole vocabulary")
+    # the segments themselves, so a control that quietly stopped writing one of
+    # the pairs it claims is not green
+    mode = src[src.index("export function spacingMode"):]
+    mode = mode[:mode.index("\n}\n")]
+    assert '"spread_to_fit"' in mode and '"space"' in mode and '"truncate"' in mode
+
+
+def test_a_zero_is_shown_as_the_figure_the_panel_actually_produced():
+    """A field reading `0` for an edge margin teaches nothing: the fit spread the
+    leftover and the boards stand 37 mm off the post. The derived readout is
+    what says so — and the one thing that must stay true of it is that DISPLAYING
+    a derived value never AUTHORS it. `derivedNum` writes to `input.value`; only
+    the change listener inside `num()` writes to the document."""
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    body = src[src.index("function derivedNum"):]
+    body = body[:body.index("\n}\n")]
+    assert "input.value" in body and "obj[key] =" not in body, (
+        "a derived figure that writes itself into the document rewrites every "
+        "model merely opened in the editor")
+    # and the two the requirement names by hand
+    assert "drawnMargin(" in src and "model.derived.rails" in src
+
+
+def test_the_deferred_fields_are_deferred_and_not_removed():
+    """Advanced is a disclosure, not a delete. Every field that left the default
+    screen is still authored somewhere, and the summary counts what is set —
+    a field an author cannot find is a field they have lost."""
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    for f in ("role", "length_rule", "overlap_mm", "option_axis", "sku_by_option",
+              "face_offset_mm", "thickness_mm", "base_ref", "top_ref"):
+        assert f in src, f
+    assert "function advancedBox" in src and "function advancedCount" in src
+    badge = src[src.index("function advancedBox"):]
+    badge = badge[:badge.index("\n}\n")]
+    assert "model.advanced_set" in badge, (
+        "a disclosure holding something the author set must say so")

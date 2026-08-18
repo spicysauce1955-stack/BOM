@@ -113,7 +113,8 @@ export function gapSummary(elev) {
 /** True when any drawn member's face size is a nominal the read model invented.
  *  The drawing has to say so, or it claims a precision the catalog does not have. */
 export function hasNominal(elev) {
-  return (elev?.members || []).some((m) => m.declared === false);
+  return (elev?.members || []).some((m) => m.declared === false)
+    || (elev?.posts || []).some((p) => p.declared === false || p.cap_declared === false);
 }
 
 /** One gap to dimension on the drawing, in PANEL coordinates, or null.
@@ -263,20 +264,28 @@ export function gapLine(elev) {
 
 // -------------------------------------------------------------- the drawing
 
-/** A `PanelElevation` as an `<svg>` element, or null when there is nothing to
- *  draw (a model with no members, or a bay from a run that predates panels).
+/** The drawing's box and scale, in viewBox units — the ONE transform.
  *
- *  `onSelect(slotKey)` fires when a member is clicked. The renderer never
- *  reaches out of its own SVG: which row that highlights is the CALLER's table
- *  and the caller's business. */
-export function renderElevation(elev, {
-  onSelect, annotations = true, joints = true,
-} = {}) {
+ * `renderElevation` computed this inline until the canvas needed to put drag
+ * handles on the very same rectangles. Two copies of a scale is a handle three
+ * pixels from the board it moves, so it is computed here and called from both.
+ * `null` when there is nothing to draw, which is the same condition the renderer
+ * refuses on.
+ *
+ * `annotations` changes the padding — a fitted-gap callout takes a lane above
+ * the panel — so a caller overlaying handles must pass the SAME options it
+ * renders with, and must read `y0` rather than assume `PAD_TOP`. */
+export function elevationLayout(elev, { annotations = true, posts = false } = {}) {
   const w = elev?.width_mm || 0;
   const h = elev?.height_mm || 0;
-  const rects = elevationRects(elev);
-  if (!(w > 0) || !(h > 0) || !rects.length) return null;
-
+  if (!(w > 0) || !(h > 0) || !(elev?.members || []).length) return null;
+  // The posts stand OUTSIDE the opening — the start one at a negative x — so the
+  // box has to grow to hold them, or they are drawn over the height dimension.
+  // Their width is in millimetres like everything else, so it scales with the
+  // drawing rather than being a fixed inset.
+  const flanking = posts ? (elev.posts || []) : [];
+  const postMm = flanking.reduce((most, p) => Math.max(most, p.w_mm || 0), 0);
+  const capMm = flanking.reduce((most, p) => Math.max(most, p.cap_h_mm || 0), 0);
   const dim = annotations ? gapDimension(elev) : null;
   const pitch = annotations ? pitchDimension(elev) : null;
   const margins = annotations ? edgeMargins(elev) : null;
@@ -293,13 +302,51 @@ export function renderElevation(elev, {
   const padBottom = PAD_BOTTOM + (margins ? MARGIN_ROW : 0);
   // one scale for both axes: a drawing that stretched to fill its box would
   // make a 100 mm slat and a 20 mm gap look like the same thing
-  const s = Math.min(MAX_DRAW_W / w, MAX_DRAW_H / h);
-  const dw = w * s;
-  const dh = h * s;
-  const x0 = PAD_START;
-  const y0 = padTop;
-  const vw = PAD_START + dw + padEnd;
-  const vh = padTop + dh + padBottom;
+  // one scale over the WHOLE drawing, posts included, so a bay does not change
+  // scale the moment its posts are shown
+  const s = Math.min(MAX_DRAW_W / (w + 2 * postMm), MAX_DRAW_H / (h + capMm));
+  const postPad = postMm * s;
+  const capPad = capMm * s;
+  return {
+    s, x0: PAD_START + postPad, y0: padTop + capPad, w_mm: w, h_mm: h,
+    dw: w * s, dh: h * s, padBottom, postPad, capPad,
+    vw: PAD_START + postPad + w * s + postPad + padEnd,
+    vh: padTop + capPad + h * s + padBottom,
+    dim, pitch, margins,
+  };
+}
+
+/** Panel millimetres -> viewBox units. Panel y counts UP from the bottom, so
+ *  this flips; `renderElevation`'s own `py` takes an already-flipped value from
+ *  `elevationRects` and does not. */
+export const layoutPx = (L, x_mm, y_mm) =>
+  [L.x0 + x_mm * L.s, L.y0 + (L.h_mm - y_mm) * L.s];
+
+/** ... and back, for a pointer landing on the drawing. */
+export const layoutMm = (L, x, y) =>
+  [Math.round((x - L.x0) / L.s), Math.round(L.h_mm - (y - L.y0) / L.s)];
+
+/** A `PanelElevation` as an `<svg>` element, or null when there is nothing to
+ *  draw (a model with no members, or a bay from a run that predates panels).
+ *
+ *  `onSelect(slotKey)` fires when a member is clicked. The renderer never
+ *  reaches out of its own SVG: which row that highlights is the CALLER's table
+ *  and the caller's business.
+ *
+ *  `fixings` draws the fastener places, and is OFF by default: the Panel and
+ *  Structure tabs answer "what is this panel made of", where a screw is a BOM
+ *  line; the canvas answers "what does per-member-crossing MEAN", where the
+ *  places are the only way to see it. */
+export function renderElevation(elev, {
+  onSelect, annotations = true, joints = true, fixings = false, posts = false,
+} = {}) {
+  const L = elevationLayout(elev, { annotations, posts });
+  const rects = elevationRects(elev);
+  if (!L || !rects.length) return null;
+
+  const { s, x0, y0, dw, dh, vw, vh, dim, pitch, margins } = L;
+  const w = L.w_mm;
+  const h = L.h_mm;
   const px = (mm) => x0 + mm * s;
   const py = (mm) => y0 + mm * s;
 
@@ -308,6 +355,9 @@ export function renderElevation(elev, {
     class: "elevation-svg",
     preserveAspectRatio: "xMidYMid meet",
   });
+  // The posts FIRST, so the opening and everything fitted into it paints over
+  // them — a post is behind the panel it carries, not in front of it.
+  if (posts) drawPosts(svg, L, elev);
   el("rect", { class: "elev-opening", x: r(x0), y: r(y0), width: r(dw), height: r(dh) }, svg);
 
   const body = el("g", { class: "elev-members" }, svg);
@@ -353,6 +403,23 @@ export function renderElevation(elev, {
       x: r(px(m.x_mm)), y: r(py(m.y_mm)),
       width: r(Math.max(m.w_mm * s, 0.5)), height: r(Math.max(m.h_mm * s, 0.5)),
     }, edges);
+
+  // The fastener PLACES, when the caller wants them. Each carries its own count
+  // (`report/elevation.py`), so a panel taking 96 screws is 32 dots reading ×3
+  // rather than a rash — "a dot per screw would bury the panel" is still true,
+  // and this is not that.
+  if (fixings) {
+    const group = el("g", { class: "elev-fixings" }, svg);
+    for (const f of elev.fixings || []) {
+      const [fx, fy] = layoutPx(L, f.x_mm, f.y_mm);
+      const dot = el("circle", {
+        class: "elev-fixing", cx: r(fx), cy: r(fy), r: 5,
+        "data-slot": f.slot_key, "data-index": String(f.index),
+      }, group);
+      // identifiers and a count, set as TEXT — a slot key never becomes markup
+      el("title", {}, dot).textContent = `${f.slot_key} ×${f.qty}`;
+    }
+  }
 
   if (annotations) {
     const widthRow = y0 + dh + 22 + (margins ? MARGIN_ROW : 0);
@@ -444,6 +511,46 @@ function drawGap(svg, dim, { px, py, w, h, y0, lane = 0, cls = "elev-gap-dim" })
   const cy = (y1 + y2) / 2;
   el("text", { class: "elev-dim-label", x: r(x + 16), y: r(cy), "text-anchor": "middle",
                transform: `rotate(-90 ${r(x + 16)} ${r(cy)})` }, g).textContent = label;
+}
+
+/** The posts the bay stands between, and their caps.
+ *
+ * `x_mm` is negative on the start side and that is the contract — the post
+ * occupies the millimetres BEFORE the opening. Clamping it to zero would draw
+ * the post over the first board and shift the whole bay a post-width across.
+ *
+ * A post is selectable like any member (`data-slot`), because the two parts of
+ * a fence that had no editor were exactly the two with nowhere to click. */
+function drawPosts(svg, L, elev) {
+  const group = el("g", { class: "elev-posts" }, svg);
+  for (const post of elev.posts || []) {
+    const [x, y] = layoutPx(L, post.x_mm, post.h_mm + (post.cap_h_mm || 0));
+    const [, base] = layoutPx(L, post.x_mm, 0);
+    const rect = el("rect", {
+      class: `elev-post${post.declared === false ? " elev-nominal" : ""}`,
+      x: r(x), y: r(y + (post.cap_h_mm || 0) * L.s),
+      width: r(Math.max(post.w_mm * L.s, 0.5)),
+      height: r(Math.max(base - y - (post.cap_h_mm || 0) * L.s, 0.5)),
+      "data-slot": post.sku ? `post:${post.side}` : "post",
+      "data-side": post.side,
+    }, group);
+    // identifiers only, and as TEXT — a sku never becomes markup or paint
+    el("title", {}, rect).textContent =
+      [post.kind, post.sku].filter(Boolean).join(" \u00b7 ") || "post";
+    if (post.cap_h_mm > 0) {
+      const cap = el("rect", {
+        // the catalog carries no cap height, so the one drawn is invented — and
+        // a drawing that paints an invented size exactly like a measured one is
+        // claiming a precision it does not have
+        class: `elev-cap${post.cap_declared === false ? " elev-nominal" : ""}`,
+        x: r(x), y: r(y),
+        width: r(Math.max(post.w_mm * L.s, 0.5)),
+        height: r(Math.max(post.cap_h_mm * L.s, 0.5)),
+        "data-slot": "cap", "data-side": post.side,
+      }, group);
+      el("title", {}, cap).textContent = post.cap_sku || "cap";
+    }
+  }
 }
 
 const r = (n) => Math.round(n * 10) / 10;

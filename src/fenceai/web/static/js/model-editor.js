@@ -28,168 +28,34 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import {
-  el, field, loadCatalogProducts, option, skuSelect, updateAdvancedUi,
+  el, field, loadCatalogProducts, option, updateAdvancedUi,
 } from "./builder-ui.js";
+import {
+  CONDITION_CMPS, CONDITION_FIELDS, readSentence, writeSentence,
+} from "./condition-sentence.js";
+import { renderElevation } from "./elevation.js";
 import { loadModelListing, refreshModelListing } from "./fence-models.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
-import { emit, on } from "./state.js";
+import { isDragging, renderCanvas } from "./panel-canvas.js";
+import {
+  applyRename, elementLabel, renderAxisEditor, renderInspector, SELECTION_NONE,
+} from "./panel-inspector.js";
+import { TEMPLATES } from "./panel-templates.js";
+import {
+  GRADES, blankModel, canChooseId, defaultFixing, defaultInfill, defaultMember,
+  defaultSlot, defaultVariant, draftCopyOf, duplicateOf, freeId, idCollision,
+  specOf,
+} from "./panel-model.js";
+import { on } from "./state.js";
+import { warningRowHtml } from "./warnings.js";
 import {
   fmt, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
 } from "./units.js";
 
-// --- the closed vocabularies, read from fencemodel/model.py -------------------
-const ROLES = ["post", "cap", "concrete", "rail", "screw", "infill", "spacer"];
-const LENGTH_RULES = ["clear_between_posts", "centre_to_centre", "overlap", "panel_height",
-  // the one rule that reads the "starts at" / "ends at" selects below; under any
-  // other rule the schema now refuses a member that sets them
-  "between_frame"];
-const PLACEMENT_KINDS = ["distributed", "from_bottom", "from_top", "fraction"];
-const JUSTIFICATIONS = ["start", "end", "center", "spread_to_fit"];
-// `trim_last` and `extension_clip` are schema-expressible and NOT built
-// (`model.py::_unsupported_features`: fit_pattern treats both exactly as
-// `truncate`, which is a different BOM). Offering them would author a model the
-// publish gate then refuses, so the editor offers what the resolver honours —
-// and an existing document carrying one still shows it, rather than being
-// silently rewritten to something it does not say.
-const EXCESS = ["truncate", "space"];
-const BASES = [
-  "per_member_crossing", "per_member", "per_end_member",
-  "per_gap", "per_frame_member", "per_panel",
-];
-const APPROVALS = ["auto", "suggest_only"];
-const GRADES = ["residential", "commercial", "industrial"];
-// `numeric` is schema-expressible and unbuilt, for the same reason `trim_last`
-// is: nothing reads `Axis.kind`, and resolution answers every axis out of its
-// declared `values`. W4 added the `_unsupported_features` entry that refuses it
-// — this list is the other half of that change.
-const AXIS_KINDS = ["enum"];
-// Knowledge params a count may defer to. The point of `count_param` is that
-// rail count stays DEFEASIBLE knowledge — a company rule may still win it — so
-// the field is offered as a param name and not as an authored integer.
-const COUNT_PARAMS = ["rails_per_span", "screws_per_span"];
-
-export const SWATCH_RE = /^#[0-9a-fA-F]{6}$/;
-
 const PREVIEW_DEBOUNCE_MS = 250;
 const DEFAULT_HEIGHT_MM = 1800;
 const DEFAULT_WIDTH_MM = 2500;
-
-// --- pure shapes (no DOM, no state): what a fresh row of each kind is --------
-
-export function blankModel(id) {
-  return {
-    id, version: 1, name_i18n: {}, grade: "residential", status: "draft",
-    height_support: { kind: "continuous", min_mm: 0, max_mm: 10000 },
-    layout_policy: [], option_axes: [],
-    default_spec: { frame: [], infill: null, fixings: [] },
-    variants: [],
-  };
-}
-
-export function defaultEligibility() {
-  return { members: [] };
-}
-
-// The ONE place a member is built, called by the "+ Add product" button and by
-// the test that judges its shape — a second literal in either would let them
-// agree with each other while disagreeing with the schema.
-//
-// `kind` is not decoration: `Eligibility.members` is a discriminated union, so
-// a member without it is a 422 `union_tag_not_found` on the whole document, and
-// the author is told only "the action failed".
-export function defaultEligibleMember(sku, priority = 1) {
-  return { kind: "catalog_item", sku: sku || "", priority, approval: "auto" };
-}
-
-export function defaultRequirement(role) {
-  return {
-    role, qty: 1, length_rule: null, overlap_mm: 0,
-    option_axis: null, sku_by_option: {}, eligibility: defaultEligibility(),
-  };
-}
-
-export function defaultPlacement(kind) {
-  switch (kind) {
-    case "from_bottom": return { kind, offset_mm: 0 };
-    case "from_top": return { kind, offset_mm: 0 };
-    case "fraction": return { kind, permille: 500 };
-    default:
-      return { kind: "distributed", count: 2, count_param: null,
-               bottom_inset_mm: 0, top_inset_mm: 0 };
-  }
-}
-
-export function defaultSlot(key) {
-  return {
-    key, orientation: "horizontal", placement: defaultPlacement("distributed"),
-    requirement: defaultRequirement("rail"),
-  };
-}
-
-export function defaultMember(key) {
-  return {
-    key, width_mm: 100, thickness_mm: 0, face_offset_mm: 0, gap_after_mm: 20,
-    base_ref: null, top_ref: null,
-    requirement: { ...defaultRequirement("infill"), length_rule: "panel_height" },
-  };
-}
-
-export function defaultInfill() {
-  return {
-    orientation: "vertical", pattern: [defaultMember("slat")],
-    justification: "spread_to_fit", excess: "space", edge_margin_mm: 0,
-    supply: "components",
-  };
-}
-
-export function defaultFixing(key) {
-  return {
-    key, basis: "per_panel", qty_per_basis: 1, qty_param: null,
-    requirement: defaultRequirement("screw"),
-  };
-}
-
-export function defaultAxis(key) {
-  return { key, label_i18n: {}, kind: "enum", values: [], available_when: null };
-}
-
-// A NEW variant starts from a condition that is already valid AST and already
-// says something ("panels 1800 and taller"), because the alternative — an empty
-// box — makes the first thing an author meets a 422 about a discriminator.
-export function defaultVariant() {
-  return {
-    condition: {
-      op: "cmp", cmp: ">=",
-      left: { op: "field", path: "panel.height_mm" },
-      right: { op: "lit", value: 1800 },
-    },
-    spec: { frame: [], infill: null, fixings: [] },
-  };
-}
-
-// A published version is NEVER mutated: editing one opens a COPY, and the
-// session that holds it carries no version, so the first save POSTs and the
-// SERVER assigns the next free one. The copy keeps the source's `version`
-// field — it is what the document said, the editor does not get to invent a
-// number, and nothing sends this one anywhere as an instruction.
-//
-// DEEP, and that is the load-bearing half: a shallow copy shares `default_spec`
-// with the document the library handed over, so the first keystroke would
-// rewrite the panel an accepted quote was priced against — in memory, where
-// nothing reports it.
-export function draftCopyOf(model) {
-  return { ...structuredClone(model), status: "draft" };
-}
-
-export function duplicateOf(model, newId) {
-  return { ...structuredClone(model), id: newId, version: 1, status: "draft" };
-}
-
-// The spec the row editors are pointed at: the default panel, or one variant's.
-export function specOf(model, index) {
-  return index < 0 ? model.default_spec : model.variants[index]?.spec;
-}
 
 // --- module state ------------------------------------------------------------
 
@@ -197,6 +63,19 @@ let listing = [];
 let session = null;      // { model, version | null, invalid, saveError, published }
 let specIndex = -1;      // -1 = default_spec, else variants[specIndex].spec
 let advancedOpen = false;
+// which thing on the panel the inspector is editing — a chip on the element
+// list today, a rectangle on the drawing once the canvas lands
+let selection = SELECTION_NONE;
+// the chip whose name is being typed over, or null. A rename is a MODE and not
+// a field: an element has no name of its own to show a permanent box for, and
+// the eighteen controls this pane was measured at started with one.
+let renaming = null;
+// when the click that COMPLETES a double-click stops counting as a selection.
+// A timestamp and not a flag: the completing click lands on the rename box that
+// has already replaced the chip, so a flag set there is never cleared by the
+// handler it was set for — and the next chip click, whenever it came, was
+// swallowed instead.
+let suppressChipUntil = 0;
 let heightMm = DEFAULT_HEIGHT_MM;
 let widthMm = DEFAULT_WIDTH_MM;
 let preview = null;
@@ -225,9 +104,7 @@ function sentence(key, params = {}) {
 // --- wiring ------------------------------------------------------------------
 
 export function initModelEditor() {
-  document.getElementById("btn-model-new").addEventListener("click", () => {
-    openSession(blankModel(freeId("M-NEW")), null, { isNew: true });
-  });
+  document.getElementById("btn-model-new").addEventListener("click", openGallery);
   document.getElementById("btn-model-save").addEventListener("click", async () => {
     if (!session || !commitAdvanced()) return;   // an invalid JSON box must not save silently
     const saved = await saveDraft();
@@ -251,9 +128,31 @@ export function initModelEditor() {
   document.getElementById("btn-model-close").addEventListener("click", () => {
     session = null; advancedOpen = false; preview = null; previewError = null;
     publishError = null; notice = null;
+    closeGallery();
     renderAll();
   });
   document.getElementById("btn-model-advanced").addEventListener("click", toggleAdvanced);
+
+  // The rename, opened by the SECOND MOUSEDOWN rather than by `dblclick`, and
+  // delegated to the host rather than bound to a chip. Both halves are the same
+  // defect, measured in a browser: the first click selects, `renderElements`
+  // rebuilds every chip, and by the time the pair completes the node the first
+  // click landed on is detached — so `dblclick` fires at the nearest common
+  // ancestor of two targets that no longer share a tree, and never reached a
+  // chip at all. `detail` is counted by the browser from position and time, not
+  // from node identity, so it survives the repaint that the double-click itself
+  // causes. Bound here once because the host outlives every chip in it.
+  document.getElementById("model-elements").addEventListener("mousedown", (ev) => {
+    if (ev.detail < 2 || renaming) return;
+    const chip = ev.target.closest?.(".element-chip");
+    if (!chip) return;
+    ev.preventDefault();
+    // ... and the click that completes the pair must not also toggle the
+    // selection, which would repaint the box being typed into out of existence
+    suppressChipUntil = Date.now() + 400;
+    const [kind, ...rest] = chip.dataset.element.split(":");
+    beginRename({ kind, key: rest.join(":") });
+  });
 
   on("tab-changed", (tab) => { if (tab === "models") openModelsTab(); });
   const relocalize = () => { if (modelsTabActive()) renderAll(); };
@@ -285,18 +184,10 @@ async function announceLibraryChange() {
   renderList();
 }
 
-// Ids are identifiers, never prose — no locale key. Uniqueness is not cosmetic:
-// a POST reusing an existing id does not create a model, it opens the NEXT
-// VERSION of that one, so duplicating twice would quietly turn the second copy
-// into v2 of the first. Takes the listing rather than reading it, so the rule
-// can be tested without a library.
-export function freeId(base, rows = listing) {
-  const taken = new Set((rows || []).map((r) => r.id));
-  if (!taken.has(base)) return base;
-  let n = 2;
-  while (taken.has(`${base}-${n}`)) n += 1;
-  return `${base}-${n}`;
-}
+// `panel-model.js` owns the rule and takes the rows it judges against — this is
+// the one place that knows WHICH rows, so the rule stays testable without a
+// library and every call site here still means "free in the library I hold".
+const freeLibraryId = (base) => freeId(base, listing);
 
 function sessionRef() {
   return session ? `${session.model.id}@v${session.version ?? "?"}` : "";
@@ -308,6 +199,8 @@ function sessionRef() {
 function openSession(model, version, { isNew = false } = {}) {
   session = { model, version, isNew, invalid: null, saveError: null, dirty: false };
   specIndex = -1;
+  selection = SELECTION_NONE;
+  renaming = null;
   advancedOpen = false;
   preview = null;
   previewError = null;
@@ -343,8 +236,73 @@ async function openForEdit(row) {
 
 async function openForDuplicate(row, version) {
   const doc = await loadVersion(row.id, version);
-  if (doc) openSession(duplicateOf(doc, freeId(`${row.id}-COPY`)), null,
+  if (doc) openSession(duplicateOf(doc, freeLibraryId(`${row.id}-COPY`)), null,
                        { isNew: true });
+}
+
+// --- starting a new panel: the gallery ---------------------------------------
+//
+// "New model" opens a handful of curated starters rather than an empty
+// document, because an empty panel is the one shape from which nothing on the
+// canvas can be clicked. Each card is a REAL preview of the panel it would
+// open — priced through the same `/preview` route the editor uses, so a card
+// cannot show a panel the editor then disagrees with — and picking one lands an
+// ordinary independent draft, exactly as "Duplicate" already did.
+
+async function openGallery() {
+  const host = document.getElementById("model-gallery");
+  if (!host) return;
+  host.hidden = false;
+  host.innerHTML = `<h3>${esc(t("model.gallery_title"))}</h3>
+    <div class="meta">${esc(t("model.gallery_hint"))}</div>
+    <div class="template-cards"></div>`;
+  const cards = host.querySelector(".template-cards");
+  for (const template of TEMPLATES)
+    cards.appendChild(await templateCard(template));
+  cards.appendChild(blankCard());
+}
+
+function closeGallery() {
+  const host = document.getElementById("model-gallery");
+  if (host) { host.hidden = true; host.innerHTML = ""; }
+}
+
+async function templateCard(template) {
+  const card = el("button", { type: "button", class: "template-card",
+                              "data-template": template.key });
+  card.appendChild(el("b", { text: t(`model.template.${template.key}.name`) }));
+  const draw = el("div", { class: "template-draw" });
+  card.appendChild(draw);
+  card.appendChild(el("span", { class: "meta",
+                                text: t(`model.template.${template.key}.desc`) }));
+  card.addEventListener("click", () => {
+    closeGallery();
+    openSession(template.build(freeLibraryId(template.id_base)), null, { isNew: true });
+  });
+  // the card's picture comes from the same route the editor prices with; a card
+  // that failed to price simply shows its words, rather than a broken box
+  try {
+    const out = await apiSend("POST", "/api/fence-models/preview", {
+      model: template.build(template.id_base),
+      bay: { height_mm: heightMm, width_mm: widthMm },
+    }, { quiet: true });
+    const svg = renderElevation(out.elevation, { annotations: false, joints: false });
+    if (svg) draw.appendChild(svg);
+  } catch { /* the words are the card; the drawing is the bonus */ }
+  return card;
+}
+
+function blankCard() {
+  const card = el("button", { type: "button", class: "template-card",
+                              "data-template": "blank" });
+  card.appendChild(el("b", { text: t("model.template.blank.name") }));
+  card.appendChild(el("div", { class: "template-draw" }));
+  card.appendChild(el("span", { class: "meta", text: t("model.template.blank.desc") }));
+  card.addEventListener("click", () => {
+    closeGallery();
+    openSession(blankModel(freeLibraryId("M-NEW")), null, { isNew: true });
+  });
+  return card;
 }
 
 // --- saving, publishing, retiring -------------------------------------------
@@ -356,29 +314,8 @@ function scheduleRepreview() {
   previewPending = setTimeout(refreshPreview, PREVIEW_DEBOUNCE_MS);
 }
 
-// The id already in the library, if the one being typed collides with it.
-//
-// Only a session that means to create a NEW model can collide. A draft copy of
-// a published version also carries no version number, and its id is the
-// existing model's ON PURPOSE — that is what makes the save land as that
-// model's next version. Reading "no version yet" as "must be new" refuses
-// exactly the save that "Edit" exists to make.
-// True only while this session could still choose its id: it means to create a
-// model AND has not yet been saved under one. After the first save the id is
-// the model's own, so it is in the listing BY DEFINITION and asking again would
-// refuse every later save of the thing just created.
-export const canChooseId = (s) => !!s?.isNew && s.version === null;
-
-// The id a save would collide with, or null. Pure, and exported, because the
-// four session kinds are easy to collapse into a wrong rule: "no version yet"
-// reads like "new", and a draft copy of a published version has no version
-// either — refusing THAT is refusing the save "Edit" exists to make.
-export function idCollision(session, rows) {
-  if (!canChooseId(session)) return null;
-  const id = (session.model?.id || "").trim();
-  return (rows || []).some((row) => row.id === id) ? id : null;
-}
-
+// The id the live session would collide with, or null — the rule itself lives
+// in `panel-model.js`, judged against the library this module holds.
 const idTaken = () => idCollision(session, listing);
 
 async function saveDraft({ quiet = false } = {}) {
@@ -617,62 +554,10 @@ function renderForm() {
   if (!session) return;
   renderHead();
   renderSpecPicker();
-  renderFrame();
-  renderInfill();
-  renderFixings();
-  renderAxes();
-}
-
-// --- field builders (shared by every row list below) -------------------------
-//
-// Each writes ONE field of the live document and then debounces a save, and
-// each carries `data-f="<field name>"`. That attribute is not decoration: the
-// row lists are generated, so a test (or a person reading the DOM) has no other
-// stable way to name "the length rule of the first frame slot" — and positional
-// selectors are exactly the kind that keep passing after a field moves.
-
-// `length` means the value is millimetres at rest and shown in the display
-// unit. The conversion happens here and nowhere else, so a width typed in cm is
-// stored as mm and reads back as the same width.
-function num(obj, key, labelKey, { length = false, min = null, onCommit = null } = {}) {
-  const raw = obj[key] ?? "";
-  const attrs = { type: "number", "data-f": key, step: length ? inputStep() : "1",
-                  value: raw === "" || !length ? raw : toDisplayValue(raw) };
-  // `min` is a number in the FIELD, so on a length it crosses the same boundary
-  // the value does — a raw `min="1"` means 1 mm in mm and 10 mm in cm.
-  if (min !== null) attrs.min = length ? toDisplayValue(min) : min;
-  const i = el("input", attrs);
-  i.addEventListener("change", () => {
-    obj[key] = length ? (toMm(i.value) ?? 0) : Math.round(i.valueAsNumber || 0);
-    (onCommit || touch)();
-  });
-  return field(labelKey, i);
-}
-
-function text(obj, key, labelKey, { size = 16, ltr = false, nullable = false } = {}) {
-  const i = el("input", { type: "text", "data-f": key, dir: ltr ? "ltr" : "auto", size,
-                          class: ltr ? "sku" : null, value: obj[key] ?? "" });
-  i.addEventListener("input", () => {
-    const v = i.value.trim();
-    obj[key] = nullable && !v ? null : i.value;
-    touch();
-  });
-  return field(labelKey, i);
-}
-
-function choice(obj, key, values, labelFor, labelKey, { rerender = false, nullKey = null } = {}) {
-  const s = el("select", { "data-f": key });
-  if (nullKey) s.appendChild(option("", t(nullKey), obj[key] === null || obj[key] === undefined));
-  for (const v of values) s.appendChild(option(v, labelFor(v), obj[key] === v));
-  // a value the resolver does not honour is never OFFERED, but a document that
-  // already carries one must not be silently rewritten by opening the editor
-  if (obj[key] && !values.includes(obj[key]))
-    s.appendChild(option(obj[key], obj[key], true));
-  s.addEventListener("change", () => {
-    obj[key] = s.value === "" ? null : s.value;
-    touch({ rerender });
-  });
-  return field(labelKey, s);
+  renderElements();
+  renderCanvasPane();
+  renderInspectorPane();
+  renderAxisPane();
 }
 
 // An edit changes the document and re-prices it. It does NOT save: a draft the
@@ -690,17 +575,6 @@ function removeButton(onclick) {
                            title: t("common.remove"), text: "✕" });
   b.addEventListener("click", onclick);
   return b;
-}
-
-function subhead(titleKey, addKey, onAdd, addId = null) {
-  const head = el("div", { class: "builder-head" },
-    el("b", { text: t(titleKey) }));
-  if (addKey) {
-    const b = el("button", { type: "button", id: addId, text: t(addKey) });
-    b.addEventListener("click", onAdd);
-    head.appendChild(b);
-  }
-  return head;
 }
 
 // --- the model head: id, name, grade ----------------------------------------
@@ -725,7 +599,7 @@ function renderHead() {
   // taken id does the same damage.
   const idInput = el("input", { type: "text", "data-f": "id", dir: "ltr",
                                 class: "sku", size: 16, value: session.model.id });
-  if (!canChooseId()) idInput.disabled = true;
+  if (!canChooseId(session)) idInput.disabled = true;
   idInput.addEventListener("input", () => {
     session.model.id = idInput.value.trim();
     idInput.classList.toggle("invalid", !!idTaken());
@@ -743,8 +617,18 @@ function renderHead() {
   });
   row.appendChild(field("model.name", nameInput));
 
-  row.appendChild(choice(session.model, "grade", GRADES,
-    (g) => t("model.grade." + g), "model.grade"));
+  // The grade is written here rather than through the inspector's `choice`,
+  // small as it is: those builders report their edits through a `notify` the
+  // inspector sets per render, and a caller outside that render would be
+  // reporting into whatever the last one happened to leave behind.
+  const grade = el("select", { "data-f": "grade" });
+  for (const g of GRADES)
+    grade.appendChild(option(g, t("model.grade." + g), session.model.grade === g));
+  grade.addEventListener("change", () => {
+    session.model.grade = grade.value;
+    touch();
+  });
+  row.appendChild(field("model.grade", grade));
   host.appendChild(row);
 }
 
@@ -779,11 +663,16 @@ function renderSpecPicker() {
   }
   host.appendChild(row);
 
-  // A variant's condition is an `Expr` AST. A general AST editor is its own
-  // design round, and half of one is worse than none — so it gets exactly what
-  // the knowledge tab gives rule conditions: a JSON box and a hint that says so.
+  // A variant's condition is an `Expr` AST. The ONE shape every shipped model
+  // uses — a field compared to a literal — is a sentence; everything else keeps
+  // the JSON box, which is not a fallback to be designed away but the parity
+  // guarantee itself: a condition the sentence cannot say is left alone rather
+  // than rewritten into one it can.
   if (specIndex >= 0) {
     const variant = variants[specIndex];
+    host.appendChild(conditionSentence(variant));
+    const advanced = el("details", { class: "condition-advanced" },
+      el("summary", { text: t("model.condition_advanced") }));
     const hint = el("div", { class: "meta", text: t("model.variant_conditions_hint") });
     const ta = el("textarea", { id: "model-variant-condition", dir: "ltr", rows: 3, cols: 60 });
     ta.value = JSON.stringify(variant.condition ?? null, null, 2);
@@ -791,327 +680,306 @@ function renderSpecPicker() {
       try {
         variant.condition = JSON.parse(ta.value);
         ta.classList.remove("invalid");
-        touch();
+        touch({ rerender: true });   // the sentence above may now be able to say it
       } catch {
         // the box keeps the user's text; nothing is saved from it until it parses
         ta.classList.add("invalid");
       }
     });
-    host.append(hint, ta);
+    advanced.append(hint, ta);
+    host.appendChild(advanced);
   }
 }
 
-// --- frame slots -------------------------------------------------------------
-
-async function renderFrame() {
-  // the catalog is awaited BEFORE the host is cleared, so two renders racing
-  // each other rebuild the list rather than appending a second copy of it
-  const products = await loadCatalogProducts();
-  const host = document.getElementById("model-frame");
-  const spec = specOf(session?.model, specIndex);
-  host.innerHTML = "";
-  if (!spec) return;
-  spec.frame ??= [];
-  host.appendChild(subhead("model.frame", "model.add_slot", () => {
-    spec.frame.push(defaultSlot(`slot${spec.frame.length + 1}`));
-    touch({ rerender: true });
-  }, "btn-model-add-slot"));
-  spec.frame.forEach((slot, idx) => {
-    // the slot and the requirement it carries are ONE thing to read and to
-    // address, so they share a group rather than sitting as loose siblings
-    const group = el("div", { class: "builder-group", "data-slot-row": String(idx) });
-    const row = el("div", { class: "builder-row" });
-    row.appendChild(text(slot, "key", "model.key", { size: 10, ltr: true }));
-    row.appendChild(choice(slot, "orientation", ["horizontal", "vertical"],
-      (v) => t("model.orientation." + v), "model.orientation"));
-
-    const kindSel = el("select", { class: "builder-kind" });
-    for (const k of PLACEMENT_KINDS)
-      kindSel.appendChild(option(k, t("model.placement." + k), slot.placement?.kind === k));
-    kindSel.addEventListener("change", () => {
-      slot.placement = defaultPlacement(kindSel.value);
-      touch({ rerender: true });
-    });
-    row.appendChild(field("model.placement", kindSel));
-
-    const p = slot.placement || {};
-    if (p.kind === "distributed") {
-      row.appendChild(num(p, "count", "model.count", { min: 0 }));
-      // a knowledge PARAM, not an authored integer: rail count ladders with
-      // height and a company rule must still be able to win it
-      row.appendChild(choice(p, "count_param", COUNT_PARAMS,
-        (v) => tu("action.param." + v), "model.count_param",
-        { nullKey: "model.count_param_none" }));
-      row.appendChild(num(p, "bottom_inset_mm", "model.bottom_inset_mm", { length: true }));
-      row.appendChild(num(p, "top_inset_mm", "model.top_inset_mm", { length: true }));
-    } else if (p.kind === "fraction") {
-      row.appendChild(num(p, "permille", "model.permille", { min: 0 }));
-    } else if (p.kind) {
-      row.appendChild(num(p, "offset_mm", "model.offset_mm", { length: true }));
-    }
-    row.appendChild(removeButton(() => {
-      spec.frame.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    group.append(row, requirementRows(slot.requirement, products));
-    host.appendChild(group);
-  });
-}
-
-// --- infill ------------------------------------------------------------------
-
-async function renderInfill() {
-  const products = await loadCatalogProducts();
-  const host = document.getElementById("model-infill");
-  const spec = specOf(session?.model, specIndex);
-  host.innerHTML = "";
-  if (!spec) return;
-  const has = !!spec.infill;
-  const head = subhead("model.infill", null);
-  const toggle = el("button", { type: "button", id: "btn-model-toggle-infill",
-                                text: t(has ? "model.remove_infill" : "model.add_infill") });
-  toggle.addEventListener("click", () => {
-    spec.infill = has ? null : defaultInfill();
-    touch({ rerender: true });
-  });
-  head.appendChild(toggle);
-  host.appendChild(head);
-  if (!has) return;
-
-  const infill = spec.infill;
-  const row = el("div", { class: "builder-row" });
-  row.appendChild(choice(infill, "orientation", ["vertical", "horizontal"],
-    (v) => t("model.orientation." + v), "model.orientation"));
-  row.appendChild(choice(infill, "justification", JUSTIFICATIONS,
-    (v) => t("model.justification." + v), "model.justification"));
-  row.appendChild(choice(infill, "excess", EXCESS,
-    (v) => t("model.excess." + v), "model.excess"));
-  row.appendChild(num(infill, "edge_margin_mm", "model.edge_margin_mm", { length: true }));
-  host.appendChild(row);
-
-  infill.pattern ??= [];
-  host.appendChild(subhead("model.pattern", "model.add_member", () => {
-    infill.pattern.push(defaultMember(`member${infill.pattern.length + 1}`));
-    touch({ rerender: true });
-  }, "btn-model-add-member"));
-  const frameKeys = (spec.frame || []).map((s) => s.key);
-  infill.pattern.forEach((member, idx) => {
-    const group = el("div", { class: "builder-group", "data-member-row": String(idx) });
-    const mrow = el("div", { class: "builder-row" });
-    mrow.appendChild(text(member, "key", "model.key", { size: 10, ltr: true }));
-    mrow.appendChild(num(member, "width_mm", "model.width_mm", { length: true, min: 1 }));
-    // NO min: a negative gap is an OVERLAP, and board-on-board and shadowbox are
-    // exactly that. `validate_model` bounds width + gap (the member's net
-    // advance) instead, which is the quantity that must stay positive.
-    mrow.appendChild(num(member, "gap_after_mm", "model.gap_after_mm", { length: true }));
-    mrow.appendChild(num(member, "face_offset_mm", "model.face_offset_mm", { length: true }));
-    mrow.appendChild(num(member, "thickness_mm", "model.thickness_mm", { length: true, min: 0 }));
-    mrow.appendChild(choice(member, "base_ref", frameKeys, (k) => k, "model.base_ref",
-      { nullKey: "model.ref_none" }));
-    mrow.appendChild(choice(member, "top_ref", frameKeys, (k) => k, "model.top_ref",
-      { nullKey: "model.ref_none" }));
-    mrow.appendChild(removeButton(() => {
-      infill.pattern.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    group.append(mrow,
-      el("div", { class: "meta", text: t("model.gap_after_hint") }),
-      requirementRows(member.requirement, products));
-    host.appendChild(group);
-  });
-}
-
-// --- fixings -----------------------------------------------------------------
-
-async function renderFixings() {
-  const products = await loadCatalogProducts();
-  const host = document.getElementById("model-fixings");
-  const spec = specOf(session?.model, specIndex);
-  host.innerHTML = "";
-  if (!spec) return;
-  spec.fixings ??= [];
-  host.appendChild(subhead("model.fixings", "model.add_fixing", () => {
-    spec.fixings.push(defaultFixing(`fix${spec.fixings.length + 1}`));
-    touch({ rerender: true });
-  }, "btn-model-add-fixing"));
-  spec.fixings.forEach((fix, idx) => {
-    const group = el("div", { class: "builder-group", "data-fixing-row": String(idx) });
-    const row = el("div", { class: "builder-row" });
-    row.appendChild(text(fix, "key", "model.key", { size: 10, ltr: true }));
-    row.appendChild(choice(fix, "basis", BASES, (b) => t("model.basis." + b), "model.basis"));
-    row.appendChild(num(fix, "qty_per_basis", "model.qty_per_basis", { min: 0 }));
-    row.appendChild(choice(fix, "qty_param", COUNT_PARAMS,
-      (v) => tu("action.param." + v), "model.qty_param", { nullKey: "model.count_param_none" }));
-    row.appendChild(removeButton(() => {
-      spec.fixings.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    group.append(row, requirementRows(fix.requirement, products));
-    host.appendChild(group);
-  });
-}
-
-// --- a requirement + its eligibility -----------------------------------------
-
-function requirementRows(req, products) {
-  const box = el("div", { class: "builder-sub" });
-  if (!req) return box;
-  req.eligibility ??= defaultEligibility();
-  req.eligibility.members ??= [];
-
-  const row = el("div", { class: "builder-row" });
-  row.appendChild(choice(req, "role", ROLES, roleWord, "model.role"));
-  row.appendChild(num(req, "qty", "model.qty", { min: 0 }));
-  row.appendChild(choice(req, "length_rule", LENGTH_RULES,
-    (r) => t("model.length_rule." + r), "model.length_rule",
-    { rerender: true, nullKey: "model.length_rule.none" }));
-  if (req.length_rule === "overlap")
-    row.appendChild(num(req, "overlap_mm", "model.overlap_mm", { length: true }));
-  const axes = (session.model.option_axes || []).map((a) => a.key);
-  row.appendChild(choice(req, "option_axis", axes, (k) => k, "model.option_axis",
-    { rerender: true, nullKey: "model.option_axis.none" }));
-  box.appendChild(row);
-
-  // eligibility: an ORDERED list, because `priority` is the company's stated
-  // preference and the order it is read in is part of the answer
-  const eligibility = el("div", { class: "builder-row" });
-  eligibility.appendChild(el("span", { class: "meta", text: t("model.eligibility") }));
-  const add = el("button", { type: "button", "data-act": "add-eligible",
-                             text: t("model.add_eligible") });
-  add.addEventListener("click", () => {
-    req.eligibility.members.push(defaultEligibleMember(
-      Object.keys(products).sort()[0], req.eligibility.members.length + 1));
-    touch({ rerender: true });
-  });
-  eligibility.appendChild(add);
-  box.appendChild(eligibility);
-
-  req.eligibility.members.forEach((member, idx) => {
-    const mrow = el("div", { class: "builder-row", "data-eligible-row": String(idx) });
-    member.kind ??= "catalog_item";
-    const picker = skuSelect(products, member.sku, false,
-      (v) => { member.sku = v; touch({ rerender: true }); });
-    picker.dataset.f = "sku";
-    mrow.appendChild(field("knowledge.builder.sku", picker));
-    mrow.appendChild(num(member, "priority", "model.priority", { min: 1 }));
-    mrow.appendChild(choice(member, "approval", APPROVALS,
-      (a) => t("model.approval." + a), "model.approval"));
-    mrow.appendChild(removeButton(() => {
-      req.eligibility.members.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    box.appendChild(mrow);
-  });
-
-  // A slot binds to AT MOST ONE axis, and then names a SKU per axis value. The
-  // SKU must be one of the eligible members — anything else is a product the
-  // slot was never allowed to use, and `validate_model` says so.
-  if (req.option_axis) {
-    const axis = (session.model.option_axes || []).find((a) => a.key === req.option_axis);
-    req.sku_by_option ??= {};
-    for (const value of axis?.values || []) {
-      const vrow = el("div", { class: "builder-row" });
-      vrow.appendChild(el("span", { class: "meta",
-        text: t("model.sku_for_option", { option: valueLabel(value) }) }));
-      const skus = req.eligibility.members.map((m) => m.sku).filter(Boolean);
-      const sel = el("select");
-      sel.appendChild(option("", t("model.ref_none"), !req.sku_by_option[value.key]));
-      for (const sku of skus)
-        sel.appendChild(option(sku, sku, req.sku_by_option[value.key] === sku));
-      sel.addEventListener("change", () => {
-        if (sel.value) req.sku_by_option[value.key] = sel.value;
-        else delete req.sku_by_option[value.key];
-        touch();
-      });
-      vrow.appendChild(sel);
-      box.appendChild(vrow);
-    }
+/** "Applies when panel height is at least 1800 mm" — three controls over the
+ *  same `Expr` the JSON box below holds.
+ *
+ *  A condition the sentence cannot read renders as a line saying so, with the
+ *  box beneath it in charge. Nothing is rewritten on the way past: opening the
+ *  editor on a document must not narrow it. */
+function conditionSentence(variant) {
+  const said = readSentence(variant.condition);
+  const wrap = el("div", { class: "builder-row condition-sentence" });
+  if (!said) {
+    wrap.appendChild(el("span", { class: "meta", text: t("model.condition_only_json") }));
+    return wrap;
   }
-  return box;
-}
-
-const valueLabel = (value) =>
-  value.label_i18n?.[currentLocale()] || value.label_i18n?.en || value.key;
-
-// --- option axes -------------------------------------------------------------
-
-function renderAxes() {
-  const host = document.getElementById("model-axes");
-  host.innerHTML = "";
-  session.model.option_axes ??= [];
-  const axes = session.model.option_axes;
-  host.appendChild(subhead("model.axes", "model.add_axis", () => {
-    axes.push(defaultAxis(`axis${axes.length + 1}`));
-    touch({ rerender: true });
-  }, "btn-model-add-axis"));
-  axes.forEach((axis, idx) => {
-    const row = el("div", { class: "builder-row", "data-axis-row": String(idx) });
-    row.appendChild(text(axis, "key", "model.key", { size: 12, ltr: true }));
-    row.appendChild(i18nLabelField(axis, "model.label"));
-    row.appendChild(choice(axis, "kind", AXIS_KINDS,
-      (k) => t("model.axis_kind." + k), "model.axis_kind"));
-    const add = el("button", { type: "button", "data-act": "add-axis-value",
-                               text: t("model.add_axis_value") });
-    add.addEventListener("click", () => {
-      axis.values ??= [];
-      axis.values.push({ key: `v${axis.values.length + 1}`, label_i18n: {}, swatch: null });
-      touch({ rerender: true });
+  const isLength = said.path.endsWith("_mm");
+  const write = () => {
+    variant.condition = writeSentence({
+      path: fieldSel.value, cmp: cmpSel.value,
+      // a length crosses the display-unit boundary here, like every other
+      // length field — a height typed as 180 in cm is 1800 mm in the condition
+      value: isLength ? (toMm(valueInput.value) ?? 0)
+                      : Math.round(valueInput.valueAsNumber || 0),
     });
-    row.appendChild(add);
-    row.appendChild(removeButton(() => {
-      axes.splice(idx, 1);
-      touch({ rerender: true });
-    }));
-    host.appendChild(row);
-    for (const [vIdx, value] of (axis.values || []).entries()) {
-      const vrow = el("div", { class: "builder-row", "data-axis-value-row": String(vIdx) });
-      vrow.appendChild(text(value, "key", "model.key", { size: 10, ltr: true }));
-      vrow.appendChild(i18nLabelField(value, "model.label"));
-      vrow.appendChild(swatchField(value));
-      vrow.appendChild(removeButton(() => {
-        axis.values.splice(vIdx, 1);
-        touch({ rerender: true });
-      }));
-      host.appendChild(vrow);
-    }
-  });
-}
-
-function i18nLabelField(obj, labelKey) {
-  const i = el("input", { type: "text", dir: "auto", size: 16,
-                          value: obj.label_i18n?.[currentLocale()] || "" });
-  i.addEventListener("input", () => {
-    obj.label_i18n = { ...obj.label_i18n, [currentLocale()]: i.value };
     touch();
-  });
-  return field(labelKey, i);
-}
-
-// A swatch reaches a CSS colour, which is a STYLE context: esc() would not make
-// a bad value safe there. The backend validates `^#[0-9a-fA-F]{6}$` at model
-// load and that check is NOT weakened — the field simply refuses anything else,
-// so the author is told at the keystroke rather than at the publish gate.
-function swatchField(value) {
-  const wrap = el("span", { class: "builder-field" });
-  const chip = el("span", { class: "swatch-chip" });
-  const i = el("input", { type: "text", dir: "ltr", class: "sku", size: 9,
-                          placeholder: "#rrggbb", value: value.swatch || "" });
-  const paint = () => {
-    // only ever a string that MATCHED the pattern reaches the style property
-    chip.style.background = SWATCH_RE.test(value.swatch || "") ? value.swatch : "transparent";
   };
-  i.addEventListener("input", () => {
-    const v = i.value.trim();
-    const ok = v === "" || SWATCH_RE.test(v);
-    i.classList.toggle("invalid", !ok);
-    if (!ok) return;                 // a half-typed "#ab" is not a colour yet
-    value.swatch = v === "" ? null : v;
-    paint();
-    touch();
+  wrap.appendChild(el("span", { class: "meta", text: t("model.condition_applies_when") }));
+  const fieldSel = el("select", { "data-f": "condition_field" });
+  for (const path of CONDITION_FIELDS)
+    fieldSel.appendChild(option(path, t(`model.condition.field.${path}`), said.path === path));
+  if (!CONDITION_FIELDS.includes(said.path))
+    fieldSel.appendChild(option(said.path, said.path, true));
+  fieldSel.addEventListener("change", write);
+  wrap.appendChild(fieldSel);
+
+  const cmpSel = el("select", { "data-f": "condition_cmp" });
+  for (const cmp of CONDITION_CMPS)
+    cmpSel.appendChild(option(cmp, t(`model.condition.cmp.${cmp}`), said.cmp === cmp));
+  cmpSel.addEventListener("change", write);
+  wrap.appendChild(cmpSel);
+
+  const valueInput = el("input", {
+    type: "number", "data-f": "condition_value", step: isLength ? inputStep() : "1",
+    value: String(isLength ? toDisplayValue(said.value) : said.value),
   });
-  paint();
-  wrap.append(el("span", { class: "meta", text: t("model.swatch") }), i, chip);
+  valueInput.addEventListener("change", write);
+  wrap.appendChild(isLength ? field("model.condition_value_mm", valueInput)
+                            : field("model.condition_value", valueInput));
   return wrap;
+}
+
+// --- what the panel is made of: the elements, and the one being edited -------
+//
+// The list is the SELECTOR the drawing became: every rail, board and set of
+// screws as a chip, plus the buttons that add one. It stays beside the canvas
+// rather than being replaced by it, because two of the three cannot always be
+// clicked on the drawing — a set of screws with no fasteners placed yet has no
+// dot, and a panel being started has no rectangles at all.
+
+const ELEMENT_KINDS = ["frame", "infill", "fixing"];
+
+/** Every element of the live spec, in the order the panel is read in. */
+function elementsOf(spec) {
+  if (!spec) return [];
+  return [
+    ...(spec.frame || []).map((s) => ({ kind: "frame", key: s.key })),
+    ...(spec.infill?.pattern || []).map((m) => ({ kind: "infill", key: m.key })),
+    ...(spec.fixings || []).map((f) => ({ kind: "fixing", key: f.key })),
+  ];
+}
+
+const selectionEquals = (a, b) => a?.kind === b?.kind && a?.key === b?.key;
+
+function selectElement(next) {
+  selection = selectionEquals(selection, next) ? SELECTION_NONE : next;
+  renaming = null;
+  renderElements();
+  renderCanvasPane();
+  renderInspectorPane();
+}
+
+// The drawing, with everything a pointer can do to it. A commit writes ONE
+// authored number and then re-prices, which is the same `touch()` every field
+// in the inspector goes through — a drag is an edit like any other, and in
+// particular it does not save.
+function renderCanvasPane() {
+  const host = document.getElementById("model-canvas");
+  if (!host) return;
+  renderCanvas(host, {
+    elev: preview?.elevation,
+    spec: specOf(session.model, specIndex),
+    selection,
+  }, { onSelect: selectElement, onCommit: commitDrag });
+}
+
+function commitDrag(handle, value) {
+  const spec = specOf(session.model, specIndex);
+  if (!spec) return;
+  switch (value.kind) {
+    case "placement": {
+      const slot = (spec.frame || []).find((s) => s.key === handle.slot_key);
+      if (slot) slot.placement = value.placement;
+      break;
+    }
+    case "width": {
+      const member = (spec.infill?.pattern || []).find((m) => m.key === handle.slot_key);
+      if (member) member.width_mm = value.width_mm;
+      break;
+    }
+    case "gap": {
+      const member = (spec.infill?.pattern || []).find((m) => m.key === handle.slot_key);
+      if (member) member.gap_after_mm = value.gap_after_mm;
+      break;
+    }
+    case "margin":
+      if (spec.infill) spec.infill.edge_margin_mm = value.edge_margin_mm;
+      break;
+    default:
+      return;
+  }
+  // the inspector's number fields are live readouts of the drag, so they are
+  // rebuilt with it — the drawing waits for the re-price, which is the server's
+  // answer about where the board actually ended up
+  touch({ rerender: true });
+}
+
+function renderElements() {
+  const host = document.getElementById("model-elements");
+  if (!host) return;
+  host.innerHTML = "";
+  const spec = specOf(session.model, specIndex);
+  if (!spec) return;
+  host.appendChild(addBar(spec));
+  const chips = el("div", { class: "element-chips" });
+  for (const item of elementsOf(spec)) {
+    if (selectionEquals(renaming, item)) {
+      chips.appendChild(renameField(spec, item));
+      continue;
+    }
+    // The chip carries the GENERATED name — "Rail", "Board 2" — because nothing
+    // in the trade names a board, and the schema key is an identifier the author
+    // never chose. It is still on the chip, in the title, for the person who
+    // has to read a `base_ref` or a part table beside it.
+    const chip = el("button", {
+      type: "button", class: `element-chip element-${item.kind}`,
+      "data-element": `${item.kind}:${item.key}`,
+      title: `${item.key} — ${t("model.rename_hint")}`,
+    }, el("span", { text: elementLabel(spec, item.kind, item.key) }));
+    if (selectionEquals(selection, item)) chip.classList.add("selected");
+    chip.addEventListener("click", () => {
+      if (Date.now() < suppressChipUntil) return;
+      selectElement(item);
+    });
+    chips.appendChild(chip);
+  }
+  if (!elementsOf(spec).length)
+    chips.appendChild(el("span", { class: "meta", text: t("canvas.empty_hint") }));
+  host.appendChild(chips);
+}
+
+// --- renaming an element -----------------------------------------------------
+//
+// The key stopped being a field and became a mode. What did NOT change is what
+// a rename has to do: keys stay unique (`freeElementKey`'s rule, over the other
+// elements), and every `base_ref`/`top_ref` pointing at the old name moves with
+// it (`applyRename`, which owns that half in panel-inspector.js). Losing either
+// authors a document the publish gate refuses, for an edit that looked like a
+// rename.
+
+function beginRename(item) {
+  renaming = item;
+  renderElements();
+  const input = document.querySelector('#model-elements [data-f="key"]');
+  input?.focus();
+  input?.select();
+}
+
+function renameField(spec, item) {
+  const input = el("input", { type: "text", "data-f": "key", dir: "ltr",
+                              class: "sku element-rename", size: 12,
+                              value: item.key });
+  // Enter commits and blur commits, and the commit re-renders — so without this
+  // the blur that FOLLOWS the Enter commits a second time, against a chip whose
+  // key has already moved
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    finishRename(spec, item, input.value);
+  };
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); commit(); }
+    else if (ev.key === "Escape") { done = true; renaming = null; renderElements(); }
+  });
+  input.addEventListener("blur", commit);
+  return input;
+}
+
+function finishRename(spec, item, typed) {
+  renaming = null;
+  const want = String(typed || "").trim();
+  if (!spec || !want || want === item.key) return renderElements();
+  // unique among the OTHER elements: a key minted against the whole list would
+  // refuse the element its own name back
+  const others = elementsOf(spec)
+    .filter((e) => !selectionEquals(e, item))
+    .map((e) => ({ id: e.key }));
+  const key = freeId(want, others);
+  applyRename(spec, item.kind, item.key, key);
+  // The renamed element becomes the selected one, unconditionally. Not merely
+  // "carry the selection if it was already there": the FIRST click of the
+  // double-click toggles the chip OFF, so by the time a rename completes the
+  // selection is nothing and a conditional restore never fires — you name a
+  // board and the inspector drops the board you just named.
+  selection = { kind: item.kind, key };
+  touch({ rerender: true });
+}
+
+// A key minted from the list's LENGTH repeats itself: add three, remove one,
+// add again. `validate_model` refuses the duplicate at the gate, and before it
+// does, everything that addresses an element by key — the chips, the drawing's
+// `data-slot`, the drag handles — silently targets the first of the two. Same
+// rule `freeId` holds for model ids, over the keys of one panel.
+const freeElementKey = (spec, base) => freeId(base, elementsOf(spec).map(
+  (e) => ({ id: e.key })));
+
+// The add buttons keep the ids they had as row-list subheads: they are the same
+// actions, and the browser suite addresses them by name.
+function addBar(spec) {
+  const bar = el("div", { class: "canvas-toolbar" });
+  const button = (id, key, onClick) => {
+    const b = el("button", { type: "button", id, text: t(key) });
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  bar.appendChild(button("btn-model-add-slot", "model.add_slot", () => {
+    spec.frame ??= [];
+    const slot = defaultSlot(freeElementKey(spec, "slot"));
+    spec.frame.push(slot);
+    selection = { kind: "frame", key: slot.key };
+    touch({ rerender: true });
+  }));
+  bar.appendChild(button("btn-model-toggle-infill",
+    spec.infill ? "model.remove_infill" : "model.add_infill", () => {
+      spec.infill = spec.infill ? null : defaultInfill();
+      selection = spec.infill
+        ? { kind: "infill", key: spec.infill.pattern[0].key } : SELECTION_NONE;
+      touch({ rerender: true });
+    }));
+  if (spec.infill) {
+    bar.appendChild(button("btn-model-add-member", "model.add_member", () => {
+      const member = defaultMember(freeElementKey(spec, "member"));
+      spec.infill.pattern.push(member);
+      selection = { kind: "infill", key: member.key };
+      touch({ rerender: true });
+    }));
+  }
+  bar.appendChild(button("btn-model-add-fixing", "model.add_fixing", () => {
+    spec.fixings ??= [];
+    const fixing = defaultFixing(freeElementKey(spec, "fix"));
+    spec.fixings.push(fixing);
+    selection = { kind: "fixing", key: fixing.key };
+    touch({ rerender: true });
+  }));
+  return bar;
+}
+
+// The catalog is awaited BEFORE the host is written, so two renders racing each
+// other rebuild the pane rather than leaving a half-built one behind.
+async function renderInspectorPane() {
+  const products = await loadCatalogProducts();
+  const host = document.getElementById("model-inspector");
+  if (!host || !session) return;
+  renderInspector(host, {
+    selection, products,
+    spec: specOf(session.model, specIndex),
+    model: session.model,
+    // the drawing the server just returned, so the inspector can say what it
+    // could not place — never to measure anything off
+    elevation: preview?.elevation,
+    onChange: touch,
+    onRemove: () => { selection = SELECTION_NONE; touch({ rerender: true }); },
+    // the posts and the cap have no chip and no spec key, so the inspector is
+    // the only thing that can route to them
+    onSelect: selectElement,
+  });
+}
+
+function renderAxisPane() {
+  renderAxisEditor(document.getElementById("model-axes"),
+                   { model: session.model, onChange: touch });
 }
 
 // --- the live preview, beside the editor -------------------------------------
@@ -1138,6 +1006,17 @@ async function refreshPreview() {
     previewError = "model.preview_failed";
   }
   renderPreview();
+  // The inspector's derived readouts — the margin the fit actually left, the
+  // rails it actually drew — are read off THIS answer, which lands a re-price
+  // after the edit that moved them. Without this they show the panel before the
+  // edit, which is worse than showing nothing.
+  //
+  // Not while the author is in the pane: `num()` commits on `change`, which
+  // Enter fires without blurring, so a rebuild here would take the caret out of
+  // the field they are still standing in. The disclosure's own open state
+  // survives the rebuild — panel-inspector.js keeps it.
+  if (!document.getElementById("model-inspector")
+        ?.contains(document.activeElement)) renderInspectorPane();
 }
 
 // The bay the preview is imagined into. Rendered ONLY when the session, the
@@ -1179,13 +1058,37 @@ function renderPreview() {
   const body = document.getElementById("model-preview-body");
   if (!body) return;
   body.innerHTML = session ? previewBodyHtml() : "";
+  // A re-price landing mid-drag would rebuild the SVG the pointer is captured
+  // on, and the capture would go with it — the board would stop following the
+  // hand. The commit re-renders; until then the handle moves locally.
+  if (session && !isDragging()) renderCanvasPane();
+}
+
+// What the preview WARNED about, above the priced table.
+//
+// The post note has existed since the preview learned to measure its own
+// model's post — "a preview must not silently fall back to the centre-to-centre
+// width, that would be the preview lying about the bay" — and it has never been
+// rendered on the one surface it was written for. `panel.js` had the renderer;
+// this tab simply never called it.
+function previewWarningsHtml() {
+  const list = preview?.warnings || [];
+  if (!list.length) return "";
+  let html = `<div class="panel" id="model-preview-warnings">
+    <h3>${esc(t("panel.warnings_title"))}</h3>`;
+  for (const w of list) html += warningRowHtml(w, { pegs: t("panel.this_panel") });
+  return html + "</div>";
 }
 
 function previewBodyHtml() {
   if (previewError)
     return `<div class="panel meta">${esc(t(previewError))}</div>`;
   if (!preview) return `<div class="panel meta">${esc(t("panel.computing"))}</div>`;
-  let html = `<div class="panel" id="model-parts">
+  // the warnings FIRST, because they change how the table beneath must be read:
+  // a bay drawn at its centre-to-centre width is priced across an opening it
+  // will not have
+  let html = previewWarningsHtml();
+  html += `<div class="panel" id="model-parts">
     <h3>${esc(t("panel.parts_title"))} — <bdi class="sku">${esc(preview.model_ref)}</bdi></h3>
     <div class="meta">${sentence("panel.bay_line",
       { width_mm: preview.width_mm, height_mm: preview.height_mm })}</div>

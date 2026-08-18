@@ -101,24 +101,78 @@ def demo_catalog() -> Catalog:
         # data reading data. The typed `capabilities` record beside it is for the
         # facts deterministic code consumes (the length check, the clear opening).
         #
-        # Two posts rather than one, because a single routing would make the
+        # Two HEIGHTS rather than one, because a single routing would make the
         # matcher a lookup: a 1800 mm panel puts its rails at 150 and 1650 and a
         # 2100 mm panel at 150 and 1950, so the fence's own height decides which
         # post can be assembled at all.
+        #
+        # And three POSITIONS at each height, because the factory also decides
+        # which faces to cut, and it decides that from where the post stands:
+        #
+        #     end post     one face          "single"
+        #     line post    two at 180 deg    "opposite"
+        #     corner post  two at 90 deg     "adjacent"
+        #
+        # `routed_faces` is the second attr in this bag and it is data for the
+        # same reason `routed_at_mm` is: nothing in Python knows the name, and
+        # nothing in Python knows that "adjacent" means a corner. A model's
+        # predicate reads `post.kind` and says which of these it wants — so a
+        # company whose posts are cut on three faces adds a product and edits a
+        # rule, not a release. This is the "why you need the layout before you
+        # can order" fact, expressed.
+        #
+        # Same section, same face and same length at each height: a variant is a
+        # different CUT of the one extrusion, so a run of mixed positions has one
+        # clear opening (1500 - 90) rather than a different bay at each end. Only
+        # the price moves, and only by the routing that was skipped.
         Product(
-            sku="POST-V-1800", name="Routed vinyl post 1800",
-            name_i18n={"he": 'עמוד PVC מחורץ 1800'},
+            sku="POST-V-1800", name="Routed vinyl post 1800, line (2 opposite faces)",
+            name_i18n={"he": 'עמוד PVC מחורץ 1800 — ביניים (2 פאות נגדיות)'},
             consumption=IndivisibleDiscrete(), price_cents=9800,
             attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "routed_at_mm": [150, 1650]},
+                   "routed_at_mm": [150, 1650], "routed_faces": "opposite"},
             capabilities=Capabilities(length_mm=2600, face_width_mm=90),
         ),
         Product(
-            sku="POST-V-2100", name="Routed vinyl post 2100",
-            name_i18n={"he": 'עמוד PVC מחורץ 2100'},
+            sku="POST-V-1800-END", name="Routed vinyl post 1800, end (1 face)",
+            name_i18n={"he": 'עמוד PVC מחורץ 1800 — קצה (פאה אחת)'},
+            consumption=IndivisibleDiscrete(), price_cents=9500,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
+                   "routed_at_mm": [150, 1650], "routed_faces": "single"},
+            capabilities=Capabilities(length_mm=2600, face_width_mm=90),
+        ),
+        Product(
+            sku="POST-V-1800-CORNER",
+            name="Routed vinyl post 1800, corner (2 adjacent faces)",
+            name_i18n={"he": 'עמוד PVC מחורץ 1800 — פינה (2 פאות סמוכות)'},
+            consumption=IndivisibleDiscrete(), price_cents=9800,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
+                   "routed_at_mm": [150, 1650], "routed_faces": "adjacent"},
+            capabilities=Capabilities(length_mm=2600, face_width_mm=90),
+        ),
+        Product(
+            sku="POST-V-2100", name="Routed vinyl post 2100, line (2 opposite faces)",
+            name_i18n={"he": 'עמוד PVC מחורץ 2100 — ביניים (2 פאות נגדיות)'},
             consumption=IndivisibleDiscrete(), price_cents=11500,
             attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
-                   "routed_at_mm": [150, 1950]},
+                   "routed_at_mm": [150, 1950], "routed_faces": "opposite"},
+            capabilities=Capabilities(length_mm=2900, face_width_mm=90),
+        ),
+        Product(
+            sku="POST-V-2100-END", name="Routed vinyl post 2100, end (1 face)",
+            name_i18n={"he": 'עמוד PVC מחורץ 2100 — קצה (פאה אחת)'},
+            consumption=IndivisibleDiscrete(), price_cents=11200,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
+                   "routed_at_mm": [150, 1950], "routed_faces": "single"},
+            capabilities=Capabilities(length_mm=2900, face_width_mm=90),
+        ),
+        Product(
+            sku="POST-V-2100-CORNER",
+            name="Routed vinyl post 2100, corner (2 adjacent faces)",
+            name_i18n={"he": 'עמוד PVC מחורץ 2100 — פינה (2 פאות סמוכות)'},
+            consumption=IndivisibleDiscrete(), price_cents=11500,
+            attrs={"material": "vinyl", "finish": "smooth", "colour": "#f8fafc",
+                   "routed_at_mm": [150, 1950], "routed_faces": "adjacent"},
             capabilities=Capabilities(length_mm=2900, face_width_mm=90),
         ),
         Product(

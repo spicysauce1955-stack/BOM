@@ -236,8 +236,111 @@ input[type="number"] { direction: ltr; }
 
 /* fence model editor: the same builder rows, plus a live preview beside them */
 .models-row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
-.models-row > #model-form { flex: 3 1 560px; }
+.models-row > #model-form { flex: 3 1 640px; }
 .models-row > #model-preview { flex: 2 1 340px; }
+
+/* ---------- the panel canvas and its inspector (js/panel-canvas.js,
+   js/panel-inspector.js) ------------------------------------------------------
+   The drawing IS the editor: the canvas selects, the inspector edits what is
+   selected. Two columns, wrapping, following the .models-row convention. */
+#model-editor { display: flex; gap: 10px; align-items: flex-start;
+  flex-wrap: wrap; }
+#model-canvas-pane { flex: 3 1 420px; min-inline-size: 0; }
+#model-inspector { flex: 2 1 300px; min-inline-size: 280px;
+  border-inline-start: 1px solid #e2e8f0; padding-inline-start: 10px; }
+.canvas-toolbar { display: flex; gap: 6px; flex-wrap: wrap;
+  margin-block-end: 6px; }
+/* the starter gallery: each card is a real preview of the panel it opens */
+.template-cards { display: flex; gap: 10px; flex-wrap: wrap;
+  margin-block-start: 8px; }
+.template-card { display: flex; flex-direction: column; gap: 4px;
+  inline-size: 190px; padding: 8px; text-align: start;
+  border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+  cursor: pointer; }
+.template-card:hover { border-color: #2563eb; background: #f8fafc; }
+.template-draw { block-size: 120px; direction: ltr; /* never mirrored */
+  display: flex; align-items: center; justify-content: center; }
+.template-draw .elevation-svg { max-block-size: 120px; }
+/* never mirrored: the first board of a panel is the first board in every
+   language, and mirroring would reverse it against the plan drawn one tab over */
+#model-canvas { direction: ltr; }
+.panel-canvas-svg { max-block-size: 520px; }
+.canvas-empty { font-size: 15px; fill: #64748b; }
+.canvas-handle { fill: #fff; stroke: #2563eb; stroke-width: 2; cursor: grab;
+  touch-action: none; }
+.canvas-handle.dragging { cursor: grabbing; fill: #dbeafe; }
+.canvas-handle[data-axis="y"] { cursor: ns-resize; }
+.canvas-handle[data-axis="x"] { cursor: ew-resize; }
+.canvas-ghost { stroke: #2563eb; stroke-width: 1.5; stroke-dasharray: 6 4;
+  pointer-events: none; }
+.canvas-readout { font-size: 20px; fill: #1d4ed8; pointer-events: none; }
+.element-chips { display: flex; gap: 6px; flex-wrap: wrap;
+  margin-block-end: 8px; }
+.element-chip { display: inline-flex; gap: 5px; align-items: baseline;
+  border: 1px solid #cbd5e1; border-radius: 12px; padding: 2px 10px;
+  background: #f8fafc; cursor: pointer; }
+.element-chip:hover { border-color: #2563eb; }
+.element-chip.selected { border-color: #2563eb; background: #dbeafe; }
+.inspect-title { display: flex; gap: 6px; align-items: baseline;
+  margin-block-end: 6px; }
+.inspect-group { margin-block: 8px; }
+.inspect-head { display: block; color: #475569; font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.04em; margin-block-end: 2px; }
+/* the preference list IS the priority, so it is ordered by dragging and the
+   numbers are written from the order — never typed */
+.pref-list { list-style: none; margin: 4px 0; padding: 0; }
+.pref-item { display: flex; gap: 6px; align-items: center; padding: 3px 4px;
+  border: 1px solid #e2e8f0; border-radius: 4px; margin-block-end: 3px;
+  background: #fff; }
+.pref-item.dragging { opacity: 0.5; }
+.pref-grip { cursor: grab; color: #94a3b8; }
+/* an element is called what it IS — "Board 2" — and the key it carries is an
+   identifier nobody chose, so it rides in the title and the rename is a mode */
+.element-rename { padding: 2px 8px; border: 1px solid #2563eb; border-radius: 12px; }
+.inspect-title .rename-hint { font-size: 11px; }
+/* one decision, one control: two segments instead of a four-by-two matrix */
+.segmented { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 6px;
+  overflow: hidden; }
+.segment { border: none; background: #fff; padding: 3px 12px; cursor: pointer;
+  font: inherit; color: #334155; }
+.segment + .segment { border-inline-start: 1px solid #cbd5e1; }
+.segment:hover { background: #f1f5f9; }
+.segment.selected { background: #2563eb; color: #fff; }
+.spacing-control { margin-block: 4px; padding: 4px 6px; background: #f8fafc;
+  border: 1px solid #eef2f6; border-radius: 6px; }
+/* a figure the panel already answered: dashed because it is not authored yet,
+   editable because one keystroke is all it takes to make it so */
+.derived-field { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  margin-block: 4px; padding: 4px 6px; background: #f8fafc;
+  border: 1px solid #eef2f6; border-radius: 6px; }
+.derived-field input[type="number"] { inline-size: 96px; }
+input.derived { border: 1px dashed #94a3b8; background: #f8fafc; color: #475569;
+  font-style: italic; }
+.derived-why { color: #64748b; }
+/* The inspector is a COLUMN beside the drawing, and a product select sizes to
+   "SKU — localized name", which is longer than the column. Measured in a
+   browser: the picker hung 155px out of its own pane, over the canvas. Logical
+   properties throughout, so RTL spills nowhere either. */
+#model-inspector .builder-row, #model-inspector .builder-sub,
+#model-inspector .derived-field, #model-inspector .spacing-control,
+#model-inspector .pref-item, #model-inspector .builder-field {
+  min-inline-size: 0; max-inline-size: 100%; }
+#model-inspector select, #model-inspector input[type="text"] {
+  min-inline-size: 0; max-inline-size: 100%; text-overflow: ellipsis; }
+#model-inspector .pref-item { flex-wrap: wrap; }
+/* deferred, never removed — and it says so when it is holding something */
+.inspect-advanced { margin-block-start: 10px; border-block-start: 1px solid #e2e8f0;
+  padding-block-start: 6px; }
+.inspect-advanced > summary { cursor: pointer; color: #475569; font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.04em; }
+.inspect-advanced .advanced-badge { text-transform: none; letter-spacing: 0;
+  margin-inline-start: 6px; }
+/* an illustration of the VOCABULARY, not of this panel: three boards and two
+   rails whatever the model says, because the question is what a basis MEANS */
+.basis-diagram { inline-size: 90px; block-size: 60px; direction: ltr; }
+.basis-rail { fill: #a8b4c4; stroke: #475569; stroke-width: 0.6; }
+.basis-board { fill: #d7dee7; stroke: #475569; stroke-width: 0.6; }
+.basis-dot { fill: #f59e0b; stroke: #78350f; stroke-width: 0.6; }
 .builder-head { display: flex; gap: 8px; align-items: center; margin-block: 8px 2px;
   padding-block-start: 6px; border-block-start: 1px solid #e2e8f0; }
 /* a requirement belongs to the row above it: indented on the reading side, so
@@ -353,6 +456,18 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .elev-member.elev-nominal { fill-opacity: 0.45; }
 .elev-member.selected { stroke: #2563eb; stroke-width: 2.5; fill: #dbeafe; }
 .elev-member:hover { stroke: #2563eb; }
+/* The posts the bay stands between, and their caps. Drawn BEHIND the panel —
+   a post carries the panel, it does not sit in front of it — and outside the
+   opening, which is why the drawing's box grows to hold them. */
+.elev-post { fill: #b8c2ce; stroke: #475569; stroke-width: 1; }
+.elev-cap { fill: #94a3b8; stroke: #475569; stroke-width: 1; }
+.elev-post.selected, .elev-cap.selected { stroke: #2563eb; stroke-width: 2.5;
+  fill: #dbeafe; }
+.elevation-svg.elev-clickable .elev-post,
+.elevation-svg.elev-clickable .elev-cap { cursor: pointer; }
+/* a fastener PLACE, with its count in the title: never one dot per screw */
+.elev-fixing { fill: #f59e0b; stroke: #78350f; stroke-width: 1; }
+.elev-fixing.selected { fill: #2563eb; stroke: #1e3a8a; stroke-width: 2; }
 /* the housed end of a member: inside something, so it is hatched rather than
    filled — the elevation says THAT it is seated; the section says how */
 .elev-seat { fill: #64748b; fill-opacity: 0.28; stroke: #475569; stroke-width: 0.8;

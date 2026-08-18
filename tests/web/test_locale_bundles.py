@@ -44,6 +44,10 @@ WARNING_CODES = [
     # answer (a post without a cap is still a fence). Two severities, two
     # sentences, one fact.
     "no_item_covers_part_spec",
+    # ... and the POST's own. The line above is the CAP's, and its sentence says
+    # the post is uncapped — reusing it for a post nothing covers told an author
+    # about a cap and pointed the repair at the wrong conjunct.
+    "no_item_covers_post_spec",
 ]
 CRITIQUE_CODES = ["narrow_span"]
 
@@ -124,6 +128,10 @@ def test_backend_code_list_is_current():
         src / "ai" / "stub.py",
         src / "fulfillment" / "supply.py",
         src / "fencemodel" / "resolve.py",
+        # the PREVIEW emits codes too, and was invisible to this guard — the
+        # same hole the routes had, found the same way (a new code shipped with
+        # no locale entry because nothing scanned the file that raised it)
+        src / "fencemodel" / "preview.py",
         src / "demand" / "derive.py",
         # the ROUTES emit codes too, in HTTP detail bodies, and they were
         # invisible to this guard twice over: the file was not scanned, and a
@@ -268,25 +276,35 @@ def test_one_module_owns_each_shared_renderer():
     # One definition is only half of it: a module that stops IMPORTING the
     # shared renderer and inlines its own innerHTML defines nothing new and
     # diverges anyway, which is the failure the docstring is actually about.
+    #
+    # The Models tab is two modules now — the editor owns the session and the
+    # publish gate, the inspector owns the controls over one selected element —
+    # so each is checked for the renderer it is the caller OF. Asserting both
+    # against the editor alone would pass with the inspector growing its own
+    # product picker, which is precisely the divergence being guarded.
     editor = sources["model-editor.js"]
+    inspector = sources["panel-inspector.js"]
     assert 'from "./impact.js"' in editor and "renderImpactReport" in editor
-    assert 'from "./builder-ui.js"' in editor and "skuSelect" in editor
+    assert 'from "./builder-ui.js"' in inspector and "skuSelect" in inspector
+    assert "skuSelect" not in editor, (
+        "the product picker belongs to the inspector; a second caller in the "
+        "editor is a second answer to how a product is named")
 
 
-def test_every_value_the_model_editor_offers_has_a_word_in_both_bundles():
+def test_every_value_the_model_vocabulary_offers_has_a_word_in_both_bundles():
     """The editor renders its closed vocabularies through COMPUTED keys —
     `t("model.basis." + b)` and a dozen siblings — which key-parity scanning
     cannot see, because neither bundle contains the literal.
 
     This is the hole the other tests open: `test_the_editor_and_the_schema_agree
-    _on_the_closed_vocabularies` forces the editor's arrays to track `model.py`,
+    _on_the_closed_vocabularies` forces panel-model.js's arrays to track `model.py`,
     so adding a `LengthRule` makes the editor offer it automatically — and
     without this, that ships a green suite with a raw `model.length_rule.foo`
     on screen in both languages."""
     import re
 
     en, he = _bundles()
-    src = (STATIC / "js" / "model-editor.js").read_text()
+    src = (STATIC / "js" / "panel-model.js").read_text()
 
     def values(name):
         body = re.search(rf"const {name} = \[(.*?)\];", src, re.S)
@@ -314,6 +332,115 @@ def test_every_value_the_model_editor_offers_has_a_word_in_both_bundles():
     missing = sorted(f"{lang}:{k}" for lang, table in (("en", en), ("he", he))
                      for k in expected if k not in table)
     assert not missing, missing
+
+
+# The vocabularies the canvas renders as a SENTENCE rather than as a label:
+# "Screws at: where every board meets every rail", not "basis: per_member_crossing".
+# The VALUES stay a typed, code-defined enum — fulfillment and resolution read
+# them, so adding one is a code change with tests. Only the PHRASING is data,
+# which is what makes it correctable without a release.
+SENTENCE_VOCABULARIES = [
+    ("BASES", "model.basis."),
+    ("PLACEMENT_KINDS", "model.placement."),
+    ("JUSTIFICATIONS", "model.justification."),
+    ("EXCESS", "model.excess."),
+    ("LENGTH_RULES", "model.length_rule."),
+]
+
+# ... and the two the inspector renders as sentences from LITERALS rather than
+# from a const array, which the scan above cannot see. Deleting these from both
+# bundles passes key parity and every other test, and the select then renders a
+# raw `model.orientation.sentence.vertical` in both languages.
+LITERAL_SENTENCE_KEYS = [
+    "model.orientation.sentence.horizontal", "model.orientation.sentence.vertical",
+    "model.approval.sentence.auto", "model.approval.sentence.suggest_only",
+]
+
+
+def test_every_sentence_vocabulary_value_has_both_a_label_and_a_phrasing():
+    """The canvas reads `model.basis.sentence.<v>`; the compact places still read
+    `model.basis.<v>`. A value carrying only one of the two renders either a raw
+    key inside a Hebrew sentence or a sentence where a chip should be — and
+    neither is visible to key-parity scanning, because both keys are computed."""
+    import re
+
+    en, he = _bundles()
+    src = (STATIC / "js" / "panel-model.js").read_text()
+    missing = []
+    for const, prefix in SENTENCE_VOCABULARIES:
+        body = re.search(rf"const {const} = \[(.*?)\];", src, re.S)
+        assert body, const
+        values = re.findall(r'"([a-z_]+)"', body.group(1))
+        assert values, const
+        for value in values:
+            for key in (f"{prefix}{value}", f"{prefix}sentence.{value}"):
+                for lang, table in (("en", en), ("he", he)):
+                    if key not in table:
+                        missing.append(f"{lang}:{key}")
+    for key in LITERAL_SENTENCE_KEYS:
+        for lang, table in (("en", en), ("he", he)):
+            if key not in table:
+                missing.append(f"{lang}:{key}")
+    assert not missing, missing
+
+
+def test_the_inspector_renders_its_vocabularies_as_sentences():
+    """The keys existing is half of it: nothing else notices if the inspector
+    stops ASKING for them.
+
+    `sentenceChoice` is the one place that turns a value into its phrasing, and
+    a version of it that fell back to the label key would leave every bundle
+    entry above unreachable — the whole "a closed enum reads as a sentence"
+    feature gone, with a green suite and a UI that still works."""
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    body = src[src.index("function sentenceChoice"):]
+    body = body[:body.index("\n}\n")]
+    assert "sentence." in body, (
+        "sentenceChoice must render the phrasing key, not the label key")
+    # ... and every vocabulary that HAS a phrasing is rendered with one. Two
+    # spellings are legitimate: handed to `sentenceChoice` as a prefix, or built
+    # inline where the control does more than set a field (the placement select
+    # rebuilds the whole placement object on change).
+    for const, prefix in SENTENCE_VOCABULARIES:
+        assert f'"{prefix}"' in src or f"{prefix}sentence." in src, (const, prefix)
+
+
+# The keys the inspector builds by CONCATENATION once the `key` field was
+# deleted and the zeros became derived readouts. None of them is a literal in
+# either bundle, so key-parity scanning is blind to all of them:
+#
+#   * `model.inspect.${word}` — an element is now CALLED "Rail" / "Board 2" /
+#     "Fixings", built from what it is plus where it sits, and the word comes
+#     from this family. Losing one renders `model.inspect.board` as the name of
+#     every board in a Hebrew UI.
+#   * `model.${side}` — a distributed slot's two insets.
+#   * `model.element_n` and the `model.derived.*` sentences — the number and the
+#     reason beside a figure the panel already answered.
+COMPUTED_INSPECTOR_KEYS = [
+    "model.inspect.rail", "model.inspect.board", "model.inspect.screws",
+    "model.bottom_inset_mm", "model.top_inset_mm",
+    "model.element_n", "model.rename_hint",
+    "model.derived.margin", "model.derived.at", "model.derived.rails",
+    "model.derived.from_param",
+]
+
+
+def test_the_generated_element_name_and_its_derived_readouts_have_words():
+    en, he = _bundles()
+    missing = sorted(f"{lang}:{k}" for lang, table in (("en", en), ("he", he))
+                     for k in COMPUTED_INSPECTOR_KEYS if k not in table)
+    assert not missing, missing
+
+
+def test_the_element_word_family_is_the_one_the_inspector_asks_for():
+    """The keys existing is half of it — the other half is that `elementLabel`
+    still builds its name out of THIS family. A version that fell back to the
+    raw key would leave every entry above unreachable, with a green suite and a
+    pane that has quietly gone back to naming boards `slat`."""
+    src = (STATIC / "js" / "panel-inspector.js").read_text()
+    body = src[src.index("export function elementLabel"):]
+    body = body[:body.index("\n}\n")]
+    assert "model.inspect." in body and "model.element_n" in body
 
 
 def test_every_material_and_finish_in_the_catalog_has_a_word_in_both_bundles():

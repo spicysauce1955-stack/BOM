@@ -215,17 +215,30 @@
         <h3 data-i18n="model.library">Fence models</h3>
         <div id="model-list"></div>
         <button id="btn-model-new" type="button" data-i18n="model.new">+ New model</button>
+        <!-- the starter gallery: each card is a real preview of the panel it
+             would open, because a card that only names a structure is a name -->
+        <div id="model-gallery" hidden></div>
       </div>
       <div class="models-row">
         <div class="panel" id="model-form" hidden>
-          <div id="model-head"></div>
-          <div id="model-editor">
+          <div id="model-settings">
+            <div id="model-head"></div>
             <div id="model-spec-picker"></div>
-            <div id="model-frame"></div>
-            <div id="model-infill"></div>
-            <div id="model-fixings"></div>
-            <div id="model-axes"></div>
           </div>
+          <!-- the drawing IS the editor: the canvas selects, the inspector edits
+               what is selected, and the element list reaches the things a
+               drawing cannot show (a fixing with no fasteners placed yet) -->
+          <div id="model-editor">
+            <div id="model-canvas-pane">
+              <div id="model-elements"></div>
+              <div id="model-canvas"></div>
+            </div>
+            <div id="model-inspector"></div>
+          </div>
+          <details id="model-axes-box">
+            <summary data-i18n="model.axes">Option axes</summary>
+            <div id="model-axes"></div>
+          </details>
           <!-- the escape hatch, in millimetres like every other raw-JSON box -->
           <textarea id="model-json" dir="ltr" rows="16" cols="80" hidden></textarea>
           <div class="toolbar">

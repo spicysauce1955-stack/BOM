@@ -126,9 +126,49 @@ a "start blank" card alongside them for the rare from-scratch build — this was
 synthesis of the brainstorming options, not a choice the user explicitly clicked
 through, so it's called out here rather than assumed settled.
 
+**Resolved (2026-08-17), and the five are not these five.** The "start blank"
+card ships alongside the starters as proposed. What changed is *what the starters
+are*: the five families named above are product families, and two of them —
+tongue-and-groove and semi-privacy dogear — are board PROFILES. The panel model
+does not express a board profile, and the catalog supplies no product with one.
+A starter naming a SKU that does not exist previews as an unsupplied line and is
+then refused at the publish gate, which is the worst thing a starter can do: it
+invites an author into a document they cannot finish, for a reason that is not on
+the screen they were given.
+
+So the cards are five STRUCTURES the mechanism can say, over products that
+exist — vertical slat, picket, board-on-board, horizontal boards, ranch rail —
+and each is put through `validate_model` and a real priced preview in the suite,
+which is what keeps that promise mechanical rather than aspirational. Adding a
+tongue-and-groove starter later is a catalog change first and a card second, in
+that order. Everything else the section says is unchanged: each card just calls
+the existing clone path, so a starter is an ordinary independent draft the moment
+it is opened, with no "templated" state to track or escape.
+
 ## Architecture
 
-No backend or schema change. The canvas constructs the same `FrameSlot` / `Infill` /
+**Amended during implementation (2026-08-17): one backend change, and it is the
+fasteners.** This section said "no backend or schema change" and the table above
+said the drawing "shows the actual fastener positions as clickable dots". Those
+could not both hold: `report/elevation.py` deliberately emits no fixing geometry
+("screws are counted, not drawn, and a dot per screw would bury the panel"), so
+the dots had to come from somewhere. Computing them in the browser was the option
+that kept this paragraph true, and it is the wrong one — a dot count worked out
+in JS from rectangles the server placed is a second derivation of a quantity, and
+it would eventually show twelve dots beside a BOM line buying eight screws, on
+the one surface built so an author can see what a basis does.
+
+So `PanelElevation` gained `fixings`: fastener PLACES, each carrying its own
+count, with the slot's whole `qty` apportioned across the places its basis names.
+`sum(place.qty) == slot.qty` by construction, for every basis and every
+`qty_per_basis` — the drawing cannot disagree with the numbers it is derived
+from. `ResolvedSlot` gained `basis` to carry the rule (a geometry parameter
+beside `orientation`, which is what the others there are); a run stored before it
+carries `""` and draws nothing rather than a guess. Both are DERIVED read models,
+so this is not a change to anything stored: `FenceModel`, the API surface and the
+draft/active/retired lifecycle are untouched, exactly as the non-goals require.
+
+Everything else below stands. The canvas constructs the same `FrameSlot` / `Infill` /
 `Fixings` / `Requirement` JSON the current form builds, and saves it through the same
 `PUT`/`preview` routes. Drag geometry (a rail's y-position, a board's width and
 gap-after, in-panel pixel↔mm conversion) is pure point-list math with no DOM or

@@ -110,6 +110,23 @@ class ResolvedSlot(BaseModel):
     # whole cycle has to travel with each slot or the walk cannot be exact.
     cycle_widths_mm: list[Mm] = []
     cycle_gaps_mm: list[Mm] = []     # the AUTHORED gaps; the fitted ones are on `fit`
+    # fixing slots: which basis put this count where it is, and how many
+    # fasteners each occurrence of that basis takes. Geometry PARAMETERS exactly
+    # like `orientation` above — the elevation derives the fastener PLACES from
+    # them, and a read model obliged to guess a basis from a count would put
+    # screws where the fence has none.
+    #
+    # `qty_per_basis` is here because `qty` alone cannot be divided back into
+    # "how many places" and "how many at each": it is the product, and a read
+    # model that apportioned `qty` across whatever places it happened to find
+    # would report a per-place count nothing decided — plausible, and invented.
+    # It is the RESOLVED figure (a `qty_param` may have won it), because that is
+    # the one this bay was built to.
+    #
+    # "" / 0 is a run stored before these existed, and draws nothing rather than
+    # a guess.
+    basis: str = ""
+    qty_per_basis: int = 0
     # --- the joint, carried for the same reason the geometry above is --------
     # A section through a joint is drawn from numbers that live on the SPEC
     # (`FrameSlot.channel_depth_mm`, `Member.base_engagement_mm`), and the read
@@ -599,7 +616,7 @@ def resolve_panel(
         eligibility, pinned = _pinned_sku(rule.key, eligibility, ctx)
         slots.append(ResolvedSlot(
             slot_key=rule.key, role=rule.requirement.role, slot_kind="fixing",
-            qty=per * basis,
+            qty=per * basis, basis=rule.basis, qty_per_basis=per,
             eligibility=eligibility,
             option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
         ))

@@ -37,9 +37,43 @@ globalThis.localStorage = {
   s: {}, getItem: (k) => globalThis.localStorage.s[k] ?? null,
   setItem: (k, v) => { globalThis.localStorage.s[k] = String(v); },
 };
+// A minimum SVG DOM, so the RENDERER can be exercised and not only the pure
+// helpers around it. The clamp that would draw a flanking post inside the
+// opening lives in `drawPosts`, which no assertion could reach without this.
+function makeEl(tag) {
+  const node = {
+    tagName: tag, children: [], attrs: {}, textContent: "",
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+    appendChild(child) { this.children.push(child); return child; },
+    append(...kids) { this.children.push(...kids); },
+    addEventListener() {},
+    classList: {
+      add(...names) {
+        const have = (node.attrs.class || "").split(/\s+/).filter(Boolean);
+        node.attrs.class = [...new Set([...have, ...names])].join(" ");
+      },
+      toggle() {},
+    },
+    querySelectorAll(sel) {
+      const want = sel.replace(/^\./, "").split(".");
+      const hits = [];
+      const walk = (n) => {
+        const have = (n.attrs.class || "").split(/\s+/).filter(Boolean);
+        if (want.every((w) => have.includes(w))) hits.push(n);
+        n.children.forEach(walk);
+      };
+      this.children.forEach(walk);
+      return hits;
+    },
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
+  };
+  return node;
+}
 globalThis.document = {
   getElementById: () => null,
   querySelectorAll: () => [],
+  createElementNS: (_ns, tag) => makeEl(tag),
   documentElement: {},
 };
 globalThis.fetch = async (url) => ({
@@ -49,8 +83,8 @@ globalThis.fetch = async (url) => ({
 import { setLocale } from "./js/i18n.js";
 import { setUnits } from "./js/units.js";
 import {
-  edgeMargins, elevationRects, gapDimension, gapLine, gapSummary, hasNominal,
-  pitchDimension,
+  edgeMargins, elevationLayout, elevationRects, gapDimension, gapLine, gapSummary,
+  hasNominal, layoutMm, layoutPx, pitchDimension, renderElevation,
 } from "./js/elevation.js";
 
 const SLAT = %(slat)s;
@@ -185,6 +219,54 @@ const flush = {
 };
 out.margins_flush = edgeMargins(flush);
 out.pitch_flush = pitchDimension(flush);   // only two members: no rhythm
+
+// --- the layout the canvas overlays its handles in -------------------------
+const layout = elevationLayout(SLAT);
+out.layout_round_trip = (() => {
+  const [x, y] = layoutPx(layout, 300, 900);
+  return layoutMm(layout, x, y);
+})();
+out.layout_origin = layoutPx(layout, 0, SLAT.height_mm);   // the panel top-left
+out.layout_top = layout.y0;
+out.layout_empty = elevationLayout({ members: [] });
+
+
+// --- the posts the bay stands between --------------------------------------
+const WITH_POSTS = { ...SLAT, posts: [
+  {side: "start", kind: "line", x_mm: -90, w_mm: 90, h_mm: SLAT.height_mm,
+   cap_h_mm: 40, sku: "POST-V-1800", cap_sku: "CAP-V-90", cap_declared: false},
+  {side: "end", kind: "corner", x_mm: SLAT.width_mm, w_mm: 90, h_mm: SLAT.height_mm,
+   cap_h_mm: 40, sku: "POST-V-1800", cap_sku: "CAP-V-90", cap_declared: false},
+]};
+out.post_layout_off = (() => {
+  const L = elevationLayout(WITH_POSTS);
+  return {x0: L.x0, vw: L.vw, s: L.s};
+})();
+out.post_layout_on = (() => {
+  const L = elevationLayout(WITH_POSTS, {posts: true});
+  const [left] = layoutPx(L, -90, 0);
+  const [right] = layoutPx(L, SLAT.width_mm + 90, 0);
+  return {x0: L.x0, vw: L.vw, s: L.s, left, right, postPad: L.postPad};
+})();
+
+// --- the posts as DRAWN, not merely as laid out ----------------------------
+// The clamp both docstrings name as the failure mode can only happen in the
+// renderer, and nothing exercised the renderer.
+out.drawn_posts = (() => {
+  const svg = renderElevation(WITH_POSTS, { posts: true, annotations: false });
+  const rects = [...svg.querySelectorAll(".elev-post")].map((r) => ({
+    x: Number(r.getAttribute("x")), w: Number(r.getAttribute("width")),
+    side: r.getAttribute("data-side"),
+  }));
+  const opening = svg.querySelector(".elev-opening");
+  return { rects, opening_x: Number(opening.getAttribute("x")),
+           caps: svg.querySelectorAll(".elev-cap").length,
+           nominal_caps: svg.querySelectorAll(".elev-cap.elev-nominal").length };
+})();
+out.posts_off_by_default = (() => {
+  const svg = renderElevation(WITH_POSTS, { annotations: false });
+  return svg.querySelectorAll(".elev-post").length;
+})();
 
 console.log(JSON.stringify(out));
 """
@@ -338,3 +420,85 @@ def test_the_edge_margin_is_the_fits_own_number_not_a_measurement(ev):
     assert drawn["start_mm"] == fit["start"]
     assert drawn["end_mm"] == fit["end"] + fit["residual"]
     assert fit["start"] > 0, "the fixture must actually inset its pattern"
+
+
+# --- the layout, shared with the canvas ---------------------------------------
+
+def test_the_layout_transform_inverts_exactly(ev):
+    """The canvas overlays drag handles in the drawing's own coordinates. A
+    second copy of this transform is how a handle ends up three pixels from the
+    board it moves, so it is computed once and exported."""
+    assert ev["layout_round_trip"] == [300, 900]
+
+
+def test_the_panel_origin_is_the_drawing_origin(ev):
+    """Panel y counts UP from the bottom; SVG y grows down. The top-left of the
+    panel is therefore the drawing's own origin — and that origin is NOT a
+    constant: a fitted-gap callout takes a lane above the panel and pushes it
+    down, which is exactly why an overlay must read the layout rather than
+    assume the padding."""
+    x, y = ev["layout_origin"]
+    assert round(x) == 58                       # PAD_START
+    assert round(y) == round(ev["layout_top"])
+
+
+def test_there_is_no_layout_for_a_panel_with_nothing_in_it(ev):
+    """The same condition the renderer refuses on — a model being started has no
+    drawing yet, and the canvas draws its own empty opening for that."""
+    assert ev["layout_empty"] is None
+
+
+def test_showing_the_posts_makes_room_for_them(ev):
+    """The start post sits at a NEGATIVE x — it occupies the millimetres before
+    the opening — so the box has to grow or it is drawn over the height
+    dimension. Off by default, so every existing drawing is untouched."""
+    off, on = ev["post_layout_off"], ev["post_layout_on"]
+    assert off["x0"] == 58, "with posts hidden the origin is the plain padding"
+    assert on["x0"] > off["x0"], "showing them pushes the opening across"
+    assert on["postPad"] > 0
+
+
+def test_a_flanking_post_is_drawn_inside_the_box(ev):
+    """Both posts have to LAND on the canvas. A layout that made room at one end
+    only would put the start post off the left edge, which is invisible rather
+    than wrong-looking — the failure mode this pins."""
+    on = ev["post_layout_on"]
+    assert on["left"] >= 0, "the start post falls off the drawing"
+    assert on["right"] <= on["vw"], "the end post falls off the drawing"
+
+
+def test_the_whole_bay_shares_one_scale(ev):
+    """A bay must not resize the instant its posts are shown: the scale is taken
+    over the panel PLUS the posts, so the drawing gets slightly smaller rather
+    than the posts being drawn at a different scale from the boards."""
+    off, on = ev["post_layout_off"], ev["post_layout_on"]
+    assert on["s"] < off["s"], "the scale must absorb the posts"
+    assert on["s"] > off["s"] * 0.9, "and not by shrinking the panel dramatically"
+
+
+def test_the_start_post_is_DRAWN_left_of_the_opening(ev):
+    """The clamp both docstrings name as the failure mode, tested where it can
+    actually happen: `Math.max(post.x_mm, 0)` in the renderer draws the post over
+    the first board and shifts the bay a post-width across. The producer-side
+    tests cannot see it — they assert the number the renderer is handed."""
+    drawn = ev["drawn_posts"]
+    start = next(r for r in drawn["rects"] if r["side"] == "start")
+    end = next(r for r in drawn["rects"] if r["side"] == "end")
+    assert start["x"] + start["w"] <= drawn["opening_x"] + 0.5, (
+        "the start post must be drawn OUTSIDE the opening, to its left")
+    assert end["x"] >= drawn["opening_x"], "and the end post to its right"
+    assert start["x"] != end["x"], "both posts drawn on the same side"
+
+
+def test_an_invented_cap_height_is_drawn_as_a_nominal(ev):
+    """The catalog carries no cap height, so the one drawn is invented. A cap
+    painted exactly like a measured face claims a precision nothing has."""
+    drawn = ev["drawn_posts"]
+    assert drawn["caps"] == 2
+    assert drawn["nominal_caps"] == 2, "an invented size must say so"
+
+
+def test_the_posts_are_off_unless_the_caller_asks(ev):
+    """The Panel and Structure tabs answer what a panel is made OF. Turning the
+    posts on for them would change two drawings nobody asked to change."""
+    assert ev["posts_off_by_default"] == 0

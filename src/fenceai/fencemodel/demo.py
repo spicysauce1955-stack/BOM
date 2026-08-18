@@ -25,7 +25,7 @@ from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FixingRule, FrameSlot,
     FromBottom, FromTop, InfillSpec, Member, PanelSpec, PartRequirement, PostSlot,
 )
-from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
+from fenceai.knowledge.ast import And, Cmp, FieldRef, In, Lit, Or
 
 
 def legacy_model(rail_sku: str = "RAIL-3000", screw_sku: str = "SCREW-S10") -> FenceModel:
@@ -245,6 +245,15 @@ def routed_vinyl_model(
     be authored as a list of SKUs — which routing is right depends on where THIS
     bay puts its rails, and that is a number no author knows.
 
+    Nor is it one post. The factory cuts the holes before the post ever reaches
+    the site, so which FACES are cut is decided by where the post will stand: one
+    face at an end, two opposite faces mid-run, two adjacent faces at a corner. A
+    14-post run is 2 end + 11 line + 1 corner, not 14 of one SKU — which is why
+    a manufacturer asks for the layout before it will quote. The predicate reads
+    `post.kind` for exactly that, and `post.kind` is answerable without a cycle
+    because it comes from the TOPOLOGY and not from the panel: a node either ends
+    a run or turns a corner long before any bay is laid out over it.
+
     Hence the predicate, and hence the whole resolution order behind it:
 
         height -> rail positions -> post -> clear width -> infill fit
@@ -263,7 +272,9 @@ def routed_vinyl_model(
     carried a fixing rule "for symmetry" would put real money on a real BOM.
 
     Both members are eligible for ONE product each, so this model demonstrates the
-    post spec rather than the supply objective — S15 owns that.
+    post spec rather than the supply objective — S15 owns that. The POST is the
+    exception and always has been: its candidate set is whatever the predicate
+    admits, and it now admits a different product at each kind of station.
     """
     return FenceModel(
         id="M-VINYL", version=1,
@@ -281,6 +292,46 @@ def routed_vinyl_model(
                     # computed at this post's own station from the bay's height.
                     Cmp(cmp="==", left=FieldRef(path="item.routed_at_mm"),
                         right=FieldRef(path="panel.rail_positions_mm")),
+                    # The other half of the same fact: WHICH FACES the factory
+                    # cut. Kept as its own conjunct rather than folded into the
+                    # term above, because the two fail differently and the
+                    # diagnostic depends on telling them apart —
+                    # `sole_excluding_term` names the ONE term that excluded
+                    # everybody, and "your posts are routed 300 mm from where
+                    # this bay wants its rails" (post_routing_mismatch) is a
+                    # different sentence from "nothing in this line is cut for a
+                    # post where three runs meet".
+                    #
+                    # A GATE post takes the end post: one panel meets it and goes
+                    # into that one routed face, and the leaf hangs off the other
+                    # side on hardware rather than through a hole. A TRANSITION —
+                    # a step or a change of base — is a line post: a bay each
+                    # side, at 180 degrees, exactly like any other mid-run post.
+                    #
+                    # A JUNCTION is deliberately absent. Three runs meeting needs
+                    # a post cut on three faces and this line does not make one,
+                    # so the generator refuses that fence by name instead of
+                    # quietly standing a two-face post where three panels have to
+                    # land. That is the refusal doing its job, not a gap.
+                    Or(items=[
+                        And(items=[
+                            In(item=FieldRef(path="post.kind"),
+                               options=["end", "gate"]),
+                            Cmp(cmp="==", left=FieldRef(path="item.routed_faces"),
+                                right=Lit(value="single")),
+                        ]),
+                        And(items=[
+                            In(item=FieldRef(path="post.kind"),
+                               options=["line", "transition"]),
+                            Cmp(cmp="==", left=FieldRef(path="item.routed_faces"),
+                                right=Lit(value="opposite")),
+                        ]),
+                        And(items=[
+                            In(item=FieldRef(path="post.kind"), options=["corner"]),
+                            Cmp(cmp="==", left=FieldRef(path="item.routed_faces"),
+                                right=Lit(value="adjacent")),
+                        ]),
+                    ]),
                 ])),
             ),
             cap=PartRequirement(

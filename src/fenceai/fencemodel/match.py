@@ -152,35 +152,68 @@ def sole_excluding_term(
 
 def post_panel_facts(
     *, model_id: str, height_mm: int, vertical: str, rail_positions_mm: list[int],
+    kind: str,
 ) -> dict:
-    """What a POST's predicate may know about the bay it stands beside.
+    """What a POST's predicate may know: the bay it stands beside, and WHERE IT
+    STANDS.
 
-    A strictly smaller set than `panel_facts`, and the difference is the cycle
-    rule: a bay's clear opening is measured TO its posts' faces, so a post chosen
-    BY that opening would be choosing itself. Everything here is settled from the
-    bay's HEIGHT, before any post is known, which is what makes the resolution
-    order a DAG.
+    `panel` is a strictly smaller set than `panel_facts`, and the difference is
+    the cycle rule: a bay's clear opening is measured TO its posts' faces, so a
+    post chosen BY that opening would be choosing itself. Everything under
+    `panel` is settled from the bay's HEIGHT, before any post is known, which is
+    what makes the resolution order a DAG.
 
-    The keys are `POST_PREDICATE_PANEL_FACTS` — the set `validate_model` refuses
-    a post predicate for reading outside of. Two statements of one set would drift
-    the moment either moved, so a test pins them equal.
+    `post` is the post's own position, and it is NOT part of that cycle — which
+    is why it can be here at all. A post's KIND is not derived from the panel:
+    it comes from the topology (does this node end a run, turn a corner, or sit
+    mid-run), and it is settled before any bay is laid out, let alone resolved.
+    It has to be readable, because a routed post is cut at the factory and WHICH
+    FACES are cut is decided by exactly this: an end post is routed on one face,
+    a line post on two opposite faces, a corner post on two adjacent ones. A
+    model that could not read it would name one post SKU for a whole run and
+    order every end and every corner wrong.
+
+    The keys are `POST_PREDICATE_PANEL_FACTS` and `POST_PREDICATE_POST_FACTS` —
+    the sets `validate_model` refuses a post predicate for reading outside of.
+    Two statements of one set would drift the moment either moved, so a test pins
+    them equal.
+
+    `mounting` is deliberately NOT here, though it is settled just as early.
+    A post's mounting is resolved from knowledge inside `_make_post`, AFTER the
+    model's post is chosen, and a `force_mounting` override can move it; putting
+    it in front of the predicate would mean resolving it a second time in a
+    second place, and the two answers could differ for one post. Mounting also
+    already reaches the BOM on its own path (`_resolve_mounting` buys the plate),
+    so nothing is inexpressible without it. If a line ever does need it, resolve
+    it ONCE at the call sites and pass it in — do not resolve it twice.
     """
-    return {"panel": {
-        "model_id": model_id,
-        "height_mm": height_mm,
-        "vertical": vertical,
-        "rail_positions_mm": rail_positions_mm,
-    }}
+    return {
+        "panel": {
+            "model_id": model_id,
+            "height_mm": height_mm,
+            "vertical": vertical,
+            "rail_positions_mm": rail_positions_mm,
+        },
+        "post": {"kind": kind},
+    }
 
 
-def chosen_post_facts(product) -> dict:
-    """What a CAP's predicate may know: the post it caps, already chosen.
+def chosen_post_facts(product, position: dict) -> dict:
+    """What a CAP's predicate may know: the post it caps, already chosen — and
+    the same position facts the post itself was chosen by.
 
     Ordered, not circular — which is the whole reason `cap` nests inside
     `PostSlot`. A cap asks about its post because the post was resolved first;
     nothing ever asks a post about its cap.
+
+    `position` merges into the SAME `post` namespace and WINS over the product's
+    attrs, on the same reasoning as `_RESERVED`: `post.kind` has to mean the same
+    thing in a cap's predicate as in a post's, or one namespace carries two
+    vocabularies and an author has no way to tell which one answered. A cap for
+    corner posts only is then expressible, and it reads exactly like the post
+    rule that produced the post.
     """
-    return {"post": _item_ctx(product)}
+    return {"post": {**_item_ctx(product), **position}}
 
 
 def match_spec(spec: PanelSpec, catalog: Catalog, facts: dict) -> PanelSpec:
