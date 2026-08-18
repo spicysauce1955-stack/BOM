@@ -70,9 +70,6 @@ flowchart TD
     API --> WEB
 ```
 
-> **Note.** `system-design.md`'s module map predates `fencemodel` and `report`; both
-> are added there alongside this document.
-
 ### Two edges that point the wrong way
 
 `project` imports `strategy.overrides` and `ai.records` (`project/model.py:7,9`).
