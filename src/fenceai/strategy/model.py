@@ -142,6 +142,24 @@ class ModelUse(BaseModel):
                 tuple(sorted((k, str(v)) for k, v in self.options.items())))
 
 
+class PartUse(BaseModel):
+    """One part, as a run actually resolved it — `parts.resolve`'s report.
+
+    `content_hash` is here for the same reason `ModelUse.content_hash` is: a draft
+    version's document may move under a fixed `(part_id, version)`, so the number
+    alone is not enough to say what a run drew on. An active version's hash is
+    redundant with its immutability but costs nothing to carry, and a uniform shape
+    is what lets `GenerationRun.part_snapshot` (Task 7) stamp both alike.
+    """
+
+    part_id: str
+    version: int
+    content_hash: str = ""
+
+    def sort_key(self) -> tuple:
+        return (self.part_id, self.version, self.content_hash)
+
+
 class GenerationRun(BaseModel):
     id: str
     project_id: str = ""

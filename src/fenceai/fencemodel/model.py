@@ -90,10 +90,27 @@ class Eligibility(BaseModel):
 
 
 class PartRequirement(BaseModel):
-    role: str                       # post | cap | concrete | rail | screw | infill | spacer
+    """WHERE a part goes in this panel. What it IS lives on the part.
+
+    The line is what the piece is versus where it goes: a joint is a relationship
+    between two members in a panel, not a property of a rail — the same rail seats
+    into a channel in one model and butts in another. But a rail's width is the
+    rail's, and keeping it here is what let a model draw 38 while buying 45.
+
+    `part_id` is unpinned. A slot storing `rail-38@v3` would mean fixing a rail spec
+    requires republishing every model naming it, which is the entire reason the part
+    is a shared entity rather than a copied template. Generation resolves
+    `latest_active` and the RUN stamps what it resolved.
+
+    `eligibility` is not authored here and carries no default a person writes: it is
+    filled by `parts.resolve.resolve_model_parts` and cleared by the matcher, which
+    is the same lifetime it has always had downstream.
+    """
+
+    part_id: str
     qty: int = 1
     length_rule: LengthRule | None = None
-    overlap_mm: Mm = 0              # only for length_rule == "overlap"
+    overlap_mm: Mm = 0
     option_axis: str | None = None
     sku_by_option: dict[str, str] = {}
     eligibility: Eligibility = Eligibility()
@@ -160,7 +177,11 @@ class FrameSlot(BaseModel):
 
 class Member(BaseModel):
     key: str
-    width_mm: Mm
+    # Undeclared (0) until `parts.resolve.resolve_model_parts` fills it from the
+    # part's dimensions — the same lifetime `thickness_mm` and `eligibility` have.
+    # Keeping this authored on the part rather than here is what let a model draw
+    # 38 while buying 45.
+    width_mm: Mm = 0
     thickness_mm: Mm = 0
     face_offset_mm: int = 0     # + front face, - back face (shadowbox)
     gap_after_mm: Mm = 0        # MAY be negative: an overlap (board-on-board)

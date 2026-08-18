@@ -432,6 +432,18 @@ class Store:
             raise ValueError(
                 f"illegal status transition {part.status} -> {status} for {part.ref}"
             )
+        if status == "retired":
+            # A published model naming this part would resolve to nothing at its next
+            # generation. Refused here rather than in a route, because it is the
+            # invariant — the same placement `save_fence_model`'s immutability refusal
+            # argues for. Note it checks ACTIVE models only: a draft naming a part it
+            # is about to stop naming must not block the retirement.
+            naming = self._models_naming_part(part_id)
+            if naming:
+                raise ValueError(
+                    f"{part.ref} is still named by {', '.join(naming)} — retiring it "
+                    "would leave those slots with nothing eligible"
+                )
         if status == "active":
             for row in self._conn.execute(
                 "SELECT version FROM parts WHERE part_id=? AND status='active'",
@@ -441,6 +453,14 @@ class Store:
                     self._set_part_status_nocommit(part_id, row[0], "retired", actor)
         self._set_part_status_nocommit(part_id, version, status, actor)
         self._conn.commit()
+
+    def _models_naming_part(self, part_id: str) -> list[str]:
+        from fenceai.parts.resolve import part_requirements
+        return sorted(
+            m.ref for m in self.fence_model_library().models
+            if m.status == "active"
+            and any(r.part_id == part_id for _key, r in part_requirements(m))
+        )
 
     def _set_part_status_nocommit(
         self, part_id: str, version: int, status: str, actor: str
