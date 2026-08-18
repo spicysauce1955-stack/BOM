@@ -1,5 +1,100 @@
 # Current status
 
+## A post is chosen by where it stands (2026-08-18)
+Prompted by the user, twice: the canvas was still *"extremely unintuitive and not
+comfortable"*, and then *"but what about poles, upper and lower bars, rails,
+caps?"* — the question that broke the redesign open. Researched the trade rather
+than guessing, and the domain answered three things the schema did not.
+
+**The blocking gap: a post predicate could not see which post it is.** A vinyl
+post is routed at the factory and WHICH FACES are cut depends on where it stands
+— end (one face), line (two opposite), corner (two adjacent). Manufacturers say
+it outright: you must know the layout before ordering. `post_panel_facts` handed
+a predicate four facts and position was not among them, so M-VINYL named ONE post
+sku for a whole run and every end and corner post was ordered wrong.
+
+The omission was principled but over-broad. It protects a real cycle — a bay's
+opening is measured TO the post faces, so a post chosen BY that opening chooses
+itself — but a post's KIND comes from the TOPOLOGY, not from the panel, and is
+settled before any of it. `post.kind` is now readable
+(`POST_PREDICATE_POST_FACTS`, beside the panel set the cycle rule still bounds);
+the catalog carries six routed posts (two heights x three positions) keyed on a
+`routed_faces` attribute no code knows the name of; M-VINYL maps position to
+routing AS DATA in its predicate, kept a separate conjunct so
+`sole_excluding_term` can still name which term excluded everybody.
+
+Two calls worth keeping. `gate` takes the single-face post rather than a blank
+one: a blank post has no `routed_at_mm`, so the routing conjunct would fail and
+every gate on a vinyl run would become a generation failure. `junction` is
+deliberately unmapped — three runs meeting needs a three-face post this line does
+not make, so it refuses by name rather than standing a two-face post where three
+panels land. S16 moved 119 900 -> 119 300 (two terminus posts skip 300c of
+routing each); only `vinyl.json` moved in the compatibility gate.
+
+**The parts with no editor at all.** `model.post` and `model.post.cap` were
+reachable only through the raw JSON box — and because the panel spans the clear
+opening BETWEEN the posts, the two parts with no controls were also the two
+literally off the drawing. The elevation now carries them: `x_mm` is NEGATIVE on
+the start side, because the post occupies the millimetres before the opening, and
+a renderer that clamped it to zero would draw the post over the first board. The
+box grows to hold them at ONE scale, so a bay does not resize the moment its
+posts appear. They are clickable, and the pane says "chosen by a rule rather than
+a list" for a predicate-driven post — or offers to specify one for a model that
+says nothing about its posts.
+
+**The inspector: eighteen controls to six.** Describing one board took eighteen,
+and the first asked the author to invent an identifier. The trade specifies a
+panel with about six; Figma lays out a row of things with four and folds "spread
+them out" into `gap: Auto` rather than a matrix. So the `key` field is gone
+(elements are auto-named; renaming is a double-click on the chip and still
+carries `base_ref`/`top_ref`); `justification` x `excess` collapses into one
+Even/Exactly segment with all EIGHT pairs still reachable and a pair no segment
+matches saying so; blank-and-zero fields became visible DERIVED readouts with
+their reason, which display without ever authoring; and role, cut-to, option
+axis, face offset, thickness and the refs sit behind one Advanced disclosure that
+badges how many non-default values it holds.
+
+**What the research corrected.** Vinyl picket and semi-privacy DO have gaps —
+fixed by where the rail was routed, so derived and read-only rather than absent.
+Pre-routed posts are a property of the product LINE, not of vinyl; bracket
+systems are common, with a different fit tolerance. The bottom rail's steel
+insert is height-conditional. And wood is less free than assumed: board width is
+a discrete sku, rail count follows height (2 under 5ft, 3 at 5-7ft, 4 at 8ft).
+
+**Three things found and deliberately not built.**
+* **Chain link has no panel object.** Its authored unit is a STRETCH between
+  terminal posts, and its BOM is driven by terminal count and hook-ups, not by
+  sections. Forcing it into the panel editor would be a larger modelling error
+  than the vinyl gap field that started this.
+* **A rail cannot carry its companion part.** `FrameSlot` has exactly one
+  `requirement`, and a real vinyl bottom rail is the rail PLUS the galvanised
+  channel inside it.
+* **ISPSC 305.2 couples two rules we model independently.** Rails 45 in apart
+  allow a 4 in gap; rails CLOSER than that require 1.75 in. We hold
+  `max_clear_gap_mm` and `min_rail_separation_mm` (= 1143 = 45 in) as separate
+  refusals, so a compliant pool fence with close rails and tight pickets is
+  refused. The error direction is safe; the fix is a knowledge pack under the
+  golden-scenarios procedure.
+
+**Four defects the browser found that green suites did not.** Two were patches
+of mine landing in the wrong function after an agent rewrote around them — one
+put `rename = onRename` inside the AXIS editor, which threw on every model open
+while `tests/web` stayed green. Renaming an element dropped the selection (the
+first click of a double-click toggles the chip off, so a conditional restore
+never fired). And the app seeds the catalog only into an EMPTY database, so a
+catalog change never reaches an existing `fenceai.db` — which is why the first
+browser check showed no posts at all.
+
+One method note, because it cost time: "assert a laid-out rectangle" catches an
+element that was never rendered (the 0x0 basis diagram), but it CANNOT tell a
+deferred control from a shown one — Chrome still reports a box for
+`content-visibility: hidden`, verified against a control `<details>` built on the
+same page. Deferral is asserted structurally instead: the control sits inside the
+disclosure, and the disclosure starts shut.
+
+1248 pytest · 180/180 smoke · scenarios updated through the golden-scenarios
+procedure, docs moved with the numbers.
+
 ## The Models tab is a canvas (2026-08-17)
 Spec `docs/superpowers/specs/2026-08-17-panel-canvas-design.md`, plan
 `docs/superpowers/plans/2026-08-17-panel-canvas.md`. The user's complaint, in
