@@ -172,6 +172,24 @@ def test_an_item_without_one_omits_the_key_rather_than_passing_none():
     assert "stock_length_mm" not in _item_ctx(_box())
 
 
+def test_a_stale_attrs_value_does_not_leak_when_the_product_has_no_real_length():
+    """`_RESERVED` names `stock_length_mm`, and the filter that enforces it must
+    run BEFORE attrs merges in, not overwrite after — a product with no real
+    length must not surface a `stock_length_mm` an author happened to leave in
+    attrs, or a `supplies` predicate (`item.stock_length_mm >= 0`) would admit it."""
+    item = Product(sku="SCREW", name="SCREW", consumption=PackagedDiscrete(qty_per_package=100),
+                   attrs={"stock_length_mm": 9999})
+    assert "stock_length_mm" not in _item_ctx(item)
+
+
+def test_a_stale_attrs_value_does_not_override_the_real_length():
+    """A product WITH a real length reports the real one, never an attrs value
+    that happens to disagree with it."""
+    item = Product(sku="BAR", name="BAR", consumption=DivisibleLinear(purchase_length_mm=3000),
+                   attrs={"stock_length_mm": 9999})
+    assert _item_ctx(item)["stock_length_mm"] == 3000
+
+
 def test_supplies_admits_bar_stock_and_fixed_pieces_and_refuses_a_box():
     from fenceai.parts.compile import compile_field
     from fenceai.parts.model import SpecField

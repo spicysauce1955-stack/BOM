@@ -121,11 +121,21 @@ def _item_ctx(product) -> dict:
     `_covers` reads a missing field as "has not covered the requirement", which
     is the honest answer for a post whose face width nobody recorded. A None
     would compare as a value and quietly satisfy `!=`.
+
+    `_RESERVED` keys are filtered OUT of `attrs` before anything is merged in,
+    not merely overwritten after — an unconditional assignment (`sku`,
+    `consumption`) can't be shadowed by an attrs entry either way, but
+    `stock_length_mm` is only set when the product HAS one, so if attrs were
+    merged first a `stock_length_mm` an author left in attrs would survive on
+    every product that declares no real length, and a `supplies` predicate
+    (`item.stock_length_mm >= 0`) would admit it on a stale attrs value.
     """
     declared = {k: v for k, v in product.capabilities.model_dump().items()
                 if v is not None}
-    ctx = {**product.attrs, **declared, "sku": product.sku,
-           "consumption": product.consumption.kind}
+    ctx = {k: v for k, v in product.attrs.items() if k not in _RESERVED}
+    ctx.update(declared)
+    ctx["sku"] = product.sku
+    ctx["consumption"] = product.consumption.kind
     length = stock_length_mm(product)
     if length is not None:
         ctx["stock_length_mm"] = length
