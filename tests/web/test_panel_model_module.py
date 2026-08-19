@@ -33,6 +33,7 @@ import pytest
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.fencemodel.model import FenceModel, Variant, validate_model
+from fenceai.parts.model import PartLibrary
 
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
@@ -162,7 +163,7 @@ def test_the_smallest_authored_model_is_one_the_backend_accepts(out):
     take it. `validate_model` is the publish gate, so a green here is the claim
     that a model authored from defaults CAN be published."""
     model = FenceModel.model_validate(out["authored"])
-    assert validate_model(model, demo_catalog()) == []
+    assert validate_model(model, demo_catalog(), PartLibrary()) == []
 
 
 def test_every_eligibility_member_carries_its_discriminator(out):
@@ -237,11 +238,11 @@ def test_a_negative_gap_is_offered_by_the_control_itself(out):
     member = model.default_spec.infill.pattern[0]
     member.width_mm, member.gap_after_mm = board["width_mm"], board["gap_after_mm"]
     assert member.gap_after_mm < 0
-    assert validate_model(model, demo_catalog()) == []
+    assert validate_model(model, demo_catalog(), PartLibrary()) == []
     # ... and the bound that IS real still bites: an overlap that swallows the
     # member whole makes `fit_pattern` stand still
     member.gap_after_mm = -member.width_mm
-    assert any("never advance" in e for e in validate_model(model, demo_catalog()))
+    assert any("never advance" in e for e in validate_model(model, demo_catalog(), PartLibrary()))
 
 
 def test_duplicating_twice_does_not_collide(out):
@@ -475,7 +476,7 @@ def _judge_renamed(spec: dict) -> None:
                                     {"kind": "catalog_item", "sku": "SLAT-100"}]}}}]},
         },
     })
-    assert validate_model(model, demo_catalog()) == [], (
+    assert validate_model(model, demo_catalog(), PartLibrary()) == [], (
         "a rename that orphans a ref authors a document the gate refuses")
 
 

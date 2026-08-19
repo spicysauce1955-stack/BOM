@@ -20,9 +20,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fenceai.catalog.model import Catalog
+from fenceai.catalog.model import Catalog, DivisibleLinear
+from fenceai.core.units import Mm
 from fenceai.fencemodel.model import Eligibility, EligibleItem, PanelSpec
-from fenceai.knowledge.ast import And, MissingField, evaluate_expr, lookup
+from fenceai.knowledge.ast import (
+    And, MissingField, evaluate_expr, lookup, register_function,
+)
 
 if TYPE_CHECKING:
     from fenceai.fencemodel.resolve import PanelContext
@@ -69,10 +72,79 @@ def match_eligibility(
 #
 # Reserved rather than merged politely: if an attrs key shadowed one of these,
 # two products could disagree about what `item.consumption` even means.
-_RESERVED = ("sku", "consumption")
+_RESERVED = ("sku", "consumption", "stock_length_mm")
+
+
+def stock_length_mm(product) -> Mm | None:
+    """How long a piece can you get from ONE purchase unit — the single definition.
+
+    Bar stock carries it on its consumption (`purchase_length_mm`); a fixed piece
+    carries it as a capability. Before this, neither was reachable by a predicate —
+    `_item_ctx` merged attrs, capabilities, sku and consumption KIND, so a bar's
+    length was invisible — while `_can_supply_length` reached into the consumption
+    object for it. Two definitions of one fact would disagree the moment either
+    moved, so `_can_supply_length` is now expressed in terms of this one.
+
+    None means "declares no length anywhere", and `_item_ctx` OMITS the key rather
+    than passing None: a None would compare as a value and quietly satisfy `>= 0`.
+    """
+    if isinstance(product.consumption, DivisibleLinear):
+        return product.consumption.purchase_length_mm
+    return product.capabilities.length_mm
+
+
+@register_function("covers")
+def _covers_fn(item_value, part_value, *, ctx=None) -> bool:
+    """The ITEM's declared set includes everything the PART declares.
+
+    A scalar on either side is a one-element set, which is what lets one operator
+    serve "my token is among yours" and "your holes include mine" without the author
+    telling them apart. Its mirror — the item's value is one of the ones the part
+    lists — is `among`, and that one compiles to `In` because there the computed side
+    is the item. Two operators, because neither subsumes the other: `covers` asks
+    about a set the ITEM declares, `among` about a set the PART declares.
+    """
+    have = set(item_value) if isinstance(item_value, list) else {item_value}
+    need = set(part_value) if isinstance(part_value, list) else {part_value}
+    return need <= have
+
+
+# `_item_ctx` memoised by the identity of the PRODUCT it describes.
+#
+# Migrating authored member lists to predicates turned matching into a full-catalog
+# scan per slot per bay: on a 120 m run against a 4623-product catalog that is
+# 957 000 calls, 2.35 s of a 2.5 s generation, almost all of it a `model_dump()` of
+# three optional integers. The context is a pure function of the product, so this
+# computes the same dict fewer times and nothing else.
+#
+# Keyed by the product's IDENTITY rather than by its sku, because a catalog is
+# mutated by REPLACING a product (`catalog.products[sku] = ...`, the /api/catalog
+# route and half the strategy tests) — an sku key would serve the old answer for
+# the new product, which is the one failure a memo must not have. The product is
+# held STRONGLY beside its context so its id cannot be recycled underneath the key
+# while the entry lives; `products` are documents that are replaced and never
+# edited in place, which is what makes identity a sound key at all.
+#
+# Cleared wholesale at a bound rather than evicted one at a time: this is a memo
+# over one generation's catalog, not a cache anybody is tuning, and a fresh catalog
+# arrives with every request.
+_ITEM_CTX: dict[int, tuple[object, dict]] = {}
+_ITEM_CTX_MAX = 20_000
 
 
 def _item_ctx(product) -> dict:
+    key = id(product)
+    hit = _ITEM_CTX.get(key)
+    if hit is not None and hit[0] is product:
+        return hit[1]
+    ctx = _build_item_ctx(product)
+    if len(_ITEM_CTX) >= _ITEM_CTX_MAX:
+        _ITEM_CTX.clear()
+    _ITEM_CTX[key] = (product, ctx)
+    return ctx
+
+
+def _build_item_ctx(product) -> dict:
     """Everything this item declares about itself, under one namespace.
 
     Typed capabilities sit beside the open `attrs` bag rather than under a prefix
@@ -84,11 +156,25 @@ def _item_ctx(product) -> dict:
     `_covers` reads a missing field as "has not covered the requirement", which
     is the honest answer for a post whose face width nobody recorded. A None
     would compare as a value and quietly satisfy `!=`.
+
+    `_RESERVED` keys are filtered OUT of `attrs` before anything is merged in,
+    not merely overwritten after — an unconditional assignment (`sku`,
+    `consumption`) can't be shadowed by an attrs entry either way, but
+    `stock_length_mm` is only set when the product HAS one, so if attrs were
+    merged first a `stock_length_mm` an author left in attrs would survive on
+    every product that declares no real length, and a `supplies` predicate
+    (`item.stock_length_mm >= 0`) would admit it on a stale attrs value.
     """
     declared = {k: v for k, v in product.capabilities.model_dump().items()
                 if v is not None}
-    return {**product.attrs, **declared, "sku": product.sku,
-            "consumption": product.consumption.kind}
+    ctx = {k: v for k, v in product.attrs.items() if k not in _RESERVED}
+    ctx.update(declared)
+    ctx["sku"] = product.sku
+    ctx["consumption"] = product.consumption.kind
+    length = stock_length_mm(product)
+    if length is not None:
+        ctx["stock_length_mm"] = length
+    return ctx
 
 
 def item_value(product, path: str):
@@ -236,7 +322,7 @@ def match_spec(spec: PanelSpec, catalog: Catalog, facts: dict) -> PanelSpec:
 
 def _holders(spec: PanelSpec) -> list:
     """Everything in a spec that carries a requirement. Mirrors
-    `model._requirements`, which returns keys rather than the objects to mutate."""
+    `model.spec_requirements`, which returns keys rather than the objects to mutate."""
     return [
         *spec.frame,
         *(spec.infill.pattern if spec.infill else []),

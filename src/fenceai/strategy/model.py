@@ -142,6 +142,34 @@ class ModelUse(BaseModel):
                 tuple(sorted((k, str(v)) for k, v in self.options.items())))
 
 
+class PartUse(BaseModel):
+    """One part, as a run actually resolved it — `parts.resolve`'s report.
+
+    `content_hash` guards against a version NUMBER being reused. It is NOT the
+    draft argument `ModelUse.content_hash` makes — that one is true of a model and
+    false of a part: `resolve_model_parts` resolves `latest_active` and nothing
+    else, so a draft is never in a snapshot and a draft moving under a fixed
+    `(part_id, version)` is a thing no run can observe.
+
+    What a run CAN observe is two libraries that both call something
+    `rail-3000@v1` and mean different documents — a restored database, an import,
+    a seed that diverged from the one a run was generated against. Without the
+    hash those two runs share a digest, the second `INSERT OR IGNORE` drops
+    silently, and every later read serves the first run's answer for the second
+    run's fence. That is the failure, and it is the reason the field is a digest
+    input rather than a decoration. Defensive, in the honest sense: nothing in
+    this codebase reuses a version number today, and the cost of carrying the
+    hash is sixteen characters against a corruption nothing else would report.
+    """
+
+    part_id: str
+    version: int
+    content_hash: str = ""
+
+    def sort_key(self) -> tuple:
+        return (self.part_id, self.version, self.content_hash)
+
+
 class GenerationRun(BaseModel):
     id: str
     project_id: str = ""
@@ -157,6 +185,13 @@ class GenerationRun(BaseModel):
     # the fence models this run actually drew from — part of what "generated from"
     # means, so it belongs in the run id (run identity, task 10)
     model_snapshot: list[ModelUse] = []
+    # the parts this run resolved — a model names a part_id and NOT a version, so
+    # two runs of the identical model document mean different fences the moment a
+    # part moves. That makes this part of what "generated from" means, and it goes
+    # into the run id on `model_snapshot`'s argument. `[]` is a run generated
+    # before parts existed and needs no validator, because it is the default —
+    # the same readable-old-runs convention `catalog_skus` keeps.
+    part_snapshot: list[PartUse] = []
     # catalog content hash at generation time — /bom and /structure refuse to
     # re-read a stored run against a catalog that no longer matches it
     catalog_hash: str = ""

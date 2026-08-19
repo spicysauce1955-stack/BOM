@@ -44,7 +44,7 @@ from fenceai.catalog.demo import demo_catalog
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.strategy.generator import generate
-from tests.scenarios.test_invariants import LIBRARY, _fixtures
+from tests.scenarios.test_invariants import LIBRARY, PARTS, _fixtures
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "compatibility_gate"
 
@@ -54,7 +54,7 @@ def _spine(name: str) -> dict:
     topo, overrides, inventory, *model = _fixtures()[name]
     catalog = demo_catalog()
     result = generate(topo, demo_knowledge(), catalog, overrides=overrides,
-                      models=LIBRARY, default_model=model[0] if model else None)
+                      models=LIBRARY, parts=PARTS, default_model=model[0] if model else None)
     priced = price_strategy(result.strategy, catalog, inventory,
                             demand_skus=result.run.demand_skus,
                             preset=result.run.objective_preset)
@@ -97,7 +97,7 @@ def test_the_gate_covers_a_fitted_infill_panel():
     nothing any golden file was watching."""
     topo, overrides, _, choice = _fixtures()["slat"]
     result = generate(topo, demo_knowledge(), demo_catalog(), overrides=overrides,
-                      models=LIBRARY, default_model=choice)
+                      models=LIBRARY, parts=PARTS, default_model=choice)
     spans = result.strategy.spans
     assert spans
     golden_slats = {

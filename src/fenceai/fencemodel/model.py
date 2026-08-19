@@ -16,13 +16,16 @@ that one really would go nowhere.
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
 from fenceai.knowledge.ast import Expr, field_paths
+
+if TYPE_CHECKING:      # `parts.resolve` imports this module; the runtime imports
+    from fenceai.parts.model import PartLibrary   # are deferred into the functions
 
 _SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -90,13 +93,87 @@ class Eligibility(BaseModel):
 
 
 class PartRequirement(BaseModel):
-    role: str                       # post | cap | concrete | rail | screw | infill | spacer
+    """WHERE a part goes in this panel. What it IS lives on the part.
+
+    The line is what the piece is versus where it goes: a joint is a relationship
+    between two members in a panel, not a property of a rail — the same rail seats
+    into a channel in one model and butts in another. But a rail's width is the
+    rail's, and keeping it here is what let a model draw 38 while buying 45.
+
+    `part_id` is unpinned. A slot storing `rail-38@v3` would mean fixing a rail spec
+    requires republishing every model naming it, which is the entire reason the part
+    is a shared entity rather than a copied template. Generation resolves
+    `latest_active` and the RUN stamps what it resolved.
+
+    `eligibility` is not authored here and carries no default a person writes: it is
+    filled by `parts.resolve.resolve_model_parts` and cleared by the matcher, which
+    is the same lifetime it has always had downstream.
+
+    `role` has the SAME lifetime, and for the same reason: it is not authored here
+    either, it is filled by `resolve_model_parts` from the part's `type`. Role left
+    AUTHORING when the part became the thing that says what a piece is — a slot
+    saying "rail" beside a part_id naming a screw part would be two authorities over
+    one word — but it did not leave the system: `ResolvedSlot.role` is required, and
+    `demand/derive.py` and the decision graph both read it. `""` is what an
+    unresolved document carries, exactly as an empty `Eligibility` is.
+
+    `part_id` defaults to `""`, which means *this slot names no part*. That is not
+    an authoring convenience: `routed_vinyl_model`'s post and cap agree with a fact
+    about the BAY (`item.routed_at_mm == panel.rail_positions_mm`), and a `SpecField`
+    is always `item.<key> <agree> <literal>` — a part cannot declare a fact about the
+    panel it has not been placed in. Those two slots keep their authored predicate and
+    `resolve_model_parts` leaves them alone. `validate_model` still refuses a slot
+    that names no part AND declares no eligibility, so the empty default cannot be a
+    silent way to author nothing.
+    """
+
+    part_id: str = ""
+    role: str = ""
     qty: int = 1
     length_rule: LengthRule | None = None
-    overlap_mm: Mm = 0              # only for length_rule == "overlap"
+    overlap_mm: Mm = 0
     option_axis: str | None = None
     sku_by_option: dict[str, str] = {}
     eligibility: Eligibility = Eligibility()
+
+    @model_validator(mode="after")
+    def _part_or_authored(self) -> "PartRequirement":
+        """Naming a part and authoring what it is are exclusive — on the AUTHORED
+        document, which is the only place the two can both be true.
+
+        Not a style rule. `resolve_model_parts` OVERWRITES `eligibility` and `role`
+        for every slot that names a part, so a document carrying both was accepted,
+        validated clean, and then had the authored half deleted without a word: a
+        slot naming `rail-rail-3000` beside an `EligibleItem(sku="RAIL-40",
+        approval="suggest_only")` resolved to `members=[]`, and a human sign-off
+        flag went with it. `_predicate_errors`' refusal of "a predicate AND members"
+        could never fire on such a slot either, because resolution wiped the
+        evidence before validation read it.
+
+        Enforced HERE rather than in `validate_model` because it is a fact about the
+        document, answerable with no catalog and no library — and because the
+        resolver's own writes must not have to route around a check that only ever
+        applies before it runs. Assignment is deliberately not validated (pydantic's
+        default): `resolve_model_parts` assigns the resolved eligibility and role
+        onto a copy, and that copy is the one document where both are true and
+        should be.
+        """
+        if not self.part_id:
+            return self
+        said = [
+            name for name, authored in (
+                ("eligibility.members", bool(self.eligibility.members)),
+                ("eligibility.predicate", self.eligibility.predicate is not None),
+                ("role", bool(self.role)),
+            ) if authored
+        ]
+        if said:
+            raise ValueError(
+                f"slot names part {self.part_id!r} and also authors "
+                f"{', '.join(said)} — the part is the one authority on what a piece "
+                "is, and resolution would overwrite what is written here"
+            )
+        return self
 
 
 # --- placement ---------------------------------------------------------------
@@ -135,6 +212,33 @@ Placement = Annotated[
 
 # --- the panel ---------------------------------------------------------------
 
+def _refuse_authored_dimensions(holder, keys: tuple[str, ...]):
+    """A holder that names a part must author none of the dimensions the part fills.
+
+    The other half of `PartRequirement._part_or_authored`, one level up, because
+    these fields sit on the HOLDER and not on the requirement. `_apply_dimensions`
+    writes `part.width_mm or 0` and `part.thickness_mm or 0` unconditionally, so a
+    part declaring no thickness silently ZEROED a thickness the author had written —
+    and 0 is not a neutral value here, it is what the elevation renders as
+    `declared=False`. The migration only dodged it by minting
+    `rail-rail-3000-40`; the next author would have lost the number with nothing
+    said. Refused where it is still fixable: put the dimension on the part, which is
+    the one authority that says how wide a rail is.
+    """
+    if not holder.requirement.part_id:
+        # Nothing here is the authority on this holder's dimensions, so whatever
+        # the document carries stands — the same case `_apply_dimensions` skips.
+        return holder
+    said = [k for k in keys if getattr(holder, k)]
+    if said:
+        raise ValueError(
+            f"{holder.key!r} names part {holder.requirement.part_id!r} and also "
+            f"authors {', '.join(said)} — declare the dimension on the part, or the "
+            "panel draws one number and buys another"
+        )
+    return holder
+
+
 class FrameSlot(BaseModel):
     key: str
     orientation: Literal["horizontal", "vertical"]
@@ -157,10 +261,18 @@ class FrameSlot(BaseModel):
     insertion_margin_mm: Mm = 0
     requirement: PartRequirement
 
+    @model_validator(mode="after")
+    def _dimensions_are_the_parts(self) -> "FrameSlot":
+        return _refuse_authored_dimensions(self, ("thickness_mm",))
+
 
 class Member(BaseModel):
     key: str
-    width_mm: Mm
+    # Undeclared (0) until `parts.resolve.resolve_model_parts` fills it from the
+    # part's dimensions — the same lifetime `thickness_mm` and `eligibility` have.
+    # Keeping this authored on the part rather than here is what let a model draw
+    # 38 while buying 45.
+    width_mm: Mm = 0
     thickness_mm: Mm = 0
     face_offset_mm: int = 0     # + front face, - back face (shadowbox)
     gap_after_mm: Mm = 0        # MAY be negative: an overlap (board-on-board)
@@ -173,6 +285,10 @@ class Member(BaseModel):
     base_engagement_mm: Mm = 0
     top_engagement_mm: Mm = 0
     requirement: PartRequirement
+
+    @model_validator(mode="after")
+    def _dimensions_are_the_parts(self) -> "Member":
+        return _refuse_authored_dimensions(self, ("width_mm", "thickness_mm"))
 
 
 class InfillSpec(BaseModel):
@@ -343,7 +459,14 @@ class FenceModel(BaseModel):
 
 # --- load-time validation ----------------------------------------------------
 
-def _requirements(spec: PanelSpec) -> list[tuple[str, PartRequirement]]:
+def spec_requirements(spec: PanelSpec) -> list[tuple[str, PartRequirement]]:
+    """Every requirement a single spec carries: frame, infill, fixings.
+
+    Public because `parts.resolve.part_requirements` walks the same structure
+    to fill predicates from parts, and a second copy of this walk is exactly
+    the drift hazard `part_requirements`'s own docstring warns about for
+    variants: one copy feeding validation and one feeding resolution, free to
+    disagree about what a spec's requirements are."""
     out = [(s.key, s.requirement) for s in spec.frame]
     if spec.infill:
         out += [(m.key, m.requirement) for m in spec.infill.pattern]
@@ -352,12 +475,9 @@ def _requirements(spec: PanelSpec) -> list[tuple[str, PartRequirement]]:
 
 
 def _can_supply_length(catalog: Catalog, sku: str) -> bool:
+    from fenceai.fencemodel.match import stock_length_mm
     product = catalog.products.get(sku)
-    if product is None:
-        return False
-    if product.consumption.kind == "divisible_linear":
-        return True
-    return product.capabilities.length_mm is not None
+    return product is not None and stock_length_mm(product) is not None
 
 
 # Several schema fields are expressible ahead of the resolver that reads them —
@@ -547,7 +667,7 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                     "member would still be cut to the rule it declares"
                 )
 
-        for key, req in _requirements(spec):
+        for key, req in spec_requirements(spec):
             if req.eligibility.group is not None:
                 # Never read: `resolve_supply` groups by the (sku, priority,
                 # approval) SIGNATURE of the usable members and by nothing else.
@@ -568,8 +688,14 @@ def _unsupported_features(model: FenceModel) -> list[str]:
     return errors
 
 
-def _joint_errors(spec: PanelSpec) -> list[str]:
+def _joint_errors(spec: PanelSpec, *, dimensions_known: bool = True) -> list[str]:
     """Joint geometry that would cut a part to the wrong length.
+
+    `dimensions_known` is False when the caller has no part library: a member's
+    thickness is filled by `parts.resolve` and is 0 in the authored document, so
+    the rules that read it would refuse every channelled slot in the portfolio for
+    a fact that has not been looked up yet. Skipped rather than guessed — see
+    `validate_model`.
 
     Every one of these is arithmetic the resolver would otherwise perform
     faithfully on a number the author cannot have meant — and the answer would
@@ -581,7 +707,7 @@ def _joint_errors(spec: PanelSpec) -> list[str]:
     frame_by_key = {s.key: s for s in spec.frame}
 
     for slot in spec.frame:
-        if slot.channel_depth_mm > 0 and slot.thickness_mm == 0:
+        if dimensions_known and slot.channel_depth_mm > 0 and slot.thickness_mm == 0:
             errors.append(
                 f"frame slot {slot.key!r}: channel_depth_mm="
                 f"{slot.channel_depth_mm} inside a member whose thickness_mm is "
@@ -706,6 +832,33 @@ def _joint_errors(spec: PanelSpec) -> list[str]:
     return errors
 
 
+def _part_errors(
+    model: FenceModel, catalog: Catalog, library: PartLibrary
+) -> list[str]:
+    """Every part this model names, checked where the specification now lives.
+
+    This is what replaced the slot-level "no eligible product". Members are a
+    MATCHING-time artifact and resolution does not populate them, so that rule
+    could no longer pass for any model — it would refuse the whole portfolio for an
+    empty list that is empty by design. The guardrail is not dropped, it moves one
+    level down: a part no product covers is refused by `validate_part`, in the
+    voice this function already used and at the same moment.
+
+    Deduped by part_id, because one part backing four slots is one fact about the
+    library and an author cannot fix it four times.
+    """
+    from fenceai.parts.resolve import part_requirements
+    from fenceai.parts.validate import validate_part
+
+    errors: list[str] = []
+    named = {req.part_id for _, req in part_requirements(model) if req.part_id}
+    for part_id in sorted(named):
+        # Never None: `resolve_model_parts` raised for any part_id with no active
+        # version before this function could be reached.
+        errors += validate_part(library.latest_active(part_id), catalog)
+    return errors
+
+
 def unknown_skus(model: FenceModel, catalog: Catalog) -> list[str]:
     """Eligible SKUs this catalog does not stock — the ONE validation failure a
     user can cause without authoring a model.
@@ -719,23 +872,43 @@ def unknown_skus(model: FenceModel, catalog: Catalog) -> list[str]:
     return sorted({
         m.sku
         for spec in [model.default_spec, *(v.spec for v in model.variants)]
-        for _, req in _requirements(spec)
+        for _, req in spec_requirements(spec)
         for m in req.eligibility.members
         if m.sku not in catalog.products
     })
 
 
-def _predicate_errors(key: str, eligibility: Eligibility, catalog: Catalog) -> list[str]:
-    """A slot that declares what it NEEDS rather than naming products.
+def predicate_skus(eligibility: Eligibility, catalog: Catalog) -> list[str] | None:
+    """Which products a spec-declared slot could be built from, or None if unknowable.
 
     The import is deferred because `match.py` imports this module for
-    `Eligibility`/`EligibleItem`. Validation asking the matcher "would anything
-    satisfy this?" is the right direction — the alternative is a second copy of
-    the covering rule here, which is how the two would eventually disagree about
-    what counts as a match.
+    `Eligibility`/`EligibleItem`. Asking the MATCHER rather than walking the catalog
+    here is the whole point — a second copy of the covering rule is how the two
+    would eventually disagree about what counts as a match — and it is the same
+    reason `parts.validate.matching_skus` is expressed in terms of this function
+    rather than repeating the walk a third time.
+
+    `None`, distinct from `[]`: the predicate asks about the bay it is being fitted
+    to, which does not exist yet. "Nothing is eligible" would be a false answer to a
+    question nobody asked; `no_eligible_item` still reports it per bay.
     """
     from fenceai.fencemodel.match import match_eligibility
 
+    if any(p.split(".", 1)[0] != "item" for p in field_paths(eligibility.predicate)):
+        return None
+    return [m.sku for m in match_eligibility(eligibility, catalog, {}).members]
+
+
+def _predicate_errors(
+    key: str, eligibility: Eligibility, admitted: list[str] | None
+) -> list[str]:
+    """A slot that declares what it NEEDS rather than naming products.
+
+    `admitted` is `predicate_skus`' answer, passed IN rather than computed here
+    because the caller needs the same list for the slot rules below it — an option
+    naming a product this slot cannot buy, a length no candidate can cut. Matching
+    the catalog twice for one slot would be the cost of hiding that.
+    """
     errors: list[str] = []
     if eligibility.members:
         errors.append(
@@ -744,13 +917,9 @@ def _predicate_errors(key: str, eligibility: Eligibility, catalog: Catalog) -> l
             "intersecting the two lists has more than one defensible reading"
         )
         return errors
-    reads = field_paths(eligibility.predicate)
-    if any(p.split(".", 1)[0] != "item" for p in reads):
-        # The predicate asks about the bay it is being fitted to, which does not
-        # exist yet. Refusing it here for failing a question nobody asked would
-        # be worse than the gap: `no_eligible_item` still reports it per bay.
+    if admitted is None:
         return errors
-    if not match_eligibility(eligibility, catalog, {}).members:
+    if not admitted:
         errors.append(
             f"slot {key}: no item in the catalog covers this spec, so nothing "
             "could ever supply it. Same reason an empty member list is refused — "
@@ -780,10 +949,16 @@ def _post_slot_errors(post: PostSlot, catalog: Catalog) -> list[str]:
         if req.eligibility.predicate is not None:
             errors += _predicate_errors(f"{post.key} ({what})", req.eligibility, catalog)
             continue
-        if not req.eligibility.members:
+        # The emptiness rule is narrowed rather than dropped: a slot's products come
+        # from the part it names, `parts.resolve` fills the predicate above, and an
+        # unresolved document has an empty list for a reason that is not an authoring
+        # error — `validate_part` carries that refusal one level down. A slot naming
+        # NO part and declaring nothing is the old case exactly, and it is still the
+        # one that would publish cleanly and then fail on every job.
+        if not req.part_id and not req.eligibility.members:
             errors.append(
-                f"slot {post.key} ({what}): no eligible product, so nothing could "
-                f"ever supply it"
+                f"slot {post.key} ({what}): names no part and declares no eligible "
+                "product, so nothing could ever be bought for it"
             )
         for m in req.eligibility.members:
             if m.sku not in catalog.products:
@@ -898,12 +1073,38 @@ def _variant_reach_errors(model: FenceModel) -> list[str]:
     return errors
 
 
-def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
+def validate_model(
+    model: FenceModel, catalog: Catalog, library: PartLibrary | None = None
+) -> list[str]:
     """Every reason this model cannot be used, as English strings for the author.
 
     Checked once at load so resolution can trust the data. These are authoring
-    errors, not user-facing warnings, so they carry no code+params."""
+    errors, not user-facing warnings, so they carry no code+params.
+
+    `library` RESOLVES the model before any of it is read, because three of these
+    rules ask about numbers a slot no longer carries: a member's width, a frame
+    member's thickness and a slot's eligible products all arrive from the part the
+    slot names. Validating the authored document for those is validating a document
+    nobody builds — it refuses every model in the portfolio for facts that have not
+    been looked up yet.
+
+    `None` means the caller has no library and therefore cannot answer those three.
+    They are SKIPPED, not guessed and not failed: every other rule — the option
+    axes, the refs, the joint arithmetic that reads only authored numbers, the
+    unbuilt features — still runs, and a caller with a library gets the lot.
+
+    A part with no active version ends the check immediately. Nothing further is
+    answerable about a document that cannot be resolved, and a page of consequential
+    errors underneath the one real cause is how an author is sent to the wrong file.
+    """
     errors: list[str] = []
+    if library is not None:
+        from fenceai.parts.resolve import resolve_model_parts
+        try:
+            model, _ = resolve_model_parts(model, library)
+        except ValueError as e:
+            return [str(e)]
+        errors += _part_errors(model, catalog, library)
     axis_keys = {a.key for a in model.option_axes}
     axis_values = {a.key: {v.key for v in a.values} for a in model.option_axes}
 
@@ -921,9 +1122,13 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                 )
 
     for spec in [model.default_spec, *(v.spec for v in model.variants)]:
-        errors += _joint_errors(spec)
+        errors += _joint_errors(spec, dimensions_known=library is not None)
 
-        for member in (spec.infill.pattern if spec.infill else []):
+        # Part-derived, so unanswerable without a library: `Member.width_mm` is 0
+        # in the authored document and filled by `parts.resolve`, and a width of 0
+        # trips both rules below on every infill member ever authored.
+        pattern = spec.infill.pattern if (spec.infill and library is not None) else []
+        for member in pattern:
             # `fit_pattern` walks the sequence adding a member then its gap. A
             # member that occupies no space, or one whose overlap swallows it
             # whole, makes that walk stand still — infinitely many members in a
@@ -943,7 +1148,7 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
                     "never advance"
                 )
 
-        reqs = _requirements(spec)
+        reqs = spec_requirements(spec)
         seen: set[str] = set()
         for key, _ in reqs:
             if key in seen:
@@ -952,20 +1157,37 @@ def validate_model(model: FenceModel, catalog: Catalog) -> list[str]:
         for key, req in reqs:
             skus = [m.sku for m in req.eligibility.members]
             if req.eligibility.predicate is not None:
-                errors += _predicate_errors(key, req.eligibility, catalog)
-                # a predicate slot names no skus of its own; the checks below are
-                # about authored ones, and the matcher only ever selects products
-                # that are IN the catalog and satisfy the requirement
-                continue
-            if not skus:
-                # A slot nothing can supply publishes cleanly and then reports
-                # `no_eligible_item` on every bay of every job built to it. The
-                # author is the only person who can say what belongs here, and
-                # the moment they can say it is now — not when an estimator finds
-                # a panel one part short in a quote.
+                # After resolution EVERY part-named slot lands here — the normal
+                # path, not the rare one — so `continue`ing past the rules below
+                # dropped four of them on the whole portfolio: an option_axis naming
+                # an axis the model does not declare, an option naming a product the
+                # slot cannot buy, and both directions of the length_rule check. All
+                # four are about the SLOT and hold however its eligibility was said.
+                # The narrowing in `resolve._chosen_option` cites the first two BY
+                # NAME as load-time guarantees, and with them gone it fell through to
+                # `unnarrowed` — the user's colour choice silently ignored.
+                admitted = predicate_skus(req.eligibility, catalog)
+                errors += _predicate_errors(key, req.eligibility, admitted)
+                # A predicate names no skus of ITS own; the products it admits are
+                # what the matcher admits. `None` (the predicate asks about a bay
+                # that does not exist yet) leaves the sku-driven rules unanswerable,
+                # which is not the same as failing them.
+                skus = admitted if admitted is not None else []
+            elif not req.part_id and not skus:
+                # A slot with neither a predicate nor members is an UNRESOLVED slot,
+                # not an empty one — PROVIDED it names a part, because that is where
+                # its products come from. The refusal that used to live here — a slot
+                # nothing can supply publishes cleanly and then reports
+                # `no_eligible_item` on every bay of every job built to it — is now
+                # `validate_part`'s, in the same voice and at the same moment, over
+                # the object that actually says what may supply it.
+                #
+                # A slot that names NO part and declares nothing is still the old
+                # refusal's case, and it is the one the empty `part_id` default could
+                # otherwise let through silently.
                 errors.append(
-                    f"slot {key}: no eligible product, so nothing could ever "
-                    f"supply it"
+                    f"slot {key}: names no part and declares no eligible product, "
+                    "so nothing could ever be bought for it"
                 )
             for sku in skus:
                 if sku not in catalog.products:

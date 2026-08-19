@@ -1408,3 +1408,127 @@ smoke step that leaves the project's inventory changed makes every later check d
 on that step having run, so it puts the yard back.
 
 1045 pytest · 155 golden scenarios · 159/159 smoke · gate unmoved.
+
+## The part library, slice 1A (2026-08-18) — COMPLETE
+Spec `docs/superpowers/specs/2026-08-18-part-library-design.md`, plan
+`docs/superpowers/plans/2026-08-18-part-library-1a-backend.md`, nine tasks executed
+serially, the spec ruled binding wherever the plan disagreed with it (twice, both
+recorded in the ledger). A part is now a third citizen of the pattern knowledge
+objects and fence models already followed — named, versioned, immutable once active,
+a run stamps what it resolved — for the one fact that had been living wherever it was
+last typed: what a piece **is**. `SLAT-100` backed an infill member in two versions of
+one model before this landed, as two separate acts of authoring; it is one part now
+(`infill-slat-100`), edited once, and the edit reaches both the next time either
+version is drawn from. A `SpecField` reads as a sentence about the item
+(`item.width_mm == 38`), compiles to the AST
+`match_eligibility` already owned, and a slot names a part by `id`, never by
+`id@version` — the same unpinned shape a project already uses for its model choice,
+paid for the same way: `GenerationRun.part_snapshot` stamps the exact version (and,
+for a still-mutable draft, its content hash) a run actually drew on, so publishing a
+part changes what a model builds NEXT, never what an already-generated run meant.
+
+**The bargain, said once, in the one place that has to say it.** An ACTIVE model
+version stopped meaning one fixed thing forever the moment the parts beneath it
+became shared and mutable-by-publish. That is not a defect smuggled in — it is the
+reason the entity is shared rather than copied, the same trade the model library
+already made with unpinned projects, and it is why `docs/architecture/02-entities.md`
+now says it beside `FenceModel` rather than leaving a reader to infer it from a
+docstring.
+
+**Two fields left AUTHORING and neither one left the SYSTEM.** `eligibility` moved
+onto the part, which is the whole point. `role` tried to go the same way and could
+not fully: `fencemodel/resolve.py` reads it at three call sites to write
+`ResolvedSlot.role`, and `demand/derive.py` consumes that role downstream deriving a
+requirement line. It came back as a RESOLVED field, filled from the part's `type` at
+generation time — the same fact, said once, just no longer said twice by an author
+who could disagree with themselves between the slot and the part.
+
+**What the migration refused to do, rather than resolve silently, twice.** Where two
+models draw the identical SKU at two different declared widths, migration reports and
+stops instead of picking one — a missing field and a stated one are not the same
+fact, and merging them would write a number onto a slot that had declared nothing,
+changing a drawing rather than a document. And a `suggest_only` eligibility member
+cannot be migrated by promoting it to `auto`, because that would let the system
+substitute a product a human had said needs sign-off. Neither refusal fired on the
+demo catalog — checked by hand, not merely asserted — but both exist as refusals
+because "migration resolves it for you" is exactly the silent-narrowing failure mode
+the rest of this system spends its whole design refusing to commit.
+
+**Honestly: two slots still name SKUs directly, not a part.** `routed_vinyl_model`'s
+post and cap compare an ITEM fact to a BAY fact
+(`item.routed_at_mm == panel.rail_positions_mm`), and a `SpecField` only ever compiles
+to `item.<key> <agree> <literal>` — there is no field-reference right-hand side for it
+to borrow. `legacy_model`'s rail and screw eligibility is rebuilt PER RUN from the
+run's resolved `demand_skus`, a knowledge rule reaching the BOM; naming a part there
+would let a fixed SKU silently outrank the rule that sources it. Both keep their
+authored `Eligibility` and `part_id=""` — a documented meaning, not an oversight, and
+`validate_model` refuses a slot that names neither a part nor an eligibility, so the
+empty default cannot be a quiet way to author nothing. The proper fix is a `SpecField`
+whose right side may be a panel `FieldRef` rather than only a literal; it is scoped
+and not built, because building it would have moved a BOM mid-arc and every dispatch
+on this branch said a moving BOM means stop.
+
+**The gate that held.** Golden scenarios, BOM, decision graph and resolved geometry
+came out byte-identical against the pre-branch baseline — checked by running
+`matching_skus`, not by trusting a report of it. The one thing that did NOT hold, by
+design and stated plainly rather than discovered later: `RUN_DIGEST_VERSION` became
+`digest-v2`, because `part_snapshot` genuinely joined the run id's inputs and a digest
+that ignored a real new input would let two runs built from different part versions
+collide on one id. A newly generated run gets a new id; a stored run keeps the one it
+was given and reads exactly as it did before this branch. The acceptance gate was
+narrowed to say so explicitly — byte-identical on the fence, not on its address.
+
+**What the browser suite caught that nothing else could:** nothing. 1A changes no UI
+and no rendered surface, and the smoke suite came back 183/183 confirming exactly
+that — the one surface this arc had not touched by design stayed untouched in fact,
+not merely in intent.
+
+1378 pytest · 183 golden scenarios · 183/183 smoke · gate byte-identical on BOM,
+decision graph and resolved geometry — run id moved, by design, on `digest-v2`.
+
+**The fix wave (same day).** Three reviews — architecture-critic, a mutation-based
+test review, and a whole-branch read — produced twenty findings, worked in four
+commits. The correctness half had one shape repeated six times: a second door into a
+state something else was guarding. `Part.status` defaults to `"active"`, so
+`save_part` was a door into the state `set_part_status` guards, and the migration tool
+walked through it — committing a second active version and only then raising
+`active -> active`, aborting AFTER the write on every database that was not fresh.
+`set_part_status` was the only multi-statement writer in `db.py` with no rollback, so
+a failed activation left the predecessor's retire for the next call to commit and the
+id ended with ZERO active versions. Its retirement refusal asked about the VERSION
+where a model names the ID, which left every abandoned draft of an in-use part stuck
+forever. `validate_part` had no caller but generation, against its own docstring:
+authors got a 422 on a job they were pricing instead of a refusal on the part they
+were writing. And `_LIST_VALUED` — a constant naming an invariant — was dead, so
+`among` with a bare string compiled to `In(['w','h','i','t','e'])` and published clean.
+
+**The one that was hiding in plain sight.** After resolution, "this slot declares a
+predicate" is EVERY part-named slot — the normal path, not the rare one — and
+`validate_model` `continue`d past four authoring rules on it. `resolve._chosen_option`
+cites two of them BY NAME as load-time guarantees, so with them gone it fell through
+to `unnarrowed` and a user's option choice was silently ignored. Separately, a slot
+naming a part while ALSO authoring `members`/`role`/a dimension validated clean and
+was then overwritten by resolution — a `suggest_only` flag a human had insisted on
+deleted without a word. Both refusals now sit on the authored document, which is the
+only place the two can both be true.
+
+**Performance, measured on the same 120 m run against a 4623-product catalog: 2.92 s
+-> 1.53 s.** `_model_post_skus` re-resolved the whole document once per post SIDE with
+the dedup on the next line throwing half of them away — 135 resolutions for 68 posts,
+now 2. `_item_ctx` was recomputed once per (slot, product) pair, 957 000 times per
+run, almost all of it a `model_dump()` of three optional integers; memoised by the
+product's IDENTITY rather than its sku, because a catalog is edited by REPLACING a
+product and an sku key would answer the new product's question with the old product's
+facts. Same run id, same BOM, same decision graph.
+
+**The test net closed where mutations walked through it.** Four gaps were confirmed by
+applying the mutation, watching the new test fail, and reverting: the run-pinned bay
+preview (dropping `part_snapshot` at the route AND neutering `library_at` both left
+the suite green — the drawer-shows-one-thing trap, one level in from where
+`bay_preview_plan` closed it); the multi-candidate part, wired to no model, so nothing
+drove `compile_spec -> match_spec -> more than one member -> pin`; the snapshot
+ordering, asserted on a hand-built list rather than a generated run; and clearing
+authored members during resolution. Four locale keys nothing emits were DELETED rather
+than left as furniture — slice 1B adds them back with their emitters.
+
+1403 pytest · 183 golden scenarios · compatibility gate untouched.

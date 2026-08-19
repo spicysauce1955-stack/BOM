@@ -24,6 +24,8 @@ import pytest
 from fenceai.catalog.demo import demo_catalog
 from fenceai.fencemodel.demo import M_LEGACY, M_SLAT
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
 
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
@@ -283,10 +285,14 @@ def ev():
     inset.default_spec.infill.edge_margin_mm = 50
     inset.default_spec.infill.justification = "center"
     inset.default_spec.infill.excess = "truncate"
+    parts = PartLibrary(parts=demo_parts())
     script = SCRIPT % {
-        "slat": preview_panel(M_SLAT, req, catalog).elevation.model_dump_json(),
-        "legacy": preview_panel(M_LEGACY, req, catalog).elevation.model_dump_json(),
-        "inset": preview_panel(inset, req, catalog).elevation.model_dump_json(),
+        "slat": preview_panel(M_SLAT, req, catalog,
+                              part_library=parts).elevation.model_dump_json(),
+        "legacy": preview_panel(M_LEGACY, req, catalog,
+                                part_library=parts).elevation.model_dump_json(),
+        "inset": preview_panel(inset, req, catalog,
+                               part_library=parts).elevation.model_dump_json(),
     }
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script],

@@ -85,6 +85,17 @@ to `Product`, as `type: str = ""`. It must default, because every existing produ
 none — and until slice 2 authors them, **no migrated part matches on it** (§7). An item
 with no type simply fails any `type ==` agreement, by the ordinary missing-field rule.
 
+> **Corrected by implementation (Task 8).** `type` did NOT become a typed field on
+> `Product`. It lives in `Product.attrs["type"]` instead, because a new typed field
+> changes `Product`'s shape, and `catalog/model.py` bumps `CATALOG_SCHEMA_VERSION`
+> whenever that shape changes — which feeds `catalog_hash`, which every stored run's
+> `/bom` and `/structure` read CHECK, not merely stamp. Adding the field as designed
+> here would have refused every previously generated run at its next read, over a
+> field nothing yet matches on. `attrs` is exactly where `catalog/model.py`'s own rule
+> already sends data read by a predicate rather than by code, so this is not a
+> departure from that rule — it is the rule, applied to `type` as it should have been
+> proposed here in the first place.
+
 ### 2.1 A model names a part by id, unpinned
 
 A slot stores `part_id`. Generation resolves `latest_active`. The run stamps what it
@@ -233,12 +244,41 @@ precisely because it wants the other side computed.
 
 * a duplicate `key` — two authorities over one field;
 * `supplies` on a field with no `unit: "mm"`, or carrying a value;
-* `between` whose value is not a two-int list;
+* a **set-valued** agreement (`among`, `between`) whose value is not a list, and a
+  `between` whose list is not two ints. Stated over the set of set-valued
+  agreements rather than over `between` alone, so a third one cannot be added
+  without arriving here: `among` with a bare string compiles to
+  `In(options=['w','h','i','t','e'])` and publishes clean while matching nothing;
 * a **published** part whose spec no product in the catalog satisfies, in the voice
   `validate_model` already uses for a slot with no eligible product.
 
 A **draft** may hold anything. That is the existing draft bargain, and it is what lets
 an author write a spec before the item exists.
+
+**Where it runs.** At the STORE, on the two calls that publish: `save_part` for any
+non-draft status, and `set_part_status(..., "active")`. Not only at generation —
+`validate_model` calls it too, but reaching it there means the author is handed a 422
+on a job they were pricing rather than a refusal on the part they were writing, which
+is the opposite of what "refusals a part earns at authoring time" promises. The store
+answers `None` from `load_catalog()` by skipping the catalog-dependent refusal, the
+same `library is None` bargain `validate_model` strikes.
+
+**The two invariants that live beside it in the store**, because `Part.status`
+defaults to `"active"` and `save_part` is therefore a second door into the state
+`set_part_status` guards:
+
+* **one active version per id.** `save_part` refuses inserting a second one — a save
+  is not a publication, and retiring a predecessor is a lifecycle act with its own
+  audit line. Publishing is `save_part(draft)` then `set_part_status(active)`.
+* **retirement is refused only when it would leave the id with NO active version.**
+  A model names the id, unpinned, and resolution takes `latest_active`; retiring one
+  version while another stays active takes nothing from any slot. Asking the question
+  of the VERSION left every abandoned draft of an in-use part stuck forever, `draft ->
+  {active, retired}` being the only transitions it has.
+
+`set_part_status` is a multi-statement write behind one `commit()`, so it carries the
+same `try/except BaseException: rollback()` as `replace_active_version` and
+`apply_review_outcome`.
 
 ---
 
@@ -304,8 +344,48 @@ class PartRequirement(BaseModel):
     sku_by_option: dict[str, str] = {}
 ```
 
-Gone: `eligibility` (the part owns it) and `role` (the part's `type` is the same fact,
-said once).
+> **Corrected by implementation (Task 8).** `part_id` is `str = ""`, not required —
+> `""` means *this slot names no part*, and it is not an authoring convenience. Two
+> demo slots cannot be expressed as a part under this spec's own vocabulary:
+> `routed_vinyl_model`'s post and cap compare an ITEM fact to a BAY fact
+> (`item.routed_at_mm == panel.rail_positions_mm`, `item.fits_face_mm ==
+> post.face_width_mm`), and a `SpecField` (§3) only ever compiles to
+> `item.<key> <agree> <literal>` — there is no field-reference right-hand side, so a
+> part cannot state a fact about the panel it has not been placed in. And
+> `legacy_model`'s rail and screw eligibility is rebuilt PER RUN from the run's
+> resolved `demand_skus` (a knowledge `DefaultComponent` reaching the BOM,
+> `generator._pick_model`) — naming a part there would overwrite that with a fixed
+> SKU and silently outrank the rule that sources it. Both slots keep their authored
+> `Eligibility` and `part_id=""`; `validate_model` refuses a slot that names no part
+> AND declares no eligibility, so the empty default cannot be a silent way to author
+> nothing. **The proper fix is a `SpecField` whose right-hand side may be a panel
+> `FieldRef`** rather than only a literal, which would let a part state
+> `item.routed_at_mm == panel.rail_positions_mm` the way the old predicate did. It is
+> NOT built in this arc — the two slots above still name SKUs directly, which is the
+> two-ways-to-fill-a-slot maintenance burden this design set out to remove, for
+> exactly these two slots.
+
+Gone from AUTHORING: `eligibility` (the part owns it) and `role` — not gone from the
+system. `role` came back as a RESOLVED, not authored, field:
+`PartRequirement.role: str = ""`, filled by `parts.resolve.resolve_model_parts` from
+the resolved part's `type`. It could not simply disappear — `fencemodel/resolve.py`
+reads `req.role` at three call sites (the frame-slot, member and fixing-rule resolvers)
+to write `ResolvedSlot.role`, and `demand/derive.py` consumes that `role` downstream
+when it derives a `RequirementLine`. Deleting the field outright breaks every one of
+those reads; the part's `type` is still "the same fact, said once" — said once on the
+`Part`, and copied onto the resolved slot at generation time rather than authored
+twice.
+
+**Naming a part and authoring what it is are exclusive, and refused on the AUTHORED
+document.** `PartRequirement` itself rejects a `part_id` beside authored
+`eligibility.members`, an authored `eligibility.predicate` or an authored `role`; and
+`FrameSlot`/`Member` reject a `part_id` beside an authored `thickness_mm`/`width_mm`.
+Without that, resolution overwrote the authored half without a word — a slot naming
+`rail-rail-3000` beside an `EligibleItem(sku="RAIL-40", approval="suggest_only")`
+resolved to `members=[]`, taking a human sign-off flag with it, and a part declaring
+no thickness silently ZEROED an authored one (0 being what the elevation renders as
+`declared=False`, not a neutral value). The refusal cannot live in `validate_model`,
+which reads the document AFTER resolution has already wiped the evidence.
 
 **`Eligibility` and `EligibleItem` themselves survive unchanged.** They stop being
 something an author writes on a slot and remain what they always were downstream: the
@@ -372,6 +452,17 @@ versions were not generated from the same thing. `[]` means a run generated befo
 existed — the same readable-old-runs convention as `catalog_skus = []` meaning "hashed
 over the whole catalog" — and needs no validator, because it is the default.
 
+> **Noted by implementation (Task 7).** `part_snapshot` joining the digest inputs meant
+> `RUN_DIGEST_VERSION` (`strategy/generator.py`) bumped from `digest-v1` to `digest-v2`
+> — a digest input that is genuinely new cannot join without changing the id it feeds,
+> or the digest would be lying about what it covers. **Newly generated runs get new
+> ids; stored runs keep the ids they were given and stay readable**, because nothing
+> re-hashes a row already in the append-only runs table. The acceptance gate (§11) is
+> byte-identical on the BOM, the decision graph and resolved geometry — the fence
+> itself — and explicitly NOT on run id, by design; a run id differing from what an
+> external system recorded before this branch, after a regeneration it asked for
+> anyway, is the expected and accepted shape of this change.
+
 **No new staleness gate.** The catalog has one because `/bom` and `/structure` genuinely
 re-price against live products. Nothing recomputes against a part after generation, so a
 moved part makes no stored run unreadable. `part_snapshot` is provenance and identity,
@@ -398,6 +489,15 @@ names.
 **Four models**: `legacy_model`, `slat_model`, `channel_slat_model`,
 `routed_vinyl_model`, plus their published versions. Every slot in them names exactly one
 SKU, so this is mechanical.
+
+> **Corrected by implementation (Task 8).** "Every slot names exactly one SKU" is
+> false. `M-SLAT@v2`'s top rail draws `RAIL-3000` at a declared 40 mm face
+> (`thickness_mm == 40`) that `M-SLAT@v1`'s rail slot leaves undeclared, and a
+> missing field is not the same fact as a 40 mm one (§7 below: "a missing field reads
+> as 'does not cover'"). Collapsing both into one part would write 40 mm onto a slot
+> that had declared nothing — a drawing change, not a document change. `RAIL-3000`
+> therefore migrated as **two** parts, `rail-rail-3000` and `rail-rail-3000-40`, not
+> one, and the dedupe below is real but not as total as this line claims.
 
 **Each inline requirement becomes a part**, deduplicated across models on `(role, sku
 list, width, thickness)`. That dedupe is the payoff landing on day one: `RAIL-3000` backs
@@ -581,9 +681,19 @@ isolation so an RTL layout does not reorder a part number.
 
 **The acceptance test is the compatibility gate, byte-identical.** Migration moves where
 a spec is written, not what it says, so every golden scenario S01–S14 must produce an
-identical BOM, an identical decision graph and an identical run digest across the whole
-change. Anything that moves is a migration bug, not a new behaviour — a far stronger
-check than any test written for the new code.
+identical BOM, an identical decision graph and identical resolved geometry across the
+whole change. Anything that moves is a migration bug, not a new behaviour — a far
+stronger check than any test written for the new code.
+
+> **Narrowed by implementation (Task 7).** "An identical run digest" is dropped from
+> this list, deliberately. `part_snapshot` genuinely joined the run id's inputs
+> (§6), so `RUN_DIGEST_VERSION` became `digest-v2` and a newly generated run's id
+> changes. Excluding a real new input from the digest would let two runs built from
+> different part versions collide on one id — the exact defect the snapshot exists to
+> prevent — so the id was the one thing this arc could not hold constant without
+> lying about what it covers. The gate is byte-identical on the fence itself — BOM,
+> decision graph, resolved geometry — never on the run's address. A stored run keeps
+> the id it was given and stays readable regardless.
 
 Beyond the gate:
 

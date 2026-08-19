@@ -9,8 +9,16 @@ scenario text is settled separately through the golden-scenarios skill.
 
 M-SLAT is the other kind: a real product line, free to be whatever the mechanism
 can express, and therefore the model that says what the mechanism can express.
-Both are built by a function taking their skus, because the structure is the
-model's and the products are the project's.
+Both are built by a function taking their PARTS, because the structure is the
+model's and what goes in each slot is the library's. They took skus before the
+part library existed; the argument moved down one level and kept its reason.
+
+M-LEGACY did NOT move, and that is the one deliberate exception. Its eligibility
+is not authored — it is rebuilt at generation from the run's resolved
+`demand_skus` (`generator._pick_model`), so a knowledge `DefaultComponent` still
+reaches the BOM. A part_id would freeze a SKU in front of that rule and silently
+outrank it, which is the failure that seam exists to prevent. It therefore also
+still carries its own `role`, because nothing resolves one for it.
 
 It has two versions, which is the third kind of built-in: v1 is what every
 existing job resolved and must keep resolving, and v2 is the same line drawn
@@ -30,7 +38,12 @@ from fenceai.knowledge.ast import And, Cmp, FieldRef, In, Lit, Or
 
 def legacy_model(rail_sku: str = "RAIL-3000", screw_sku: str = "SCREW-S10") -> FenceModel:
     """The model's eligibility is seeded from the run's resolved demand skus, so
-    a knowledge DefaultComponent change still reaches the BOM."""
+    a knowledge DefaultComponent change still reaches the BOM.
+
+    Hence the only two slots in the built-ins that still author `role` and
+    `eligibility` directly: this document is already RESOLVED when it is built, by
+    knowledge rather than by the part library. `parts.resolve` leaves a requirement
+    naming no part exactly as it found it, which is what keeps that seam open."""
     return FenceModel(
         id="M-LEGACY", version=1,
         name_i18n={"en": "Legacy panel", "he": "פאנל מורשת"},
@@ -58,9 +71,9 @@ def legacy_model(rail_sku: str = "RAIL-3000", screw_sku: str = "SCREW-S10") -> F
 
 
 def slat_model(
-    slat_sku: str = "SLAT-100",
-    rail_sku: str = "RAIL-3000",
-    screw_sku: str = "SCREW-S10",
+    slat_part: str = "infill-slat-100",
+    rail_part: str = "rail-rail-3000",
+    screw_part: str = "screw-screw-s10",
 ) -> FenceModel:
     """A screwed slat panel: two rails spread up the height, slats fitted across
     the clear width, two screws wherever a slat crosses a rail.
@@ -95,16 +108,13 @@ def slat_model(
                 # arithmetic instead of through the skill that owns it.
                 placement=Distributed(count=2, count_param="rails_per_span"),
                 requirement=PartRequirement(
-                    role="rail", qty=1, length_rule="centre_to_centre",
-                    eligibility=Eligibility(
-                        members=[EligibleItem(sku=rail_sku, priority=1)]),
-                ),
+                    part_id=rail_part, qty=1, length_rule="centre_to_centre"),
             )],
             infill=InfillSpec(
                 orientation="vertical",
                 justification="spread_to_fit", excess="space", edge_margin_mm=0,
                 pattern=[Member(
-                    key="slat", width_mm=100, gap_after_mm=20,
+                    key="slat", gap_after_mm=20,
                     requirement=PartRequirement(
                         # `panel_height`, not a width rule: a slat is cut to the
                         # panel's height. Every other LengthRule derives from the
@@ -115,29 +125,22 @@ def slat_model(
                         # plans no bars, so the panel would price no slats at all
                         # and the ledger would report every one of them as
                         # covered from stock.
-                        role="infill", qty=1, length_rule="panel_height",
-                        eligibility=Eligibility(
-                            members=[EligibleItem(sku=slat_sku, priority=1)]),
-                    ),
+                        part_id=slat_part, qty=1, length_rule="panel_height"),
                 )],
             ),
             fixings=[FixingRule(
                 key="screw", basis="per_member_crossing", qty_per_basis=2,
-                requirement=PartRequirement(
-                    role="screw", qty=1,
-                    eligibility=Eligibility(
-                        members=[EligibleItem(sku=screw_sku, priority=1)]),
-                ),
+                requirement=PartRequirement(part_id=screw_part, qty=1),
             )],
         ),
     )
 
 
 def channel_slat_model(
-    slat_sku: str = "SLAT-100",
-    rail_sku: str = "RAIL-3000",
-    channel_sku: str = "CHANNEL-3000",
-    screw_sku: str = "SCREW-S10",
+    slat_part: str = "infill-slat-100",
+    rail_part: str = "rail-rail-3000-40",
+    channel_part: str = "rail-channel-3000",
+    screw_part: str = "screw-screw-s10",
 ) -> FenceModel:
     """M-SLAT v2: the same product line, built with a joint.
 
@@ -178,33 +181,31 @@ def channel_slat_model(
                     # would move every slat's cut length with it.
                     placement=FromBottom(offset_mm=50),
                     # the face height and the housing are the CHANNEL's, which is
-                    # why the slot names its own product rather than reusing the
+                    # why the slot names its own part rather than reusing the
                     # rail: one SKU cannot be 40 mm tall in one panel and 60 in
                     # another, and the slats' cut length depends on which it is.
-                    thickness_mm=60, joint="channel",
+                    # The 60 mm face is no longer written here — it is the part's
+                    # `thickness_mm` and `parts.resolve` fills this field from it,
+                    # so the panel can no longer draw one number and buy another.
+                    joint="channel",
                     channel_depth_mm=20, insertion_margin_mm=3,
                     requirement=PartRequirement(
-                        role="rail", qty=1, length_rule="centre_to_centre",
-                        eligibility=Eligibility(
-                            members=[EligibleItem(sku=channel_sku, priority=1)]),
-                    ),
+                        part_id=channel_part, qty=1,
+                        length_rule="centre_to_centre"),
                 ),
                 FrameSlot(
                     key="top_rail", orientation="horizontal",
                     placement=FromTop(offset_mm=50),
-                    thickness_mm=40,
                     requirement=PartRequirement(
-                        role="rail", qty=1, length_rule="centre_to_centre",
-                        eligibility=Eligibility(
-                            members=[EligibleItem(sku=rail_sku, priority=1)]),
-                    ),
+                        part_id=rail_part, qty=1,
+                        length_rule="centre_to_centre"),
                 ),
             ],
             infill=InfillSpec(
                 orientation="vertical",
                 justification="spread_to_fit", excess="space", edge_margin_mm=0,
                 pattern=[Member(
-                    key="slat", width_mm=100, gap_after_mm=20,
+                    key="slat", gap_after_mm=20,
                     base_ref="bottom_channel", top_ref="top_rail",
                     # `channel` names the BASE joint, which is the one with a
                     # mechanic; the top end butts under the rail and takes no
@@ -214,27 +215,20 @@ def channel_slat_model(
                     # nothing downstream has to read this kind as both ends.
                     joint="channel", base_engagement_mm=15, top_engagement_mm=0,
                     requirement=PartRequirement(
-                        role="infill", qty=1, length_rule="between_frame",
-                        eligibility=Eligibility(
-                            members=[EligibleItem(sku=slat_sku, priority=1)]),
-                    ),
+                        part_id=slat_part, qty=1, length_rule="between_frame"),
                 )],
             ),
             fixings=[FixingRule(
                 key="screw", basis="per_member", qty_per_basis=1,
-                requirement=PartRequirement(
-                    role="screw", qty=1,
-                    eligibility=Eligibility(
-                        members=[EligibleItem(sku=screw_sku, priority=1)]),
-                ),
+                requirement=PartRequirement(part_id=screw_part, qty=1),
             )],
         ),
     )
 
 
 def routed_vinyl_model(
-    slat_sku: str = "SLAT-V-150",
-    rail_sku: str = "RAIL-V-3000",
+    slat_part: str = "infill-slat-v-150",
+    rail_part: str = "rail-rail-v-3000",
 ) -> FenceModel:
     """M-VINYL: the line that cannot be described without its post.
 
@@ -282,6 +276,12 @@ def routed_vinyl_model(
         grade="residential", status="active",
         post=PostSlot(
             key="post",
+            # Names NO part, and this is the vocabulary's boundary rather than an
+            # omission. The predicate below agrees with a fact about the BAY —
+            # `item.routed_at_mm == panel.rail_positions_mm` — while a `SpecField`
+            # is always `item.<key> <agree> <literal>`. A part declares what a piece
+            # IS; it cannot declare where this panel puts its rails. Expressing the
+            # routing as a literal `[150, 1650]` would delete every 2100 mm fence.
             requirement=PartRequirement(
                 role="post",
                 eligibility=Eligibility(predicate=And(items=[
@@ -334,6 +334,9 @@ def routed_vinyl_model(
                     ]),
                 ])),
             ),
+            # Same boundary: `item.fits_face_mm == post.face_width_mm` reads the
+            # post this cap sits on, which is answerable only because the post is
+            # chosen first — and is not a fact any part can declare about itself.
             cap=PartRequirement(
                 role="cap",
                 eligibility=Eligibility(predicate=Cmp(
@@ -353,7 +356,7 @@ def routed_vinyl_model(
                 # quietly building on a two-hole one.
                 placement=Distributed(count=2, count_param="rails_per_span",
                                       bottom_inset_mm=150, top_inset_mm=150),
-                thickness_mm=60, joint="channel",
+                joint="channel",
                 channel_depth_mm=18, insertion_margin_mm=3,
                 requirement=PartRequirement(
                     # centre_to_centre, and for once the reason is physical
@@ -362,10 +365,7 @@ def routed_vinyl_model(
                     # centrelines, each end seats half a face deep into the hole
                     # it was punched for. `clear_between_posts` would cut it to
                     # the opening and leave nothing to seat.
-                    role="rail", qty=1, length_rule="centre_to_centre",
-                    eligibility=Eligibility(
-                        members=[EligibleItem(sku=rail_sku, priority=1)]),
-                ),
+                    part_id=rail_part, qty=1, length_rule="centre_to_centre"),
             )],
             infill=InfillSpec(
                 orientation="vertical",
@@ -377,14 +377,11 @@ def routed_vinyl_model(
                 # routed channel takes it up.
                 justification="center", excess="truncate", edge_margin_mm=0,
                 pattern=[Member(
-                    key="slat", width_mm=150, gap_after_mm=0,
+                    key="slat", gap_after_mm=0,
                     base_ref="rail", top_ref="rail",
                     joint="channel", base_engagement_mm=15, top_engagement_mm=15,
                     requirement=PartRequirement(
-                        role="infill", qty=1, length_rule="between_frame",
-                        eligibility=Eligibility(
-                            members=[EligibleItem(sku=slat_sku, priority=1)]),
-                    ),
+                        part_id=slat_part, qty=1, length_rule="between_frame"),
                 )],
             ),
         ),

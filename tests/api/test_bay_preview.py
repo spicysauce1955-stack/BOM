@@ -397,3 +397,92 @@ def test_a_moved_catalog_refuses_here_exactly_as_it_does_on_the_bom(client):
     r = bay_preview(client, run_id, span["id"])
     assert r.status_code == 409
     assert r.json()["detail"]["code"] == "catalog_changed"
+
+
+# --- the parts a run resolved, against the parts the library holds today -------
+
+def publish_part_version(client, part_id: str, spec: list[dict]) -> int:
+    """A new active version of a part, through the store — slice 1B owns the
+    routes, and this test is about what a RUN pinned, not about how it was
+    edited."""
+    from fenceai.parts.model import Part
+
+    version = state.store.next_part_version(part_id)
+    previous = state.store.load_part(part_id, version - 1)
+    state.store.save_part(Part(id=part_id, version=version, status="draft",
+                               type=previous.type, name_i18n=previous.name_i18n,
+                               spec=spec))
+    state.store.set_part_status(part_id, version, "active")
+    return version
+
+
+def slat_v2_project(client):
+    """A project built to M-SLAT@v2, whose top rail names `rail-rail-3000-40` —
+    the one demo part that declares a thickness AND a sku, so one edit moves both
+    the product a bay is bought from and the face it is drawn with."""
+    pid = make_project(client)
+    assert client.put(f"/api/projects/{pid}/fence-model",
+                      json={"model_id": "M-SLAT", "version_pin": 2}).status_code == 200
+    return pid
+
+
+def top_rail(preview: dict) -> dict:
+    return next(p for p in preview["parts"] if p["slot_key"] == "top_rail")
+
+
+def top_rail_band(preview: dict) -> dict:
+    return next(m for m in preview["elevation"]["members"]
+                if m["slot_key"] == "top_rail")
+
+
+def test_a_bay_of_a_stored_run_previews_the_part_versions_that_run_resolved(client):
+    """THE trap, one level in from where `bay_preview_plan` closed it.
+
+    That function already reloads the model document by the version the run
+    STAMPED and never `latest_active`, because the drawer once marked one product
+    chosen while the run had bought another. An UNPINNED `part_id` inside that
+    pinned document is the identical bug by a new door: the model version is
+    frozen and the part it names is not.
+
+    So: generate, then publish a v2 of that part naming a different product at a
+    different face. The bay of the stored run must still show what it bought.
+    """
+    pid = slat_v2_project(client)
+    result = generate(client, pid)
+    run_id, span = result["run"]["id"], result["strategy"]["spans"][0]
+    assert {u["part_id"]: u["version"] for u in result["run"]["part_snapshot"]} \
+        ["rail-rail-3000-40"] == 1
+
+    before = ok(bay_preview(client, run_id, span["id"]))
+    assert top_rail(before)["sku"] == "RAIL-3000"
+    assert top_rail_band(before)["h_mm"] == 40
+
+    publish_part_version(client, "rail-rail-3000-40", [
+        {"key": "sku", "value": ["CHANNEL-3000"], "agree": "among"},
+        {"key": "thickness_mm", "value": 60, "agree": "==", "unit": "mm"},
+    ])
+
+    after = ok(bay_preview(client, run_id, span["id"]))
+    assert top_rail(after)["sku"] == "RAIL-3000", \
+        "the run bought RAIL-3000; a part published afterwards cannot re-sell it"
+    assert top_rail_band(after)["h_mm"] == 40, \
+        "and it cannot redraw the face the run was drawn with either"
+
+
+def test_a_model_scoped_preview_of_the_same_bay_shows_the_part_as_it_is_now(client):
+    """The other half, and the reason the snapshot is an ARGUMENT rather than a
+    lookup: "what does this model build" and "what did this bay cost" are two
+    questions, and the second one is the only one that is pinned."""
+    pid = slat_v2_project(client)
+    result = generate(client, pid)
+    span = result["strategy"]["spans"][0]
+
+    publish_part_version(client, "rail-rail-3000-40", [
+        {"key": "sku", "value": ["CHANNEL-3000"], "agree": "among"},
+        {"key": "thickness_mm", "value": 60, "agree": "==", "unit": "mm"},
+    ])
+
+    live = ok(client.post("/api/fence-models/M-SLAT/2/preview", json={
+        "height_mm": span["height_mm"], "width_mm": span["width_mm"]}))
+    assert top_rail(live)["sku"] == "CHANNEL-3000"
+    assert top_rail_band(live)["h_mm"] == 60

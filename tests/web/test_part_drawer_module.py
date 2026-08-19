@@ -30,6 +30,8 @@ from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import purchase_price_cents
 from fenceai.fencemodel.demo import demo_models
 from fenceai.fencemodel.preview import PreviewRequest, preview_panel
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
 from tests.fencemodel.test_preview import two_candidate_model
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem
 
@@ -200,7 +202,8 @@ def drawer():
         pytest.skip("node not available")
     catalog = demo_catalog()
     model = demo_models()["M-SLAT"]
-    preview = preview_panel(model, PreviewRequest(height_mm=1800, width_mm=2500), catalog)
+    preview = preview_panel(model, PreviewRequest(height_mm=1800, width_mm=2500),
+                            catalog, part_library=PartLibrary(parts=demo_parts()))
     inventory = Inventory(items=[
         InventoryItem(id="i1", sku="SLAT-100", kind="full_stock", qty=4),
         InventoryItem(id="i2", sku="SLAT-100", kind="remnant", length_mm=900),

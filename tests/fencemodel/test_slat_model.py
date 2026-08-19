@@ -16,6 +16,18 @@ from fenceai.fencemodel.demo import (
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.model import validate_model
 from fenceai.fencemodel.resolve import PanelContext, resolve_panel
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
+from fenceai.parts.resolve import resolve_model_parts
+
+# What a slot holds now comes from the part it names, so a panel cannot be resolved
+# from the AUTHORED document any more — its members carry no width and its slots no
+# role until the library is read. `resolve_panel` sits strictly downstream of that,
+# exactly as `generate` does, so the tests below resolve first and then ask the same
+# questions of the same numbers.
+PARTS = PartLibrary(parts=demo_parts())
+SLAT = resolve_model_parts(M_SLAT, PARTS)[0]
+SLAT_V2 = resolve_model_parts(M_SLAT_V2, PARTS)[0]
 
 # One bay, stated once: 2500 c/c between post centres, 2400 clear between their
 # faces, 1800 tall and level. Every count below is derived from these three
@@ -30,7 +42,7 @@ def test_slat_model_validates_against_the_demo_catalog():
     """The load-time gate is the definition of "phase-1 buildable": M-SLAT may
     only use features `resolve_panel` actually honours, and the demo catalog must
     stock every sku it names."""
-    assert validate_model(M_SLAT, demo_catalog()) == []
+    assert validate_model(M_SLAT, demo_catalog(), PARTS) == []
 
 
 def test_the_model_library_keeps_one_document_per_line():
@@ -41,14 +53,19 @@ def test_the_model_library_keeps_one_document_per_line():
     assert M_SLAT.ref == "M-SLAT@v1"
 
 
-def test_the_skus_are_arguments_so_a_project_catalog_can_differ():
-    """Same reason `legacy_model()` takes them: the structure is the model's, the
-    products are the project's."""
-    spec = slat_model(slat_sku="X-SLAT", rail_sku="X-RAIL",
-                      screw_sku="X-SCREW").default_spec
+def test_the_parts_are_arguments_so_a_project_library_can_differ():
+    """Same reason it used to take SKUs: the structure is the model's, and what
+    fills each slot is the library's. The argument moved down one level when the
+    part became the thing that says what a piece is — a slot names a part, and the
+    part names the products."""
+    spec = slat_model(slat_part="x-slat", rail_part="x-rail",
+                      screw_part="x-screw").default_spec
     holders = [*spec.frame, *spec.infill.pattern, *spec.fixings]
-    assert {h.key: [m.sku for m in h.requirement.eligibility.members] for h in holders} \
-        == {"rail": ["X-RAIL"], "slat": ["X-SLAT"], "screw": ["X-SCREW"]}
+    assert {h.key: h.requirement.part_id for h in holders} \
+        == {"rail": "x-rail", "slat": "x-slat", "screw": "x-screw"}
+    # and nothing names a product of its own any more — that was the two
+    # authorities the entity removed
+    assert all(not h.requirement.eligibility.members for h in holders)
 
 
 # ---- the bay, resolved ------------------------------------------------------
@@ -58,7 +75,7 @@ def test_a_2400_bay_resolves_two_rails_twenty_slats_and_eighty_screws():
     not. Two rails, so 40 crossings, so 80 screws — the count a per_panel rule
     (M-LEGACY's 8) cannot express, which is why this model exists.
     """
-    panel = resolve_panel(M_SLAT.default_spec, BAY, M_SLAT.ref)
+    panel = resolve_panel(SLAT.default_spec, BAY, M_SLAT.ref)
     by_key = {s.slot_key: s for s in panel.slots}
 
     assert panel.model_ref == "M-SLAT@v1"
@@ -73,7 +90,7 @@ def test_the_rails_are_cut_centre_to_centre_like_the_legacy_model():
     """The doc/code disagreement `demo.py` records is about which number a rail
     is cut to, and it is unsettled; a second model quietly choosing the other
     answer would settle it by arithmetic."""
-    rail = next(s for s in resolve_panel(M_SLAT.default_spec, BAY).slots
+    rail = next(s for s in resolve_panel(SLAT.default_spec, BAY).slots
                 if s.slot_key == "rail")
     assert rail.length_mm == 2500
     assert rail.length_basis == "width"
@@ -83,7 +100,7 @@ def test_a_knowledge_param_still_wins_the_rail_count_and_the_screws_follow():
     """The crossing count is derived, not authored: three rails is 60 crossings
     without anyone editing the fixing rule."""
     ctx = BAY.model_copy(update={"params": {"rails_per_span": 3}})
-    by_key = {s.slot_key: s for s in resolve_panel(M_SLAT.default_spec, ctx).slots}
+    by_key = {s.slot_key: s for s in resolve_panel(SLAT.default_spec, ctx).slots}
     assert by_key["rail"].qty == 3
     assert by_key["screw"].qty == 120
 
@@ -93,7 +110,7 @@ def test_the_slat_is_cut_to_the_panel_height_not_to_the_bay_width():
     LengthRule derives from the bay's width, and one of those on a vertical
     member would stamp 2400 (or 2500) on a part the fence cuts to 1800 and put
     that number on a cut list."""
-    slat = next(s for s in resolve_panel(M_SLAT.default_spec, BAY).slots
+    slat = next(s for s in resolve_panel(SLAT.default_spec, BAY).slots
                 if s.slot_key == "slat")
     assert slat.length_mm == BAY.height_mm == 1800
     assert slat.length_mm not in (BAY.clear_width_mm, BAY.centre_width_mm)
@@ -106,13 +123,13 @@ def test_a_raked_bay_does_not_stretch_the_slats():
     end cuts are angled."""
     raked = BAY.model_copy(update={
         "vertical": "raked", "length_basis": "slope", "slope_len_mm": 2600})
-    by_key = {s.slot_key: s for s in resolve_panel(M_SLAT.default_spec, raked).slots}
+    by_key = {s.slot_key: s for s in resolve_panel(SLAT.default_spec, raked).slots}
     assert by_key["slat"].length_mm == 1800
     assert by_key["rail"].length_mm == 2600, "the rail still follows the grade"
 
 
 def test_resolution_is_deterministic():
-    assert resolve_panel(M_SLAT.default_spec, BAY) == resolve_panel(M_SLAT.default_spec, BAY)
+    assert resolve_panel(SLAT.default_spec, BAY) == resolve_panel(SLAT.default_spec, BAY)
 
 
 # ---- the fit ----------------------------------------------------------------
@@ -121,9 +138,9 @@ def test_the_residual_is_spread_into_the_gaps_and_nothing_is_left_over():
     """`excess="space"` means the axis is accounted for to the millimetre: the
     20 mm the nominal pattern leaves over is not a 20 mm hole at one end, it is
     one extra millimetre in each of 19 gaps plus one more in the first."""
-    fit = next(s for s in resolve_panel(M_SLAT.default_spec, BAY).slots
+    fit = next(s for s in resolve_panel(SLAT.default_spec, BAY).slots
                if s.slot_key == "slat").fit
-    slat = M_SLAT.default_spec.infill.pattern[0]
+    slat = SLAT.default_spec.infill.pattern[0]
 
     assert fit.count == 20
     assert len(fit.gaps_mm) == 19
@@ -142,7 +159,7 @@ def test_the_gaps_stay_within_a_millimetre_across_every_bay_width():
     let a clear-gap check pass on the average while a real opening exceeds it."""
     for clear in range(600, 3001, 7):
         ctx = BAY.model_copy(update={"clear_width_mm": clear})
-        slat = next((s for s in resolve_panel(M_SLAT.default_spec, ctx).slots
+        slat = next((s for s in resolve_panel(SLAT.default_spec, ctx).slots
                      if s.slot_key == "slat"), None)
         if slat is None or len(slat.fit.gaps_mm) < 2:
             continue
@@ -173,7 +190,7 @@ def test_the_slat_stock_length_is_chosen_for_the_height_it_is_cut_to():
 # ---- v2: the same line, built with a joint -----------------------------------
 
 def test_the_channel_version_validates_against_the_demo_catalog():
-    assert validate_model(M_SLAT_V2, demo_catalog()) == []
+    assert validate_model(M_SLAT_V2, demo_catalog(), PARTS) == []
     assert M_SLAT_V2.ref == "M-SLAT@v2"
 
 
@@ -191,7 +208,7 @@ def test_the_slats_are_cut_to_the_opening_plus_what_the_channel_takes():
     the version exists: the two panels draw as the same rectangle and are cut to
     different lengths, and only the joint fields say which."""
     by_key = {s.slot_key: s
-              for s in resolve_panel(M_SLAT_V2.default_spec, BAY, M_SLAT_V2.ref).slots}
+              for s in resolve_panel(SLAT_V2.default_spec, BAY, M_SLAT_V2.ref).slots}
 
     assert by_key["slat"].length_mm == 1665
     assert by_key["slat"].qty == 20         # the fit is v1's: 20 x 100 in 2400 clear
@@ -211,7 +228,7 @@ def test_the_channel_version_leaves_v1_exactly_as_it_was():
     `slat_model()` — so an edit to the shared builder would move both sides
     together and the test would stay green while every stored v1 run came back a
     different panel."""
-    spec = M_SLAT.default_spec
+    spec = SLAT.default_spec
     (rail,), (slat,), (screw,) = spec.frame, spec.infill.pattern, spec.fixings
 
     assert [s.key for s in spec.frame] == ["rail"]     # not v2's channel + rail
@@ -271,7 +288,7 @@ def test_the_joint_reaches_the_cut_list_and_the_bar_it_is_cut_from():
     def slat_lines(version: int):
         result = generate(
             straight_topology(6000), demo_knowledge(), demo_catalog(),
-            models=library,
+            models=library, parts=PARTS,
             default_model=FenceModelChoice(model_id="M-SLAT", version_pin=version),
         )
         priced = price_strategy(result.strategy, demo_catalog(), None,
