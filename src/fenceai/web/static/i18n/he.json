@@ -831,5 +831,10 @@
   "assembly.animate.placed": "{placed} מתוך {total} חלקים",
   "assembly.animate.done": "מורכב במלואו",
   "assembly.animate.nothing": "עדיין לא משורטט כאן דבר — הפיקו גדר כדי לראות אותה נבנית.",
-  "assembly.animate.reduced_motion": "המערכת שלכם מבקשת להפחית תנועה, ולכן הגדר מוצגת מורכבת במלואה במקום מונפשת."
+  "assembly.animate.reduced_motion": "המערכת שלכם מבקשת להפחית תנועה, ולכן הגדר מוצגת מורכבת במלואה במקום מונפשת.",
+  "part_type.rail": "שלבים",
+  "part_type.infill": "קרשים",
+  "part_type.screw": "אמצעי חיבור",
+  "part_type.post": "עמודים",
+  "part_type.cap": "כובעים"
 }

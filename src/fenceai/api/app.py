@@ -7,6 +7,7 @@ lives here. AI adapters are selected once at startup (stub by default, ADR-0009)
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -1007,6 +1008,62 @@ def get_catalog():
             for sku, product in catalog.products.items()
         },
     }
+
+
+_LOCALE_BUNDLES: dict[str, dict[str, str]] = {}
+
+
+def _locale_bundle(lang: str) -> dict[str, str]:
+    """The frontend's own `i18n/<lang>.json`, read once per process and cached.
+
+    A second reader is expected, not a duplication: the browser and this backend
+    are different runtimes, and a label the server derives (a part type nobody
+    stocked before) needs the same bundle the browser renders everything else
+    from.
+    """
+    if lang not in _LOCALE_BUNDLES:
+        path = Path(__file__).resolve().parents[1] / "web" / "static" / "i18n" / f"{lang}.json"
+        _LOCALE_BUNDLES[lang] = json.loads(path.read_text(encoding="utf-8"))
+    return _LOCALE_BUNDLES[lang]
+
+
+def _part_type_labels(key: str) -> dict[str, str]:
+    labels = {}
+    for lang in ("en", "he"):
+        bundle = _locale_bundle(lang)
+        labels[lang] = bundle.get(f"part_type.{key}", key)
+    return labels
+
+
+@app.get("/api/parts")
+def list_parts() -> dict:
+    """The part library, for the Models editor's picker.
+
+    Each part's spec travels with it: an author choosing "38mm vinyl rail" should be
+    able to see WHY it is that, not only its name. Read-only — creating and editing
+    parts is the arc that builds an editor for them.
+    """
+    library = state.store.part_library()
+    return {"parts": [p.model_dump() for p in
+                      sorted(library.parts, key=lambda p: (p.type, p.id, p.version))]}
+
+
+@app.get("/api/part-types")
+def list_part_types() -> dict:
+    """The types actually in use, with a label per language.
+
+    `PartType` exists as a model and nothing instantiates it, so a route over stored
+    type data would return an empty list. These are derived from the library, which
+    is the honest amount of vocabulary this arc needs; a stored, editable type
+    library belongs to the arc where a NEW part must be given a type.
+
+    The label comes from `part_type.<key>` in the locale bundles and falls back to
+    the raw key, so a company that stocks something new gets a working picker before
+    anyone writes it a word.
+    """
+    library = state.store.part_library()
+    keys = sorted({p.type for p in library.parts})
+    return {"types": [{"key": k, "label_i18n": _part_type_labels(k)} for k in keys]}
 
 
 @app.put("/api/catalog/products")

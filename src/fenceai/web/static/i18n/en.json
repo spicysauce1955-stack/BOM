@@ -831,5 +831,10 @@
   "assembly.animate.placed": "{placed} of {total} parts",
   "assembly.animate.done": "Fully assembled",
   "assembly.animate.nothing": "Nothing is drawn here yet — generate a fence to watch it go up.",
-  "assembly.animate.reduced_motion": "Your system asks for reduced motion, so the fence is shown fully assembled instead of being played."
+  "assembly.animate.reduced_motion": "Your system asks for reduced motion, so the fence is shown fully assembled instead of being played.",
+  "part_type.rail": "Rails",
+  "part_type.infill": "Boards",
+  "part_type.screw": "Fixings",
+  "part_type.post": "Posts",
+  "part_type.cap": "Caps"
 }
