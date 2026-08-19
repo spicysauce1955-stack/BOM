@@ -45,10 +45,8 @@ out.sources = {
 const grouped = partsByType(parts);
 out.groups = grouped.map((g) => [g.type, g.parts.map((p) => p.id)]);
 
-out.chips = specChips(parts.find((p) => p.id === "rail-38-vinyl"))
-  .map((c) => c.text);
-out.chipsOfSkuPart = specChips(parts.find((p) => p.id === "rail-rail-3000"))
-  .map((c) => c.text);
+out.chips = specChips(parts.find((p) => p.id === "rail-38-vinyl"));
+out.chipsOfSkuPart = specChips(parts.find((p) => p.id === "rail-rail-3000"));
 out.chipsOfNothing = specChips(null);
 
 const summary = partSummary(
@@ -102,10 +100,20 @@ def test_the_picker_reads_the_real_library_and_the_real_preview(tmp_path):
         assert ids == sorted(ids)
     assert "rail" in types
 
-    # a spec-authored part shows what it requires; a sku-list part says so plainly
-    assert any("38" in c for c in out["chips"])
-    assert any("vinyl" in c.lower() for c in out["chips"])
-    assert out["chipsOfSkuPart"]      # not empty — an sku list is still a fact
+    # A spec-authored part shows what it requires — as the FACTS, never as prose.
+    # `specChips` is in the one module that may not import i18n (it is import-free
+    # so node can run it), so a `text` built there would be English in a
+    # Hebrew-first app; panel-inspector.js renders these through
+    # `model.chip.<agree>` out of both bundles.
+    assert out["chips"] == [
+        {"key": "width_mm", "agree": "==", "value": 38, "unit": "mm"},
+        {"key": "material", "agree": "==", "value": "vinyl", "unit": None},
+        {"key": "length_mm", "agree": "supplies", "value": None, "unit": "mm"},
+    ]
+    # not empty — an sku list is still a fact, and it travels as one
+    assert out["chipsOfSkuPart"] == [
+        {"key": "sku", "agree": "among", "value": ["RAIL-3000"], "unit": None},
+    ]
     assert out["chipsOfNothing"] == []
 
     # the summary joins the slot, the library and the preview

@@ -73,9 +73,14 @@ export function defaultEligibleMember(sku, priority = 1) {
   return { kind: "catalog_item", sku: sku || "", priority, approval: "auto" };
 }
 
+// `part_id: ""` is the schema's own default and means *this slot names no part
+// yet*. Written out rather than left off so the picker has a field to set and
+// `eligibilitySource` a field to read on a row the "+ Add" button just made —
+// an absent key and an empty one answer the same, and only one of them is what
+// the document says.
 export function defaultRequirement(role) {
   return {
-    role, qty: 1, length_rule: null, overlap_mm: 0,
+    part_id: "", role, qty: 1, length_rule: null, overlap_mm: 0,
     option_axis: null, sku_by_option: {}, eligibility: defaultEligibility(),
   };
 }
@@ -231,18 +236,19 @@ export function partsByType(parts) {
     }));
 }
 
-/** What the part requires, as short phrases. The author picked a name; this is how
- *  they see what the name MEANS without leaving the slot. */
+/** What the part requires, one chip per declared fact. The author picked a name;
+ *  this is how they see what the name MEANS without leaving the slot.
+ *
+ *  STRUCTURED, never prose. An earlier draft returned a `text` built here, and
+ *  the text was English — in a Hebrew-first app, from the one module that may
+ *  not import i18n (this file is import-free so node can run it, which is the
+ *  whole reason the picker's logic is testable at all). So the fact travels and
+ *  panel-inspector.js renders it through `model.chip.<agree>`: the phrasing is
+ *  data in both bundles, and no sentence is assembled where no locale exists. */
 export function specChips(part) {
-  return (part?.spec || []).map((f) => ({ kind: f.agree, text: chipText(f) }));
-}
-
-function chipText(f) {
-  if (f.agree === "supplies") return "cut from stock";
-  if (f.agree === "among") return `${f.key}: ${(f.value || []).join(", ")}`;
-  if (f.agree === "between") return `${f.key} ${f.value?.[0]}–${f.value?.[1]}`;
-  if (f.agree === "==") return `${f.key} ${f.value}`;
-  return `${f.key} ${f.agree} ${f.value}`;
+  return (part?.spec || []).map((f) => ({
+    key: f.key, agree: f.agree, value: f.value ?? null, unit: f.unit ?? null,
+  }));
 }
 
 /** Everything the slot pane needs about the part, joined from the slot, the

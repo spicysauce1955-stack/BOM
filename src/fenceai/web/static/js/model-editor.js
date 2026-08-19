@@ -28,7 +28,8 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import {
-  el, field, loadCatalogProducts, option, updateAdvancedUi,
+  el, field, loadCatalogProducts, loadPartTypes, loadParts, option,
+  updateAdvancedUi,
 } from "./builder-ui.js";
 import {
   CONDITION_CMPS, CONDITION_FIELDS, readSentence, writeSentence,
@@ -956,19 +957,27 @@ function addBar(spec) {
   return bar;
 }
 
-// The catalog is awaited BEFORE the host is written, so two renders racing each
-// other rebuild the pane rather than leaving a half-built one behind.
+// The catalog, the part library and the type vocabulary are all awaited BEFORE
+// the host is written, so two renders racing each other rebuild the pane rather
+// than leaving a half-built one behind. All three are cached promises, so this
+// costs one request each per session however often the pane rebuilds.
 async function renderInspectorPane() {
-  const products = await loadCatalogProducts();
+  const [products, parts, partTypes] = await Promise.all(
+    [loadCatalogProducts(), loadParts(), loadPartTypes()]);
   const host = document.getElementById("model-inspector");
   if (!host || !session) return;
   renderInspector(host, {
-    selection, products,
+    selection, products, parts, partTypes,
     spec: specOf(session.model, specIndex),
     model: session.model,
     // the drawing the server just returned, so the inspector can say what it
     // could not place — never to measure anything off
     elevation: preview?.elevation,
+    // ... and the WHOLE preview beside it, because the part picker's "N products
+    // can fill this" is counted off `preview.parts[].eligible_skus`. Handed the
+    // elevation alone it counts zero on every slot, which is the same "nothing
+    // supplies this" the broken picker used to say.
+    preview,
     onChange: touch,
     onRemove: () => { selection = SELECTION_NONE; touch({ rerender: true }); },
     // the posts and the cap have no chip and no spec key, so the inspector is

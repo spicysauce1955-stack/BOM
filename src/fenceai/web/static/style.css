@@ -294,6 +294,22 @@ input[type="number"] { direction: ltr; }
   background: #fff; }
 .pref-item.dragging { opacity: 0.5; }
 .pref-grip { cursor: grab; color: #94a3b8; }
+/* the part a slot names, and what that name MEANS — the chips are the part's
+   own declared facts, so choosing one is not choosing blind */
+.part-field { margin-block: 4px; }
+.part-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-block: 4px; }
+.part-chip { padding: 1px 8px; border: 1px solid #cbd5e1; border-radius: 10px;
+  background: #f8fafc; color: #334155; font-size: 12px; }
+/* "cut from stock" is the part declining to state a length — the bay resolves
+   it — which is a different KIND of fact from a dimension it does state */
+.part-chip.agree-supplies { border-style: dashed; color: #475569; }
+.part-candidates > summary { cursor: pointer; color: #475569; font-size: 12px; }
+.part-candidate-list { list-style: none; margin: 4px 0; padding: 0; }
+.part-candidate-list li { display: flex; gap: 6px; align-items: center;
+  font-size: 12px; }
+.part-candidate-list li.chosen { font-weight: 600; }
+.chosen-mark { color: #16a34a; }
+.part-ref { margin-block-start: 2px; }
 /* an element is called what it IS — "Board 2" — and the key it carries is an
    identifier nobody chose, so it rides in the title and the rename is a mode */
 .element-rename { padding: 2px 8px; border: 1px solid #2563eb; border-radius: 12px; }

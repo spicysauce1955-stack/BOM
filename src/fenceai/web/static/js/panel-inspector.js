@@ -43,10 +43,14 @@
 //     did, with the reason, dashed — and the moment the author types, the figure
 //     is theirs. The derived value is NEVER written to the document by being
 //     displayed; only a keystroke writes.
-//   * EVERYTHING ELSE IS DEFERRED, NEVER REMOVED. `advancedBox` holds role,
+//   * EVERYTHING ELSE IS DEFERRED, NEVER REMOVED. `advancedBox` holds the
 //     length rule, option axis, offsets, refs, the preference list and the raw
 //     spacing pair, and its summary carries a count when any of them is set —
 //     an author who cannot see what they set has lost it.
+//     ROLE IS THE ONE EXCEPTION, and it is not a deferral: the part a slot names
+//     says what the piece IS, `PartRequirement` refuses a document that says
+//     both, so the control did not move behind a disclosure — it left, because
+//     what it wrote could no longer be saved.
 //
 // Two things here are load-bearing and easy to "tidy" into defects:
 //
@@ -69,10 +73,11 @@ import { currentLocale, t } from "./i18n.js";
 import { gapForOverlap, overlapOf } from "./panel-canvas-geom.js";
 import {
   APPROVALS, AXIS_KINDS, BASES, COUNT_PARAMS, EXCESS, JUSTIFICATIONS,
-  LENGTH_RULES, PLACEMENT_KINDS, ROLES, SWATCH_RE, defaultEligibleMember,
-  defaultPlacement, defaultRequirement,
+  LENGTH_RULES, PLACEMENT_KINDS, SWATCH_RE, defaultEligibleMember,
+  defaultPlacement, defaultRequirement, eligibilitySource, partSummary,
+  partsByType,
 } from "./panel-model.js";
-import { inputStep, roleWord, toDisplayValue, toMm, tu } from "./units.js";
+import { inputStep, toDisplayValue, toMm, tu } from "./units.js";
 
 /** Nothing on the drawing is selected: the panel itself is. */
 export const SELECTION_NONE = { kind: "panel", key: null };
@@ -396,62 +401,204 @@ function spacingControl(infill, ctx) {
   return box;
 }
 
-// --- what supplies a part ----------------------------------------------------
+// --- what supplies a slot: the PART it names ---------------------------------
+//
+// A slot used to be authored as a sku, and this pane picked one. It no longer
+// is: the slot names a PART, the part owns the eligibility and the role, and
+// `PartRequirement` refuses a document that says both — which is why this pane
+// spent an arc showing "no product" on every slot in the demo library and then
+// refusing the save that would have fixed it. What the author picks here is a
+// name out of the part library; what the pane SHOWS beside it is what that name
+// means, so choosing one is not choosing blind.
+//
+// Four shapes, and the pane branches on them before it renders anything, because
+// three of them have no part to pick and a picker offered there authors exactly
+// the pair the loader refuses:
+//
+//   * `part`               — the picker, the part's facts, and what can fill it.
+//   * `authored_predicate` — M-VINYL's post and cap: their rule agrees with a
+//                            fact about the BAY, which no part can declare. Said
+//                            plainly, and the rule itself stays under Advanced.
+//   * `authored_members`   — M-LEGACY's rail and screw: a sku list, still edited
+//                            under Advanced, because those two are rebuilt per
+//                            run from company knowledge and a part would outrank
+//                            the rule silently.
+//   * `unspecified`        — a slot the "+ Add" button just made. Ask for a part.
 
-/** "What product" — one picker over the first eligible member.
+/** The part library as a grouped `<select>` — the one control that writes here.
  *
- * The full preference list is still the truth (`priority` is the company's
- * stated order and the ORDER it is read in IS part of the answer), and it is
- * still edited, under Advanced. What moved is the common case: a slot supplied
- * by one product should be one select, not a draggable list with a grip and an
- * approval checkbox per row. */
-function productField(req, products) {
-  req.eligibility ??= { members: [] };
-  req.eligibility.members ??= [];
-  const members = req.eligibility.members;
-  const wrap = row();
-  if (req.eligibility.predicate) {
-    // an eligibility that declares a PREDICATE may not also name members — the
-    // loader refuses the pair — so there is nothing here to pick
-    wrap.appendChild(el("span", { class: "meta", text: t("model.prefer_predicate") }));
-    return wrap;
+ * It writes `part_id` and, when it writes one, CLEARS `role` and the authored
+ * eligibility in the same act. Not tidiness: `_part_or_authored` refuses a slot
+ * that names a part and also says what the piece is, so leaving the `role` the
+ * "+ Add slot" button wrote is a save that 422s on a field the author cannot
+ * see. One place does both, so the pair can never be half-applied. */
+function partSelect(req, ctx, summary) {
+  const sel = el("select", { "data-f": "part_id" });
+  // the empty entry is the prompt, not a value — an author who lands on a fresh
+  // slot must read "choose a part", never a part they did not choose
+  sel.appendChild(option("", t("model.slot.choose_part"), !req.part_id));
+  const labels = new Map((ctx.partTypes || []).map((ty) => [ty.key, ty]));
+  for (const { type, parts } of partsByType(ctx.parts)) {
+    const ty = labels.get(type);
+    const group = el("optgroup",
+      { label: ty?.label_i18n?.[currentLocale()] || ty?.label_i18n?.en || type });
+    for (const part of parts)
+      group.appendChild(option(part.id, partWord(part), req.part_id === part.id));
+    sel.appendChild(group);
   }
-  const first = members[0] || null;
-  const picker = skuSelect(products, first?.sku || "", true, (v) => {
-    if (!v) members.splice(0, 1);
-    else if (first) first.sku = v;
-    else members.unshift(defaultEligibleMember(v, 1));
-    renumber(members);
+  // a part the library does not have is still what the document says, and an
+  // editor that silently dropped it would rewrite the slot by being opened
+  if (summary.missing)
+    sel.appendChild(option(req.part_id, req.part_id, true));
+  sel.addEventListener("change", () => {
+    req.part_id = sel.value;
+    if (req.part_id) {
+      req.role = "";
+      req.eligibility = { members: [] };
+    }
     notify({ rerender: true });
   });
-  picker.dataset.f = "product";
-  wrap.appendChild(field("model.product", picker));
-  if (members.length > 1)
-    wrap.appendChild(el("span", { class: "meta",
-      text: t("model.more_products", { n: members.length - 1 }) }));
-  else if (!members.length)
-    wrap.appendChild(el("span", { class: "meta", text: t("model.prefer_none") }));
-  return wrap;
+  return field("model.part", sel);
+}
+
+/** A part as a person reads it: its localized name, or its id when it has none. */
+const partWord = (part) =>
+  part.name_i18n?.[currentLocale()] || part.name_i18n?.en || part.id;
+
+/** One declared fact of the part, as a phrase.
+ *
+ * `specChips` hands over `{key, agree, value, unit}` and no prose — it is the
+ * import-free module — so the sentence is assembled HERE, out of the bundle.
+ * `!=`, `>=`, `<=` and `covers` share `model.chip.other`, which renders the
+ * agreement as the symbol the author typed: no demo part exercises them, and an
+ * invented phrasing for an untested case is a worse answer than an honest one.
+ *
+ * Every field of the chip is DATA a catalog author typed, and it reaches the DOM
+ * through `textContent` — `el`'s `text` attribute — so there is no interpolation
+ * into markup for `esc()` to guard. That is the stronger half of the rule this
+ * pane has kept from the beginning: a surface that never reaches for innerHTML
+ * cannot grow an exception to it later. */
+function chipPhrase(chip) {
+  const value = Array.isArray(chip.value) ? chip.value.join(", ") : chip.value;
+  switch (chip.agree) {
+    case "supplies": return t("model.chip.supplies");
+    case "among": return t("model.chip.among", { key: chip.key, value });
+    case "between": return t("model.chip.between", { key: chip.key,
+      low: chip.value?.[0], high: chip.value?.[1] });
+    case "==": return t("model.chip.eq", { key: chip.key, value });
+    default: return t("model.chip.other",
+      { key: chip.key, agree: chip.agree, value });
+  }
+}
+
+/** "N products can fill this", and which ones.
+ *
+ * Shut by default and counted on the summary: the count is the fact an author
+ * needs at a glance ("is this part supplied at all?"), and the skus are the
+ * answer to the question that follows. Both come off the preview the editor
+ * already fetched — no request of its own, because the candidate set is already
+ * on the wire.
+ *
+ * The chosen one is marked with a ✓ rather than with a word: it needs no
+ * translation, and it survives being read in either direction. */
+function candidateList(summary) {
+  const box = el("details", { class: "part-candidates" });
+  box.appendChild(el("summary",
+    { text: t("model.part.can_fill", { n: summary.candidates }) }));
+  const list = el("ul", { class: "part-candidate-list" });
+  for (const sku of summary.eligibleSkus) {
+    const chosen = sku === summary.chosen;
+    const item = el("li", { class: chosen ? "chosen" : null },
+      el("bdi", { class: "sku", text: sku }));
+    if (chosen) item.appendChild(el("span", { class: "chosen-mark", text: "✓" }));
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  return box;
+}
+
+/** What supplies this slot — the pane, branching on which of the four it is. */
+function partField(req, ctx, slotKey) {
+  req.eligibility ??= { members: [] };
+  req.eligibility.members ??= [];
+  const summary = partSummary(req, {
+    parts: ctx.parts, preview: ctx.preview, slotKey });
+  const box = el("div", { class: "part-field" });
+
+  if (summary.source === "authored_predicate") {
+    box.appendChild(el("div", { class: "meta", text: t("model.slot.by_rule") }));
+    box.appendChild(candidateList(summary));
+    return box;
+  }
+  if (summary.source === "authored_members") {
+    const first = req.eligibility.members[0]?.sku || "";
+    box.appendChild(el("div", { class: "meta" },
+      el("span", { text: t("model.slot.by_listed_product") }),
+      el("bdi", { class: "sku", text: first })));
+    box.appendChild(candidateList(summary));
+    return box;
+  }
+
+  box.appendChild(row(partSelect(req, ctx, summary)));
+  if (summary.source === "unspecified") {
+    box.appendChild(el("div", { class: "meta", text: t("model.slot.choose_part") }));
+    return box;
+  }
+  if (summary.missing) {
+    // named, and not there. Reported as the id it names — an empty select would
+    // read as "you never chose one", and the repair is a different one.
+    box.appendChild(el("div", { class: "meta" },
+      el("bdi", { class: "sku", text: req.part_id }),
+      el("span", { text: ` — ${t("model.part.not_in_library")}` })));
+    return box;
+  }
+
+  const chips = el("div", { class: "part-chips" });
+  for (const chip of summary.chips)
+    chips.appendChild(el("span",
+      { class: `part-chip agree-${chip.agree}`, text: chipPhrase(chip) }));
+  box.appendChild(chips);
+  box.appendChild(candidateList(summary));
+  // the id and the version, as TEXT. Not a link: there is no Parts tab in this
+  // arc, and a link that goes nowhere is worse than a readout that does not
+  // pretend to.
+  const ref = el("div", { class: "meta part-ref" },
+    el("bdi", { class: "sku", text: `${summary.part.id}@v${summary.part.version}` }));
+  if (summary.part.status !== "active")
+    ref.appendChild(el("span", { text: ` — ${t("model.part.not_published")}` }));
+  box.appendChild(ref);
+  return box;
 }
 
 // --- a requirement and the products that may answer it -----------------------
 
-/** The part of a requirement a person meets first: what supplies it, how many. */
-function requirementRows(req, ctx) {
+/** The part of a requirement a person meets first: what supplies it, how many.
+ *
+ * `slotKey` is the slot's own key, and it is what joins this pane to the preview
+ * row: `PreviewPart.eligible_skus` is keyed by it, so a pane rendered without it
+ * says "0 products can fill this" about a slot the server just supplied. */
+function requirementRows(req, ctx, slotKey = "") {
   const box = el("div", { class: "builder-sub" });
   if (!req) return box;
-  box.appendChild(productField(req, ctx.products));
+  box.appendChild(partField(req, ctx, slotKey));
   box.appendChild(row(num(req, "qty", "model.qty", { min: 0 })));
   return box;
 }
 
-/** ... and the part it meets when it needs to: role, cut length, option axis,
- *  and the preference order behind the single picker above. */
+/** ... and the part it meets when it needs to: cut length, option axis, and the
+ *  preference order for the slots that still author one.
+ *
+ *  ROLE IS NOT HERE, and its absence is the point. The part is the one authority
+ *  on what a piece is — `resolve_model_parts` fills `role` from the part's type,
+ *  and `PartRequirement` refuses a slot that names a part and says a role too.
+ *  Offering the control anyway is what turned "set the role" into a save the
+ *  server rejected, on a field the author had every reason to think was theirs.
+ *  The word did not leave the system: `ResolvedSlot.role` is still required and
+ *  the BOM still reads it. It left AUTHORING. */
 function requirementAdvanced(req, ctx, kind) {
   const box = el("div", { class: "builder-sub" });
   if (!req) return box;
   const first = row();
-  first.appendChild(choice(req, "role", ROLES, roleWord, "model.role"));
   // `between_frame` is the one rule that reads a member's base/top refs, and a
   // FRAME slot has none — the schema refuses it there, so it is not offered
   // there. Same principle as the narrowed `excess` list: offering a value the
@@ -468,7 +615,13 @@ function requirementAdvanced(req, ctx, kind) {
   first.appendChild(choice(req, "option_axis", axes, (k) => k, "model.option_axis",
     { rerender: true, nullKey: "model.option_axis.none" }));
   box.appendChild(first);
-  box.appendChild(eligibilityList(req, ctx));
+  // The preference list belongs to the slots that GENUINELY author a sku list.
+  // On a slot that names a part it is the pair the loader refuses, and on one
+  // that declares a predicate it is a list with nothing to order — offering it
+  // on either is offering the author a document they can only fix by undoing
+  // the edit the editor invited.
+  if (eligibilitySource(req) === "authored_members")
+    box.appendChild(eligibilityList(req, ctx));
 
   // A slot binds to AT MOST ONE axis, and then names a SKU per axis value. The
   // SKU must be one of the eligible members — anything else is a product the
@@ -602,10 +755,14 @@ function addProductButton(req, products) {
 // against `panel-model.js`'s `defaultRequirement`/`defaultMember` — the badge is
 // a claim about what the AUTHOR set, so a field sitting at the value the "+ Add"
 // button gave it is not something they set.
+//
+// Role is not among them any more, because it is no longer BEHIND the
+// disclosure: the part says what a piece is, the control is gone, and a badge
+// counting a field nobody can see is the exact lie the count exists to prevent.
 const REQUIREMENT_DEFAULTS = {
-  frame: { role: "rail", length_rule: null },
-  infill: { role: "infill", length_rule: "panel_height" },
-  fixing: { role: "screw", length_rule: null },
+  frame: { length_rule: null },
+  infill: { length_rule: "panel_height" },
+  fixing: { length_rule: null },
 };
 
 /** How many things behind the disclosure are NOT at their default.
@@ -618,7 +775,6 @@ function advancedCount(kind, { req = null, member = null, infill = null,
   const base = REQUIREMENT_DEFAULTS[kind] || {};
   let n = 0;
   if (req) {
-    if ((req.role ?? null) !== (base.role ?? null)) n += 1;
     if ((req.length_rule ?? null) !== (base.length_rule ?? null)) n += 1;
     if (req.overlap_mm) n += 1;
     if (req.option_axis) n += 1;
@@ -816,14 +972,21 @@ export function renderAxisEditor(host, { model, onChange = () => {} } = {}) {
  * when the selected thing is deleted, so the caller can drop the selection with
  * it rather than leaving the inspector pointed at nothing. */
 export function renderInspector(host, {
-  selection = SELECTION_NONE, spec, model, products = {}, elevation = null,
+  selection = SELECTION_NONE, spec, model, products = {}, parts = [],
+  partTypes = [], elevation = null, preview = null,
   onChange = () => {}, onRemove = () => {}, onSelect = () => {},
 } = {}) {
   if (!host) return;
   notify = onChange;
   host.innerHTML = "";
   if (!spec || !model) return;
-  const ctx = { products, model, spec, elevation, onRemove, onSelect };
+  // `elevation` AND `preview`: the elevation is the drawing (what could not be
+  // placed), the preview's `parts` rows are the SUPPLY (which products can fill
+  // each slot). They are two different readouts of the same response and the
+  // pane needs both — handed the drawing alone, the part picker counts every
+  // candidate set as empty and tells the author nothing can supply anything.
+  const ctx = { products, parts, partTypes, model, spec, elevation, preview,
+                onRemove, onSelect };
   switch (selection?.kind) {
     case "frame": return frameInspector(host, selection.key, ctx);
     case "infill": return infillInspector(host, selection.key, ctx);
@@ -903,7 +1066,7 @@ function frameInspector(host, key, ctx) {
     host.appendChild(el("div", { class: "meta",
       text: t("model.inspect.interior_not_placeable") }));
   host.appendChild(group("model.inspect.made_of",
-    requirementRows(slot.requirement, ctx)));
+    requirementRows(slot.requirement, ctx, key)));
   host.appendChild(advancedBox(
     advancedCount("frame", { req: slot.requirement, placement: p }),
     p.kind === "distributed"
@@ -927,7 +1090,7 @@ function infillInspector(host, key, ctx) {
   host.appendChild(group("model.inspect.this_board",
     row(num(member, "width_mm", "model.width_mm", { length: true, min: 1 })),
     gapControl(member),
-    requirementRows(member.requirement, ctx)));
+    requirementRows(member.requirement, ctx, key)));
 
   host.appendChild(group("model.inspect.all_boards",
     row(sentenceChoice(infill, "orientation", ["vertical", "horizontal"],
@@ -980,7 +1143,7 @@ function fixingInspector(host, key, ctx) {
         : null,
     })));
   host.appendChild(group("model.inspect.made_of",
-    requirementRows(fix.requirement, ctx)));
+    requirementRows(fix.requirement, ctx, key)));
   host.appendChild(advancedBox(
     advancedCount("fixing", { req: fix.requirement, fixing: fix }),
     row(choice(fix, "qty_param", COUNT_PARAMS, paramWord, "model.qty_param",
@@ -1040,7 +1203,7 @@ function postInspector(host, kind, ctx) {
     })));
 
   host.appendChild(group("model.inspect.the_post",
-    requirementRows(post.requirement, ctx, "post")));
+    requirementRows(post.requirement, ctx, post.key || "post")));
 
   // The cap NESTS in the post, and reads the post it caps — so it is offered
   // after it, never beside it. That ordering is the model's, not a layout

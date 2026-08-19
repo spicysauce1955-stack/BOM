@@ -78,6 +78,34 @@ export function loadCatalogProducts() {
   return catalogPromise;
 }
 
+// The PART library, cached exactly as the catalog above is and for the same two
+// reasons: two caches are two answers to "which parts exist", and a cached empty
+// list is a picker that stays empty for the rest of the session because one
+// request lost a network. The promise is cached, not the result, so the two
+// surfaces that warm it cannot race into two fetches.
+//
+// Read-only. Nothing here creates or edits a part — that is the arc that builds
+// an editor for them — so there is no invalidation to get wrong yet.
+let partsPromise = null;
+export function loadParts() {
+  partsPromise ??= apiGet("/api/parts")
+    .then((body) => body.parts || [])
+    .catch(() => { partsPromise = null; return []; });
+  return partsPromise;
+}
+
+// The filing vocabulary the picker groups by. A separate request rather than a
+// field derived in JS from the parts themselves: the LABEL is per-language and
+// comes from the bundle the server reads, so deriving the list here would give
+// the group headings raw keys in Hebrew.
+let partTypesPromise = null;
+export function loadPartTypes() {
+  partTypesPromise ??= apiGet("/api/part-types")
+    .then((body) => body.types || [])
+    .catch(() => { partTypesPromise = null; return []; });
+  return partTypesPromise;
+}
+
 // show/hide the structured editor vs. the raw-JSON textarea; the toggle button's
 // data-i18n key is swapped so applyStatic keeps it correct across locale changes.
 // `backKey` names the surface being returned to — the inventory tab has no rule
