@@ -370,8 +370,8 @@ export function assemblyPlanHtml(plan) {
         slots: plan.unplaced.map((p) => p.slot_key).join(", ") }))}</div>`
     : "";
   return `<div class="panel" id="panel-assembly">
-    <h3>${esc(t("assembly.title"))}</h3>
-    <div class="meta">${esc(t("assembly.hint"))}</div>
+    <h3>${esc(t("assembly.sheet_title"))}</h3>
+    <div class="meta">${esc(t("assembly.sheet_hint"))}</div>
     ${missed}<ol class="steps">${rows}</ol></div>`;
 }
 

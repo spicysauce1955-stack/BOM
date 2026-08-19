@@ -102,6 +102,27 @@ def _bundles():
     return en, he
 
 
+def test_no_bundle_key_is_declared_twice():
+    """`json.load` keeps the LAST value silently, so a duplicate key is not a
+    parse error — it is a string that resolves to whatever happens to come
+    later in the file. It bit for real: a new panel added `assembly.title` and
+    `assembly.hint` above the Assembly TAB's own keys of the same name, and the
+    tab's copy won, so the Panel tab's instruction sheet was headed "Assembly
+    view" and told the reader to pick a bay from a list it does not have.
+
+    Every other test in this file loads the bundle through `json`, so none of
+    them can see this. The text has to be read as TEXT.
+    """
+    import collections
+    import re
+
+    for name in ("en", "he"):
+        raw = (STATIC / "i18n" / f"{name}.json").read_text()
+        keys = re.findall(r'^  "([^"]+)":', raw, re.M)
+        dupes = sorted(k for k, n in collections.Counter(keys).items() if n > 1)
+        assert not dupes, (name, dupes)
+
+
 def test_bundle_key_parity():
     en, he = _bundles()
     assert set(en) == set(he), {
