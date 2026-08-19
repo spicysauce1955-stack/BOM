@@ -108,7 +108,21 @@ def main() -> int:
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
     try:
-        time.sleep(3)
+        # Wait for BOTH to answer rather than sleeping a fixed 3 s. A brand-new
+        # Chrome profile initialises slower than a warm one, so the old sleep
+        # turned a hermetic run into a connection-refused traceback — and a fixed
+        # sleep is what made the whole start-up fragile in the first place.
+        for url in (f"http://localhost:{CDP_PORT}/json/version",
+                    f"http://localhost:{PORT}/api/health"):
+            for _ in range(120):          # 60 s, checked twice a second
+                try:
+                    urllib.request.urlopen(url, timeout=1)
+                    break
+                except Exception:
+                    time.sleep(0.5)
+            else:
+                print(f"FATAL: {url} never answered")
+                return 2
         c = Cdp(f"http://localhost:{PORT}/", cdp_port=CDP_PORT, out_dir=OUT)
         c.js("window.confirm = () => true; undefined")
 
