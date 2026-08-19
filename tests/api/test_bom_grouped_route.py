@@ -28,13 +28,18 @@ def _project_with_a_fence(client) -> tuple[str, str]:
     return pid, run_id
 
 
-def test_the_bom_route_groups_by_section_bay_and_decision():
+def test_the_bom_route_groups_by_section_and_bay():
     with TestClient(app) as client:
         _, run_id = _project_with_a_fence(client)
         body = client.get(f"/api/runs/{run_id}/bom").json()
         assert "grouped" in body, "the flat list is not the only shape asked for"
-        kinds = {g["kind"] for g in body["grouped"]["groups"]}
-        assert {"section", "bay"} <= kinds
+        kinds = [g["kind"] for g in body["grouped"]["groups"]]
+        # named exactly, because "is a subset" hid that this fixture produces NO
+        # decision group at all — every demo model names one product per slot, so
+        # `resolve_supply` never has a choice to record. The unit suite covers
+        # the decision kind on a fixture with two eligible stocks.
+        assert sorted(set(kinds)) == ["bay", "node", "section"]
+        assert kinds.count("node") == 2 and kinds.count("section") == 1
         section = next(g for g in body["grouped"]["groups"] if g["kind"] == "section")
         assert section["element_id"] == "run1"
         assert section["lines"]

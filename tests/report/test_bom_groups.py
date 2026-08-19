@@ -329,3 +329,26 @@ def test_grouping_is_pure_and_deterministic():
     twice = group_bom(result.strategy, priced.requirements, priced.bom,
                       priced.decisions)
     assert once == twice
+
+
+def test_a_gate_is_part_of_the_section_it_stands_in():
+    """A gate kit is demand like any other and pegs to the gate element. No
+    fixture had one, so deleting gates from the element→section map left the
+    suite green while a gate's kit belonged to no section at all."""
+    from fenceai.topology.model import GatePayload
+    from tests.conftest import add_point_event
+
+    catalog = demo_catalog()
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "g1", 2000,
+                    GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    result = generate(topo, demo_knowledge(), catalog, parts=PARTS,
+                      models=FenceModelLibrary(models=[M_SLAT]),
+                      default_model=FenceModelChoice(model_id="M-SLAT"))
+    assert result.strategy.gates, "the fixture grew no gate"
+    priced = price_strategy(result.strategy, catalog,
+                            demand_skus=result.run.demand_skus)
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    section = next(g for g in grouped.groups if g.element_id == "run1")
+    assert "GATE-KIT-1000" in {x.sku for x in section.lines}
