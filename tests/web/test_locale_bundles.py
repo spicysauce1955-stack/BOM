@@ -416,12 +416,24 @@ def test_the_inspector_renders_its_vocabularies_as_sentences():
 #   * `model.${side}` — a distributed slot's two insets.
 #   * `model.element_n` and the `model.derived.*` sentences — the number and the
 #     reason beside a figure the panel already answered.
+#   * `model.chip.<agree>` and its `_len` sibling — the part picker renders one
+#     chip per fact the part declares, and WHICH template it asks for is chosen
+#     from the agreement and from whether the fact carries a unit. Neither name
+#     is a literal the parity scan can see as belonging to anything, and a
+#     missing one puts a raw `model.chip.eq_len` inside a Hebrew pane.
+#   * `model.<dim>` — the width and thickness a part owns, rendered read-only
+#     where their fields used to be.
 COMPUTED_INSPECTOR_KEYS = [
     "model.inspect.rail", "model.inspect.board", "model.inspect.screws",
     "model.bottom_inset_mm", "model.top_inset_mm",
     "model.element_n", "model.rename_hint",
     "model.derived.margin", "model.derived.at", "model.derived.rails",
     "model.derived.from_param",
+    "model.chip.supplies", "model.chip.among", "model.chip.between",
+    "model.chip.eq", "model.chip.other",
+    "model.chip.among_len", "model.chip.between_len", "model.chip.eq_len",
+    "model.chip.other_len",
+    "model.width_mm", "model.thickness_mm", "model.dim.from_part",
 ]
 
 

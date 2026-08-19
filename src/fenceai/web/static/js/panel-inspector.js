@@ -73,11 +73,11 @@ import { currentLocale, t } from "./i18n.js";
 import { gapForOverlap, overlapOf } from "./panel-canvas-geom.js";
 import {
   APPROVALS, AXIS_KINDS, BASES, COUNT_PARAMS, EXCESS, JUSTIFICATIONS,
-  LENGTH_RULES, PLACEMENT_KINDS, SWATCH_RE, defaultEligibleMember,
-  defaultPlacement, defaultRequirement, eligibilitySource, partSummary,
-  partsByType,
+  LENGTH_RULES, PART_DIMENSIONS, PLACEMENT_KINDS, SWATCH_RE,
+  defaultEligibleMember, defaultPlacement, defaultRequirement, eligibilitySource,
+  partSummary, partsByType,
 } from "./panel-model.js";
-import { inputStep, toDisplayValue, toMm, tu } from "./units.js";
+import { fmt, inputStep, toDisplayValue, toMm, tu } from "./units.js";
 
 /** Nothing on the drawing is selected: the panel itself is. */
 export const SELECTION_NONE = { kind: "panel", key: null };
@@ -427,13 +427,16 @@ function spacingControl(infill, ctx) {
 
 /** The part library as a grouped `<select>` — the one control that writes here.
  *
- * It writes `part_id` and, when it writes one, CLEARS `role` and the authored
- * eligibility in the same act. Not tidiness: `_part_or_authored` refuses a slot
- * that names a part and also says what the piece is, so leaving the `role` the
- * "+ Add slot" button wrote is a save that 422s on a field the author cannot
- * see. One place does both, so the pair can never be half-applied. */
-function partSelect(req, ctx, summary) {
-  const sel = el("select", { "data-f": "part_id" });
+ * It writes `part_id` and, when it writes one, CLEARS in the same act everything
+ * the part is now the authority on: `role`, the authored eligibility, and the
+ * holder's own dimensions. Not tidiness — three validators refuse those pairs.
+ * `_part_or_authored` refuses a slot that names a part and says what the piece
+ * is, so leaving the `role` the "+ Add slot" button wrote is a 422 on a field the
+ * author cannot see; `_refuse_authored_dimensions` refuses the same slot carrying
+ * a `width_mm`, so leaving the 100 mm `defaultMember` wrote is the SAME defect one
+ * level up. One place does all of it, so the set can never be half-applied. */
+function partSelect(req, ctx, summary, { holder = null, dims = [] } = {}) {
+  const sel = el("select", { "data-f": "part" });
   // the empty entry is the prompt, not a value — an author who lands on a fresh
   // slot must read "choose a part", never a part they did not choose
   sel.appendChild(option("", t("model.slot.choose_part"), !req.part_id));
@@ -455,6 +458,10 @@ function partSelect(req, ctx, summary) {
     if (req.part_id) {
       req.role = "";
       req.eligibility = { members: [] };
+      // 0 is what an UNDECLARED dimension is here — the elevation renders it
+      // `declared=False` rather than drawing a nominal band — so this hands the
+      // number to the part rather than inventing one
+      for (const dim of dims) if (holder) holder[dim] = 0;
     }
     notify({ rerender: true });
   });
@@ -465,7 +472,7 @@ function partSelect(req, ctx, summary) {
 const partWord = (part) =>
   part.name_i18n?.[currentLocale()] || part.name_i18n?.en || part.id;
 
-/** One declared fact of the part, as a phrase.
+/** One declared fact of the part, as an isolated chip.
  *
  * `specChips` hands over `{key, agree, value, unit}` and no prose — it is the
  * import-free module — so the sentence is assembled HERE, out of the bundle.
@@ -473,22 +480,62 @@ const partWord = (part) =>
  * agreement as the symbol the author typed: no demo part exercises them, and an
  * invented phrasing for an untested case is a worse answer than an honest one.
  *
+ * A UNIT-BEARING fact goes through the same length path as every other length in
+ * this app — a `_len` template carrying `{…_mm}` + `{u}`, rendered with `tu()` —
+ * so a part declaring 38 mm reads "3.8 cm" for an author working in centimetres
+ * instead of a bare `38` that means nothing until you know which editor wrote it.
+ *
+ * DIRECTION. Every chip but `supplies` begins with the part's own `key` — a Latin
+ * identifier a catalog author typed — followed by a value, and that pair reorders
+ * on screen in an RTL page. So those render as `<bdi class="num">`: isolated, and
+ * ltr inside, which is the same treatment a SKU and every other figure gets.
+ * `supplies` is the one chip that is PROSE ("cut from stock" / "נחתך ממלאי") and
+ * it keeps the page's own direction, because forcing ltr on Hebrew is the defect
+ * this rule exists to prevent, mirrored.
+ *
  * Every field of the chip is DATA a catalog author typed, and it reaches the DOM
  * through `textContent` — `el`'s `text` attribute — so there is no interpolation
  * into markup for `esc()` to guard. That is the stronger half of the rule this
  * pane has kept from the beginning: a surface that never reaches for innerHTML
  * cannot grow an exception to it later. */
-function chipPhrase(chip) {
-  const value = Array.isArray(chip.value) ? chip.value.join(", ") : chip.value;
+function chipText(chip) {
+  // `supplies` first, and out: it is the only agreement carrying no value, so its
+  // `unit: "mm"` — which the schema REQUIRES — is not a measurement to convert.
+  // It means "the bay resolves the length", never "the length is zero mm".
+  if (chip.agree === "supplies") return t("model.chip.supplies");
+  const len = chip.unit === "mm";
+  const key = chip.key;
+  const list = Array.isArray(chip.value)
+    ? chip.value.map((v) => (len ? toDisplayValue(v) : v)).join(", ") : "";
   switch (chip.agree) {
-    case "supplies": return t("model.chip.supplies");
-    case "among": return t("model.chip.among", { key: chip.key, value });
-    case "between": return t("model.chip.between", { key: chip.key,
-      low: chip.value?.[0], high: chip.value?.[1] });
-    case "==": return t("model.chip.eq", { key: chip.key, value });
-    default: return t("model.chip.other",
-      { key: chip.key, agree: chip.agree, value });
+    case "among":
+      return len ? tu("model.chip.among_len", { key, value: list })
+                 : t("model.chip.among", { key, value: list });
+    case "between":
+      return len
+        ? tu("model.chip.between_len",
+             { key, low_mm: chip.value?.[0], high_mm: chip.value?.[1] })
+        : t("model.chip.between",
+            { key, low: chip.value?.[0], high: chip.value?.[1] });
+    case "==":
+      return len ? tu("model.chip.eq_len", { key, value_mm: chip.value })
+                 : t("model.chip.eq", { key, value: chip.value });
+    default:
+      return len
+        ? tu("model.chip.other_len",
+             { key, agree: chip.agree, value_mm: chip.value })
+        : t("model.chip.other", { key, agree: chip.agree, value: chip.value });
   }
+}
+
+/** The chip itself. `data-chip` carries the agreement, so a check can find the
+ *  chips and say WHICH fact it found without parsing a localized sentence. */
+function chipNode(chip) {
+  const prose = chip.agree === "supplies";
+  return el(prose ? "span" : "bdi", {
+    class: `part-chip agree-${chip.agree}${prose ? "" : " num"}`,
+    "data-chip": chip.agree, text: chipText(chip),
+  });
 }
 
 /** "N products can fill this", and which ones.
@@ -503,8 +550,10 @@ function chipPhrase(chip) {
  * translation, and it survives being read in either direction. */
 function candidateList(summary) {
   const box = el("details", { class: "part-candidates" });
-  box.appendChild(el("summary",
-    { text: t("model.part.can_fill", { n: summary.candidates }) }));
+  // `data-candidates` carries the number as well as marking the element, so a
+  // check reads the count without parsing a sentence that exists in two languages
+  box.appendChild(el("summary", { "data-candidates": String(summary.candidates),
+    text: t("model.part.can_fill", { n: summary.candidates }) }));
   const list = el("ul", { class: "part-candidate-list" });
   for (const sku of summary.eligibleSkus) {
     const chosen = sku === summary.chosen;
@@ -517,8 +566,34 @@ function candidateList(summary) {
   return box;
 }
 
+/** The dimensions the PART owns, standing where the fields for them used to be.
+ *
+ * A width field on a member whose part declares the width is the `role` control
+ * one level up: `_refuse_authored_dimensions` refuses that pair too, so typing
+ * there produced exactly the unexplainable 422 this arc exists to remove. The
+ * CONTROL is gone; the NUMBER must not be. An author still has to see how wide
+ * the board is, and see it where they looked for it, or the pane has answered a
+ * question by deleting it.
+ *
+ * Read off the part's own spec — the `unit=mm, agree===, int` fields, which is
+ * `Part.dimensions` in Python and the same three-way test `is_dimension` makes.
+ * A part declaring none shows a dash: undeclared is what the document then means,
+ * and a 0 would read as a measured zero. */
+function partDimensions(part, dims) {
+  const box = el("div", { class: "part-dims" });
+  for (const dim of dims) {
+    const declared = (part?.spec || []).find(
+      (f) => f.key === dim && f.agree === "==" && f.unit === "mm");
+    box.appendChild(row(
+      field(`model.${dim}`, el("bdi", { class: "num", "data-dim": dim,
+        text: declared ? fmt(declared.value) : "—" })),
+      el("span", { class: "meta", text: t("model.dim.from_part") })));
+  }
+  return box;
+}
+
 /** What supplies this slot — the pane, branching on which of the four it is. */
-function partField(req, ctx, slotKey) {
+function partField(req, ctx, { slotKey = "", holder = null, dims = [] } = {}) {
   req.eligibility ??= { members: [] };
   req.eligibility.members ??= [];
   const summary = partSummary(req, {
@@ -539,7 +614,7 @@ function partField(req, ctx, slotKey) {
     return box;
   }
 
-  box.appendChild(row(partSelect(req, ctx, summary)));
+  box.appendChild(row(partSelect(req, ctx, summary, { holder, dims })));
   if (summary.source === "unspecified") {
     box.appendChild(el("div", { class: "meta", text: t("model.slot.choose_part") }));
     return box;
@@ -554,10 +629,9 @@ function partField(req, ctx, slotKey) {
   }
 
   const chips = el("div", { class: "part-chips" });
-  for (const chip of summary.chips)
-    chips.appendChild(el("span",
-      { class: `part-chip agree-${chip.agree}`, text: chipPhrase(chip) }));
+  for (const chip of summary.chips) chips.appendChild(chipNode(chip));
   box.appendChild(chips);
+  if (dims.length) box.appendChild(partDimensions(summary.part, dims));
   box.appendChild(candidateList(summary));
   // the id and the version, as TEXT. Not a link: there is no Parts tab in this
   // arc, and a link that goes nowhere is worse than a readout that does not
@@ -576,11 +650,16 @@ function partField(req, ctx, slotKey) {
  *
  * `slotKey` is the slot's own key, and it is what joins this pane to the preview
  * row: `PreviewPart.eligible_skus` is keyed by it, so a pane rendered without it
- * says "0 products can fill this" about a slot the server just supplied. */
-function requirementRows(req, ctx, slotKey = "") {
+ * says "0 products can fill this" about a slot the server just supplied.
+ *
+ * `holder` and `dims` are the row the requirement BELONGS to and the dimensions
+ * that row authors — `PART_DIMENSIONS`. They travel together because naming a
+ * part is one act that has to reach both objects: the requirement loses its role
+ * and its eligibility, and the holder loses the width the part now states. */
+function requirementRows(req, ctx, opts = {}) {
   const box = el("div", { class: "builder-sub" });
   if (!req) return box;
-  box.appendChild(partField(req, ctx, slotKey));
+  box.appendChild(partField(req, ctx, opts));
   box.appendChild(row(num(req, "qty", "model.qty", { min: 0 })));
   return box;
 }
@@ -782,7 +861,10 @@ function advancedCount(kind, { req = null, member = null, infill = null,
   }
   if (member) {
     if (member.face_offset_mm) n += 1;
-    if (member.thickness_mm) n += 1;
+    // not counted when the part owns it: the control is not behind the
+    // disclosure at all then, and a badge counting what nobody can see is the
+    // lie this count exists to prevent
+    if (!req?.part_id && member.thickness_mm) n += 1;
     if (member.base_ref) n += 1;
     if (member.top_ref) n += 1;
   }
@@ -1066,7 +1148,8 @@ function frameInspector(host, key, ctx) {
     host.appendChild(el("div", { class: "meta",
       text: t("model.inspect.interior_not_placeable") }));
   host.appendChild(group("model.inspect.made_of",
-    requirementRows(slot.requirement, ctx, key)));
+    requirementRows(slot.requirement, ctx,
+      { slotKey: key, holder: slot, dims: PART_DIMENSIONS.frame })));
   host.appendChild(advancedBox(
     advancedCount("frame", { req: slot.requirement, placement: p }),
     p.kind === "distributed"
@@ -1087,10 +1170,18 @@ function infillInspector(host, key, ctx) {
     ctx.onRemove({ kind: "infill", key });
   }));
 
+  // The width is the PART's when the member names one — `partDimensions` shows it
+  // a few lines down, read-only. Offering the field as well is the `role` defect
+  // one level up: `_refuse_authored_dimensions` refuses the pair, so a number
+  // typed here is a 422 the author cannot connect to anything they did.
+  const ownsSize = !member.requirement?.part_id;
   host.appendChild(group("model.inspect.this_board",
-    row(num(member, "width_mm", "model.width_mm", { length: true, min: 1 })),
+    ownsSize
+      ? row(num(member, "width_mm", "model.width_mm", { length: true, min: 1 }))
+      : el("span"),
     gapControl(member),
-    requirementRows(member.requirement, ctx, key)));
+    requirementRows(member.requirement, ctx,
+      { slotKey: key, holder: member, dims: PART_DIMENSIONS.infill })));
 
   host.appendChild(group("model.inspect.all_boards",
     row(sentenceChoice(infill, "orientation", ["vertical", "horizontal"],
@@ -1098,9 +1189,15 @@ function infillInspector(host, key, ctx) {
     spacingControl(infill, ctx)));
 
   const frameKeys = (ctx.spec.frame || []).map((s) => s.key);
+  // `face_offset_mm` is the member's own — where it sits on the face, which is a
+  // fact about this PANEL and not about the piece — so it stays whoever supplies
+  // it. `thickness_mm` is the part's, on the same terms as the width above.
   const sizes = row(
     num(member, "face_offset_mm", "model.face_offset_mm", { length: true }),
-    num(member, "thickness_mm", "model.thickness_mm", { length: true, min: 0 }));
+    ...(ownsSize
+      ? [num(member, "thickness_mm", "model.thickness_mm",
+             { length: true, min: 0 })]
+      : []));
   // "starts at" / "ends at" are read by ONE length rule, and the schema refuses
   // a member that sets them under any other — so they are offered under that
   // one. The rule itself is one row up, in the same disclosure.
@@ -1143,7 +1240,7 @@ function fixingInspector(host, key, ctx) {
         : null,
     })));
   host.appendChild(group("model.inspect.made_of",
-    requirementRows(fix.requirement, ctx, key)));
+    requirementRows(fix.requirement, ctx, { slotKey: key })));
   host.appendChild(advancedBox(
     advancedCount("fixing", { req: fix.requirement, fixing: fix }),
     row(choice(fix, "qty_param", COUNT_PARAMS, paramWord, "model.qty_param",
@@ -1203,7 +1300,8 @@ function postInspector(host, kind, ctx) {
     })));
 
   host.appendChild(group("model.inspect.the_post",
-    requirementRows(post.requirement, ctx, post.key || "post")));
+    requirementRows(post.requirement, ctx,
+      { slotKey: post.key || "post" })));
 
   // The cap NESTS in the post, and reads the post it caps — so it is offered
   // after it, never beside it. That ordering is the model's, not a layout
@@ -1219,7 +1317,8 @@ function postInspector(host, kind, ctx) {
   if (post.cap && drawnCapSku(ctx.elevation))
     capRow.appendChild(el("bdi", { class: "sku", text: drawnCapSku(ctx.elevation) }));
   const capGroup = group("model.inspect.the_cap", capRow);
-  if (post.cap) capGroup.appendChild(requirementRows(post.cap, ctx, "cap"));
+  if (post.cap)
+    capGroup.appendChild(requirementRows(post.cap, ctx, { slotKey: "cap" }));
   host.appendChild(capGroup);
 }
 

@@ -221,11 +221,56 @@ export function eligibilitySource(req) {
   return "unspecified";
 }
 
+// The dimension fields each holder authors, and that a PART fills once one is
+// named. Mirrors `_refuse_authored_dimensions`' two call sites in
+// `fencemodel/model.py` — `FrameSlot("thickness_mm")` and
+// `Member("width_mm", "thickness_mm")` — and it is the same exclusion `role` is,
+// one level up: the fields sit on the HOLDER rather than on the requirement, so
+// `PartRequirement._part_or_authored` cannot see them and a second validator has
+// to. A fixing rule and the post carry none, so they are absent rather than empty.
+//
+// The editor reads this twice: to HIDE the control (a width field on a slot whose
+// part owns the width is an invitation to a 422 nobody can explain) and to CLEAR
+// what a holder already carries when a part is chosen, in the same act.
+export const PART_DIMENSIONS = {
+  frame: ["thickness_mm"],
+  infill: ["width_mm", "thickness_mm"],
+};
+
+/** The version of a part that a document naming `id` MEANS.
+ *
+ *  Mirrors `PartLibrary.latest_active`, and it has to: `part_id` is unpinned on
+ *  purpose (a slot stores `rail-38`, never `rail-38@v3`), so the backend resolves
+ *  the newest ACTIVE version at generation. `/api/parts` returns EVERY version
+ *  ascending, drafts and retired included — so taking the first row would show v1's
+ *  facts beside a bay priced against v2, label an active part "not published" the
+ *  moment someone drafted a v3, and list one id once per version in the picker.
+ *
+ *  The fallback is the highest version of any status, because a part that has only
+ *  ever been a draft still EXISTS: rendering it as missing would tell the author
+ *  their slot names nothing, which sends them to a different repair. */
+export function latestPart(parts, id) {
+  if (!id) return null;
+  const rows = (parts || []).filter((p) => p.id === id);
+  if (!rows.length) return null;
+  const active = rows.filter((p) => p.status === "active");
+  return (active.length ? active : rows)
+    .reduce((best, p) => (p.version > best.version ? p : best));
+}
+
 /** Parts grouped by type, both levels sorted — a picker that reshuffles between
- *  renders makes an author lose their place. */
+ *  renders makes an author lose their place.
+ *
+ *  ONE ENTRY PER ID, not per version. The picker's value is the bare `part_id`, so
+ *  two versions of one part are two options that write the same thing and read as a
+ *  duplicate the author has to guess between. Which version each row SHOWS is
+ *  `latestPart`'s answer, so the option label and the chips below it are the same
+ *  version the generator will resolve. */
 export function partsByType(parts) {
   const byType = new Map();
-  for (const part of parts || []) {
+  for (const id of new Set((parts || []).map((p) => p.id))) {
+    const part = latestPart(parts, id);
+    if (!part) continue;
     if (!byType.has(part.type)) byType.set(part.type, []);
     byType.get(part.type).push(part);
   }
@@ -258,7 +303,7 @@ export function specChips(part) {
  *  new request, because the candidate set is already on the wire. */
 export function partSummary(req, { parts = [], preview = null, slotKey = "" } = {}) {
   const source = eligibilitySource(req);
-  const part = (parts || []).find((p) => p.id === req?.part_id) || null;
+  const part = latestPart(parts, req?.part_id);
   const row = (preview?.parts || []).find((p) => p.slot_key === slotKey)
     || (preview?.unsupplied || []).find((p) => p.slot_key === slotKey) || null;
   return {

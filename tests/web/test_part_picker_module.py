@@ -60,6 +60,30 @@ out.unknownPart = partSummary(
   { part_id: "no-such-part", eligibility: { members: [] } },
   { parts, preview, slotKey: "rail" }).missing;
 
+// Two versions of one id. `/api/parts` returns EVERY version ascending, drafts and
+// retired included, and a slot names the bare id — so "the first row with this id"
+// is v1's facts beside a bay the generator priced against v2.
+const base = parts.find((p) => p.id === "rail-38-vinyl");
+const versioned = [
+  ...parts,
+  { ...base, version: 2, status: "active" },
+  { ...base, version: 3, status: "draft" },
+  { ...base, version: 4, status: "retired" },
+];
+out.resolved = partSummary({ part_id: "rail-38-vinyl", eligibility: { members: [] } },
+                           { parts: versioned }).part.version;
+out.oneRowPerId = partsByType(versioned)
+  .flatMap((g) => g.parts.map((p) => `${p.id}@v${p.version}`))
+  .filter((r) => r.startsWith("rail-38-vinyl"));
+
+// ... and a part whose only version is a draft still EXISTS
+const draftOnly = [{ ...base, id: "rail-draft", version: 1, status: "draft" },
+                   { ...base, id: "rail-draft", version: 2, status: "draft" }];
+const draftSummary = partSummary(
+  { part_id: "rail-draft", eligibility: { members: [] } }, { parts: draftOnly });
+out.draftOnly = { version: draftSummary.part?.version,
+                  missing: draftSummary.missing };
+
 console.log(JSON.stringify(out));
 """
 
@@ -125,3 +149,14 @@ def test_the_picker_reads_the_real_library_and_the_real_preview(tmp_path):
 
     # a part_id the library does not have is REPORTED, never rendered as empty
     assert out["unknownPart"] is True
+
+    # `part_id` is unpinned, so a bare id MEANS `latest_active` — v2 here, never the
+    # v1 that happens to come first on the wire, never the v3 nobody published, and
+    # never the v4 that was withdrawn
+    assert out["resolved"] == 2
+    # and the picker offers the id ONCE: its value is the bare id, so a row per
+    # version is a duplicate option that writes the same thing
+    assert out["oneRowPerId"] == ["rail-38-vinyl@v2"]
+
+    # the fallback: a part that has only ever been a draft is a part that exists
+    assert out["draftOnly"] == {"version": 2, "missing": False}

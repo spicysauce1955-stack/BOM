@@ -310,6 +310,9 @@ input[type="number"] { direction: ltr; }
 .part-candidate-list li.chosen { font-weight: 600; }
 .chosen-mark { color: #16a34a; }
 .part-ref { margin-block-start: 2px; }
+/* the width the PART owns: no field, because authoring it beside the part is
+   refused — the number stands where the field stood, read-only */
+.part-dims { margin-block: 2px; }
 /* an element is called what it IS — "Board 2" — and the key it carries is an
    identifier nobody chose, so it rides in the title and the rename is a mode */
 .element-rename { padding: 2px 8px; border: 1px solid #2563eb; border-radius: 12px; }
