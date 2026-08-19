@@ -1,13 +1,17 @@
 # Open work
 
-Handoff, updated 2026-08-17. Everything below is unstarted unless it says
+Handoff, updated 2026-08-20. Everything below is unstarted unless it says
 otherwise. State it follows from: `plan/current-status.md` (newest entry first)
 and `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md`,
 whose §11 carries the wave plan with each wave's findings folded back in.
 
-`main` is green: **1152 pytest · 175 scenario tests · 170/170 smoke · compatibility gate
-byte-identical** (plus `vinyl.json`, a new fixture, and the one deliberate proved
-regeneration recorded in the spec's §9).
+The branch is green: **1542 pytest · 191 scenario tests · 198/199 smoke ·
+compatibility gate byte-identical** — the one smoke failure is another agent's
+in-flight check, uncommitted in this tree, not a regression.
+
+**Every numbered item below is now closed or specified.** What is left is the
+"smaller, known" list, the deferred triggers, and whatever the two review rounds
+recorded as knowingly not done.
 
 ---
 
@@ -20,65 +24,89 @@ posts intersect; the three §8 failure codes), `e033f01` (the panel preview
 measures its own model's post). See `plan/current-status.md` for what each
 decided and what building them found.
 
-## 2. Assembly and installation instructions per panel (roadmap Admin 3)
+## ~~2. Assembly and installation instructions per panel~~ — DONE, 2026-08-19
 
-*"Each fence panel has assembly rules and instructions (also support installation
-rules and instructions)."* The only roadmap item with **no foundation at all** —
-nothing on `FenceModel` carries prose, an ordering, or a step. Worth a
-brainstorm before code: an instruction that is only text is a doc, while an
-instruction that names slots and an order is data the assembly film could already
-drive (`js/animate.js` computes a build order today from roles alone).
+`AssemblyStep` on `FenceModel`, `report/assembly.py`, M-VINYL's own instructions,
+and the Panel tab (`6839e25`, `a94048b`, `5d50357`). The plan's own line settled
+the design: a step names slots, so it is data rather than a paragraph, and the
+invariant is that every member is placed by exactly one step or reported
+`unplaced`.
 
-## 3. Section-scoped decisions, and commenting on one (roadmap step 5)
+**Knowingly not done**, both recorded in `report/assembly.py`:
+* the assembly FILM still orders itself by its role heuristic. For every demo
+  model the authored order and the heuristic agree, so rewiring adds a second
+  ordering path to a well-tested feature for no observable difference. A model
+  whose order genuinely disagrees is what should motivate it.
+* the placeable vocabulary is the PANEL's slots, so no step can name a post, its
+  cap or its footing — an installation instruction about posts is prose today.
+  Closing it means giving the read model the bay's posts, a different input.
+* `text_i18n` is versioned with the engineering document, so fixing a typo mints
+  a new product-line version. The split, if it is worth it: keep `key/kind/slots`
+  on the model, move the prose to a separately versioned instruction document.
 
-*"focus on specific sections of the fence and get only the decisions related to
-the selected session. change, comment or start a conversation about it!"*
+## ~~3. Section-scoped decisions, and commenting on one~~ — DONE, 2026-08-19
 
-`/api/runs/{id}/explain/{element}` answers per ELEMENT. Scoping to a section and
-returning only its decisions does not exist; nor does any comment surface.
-Annotations, `Correction` and the AI ports are the machinery to build it on — and
-the boundary holds: a comment becomes an interpretation, an interpretation
-becomes a PROPOSAL, and only a human confirms. AI never decides.
+`report/section_decisions.py`, two routes, the side-panel surface, S17, and the
+propose-a-rule loop (`6db459f`, `47dfcd7`, `28e0e73`, `dda3675`). The boundary
+holds and is on screen: a comment is verbatim, changes no fence, and becomes a
+candidate only a person can approve.
 
-## 4. BOM grouped by section / panel / decision (roadmap step 7)
+**Knowingly not done:**
+* "CHANGE it" — the third verb of that roadmap line — is still the existing
+  override path (pin post, force sku) and is not reachable from this panel.
+* a comment cannot follow its decision into a new run, because a decision id is
+  positional. The panel counts and names earlier-run comments rather than
+  pretending they do not exist; making one MIGRATE needs a semantic anchor
+  (section + action + station) stored beside `decision_ref`.
+* the proposer still reads a comment as raw text, so a QUESTION ("why is this bay
+  1500?") is evidence for a rule in the same way a correction is. A
+  `kind: correction | comment | question` discriminator is the cheap fix.
 
-`Bom.lines` are flat and sorted by sku; `report/structure.py` already inverts
-pegs to put parts on bays and stations, so grouping by section and panel is a
-read-model addition rather than new arithmetic. Grouping by DECISION is the new
-one — `SupplyDecision` and the graph carry what is needed.
+## ~~4. BOM grouped by section / panel / decision~~ — DONE, 2026-08-19
 
-## 5. `DesignRun` / `MaterialRun` (backend audit §1.5)
+`report/bom_groups.py`, the `grouped` key on `/bom`, and the BOM tab (`dfbb154`,
+`5d50357`, `972d767`).
 
-The audit's sharpest finding and verified in code: `/bom` reads LIVE inventory and
-logs an `inventory_hash` that enters no identity, so one `run_id` yields different
-BOMs as stock moves; and `objective_preset` — read only by supply resolution —
-sits inside the DESIGN digest (`generator.py`). Deserves its own spec: it changes
-persisted identity. Dispositions in
-`docs/reviews/backend-audit-2026-08-16-response.md`.
+**Knowingly not done: money per section.** A purchase is pooled per sku across
+the run — one bar is cut for two bays — so a per-section price is an
+apportionment nothing measured. The missing concept is not arithmetic but a
+named, versioned **apportionment policy** (by consumed length / by piece count /
+by list value), which is an objective in the ADR-0007 sense and belongs in an
+ADR rather than in a read model. An estimator quoting a two-phase job genuinely
+needs this; it is the most valuable single thing left on this list.
+
+Also open: the grouped BOM and the structure sheet answer "what does section A
+need" differently for a SHARED corner post, because one sums and the other does
+not. Both are right for their own question and the difference is now named on
+screen, but one of them should probably change.
+
+## 5. `DesignRun` / `MaterialRun` — SPECIFIED, not built (backend audit §1.5)
+
+Spec: `docs/superpowers/specs/2026-08-19-design-run-material-run.md`. The defect
+is demonstrated there rather than described — one run id, 40 700 then 27 200
+agorot after three posts arrive in the yard, with `GET /runs/{id}` byte-identical
+between them.
+
+**It stops at a spec on purpose, and needs ONE decision from you** (§5): removing
+`objective_preset` from the design digest means a regeneration of an unchanged
+project produces a new id where it used to return the old one. One deliberate
+discontinuity (recommended) against a permanent conflation. It also strands
+comments anchored to a design run, which item 3 just made concrete.
 
 ---
 
 ## Smaller, known, and cheap
 
-- **`elevation.js` layer identity is positional.** `.elev-edges` and `.elev-seats`
-  tie shapes to members by ARRAY POSITION; only `.elev-member` carries
-  `data-order`. A change to one loop mis-pairs an outline with the wrong slat.
-  `assembly.js` defends itself by checking layer lengths agree. Give those rects a
-  `data-order`.
+*(`elevation.js` layer identity, the cap following the stood post, and the
+architecture fitness tests all shipped on 2026-08-19 — `051578c`, `979a1a9`,
+`336cb6f`. The fitness tests found real drift on their first run: the part-library
+arc had added a table and two routes without touching the backend doc.)*
+
 - **Post candidate selection is sorted-first, not cost-based** (`_model_post_skus`).
   Defensible for an indivisible each; the line still carries its full eligibility
   into demand, so the choice stays explainable there. Still true after W3, and
   now visible: a routed line with two acceptable posts buys the alphabetically
   first, and the intersection at a boundary is taken over sets, not over prices.
-- **A model's cap is matched against the MODEL's post, not the one finally
-  written.** `_make_post` puts a forced sku, a masonry mount and a gate
-  reinforcement ABOVE the model's post, so a cap whose predicate reads
-  `post.face_width_mm` reads the face of a post that situation replaced. Narrow —
-  it needs a predicate-matched cap AND a situational post at one station — but it
-  is a wrong answer rather than a missing one when it happens.
-- **Architecture fitness tests** (audit §5): forbidden imports, table inventory,
-  port inventory, route inventory, hash field lists. The right answer to the whole
-  class of drift the audit found. Best done once the import graph stops moving.
 - **Application layer** (audit §1.3): extract a handler when a use case is next
   touched — `generate`, `/bom`, `quote`, `impact` are the four with real
   duplication risk. Rejected as a big-bang restructure.
