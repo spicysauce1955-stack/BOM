@@ -1,5 +1,25 @@
 # Current status
 
+## Note for archaeology: it happened again, two agents, one tree (2026-08-19)
+`987e17b` ("test(smoke): the Models tab's slot pane is used, not just opened") is
+Task 5 of the part-picker plan and it also carries the **hermetic-profile fix** —
+`--user-data-dir`, the `shutil` import, the `rmtree` in `finally` — which belongs
+to the diagnosis below and was sitting uncommitted in the shared tree when that
+commit staged the file. My own `6004a29`, whose message describes that fix in
+full, therefore contains only the 15 lines left over: the readiness wait. Neither
+commit is wrong about the CODE; both are wrong about which one holds what.
+
+And in the other direction: `8895c62` carries `docs/architecture/05-frontend.md`'s
+"The slot inspector names a part" section, which was the OTHER agent's work,
+finished and unstaged, swept in by a `git add docs/`. Its message said the doc
+"already describes" that section, which was false — the commit is what added it.
+Amended to say so.
+
+Nothing is lost and nothing in the tree is wrong. This is the third time (see the
+2026-08-16 note): staging by directory is the same mistake as `git add -A` when
+another agent shares the filesystem. `git add <exact paths I edited>`, and read
+`git status` before every commit rather than after.
+
 ## The browser gate was never flaky — it was not hermetic (2026-08-19)
 Closing the part-picker arc meant running the suite, and it came back with 33 red
 checks starting at the strategy summary and ending at *"Hebrew RTL is the
