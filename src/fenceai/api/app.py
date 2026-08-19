@@ -57,6 +57,7 @@ from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.project.model import Annotation, Project
+from fenceai.report.bom_groups import group_bom
 from fenceai.report.structure import build_structure
 from fenceai.store.db import Store
 from fenceai.strategy.generator import LEGACY_MODEL_ID, generate
@@ -377,8 +378,16 @@ def get_bom(run_id: str):
     # routing an unresolved line out of `requirements` (so a blank sku can never
     # reach fulfill()/the ledger) must not make it disappear from this view —
     # /bom is a working view, so it reports the gap rather than refusing.
+    # The same demand, grouped by what CAUSED it. Derived here rather than in the
+    # client because the pegs are a backend fact and a second inversion of them
+    # in JS is how the two views would come to disagree about which bay bought a
+    # rail. Deliberately NOT topology-dependent: /bom stays readable when the
+    # drawing has moved on, which is why it groups by `run_ref` and leaves the
+    # section TAGS to `js/structure-data.js`, the single tag source.
     return {"requirements": priced.requirements, "unresolved": priced.unresolved,
-            "bom": priced.bom, "inventory_hash": inventory_hash}
+            "bom": priced.bom, "inventory_hash": inventory_hash,
+            "grouped": group_bom(result.strategy, priced.requirements, priced.bom,
+                                 priced.decisions, priced.unresolved)}
 
 
 @app.get("/api/runs/{run_id}/structure")

@@ -979,6 +979,48 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
       .map(h => h.textContent).find(s => /₪/.test(s)) || '',
   };
 })()""")
+        # --- the BOM, grouped by what caused it -------------------------------
+        # `Bom.lines` are flat and sorted by sku, which answers "what do I
+        # order" and none of "what does this section need", "what is in this
+        # panel", "which choice bought that". The grouped panel is checked for
+        # the two things that can go silently wrong: the tags come from
+        # structure-data.js (the single tag source), and NO group carries a
+        # price — a purchase is pooled across the run, so a per-section figure
+        # would be an apportionment nothing measured.
+        grouped = c.js("""
+(() => {
+  const host = document.getElementById('bom-grouped');
+  if (!host) return null;
+  const rows = [...host.querySelectorAll('.group-row')];
+  return {
+    kinds: [...host.querySelectorAll('[data-group-kind]')]
+      .map(h => h.dataset.groupKind),
+    rows: rows.length,
+    heads: rows.map(r => r.querySelector('.group-head')?.textContent.trim() || ''),
+    money: (host.textContent.match(/[\u20aa\u20ac$]/g) || []).length,
+    cells: rows.reduce((n, r) => n + r.querySelectorAll('td').length, 0),
+  };
+})()""")
+        check("the BOM is grouped by section, panel and decision",
+              grouped is not None
+              and {"section", "bay"} <= set(grouped["kinds"] or [])
+              and grouped["rows"] > 0 and grouped["cells"] > 0)
+        # the tag, not the raw element id: `A/B1` is what the schedule and both
+        # drawings call that bay, and a money view calling it
+        # `span@run1:0-1500` is a third name for one thing.
+        #
+        # EVERY row, not any: a bay's key is already an element id so it tags
+        # itself, while a section's key is a RUN id and a node's names a post —
+        # asked as `any`, this passed while two of the four kinds printed
+        # `run1` and `node:n1` in a Hebrew UI.
+        named = [h for h in grouped["heads"] if h]
+        check("every grouped row is named by the tag the rest of the app uses",
+              len(named) == grouped["rows"]
+              and not any("@" in h or h.startswith("run") or h.startswith("node:")
+                          for h in named))
+        check("no group is priced, because a purchase is not per section",
+              grouped["money"] == 0)
+
         check("every price on the BOM tab is a ₪ figure, and no other symbol is left",
               (prices["nis"] or 0) > 0 and prices["other"] == 0
               and "\u20aa" in prices["total"])
@@ -1435,8 +1477,14 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(1.5)
         bom_text = c.js("document.getElementById('tab-bom').textContent")
         check("BOM cut plan is labelled in the chosen unit", 'ס"מ' in (bom_text or ""))
+        # Scoped to the cut-plan panel. Unscoped it read cell 1 of EVERY table on
+        # the tab, so it measured whichever table came first — and a new panel
+        # whose second column happens to hold a product name ("Rail stock 3000
+        # mm") failed it while every cut length was converted correctly. The
+        # assertion is unchanged: a relabelled-but-unconverted stock length
+        # still reads 3000 and still fails.
         stock = c.js("""
-[...document.querySelectorAll('#tab-bom table tr')]
+[...document.querySelectorAll('#tab-bom .cut-plan table tr')]
   .map(r => r.cells?.[1]?.textContent || '').join('|')""")
         check("BOM cut-plan lengths are converted, not just relabelled",
               "300" in (stock or "") and "3000" not in (stock or ""))
