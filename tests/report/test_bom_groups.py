@@ -21,7 +21,7 @@ from fenceai.fencemodel.demo import M_SLAT
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.demand.derive import DemandLine
-from fenceai.fulfillment.fulfill import Inventory, InventoryItem
+from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
 from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.knowledge.demo import demo_knowledge
@@ -56,6 +56,86 @@ def test_every_bay_of_the_fence_is_a_group():
     assert len(bays) == len(result.strategy.spans)
     assert {g.element_id for g in bays} == {s.id for s in result.strategy.spans}
     assert all(g.lines for g in bays)
+
+
+def test_a_bay_group_carries_THAT_bays_numbers_and_not_its_sections():
+    """Nothing anywhere asserted a single concrete quantity of a group, and one
+    lost `model_copy` is enough to break it silently: the same `GroupedLine`
+    object is appended to a section list AND a bay list, so merging in place
+    corrupts the first bay into the whole section's totals. `_assert_balances`
+    skips bays by design, so it cannot see this."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    bay = next(g for g in grouped.groups if g.element_id == "span@run1:0-1500")
+    assert [(x.sku, x.qty, x.unit, x.slot_key, x.cut_length_mm, x.length_basis)
+            for x in bay.lines] == [
+        ("RAIL-3000", 2, "cut", "rail", 1500, "width"),
+        ("SCREW-S10", 48, "each", "screw", None, None),
+        ("SLAT-100", 12, "cut", "slat", 1800, "width")]
+    # and the section is the sum of its bays for a bay-only part
+    per_bay = sum(x.qty for g in grouped.groups if g.kind == "bay"
+                  for x in g.lines if x.sku == "RAIL-3000")
+    section = next(g for g in grouped.groups if g.kind == "section")
+    assert per_bay == next(x.qty for x in section.lines if x.sku == "RAIL-3000") == 8
+
+
+def test_two_cuts_of_one_sku_are_two_rows_and_not_one():
+    """A raked bay cuts its rails on the SLOPE: same sku, same slot, different
+    piece. The merge key gained `length_basis` in the review round with no test
+    behind it — which is the standard this project holds itself to, missed."""
+    result, priced = _priced()
+    span = result.strategy.spans[0].id
+
+    def rail(i, length, basis):
+        return ResolvedSupplyLine.of(
+            DemandLine(id=f"rk{i}", engineering_qty=1, role="rail",
+                       slot_key="rail", pegs=[span], cut_length_mm=length,
+                       length_basis=basis),
+            sku="RAIL-3000", unit="cut")
+
+    extra = [rail(1, 1500, "width"), rail(2, 1500, "width"),
+             rail(3, 1512, "slope"), rail(4, 1500, "slope")]
+    grouped = group_bom(result.strategy, [*priced.requirements, *extra],
+                        priced.bom, priced.decisions)
+    bay = next(g for g in grouped.groups if g.element_id == span)
+    assert [(x.qty, x.cut_length_mm, x.length_basis)
+            for x in bay.lines if x.sku == "RAIL-3000"] == [
+        (4, 1500, "width"), (1, 1500, "slope"), (1, 1512, "slope")]
+
+
+def test_rows_and_groups_come_back_in_a_stated_order():
+    """A view read side by side with the schedule must not shuffle between
+    renders. Both orderings were untested."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    bays = [g for g in grouped.groups if g.kind == "bay"]
+    assert [g.element_id for g in bays] == sorted(s.id for s in result.strategy.spans)
+    for g in grouped.groups:
+        assert [x.sku for x in g.lines] == sorted(x.sku for x in g.lines)
+
+
+def test_a_line_pegged_to_several_elements_is_counted_once_per_group():
+    """The de-duplication the review round added, which nothing exercised: every
+    demand line pegs to exactly one element today, so the set that prevents
+    double-counting was invisible. A fixing that pegs to a bay AND both posts it
+    fixes to is the obvious next shape."""
+    result, priced = _priced()
+    span = result.strategy.spans[0]
+    posts = [p.id for p in result.strategy.posts if p.run_ref == span.run_ref][:2]
+    assert len(posts) == 2, "the fixture needs two posts on the same section"
+    multi = ResolvedSupplyLine.of(
+        DemandLine(id="fix1", engineering_qty=4, role="screw", slot_key="fix",
+                   pegs=[span.id, *posts]),
+        sku="SCREW-S10", unit="each")
+    grouped = group_bom(result.strategy, [*priced.requirements, multi],
+                        priced.bom, priced.decisions)
+    section = next(g for g in grouped.groups if g.kind == "section")
+    fix = [x for x in section.lines if x.slot_key == "fix"]
+    assert [x.qty for x in fix] == [4], "counted once per section, not once per peg"
+    bay = next(g for g in grouped.groups if g.element_id == span.id)
+    assert [x.qty for x in bay.lines if x.slot_key == "fix"] == [4]
 
 
 def test_a_section_is_the_unit_the_estimator_asks_about():
@@ -211,9 +291,16 @@ def test_a_line_pegged_to_nothing_lands_in_unassigned():
         DemandLine(id="req-orphan", engineering_qty=3, role="screw",
                    slot_key="screw", pegs=[]),
         sku="SCREW-S10", unit="each")
-    grouped = group_bom(result.strategy, [*priced.requirements, orphan],
-                        priced.bom, priced.decisions)
-    assert ("SCREW-S10", 3) in [(t.sku, t.qty) for t in grouped.unassigned]
+    # A BOM computed from the SAME lines. The first version of this test paired
+    # the orphan with a BOM that had never seen it, which is a state fulfilment
+    # cannot produce — and the inconsistency alone made the shortfall arithmetic
+    # report 3 as `from_stock` as well, i.e. the fixture manufactured a defect
+    # and then the assertion was too weak to notice.
+    reqs = [*priced.requirements, orphan]
+    bom = fulfill(reqs, demo_catalog())
+    grouped = group_bom(result.strategy, reqs, bom, priced.decisions)
+    assert [(t.sku, t.qty) for t in grouped.unassigned] == [("SCREW-S10", 3)]
+    assert grouped.from_stock == [], "an unpegged line is not stock coverage"
     assert not any(line.sku == "SCREW-S10" and line.qty == 3
                    for g in grouped.groups for line in g.lines), \
         "an orphan must not be invented into a section"

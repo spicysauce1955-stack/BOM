@@ -87,6 +87,9 @@ REFUSAL_CODES = [
     # the run it was made in names different decisions in different runs. The
     # unsafe read is refused rather than warned about.
     "decision_ref_needs_run",
+    # assembly steps read against a panel resolved from a different version of
+    # the model — the same shape as `topology_changed`, one document down
+    "model_changed",
     "post_spec_conflict",
     "post_routing_mismatch",
     "no_item_covers_part_spec",
@@ -142,6 +145,11 @@ def test_backend_code_list_is_current():
         # route writes `"code": "x"` rather than `code="x"`. Both forms now.
         src / "api" / "app.py",
     ]
+    # ...and every read model, because they emit codes now too. Named as a
+    # DIRECTORY rather than file by file: `report/assembly.py` raised
+    # `model_changed` and this guard could not see it, which is the same blind
+    # spot the route files had before `api/app.py` was added to the list.
+    scanned += sorted((src / "report").glob("*.py"))
     emitted: set[str] = set()
     for path in scanned:
         text = path.read_text()

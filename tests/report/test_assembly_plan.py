@@ -56,8 +56,11 @@ def test_a_part_no_step_fits_is_REPORTED_not_dropped():
     panel to the person holding it."""
     model, panel = _stepped(AssemblyStep(key="frame", slots=["rail"]))
     plan = assembly_plan(model, panel)
-    assert {p.slot_key for p in plan.unplaced} == {"slat", "screw"}
-    assert all(p.qty for p in plan.unplaced), "an unplaced part keeps its quantity"
+    # field by field: an unplaced part that lost its role or its length would be
+    # a row a fitter cannot act on, and only `slot_key` was ever asserted
+    assert [(p.slot_key, p.role, p.qty, p.length_mm) for p in plan.unplaced] == [
+        ("slat", "infill", 21, 1800), ("screw", "screw", 84, None)]
+    assert plan.model_ref == panel.model_ref == "M-SLAT@v1"
 
 
 def test_every_member_is_placed_exactly_once_or_reported():
@@ -98,15 +101,34 @@ def test_an_installation_step_that_fits_nothing_still_appears():
     assert cure.text_i18n["en"]
 
 
-def test_a_slot_this_BAY_does_not_have_is_skipped_rather_than_invented():
+def test_a_slot_only_a_VARIANT_has_is_skipped_rather_than_invented():
     """A step may name a slot only a variant has, and a bay built to another
-    variant simply does not fit it here. Not an error — `validate_model` proved
-    the slot exists in some spec — and not a phantom part either."""
-    model, panel = _stepped(
-        AssemblyStep(key="frame", slots=["rail"]),
-        AssemblyStep(key="brace", slots=["stile"]),   # no such slot in this bay
-    )
-    plan = assembly_plan(model, panel)
+    variant simply does not fit it here.
+
+    The first version of this test built NO variant — so it exercised "an unknown
+    key is skipped" on a model `validate_model` rejects, which is a different
+    claim entirely. The model below is one the validator accepts, which is what
+    makes the skip legitimate rather than a swallowed typo."""
+    from fenceai.fencemodel.model import Distributed, FrameSlot, PartRequirement, Variant
+    from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+    from fenceai.fencemodel.model import validate_model
+
+    model = M_SLAT.model_copy(deep=True)
+    model.assembly = [AssemblyStep(key="frame", slots=["rail"]),
+                      AssemblyStep(key="brace", slots=["stile"])]
+    tall = model.default_spec.model_copy(deep=True)
+    tall.frame.append(FrameSlot(
+        key="stile", orientation="vertical", placement=Distributed(count=2),
+        requirement=PartRequirement(part_id="rail-rail-3000", qty=1,
+                                    length_rule="panel_height")))
+    model.variants = [Variant(
+        condition=Cmp(cmp=">", left=FieldRef(path="panel.height_mm"),
+                      right=Lit(value=9000)),      # this bay is 1800: default spec
+        spec=tall)]
+    assert validate_model(model, demo_catalog(), PARTS) == [], \
+        "the model must be VALID, or the skip below is a swallowed typo"
+
+    plan = assembly_plan(model, _panel(model))
     brace = next(s for s in plan.steps if s.key == "brace")
     assert brace.parts == []
     assert "stile" not in {p.slot_key for p in plan.unplaced}
@@ -127,3 +149,45 @@ def test_one_models_steps_are_never_laid_over_another_models_panel():
     with pytest.raises(ReadRefused) as exc:
         assembly_plan(other, _panel(M_SLAT))
     assert exc.value.code == "model_changed"
+    # the params are what the reader's sentence is rendered from
+    assert exc.value.params == {"model_ref": "M-SLAT@v99",
+                                "panel_model_ref": "M-SLAT@v1"}
+
+    # a panel that names no model cannot contradict one, so it is not refused
+    from fenceai.fencemodel.resolve import ResolvedPanel
+    assert assembly_plan(other, ResolvedPanel(model_ref="", slots=[])) is not None
+
+
+def test_the_preview_carries_the_plan_for_the_panel_it_resolved():
+    """The wiring, which nothing tested: blanking `PanelPreview.assembly` left
+    the entire suite green while the feature vanished from the API payload and
+    the Panel tab. Only the browser suite would have noticed."""
+    from fenceai.fencemodel.demo import M_LEGACY, M_VINYL
+    from fenceai.fencemodel.preview import PreviewRequest, preview_panel
+
+    p = preview_panel(M_VINYL, PreviewRequest(height_mm=1800, width_mm=1500),
+                      demo_catalog(), part_library=PARTS)
+    assert [s.key for s in p.assembly.steps] == ["rails", "boards", "cure"]
+    assert [(x.slot_key, x.qty, x.length_mm) for x in p.assembly.steps[1].parts] \
+        == [("slat", 9, 1470)]
+    assert p.assembly.unplaced == []
+    assert p.assembly.model_ref == "M-VINYL@v1"
+
+    # ...and a model that states no order carries no plan, not an empty one
+    legacy = preview_panel(M_LEGACY, PreviewRequest(height_mm=1800, width_mm=1500),
+                           demo_catalog(), part_library=PARTS)
+    assert legacy.assembly is None
+
+
+def test_an_installation_step_that_DOES_name_a_slot_still_fits_it():
+    """The schema permits it — only `assembly` steps are required to name parts —
+    so the plan must place them rather than silently skipping the slot into
+    `unplaced`, which would make the sheet contradict itself."""
+    model, panel = _stepped(
+        AssemblyStep(key="frame", slots=["rail"]),
+        AssemblyStep(key="site", kind="installation", slots=["screw"]),
+    )
+    plan = assembly_plan(model, panel)
+    site = next(s for s in plan.steps if s.key == "site")
+    assert [p.slot_key for p in site.parts] == ["screw"]
+    assert "screw" not in {p.slot_key for p in plan.unplaced}

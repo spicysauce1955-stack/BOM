@@ -359,7 +359,7 @@ export function assemblyPlanHtml(plan) {
       <div dir="auto">${esc(said(step))}</div>
       ${step.parts.length
         ? `<div class="meta">${step.parts.map((p) => `<span class="sku">${
-            esc(p.sku || p.slot_key)}</span> ×<span class="num">${fmt(p.qty)}</span>${
+            esc(p.slot_key)}</span> ×<span class="num">${fmt(p.qty)}</span>${
             p.length_mm == null ? "" : ` · ${esc(fmtLen(p.length_mm))}`}`).join(" · ")}</div>`
         : `<div class="meta">${esc(t("assembly.no_parts"))}</div>`}
     </li>`).join("");

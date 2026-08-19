@@ -70,6 +70,13 @@ const GROUPED = {
 };
 
 out.plain = groupedBomHtml(GROUPED, PRODUCTS);
+// the two buckets the module promises are "reported, never balanced away" —
+// GROUPED leaves both empty, so that branch rendered in no test at all
+out.buckets = groupedBomHtml({
+  ...GROUPED,
+  unassigned: [{ sku: "SCREW-S10", qty: 7, unit: "each" }],
+  from_stock: [{ sku: "POST-CAP", qty: 2, unit: "each" }],
+}, PRODUCTS);
 out.empty = groupedBomHtml({ groups: [], unassigned: [], from_stock: [],
                              unresolved: [] }, PRODUCTS);
 out.money = (out.plain.match(/[\\u20aa\\u20ac$]/g) || []).length;
@@ -109,6 +116,7 @@ out.sheet_escaped = assemblyPlanHtml({
 out.keys = {
   unresolved: EN["bom.group_unresolved"], unplaced_prefix: EN["assembly.unplaced"].slice(0, 12),
   no_parts: EN["assembly.no_parts"],
+  unassigned: EN["bom.group_unassigned"], from_stock: EN["bom.group_from_stock"],
 };
 
 console.log(JSON.stringify(out));
@@ -196,3 +204,29 @@ def test_an_authors_prose_is_escaped(rendered):
     """`text_i18n` is expert-authored and goes to `innerHTML`."""
     assert "<b>bold</b>" not in rendered["sheet_escaped"]
     assert "&lt;b&gt;bold&lt;/b&gt;" in rendered["sheet_escaped"]
+
+
+def test_the_two_buckets_it_promises_never_to_hide_are_rendered(rendered):
+    """"Reported, never balanced away" is the module's own phrase, and the
+    fixture left both lists empty — so the branch that renders them appeared in
+    no test. A `bucket()` that dropped every row passed."""
+    assert rendered["keys"]["unassigned"] in rendered["buckets"]
+    assert rendered["keys"]["from_stock"] in rendered["buckets"]
+    assert "SCREW-S10" in rendered["buckets"] and "POST-CAP" in rendered["buckets"]
+    assert ">7<" in rendered["buckets"].replace(" ", "")
+
+
+def test_a_quantity_lands_in_the_quantity_column(rendered):
+    """No test at any level read a NUMBER out of this table — so a renderer that
+    printed the cut length where the quantity belongs passed everything."""
+    plain = rendered["plain"].replace("\n", " ")
+    assert 'class="num">2<' in plain, "the bay's rail quantity"
+    assert 'class="num">8<' in plain, "the section's rail quantity"
+
+
+def test_each_group_is_addressable_by_what_it_is(rendered):
+    """`data-group` and `data-kind` are what a later click-through and the
+    browser check both hang off."""
+    assert 'data-group="span@run1:0-1500"' in rendered["plain"]
+    assert 'data-kind="bay"' in rendered["plain"]
+    assert 'data-kind="decision"' in rendered["plain"]

@@ -1298,9 +1298,22 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         check("the panel says how it goes together, in order",
               steps is not None and steps["keys"] == ["rails", "boards", "cure"]
               and steps["kinds"] == ["assembly", "assembly", "installation"])
-        # every part of this panel is fitted by some step, or the sheet says so
-        check("no part of the panel is left unfitted by the instructions",
-              steps["unplaced"] == 0)
+        # Asserted POSITIVELY. `unplaced == 0` is the absence of a warning, which
+        # is equally absent when the branch that would render it is deleted — a
+        # check that passes against the feature removed. What the sheet claims is
+        # that its steps fit exactly the panel's parts, so compare the two.
+        fitted = c.js("""
+(() => {
+  const steps = [...document.querySelectorAll('#panel-assembly li.step .sku')]
+    .map(x => x.textContent.trim());
+  const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')]
+    .map(r => r.dataset.slot);
+  return { steps, rows,
+           warned: document.querySelectorAll('#panel-assembly .warning').length };
+})()""")
+        check("the steps fit exactly the parts the panel is made of",
+              sorted(fitted["steps"]) == sorted(fitted["rows"])
+              and len(fitted["steps"]) > 0 and fitted["warned"] == 0)
         # expert prose, in the reader's language rather than through t()
         check("the instructions are the author's own words, localized",
               "השחילו" in steps["text"])

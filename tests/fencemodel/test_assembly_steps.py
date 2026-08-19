@@ -72,7 +72,12 @@ def test_two_steps_cannot_both_place_the_same_part():
     errs = validate_model(_model(
         AssemblyStep(key="a", slots=["rail"]),
         AssemblyStep(key="b", slots=["rail", "slat"])), CATALOG)
-    assert any("rail" in e and "b" in e for e in errs)
+    # the WHOLE sentence: every message begins "assembly step", so `"b" in e`
+    # was free, and a message naming the slot where the earlier STEP belongs
+    # would have passed it
+    assert errs == [
+        "assembly step b: slot rail is already fitted by step a. A part is "
+        "fitted once — two steps naming it is a contradiction, not an ordering"]
 
 
 def test_an_assembly_step_that_places_nothing_is_refused():
@@ -121,7 +126,7 @@ def test_a_step_may_name_a_slot_that_only_a_VARIANT_has():
     assert validate_model(model, CATALOG) == []
 
 
-def test_a_step_cannot_name_a_POST_yet_and_the_refusal_says_which_slots_exist():
+def test_a_step_cannot_name_a_POST_yet():
     """The scope, pinned in code rather than only in prose. The placeable
     vocabulary is the panel's own slots; a post belongs to the bay. So an
     instruction about posts is currently prose, which is a genuine limitation of

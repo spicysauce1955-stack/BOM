@@ -44,7 +44,11 @@ class StepPart(BaseModel):
     role: str
     qty: int
     length_mm: Mm | None = None
-    sku: str = ""
+    # No `sku`, deliberately. A `ResolvedSlot.sku` is "resolved by fulfillment,
+    # never here" (`fencemodel/resolve.py`), so a field copied from it would be
+    # empty on every step of every plan — a column that always falls back, and a
+    # value no test could ever pin. The parts table beside the sheet names the
+    # products; this says which SLOT is fitted when.
 
 
 class ResolvedStep(BaseModel):
@@ -75,9 +79,13 @@ def assembly_plan(model: FenceModel, panel: ResolvedPanel) -> AssemblyPlan | Non
         # in `unplaced` under a version they never came from. A stored run pins
         # its model ref precisely so a reader can check.
         raise ReadRefused(
-            "model_changed",
-            f"assembly steps are {model.ref}'s and this panel was resolved from "
-            f"{panel.model_ref}",
+            # spelled `code=` like every other refusal in the codebase, and not
+            # only for symmetry: `tests/web/test_locale_bundles.py` greps for
+            # that literal to prove every emitted code has a sentence in both
+            # bundles, and a positional argument is invisible to it
+            code="model_changed",
+            message=f"assembly steps are {model.ref}'s and this panel was "
+                    f"resolved from {panel.model_ref}",
             model_ref=model.ref, panel_model_ref=panel.model_ref,
         )
     if not model.assembly:
@@ -97,13 +105,13 @@ def assembly_plan(model: FenceModel, panel: ResolvedPanel) -> AssemblyPlan | Non
             placed.add(key)
             parts.append(StepPart(
                 slot_key=slot.slot_key, role=slot.role, qty=slot.qty,
-                length_mm=slot.length_mm, sku=slot.sku,
+                length_mm=slot.length_mm,
             ))
         steps.append(ResolvedStep(key=step.key, kind=step.kind,
                                   text_i18n=dict(step.text_i18n), parts=parts))
     unplaced = [
         StepPart(slot_key=s.slot_key, role=s.role, qty=s.qty,
-                 length_mm=s.length_mm, sku=s.sku)
+                 length_mm=s.length_mm)
         for s in panel.slots if s.slot_key not in placed
     ]
     return AssemblyPlan(model_ref=panel.model_ref, steps=steps, unplaced=unplaced)
