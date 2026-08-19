@@ -1,5 +1,45 @@
 # Current status
 
+## A panel can say how it goes together (2026-08-19)
+`plan/open-work.md` item 2, roadmap Admin 3 — the one item with **no foundation
+at all**: nothing on `FenceModel` carried prose, an ordering, or a step.
+
+The line the plan drew is the one the schema draws. *"An instruction that is only
+text is a doc, while an instruction that names slots and an order is data the
+assembly film could already drive."* So a step names the slots it fits, and the
+consequences follow from that alone: the film can order itself by it, a panel's
+parts can be split by it, and a slot no step places is a gap something can
+report. An `assembly` step must name parts; an `installation` step need not —
+"leave the footings to cure" places nothing and is exactly the second half of
+that roadmap line, which is why `kind` exists rather than one flat list.
+
+**The governing property** is the same shape as `Σ(parts) ≡ BOM`: every member of
+the panel is placed by exactly one step, or reported as `unplaced`. A sheet that
+quietly omits the fixings reads as a finished panel to the person holding it,
+which is worse than no sheet at all.
+
+Four calls worth keeping. A model with no steps gets `None` and not an empty
+plan, because "says nothing about its order" and "takes no steps" are different
+facts and the film needs the difference to know whether to fall back. A step may
+name a slot only a VARIANT has — a variant's panel is still this model's panel —
+and a bay without it skips rather than inventing a part. Two steps may not fit
+one slot: a contradiction, not an ordering. And `text_i18n` follows `name_i18n`,
+not the locale bundles: it is expert prose, so it falls back across the languages
+the author actually wrote.
+
+M-VINYL carries real instructions because it is the line where order IS the
+assembly — nothing is screwed, so a board dropped in before its top rail is a
+board that cannot be dropped in at all.
+
+**Not done, and stated rather than implied:** the assembly film still orders
+itself by its role heuristic. For every model in the demo the authored order and
+the heuristic agree, so rewiring it today would add a second ordering path to a
+well-tested feature for no observable difference. The plan is exposed on the
+preview, which is what that rewiring needs; a model whose order genuinely
+disagrees is what should motivate it.
+
+1530 pytest · 198/199 smoke · gate unmoved.
+
 ## A section answers why, and you can argue with it (2026-08-19)
 `plan/open-work.md` item 3, roadmap step 5. Two halves, and neither existed.
 

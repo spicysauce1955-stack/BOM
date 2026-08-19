@@ -234,7 +234,15 @@ classDiagram
         +list~Axis~ option_axes
         +PanelSpec default_spec
         +list~Variant~ variants
+        +PostSlot post
+        +list~AssemblyStep~ assembly
         +ref() str
+    }
+    class AssemblyStep {
+        +str key
+        +str kind
+        +list~str~ slots
+        +dict text_i18n
     }
     class PanelSpec {
         +list~FrameSlot~ frame
@@ -311,6 +319,7 @@ classDiagram
     }
 
     FenceModel *-- PanelSpec
+    FenceModel *-- AssemblyStep
     FenceModel *-- Variant
     Variant *-- PanelSpec
     PanelSpec *-- FrameSlot
