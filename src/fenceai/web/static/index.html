@@ -108,6 +108,11 @@
             <h3 data-i18n="inspect.title">Inspector</h3>
             <div id="inspector-body"><em data-i18n="inspect.empty">Click a generated post, span, or gate.</em></div>
           </div>
+          <!-- The decisions of the SELECTED SECTION, and the conversation about
+               each. Owned by js/section-decisions.js; it reads the section from
+               the same `run-select` above, because "focus on a section" is a
+               selection this panel already has rather than a second one. -->
+          <div class="panel" id="section-decisions"></div>
         </aside>
       </div>
     </section>

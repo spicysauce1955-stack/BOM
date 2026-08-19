@@ -206,6 +206,45 @@ that excluded everybody:
   `no_item_covers_part_spec` at that station rather than a routing sentence about
   heights that are not the problem.
 
+### S17 — A section is asked why, and answered; then argued with
+6000 mm straight run on soil, generated. The expert selects **section run1** and
+asks what was decided about it, then comments on one of those decisions.
+
+This is roadmap step 5 — *"focus on specific sections of the fence and get only
+the decisions related to the selected section. change, comment or start a
+conversation about it!"* — and it is a scenario rather than a unit test because
+the property it defends spans the whole spine: the decision graph, the topology
+that defines what a section IS, the learning store, and the boundary between a
+human's words and what gets built.
+
+Expect:
+
+1. **Only this section's decisions.** Every returned decision settled something
+   about run1. On an L-shape, asking about `runA` returns no `@runB` element.
+2. **The run-level decisions are included.** `run_geometry` and
+   `choose_vertical_mode` decide for the SECTION and name no element; they are
+   what a person asking about a section wants first, and a scope-refs-only
+   reading would drop exactly those.
+3. **A shared corner post reaches both sections.** It is decided once and stands
+   on both, so neither section's story has a post that appeared from nowhere.
+4. **Causal order.** Decisions arrive by graph ordinal, which is causal order by
+   construction — every edge points from a lower ordinal to a higher one.
+5. **The section view refuses a moved drawing** (409 `topology_changed`), because
+   a section is a topology object and "the decisions for section A" stops being
+   true when A may no longer be that stretch. `/explain/{element}` does **not**
+   refuse: an element id is self-identifying, and the asymmetry is the difference
+   between the two questions.
+6. **A comment is stored verbatim against the decision**, in
+   `Correction.decision_ref` — scoped by `generation_run_id`, because a decision
+   node id means what it means only within the run that generated it
+   (`core/ids.py`: generated ids may not be referenced across runs).
+7. **The conversation reads back in the order it was said**, with a timestamp on
+   every turn.
+8. **Commenting changes no fence.** The stored run is byte-identical before and
+   after. A comment is evidence; it becomes an interpretation, an interpretation
+   becomes a PROPOSAL, and only a human confirms — the same boundary S12 draws
+   for a correction and S14 for an annotation. **AI never decides.**
+
 ## Invariants checked across all scenarios
 
 - span width ≤ applicable hard maximum (unless authorized exception exists — none in demo KB)

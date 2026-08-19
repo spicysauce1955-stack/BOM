@@ -60,6 +60,16 @@ th { background: #eef2f6; }
 #inspector-body .expl { margin: 4px 0; padding: 4px 8px; background: #f8fafc; border-radius: 4px; }
 #inspector-body .expl.sub { margin-inline-start: 14px; color: #475569; }
 
+/* The selected section's decisions, and the conversation about each. Logical
+   properties only — the side column mirrors in RTL like the rest of the chrome
+   (the canvas and the profile are the two that never do). */
+#section-decisions .decision { border-block-end: 1px solid #e2e8f0; padding: 6px 0; }
+#section-decisions .decision:last-of-type { border-block-end: 0; }
+#section-decisions .expl { padding: 4px 8px; background: #f8fafc; border-radius: 4px; }
+#section-decisions .verbatim { background: #f1f5f9; border-inline-start: 3px solid #2563eb;
+  padding: 4px 8px; margin: 4px 0 4px 0; font-style: italic; }
+#section-decisions .decision-actions { margin-block-start: 4px; }
+
 .tag { display: inline-block; border-radius: 8px; padding: 1px 8px; font-size: 11px; margin-inline-end: 4px; }
 .tag.hard_constraint { background: #fee2e2; }
 .tag.company_rule { background: #fde68a; }

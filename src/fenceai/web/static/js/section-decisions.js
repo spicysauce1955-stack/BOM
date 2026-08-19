@@ -1,0 +1,163 @@
+// The decisions of ONE section, and the conversation about each of them.
+//
+// The roadmap: "focus on specific sections of the fence and get only the
+// decisions related to the selected section. change, comment or start a
+// conversation about it!" The inspector answers per ELEMENT — click a post, see
+// why it is there. This answers per SECTION, which is the question a person
+// asks while looking at the drawing rather than at one post.
+//
+// It reads the section from `#run-select`, the picker this panel already has:
+// "focus on a section" is a selection the side column makes, and a second
+// picker for the same idea is how two parts of one panel come to disagree about
+// which section is in front of you.
+//
+// **The boundary, which this file is the surface of.** A comment is verbatim
+// human text and changes no fence. It becomes an interpretation, an
+// interpretation becomes a PROPOSAL, and only a human confirms — so nothing
+// here writes an override, and the thread says so rather than implying a
+// comment did something.
+
+import { apiGet, apiSend, esc } from "./api.js";
+import { currentLocale, t } from "./i18n.js";
+import { on, state } from "./state.js";
+import { currentUnit } from "./units.js";
+
+// The conversation, indexed by the decision it is about — fetched once per
+// render rather than once per decision, because a section has many decisions
+// and a request each would be a burst on every selection change.
+let threads = new Map();
+// which decision's comment box is open; only one at a time, because a form per
+// decision is a wall of inputs on a section with twenty of them
+let openOn = null;
+
+export function initSectionDecisions() {
+  const rerender = () => { render(); };
+  on("selection-changed", rerender);
+  on("result-changed", () => { openOn = null; render(); });
+  on("locale-changed", rerender);
+  on("units-changed", rerender);
+  on("project-loaded", () => { openOn = null; render(); });
+}
+
+function sectionId() {
+  return state.selection?.runId
+    || document.getElementById("run-select")?.value
+    || null;
+}
+
+export async function render() {
+  const host = document.getElementById("section-decisions");
+  if (!host) return;
+  const section = sectionId();
+  if (!state.result || !section) {
+    host.innerHTML = `<h3>${esc(t("decisions.title"))}</h3>
+      <div class="meta">${esc(t("decisions.empty"))}</div>`;
+    return;
+  }
+  const runId = state.result.run.id;
+  let body;
+  try {
+    body = await apiGet(
+      `/api/runs/${runId}/sections/${encodeURIComponent(section)}/decisions`
+      + `?lang=${currentLocale()}&units=${currentUnit()}`);
+  } catch (err) {
+    // 409 topology_changed is a real state, not a failure: the drawing moved on
+    // and "the decisions for section A" is no longer a true sentence. Named,
+    // exactly as structure-data.js names the same refusal.
+    const key = String(err?.message || "").includes("topology_changed")
+      ? "decisions.stale" : null;
+    host.innerHTML = `<h3>${esc(t("decisions.title"))}</h3>
+      <div class="meta">${esc(t(key || "decisions.unavailable"))}</div>`;
+    return;
+  }
+  try {
+    const all = await apiGet(
+      `/api/projects/${state.projectId}/corrections?generation_run_id=${runId}`);
+    threads = new Map();
+    for (const c of all)
+      if (c.decision_ref)
+        threads.set(c.decision_ref, [...(threads.get(c.decision_ref) || []), c]);
+  } catch {
+    threads = new Map();   // the decisions are still worth showing without them
+  }
+  host.innerHTML = sectionHtml(body, threads, openOn);
+  wire(host, runId);
+}
+
+/** Pure: `(section decisions, decision id -> its comments, which form is open)`
+ *  -> the panel's markup. Takes its state as arguments rather than reading the
+ *  module's, so node can render it exactly as the browser does — which is where
+ *  the escaping rule and the empty cases are actually checked. */
+export function sectionHtml(body, threads = new Map(), openOn = null) {
+  const rows = body.decisions.map((d) => {
+    const said = threads.get(d.node_id) || [];
+    return `<div class="decision" data-node="${esc(d.node_id)}">
+      <div class="expl" dir="auto">${esc(d.sentence)}</div>
+      ${d.governed_by.length
+        ? `<div class="meta">${esc(t("decisions.governed_by"))}
+             <span class="sku">${esc(d.governed_by.join(", "))}</span></div>`
+        : ""}
+      ${said.map(commentHtml).join("")}
+      ${said.length
+        ? `<div class="meta">${esc(t("decisions.comment_note"))}</div>`
+        : ""}
+      <div class="decision-actions">
+        <button data-act="say" data-node="${esc(d.node_id)}">${
+          esc(said.length ? t("decisions.add_comment")
+                          : t("decisions.start_conversation"))}</button>
+      </div>
+      ${openOn === d.node_id ? formHtml(d.node_id) : ""}
+    </div>`;
+  }).join("");
+  return `<h3>${esc(t("decisions.title"))}</h3>
+    <div class="meta">${esc(t("decisions.hint", { section: body.section_id }))}</div>
+    ${body.decisions.length ? rows
+      : `<div class="meta">${esc(t("decisions.none_here"))}</div>`}`;
+}
+
+/** Verbatim, and rendered as TEXT through `esc` — the existing convention for
+ *  human prose (`tabs.js`'s `.verbatim`). What a person wrote is not markup. */
+export function commentHtml(c) {
+  return `<div class="verbatim" dir="auto">“${esc(c.comment || "")}”
+    <span class="meta"><bdi>${esc(c.author || "")}</bdi>
+      ${esc((c.created_at || "").slice(0, 16).replace("T", " "))}</span></div>`;
+}
+
+function formHtml(nodeId) {
+  return `<div class="inline-form" data-form="${esc(nodeId)}">
+    <input data-f="comment" dir="auto" size="30"
+      placeholder="${esc(t("decisions.comment_placeholder"))}">
+    <button data-act="send" data-node="${esc(nodeId)}" class="primary">${
+      esc(t("decisions.send"))}</button>
+    <button data-act="cancel">${esc(t("common.cancel"))}</button>
+    <div class="meta">${esc(t("decisions.comment_note"))}</div>
+  </div>`;
+}
+
+function wire(host, runId) {
+  host.querySelectorAll('[data-act="say"]').forEach((b) => {
+    b.addEventListener("click", () => {
+      openOn = openOn === b.dataset.node ? null : b.dataset.node;
+      render();
+    });
+  });
+  host.querySelectorAll('[data-act="cancel"]').forEach((b) => {
+    b.addEventListener("click", () => { openOn = null; render(); });
+  });
+  host.querySelectorAll('[data-act="send"]').forEach((b) => {
+    b.addEventListener("click", async () => {
+      const form = host.querySelector(`[data-form="${CSS.escape(b.dataset.node)}"]`);
+      const said = form?.querySelector('[data-f="comment"]')?.value.trim();
+      if (!said) return;
+      await apiSend("POST", `/api/projects/${state.projectId}/corrections`, {
+        generation_run_id: runId,
+        decision_ref: b.dataset.node,
+        // the run scopes the ref: a decision id means what it means only within
+        // the run that generated it (`core/ids.py`)
+        before: {}, after: {}, comment: said, author: "expert",
+      });
+      openOn = null;
+      render();
+    });
+  });
+}

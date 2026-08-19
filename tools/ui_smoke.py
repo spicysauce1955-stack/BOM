@@ -214,6 +214,62 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               and str(n_posts) in (summary or ""))
         c.shot("03-generated.png")
 
+        # --- the selected section's decisions, and a conversation about one ----
+        # The roadmap asks to "focus on specific sections of the fence and get
+        # only the decisions related to the selected section — change, comment
+        # or start a conversation about it". Both halves are checked here
+        # because only the browser has the two of them together: the panel reads
+        # its section from the SAME `#run-select` the side column already has,
+        # and a comment has to survive the round trip to the server and come
+        # back rendered — which is the half that did not exist at all (there was
+        # no GET for corrections anywhere).
+        section = c.js("""
+(() => {
+  const host = document.getElementById('section-decisions');
+  if (!host) return null;
+  return {
+    decisions: host.querySelectorAll('.decision').length,
+    sentences: [...host.querySelectorAll('.decision .expl')]
+      .map(d => d.textContent.trim()).filter(Boolean).length,
+    start: !!host.querySelector('[data-act="say"]'),
+    comments: host.querySelectorAll('.verbatim').length,
+  };
+})()""")
+        check("the selected section lists its own decisions, localized",
+              section is not None and section["decisions"] > 0
+              and section["sentences"] == section["decisions"]
+              and section["start"] and section["comments"] == 0)
+
+        # start a conversation on the first decision and read it back
+        c.js("""
+document.querySelector('#section-decisions [data-act="say"]').click(); 'ok'""")
+        time.sleep(0.6)
+        c.js("""
+{
+  const box = document.querySelector('#section-decisions [data-f="comment"]');
+  box.value = 'למה דווקא כאן?';
+  document.querySelector('#section-decisions [data-act="send"]').click();
+}
+'ok'""")
+        time.sleep(1.5)
+        said = c.js("""
+(() => {
+  const host = document.getElementById('section-decisions');
+  return {
+    comments: host.querySelectorAll('.verbatim').length,
+    text: host.textContent,
+    open_forms: host.querySelectorAll('[data-form]').length,
+  };
+})()""")
+        check("a comment on a decision is stored and read back on the panel",
+              said["comments"] == 1 and "למה דווקא כאן?" in said["text"]
+              and said["open_forms"] == 0)
+        # the boundary, visible to the user rather than only true in the backend
+        # — and stated where the CONVERSATION is, so it survives the form closing
+        check("the panel says a comment changes nothing on its own",
+              "הצעה" in said["text"])
+        c.shot("03b-section-decisions.png")
+
         # --- the map moves: dragging empty canvas pans, a click still edits ---
         vb_before = c.js("document.getElementById('canvas').getAttribute('viewBox')")
         empty = c.canvas_px(1000, 4000)          # away from the run
