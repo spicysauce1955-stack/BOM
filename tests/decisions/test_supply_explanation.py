@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from fenceai.api.app import app
 from fenceai.catalog.model import Catalog, DivisibleLinear, Product
-from fenceai.decisions.graph import DecisionGraph
+from fenceai.decisions.graph import DecisionGraph, DecisionNode
 from fenceai.decisions.supply import with_supply_decisions
 from fenceai.fulfillment.supply import Candidate, SupplyDecision
 
@@ -179,3 +179,73 @@ def test_the_stored_run_document_is_unchanged_by_being_explained(client):
     before = client.get(f"/api/runs/{run_id}").json()
     client.get(f"/api/runs/{run_id}/explain/{result['strategy']['spans'][0]['id']}")
     assert client.get(f"/api/runs/{run_id}").json() == before
+
+
+# --- the node's IDENTITY, now that people can comment on one -------------------
+
+def _two_decisions() -> list[SupplyDecision]:
+    """Two decisions sharing a slot key, which is what makes the ordering
+    question real: sorted by the CHOSEN sku they swap when stock moves."""
+    return [
+        SupplyDecision(requirement_ids=["req0002"], pegs=["span@run1:0-1500"],
+                       slot_key="rail", role="rail", chosen="RAIL-Z", preset="least_cost"),
+        SupplyDecision(requirement_ids=["req0001"], pegs=["span@run1:0-1500"],
+                       slot_key="rail", role="rail", chosen="RAIL-A", preset="least_cost"),
+    ]
+
+
+def test_a_supply_node_is_named_by_what_it_DECIDED_not_by_its_position():
+    """`s0041` used to be the forty-first node of a read-time list sorted by the
+    CHOSEN sku — and what is chosen depends on inventory, which sits outside the
+    run's identity on purpose. So when stock moved and one group's winner changed,
+    that group SWAPPED PLACES with another and inherited its node id, WITHIN one
+    run: `s0001` stops naming the decision it named an hour ago.
+
+    Survivable while a node id was read and thrown away. Not survivable once a
+    person can attach a comment to one.
+    """
+    graph = DecisionGraph()
+
+    def decisions(first_chosen: str) -> list[SupplyDecision]:
+        return [
+            SupplyDecision(requirement_ids=["req0001"], pegs=[], slot_key="rail",
+                           role="rail", chosen=first_chosen, preset="least_cost"),
+            SupplyDecision(requirement_ids=["req0002"], pegs=[], slot_key="rail",
+                           role="rail", chosen="RAIL-M", preset="least_cost"),
+        ]
+
+    def by_line(chosen: str) -> dict[str, str]:
+        out = with_supply_decisions(graph, decisions(chosen))
+        return {n.payload["requirement_ids"][0]: n.id
+                for n in out.nodes if n.action == "select_supply"}
+
+    # the SAME decision about req0001, before and after stock made a rival cheap
+    cheap, dear = by_line("RAIL-A"), by_line("RAIL-Z")
+    assert cheap["req0001"] == dear["req0001"], \
+        "the decision about req0001 changed its name when its winner changed"
+    assert cheap["req0002"] == dear["req0002"]
+
+
+def test_the_same_decision_keeps_its_id_when_a_RIVAL_wins_instead():
+    """The single-decision case of the same rule, stated directly: the same
+    requirement lines decided the same way keep their node, whichever product
+    ends up cheapest."""
+    graph = DecisionGraph()
+    one = SupplyDecision(requirement_ids=["req0001"], pegs=[], slot_key="rail",
+                         role="rail", chosen="RAIL-A", preset="least_cost")
+    other = one.model_copy(update={"chosen": "RAIL-Z"})
+    a = next(n.id for n in with_supply_decisions(graph, [one]).nodes)
+    b = next(n.id for n in with_supply_decisions(graph, [other]).nodes)
+    assert a == b
+
+
+def test_supply_nodes_still_come_after_everything_they_explain():
+    """Ordinals stay causal: a supply node is derived at READ time from lines the
+    run already produced, so it cannot precede them."""
+    graph = DecisionGraph()
+    graph.nodes.append(DecisionNode(id="d0001", ordinal=1, kind="structural",
+                                    action="create_span"))
+    out = with_supply_decisions(graph, _two_decisions())
+    supply = [n for n in out.nodes if n.action == "select_supply"]
+    assert all(n.ordinal > 1 for n in supply)
+    assert len({n.ordinal for n in supply}) == len(supply)

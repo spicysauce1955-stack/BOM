@@ -23,8 +23,27 @@ strictly later than everything they point at and the acyclicity invariant
 
 from __future__ import annotations
 
+import hashlib
+
 from fenceai.decisions.graph import DecisionEdge, DecisionGraph, DecisionNode
 from fenceai.fulfillment.supply import SupplyDecision
+
+
+def _identity(decision: SupplyDecision) -> tuple:
+    """What distinguishes one supply decision from another, inventory aside."""
+    return (decision.role, decision.slot_key, tuple(sorted(decision.requirement_ids)))
+
+
+def _digest(decision: SupplyDecision) -> str:
+    """A short, stable name for a decision — derived from the lines it answered.
+
+    Hashed rather than spelled out because a slot key and a role are authored
+    strings: they can be long, can repeat across groups, and would put a
+    catalogue of somebody's naming into every node id.
+    """
+    key = "|".join(_identity(decision)[:2]) + "|" + ",".join(
+        sorted(decision.requirement_ids))
+    return hashlib.sha256(key.encode()).hexdigest()[:10]
 
 
 def with_supply_decisions(
@@ -39,10 +58,20 @@ def with_supply_decisions(
     out = graph.model_copy(deep=True)
     ordinal = max((n.ordinal for n in out.nodes), default=0)
 
-    for decision in sorted(decisions, key=lambda d: (d.slot_key, d.chosen)):
+    # Sorted and NAMED by what the decision is ABOUT, never by what it chose.
+    # `chosen` is a function of inventory, which sits outside the run's identity
+    # on purpose (`plan/open-work.md` item 5) — so an id derived from it stops
+    # naming the same decision when stock moves, within one unchanged run. That
+    # was survivable while these ids were read and thrown away, and stopped
+    # being survivable when a person could attach a comment to one
+    # (`Correction.decision_ref`).
+    #
+    # The requirement lines ARE the decision: one node per eligibility group,
+    # and the group is exactly the set of lines it answered.
+    for decision in sorted(decisions, key=_identity):
         ordinal += 1
         node = DecisionNode(
-            id=f"s{ordinal:04d}",
+            id=f"s{_digest(decision)}",
             ordinal=ordinal,
             kind="selection",
             action="select_supply",

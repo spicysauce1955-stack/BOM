@@ -289,3 +289,19 @@ def test_a_conversation_that_suggests_no_rule_proposes_nothing_rather_than_somet
             "generation_run_id": run_id, "decision_ref": node_id,
             "comment": "why is this bay 1500?", "author": "expert"})
         assert client.post(f"/api/projects/{pid}/propose-knowledge").json() == []
+
+
+def test_a_candidate_remembers_which_decision_was_argued_with():
+    """The evidence chain, joined at the one place it was broken. A candidate
+    born from an argument about a decision kept only the sentence — and the
+    decision graph is the natural evidence for a proposed rule. The ref carries
+    its RUN, because a decision id means nothing outside the run that made it."""
+    with TestClient(app) as client:
+        pid, run_id, node_id = _fence(client)
+        client.post(f"/api/projects/{pid}/corrections", json={
+            "generation_run_id": run_id, "decision_ref": node_id,
+            "comment": "always use existing foundations", "author": "expert"})
+        [candidate] = client.post(f"/api/projects/{pid}/propose-knowledge").json()
+        assert f"{run_id}#{node_id}" in candidate["derived_from"]
+        assert any(d.startswith("corr_") for d in candidate["derived_from"]), \
+            "the correction itself is still cited"
