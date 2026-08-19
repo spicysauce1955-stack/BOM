@@ -1,5 +1,57 @@
 # Current status
 
+## The BOM answers the question an estimator asks (2026-08-19)
+`plan/open-work.md` item 4. `Bom.lines` are flat and sorted by sku, which is the
+right shape for placing an order and the wrong one for every question asked
+before it: what does THIS section need, what is in THIS panel, and which choice
+put that product on the list. `report/bom_groups.py` groups the same demand three
+ways, recomputing nothing — every number is an `engineering_qty` `resolve_supply`
+already settled, re-grouped by the pegs the line already carries.
+
+**It carries no money, and that is the design.** A BOM line is a PURCHASE pooled
+per sku across the run — one 3000 mm bar is cut for two bays — so a per-section
+price is an apportionment nothing measured, arriving with the authority of a
+priced table. The missing concept is not arithmetic: it is a named, versioned
+apportionment POLICY, which is an objective in ADR-0007's sense and belongs in an
+ADR. An estimator quoting a two-phase job genuinely needs it, and it is now the
+most valuable single thing left on the list.
+
+A post shared at a node is named rather than given to a side, and the route
+groups by `run_ref` so `/bom` needs no topology and does not inherit
+`/structure`'s 409 when the drawing moves on.
+
+## The two review rounds, and what they cost me (2026-08-20)
+architecture-critic and test-reviewer over the three slices, per CLAUDE.md. Both
+verdicts were SOUND-WITH-FIXES / GAPS and both were worth their cost.
+
+**The finding worth being embarrassed by**: `bom_groups` named a decision group
+`role:slot:chosen` — the outcome-derived id `decisions/supply.py` spends a
+docstring refusing, and which I had fixed there the same day. One decision, two
+names, and the one in the money view changed when the yard restocked.
+
+Three more that would have bitten: an unresolved line was carried by the API and
+rendered by nothing, so a section missing a part read as complete — the failure
+the BOM tab records having had once already; the grouped panel read the tag
+source without awaiting it, the only consumer that neither awaited nor
+subscribed; and the merge key had silently diverged from the schedule's while
+claiming to be the same one, dropping `length_basis` so slope-cut and width-cut
+rails merged.
+
+Twelve mutations survived across the two slices before this round and die now.
+Two whole render functions had no test at all, including one I had written an
+hour earlier.
+
+**Architecture fitness tests** landed in the same pass (audit §5, "the right
+answer to the whole class of drift"). Nine structural assertions — layering, no
+AI in deterministic modules, and the backend doc's route and table inventories
+counted rather than claimed. They found real drift on their first run and not
+mine: the part-library arc had added a table and two routes without touching the
+doc. Two of my own rules were wrong first, and both times the TEST was measuring
+the wrong thing: importing `ai.records` for a data shape is not reaching for an
+AI port, and the doc counts method+path pairs rather than unique paths.
+
+1553 pytest · 191 scenario tests · 198/199 smoke · gate byte-identical.
+
 ## A panel can say how it goes together (2026-08-19)
 `plan/open-work.md` item 2, roadmap Admin 3 — the one item with **no foundation
 at all**: nothing on `FenceModel` carried prose, an ordering, or a step.
