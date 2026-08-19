@@ -21,7 +21,7 @@ flowchart TB
         PD["generate() · resolve_panel() · fit_pattern()<br/>plan_cuts() · build_structure() · panel_elevation()"]
     end
     subgraph L4["persistence"]
-        ST["store/db.py — 8 tables, documents as JSON"]
+        ST["store/db.py — 10 tables, documents as JSON"]
     end
 
     R --> PI
@@ -43,7 +43,7 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ## The API surface
 
-49 routes. Grouped by what they are for rather than by path:
+51 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
@@ -54,6 +54,7 @@ domain testable without a database and what keeps `generate()` reproducible.
 | Money | `POST /runs/{id}/quote`, `GET/POST /quotes/{id}[/accept]`, `GET /projects/{id}/quotes` | Immutable snapshots with a lifecycle |
 | Knowledge | `GET/POST /knowledge`, `POST /knowledge/{id}/{v}/retire`, `POST /knowledge/preview-impact` | Versioned; never edited in place |
 | Learning | `GET/POST /projects/{id}/corrections`, `POST /projects/{id}/propose-knowledge`, `GET /candidates`, `POST /candidates/{id}/{v}/review` | Candidates are inert. The GET is filterable by `decision_ref`/`element_ref`/`generation_run_id` |
+| Parts | `GET /parts`, `GET /part-types` | The shared library a model's slot names; read-only, versioned like knowledge |
 | Fence models | `GET/POST /fence-models`, `PUT /fence-models/{id}/draft`, `POST .../publish`, `POST .../status`, `DELETE .../{v}`, `POST /fence-models/preview`, `POST /fence-models/{id}/preview-impact` | Publish is the gate |
 | Panel preview | `POST /runs/{id}/bays/{element_id}/panel-preview` | Reads the run, not the live catalog |
 | Annotations | `POST /projects/{id}/annotations[/{id}/interpret]`, `POST /projects/{id}/intents/{id}/confirm` | Verbatim in, proposals out |
@@ -118,7 +119,7 @@ built badly, an error describes a part not bought at all.
 
 ## Persistence
 
-Nine tables — eight document stores plus the append-only `audit_log`. Documents are
+Ten tables — nine document stores plus the append-only `audit_log`. Documents are
 stored as JSON `doc` columns; the schema holds only what is queried or ordered by.
 
 ```sql
