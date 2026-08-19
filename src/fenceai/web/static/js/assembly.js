@@ -943,19 +943,27 @@ function collectAnimationParts() {
   const drawn = whatIf && preview ? preview.elevation : bay?.elevation;
   if (microSvg && drawn) {
     const rects = elevationRects(drawn);
-    const edges = [...microSvg.querySelectorAll(".elev-edges > rect")];
-    const seats = [...microSvg.querySelectorAll(".elev-seats > rect")];
-    // Three layers, one order: `renderElevation` paints members, seats and
-    // edges by walking the SAME `elevationRects` list, so layer i belongs to
-    // member i. The members say so themselves (`data-order`); the other two say
-    // it only by position, so the reading is checked before it is trusted and
-    // the layer is left alone rather than uncovered against the wrong member —
-    // an outline arriving before its slat is worse than an outline that never
-    // hides at all.
-    const seatOf = new Map();
-    for (const [i, m] of rects.entries()) if (m.seat) seatOf.set(i, seatOf.size);
-    const edgesAlign = edges.length === rects.length;
-    const seatsAlign = seats.length === seatOf.size;
+    // Three layers, and each rectangle NAMES the member it belongs to. It used
+    // to say so only by position, which held while three loops walked one array
+    // in one order and no longer than that — and the seats layer never did hold,
+    // because it skips a member that seats into nothing. Correcting for that
+    // meant re-implementing the skip here, a second copy of a rule that lives in
+    // `renderElevation`; both the copy and the length checks that hedged against
+    // it are gone with the attribute that made them unnecessary.
+    const byOrder = (sel) => {
+      const map = new Map();
+      for (const node of microSvg.querySelectorAll(sel)) {
+        const named = node.getAttribute("data-order");
+        // `Number(null)` is 0, not NaN, so an unnamed rectangle would claim
+        // member 0 and be revealed with it — the very mis-pairing this reads by
+        // name to avoid. Unnamed means unanimated, which is what the old
+        // length-check hedge bought and this keeps.
+        if (named !== null) map.set(Number(named), node);
+      }
+      return map;
+    };
+    const edges = byOrder(".elev-edges > rect");
+    const seats = byOrder(".elev-seats > rect");
     const members = [...microSvg.querySelectorAll(".elev-members .elev-member")]
       // paint order, not DOM order: a raised selection re-appends its rectangles
       .sort((a, b) => +a.getAttribute("data-order") - +b.getAttribute("data-order"));
@@ -963,10 +971,7 @@ function collectAnimationParts() {
       const order = Number(node.getAttribute("data-order"));
       const m = rects[order];
       if (!m) continue;
-      take([node,
-            edgesAlign ? edges[order] : null,
-            seatsAlign && seatOf.has(order) ? seats[seatOf.get(order)] : null],
-           m.role);
+      take([node, edges.get(order) || null, seats.get(order) || null], m.role);
     }
   }
   return items;
