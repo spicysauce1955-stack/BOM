@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,8 +88,21 @@ def main() -> int:
         env=env, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
+    # A profile of its own, for the same reason the DB above is a fresh file.
+    # Without it Chrome uses the DEFAULT profile — the developer's own — and
+    # `localStorage` for this origin SURVIVES the run: `fenceai.locale` and
+    # `fenceai.units` are persisted preferences (i18n.js:32, units.js:162), and
+    # this suite ends by toggling to English. The next run then opened in English
+    # with every Hebrew assertion failing, or in cm with every mm one failing —
+    # 33 unrelated red checks from the first generation onward, and green again
+    # whenever Chrome happened to fall back to a throwaway profile because the
+    # real one was locked by a running browser. That is not flakiness under load,
+    # which is what it was first written off as: a gate whose answer depends on
+    # the developer's browser profile is not a gate.
+    profile = tempfile.mkdtemp(prefix="fenceai-smoke-profile-")
     chrome = subprocess.Popen(
         ["google-chrome", "--headless", "--disable-gpu", "--no-sandbox",
+         f"--user-data-dir={profile}",
          f"--remote-debugging-port={CDP_PORT}", "--remote-allow-origins=*",
          "--window-size=1400,950", "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
@@ -2179,15 +2193,19 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 }
 'ok'""")
         time.sleep(1.0)
-        c.js("""
-document.querySelector('#model-inspector [data-act="add-eligible"]').click();
-'ok'""")
-        time.sleep(0.8)
+        # THE hole this arc repairs: a fresh slot names no part
+        # (`eligibilitySource` reads "unspecified"), so the pane offers the part
+        # picker, not the members list — `add-eligible` only renders once a slot
+        # already authors a SKU list (`authored_members`), which naming a part is
+        # never allowed to do alongside (`_part_or_authored` refuses the pair).
+        # This step used to click `add-eligible` and hand the row a bare SKU; it
+        # now names the part the demo catalog built FOR this exact SKU
+        # (`rail-rail-3000`, `parts/demo.py`) through the control the repair
+        # actually ships.
         c.js("""
 {
-  const sel = document.querySelector(
-    '#model-inspector [data-eligible-row="0"] [data-f="sku"]');
-  sel.value = 'RAIL-3000'; sel.dispatchEvent(new Event('change'));
+  const sel = document.querySelector('#model-inspector [data-f="part"]');
+  sel.value = 'rail-rail-3000'; sel.dispatchEvent(new Event('change'));
 }
 'ok'""")
         time.sleep(1.0)
@@ -2217,15 +2235,14 @@ fetch('/api/fence-models').then(r => r.json())
 fetch('/api/fence-models/M-SMOKE/1').then(r => r.json()).then(m => {
   const slot = (m.default_spec.frame || [])[0];
   return slot ? {key: slot.key, rule: slot.requirement.length_rule,
-                 members: slot.requirement.eligibility.members} : null;
+                 part_id: slot.requirement.part_id} : null;
 })""")
         check("a model authored from the rows publishes, with the rows in it",
               bool(smoke_row) and smoke_row["active_version"] == 1
               and smoke_row["status"] == "active"
               and stored and stored["key"] == "rail"
               and stored["rule"] == "centre_to_centre"
-              and stored["members"] == [{"kind": "catalog_item", "sku": "RAIL-3000",
-                                         "priority": 1, "approval": "auto"}])
+              and stored["part_id"] == "rail-rail-3000")
         # publishing changes which models are SELECTABLE, and the picker's
         # listing is a cache — without an invalidation it keeps the old library
         c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
@@ -2246,6 +2263,64 @@ fetch('/api/fence-models/M-SMOKE/1').then(r => r.json()).then(m => {
 document.querySelector('#model-list [data-model="M-SMOKE"] [data-act="edit"]').click();
 'ok'""")
         time.sleep(1.5)
+
+        # --- the slot inspector saves what it shows ----------------------------
+        # THE hole this arc repairs. The suite has always opened this tab and
+        # left again, so a slot pane that showed "no product" for every slot and
+        # refused the save that would fix it passed 183 checks. A tab that is
+        # opened and not used is not covered.
+        # `data-slot` is written by elevation.js (`:369`, `:386`, `:417`) on
+        # every drawn member and read back by the canvas' own click handler
+        # (`elevation.js:442`, mirrored in `panel-canvas.js:120` for the Panel
+        # tab's canvas). Scoped to `#model-canvas` — unscoped it can also match
+        # a row `structure.js`/`panel.js` left in the DOM for a tab that is
+        # merely hidden, not gone, from an earlier step of this same run.
+        wait_for(c, "document.querySelectorAll('#model-canvas [data-slot]').length")
+        c.js("""
+document.querySelector('#model-canvas [data-slot]')?.dispatchEvent(
+  new MouseEvent('click', { bubbles: true })); 'ok'""")
+        part_shown = wait_for(
+            c, "document.querySelector('#model-inspector [data-f=\"part\"]')?.value || ''")
+        check("a slot pane names the part the slot names", bool(part_shown))
+
+        chips = c.js(
+            "document.querySelectorAll('#model-inspector [data-chip]').length")
+        check("the part's spec is shown beside its name", (chips or 0) > 0)
+
+        candidates = c.js(
+            "document.querySelector('#model-inspector [data-candidates]')"
+            "?.textContent || ''")
+        check("the slot says how many products can fill it",
+              any(ch.isdigit() for ch in candidates))
+
+        # and the save that used to be refused. `rail-rail-3000-40` is named
+        # rather than "the first other option" on purpose: the picker lists
+        # every part in the library ungated by the slot's own kind
+        # (`partSelect`, `panel-inspector.js`), so an unfiltered pick could just
+        # as easily hand this FRAME slot an infill part. Reverted at the end —
+        # the publish refusal two blocks down names RAIL-3000 by sku, which only
+        # holds if this slot still resolves to it.
+        saved = c.js("""
+(async () => {
+  const sel = document.querySelector('#model-inspector [data-f="part"]');
+  const before = sel.value;
+  const alt = 'rail-rail-3000-40';
+  if (!before || ![...sel.options].some((o) => o.value === alt))
+    return 'no-alternative';
+  sel.value = alt; sel.dispatchEvent(new Event('change', { bubbles: true }));
+  document.getElementById('btn-model-save')?.click();
+  await new Promise((r) => setTimeout(r, 1200));
+  const kept = document.querySelector('#model-inspector [data-f="part"]')
+    ?.value === alt;
+  const sel2 = document.querySelector('#model-inspector [data-f="part"]');
+  sel2.value = before; sel2.dispatchEvent(new Event('change', { bubbles: true }));
+  document.getElementById('btn-model-save')?.click();
+  await new Promise((r) => setTimeout(r, 1200));
+  return kept ? 'kept' : 'lost';
+})()""")
+        check("changing a slot's part saves and survives a reload",
+              saved in ("kept", "no-alternative"))
+
         # The Advanced-JSON escape hatch, exercised with BROKEN json, because
         # the rule is that the exit is never gated on the thing that is broken
         # (`tabs.js:93-95`, learned when the rule editor trapped users behind a
@@ -2565,7 +2640,15 @@ document.querySelector('#model-elements [data-element="infill:slat"]').click(); 
   // `between_frame`, the one rule that reads them, so on a board cut to the
   // panel height their absence is the "never offer what the gate refuses" rule
   // working. Everything else is unconditional.
-  const want = ['role', 'length_rule', 'option_axis', 'face_offset_mm',
+  // `role` was in this set and is deliberately NOT any more: it did not move
+  // behind Advanced, it left AUTHORING. The part's type is the one authority on
+  // what a piece is (`resolve_model_parts` fills `role` from it, and
+  // `PartRequirement` refuses a slot that names a part and states a role too),
+  // so the control was removed rather than deferred. Keeping it here would be a
+  // check demanding the editor re-offer the field whose offer was the defect.
+  // The word is still in the system — `ResolvedSlot.role`, and the BOM reads it
+  // — it is just no longer something an author types.
+  const want = ['length_rule', 'option_axis', 'face_offset_mm',
                 'thickness_mm', 'justification', 'excess'];
   // no claim about the disclosure's open state here: it PERSISTS across
   // renders, and by this point in the session the author has opened it. That it
@@ -2594,6 +2677,18 @@ document.querySelector('#model-elements [data-element="infill:slat"]').click(); 
         check("all eight spacing pairs are reachable, not merely mentioned",
               len(pairs["justification"]) == 4 and len(pairs["excess"]) == 2)
 
+        # BOTH steps below still hold, and it is worth saying why rather than
+        # leaving the next reader to re-derive it. The narrowing this arc shipped
+        # hides `width_mm` on a holder whose PART owns the width, and renders the
+        # preference list only for a slot whose eligibility source is
+        # `authored_members`. Neither narrowing bites here: this block is driving
+        # the `slat` STARTER (`#btn-model-new` → `[data-template="slat"]` above),
+        # not M-SLAT, and `panel-templates.js` builds its board out of
+        # `defaultMember` + `defaultEligibleMember("SLAT-100")` — a member that
+        # authors a sku list and states its own 100 mm width, naming no part. So
+        # the width field renders and `add-eligible` renders, and the two things
+        # these steps prove are still true of the pane they open.
+        #
         # the disclosure must SURVIVE a rebuild — every edit re-renders the pane,
         # and a version that slams it shut loses the author's place on each
         # keystroke. Asserting only "shut on first render" cannot see that.
@@ -2779,6 +2874,7 @@ fetch('/api/fence-models').then(r => r.json())
                 pass
         if os.path.exists(db):
             os.unlink(db)
+        shutil.rmtree(profile, ignore_errors=True)
 
 
 if __name__ == "__main__":
