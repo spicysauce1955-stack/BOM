@@ -52,6 +52,42 @@ def test_s17_1_only_this_sections_decisions_come_back():
                        for d in a["decisions"] for e in d["elements"])
 
 
+def test_s17_1b_the_section_says_WHAT_was_decided_not_merely_that_something_was():
+    """A scenario that asserts non-emptiness is a slower unit test. These are the
+    numbers a 6000 mm run on the demo knowledge actually produces — three equal
+    bays beating the max-span alternative, four posts, and the rule that decided
+    it named in the sentence."""
+    with TestClient(app) as client:
+        _, run_id = _fence(client, STRAIGHT)
+        got = _decisions(client, run_id, "run1")["decisions"]
+        assert [d["elements"] for d in got if d["action"] == "create_span"] == [
+            ["span@run1:0-2000"], ["span@run1:2000-4000"], ["span@run1:4000-6000"]]
+        assert sorted({e for d in got for e in d["elements"]
+                       if e.startswith("post@")}) == [
+            "post@node:n1", "post@node:n2", "post@run1:2000", "post@run1:4000"]
+        layout = next(d for d in got if d["action"] == "layout_spans")
+        assert layout["sentence"] == (
+            "Segment [0, 6000] divided into spans [2000, 2000, 2000]. "
+            "Alternative [2438, 2438, 1124] was rejected because of K-EQUAL@v1. "
+            "Governed by K-EQUAL@v1, K-MAXSPAN@v2.")
+
+
+def test_s17_9_the_section_explains_exactly_what_the_structure_sheet_lays_on_it():
+    """The spine, joined. Two independent read models over one run — the setting
+    out and the decision trail — must name the same elements, or one of them is
+    describing a fence the other did not build."""
+    with TestClient(app) as client:
+        _, run_id = _fence(client, STRAIGHT)
+        explained = {e for d in _decisions(client, run_id, "run1")["decisions"]
+                     for e in d["elements"]}
+        report = client.get(f"/api/runs/{run_id}/structure").json()
+        section = next(s for s in report["sections"] if s["run_id"] == "run1")
+        laid_out = {row["element_id"]
+                    for row in [*section["setting_out"], *section["bays"]]}
+        assert laid_out <= explained, \
+            f"laid out but never explained: {sorted(laid_out - explained)}"
+
+
 def test_s17_2_the_run_level_decisions_are_there():
     """They name no element and are what a person asks about a section first."""
     with TestClient(app) as client:
@@ -110,7 +146,8 @@ def test_s17_6_7_8_a_conversation_is_kept_verbatim_in_order_and_changes_nothing(
             assert posted.json()["decision_ref"] == node_id
 
         thread = client.get(
-            f"/api/projects/{pid}/corrections?decision_ref={node_id}").json()
+            f"/api/projects/{pid}/corrections"
+            f"?decision_ref={node_id}&generation_run_id={run_id}").json()
         # 6 + 7: verbatim, against that decision, in the order it was said
         assert [c["comment"] for c in thread] == said
         assert all(c["created_at"] for c in thread)

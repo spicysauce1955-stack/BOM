@@ -11,6 +11,14 @@ reader's language and display unit. A view that returned node kinds and left the
 client to phrase them would be a second explanation, free to disagree with the
 first.
 
+**What belongs to no section, deliberately.** A `knowledge_version` node is the
+SOURCE a decision cites rather than a step in the story — it is already named on
+every node it governed. `resolve_demand_products` is decided once for the whole
+PROJECT (the company's default rail, screw, concrete and cap), so attributing it
+to each section would report one choice as several. Everything else in the graph
+reaches a section: elements by their `run_ref`, run-level nodes by `run_id` in
+their payload, and a topology fact by the node it names.
+
 **A summary, not a deeper trail.** The per-element view walks ancestors and
 prints them under `←`; doing that per section would repeat one rule firing under
 every bay it governed and bury the sequence this view exists to show. A node
@@ -46,6 +54,15 @@ class SectionDecisions(BaseModel):
     decisions: list[ScopedDecision] = []
 
 
+def _touching(topology: Topology) -> dict[str, set[str]]:
+    """topology node id -> the runs that meet there."""
+    out: dict[str, set[str]] = {}
+    for run in topology.runs:
+        for node_id in (run.start_node_id, run.end_node_id):
+            out.setdefault(node_id, set()).add(run.id)
+    return out
+
+
 def _sections_of_element(strategy: Strategy, topology: Topology) -> dict[str, set[str]]:
     """element id -> the sections it belongs to.
 
@@ -56,11 +73,7 @@ def _sections_of_element(strategy: Strategy, topology: Topology) -> dict[str, se
     turns that into the runs — the same fact the setting-out sheet states by
     tagging such a post once and cross-referencing it from the other section.
     """
-    touching: dict[str, set[str]] = {}
-    for run in topology.runs:
-        for node_id in (run.start_node_id, run.end_node_id):
-            touching.setdefault(node_id, set()).add(run.id)
-
+    touching = _touching(topology)
     out: dict[str, set[str]] = {}
     for element in [*strategy.posts, *strategy.spans, *strategy.gates]:
         ref = element.run_ref
@@ -88,27 +101,27 @@ def decisions_for_section(
     so a scope-refs-only reading would drop exactly the wrong ones.
     """
     sections = _sections_of_element(strategy, topology)
+    touching = _touching(topology)
     out: list[ScopedDecision] = []
     for node in sorted(graph.nodes, key=lambda n: n.ordinal):
+        if node.action == "knowledge_version":
+            # A knowledge object is the SOURCE a decision cites, not a decision.
+            # It is already named on every node it governed (`governed_by`), and
+            # listing it again as a step would put "K-MAXSPAN exists" in the
+            # story of every section that obeyed it.
+            continue
         mine = [ref for ref in node.scope_refs
                 if section_id in sections.get(ref, set())]
         # `run_id` in the payload is how a run-level node names its section;
         # `run_ref` is the same fact under the name a couple of nodes use.
         by_payload = section_id in (node.payload.get("run_id"),
                                     node.payload.get("run_ref"))
-        # ...and some name neither. `choose_vertical_mode` carries a mode and a
-        # slope and nothing else, yet it is decided for one run and is among the
-        # first things a person asking about a section wants. It is reachable
-        # anyway: every node of a run descends from that run's `run_geometry`
-        # fact, because the builder materialises evidence edges before the node
-        # that cites them. Asked ONLY as a fallback — a node that names its
-        # elements or its run has already answered, and walking the closure for
-        # those would pull in every fact they happen to share.
-        if not mine and not by_payload and not node.scope_refs:
-            by_payload = any(
-                a.action == "run_geometry" and a.payload.get("run_id") == section_id
-                for a in graph.ancestors(node.id))
-        if not mine and not by_payload:
+        # ...and a topology FACT names a node of the drawing. The surface under
+        # this section's own end post was decided there, so it belongs to every
+        # run that touches that node — the same rule the shared post itself
+        # follows, applied to the fact that decided it.
+        by_node = section_id in touching.get(node.payload.get("node_id", ""), set())
+        if not mine and not by_payload and not by_node:
             continue
         out.append(ScopedDecision(
             node_id=node.id, ordinal=node.ordinal, kind=node.kind,

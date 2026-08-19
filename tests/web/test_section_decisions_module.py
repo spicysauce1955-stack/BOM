@@ -40,6 +40,12 @@ globalThis.fetch = async (url) => ({
 import { setLocale } from "./js/i18n.js";
 import { commentHtml, sectionHtml } from "./js/section-decisions.js";
 
+// Assert against the BUNDLE, never against the copy. A wording change is not a
+// regression, and a test that spells the sentence out reddens on a copy edit
+// while passing if the wrong key were rendered with matching text.
+const EN = JSON.parse(readFileSync("./i18n/en.json", "utf8"));
+const HE = JSON.parse(readFileSync("./i18n/he.json", "utf8"));
+
 const out = {};
 const BODY = {
   section_id: "run1",
@@ -72,6 +78,28 @@ const nasty = { comment: '<img src=x onerror="alert(1)">', author: "<b>x</b>",
                 created_at: "2026-08-19T21:30:00+00:00" };
 out.escaped = commentHtml(nasty);
 
+// a comment is keyed to the decision it is ABOUT: the d0001 block must be clean
+const chunk = (html, node) => {
+  const parts = html.split('data-node="');
+  const hit = parts.find((p) => p.startsWith(node));
+  return hit || "";
+};
+out.d0001_comments = (chunk(out.with_thread, "d0001").match(/class="verbatim"/g) || []).length;
+out.d0007_comments = (chunk(out.with_thread, "d0007").match(/class="verbatim"/g) || []).length;
+
+// human prose and an author name are direction-isolated (CLAUDE.md)
+out.isolated = commentHtml({ comment: "שלום world", author: "dana",
+                             created_at: "2026-08-19T21:30:00+00:00" });
+
+// a conversation from an earlier run is NAMED rather than silently absent
+out.earlier = sectionHtml(BODY, new Map(), null, 3);
+
+out.keys = {
+  start: EN["decisions.start_conversation"], add: EN["decisions.add_comment"],
+  none: EN["decisions.none_here"], note: EN["decisions.comment_note"],
+  he_start: HE["decisions.start_conversation"],
+};
+
 // the form appears only on the decision it was opened for
 out.form_scoped = sectionHtml(BODY, new Map(), "d0007");
 out.form_count = (out.form_scoped.match(/data-form=/g) || []).length;
@@ -99,7 +127,7 @@ def rendered():
 def test_a_section_with_no_decisions_says_so(rendered):
     """Silence reads as broken. A section nothing was decided about is a real
     state and gets a sentence."""
-    assert "Nothing was decided" in rendered["empty_section"]
+    assert rendered["keys"]["none"] in rendered["empty_section"]
 
 
 def test_each_decision_shows_its_sentence_and_what_governed_it(rendered):
@@ -111,14 +139,14 @@ def test_each_decision_shows_its_sentence_and_what_governed_it(rendered):
 def test_a_decision_with_nothing_said_offers_to_START_a_conversation(rendered):
     """The roadmap's word. A button reading "add a comment" on an empty thread
     invites you to add to nothing."""
-    assert "Start a conversation" in rendered["plain"]
-    assert "Add a comment" not in rendered["plain"]
+    assert rendered["keys"]["start"] in rendered["plain"]
+    assert rendered["keys"]["add"] not in rendered["plain"]
 
 
 def test_a_decision_that_has_been_discussed_shows_the_conversation(rendered):
     assert rendered["shows_comment"]
     assert rendered["author"]
-    assert "Add a comment" in rendered["with_thread"]
+    assert rendered["keys"]["add"] in rendered["with_thread"]
 
 
 def test_the_boundary_is_stated_where_the_conversation_IS(rendered):
@@ -126,8 +154,8 @@ def test_the_boundary_is_stated_where_the_conversation_IS(rendered):
     you commented — the reader saw the promise while typing and never again. A
     thread that exists is exactly where "this changed nothing on its own" has to
     keep being true."""
-    assert "change nothing on their own" in rendered["with_thread"]
-    assert "change nothing on their own" not in rendered["plain"], \
+    assert rendered["keys"]["note"] in rendered["with_thread"]
+    assert rendered["keys"]["note"] not in rendered["plain"], \
         "an empty decision has no conversation to qualify"
 
 
@@ -153,6 +181,32 @@ def test_only_the_decision_asked_about_opens_a_comment_box(rendered):
     assert 'data-form="d0007"' in rendered["form_scoped"]
 
 
+def test_a_comment_is_shown_under_the_decision_it_is_ABOUT(rendered):
+    """Keying, not merely presence. Rendering every comment under every decision
+    passed a test that only asked whether the text appeared somewhere — and it
+    is the failure that would make the panel actively misleading, attributing an
+    argument to a decision nobody made it about."""
+    assert rendered["d0007_comments"] == 1
+    assert rendered["d0001_comments"] == 0
+
+
+def test_a_comment_is_direction_isolated(rendered):
+    """Hebrew prose beside a latin author name and an ISO timestamp: without
+    `dir="auto"` and `<bdi>` the punctuation migrates across the line. CLAUDE.md
+    requires both for user text."""
+    assert 'dir="auto"' in rendered["isolated"]
+    assert "<bdi>" in rendered["isolated"]
+
+
+def test_a_conversation_from_an_earlier_run_is_named_not_hidden(rendered):
+    """A decision is numbered per generation, so older comments cannot be matched
+    to the decisions below — but going silent would offer to "start" a
+    conversation two people already had. Counted and named at the PANEL, which
+    is the finest grain at which the statement is true."""
+    assert "3" in rendered["earlier"]
+    assert rendered["earlier"] != rendered["plain"]
+
+
 def test_the_panel_speaks_the_readers_language(rendered):
-    assert any("א" <= ch <= "ת" for ch in rendered["he"])
-    assert "Start a conversation" not in rendered["he"]
+    assert rendered["keys"]["he_start"] in rendered["he"]
+    assert rendered["keys"]["start"] not in rendered["he"]

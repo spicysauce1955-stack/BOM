@@ -83,6 +83,10 @@ REFUSAL_CODES = [
     # is a fence that cannot be assembled rather than a worse buy; and
     # `no_item_covers_part_spec` is the generic case. A single merged code would
     # leave "no post found" a mystery, which is what they exist to avoid.
+    # A decision node id is positional, so a `decision_ref` asked for without
+    # the run it was made in names different decisions in different runs. The
+    # unsafe read is refused rather than warned about.
+    "decision_ref_needs_run",
     "post_spec_conflict",
     "post_routing_mismatch",
     "no_item_covers_part_spec",

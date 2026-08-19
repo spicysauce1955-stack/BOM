@@ -103,8 +103,23 @@ def test_a_conversation_can_be_asked_for_by_decision():
             "generation_run_id": run_id, "decision_ref": other_id,
             "comment": "about the other", "author": "expert"})
         mine = client.get(
-            f"/api/projects/{pid}/corrections?decision_ref={node_id}").json()
+            f"/api/projects/{pid}/corrections"
+            f"?decision_ref={node_id}&generation_run_id={run_id}").json()
         assert [c["comment"] for c in mine] == ["about this one"]
+
+
+def test_asking_for_a_decision_across_runs_is_refused():
+    """A decision node id is POSITIONAL — `d0007` is the seventh node the builder
+    emitted, and one new gate event renumbers everything after it. A
+    `decision_ref` without the run it was made in therefore names different
+    decisions in different runs, and the route refuses rather than quietly
+    returning a mixture."""
+    with TestClient(app) as client:
+        pid, _, node_id = _fence(client)
+        refused = client.get(
+            f"/api/projects/{pid}/corrections?decision_ref={node_id}")
+        assert refused.status_code == 422
+        assert refused.json()["detail"]["code"] == "decision_ref_needs_run"
 
 
 def test_commenting_changes_no_fence():
@@ -119,6 +134,95 @@ def test_commenting_changes_no_fence():
             "comment": "this is wrong", "author": "expert"})
         after = client.get(f"/api/runs/{run_id}").json()
         assert after == before
+
+
+def test_regenerating_the_same_drawing_keeps_the_conversation():
+    """A run id is a digest of what the run MEANS, so regenerating an unchanged
+    drawing returns the same run — and the thread is still there. This is the
+    ordinary case and it must not be mistaken for the one below."""
+    with TestClient(app) as client:
+        pid, run_id, node_id = _fence(client)
+        client.post(f"/api/projects/{pid}/corrections", json={
+            "generation_run_id": run_id, "decision_ref": node_id,
+            "comment": "still relevant", "author": "expert"})
+        again = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+        assert again == run_id
+        thread = client.get(f"/api/projects/{pid}/corrections"
+                            f"?decision_ref={node_id}&generation_run_id={again}").json()
+        assert [c["comment"] for c in thread] == ["still relevant"]
+
+
+def test_a_comment_does_not_follow_its_decision_into_a_NEW_run():
+    """The honest half. A decision id is positional, so after the drawing moves
+    the same string names a different decision. The comment is not destroyed —
+    evidence never is — it simply is not claimed by the new run, and the panel
+    says so at the level where the statement is true."""
+    with TestClient(app) as client:
+        pid, run_id, node_id = _fence(client)
+        client.post(f"/api/projects/{pid}/corrections", json={
+            "generation_run_id": run_id, "decision_ref": node_id,
+            "comment": "about the old fence", "author": "expert"})
+        moved = client.get(f"/api/projects/{pid}").json()["topology"]
+        moved["nodes"][1]["x_mm"] = 9000
+        moved["revision"] = 2
+        client.put(f"/api/projects/{pid}/topology", json=moved)
+        new_run = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+        assert new_run != run_id
+
+        assert client.get(f"/api/projects/{pid}/corrections"
+                          f"?decision_ref={node_id}&generation_run_id={new_run}").json() == []
+        kept = client.get(f"/api/projects/{pid}/corrections").json()
+        assert [c["comment"] for c in kept] == ["about the old fence"]
+
+
+def test_commenting_leaves_the_knowledge_base_alone():
+    """The boundary, checked where it could actually break. Comparing the RUN
+    would still pass if posting a comment had quietly run the proposer — and a
+    knowledge candidate appearing because somebody typed a sentence is exactly
+    the "inert until approved" invariant, broken at the surface this slice adds."""
+    with TestClient(app) as client:
+        pid, run_id, node_id = _fence(client)
+        before = (client.get("/api/knowledge").json(),
+                  client.get("/api/candidates").json())
+        client.post(f"/api/projects/{pid}/corrections", json={
+            "generation_run_id": run_id, "decision_ref": node_id,
+            "comment": "always use existing foundations", "author": "expert"})
+        assert (client.get("/api/knowledge").json(),
+                client.get("/api/candidates").json()) == before
+
+
+def test_a_comment_on_a_decision_the_run_does_not_have_is_kept_as_evidence():
+    """Deliberate, not an oversight. Refusing would mean the store had to know
+    the shape of every run's graph, and a comment is EVIDENCE — the one thing
+    this system never throws away. It simply appears on no section, which is
+    visible rather than silent: the project's conversation still lists it."""
+    with TestClient(app) as client:
+        pid, run_id, _ = _fence(client)
+        made = client.post(f"/api/projects/{pid}/corrections", json={
+            "generation_run_id": run_id, "decision_ref": "d9999",
+            "comment": "about nothing", "author": "expert"})
+        assert made.status_code == 200
+        assert any(c["comment"] == "about nothing"
+                   for c in client.get(f"/api/projects/{pid}/corrections").json())
+
+
+def test_an_unknown_section_is_empty_rather_than_missing():
+    """A section nothing was decided about is an ordinary state. So is a node id
+    typed where a run id belongs."""
+    with TestClient(app) as client:
+        _, run_id, _ = _fence(client)
+        for section in ("nope", "n2"):
+            got = client.get(f"/api/runs/{run_id}/sections/{section}/decisions")
+            assert got.status_code == 200
+            assert got.json() == {"section_id": section, "decisions": []}
+
+
+def test_the_same_question_gets_the_same_answer_twice():
+    with TestClient(app) as client:
+        _, run_id, _ = _fence(client)
+        a = client.get(f"/api/runs/{run_id}/sections/run1/decisions")
+        b = client.get(f"/api/runs/{run_id}/sections/run1/decisions")
+        assert a.text == b.text
 
 
 def test_the_comment_is_kept_verbatim():

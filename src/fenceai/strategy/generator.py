@@ -1420,7 +1420,7 @@ def _generate_run(
         seg_kb, seg_ctx = _segment_view(kb, scope, ctx["run"], model)
         select_node = builder.add(
             "selection", "select_model",
-            payload={"model_ref": model.ref, "source": source,
+            payload={"run_id": run.id, "model_ref": model.ref, "source": source,
                      "options": options},
             inputs=[run_fact.id],
         )
@@ -1431,7 +1431,8 @@ def _generate_run(
         max_span_mm: Mm = next(a.value for a in res.winner.actions if a.kind == "set_param")
         firing = builder.add(
             "rule_firing", "resolve_max_span",
-            payload={"param": "max_span_mm", "value": max_span_mm},
+            payload={"run_id": run.id, "param": "max_span_mm",
+                     "value": max_span_mm},
             inputs=[run_fact.id, select_node.id],
             governed_by=[res.winner.version.ref],
             # a defeated edge cites the LOSING version (decision-model.md); the loser
@@ -1789,7 +1790,12 @@ def _generate_run(
     _surface_conflicts(vert_res.conflicts, builder, strategy)
     vertical_node = builder.add(
         "vertical", "choose_vertical_mode",
-        payload={"mode": vertical, "slope_permille": slope_permille},
+        # `run_id` because this node decides for the SECTION and names no
+        # element. A reader asking what was decided about a section had to infer
+        # it from the evidence closure otherwise, which cannot reach a node
+        # emitted before that run's geometry fact — so say it.
+        payload={"run_id": run.id, "mode": vertical,
+                 "slope_permille": slope_permille},
         inputs=[run_fact.id],
         governed_by=vertical_refs,
         defeated=vertical_defeated,
@@ -1913,6 +1919,7 @@ def _generate_run(
         layout_node = builder.add(
             "structural", "layout_spans",
             payload={
+                "run_id": run.id,
                 "segment": [seg_start, seg_end],
                 "widths": layout.widths,
                 "alternatives": (

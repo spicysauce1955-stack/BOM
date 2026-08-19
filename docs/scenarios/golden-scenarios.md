@@ -207,8 +207,10 @@ that excluded everybody:
   heights that are not the problem.
 
 ### S17 — A section is asked why, and answered; then argued with
-6000 mm straight run on soil, generated. The expert selects **section run1** and
-asks what was decided about it, then comments on one of those decisions.
+Two topologies, because the scenario has two halves. A **6000 mm straight run**
+on soil for the decisions and the conversation, and an **L-shape** (runA 4000 mm,
+90° corner at n2, runB 3000 mm) for the two expectations that only exist when
+there is more than one section — isolation, and the corner post they share.
 
 This is roadmap step 5 — *"focus on specific sections of the fence and get only
 the decisions related to the selected section. change, comment or start a

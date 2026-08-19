@@ -81,12 +81,19 @@ function renderRunSelectors() {
   // run-select only; #ann-target belongs to the annotations tab (review #5)
   const sel = document.getElementById("run-select");
   sel.innerHTML = "";
-  for (const r of state.project ? state.project.topology.runs : []) {
+  const runs = state.project ? state.project.topology.runs : [];
+  for (const r of runs) {
     const o = document.createElement("option");
     o.value = r.id;
     o.textContent = `${r.id} (${fmtLen(runLength(r))})`;
     sel.appendChild(o);
   }
+  // The select shows the first run whether or not anything said so, so SAY it.
+  // Another panel asking "which section is in front of me" must be able to read
+  // `state.selection` rather than this element: modules talk through state.js,
+  // and a reader of someone else's DOM works only while the listeners happen to
+  // be registered in the right order.
+  if (!state.selection.runId && runs.length) setSelection({ runId: runs[0].id });
 }
 
 function renderOverrides() {

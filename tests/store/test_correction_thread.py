@@ -70,3 +70,36 @@ def test_a_correction_with_no_stamp_still_has_a_place():
                     comment="ancient", created_at="").model_dump_json(),))
     store.save_correction(_corr("corr_new", "recent", "2026-01-02T00:00:00+00:00"))
     assert [c.comment for c in store.list_corrections("p1")] == ["ancient", "recent"]
+
+
+def test_two_turns_in_the_same_instant_keep_a_stable_order():
+    """The docstring above claims the order is TOTAL; nothing tested it, because
+    no fixture had two equal stamps. Equal times fall back to the id, so two
+    reads cannot disagree — a thread that reshuffled between renders would be a
+    conversation nobody could quote."""
+    store = _store()
+    same = "2026-01-01T00:00:00+00:00"
+    store.save_correction(_corr("corr_zzz", "written first", same))
+    store.save_correction(_corr("corr_aaa", "written second", same))
+    once = [c.id for c in store.list_corrections("p1")]
+    twice = [c.id for c in store.list_corrections("p1")]
+    assert once == twice == ["corr_aaa", "corr_zzz"]
+
+
+def test_two_writers_do_not_lose_a_turn():
+    """`Store` serialises every public method and nothing proved it for this
+    table. A conversation that dropped a turn under two writers would lose
+    evidence, which is the one thing this system never does."""
+    import threading
+
+    store = _store()
+    def write(tag: str):
+        for i in range(20):
+            store.save_correction(_corr(f"corr_{tag}{i:02d}", f"{tag}{i}"))
+    threads = [threading.Thread(target=write, args=(t,)) for t in ("a", "b")]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    got = store.list_corrections("p1")
+    assert len(got) == 40
+    assert len({c.id for c in got}) == 40
+    assert [c.id for c in store.list_corrections("p1")] == [c.id for c in got]

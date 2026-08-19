@@ -265,9 +265,13 @@ document.querySelector('#section-decisions [data-act="say"]').click(); 'ok'""")
               said["comments"] == 1 and "למה דווקא כאן?" in said["text"]
               and said["open_forms"] == 0)
         # the boundary, visible to the user rather than only true in the backend
-        # — and stated where the CONVERSATION is, so it survives the form closing
+        # — and stated where the CONVERSATION is, so it survives the form closing.
+        # Asserted against the BUNDLE, not the copy: a wording change is not a
+        # regression, and a single word can match the wrong sentence.
+        note = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => b['decisions.comment_note'])""")
         check("the panel says a comment changes nothing on its own",
-              "הצעה" in said["text"])
+              bool(note) and note in said["text"])
         c.shot("03b-section-decisions.png")
 
         # --- the map moves: dragging empty canvas pans, a click still edits ---
@@ -1992,6 +1996,18 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
               or "עדיין אין" in (stale_text or ""))
         check("a stale schedule leaves no tags on the drawing",
               (c.js("document.querySelectorAll('#g-overlay text.elem-tag').length") or 0) == 0)
+        # ...and the section decisions say the same thing, which is the ONLY
+        # place that 409 branch is reachable: node cannot fetch and no other
+        # check moves the drawing under a generated run. A section is a topology
+        # object, so "the decisions for section A" stops being true here.
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(1.5)
+        stale_decisions = c.js(
+            "document.getElementById('section-decisions')?.textContent || ''")
+        stale_key = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => b['decisions.stale'])""")
+        check("a moved drawing makes the section decisions say so, not answer anyway",
+              bool(stale_key) and stale_key in stale_decisions)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
 

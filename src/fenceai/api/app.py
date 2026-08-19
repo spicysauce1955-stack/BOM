@@ -610,6 +610,19 @@ def list_corrections(
     and why this route lets you filter by it.
     """
     _project(project_id)   # 404 for a project that does not exist
+    if decision_ref is not None and generation_run_id is None:
+        # A decision node id is POSITIONAL — `d0007` is the seventh node the
+        # builder emitted, and inserting one gate event renumbers everything
+        # after it (`decisions/graph.py`, `core/ids.py`). Asking for a
+        # `decision_ref` across runs therefore mixes comments about different
+        # decisions that happen to share an ordinal. The unsafe read is made
+        # unrepresentable rather than warned about in a docstring nobody has to
+        # read; ask for the whole project's conversation instead if that is
+        # genuinely what you want.
+        raise HTTPException(422, {
+            "code": "decision_ref_needs_run",
+            "decision_ref": decision_ref,
+        })
     out = state.store.list_corrections(project_id)
     if decision_ref is not None:
         out = [c for c in out if c.decision_ref == decision_ref]

@@ -115,6 +115,26 @@ def test_a_shared_corner_post_is_reported_to_BOTH_sections():
     assert any(shared in d.elements for d in b.decisions)
 
 
+def test_a_run_level_decision_of_another_section_does_not_leak_in():
+    """Element leakage is the visible half; this is the invisible one. A
+    run-level node carries NO elements, so the other section's vertical mode or
+    geometry slipping in would show up in no `elements` list at all — and it is
+    exactly what the broadest attribution rule in the file could get wrong."""
+    topo, result = _corner()
+    a = decisions_for_section(result.graph, result.strategy, topo, "runA")
+    assert not any(result.graph.node(d.node_id).payload.get("run_id") == "runB"
+                   for d in a.decisions)
+    b = decisions_for_section(result.graph, result.strategy, topo, "runB")
+    shared = {d.node_id for d in a.decisions} & {d.node_id for d in b.decisions}
+    # exactly the corner they meet at: the topology fact for node n2, the post
+    # standing on it, and the check that measured that post. Anything else
+    # shared is a leak.
+    assert {result.graph.node(n).action for n in shared} == {
+        "topology_node", "place_post", "resolve_post_embedment"}
+    assert all(result.graph.node(n).payload.get("node_id") in (None, "n2")
+               for n in shared), "only the node they actually share"
+
+
 def test_an_element_of_another_section_is_not_listed_on_a_shared_decision():
     """A decision reported to a section lists the elements of THAT section: a
     node post's decision reaches both, and neither is told it owns the other's."""
@@ -122,6 +142,89 @@ def test_an_element_of_another_section_is_not_listed_on_a_shared_decision():
     a = decisions_for_section(result.graph, result.strategy, topo, "runA")
     for d in a.decisions:
         assert not any("@runB" in e for e in d.elements)
+
+
+def test_a_decision_names_the_rule_that_governed_it():
+    """`governed_by` was computed by this view and asserted by nothing — blanking
+    both edge lists left every test green while the reader lost which rule
+    decided the layout. The decision graph IS the explanation (foundation §15),
+    and a rule reference is the load-bearing half of it."""
+    topo, result = _straight()
+    got = decisions_for_section(result.graph, result.strategy, topo, "run1")
+    layout = next(d for d in got.decisions if d.action == "layout_spans")
+    assert "K-MAXSPAN" in " ".join(layout.governed_by)
+    assert any(d.governed_by for d in got.decisions if d.action == "place_post")
+
+
+def test_a_defeated_version_is_named_where_it_lost():
+    """A `defeated` edge cites the LOSING version (CLAUDE.md), and no fixture in
+    the suite produced one — the field was structurally dead. A soft maximum
+    that loses to the hard one is exactly the case a reader needs to see, or the
+    graph reports a choice with no rival."""
+    from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
+    kb = demo_knowledge()
+    soft = KnowledgeVersion(
+        object_id="K-SOFT-MAX", version=1, type="preference",
+        actions=[SetParam(param="max_span_mm", value=2000)],
+        title="prefer shorter spans", scope={},
+    )
+    topo = straight_topology(5000)
+    result = generate(topo, KnowledgeBase(versions=[*kb.versions, soft]),
+                      demo_catalog(), parts=PARTS)
+    got = decisions_for_section(result.graph, result.strategy, topo, "run1")
+    beaten = [d for d in got.decisions if d.defeated]
+    assert beaten, "nothing lost, so this fixture proves nothing about defeat"
+    assert any("K-SOFT-MAX" in " ".join(d.defeated) for d in beaten)
+
+
+def test_the_reader_gets_their_own_display_unit():
+    """Hardcoding mm left every test green while half the sentences carried the
+    wrong number for a reader working in cm. The same two rules `units.js`
+    follows, applied to server-rendered prose."""
+    topo, result = _straight()
+    mm = decisions_for_section(result.graph, result.strategy, topo, "run1")
+    cm = decisions_for_section(result.graph, result.strategy, topo, "run1",
+                               units="cm")
+    assert [d.node_id for d in mm.decisions] == [d.node_id for d in cm.decisions]
+    assert [d.sentence for d in mm.decisions] != [d.sentence for d in cm.decisions]
+    assert any("6000 mm" in d.sentence for d in mm.decisions)
+    assert any("600 cm" in d.sentence for d in cm.decisions)
+
+
+def test_the_order_is_the_ORDINAL_not_the_order_they_are_stored_in():
+    """`graph.nodes` happens to be appended in ordinal order, so asserting the
+    result is sorted proved nothing — insertion order passes it too. Shuffling
+    the stored list is what tells the two apart."""
+    import random
+    topo, result = _straight()
+    straight = decisions_for_section(result.graph, result.strategy, topo, "run1")
+    shuffled = result.graph.model_copy(deep=True)
+    random.Random(0).shuffle(shuffled.nodes)
+    assert [d.node_id for d in
+            decisions_for_section(shuffled, result.strategy, topo, "run1").decisions] \
+        == [d.node_id for d in straight.decisions]
+
+
+def test_a_knowledge_object_is_a_source_and_not_a_step():
+    """It is already named on every decision it governed. Listing it again would
+    put "K-MAXSPAN exists" in the story of every section that obeyed it."""
+    topo, result = _straight()
+    got = decisions_for_section(result.graph, result.strategy, topo, "run1")
+    # `knowledge_version` is the ACTION; the kind is `input_fact` like any other
+    # materialised evidence. Checking the kind was checking nothing.
+    assert any(n.action == "knowledge_version" for n in result.graph.nodes), \
+        "the graph has no knowledge sources, so this proves nothing"
+    assert "knowledge_version" not in {d.action for d in got.decisions}
+
+
+def test_a_project_wide_choice_belongs_to_no_section():
+    """`resolve_demand_products` picks the company's default rail, screw,
+    concrete and cap ONCE for every run. Reporting it per section would present
+    one choice as several, each looking like a decision made about that stretch."""
+    topo, result = _straight()
+    got = decisions_for_section(result.graph, result.strategy, topo, "run1")
+    assert "resolve_demand_products" not in {d.action for d in got.decisions}
+    assert any(n.action == "resolve_demand_products" for n in result.graph.nodes)
 
 
 def test_a_section_nobody_drew_has_no_decisions_rather_than_an_error():

@@ -39,10 +39,13 @@ export function initSectionDecisions() {
   on("project-loaded", () => { openOn = null; render(); });
 }
 
+// `state.selection` only. The run picker is `inspector.js`'s DOM, and reading it
+// from here worked solely because `app.js` happens to register that module
+// first — reorder two lines and this panel renders empty. Modules communicate
+// through state.js (CLAUDE.md), so inspector now SAYS which section is selected
+// rather than merely showing it.
 function sectionId() {
-  return state.selection?.runId
-    || document.getElementById("run-select")?.value
-    || null;
+  return state.selection?.runId || null;
 }
 
 export async function render() {
@@ -55,6 +58,12 @@ export async function render() {
     return;
   }
   const runId = state.result.run.id;
+  // What this render is FOR. Two awaits follow, and a section switch or a
+  // locale flip landing between them would paint the previous section's
+  // decisions over the current one — the same in-flight rule structure-data.js
+  // already lives by ("a fetch belongs to the run it was STARTED for").
+  const forWhat = `${runId}\u0000${section}`;
+  const stale = () => forWhat !== `${state.result?.run?.id}\u0000${sectionId()}`;
   let body;
   try {
     body = await apiGet(
@@ -64,23 +73,36 @@ export async function render() {
     // 409 topology_changed is a real state, not a failure: the drawing moved on
     // and "the decisions for section A" is no longer a true sentence. Named,
     // exactly as structure-data.js names the same refusal.
+    if (stale()) return;
     const key = String(err?.message || "").includes("topology_changed")
       ? "decisions.stale" : null;
     host.innerHTML = `<h3>${esc(t("decisions.title"))}</h3>
       <div class="meta">${esc(t(key || "decisions.unavailable"))}</div>`;
     return;
   }
+  if (stale()) return;
+  let earlier = 0;
   try {
-    const all = await apiGet(
-      `/api/projects/${state.projectId}/corrections?generation_run_id=${runId}`);
+    // The WHOLE project's conversation, split by the run it was made in. A
+    // decision node id is positional, so a comment from another run cannot be
+    // matched to a decision in this one — but it must not be silently absent
+    // either, or the panel offers to "start" a conversation two people already
+    // had. Counted and named at the PANEL, which is the finest grain at which
+    // the statement is true.
+    const all = await apiGet(`/api/projects/${state.projectId}/corrections`);
+    if (stale()) return;
     threads = new Map();
-    for (const c of all)
-      if (c.decision_ref)
+    for (const c of all) {
+      if (!c.decision_ref) continue;
+      if (c.generation_run_id === runId)
         threads.set(c.decision_ref, [...(threads.get(c.decision_ref) || []), c]);
+      else earlier += 1;
+    }
   } catch {
     threads = new Map();   // the decisions are still worth showing without them
   }
-  host.innerHTML = sectionHtml(body, threads, openOn);
+  if (stale()) return;
+  host.innerHTML = sectionHtml(body, threads, openOn, earlier);
   wire(host, runId);
 }
 
@@ -88,7 +110,7 @@ export async function render() {
  *  -> the panel's markup. Takes its state as arguments rather than reading the
  *  module's, so node can render it exactly as the browser does — which is where
  *  the escaping rule and the empty cases are actually checked. */
-export function sectionHtml(body, threads = new Map(), openOn = null) {
+export function sectionHtml(body, threads = new Map(), openOn = null, earlier = 0) {
   const rows = body.decisions.map((d) => {
     const said = threads.get(d.node_id) || [];
     return `<div class="decision" data-node="${esc(d.node_id)}">
@@ -111,6 +133,9 @@ export function sectionHtml(body, threads = new Map(), openOn = null) {
   }).join("");
   return `<h3>${esc(t("decisions.title"))}</h3>
     <div class="meta">${esc(t("decisions.hint", { section: body.section_id }))}</div>
+    ${earlier
+      ? `<div class="meta">${esc(t("decisions.earlier", { count: earlier }))}</div>`
+      : ""}
     ${body.decisions.length ? rows
       : `<div class="meta">${esc(t("decisions.none_here"))}</div>`}`;
 }

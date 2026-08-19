@@ -43,17 +43,17 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ## The API surface
 
-47 routes. Grouped by what they are for rather than by path:
+49 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
 | Projects & topology | `GET/POST /projects`, `GET /projects/{id}`, `PUT /projects/{id}/topology` | Topology PUT bumps `revision` |
 | Generation | `POST /projects/{id}/generate`, `GET /projects/{id}/runs`, `GET /runs/{id}` | The only write that decides a fence |
-| Explanation | `GET /runs/{id}/explain/{element_id}`, `GET /runs/{id}/impact/{object_id}` | Takes `lang` **and** `units` |
-| Read models | `GET /runs/{id}/structure`, `GET /runs/{id}/bom` | 409 on stale topology or catalog |
+| Explanation | `GET /runs/{id}/explain/{element_id}`, `GET /runs/{id}/sections/{section_id}/decisions`, `GET /runs/{id}/impact/{object_id}` | Takes `lang` **and** `units`. The section view 409s on a moved topology and the element view does not — see below |
+| Read models | `GET /runs/{id}/structure`, `GET /runs/{id}/bom` | 409 on stale topology or catalog. `/bom` also carries `grouped` — the same demand by section, panel and decision, and it does NOT 409 on topology |
 | Money | `POST /runs/{id}/quote`, `GET/POST /quotes/{id}[/accept]`, `GET /projects/{id}/quotes` | Immutable snapshots with a lifecycle |
 | Knowledge | `GET/POST /knowledge`, `POST /knowledge/{id}/{v}/retire`, `POST /knowledge/preview-impact` | Versioned; never edited in place |
-| Learning | `POST /projects/{id}/corrections`, `POST /projects/{id}/propose-knowledge`, `GET /candidates`, `POST /candidates/{id}/{v}/review` | Candidates are inert |
+| Learning | `GET/POST /projects/{id}/corrections`, `POST /projects/{id}/propose-knowledge`, `GET /candidates`, `POST /candidates/{id}/{v}/review` | Candidates are inert. The GET is filterable by `decision_ref`/`element_ref`/`generation_run_id` |
 | Fence models | `GET/POST /fence-models`, `PUT /fence-models/{id}/draft`, `POST .../publish`, `POST .../status`, `DELETE .../{v}`, `POST /fence-models/preview`, `POST /fence-models/{id}/preview-impact` | Publish is the gate |
 | Panel preview | `POST /runs/{id}/bays/{element_id}/panel-preview` | Reads the run, not the live catalog |
 | Annotations | `POST /projects/{id}/annotations[/{id}/interpret]`, `POST /projects/{id}/intents/{id}/confirm` | Verbatim in, proposals out |
@@ -65,6 +65,21 @@ Two routes exist that look redundant and are not: `POST /fence-models/preview` t
 an **unsaved** document in its body, while `POST /fence-models/{id}/{v}/preview`
 prices a stored one. The first exists because an editor that must save to preview
 leaves half-typed model ids in the library forever.
+
+**One asymmetry that is deliberate.** `GET /runs/{id}/sections/{section_id}/decisions`
+refuses a topology the run was not generated from (409 `topology_changed`), and
+`GET /runs/{id}/explain/{element_id}` does not. A SECTION is a topology object,
+so "the decisions for section A" stops being a true sentence once A may no longer
+be the stretch the reader is looking at — the same refusal `/structure` makes. An
+element id is self-identifying (`post@run1:1500`), so the element view answers
+whatever the drawing has since become. The difference is between the two
+questions, not between two standards.
+
+**And one anchoring rule a caller must not read past.** A `Correction` may carry a
+`decision_ref` (a decision-graph node id) or an `element_ref`, and both are
+GENERATED ids — `core/ids.py` states that nothing may reference them across runs.
+That is why every correction also carries `generation_run_id`, and why the list
+route lets you filter by it: a ref means what it means only inside its own run.
 
 ---
 
