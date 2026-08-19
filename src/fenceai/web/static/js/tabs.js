@@ -295,7 +295,7 @@ function wireQuoteButtons(div, products) {
  *  Tags come from `structure-data.js`, the single tag source for this tab and
  *  both drawings; an element it cannot name (a stale report) falls back to its
  *  own id rather than to a blank cell that reads as "no section". */
-function groupedBomHtml(grouped, products) {
+export function groupedBomHtml(grouped, products) {
   const groups = grouped?.groups || [];
   if (!groups.length) return "";
   const KINDS = ["section", "node", "bay", "decision"];

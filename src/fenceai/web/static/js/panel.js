@@ -342,11 +342,15 @@ function unsuppliedHtml() {
  *  wrote, so it falls back across the languages they did write rather than
  *  through `t()`. Escaped like every other human sentence in the app. */
 function assemblyHtml() {
+  return assemblyPlanHtml(preview?.assembly);
+}
+
+
+export function assemblyPlanHtml(plan) {
   // `null` is "this line states no order"; a plan always has at least one step,
   // because it is built one-for-one from a non-empty `assembly`. The second half
   // of the old guard was dead and collapsed the two states the tri-state exists
   // to keep apart.
-  const plan = preview?.assembly;
   if (!plan) return "";
   const said = (step) => step.text_i18n[currentLocale()]
     || step.text_i18n.en || Object.values(step.text_i18n)[0] || "";
