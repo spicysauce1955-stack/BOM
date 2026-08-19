@@ -227,6 +227,21 @@ def test_a_project_wide_choice_belongs_to_no_section():
     assert any(n.action == "resolve_demand_products" for n in result.graph.nodes)
 
 
+def test_no_decision_reads_as_a_raw_python_dict():
+    """The section view puts input FACTS at the top of what a person reads, and
+    they used to fall through to a template that prints the payload —
+    `topology_node {'node_id': 'n1', 'x_mm': 0, ...}` in a Hebrew side panel.
+    Tolerable while they only appeared as an indented `←` ancestor of an
+    element's trail; not once they open the story."""
+    topo, result = _straight()
+    for lang in ("en", "he"):
+        got = decisions_for_section(result.graph, result.strategy, topo, "run1",
+                                    lang=lang)
+        offenders = [d.sentence for d in got.decisions
+                     if "{'" in d.sentence or "':" in d.sentence]
+        assert not offenders, offenders
+
+
 def test_a_section_nobody_drew_has_no_decisions_rather_than_an_error():
     topo, result = _straight()
     got = decisions_for_section(result.graph, result.strategy, topo, "runZ")

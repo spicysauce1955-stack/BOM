@@ -204,6 +204,13 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Model {model_ref} resolves no cut length for slot {slot} in {n} "
             "bay(s) of section {run_id}."
         ),
+        # The input FACTS a section's story opens with. They used to fall through
+        # to `input_fact`, which prints the raw payload dict — acceptable while
+        # they appeared only as an indented `←` ancestor, and not once the
+        # section view puts them at the top of what a person reads.
+        "topology_node": "Node {node_id} of the drawing, where {runs} section(s) meet.",
+        "run_geometry": "Section {run_id} is {length_mm} {u} long, falling {slope_permille}‰.",
+        "gate_event": "A gate was asked for between {start_mm} {u} and {end_mm} {u}.",
         "override_applied": "User override {override_id} applied ({action}).",
         "input_fact": "Input fact: {action} {payload}.",
         "generic": "{action}: {payload}",
@@ -338,6 +345,9 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "דגם {model_ref} אינו מחשב אורך חיתוך עבור החריץ {slot} ב-{n} "
             "מפתחים בקטע {run_id}."
         ),
+        "topology_node": "צומת {node_id} בשרטוט, שבו נפגשים {runs} קטעים.",
+        "run_geometry": "אורך קטע {run_id} הוא {length_mm} {u}, בשיפוע {slope_permille}‰.",
+        "gate_event": "התבקש שער בין {start_mm} {u} ל-{end_mm} {u}.",
         "override_applied": "דריסת משתמש {override_id} הוחלה ({action}).",
         "input_fact": "עובדת קלט: {action} {payload}.",
         "generic": "{action}: {payload}",
@@ -563,7 +573,20 @@ def explain_node(
             base = _fmt(t, "override_applied", lang, units,
                 override_id=p.get("override_id"), action=node.action
             )
+        case "topology_node":
+            base = _fmt(t, "topology_node", lang, units,
+                        node_id=p.get("node_id"), runs=p.get("runs"))
+        case "run_geometry":
+            base = _fmt(t, "run_geometry", lang, units, run_id=p.get("run_id"),
+                        length_mm=p.get("length_mm"),
+                        slope_permille=p.get("slope_permille"))
+        case "gate_event":
+            base = _fmt(t, "gate_event", lang, units,
+                        start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))
         case action if action in _INPUT_FACT_ACTIONS:
+            # `knowledge_version` alone reaches this now: it is a REF, and its
+            # payload is that ref. The three facts above are sentences, because
+            # the section view puts them at the top of what a person reads.
             base = _fmt(t, "input_fact", lang, units, action=node.action, payload=p)
         case _:
             base = _fmt(t, "generic", lang, units, action=node.action, payload=p)
