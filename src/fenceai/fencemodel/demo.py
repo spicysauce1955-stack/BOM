@@ -30,7 +30,8 @@ to come back the same panel.
 from __future__ import annotations
 
 from fenceai.fencemodel.model import (
-    Distributed, Eligibility, EligibleItem, FenceModel, FixingRule, FrameSlot,
+    AssemblyStep, Distributed, Eligibility, EligibleItem, FenceModel, FixingRule,
+    FrameSlot,
     FromBottom, FromTop, InfillSpec, Member, PanelSpec, PartRequirement, PostSlot,
 )
 from fenceai.knowledge.ast import And, Cmp, FieldRef, In, Lit, Or
@@ -344,6 +345,40 @@ def routed_vinyl_model(
                     right=FieldRef(path="post.face_width_mm"))),
             ),
         ),
+        # How it goes together, in the order a fitter does it. A routed vinyl
+        # panel is the line where this matters most: nothing is screwed, so the
+        # ORDER is the whole assembly — a board dropped in before its top rail is
+        # a board that cannot be dropped in at all.
+        #
+        # The last step fits nothing and says so by being an `installation` step:
+        # curing is an instruction about the job, not about a part.
+        assembly=[
+            AssemblyStep(
+                key="rails", slots=["rail"],
+                text_i18n={
+                    "en": "Slide both rails through the routed holes in the posts, "
+                          "channel facing in.",
+                    "he": "השחילו את שתי המסילות דרך החורים המחורצים בעמודים, "
+                          "כשהתעלה פונה פנימה.",
+                }),
+            AssemblyStep(
+                key="boards", slots=["slat"],
+                text_i18n={
+                    "en": "Drop the boards in from above, one at a time, seating "
+                          "each into the bottom channel before letting it fall "
+                          "under the top rail.",
+                    "he": "הכניסו את הלוחות מלמעלה, אחד אחד, כשכל לוח יושב תחילה "
+                          "בתעלה התחתונה ורק אז מונח מתחת למסילה העליונה.",
+                }),
+            AssemblyStep(
+                key="cure", kind="installation",
+                text_i18n={
+                    "en": "Leave the post footings to cure before loading the "
+                          "panels; a routed post carries the fence from its holes.",
+                    "he": "הניחו ליסודות העמודים להתקשות לפני העמסת הפאנלים; "
+                          "עמוד מחורץ נושא את הגדר מהחורים שלו.",
+                }),
+        ],
         default_spec=PanelSpec(
             frame=[FrameSlot(
                 key="rail", orientation="horizontal",

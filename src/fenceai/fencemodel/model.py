@@ -464,6 +464,31 @@ class Discrete(BaseModel):
 HeightSupport = Annotated[Union[Continuous, Discrete], Field(discriminator="kind")]
 
 
+class AssemblyStep(BaseModel):
+    """One thing a person does, in the order they do it.
+
+    The roadmap asks that a panel carry assembly AND installation instructions.
+    The difference between an instruction and a doc is whether it names PARTS: a
+    step that says "fit the bottom rail" and names the slot is data — the
+    assembly film can drive its order from it, the parts list can be split by it,
+    and a slot no step places is a gap something can report. A step that is only
+    prose is a paragraph, and a fence model is not a document.
+
+    So `assembly` steps must name slots and `installation` steps need not: "let
+    the footings cure overnight" places no part and is exactly the kind of
+    instruction the second half of that roadmap line is about.
+
+    `text_i18n` follows `name_i18n`'s precedent — expert-authored prose, not a UI
+    string, so it is not key-checked against the locale bundles; the surface
+    falls back to whichever language the author wrote.
+    """
+
+    key: str
+    kind: Literal["assembly", "installation"] = "assembly"
+    slots: list[str] = []
+    text_i18n: dict[str, str] = {}
+
+
 class FenceModel(BaseModel):
     id: str
     version: int
@@ -480,6 +505,10 @@ class FenceModel(BaseModel):
     # opinionated model and a legacy one resolve to the opinionated one's spec
     # rather than to a conflict.
     post: PostSlot | None = None
+    # In the order a person does them. Empty is NO OPINION, exactly as `post`
+    # is: the assembly film then falls back to its role-based build order, which
+    # is what every model shipped before this had.
+    assembly: list[AssemblyStep] = []
 
     @property
     def ref(self) -> str:
@@ -1102,6 +1131,54 @@ def _variant_reach_errors(model: FenceModel) -> list[str]:
     return errors
 
 
+def _assembly_step_errors(model: FenceModel) -> list[str]:
+    """The rules that keep an instruction from being a paragraph.
+
+    A step names slots because that is what makes it DATA: the film can order
+    itself by it, the parts of a panel can be split by it, and a slot no step
+    places is a gap something can report. The checks follow from that and from
+    nothing else.
+
+    Slots are collected across the default spec AND every variant, because a
+    variant's panel is still this model's panel — refusing a step for naming a
+    slot the default lacks would leave a model unable to say how its own variants
+    go together.
+    """
+    if not model.assembly:
+        return []            # no opinion, exactly as an empty `post` is
+    known = {key for spec in [model.default_spec, *(v.spec for v in model.variants)]
+             for key, _ in spec_requirements(spec)}
+    errors: list[str] = []
+    seen_keys: set[str] = set()
+    placed_by: dict[str, str] = {}
+    for step in model.assembly:
+        if step.key in seen_keys:
+            errors.append(
+                f"assembly step {step.key}: two steps share this key, so a "
+                f"reference to it names both")
+        seen_keys.add(step.key)
+        if step.kind == "assembly" and not step.slots:
+            errors.append(
+                f"assembly step {step.key}: an assembly step fits parts and this "
+                f"one names none. An instruction that is only text is a doc, and "
+                f"a fence model is not a document — if it fits nothing, it is an "
+                f"installation step and should say so")
+        for slot in step.slots:
+            if slot not in known:
+                errors.append(
+                    f"assembly step {step.key}: no slot named {slot} in this "
+                    f"model, so the step would place nothing on every job built "
+                    f"to it")
+            elif slot in placed_by:
+                errors.append(
+                    f"assembly step {step.key}: slot {slot} is already fitted by "
+                    f"step {placed_by[slot]}. A part is fitted once — two steps "
+                    f"naming it is a contradiction, not an ordering")
+            else:
+                placed_by[slot] = step.key
+    return errors
+
+
 def validate_model(
     model: FenceModel, catalog: Catalog, library: PartLibrary | None = None
 ) -> list[str]:
@@ -1141,6 +1218,7 @@ def validate_model(
     if model.post is not None:
         errors += _post_slot_errors(model.post, catalog)
         errors += _variant_reach_errors(model)
+    errors += _assembly_step_errors(model)
 
     for axis in model.option_axes:
         for value in axis.values:
