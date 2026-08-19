@@ -272,6 +272,36 @@ document.querySelector('#section-decisions [data-act="say"]').click(); 'ok'""")
 fetch('/i18n/he.json').then(r => r.json()).then(b => b['decisions.comment_note'])""")
         check("the panel says a comment changes nothing on its own",
               bool(note) and note in said["text"])
+        # --- and the loop the boundary promises, walked ------------------------
+        # "A comment becomes an interpretation, an interpretation becomes a
+        # PROPOSAL, and only a human confirms." The propose route existed and was
+        # reachable from nothing; a boundary nobody can walk is a sentence in a
+        # doc. The demo proposer reads a narrow vocabulary on purpose, so the
+        # comment below is one it recognises — and the check asserts the answer
+        # is NAMED either way, because "nothing suggests a rule" is the ordinary
+        # outcome and a silent button reads as broken.
+        c.js("""
+document.querySelector('#section-decisions [data-act="say"]').click(); 'ok'""")
+        time.sleep(0.5)
+        c.js("""
+{
+  const box = document.querySelector('#section-decisions [data-f="comment"]');
+  box.value = 'תמיד להשתמש ביסוד קיים';
+  document.querySelector('#section-decisions [data-act="send"]').click();
+}
+'ok'""")
+        time.sleep(1.5)
+        c.js("""document.querySelector('#section-decisions [data-act="propose"]').click(); 'ok'""")
+        time.sleep(2.0)
+        proposed = c.js(
+            "document.getElementById('propose-said')?.textContent || ''")
+        check("a conversation can be turned into a candidate rule",
+              bool(proposed.strip()))
+        queued = c.js("""
+fetch('/api/candidates').then(r => r.json()).then(cs => ({
+  n: cs.length, inert: cs.every(c => c.status === 'proposed')}))""")
+        check("the candidate arrives INERT, for a person to approve",
+              (queued or {}).get("n", 0) > 0 and queued["inert"])
         c.shot("03b-section-decisions.png")
 
         # --- the map moves: dragging empty canvas pans, a click still edits ---

@@ -236,3 +236,56 @@ def test_the_comment_is_kept_verbatim():
             "comment": said, "author": "expert"})
         [got] = client.get(f"/api/projects/{pid}/corrections").json()
         assert got["comment"] == said
+
+
+# --- a comment becomes a PROPOSAL, and a human confirms -----------------------
+
+def test_a_conversation_can_become_a_candidate_rule_that_is_inert():
+    """The boundary walked end to end, which is the whole of roadmap step 5: a
+    comment becomes an interpretation, an interpretation becomes a PROPOSAL, and
+    only a human confirms. The candidate must arrive INERT — proposed, invisible
+    to generation, and outside the run's knowledge snapshot."""
+    with TestClient(app) as client:
+        pid, run_id, node_id = _fence(client)
+        client.post(f"/api/projects/{pid}/corrections", json={
+            "generation_run_id": run_id, "decision_ref": node_id,
+            "comment": "always use existing foundations when within 300 mm",
+            "author": "expert"})
+        made = client.post(f"/api/projects/{pid}/propose-knowledge").json()
+        assert made, "the demo proposer reads this vocabulary; nothing was proposed"
+        assert all(c["status"] == "proposed" for c in made)
+        assert all(c["type"] == "candidate" for c in made)
+
+        # inert: generation cannot see it
+        before = client.get(f"/api/runs/{run_id}").json()
+        again = client.post(f"/api/projects/{pid}/generate").json()["result"]
+        assert again["run"]["id"] == before["run"]["id"], \
+            "a proposed candidate changed the fence, which is the one thing it may not do"
+        # the snapshot is (object_id, version) pairs: a candidate must be in none
+        assert made[0]["object_id"] not in {
+            pair[0] for pair in again["run"]["knowledge_snapshot"]}
+
+
+def test_the_same_conversation_does_not_propose_the_same_rule_twice():
+    """Pressing the button again is an ordinary thing to do. A candidate already
+    handled — or already sitting in the queue — is never re-proposed."""
+    with TestClient(app) as client:
+        pid, run_id, node_id = _fence(client)
+        client.post(f"/api/projects/{pid}/corrections", json={
+            "generation_run_id": run_id, "decision_ref": node_id,
+            "comment": "always use existing foundations", "author": "expert"})
+        first = client.post(f"/api/projects/{pid}/propose-knowledge").json()
+        second = client.post(f"/api/projects/{pid}/propose-knowledge").json()
+        assert first and second == []
+
+
+def test_a_conversation_that_suggests_no_rule_proposes_nothing_rather_than_something():
+    """The ordinary answer. The proposer reads a narrow vocabulary on purpose
+    (it must not become a second rule engine), so most comments yield nothing —
+    and inventing a rule from a question would be the AI deciding."""
+    with TestClient(app) as client:
+        pid, run_id, node_id = _fence(client)
+        client.post(f"/api/projects/{pid}/corrections", json={
+            "generation_run_id": run_id, "decision_ref": node_id,
+            "comment": "why is this bay 1500?", "author": "expert"})
+        assert client.post(f"/api/projects/{pid}/propose-knowledge").json() == []

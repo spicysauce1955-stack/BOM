@@ -136,9 +136,21 @@ export function sectionHtml(body, threads = new Map(), openOn = null, earlier = 
     ${earlier
       ? `<div class="meta">${esc(t("decisions.earlier", { count: earlier }))}</div>`
       : ""}
+    ${threadCount(threads)
+      ? `<div class="decision-actions"><button data-act="propose">${
+          esc(t("decisions.propose"))}</button>
+         <span class="meta" id="propose-said"></span></div>`
+      : ""}
     ${body.decisions.length ? rows
       : `<div class="meta">${esc(t("decisions.none_here"))}</div>`}`;
 }
+
+function threadCount(threads) {
+  let n = 0;
+  for (const said of threads.values()) n += said.length;
+  return n;
+}
+
 
 /** Verbatim, and rendered as TEXT through `esc` — the existing convention for
  *  human prose (`tabs.js`'s `.verbatim`). What a person wrote is not markup. */
@@ -169,6 +181,30 @@ function wire(host, runId) {
   host.querySelectorAll('[data-act="cancel"]').forEach((b) => {
     b.addEventListener("click", () => { openOn = null; render(); });
   });
+  const propose = host.querySelector('[data-act="propose"]');
+  if (propose) {
+    propose.addEventListener("click", async () => {
+      // The boundary, walked rather than merely described. A comment becomes a
+      // knowledge CANDIDATE, which is inert until a person reviews it — the
+      // route stores nothing active and this button cannot either.
+      const said = host.querySelector("#propose-said");
+      said.textContent = t("decisions.proposing");
+      let made = [];
+      try {
+        made = await apiSend("POST",
+          `/api/projects/${state.projectId}/propose-knowledge`, {});
+      } catch {
+        said.textContent = t("decisions.propose_failed");
+        return;
+      }
+      // Nothing proposed is the ORDINARY answer and has to say so: the proposer
+      // reads a narrow vocabulary, and a button that silently did nothing would
+      // read as broken rather than as "nothing here suggests a rule yet".
+      said.textContent = made.length
+        ? t("decisions.proposed", { count: made.length })
+        : t("decisions.proposed_none");
+    });
+  }
   host.querySelectorAll('[data-act="send"]').forEach((b) => {
     b.addEventListener("click", async () => {
       const form = host.querySelector(`[data-form="${CSS.escape(b.dataset.node)}"]`);
