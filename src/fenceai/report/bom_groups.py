@@ -164,6 +164,15 @@ def group_bom(
         for span_id in {e for e in req.pegs if e in spans}:
             by_bay.setdefault(span_id, []).append(line)
 
+    # NOTE, because two views of one fence must not quietly disagree:
+    # `report/structure.py` lists a shared node post in EVERY section that
+    # touches it (a borrowed row carrying `shared_from`) and attaches its parts
+    # to each, because that sheet shows parts PER ELEMENT and never sums them.
+    # This view sums, so the same choice here would double-count the post. The
+    # two answers are both right for their own question and the difference is
+    # visible rather than silent: the group is named "shared posts", and the
+    # panel's own hint says these views overlap and must not be added up.
+    #
     # A post shared at a node belongs to no single run — `Post.run_ref` says
     # `node:n1`, which is the strategy's own answer and the reason the
     # setting-out sheet gives such a post ONE tag and cross-references it from
