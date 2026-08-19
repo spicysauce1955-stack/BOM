@@ -1,5 +1,45 @@
 # Current status
 
+## The test review, and the bug it found under a heading (2026-08-20)
+test-reviewer over the grouped BOM and the assembly steps, 45 mutants, 22 alive.
+Verdict GAPS and it was right: the invariants each view is NAMED for were held,
+and the numbers those views print were pinned nowhere.
+
+**Three real defects, not test gaps.** `error.model_changed` — a refusal added
+that same day — was in neither locale bundle and in no code list, so a user
+hitting it got "the action failed (400)". It was invisible to the guard twice
+over: `report/` was not among the scanned files, and the code was passed
+POSITIONALLY where the guard greps for `code="..."`. `StepPart.sku` was copied
+from a field documented "resolved by fulfillment, never here", so it was empty on
+every step of every plan — a column that always fell back and a value no test
+could pin. And the Panel tab's instruction sheet was headed **"Assembly view —
+pick a bay above"** on a tab with no bay list, because two keys were added to
+each bundle that the Assembly TAB already owned: `json.load` keeps the LAST
+value, so the tab's copy won. Every test in that file reads the bundles through
+`json`, which resolves a duplicate silently — the new guard reads the text.
+
+**One correction back to the reviewer.** It reported a shipped double-report, an
+unpegged line counted as `unassigned` AND `from_stock`. Not shipped: with a BOM
+computed from the same requirements there is no `from_stock` row. My TEST built
+the impossible pair — a requirement the BOM had never seen — and then asserted
+too weakly to notice what it had manufactured.
+
+**And the standard, missed by me and caught here.** The merge key gained
+`length_basis` in the architecture-review round *with no failing test behind it*;
+so did the peg de-duplication in the same commit. Both have one now. Nothing
+anywhere asserted a single concrete quantity of a group, so one lost
+`model_copy` — the same line object appended to a section list and a bay list,
+then merged in place — corrupted the first bay into the section's totals with the
+whole suite green. `PanelPreview.assembly` could be blanked without a red test,
+the feature vanishing from the payload and the tab.
+
+Two vacuous fixtures replaced (a "variant slot" test with no variant, running on
+a model `validate_model` rejects; `assert "b" in e`, free because every message
+begins "assembly step") and one browser check that asserted the ABSENCE of a
+warning, so it passed against the feature deleted.
+
+1564 pytest · 191 scenario tests · 198/199 smoke · gate byte-identical.
+
 ## The BOM answers the question an estimator asks (2026-08-19)
 `plan/open-work.md` item 4. `Bom.lines` are flat and sorted by sku, which is the
 right shape for placing an order and the wrong one for every question asked
