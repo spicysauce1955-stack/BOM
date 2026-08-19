@@ -1276,6 +1276,34 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         # says so by carrying no fixing rule at all
         check("a channelled panel buys no screws and reports no gap",
               vinyl["slots"] == ["rail", "slat"] and vinyl["warnings"] == 0)
+        # --- and how it goes together -----------------------------------------
+        # Roadmap Admin 3. M-VINYL is the line where ORDER is the assembly:
+        # nothing is screwed, so a board dropped in before its top rail is a
+        # board that cannot be dropped in at all. Checked here because only the
+        # browser has the model, the resolved panel and the reader's language
+        # together.
+        steps = c.js("""
+(() => {
+  const host = document.getElementById('panel-assembly');
+  if (!host) return null;
+  const li = [...host.querySelectorAll('li.step')];
+  return {
+    n: li.length,
+    kinds: li.map(x => x.dataset.kind),
+    keys: li.map(x => x.dataset.step),
+    text: host.textContent,
+    unplaced: host.querySelectorAll('.warning').length,
+  };
+})()""")
+        check("the panel says how it goes together, in order",
+              steps is not None and steps["keys"] == ["rails", "boards", "cure"]
+              and steps["kinds"] == ["assembly", "assembly", "installation"])
+        # every part of this panel is fitted by some step, or the sheet says so
+        check("no part of the panel is left unfitted by the instructions",
+              steps["unplaced"] == 0)
+        # expert prose, in the reader's language rather than through t()
+        check("the instructions are the author's own words, localized",
+              "השחילו" in steps["text"])
         c.shot("18c-panel-vinyl.png")
 
         # the panel is priced from the model, not from a fixed shape: M-LEGACY's

@@ -70,6 +70,12 @@ th { background: #eef2f6; }
   padding: 4px 8px; margin: 4px 0 4px 0; font-style: italic; }
 #section-decisions .decision-actions { margin-block-start: 4px; }
 
+/* The assembly steps of a panel: an ordered list, so the number a fitter counts
+   from is the browser's own and never a hand-written one that can drift. */
+#panel-assembly ol.steps { margin: 6px 0 0; padding-inline-start: 22px; }
+#panel-assembly li.step { margin-block-end: 8px; }
+#panel-assembly li.step[data-kind="installation"] { color: #475569; font-style: italic; }
+
 .tag { display: inline-block; border-radius: 8px; padding: 1px 8px; font-size: 11px; margin-inline-end: 4px; }
 .tag.hard_constraint { background: #fee2e2; }
 .tag.company_rule { background: #fde68a; }

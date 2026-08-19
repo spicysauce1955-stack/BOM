@@ -23,10 +23,10 @@
 import { apiSend, esc } from "./api.js";
 import { gapLine, hasNominal, highlightSlot, renderElevation } from "./elevation.js";
 import { isSelectable, loadModelListing, modelName, modelOptionLabel, rowFor } from "./fence-models.js";
-import { t } from "./i18n.js";
+import { currentLocale, t } from "./i18n.js";
 import { on, reloadProject, state } from "./state.js";
 import {
-  fmt, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
+  fmt, fmtLen, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
 } from "./units.js";
 import { warningRowHtml } from "./warnings.js";
 
@@ -231,7 +231,8 @@ function renderPreview() {
   // The gap FIRST, above the priced table, because it changes how that table
   // must be read: a panel one part short must not preview as complete, and the
   // total below it is the total of what CAN be supplied.
-  host.innerHTML = unsuppliedHtml() + warningsHtml() + elevationHtml() + partsHtml();
+  host.innerHTML = unsuppliedHtml() + warningsHtml() + elevationHtml()
+    + partsHtml() + assemblyHtml();
   mountElevation();
   for (const row of host.querySelectorAll("#panel-parts tr[data-slot]"))
     row.addEventListener("click", () => selectSlot(row.dataset.slot));
@@ -330,6 +331,42 @@ function unsuppliedHtml() {
   }
   return html + "</table></div>";
 }
+
+/** How the panel goes together, when its model says so.
+ *
+ *  Absent for a model that states no order — which is not the same as a model
+ *  that takes no steps, and showing an empty "how to build it" panel for the
+ *  first would read as an answer rather than as silence.
+ *
+ *  `text_i18n` is EXPERT prose, not a UI string: it is whatever the author
+ *  wrote, so it falls back across the languages they did write rather than
+ *  through `t()`. Escaped like every other human sentence in the app. */
+function assemblyHtml() {
+  const plan = preview?.assembly;
+  if (!plan || !plan.steps.length) return "";
+  const said = (step) => step.text_i18n[currentLocale()]
+    || step.text_i18n.en || Object.values(step.text_i18n)[0] || "";
+  const rows = plan.steps.map((step, i) => `
+    <li class="step" data-step="${esc(step.key)}" data-kind="${esc(step.kind)}">
+      <div dir="auto">${esc(said(step))}</div>
+      ${step.parts.length
+        ? `<div class="meta">${step.parts.map((p) => `<span class="sku">${
+            esc(p.sku || p.slot_key)}</span> ×<span class="num">${fmt(p.qty)}</span>${
+            p.length_mm == null ? "" : ` · ${esc(fmtLen(p.length_mm))}`}`).join(" · ")}</div>`
+        : `<div class="meta">${esc(t("assembly.no_parts"))}</div>`}
+    </li>`).join("");
+  // a part no step fits is REPORTED: a sheet that omits it reads as a finished
+  // panel to the person holding it
+  const missed = plan.unplaced.length
+    ? `<div class="warning">${esc(t("assembly.unplaced", {
+        slots: plan.unplaced.map((p) => p.slot_key).join(", ") }))}</div>`
+    : "";
+  return `<div class="panel" id="panel-assembly">
+    <h3>${esc(t("assembly.title"))}</h3>
+    <div class="meta">${esc(t("assembly.hint"))}</div>
+    ${missed}<ol class="steps">${rows}</ol></div>`;
+}
+
 
 function warningsHtml() {
   const list = preview.warnings || [];
