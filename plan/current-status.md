@@ -1,5 +1,68 @@
 # Current status
 
+## A section answers why, and you can argue with it (2026-08-19)
+`plan/open-work.md` item 3, roadmap step 5. Two halves, and neither existed.
+
+**Section-scoped decisions.** `/explain/{element}` answers "why is this post
+here"; nothing answered "what was decided about this stretch", because a section
+is a TOPOLOGY object and the graph indexes by strategy element.
+`report/section_decisions.py` renders each node with the same `explain_node` the
+element trail uses — a view that returned node kinds and let the client phrase
+them would be a second explanation. It is a summary in causal order, not a
+deeper trail: one node once, no `←` ancestors, because repeating a rule firing
+under every bay it governed buries the sequence it exists to show.
+
+**Commenting was a write with no read.** The inspector posted a `Correction` and
+alerted; nothing in the app could ever show it again. `Store.list_corrections`
+had exactly one caller, the knowledge proposer. Trying to READ a conversation
+found two defects immediately: nothing stamped `created_at`, so a turn had no
+place in time, and the list ordered by `id` — `corr_<uuid4 hex>`, a shuffle.
+`Correction.decision_ref` is finally populated by something; it had been on the
+learning model since it was written with no code setting or reading it.
+
+**The anchor is the part the review changed.** A decision node id is POSITIONAL —
+`d0007` is the seventh node emitted, and one new gate event renumbers everything
+after it. So `?decision_ref=` without a run mixes comments about different
+decisions, and my own golden test was making that call while the route's
+docstring warned against it: 422 now, unrepresentable rather than documented.
+And after the drawing moves, a comment cannot be matched to a decision in the new
+run — offering to "start a conversation" on one two people already had is a false
+statement about the record, so the panel counts and names them at the level where
+the statement is true. Both halves are pinned: an unchanged drawing regenerates
+to the SAME run and keeps its thread; a moved one does not claim the old
+comments, which are still kept, because evidence is never destroyed.
+
+**The attribution was quietly incomplete.** A run-level node was found by
+descending to its run's `run_geometry` fact — but the builder materialises
+evidence BEFORE the node citing it, so nothing emitted earlier could ever be
+attributed, and the `topology_node` facts that decided the surface under a
+section's own end posts belonged to no section at all. The generator now says
+`run_id` outright on the four run-level nodes and the closure walk is gone. Two
+exclusions became deliberate and tested: a knowledge object is the SOURCE a
+decision cites, and `resolve_demand_products` is one project-wide choice that
+would read as several. The guard for the first checked `kind` where the value is
+an `action` — dead code, found by the test written to pin it.
+
+**The reviews were worth their cost.** Six mutations survived the suite
+(`governed_by`/`defeated`, `units`, the ordinal sort, the run filter, panel
+thread keying, direction isolation) and now die; the boundary test compared the
+RUN, which would still pass if commenting had quietly run the proposer, and now
+compares the knowledge base; and S17 pinned nothing numeric, so it was a slower
+copy of the unit tests rather than a release gate. It now pins three 2000 mm
+bays, four posts and the layout sentence verbatim, and joins the spine by
+asserting the setting-out sheet and the decision trail name the same elements.
+
+Two CLAUDE.md violations in the new module, both real: it read another module's
+DOM (`#run-select`, owned by `inspector.js`) and worked only because `app.js`
+registers that module first, and it painted after two awaits with no in-flight
+guard. Fixed at the source — inspector now SAYS the selection through `state.js`.
+
+1507 pytest · 191 scenario tests · 193/194 smoke · gate byte-identical.
+
+Deferred, both wider than this slice: `select_supply` node ids are positional
+over an inventory-dependent sort (`decisions/supply.py`), and the proposer drops
+a comment's decision provenance (`ai/stub.py`).
+
 ## Note for archaeology: it happened again, two agents, one tree (2026-08-19)
 `987e17b` ("test(smoke): the Models tab's slot pane is used, not just opened") is
 Task 5 of the part-picker plan and it also carries the **hermetic-profile fix** —
