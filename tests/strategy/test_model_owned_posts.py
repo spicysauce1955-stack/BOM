@@ -23,6 +23,7 @@ from fenceai.knowledge.ast import Cmp, FieldRef
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
 from fenceai.strategy.generator import generate
+from fenceai.strategy.overrides import ForcePostSku, Override
 from tests.conftest import straight_topology
 
 MODEL_ID = "M-OWNPOST"
@@ -49,10 +50,11 @@ def _model(post_sku="POST-S-HD", cap_sku="POST-CAP") -> FenceModel:
     )
 
 
-def _run(model=None, topo=None, catalog=None, knowledge=None, policy=None):
+def _run(model=None, topo=None, catalog=None, knowledge=None, policy=None,
+         overrides=None):
     return generate(
         topo or straight_topology(3000), knowledge or demo_knowledge(),
-        catalog or demo_catalog(), policy=policy,
+        catalog or demo_catalog(), policy=policy, overrides=overrides,
         models=FenceModelLibrary(models=[model or _model()]),
         default_model=FenceModelChoice(model_id=MODEL_ID),
     )
@@ -197,6 +199,78 @@ def test_a_cap_is_matched_against_the_post_it_caps():
         result.strategy, catalog, policy=result.run.demand_skus) if line.role == "cap"]
     assert caps
     assert all([m.sku for m in c.eligibility.members] == ["POST-CAP-100"] for c in caps)
+
+
+def test_a_cap_follows_the_post_that_was_ACTUALLY_stood_there():
+    """`_make_post` puts a forced sku, a masonry mount and a gate reinforcement
+    ABOVE the model's post, because each of those is a post doing a different
+    JOB. The cap has to follow: a cap matched against the post the model WANTED
+    is a cap for a post that is not on the drawing.
+
+    One station is patched to a 140 mm post and the rest keep the model's 100 mm
+    one, so the run needs two different caps — and the wrong answer here is not a
+    missing line but a wrong one, which is why it is worth a test."""
+    catalog = _routed_catalog(("POST-V-150", [150, 1650]))
+    catalog.products["POST-WIDE"] = Product(
+        sku="POST-WIDE", name="A post the user patched in",
+        consumption=IndivisibleDiscrete(), price_cents=9500,
+        attrs={"material": "vinyl"},
+        capabilities=Capabilities(length_mm=2600, face_width_mm=140),
+    )
+    for sku, face in (("POST-CAP-100", 100), ("POST-CAP-140", 140)):
+        catalog.products[sku] = Product(
+            sku=sku, name=f"Cap for {face} mm post",
+            consumption=IndivisibleDiscrete(), price_cents=1200,
+            attrs={"material": "vinyl", "fits_face_mm": face},
+        )
+    cap = PartRequirement(role="cap", eligibility=Eligibility(predicate=Cmp(
+        cmp="==", left=FieldRef(path="item.fits_face_mm"),
+        right=FieldRef(path="post.face_width_mm"))))
+    result = _run(
+        _routed_model(cap=cap), catalog=catalog,
+        overrides=[Override(id="ov_wide", run_id="run1",
+                            directive=ForcePostSku(station_mm=1500,
+                                                   sku="POST-WIDE"))],
+    )
+    at = {p.station_mm: (p.sku, p.cap_sku) for p in result.strategy.posts}
+    assert at[1500] == ("POST-WIDE", "POST-CAP-140"), \
+        "the patched post is 140 mm and its cap must be the one that fits it"
+    assert at[0] == ("POST-V-150", "POST-CAP-100")
+
+
+def test_a_cap_nothing_fits_the_STOOD_post_is_a_warning_not_a_wrong_cap():
+    """The other half, and the reason this is not merely cosmetic: when the post
+    that actually stands there has no cap in the catalog, the honest answer is no
+    cap and a warning. Quietly keeping the cap that fitted the model's post would
+    put a part on the BOM that cannot be fitted to the post beside it."""
+    catalog = _routed_catalog(("POST-V-150", [150, 1650]))
+    catalog.products["POST-WIDE"] = Product(
+        sku="POST-WIDE", name="A post the user patched in",
+        consumption=IndivisibleDiscrete(), price_cents=9500,
+        attrs={"material": "vinyl"},
+        capabilities=Capabilities(length_mm=2600, face_width_mm=140),
+    )
+    catalog.products["POST-CAP-100"] = Product(
+        sku="POST-CAP-100", name="Cap for 100 mm post",
+        consumption=IndivisibleDiscrete(), price_cents=1200,
+        attrs={"material": "vinyl", "fits_face_mm": 100},
+    )
+    cap = PartRequirement(role="cap", eligibility=Eligibility(predicate=Cmp(
+        cmp="==", left=FieldRef(path="item.fits_face_mm"),
+        right=FieldRef(path="post.face_width_mm"))))
+    result = _run(
+        _routed_model(cap=cap), catalog=catalog,
+        overrides=[Override(id="ov_wide", run_id="run1",
+                            directive=ForcePostSku(station_mm=1500,
+                                                   sku="POST-WIDE"))],
+    )
+    at = {p.station_mm: (p.sku, p.cap_sku) for p in result.strategy.posts}
+    assert at[1500] == ("POST-WIDE", "")
+    assert at[0] == ("POST-V-150", "POST-CAP-100")
+    warned = [w for w in result.strategy.warnings
+              if w.code == "no_item_covers_part_spec"]
+    assert warned and all(w.severity == "warning" for w in warned)
+    assert any("post@run1:1500" in w.element_refs for w in warned)
 
 
 def test_the_post_is_recorded_on_the_run_like_any_other_choice():
