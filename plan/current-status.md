@@ -1,5 +1,37 @@
 # Current status
 
+## The browser gate was never flaky — it was not hermetic (2026-08-19)
+Closing the part-picker arc meant running the suite, and it came back with 33 red
+checks starting at the strategy summary and ending at *"Hebrew RTL is the
+default"*. That exact shape had appeared on 2026-08-17, been re-run green, and
+been written into `plan/open-work.md` as **flakiness under load**. That diagnosis
+was wrong, and the tell was in the evidence at the time: the failing SET was
+near-identical across both runs. Load does not fail the same 33 checks twice.
+
+The screenshot settled it in one look — the app was in **English**. Chrome was
+launched with no `--user-data-dir`, so it could attach to the developer's own
+profile, and `localStorage` for this origin therefore SURVIVED the run.
+`fenceai.locale` and `fenceai.units` are persisted preferences (`i18n.js:32`,
+`units.js:162`) and this suite ends by toggling to English: the next run opened in
+English with every Hebrew assertion red, or in cm with every mm one red. It went
+green whenever Chrome fell back to a throwaway profile because the real one was
+locked by a running browser — which is the whole of the "under load" story.
+
+The profile is now a temp dir beside the temp DB, dropped in the same `finally`
+and for the same reason. Start-up waits for the CDP endpoint and the app to ANSWER
+instead of sleeping a fixed three seconds: a fresh profile initialises slower than
+a warm one, so the hermetic fix first surfaced as a connection-refused traceback,
+and a fixed sleep is what made start-up fragile to begin with.
+
+Proved rather than assumed: the run before the fix ended in English — precisely
+the state that produces the 33 failures — and the run after it passed 187/187.
+
+**The lesson worth keeping is about the diagnosis, not the flag.** "Re-run and
+see" turned a real defect into a note about the weather, and the note then told
+the next reader to do the same thing. A gate whose answer depends on the
+developer's browser profile is not a gate, and an identical failure set across two
+runs is never flakiness.
+
 ## A post is chosen by where it stands (2026-08-18)
 Prompted by the user, twice: the canvas was still *"extremely unintuitive and not
 comfortable"*, and then *"but what about poles, upper and lower bars, rails,
@@ -1532,3 +1564,86 @@ authored members during resolution. Four locale keys nothing emits were DELETED 
 than left as furniture — slice 1B adds them back with their emitters.
 
 1403 pytest · 183 golden scenarios · compatibility gate untouched.
+
+## The part picker — repairing the Models editor (2026-08-19) — COMPLETE
+Spec `docs/superpowers/specs/2026-08-19-part-picker-repair-design.md`, plan
+`docs/superpowers/plans/2026-08-19-part-picker-repair.md`. Arc A of three (B is
+connections, C is item tolerance). Slice 1A moved a slot's eligibility onto the part
+it names and left the editor believing the old shape. The regression it shipped with
+was not exotic: `panel-inspector.js` still wrote `req.eligibility.members` and
+`req.role`, both fields 1A had made RESOLVED rather than authored, and the validator
+it added refuses a document that states both a `part_id` and either one. An expert
+opening the Models tab saw every slot claiming no product, and the save that would
+have fixed it was refused — with a 422 that named a field the editor never showed
+them touching.
+
+**Why 183 green smoke checks did not notice.** The suite has always opened the
+Models tab, driven a different tool entirely — choosing a published model for a
+span — and left again. Not one of those 183 checks ever clicked into the slot
+inspector this arc repairs, so a pane that showed "no product" on every slot and
+refused the fix passed clean, run after run, because passing required using a
+surface nothing used. A tab that is opened and not exercised is not covered; the
+green run was truthful about what it checked and silent about what it did not.
+
+**The repair is a mirror, kept honest by testing both sides of it.**
+`eligibility_source` (Python, `PartRequirement`) answers one question — which of
+four shapes a slot is — and `panel-model.js`'s `eligibilitySource` answers the same
+question in the runtime that has no import path to the first. `part_id` wins ahead
+of everything else, because resolution fills a predicate onto a part-named slot and
+a resolved document must not then read as rule-authored. The two are the deliberate
+duplication CLAUDE.md's reuse rubric does not mean to catch — no shared module runs
+in both a FastAPI process and a browser tab — and what keeps them from drifting is a
+Python test over the real demo models on one side and a node test over the real
+library on the other, not a promise.
+
+**Two fields left authoring, and neither one left the system.** `role` did not move
+behind Advanced; it is gone from the pane entirely, because `_part_or_authored`
+refuses a part-named slot that also states what the piece is — offering the control
+was offering exactly the save the server would refuse. It came back as a RESOLVED
+field: `resolve_model_parts` fills it from the part's own type at generation, so
+`ResolvedSlot.role` is still required and the BOM still reads it. `width_mm` and
+`thickness_mm` are the identical exclusion one level up, on the holder rather than
+the requirement (`_refuse_authored_dimensions`), and the sharpest finding of the arc
+was that the editor had fixed the picker's own pair while leaving this one live —
+`M-SLAT`'s slat names a part and carries `width_mm=0`, and the pane still offered a
+width field with `min: 1` until the fix reached it. Naming a part now clears the
+holder's own dimension in the same act that writes `part_id`, because hiding the
+control alone was not enough — `defaultMember` still wrote a stale 100 mm into a
+freshly added member, which is the same 422 through a door the fix had left open.
+
+**A localization bug the pure/DOM split caught rather than shipped.** `specChips`
+lives in `panel-model.js`, which is deliberately import-free so node can run it —
+that is what makes the four-shape logic testable without a browser, and it is also
+why it cannot call `t()`. An early draft phrased chip text as English prose right
+there, in the one module with no path to i18n, in a Hebrew-first product. The fix
+kept `specChips` returning structured facts — key, agreement, value, unit — and
+moved the sentence assembly into `panel-inspector.js`, through the same `model.chip.*`
+bundle keys every other user-visible string goes through.
+
+**The preference list survives only where a slot genuinely authors one.**
+`authored_members` slots — the two that still name a rebuilt-per-run sku list rather
+than a part, because a fixed sku there would let a company rule get silently
+outranked — keep the ordered picker under Advanced. A `part` slot cannot show it (the
+pair a part-named requirement is refused for), and `authored_predicate` cannot either
+(a list with nothing to order). Getting this branch wrong in either direction was the
+same defect the arc exists to remove, one field over.
+
+**What the smoke suite had to relearn to close its own gap.** Retargeting it past a
+tab-open-and-leave step surfaced staleness the tab-open step had been hiding for two
+tasks: `add-eligible` no longer exists on a part-named slot (narrowed correctly, the
+check was not); a `role`-in-Advanced assertion still listed a field that had left
+authoring, not moved; and a width-field block that looked stale on a first read was
+in fact driving a STARTER template's `authored_members` slot, where both controls
+still legitimately render — read the block without reading what opened it, the first
+time through. Two stalls in the same implementer, same wait-loop pattern, led to an
+escalation to a fresh agent on a more capable model with an explicit instruction to
+poll the smoke run in the background rather than park on it; the escalated run closed
+clean.
+
+**The gate held exactly where it had to.** Nothing in this arc touches resolution or
+field generation — no scenario moved, and `tests/scenarios/compatibility_gate/*.json`
+is byte-identical to the branch's root. The full suite grew by 29 tests across four
+tasks and the smoke suite grew from 183 checks to 187, four of them landing
+specifically inside the slot pane this arc exists to repair.
+
+1432 pytest · 183 golden scenarios · 187/187 smoke · compatibility gate unmoved.

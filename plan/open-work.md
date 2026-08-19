@@ -97,11 +97,16 @@ persisted identity. Dispositions in
   defects in this arc that pytest structurally could not — a user-visible parts
   ordering change, two JS readers left on migrated catalog keys, a rail painting
   black, a stale bay preview, and a new built-in model absent from the tool that
-  offers them. `TestClient` serialises requests, so no pytest test can see the
-  concurrency class at all. It is also FLAKY under load: one run of this arc
-  reported 32 unrelated failures from the first generation onward and the next
-  clean run passed 170/170. Re-run before believing a broad collapse; believe a
-  single localised failure immediately.
+  offers them, and a Models tab that was opened and never used. `TestClient`
+  serialises requests, so no pytest test can see the concurrency class at all.
+- **It was NOT flaky, and this note used to say it was.** A run reporting ~33
+  unrelated failures from the first generation onward, green again on a re-run,
+  was diagnosed on 2026-08-17 as load. It was a shared Chrome profile: no
+  `--user-data-dir`, so `localStorage` survived the run, and this suite ends by
+  toggling to English — the next run opened in English with every Hebrew
+  assertion red. Fixed at the source (`6004a29`). The lesson generalises: an
+  identical failure SET across two runs is never flakiness, and "re-run and see"
+  is how a real defect gets written off twice.
 - **A new user-visible code needs BOTH locale bundles** and a line in the
   `REFUSAL_CODES`/`WARNING_CODES` list; the guard scans `api/app.py` and both
   `code="..."` spellings.

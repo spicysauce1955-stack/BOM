@@ -165,6 +165,49 @@ check by accident.
 
 ---
 
+## The slot inspector names a part
+
+A `FrameSlot`, `Member` and `FixingRule` each hold a `PartRequirement`, and the
+Models tab's slot pane (`model-editor.js` → `panel-inspector.js`, the DOM half; the
+pure logic lives in `panel-model.js` so node can test it without a browser) exists to
+author that requirement honestly. It used to author a bare sku; it authors a **part**
+now, because eligibility moved onto the part the requirement names.
+
+The pane branches on `eligibilitySource(req)` — a JS function that mirrors
+`PartRequirement.eligibility_source` exactly, `part_id` checked first, and the two are
+kept from drifting apart by a test on each side of the mirror rather than a shared
+module (they run in different runtimes). There are four shapes, and only one of them
+puts a picker on screen:
+
+* **`part`** — a `<select>` grouped by type (`partsByType`), the chosen part's
+  declared facts as chips (`specChips`), and how many catalog products can fill the
+  slot (`partSummary`, joined from the preview the tab already fetched — no request
+  of its own).
+* **`authored_predicate`** — the slot's rule agrees with a fact about the bay, which
+  no part can declare (e.g. a post's routed position matching the bay's rail
+  positions). Said plainly, no picker offered.
+* **`authored_members`** — a sku list, rebuilt per run from company knowledge; naming
+  a part here would let a fixed sku silently outrank the rule that sources it.
+* **`unspecified`** — a slot the "+ Add" button just made. The pane asks for a part.
+
+**The preference list survives only for `authored_members`.** `eligibilityList`
+renders the ordered sku/priority rows, and it is offered exactly there — not on a
+`part` slot (the pair a part-named requirement is refused for carrying), and not on
+`authored_predicate` (a list with nothing to order).
+
+**`role` left authoring entirely — it did not move behind Advanced, it is gone.**
+`PartRequirement` refuses a slot that names a part and also states what the piece is;
+`resolve_model_parts` fills `role` from the part's own type at generation, so the
+field is still required on `ResolvedSlot` and the BOM still reads it — it just has no
+control in the editor. `width_mm` and `thickness_mm` are the same exclusion one level
+up (`_refuse_authored_dimensions`, on the frame slot's and the member's own fields,
+not the requirement): naming a part **hides** the width/thickness inputs on that
+holder and shows the part's own declared dimension read-only in their place, clearing
+whatever number the holder carried in the same act that writes `part_id` — a stale
+100 mm left by `defaultMember` is the identical 422 one field over.
+
+---
+
 ## Units, i18n, safety
 
 **Display units (mm | cm) are a presentation preference.** `units.js` is the only
@@ -205,13 +248,16 @@ Two tiers, because neither alone is enough.
 pin the JS vocabularies against the Python ones in **both** directions, so a role or
 length rule added on one side fails the suite on the other.
 
-**Browser smoke** (`tools/ui_smoke.py`, 159 CDP-driven checks) is the only tier that
+**Browser smoke** (`tools/ui_smoke.py`, 187 CDP-driven checks) is the only tier that
 sees rendering, event wiring and concurrency. Things it has caught that pytest
 structurally could not: a rail painting black because a macro member carried its role
 class but not `elev-member`; a bay selection keeping the previous bay's preview so
 the cost strip quoted one panel's price under another's tag (both numbers correct in
 isolation); a joint section rendering inside the panel's own render, so it ran once
-while nothing was selected and never again — the box was present and simply empty.
+while nothing was selected and never again — the box was present and simply empty;
+and the Models tab's slot pane showing "no product" on every slot and refusing the
+save that would fix it, passing 183 green checks the whole time because the suite had
+always opened that tab and left again rather than using the pane it opened.
 
 **A smoke check that reads the whole page body proves nothing.** Assertions are
 scoped to the panel that owns the feature, and verified by deleting the feature and
