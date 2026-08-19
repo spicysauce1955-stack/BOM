@@ -614,6 +614,11 @@ class Store:
     # -- corrections (append-only) ----------------------------------------------
 
     def save_correction(self, c: Correction, actor: str = "system") -> None:
+        # The clock lives here, exactly as it does for a quote: a correction is
+        # one turn of a conversation, and a turn with no time has no place in
+        # it. Fills a BLANK rather than overwriting — a caller that already
+        # established when this happened is not second-guessed.
+        c.created_at = c.created_at or _now()
         self._conn.execute(
             "INSERT INTO corrections (id, project_id, doc) VALUES (?,?,?)",
             (c.id, c.project_id, c.model_dump_json()),
@@ -622,12 +627,23 @@ class Store:
         self._conn.commit()
 
     def list_corrections(self, project_id: str | None = None) -> list[Correction]:
+        """In the order they were MADE.
+
+        `ORDER BY id` was a shuffle: an id is `corr_<uuid4 hex>`, so a thread
+        rendered from it had its turns in an arbitrary order that changed with
+        every new comment. The sort is on `created_at` extracted from the doc,
+        with `id` breaking ties so the order is TOTAL — two comments in the same
+        second must not swap between two reads. A row written before the stamp
+        existed sorts first, which is where it belongs, being older than
+        anything stamped.
+        """
+        order = "ORDER BY json_extract(doc, '$.created_at'), id"
         if project_id:
             rows = self._conn.execute(
-                "SELECT doc FROM corrections WHERE project_id=? ORDER BY id", (project_id,)
+                f"SELECT doc FROM corrections WHERE project_id=? {order}", (project_id,)
             ).fetchall()
         else:
-            rows = self._conn.execute("SELECT doc FROM corrections ORDER BY id").fetchall()
+            rows = self._conn.execute(f"SELECT doc FROM corrections {order}").fetchall()
         return [Correction.model_validate_json(r[0]) for r in rows]
 
     # -- inventory ---------------------------------------------------------------

@@ -58,6 +58,7 @@ from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.project.model import Annotation, Project
 from fenceai.report.bom_groups import group_bom
+from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
 from fenceai.store.db import Store
 from fenceai.strategy.generator import LEGACY_MODEL_ID, generate
@@ -520,6 +521,43 @@ def explain(
     return {"element_id": element_id, "explanation": lines}
 
 
+@app.get("/api/runs/{run_id}/sections/{section_id}/decisions")
+def section_decisions(
+    run_id: str,
+    section_id: str,
+    lang: Literal["en", "he"] = "en",
+    units: Literal["mm", "cm"] = "mm",   # display unit only; the graph stores mm
+):
+    """Only the decisions that settled something about ONE section.
+
+    It REFUSES a moved topology, exactly as /structure does and for the same
+    reason: a section is a topology object, so "the decisions for section A" is
+    a false sentence once A may no longer be the stretch the reader is looking
+    at. /explain is per ELEMENT and needs no topology, which is why it does not
+    refuse — the asymmetry is the difference between the two questions, not an
+    inconsistency.
+    """
+    result = _run(run_id)
+    project = _project(result.run.project_id)
+    if project.topology.revision != result.run.topology_revision:
+        raise HTTPException(409, {
+            "code": "topology_changed",
+            "run_topology_revision": result.run.topology_revision,
+            "project_topology_revision": project.topology.revision,
+        })
+    graph = result.graph
+    try:
+        _, _, priced = _priced(result)
+    except HTTPException:
+        # a stale catalog must not cost the reader every other decision — the
+        # same trade /explain makes one route up
+        priced = None
+    if priced is not None:
+        graph = with_supply_decisions(graph, priced.decisions)
+    return decisions_for_section(graph, result.strategy, project.topology,
+                                 section_id, lang=lang, units=units)
+
+
 @app.get("/api/runs/{run_id}/impact/{object_id}")
 def knowledge_impact(run_id: str, object_id: str):
     """Which decisions in this run depend on a knowledge object (impact analysis)."""
@@ -546,6 +584,40 @@ def add_correction(project_id: str, body: CorrectionCreate) -> Correction:
     correction = Correction(id=new_id("corr"), project_id=project_id, **body.model_dump())
     state.store.save_correction(correction, actor=body.author)
     return correction
+
+
+@app.get("/api/projects/{project_id}/corrections")
+def list_corrections(
+    project_id: str,
+    decision_ref: str | None = None,
+    element_ref: str | None = None,
+    generation_run_id: str | None = None,
+):
+    """The conversation, read back.
+
+    There was no GET here at all: a correction went in, the UI alerted, and
+    nothing in the app could show it again — a suggestion box rather than a
+    conversation. `Store.list_corrections` already existed and had exactly one
+    caller, the knowledge proposer.
+
+    The filters are the three anchors a `Correction` carries. They are AND-ed,
+    and an unknown ref returns an empty list rather than a 404: a decision with
+    nothing said about it is a real and ordinary state, not a missing resource.
+
+    Note what a caller must NOT read into a `decision_ref` across runs. Node ids
+    are generated per run (`core/ids.py`), so a ref means what it means only
+    within its `generation_run_id` — which is why every correction carries one
+    and why this route lets you filter by it.
+    """
+    _project(project_id)   # 404 for a project that does not exist
+    out = state.store.list_corrections(project_id)
+    if decision_ref is not None:
+        out = [c for c in out if c.decision_ref == decision_ref]
+    if element_ref is not None:
+        out = [c for c in out if c.element_ref == element_ref]
+    if generation_run_id is not None:
+        out = [c for c in out if c.generation_run_id == generation_run_id]
+    return out
 
 
 @app.post("/api/projects/{project_id}/propose-knowledge")
