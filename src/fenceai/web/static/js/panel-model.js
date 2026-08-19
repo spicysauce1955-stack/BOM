@@ -199,3 +199,71 @@ export function idCollision(session, rows) {
   const id = (session.model?.id || "").trim();
   return (rows || []).some((row) => row.id === id) ? id : null;
 }
+
+// --- the part picker's logic, kept pure so node can test it ------------------
+// panel-inspector.js is DOM; this is not. The same split base-top.js already has,
+// and the reason the picker can be tested without a browser.
+
+/** Which of four shapes a slot is. Mirrors `PartRequirement.eligibility_source`
+ *  exactly — two answers to one question would drift, and this one decides which
+ *  pane an author sees. `part_id` first: resolution fills `predicate` on a
+ *  part-named slot, and a resolved document must not read as rule-authored. */
+export function eligibilitySource(req) {
+  if (!req) return "unspecified";
+  if (req.part_id) return "part";
+  if (req.eligibility?.predicate) return "authored_predicate";
+  if (req.eligibility?.members?.length) return "authored_members";
+  return "unspecified";
+}
+
+/** Parts grouped by type, both levels sorted — a picker that reshuffles between
+ *  renders makes an author lose their place. */
+export function partsByType(parts) {
+  const byType = new Map();
+  for (const part of parts || []) {
+    if (!byType.has(part.type)) byType.set(part.type, []);
+    byType.get(part.type).push(part);
+  }
+  return [...byType.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([type, list]) => ({
+      type, parts: list.slice().sort((a, b) => a.id.localeCompare(b.id)),
+    }));
+}
+
+/** What the part requires, as short phrases. The author picked a name; this is how
+ *  they see what the name MEANS without leaving the slot. */
+export function specChips(part) {
+  return (part?.spec || []).map((f) => ({ kind: f.agree, text: chipText(f) }));
+}
+
+function chipText(f) {
+  if (f.agree === "supplies") return "cut from stock";
+  if (f.agree === "among") return `${f.key}: ${(f.value || []).join(", ")}`;
+  if (f.agree === "between") return `${f.key} ${f.value?.[0]}–${f.value?.[1]}`;
+  if (f.agree === "==") return `${f.key} ${f.value}`;
+  return `${f.key} ${f.agree} ${f.value}`;
+}
+
+/** Everything the slot pane needs about the part, joined from the slot, the
+ *  library and the preview the editor already fetched.
+ *
+ *  `candidates` and `chosen` come off `PreviewPart.eligible_skus` and `.sku` — no
+ *  new request, because the candidate set is already on the wire. */
+export function partSummary(req, { parts = [], preview = null, slotKey = "" } = {}) {
+  const source = eligibilitySource(req);
+  const part = (parts || []).find((p) => p.id === req?.part_id) || null;
+  const row = (preview?.parts || []).find((p) => p.slot_key === slotKey)
+    || (preview?.unsupplied || []).find((p) => p.slot_key === slotKey) || null;
+  return {
+    source,
+    part,
+    chips: specChips(part),
+    candidates: (row?.eligible_skus || []).length,
+    eligibleSkus: row?.eligible_skus || [],
+    chosen: row?.sku || "",
+    // a slot naming a part the library does not have. Reported, never rendered as
+    // an empty select — an empty select reads as "you never chose one".
+    missing: source === "part" && !part,
+  };
+}
