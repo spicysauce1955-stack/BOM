@@ -136,6 +136,35 @@ class PartRequirement(BaseModel):
     sku_by_option: dict[str, str] = {}
     eligibility: Eligibility = Eligibility()
 
+    @property
+    def eligibility_source(self) -> Literal[
+        "part", "authored_members", "authored_predicate", "unspecified"
+    ]:
+        """Which of four shapes this slot is — one accessor, so the editor and the
+        validator read the same answer.
+
+        Derived, never stored, for the reason `Part.dimensions` is: a stored copy
+        would be a second authority over facts these fields already encode.
+
+        `part_id` is checked FIRST because resolution fills `predicate` on a
+        part-named slot — a resolved document would otherwise report itself as
+        rule-authored, and the editor would offer to edit a rule nobody wrote.
+
+        There is a fifth shape it cannot report. M-LEGACY's rail and screw have
+        their members REPLACED per run from `demand_skus`, so what a job buys there
+        comes from company knowledge — but that is a generation-time behaviour with
+        no trace on the authored document. Those slots report `authored_members`,
+        which is what they are on paper. Claiming otherwise would be a guess dressed
+        as a fact.
+        """
+        if self.part_id:
+            return "part"
+        if self.eligibility.predicate is not None:
+            return "authored_predicate"
+        if self.eligibility.members:
+            return "authored_members"
+        return "unspecified"
+
     @model_validator(mode="after")
     def _part_or_authored(self) -> "PartRequirement":
         """Naming a part and authoring what it is are exclusive — on the AUTHORED
