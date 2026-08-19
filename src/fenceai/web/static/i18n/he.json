@@ -215,6 +215,7 @@
   "bom.group_bay": "לפי פאנל",
   "bom.group_decision": "לפי החלטה",
   "bom.group_beat": "נבחר על פני {rejected} ({preset})",
+  "bom.group_unresolved": "נדרש ולא סופק",
   "bom.group_unassigned": "לא נדרש על ידי אף רכיב",
   "bom.group_from_stock": "מכוסה מהמלאי",
   "assembly.title": "איך זה מורכב",

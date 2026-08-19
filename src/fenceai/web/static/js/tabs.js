@@ -10,7 +10,7 @@ import { emit, on, reloadProject, state } from "./state.js";
 import {
   fmt, fmtLen, inputStep, money, toDisplayValue, toMm, tu, unitLabel,
 } from "./units.js";
-import { sectionOf, tagOf } from "./structure-data.js";
+import { loadStructure, sectionOf, tagOf } from "./structure-data.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
 export function initTabs() {
@@ -205,6 +205,11 @@ async function renderBom() {
   const [products, quotes] = await Promise.all([
     loadCatalogProducts(),
     apiGet(`/api/projects/${state.projectId}/quotes`).catch(() => []),
+    // The grouped panel names its rows from `structure-data.js`, and this tab
+    // was the only consumer that neither awaited nor subscribed to it — so a
+    // /structure fetch that resolved after this render left `run1` and raw span
+    // ids on screen for good. `assembly.js` awaits it for the same reason.
+    loadStructure().catch(() => null),
   ]);
   div.innerHTML = `<div class="panel">
       <button id="btn-save-quote" class="primary">${t("quote.save")}</button>
@@ -327,7 +332,7 @@ function groupedBomHtml(grouped, products) {
       for (const line of g.lines) {
         const p = products?.[line.sku];
         html += `<tr><td class="sku">${esc(line.sku)}</td>
-          <td>${esc(p?.name || "")}</td>
+          <td>${esc(p ? lineName(products, { sku: line.sku, name: p.name }) : "")}</td>
           <td class="num">${fmt(line.qty)}</td>
           <td>${esc(line.unit)}</td>
           <td class="num">${line.cut_length_mm == null ? ""
@@ -348,6 +353,13 @@ function groupedBomHtml(grouped, products) {
   // carries, for the same reason
   html += bucket(grouped.unassigned, "bom.group_unassigned");
   html += bucket(grouped.from_stock, "bom.group_from_stock");
+  // A line nothing could supply is part of what a section NEEDS and appears on
+  // no purchase line — so a section missing a part read as complete here. The
+  // same failure the panel preview names: "a panel one part short must not
+  // preview as complete".
+  html += bucket((grouped.unresolved || []).map((u) => ({
+    sku: u.slot_key || u.role, qty: u.engineering_qty, unit: "",
+  })), "bom.group_unresolved");
   return html + `</div>`;
 }
 

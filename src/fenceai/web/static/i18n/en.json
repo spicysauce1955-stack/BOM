@@ -215,6 +215,7 @@
   "bom.group_bay": "By panel",
   "bom.group_decision": "By decision",
   "bom.group_beat": "chosen over {rejected} ({preset})",
+  "bom.group_unresolved": "Needed and unsupplied",
   "bom.group_unassigned": "Not asked for by any element",
   "bom.group_from_stock": "Covered from stock",
   "assembly.title": "How it goes together",

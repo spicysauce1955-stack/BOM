@@ -119,3 +119,15 @@ def test_a_step_may_name_a_slot_that_only_a_VARIANT_has():
                       right=Lit(value=1000)),
         spec=variant_spec)]
     assert validate_model(model, CATALOG) == []
+
+
+def test_a_step_cannot_name_a_POST_yet_and_the_refusal_says_which_slots_exist():
+    """The scope, pinned in code rather than only in prose. The placeable
+    vocabulary is the panel's own slots; a post belongs to the bay. So an
+    instruction about posts is currently prose, which is a genuine limitation of
+    this schema and NOT the assembly/installation distinction working — a test
+    that let it pass silently would let the limitation be forgotten."""
+    model = _model(AssemblyStep(key="stand", slots=["post"]))
+    model.post = None       # even a model that HAS one could not name it
+    errs = validate_model(model, CATALOG)
+    assert any("post" in e for e in errs)

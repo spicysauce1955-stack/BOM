@@ -32,13 +32,21 @@ from fenceai.core.units import Mm
 from fenceai.demand.derive import DemandLine
 from fenceai.fulfillment.fulfill import Bom
 from fenceai.fulfillment.lines import ResolvedSupplyLine
+from fenceai.decisions.supply import decision_id
 from fenceai.fulfillment.supply import SupplyDecision
 from fenceai.strategy.model import Strategy
 
 
 class GroupedLine(BaseModel):
     """One material line of one group — the same numbers as the BOM's demand
-    side, seen from whatever caused them."""
+    side, seen from whatever caused them.
+
+    `length_basis` is here because dropping it made this a subtly POORER copy of
+    `structure.Part`: a raked bay's rails are cut on the slope, so two lines of
+    the same nominal length are different pieces, and merging them would report
+    one cut length for two cuts. The comment below claimed the same merge key as
+    the schedule while quietly using a shorter one.
+    """
 
     sku: str
     qty: int
@@ -46,6 +54,7 @@ class GroupedLine(BaseModel):
     role: str = ""
     slot_key: str = ""
     cut_length_mm: Mm | None = None
+    length_basis: str | None = None
 
 
 class SkuTotal(BaseModel):
@@ -80,10 +89,18 @@ class GroupedBom(BaseModel):
     unresolved: list[DemandLine] = []
 
 
+def _decision_order(decision: SupplyDecision) -> tuple:
+    """Ordered by what the decision is ABOUT — never by what it chose, for the
+    reason its id is not: `chosen` moves with the inventory, and a total order
+    needs the requirement ids anyway (two groups can share role and slot)."""
+    return (decision.role, decision.slot_key, tuple(sorted(decision.requirement_ids)))
+
+
 def _line(req: ResolvedSupplyLine) -> GroupedLine:
     return GroupedLine(
         sku=req.sku, qty=req.engineering_qty, unit=req.unit, role=req.role,
         slot_key=req.slot_key, cut_length_mm=req.cut_length_mm,
+        length_basis=req.length_basis,
     )
 
 
@@ -93,7 +110,8 @@ def _merged(lines: list[GroupedLine]) -> list[GroupedLine]:
     bay reads the same here as it does on the schedule."""
     out: dict[tuple, GroupedLine] = {}
     for line in lines:
-        key = (line.sku, line.unit, line.role, line.slot_key, line.cut_length_mm)
+        key = (line.sku, line.unit, line.role, line.slot_key, line.cut_length_mm,
+               line.length_basis)
         if key in out:
             out[key].qty += line.qty
         else:
@@ -135,15 +153,16 @@ def group_bom(
             # the same line for the same reason)
             unpegged[key] = unpegged.get(key, 0) + req.engineering_qty
             continue
-        for element_id in req.pegs:
-            # A node post is shared by two runs and `run_ref` names the one it
-            # belongs to, so it is counted once — the same rule that gives it one
-            # tag on the setting-out sheet rather than one per section.
-            run_ref = section_of.get(element_id)
-            if run_ref is not None:
-                by_section.setdefault(run_ref, []).append(line)
-            if element_id in spans:
-                by_bay.setdefault(element_id, []).append(line)
+        # ONCE per group, however many of its elements a line pegs to. Every
+        # demand line pegs to exactly one element today, so this changes nothing
+        # — and the day a line pegs to a span AND the posts it fixes to (an
+        # obvious next step for panel-to-post fixings) the section total would
+        # have counted it twice while `asked` counted it once, and the balance
+        # test would fail with no hint why.
+        for run_ref in {section_of[e] for e in req.pegs if e in section_of}:
+            by_section.setdefault(run_ref, []).append(line)
+        for span_id in {e for e in req.pegs if e in spans}:
+            by_bay.setdefault(span_id, []).append(line)
 
     # A post shared at a node belongs to no single run — `Post.run_ref` says
     # `node:n1`, which is the strategy's own answer and the reason the
@@ -158,15 +177,19 @@ def group_bom(
                for span_id, lines in sorted(by_bay.items())]
 
     by_id = {req.id: req for req in requirements}
-    for decision in sorted(decisions or [], key=lambda d: (d.role, d.slot_key, d.chosen)):
+    for decision in sorted(decisions or [], key=_decision_order):
         lines = [_line(by_id[rid]) for rid in decision.requirement_ids if rid in by_id]
         if not lines:
             continue
         groups.append(BomGroup(
             kind="decision",
-            # the decision's own identity: one per eligibility GROUP, which is
-            # what `resolve_supply` writes and what the graph node explains
-            element_id=f"{decision.role}:{decision.slot_key}:{decision.chosen}",
+            # THE decision's id, the same one `/explain` and a comment's
+            # `decision_ref` use. It was `role:slot:chosen` here, which is the
+            # outcome-derived name `decisions/supply.py` refuses at length: two
+            # names for one decision, and the one here changed when the yard
+            # restocked, so this view could not be joined to the graph or to the
+            # conversation about the same decision.
+            element_id=f"s{decision_id(decision)}",
             lines=_merged(lines), chosen=decision.chosen,
             rejected=decision.rejected, preset=decision.preset,
         ))

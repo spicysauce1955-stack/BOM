@@ -110,3 +110,20 @@ def test_a_slot_this_BAY_does_not_have_is_skipped_rather_than_invented():
     brace = next(s for s in plan.steps if s.key == "brace")
     assert brace.parts == []
     assert "stile" not in {p.slot_key for p in plan.unplaced}
+
+
+def test_one_models_steps_are_never_laid_over_another_models_panel():
+    """The guard the structure sheet has and this did not. `assembly_plan` takes
+    a model AND a panel and stamped the PANEL's ref on its answer, so v2's steps
+    over a v1 panel produced a plausible sheet whose slots quietly landed in
+    `unplaced` under a version they never came from — the same shape as laying a
+    run out over a topology it was not generated from."""
+    import pytest
+    from fenceai.core.errors import ReadRefused
+
+    other = M_SLAT.model_copy(deep=True)
+    other.version = 99
+    other.assembly = [AssemblyStep(key="frame", slots=["rail"])]
+    with pytest.raises(ReadRefused) as exc:
+        assembly_plan(other, _panel(M_SLAT))
+    assert exc.value.code == "model_changed"

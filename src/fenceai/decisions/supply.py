@@ -34,6 +34,17 @@ def _identity(decision: SupplyDecision) -> tuple:
     return (decision.role, decision.slot_key, tuple(sorted(decision.requirement_ids)))
 
 
+def decision_id(decision: SupplyDecision) -> str:
+    """THE name of a supply decision, for anything that needs to refer to one.
+
+    Public because a second module needed it and derived its own instead: the
+    grouped BOM named a decision by `role:slot:chosen`, which is the exact
+    outcome-derived id this module spent its docstring refusing. One decision
+    with two names, one of them changing when the yard restocks.
+    """
+    return _digest(decision)
+
+
 def _digest(decision: SupplyDecision) -> str:
     """A short, stable name for a decision — derived from the lines it answered.
 

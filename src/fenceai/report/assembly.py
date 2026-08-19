@@ -15,12 +15,23 @@ would believe the panel finished. That is the same shape as `Σ(parts) ≡ BOM`,
 A model with no steps gets no plan at all — `None`, not an empty one. "No opinion"
 and "an empty instruction sheet" are different facts, and the assembly film needs
 to tell them apart to know whether to fall back to its role-based build order.
+
+**The scope, stated because the roadmap line is wider than it.** These steps
+describe how the PANEL goes together: the placeable vocabulary is the panel's own
+slots — frame, infill, fixings — and the invariant below accounts for exactly
+those. A post, its cap and its footing are elements of the BAY, not members of
+the panel, and this function is not given them; an `installation` step therefore
+carries site prose and names no part, which is honest for "leave the footings to
+cure" and is a real limitation for "set the posts plumb in concrete". Making a
+step able to name a post means giving this read model the bay's posts, which is a
+different input and a deliberate next step rather than an oversight.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel
 
+from fenceai.core.errors import ReadRefused
 from fenceai.core.units import Mm
 from fenceai.fencemodel.model import FenceModel
 from fenceai.fencemodel.resolve import ResolvedPanel
@@ -57,6 +68,18 @@ def assembly_plan(model: FenceModel, panel: ResolvedPanel) -> AssemblyPlan | Non
     `None` when the model states no order — which is not the same as a plan with
     no steps, and the caller needs the difference.
     """
+    if panel.model_ref and model.ref != panel.model_ref:
+        # The same refusal the structure sheet makes for a moved topology, and
+        # for the same reason: this is a read model over a document, and laying
+        # v2's steps over a v1 panel produces a plausible sheet whose slots land
+        # in `unplaced` under a version they never came from. A stored run pins
+        # its model ref precisely so a reader can check.
+        raise ReadRefused(
+            "model_changed",
+            f"assembly steps are {model.ref}'s and this panel was resolved from "
+            f"{panel.model_ref}",
+            model_ref=model.ref, panel_model_ref=panel.model_ref,
+        )
     if not model.assembly:
         return None
     by_slot = {slot.slot_key: slot for slot in panel.slots}

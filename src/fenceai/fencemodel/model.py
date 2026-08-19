@@ -478,6 +478,12 @@ class AssemblyStep(BaseModel):
     the footings cure overnight" places no part and is exactly the kind of
     instruction the second half of that roadmap line is about.
 
+    The placeable vocabulary is the PANEL's own slots — frame, infill, fixings.
+    A post, its cap and its footing belong to the bay rather than to the panel,
+    so no step can name one today: an installation step about posts is prose,
+    which is a real limitation and not the distinction above doing its job.
+    `report/assembly.py` records what closing it would take.
+
     `text_i18n` follows `name_i18n`'s precedent — expert-authored prose, not a UI
     string, so it is not key-checked against the locale bundles; the surface
     falls back to whichever language the author wrote.

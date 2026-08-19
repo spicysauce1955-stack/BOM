@@ -152,6 +152,24 @@ def _assert_balances(grouped, bom):
     assert {k: v for k, v in asked.items() if v} == purchased
 
 
+def test_a_decision_group_is_named_the_same_thing_the_graph_names_it():
+    """One decision, one name. This view called it `role:slot:chosen` — the
+    outcome-derived id `decisions/supply.py` refuses at length, because `chosen`
+    moves with the inventory. So the money view and the decision graph had two
+    different names for one decision, and the one here changed when the yard
+    restocked: neither `/explain` nor a comment's `decision_ref` could be joined
+    to it."""
+    from fenceai.decisions.supply import decision_id
+    result, priced = _with_a_real_choice()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    named = {g.element_id for g in grouped.groups if g.kind == "decision"}
+    assert named == {f"s{decision_id(d)}" for d in priced.decisions}
+    assert not any(g.chosen in g.element_id
+                   for g in grouped.groups if g.kind == "decision"), \
+        "the id still carries the outcome, which is what moves with stock"
+
+
 def test_the_grouped_demand_adds_up_to_the_bom():
     """THE governing property, and the same one `Σ(parts) ≡ BOM` states for the
     structure sheet: grouping may not lose or invent a quantity. Per (sku, unit),
