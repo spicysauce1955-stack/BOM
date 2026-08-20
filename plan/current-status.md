@@ -1,5 +1,78 @@
 # Current status
 
+## The seven findings the review left open, closed (2026-08-20)
+
+The 2026-08-20 test review left seven findings open when the session ran out of
+room. All seven are closed: **1570 pytest** (+6) and **200 browser checks** (+1,
+two rewritten). Every new assertion was shown failing against a mutant first —
+including the three browser ones, which cost two full suite runs and were worth
+both.
+
+**The two that were testing nothing.** Decision-group ORDER was unobservable:
+every fixture that decided anything decided exactly ONE thing, and a one-element
+list comes back the same under every comparator — including one keyed on
+`chosen`, which is the outcome-derived ordering `bom_groups.py` argues against at
+length. The fixture now decides two things that disagree in direction (the rail
+takes the LATER sku, the infill the earlier), so a `chosen` key is visibly wrong,
+and a second test splits one decision in two so the key's third component
+(`sorted(requirement_ids)`) is reachable at all — a stable sort's tie is not an
+order, it is whatever the caller happened to pass. `unplaced` had its FIELDS
+pinned and not its order, so a `set` rebuild or a tidy-looking `sorted()` was
+invisible; it is the panel's own slot order (frame, infill, fixings) because that
+is the order a fitter works in.
+
+**The one that was served by nobody.** `grouped.unresolved` was rendered in the
+node harness and asserted at no API level, so deleting the fifth argument at
+`api/app.py:391` left the suite green while a section missing a part read as
+complete. The new route test provokes the gap through the product's own editors —
+a catalog product whose stock is shorter than the piece, and a default component
+aimed at it — rather than by forcing state.
+
+**The tag lookup, which was the riskiest branch in the module and covered
+nowhere.** `groupedBomHtml` resolves three different kinds of id three different
+ways (a section's key is a RUN id, a node's names the POST standing there, a
+bay's is already an element id). `structure-data.js` had never been loaded in the
+node harness, so `tagOf`/`sectionOf` answered null and EVERY group took the
+unknown-element fallback. The harness now drives the real tag source over a
+structure report, and each branch is asserted by equality against the tag that
+element actually has.
+
+**And the browser check that was satisfied by the failure it existed to
+prevent.** It asked that a group head "does not look like a raw id" — which
+printing `A` on every row of the table satisfies, one name for four bays, the
+exact confusion a single tag source exists to prevent. It now re-derives the
+mapping from `/api/runs/{id}/structure` the way `structure-data.js` does and
+compares per element; the mutant that tags everything `A` fails it and failed
+nothing else in the suite, which is the measure of how much the old one was
+worth. This also covers the one thing the node harness cannot: its structure
+fixture is a hand-written literal, so a backend field rename would leave it green
+— the browser check reads the real route.
+
+**Nothing at any level had read a NUMBER out of the grouped table in a browser.**
+The checks counted rows and cells, so a renderer printing the CUT LENGTH in the
+quantity column passed all of them; it now does not (the mutant reports bays
+totalling 5000 against a section's 2500). The property asserted is the one the
+view is built on: a bay is a strict subset of its section, so per sku the bays
+can never total more, and a bay-only part must total exactly the same in both —
+which is what breaks when a `GroupedLine` is shared between two lists and merged
+in place.
+
+**One check now asserts the mechanism instead of a word.** "The instructions are
+the author's own words" was a single Hebrew word copied out of M-VINYL — which
+would equally have matched that sentence rendered under the wrong step, and
+would have broken the day an author reworded it. It now reads the model's own
+`text_i18n` off the API and requires every authored sentence to appear and the
+English of a Hebrew UI not to, which is the actual claim and the one a
+`text_i18n[locale] ?? .en` fallback silently breaks.
+
+**Left in the working tree, not committed.** The three browser checks live in
+`tools/ui_smoke.py`, which another agent also has uncommitted work in — including
+a check that is currently RED because it is unfinished, and the `check(detail=)`
+signature these three depend on. Committing the file would land their in-flight
+work under this message and a failing check with it; that mistake already has an
+archaeology note further down this file. The hunks stay in the tree until their
+branch lands.
+
 ## The test review, and the bug it found under a heading (2026-08-20)
 test-reviewer over the grouped BOM and the assembly steps, 45 mutants, 22 alive.
 Verdict GAPS and it was right: the invariants each view is NAMED for were held,

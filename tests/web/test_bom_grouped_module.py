@@ -34,17 +34,60 @@ globalThis.document = {
   createElement: () => ({ style: {}, classList: { add() {} }, appendChild() {} }),
   documentElement: {},
 };
+// A real StructureReport, trimmed to the two fields its index reads (dumped
+// from `build_structure` over an L of run1 + run2 meeting at n2). It is the ONE
+// tag source: the schedule, the plan canvas and this panel all name an element
+// from here, which is the whole point of tagging a drawing against a schedule.
+const STRUCTURE = {
+  run_id: "r1",
+  sections: [
+    { tag: "A", run_id: "run1",
+      setting_out: [{ tag: "A/P1", element_id: "post@node:n1" },
+                    { tag: "A/P2", element_id: "post@run1:1500" },
+                    { tag: "A/P5", element_id: "post@node:n2" }],
+      bays: [{ tag: "A/B1", element_id: "span@run1:0-1500" },
+             { tag: "A/B2", element_id: "span@run1:1500-3000" }],
+      gates: [] },
+    { tag: "B", run_id: "run2",
+      // the post at n2 is BORROWED by the second section and keeps A's tag
+      setting_out: [{ tag: "A/P5", element_id: "post@node:n2" }],
+      bays: [{ tag: "B/B1", element_id: "span@run2:0-1334" }],
+      gates: [] },
+  ],
+};
 globalThis.fetch = async (url) => ({
-  ok: true, json: async () => JSON.parse(readFileSync(url, "utf8")),
+  ok: true,
+  json: async () => (url.startsWith("/api/")
+    ? STRUCTURE                                  // the structure route
+    : JSON.parse(readFileSync(url, "utf8"))),    // the locale bundles, off disk
 });
 
 import { setLocale } from "./js/i18n.js";
+import { state } from "./js/state.js";
+import { loadStructure } from "./js/structure-data.js";
 import { groupedBomHtml } from "./js/tabs.js";
 import { assemblyPlanHtml } from "./js/panel.js";
 
 const EN = JSON.parse(readFileSync("./i18n/en.json", "utf8"));
 const out = {};
 await setLocale("en");
+
+// The tag source the panel reads. `structure-data.js` had never been loaded in
+// this harness, so `tagOf`/`sectionOf` answered null for everything and EVERY
+// group took the unknown-element fallback — the three lookups that actually
+// name a group were exercised by nothing.
+state.result = { run: { id: "r1" } };
+await loadStructure();
+
+// element id -> exactly what the group head says, so an assertion can compare a
+// tag rather than search for one ("A" occurs inside "A/P1" and "A/B1" too)
+const heads = (html) => {
+  const out = {};
+  const re = /data-group="([^"]*)"[\\s\\S]*?<div class="group-head"><strong>([\\s\\S]*?)<\\/strong>/g;
+  let m;
+  while ((m = re.exec(html))) out[m[1]] = m[2];
+  return out;
+};
 
 const PRODUCTS = {
   "RAIL-3000": { sku: "RAIL-3000", name: "Rail stock 3000 mm",
@@ -60,6 +103,16 @@ const GROUPED = {
     { kind: "bay", element_id: "span@run1:0-1500", chosen: "", rejected: [], preset: "",
       lines: [{ sku: "RAIL-3000", qty: 2, unit: "cut", role: "rail",
                 slot_key: "rail", cut_length_mm: 1500, length_basis: "width" }] },
+    { kind: "node", element_id: "node:n1", chosen: "", rejected: [], preset: "",
+      // a post shared at a node belongs to no run: the group names `node:n1`
+      // and the POST standing there is `post@node:n1`
+      lines: [{ sku: "POST-70", qty: 1, unit: "each", role: "post",
+                slot_key: "post", cut_length_mm: null }] },
+    { kind: "bay", element_id: "span@run9:0-1000", chosen: "", rejected: [],
+      // an element this report does not name — the shape a stale or partial
+      // report leaves behind
+      preset: "", lines: [{ sku: "RAIL-3000", qty: 1, unit: "cut", role: "rail",
+                slot_key: "rail", cut_length_mm: 1000, length_basis: "width" }] },
     { kind: "decision", element_id: "s0a1b2c3d4e5", chosen: "RAIL-3000",
       rejected: ["RAIL-3050"], preset: "least_cost",
       lines: [{ sku: "RAIL-3000", qty: 8, unit: "cut", role: "rail",
@@ -70,6 +123,7 @@ const GROUPED = {
 };
 
 out.plain = groupedBomHtml(GROUPED, PRODUCTS);
+out.heads = heads(out.plain);
 // the two buckets the module promises are "reported, never balanced away" —
 // GROUPED leaves both empty, so that branch rendered in no test at all
 out.buckets = groupedBomHtml({
@@ -230,3 +284,26 @@ def test_each_group_is_addressable_by_what_it_is(rendered):
     assert 'data-group="span@run1:0-1500"' in rendered["plain"]
     assert 'data-kind="bay"' in rendered["plain"]
     assert 'data-kind="decision"' in rendered["plain"]
+
+
+def test_each_kind_of_group_is_named_by_the_tag_its_OWN_id_resolves_to(rendered):
+    """Three kinds of id, one tag source, three different lookups: a section's
+    `element_id` is a RUN id (which the element index does not hold), a node's
+    names the post standing there (`post@<node>`), and a bay's IS an element id.
+    Getting one wrong is not a crash — it is `run1` printed in the panel where
+    the schedule and both drawings say `A`, a third name for one thing, which is
+    exactly what a single tag source exists to prevent.
+
+    Asserted as equality per group: "some tag appeared" would pass with the
+    section head printing the bay's."""
+    heads = rendered["heads"]
+    assert heads["run1"] == "A", "a section is named by its SECTION tag"
+    assert heads["node:n1"] == "A/P1", "a node is named by the post standing there"
+    assert heads["span@run1:0-1500"] == "A/B1", "a bay's key is already an element id"
+
+
+def test_an_element_the_tag_source_cannot_name_still_says_which_element_it_is(rendered):
+    """A stale or partial report leaves groups whose element it never tagged. A
+    blank head reads as "no section"; the raw id is at least the machine identity
+    the user can match against, isolated so RTL cannot reorder it."""
+    assert rendered["heads"]["span@run9:0-1000"] == "<bdi>span@run9:0-1000</bdi>"

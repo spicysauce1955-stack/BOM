@@ -191,3 +191,24 @@ def test_an_installation_step_that_DOES_name_a_slot_still_fits_it():
     site = next(s for s in plan.steps if s.key == "site")
     assert [p.slot_key for p in site.parts] == ["screw"]
     assert "screw" not in {p.slot_key for p in plan.unplaced}
+
+
+def test_unplaced_is_read_in_the_panels_own_slot_order():
+    """The list above pins the FIELDS of each unplaced part; nothing pinned their
+    ORDER, so a comprehension rebuilt over a `set`, or sorted by slot key to look
+    tidy, was invisible to the suite.
+
+    The order is the panel's own — frame, then infill, then fixings, exactly as
+    `resolve_panel` builds `panel.slots` — because "the parts no step fits" is
+    read beside the sheet by someone holding the panel, and every other list
+    about this panel (the slots, the structure sheet's rows) is in that order.
+    Alphabetical would put the screws before the boards for no reason a fitter
+    could see."""
+    model, panel = _stepped(AssemblyStep(key="frame", slots=["rail"]))
+    plan = assembly_plan(model, panel)
+    assert [p.slot_key for p in plan.unplaced] == ["slat", "screw"]
+    assert [s.slot_key for s in panel.slots] == ["rail", "slat", "screw"], \
+        "the expectation above IS the panel's order, not a coincidence of names"
+    # stated as a negative too, so a `sorted(...)` rebuild cannot pass by luck
+    assert [p.slot_key for p in plan.unplaced] != \
+        sorted(p.slot_key for p in plan.unplaced)

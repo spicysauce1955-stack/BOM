@@ -166,11 +166,17 @@ def test_a_post_shared_at_a_node_is_named_rather_than_given_to_a_side():
                for g in nodes), "a node carries its post, never a bay's infill"
 
 
-def _with_a_real_choice():
+def _with_a_real_choice(*, and_the_infill: bool = False):
     """A run whose rail slot has two eligible stocks, so `select_supply` actually
     DECIDES. Every demo model names one product per slot, which is why the plain
     fixture above records no decision at all — a decision group tested on it
-    would be testing an empty list."""
+    would be testing an empty list.
+
+    `and_the_infill` gives the slat slot a rival too, so the run records TWO
+    decisions. One decision is a list that is sorted the same by every
+    comparator, which is why the ordering test below needs this: the order of a
+    one-element list says nothing about the key that produced it.
+    """
     catalog = demo_catalog()
     catalog.products["RAIL-3050"] = Product(
         sku="RAIL-3050", name="Rail stock 3050 mm",
@@ -186,6 +192,25 @@ def _with_a_real_choice():
         EligibleItem(sku="RAIL-3000", priority=1),
         EligibleItem(sku="RAIL-3050", priority=2),
     ])
+    if and_the_infill:
+        catalog.products["SLAT-105"] = Product(
+            sku="SLAT-105", name="Slat 100 mm (6000 mm stock)",
+            consumption=DivisibleLinear(purchase_length_mm=6000, kerf_mm=3,
+                                        min_reusable_remnant_mm=300),
+            price_cents=5600,
+            attrs={"type": "infill", "width_mm": 100},
+        )
+        member = model.default_spec.infill.pattern[0]
+        slat = member.requirement
+        slat.part_id = ""
+        slat.role = "infill"
+        # the width the part used to supply: a member that names no part must
+        # carry its own, or `fit_pattern` has no advance to lay out
+        member.width_mm = 100
+        slat.eligibility = Eligibility(members=[
+            EligibleItem(sku="SLAT-100", priority=1),
+            EligibleItem(sku="SLAT-105", priority=2),
+        ])
     result = generate(
         straight_topology(6000), demo_knowledge(), catalog, parts=PARTS,
         models=FenceModelLibrary(models=[model]),
@@ -211,6 +236,56 @@ def test_a_decision_group_says_which_choice_bought_it():
     assert rail.preset
     assert all(line.sku == rail.chosen for line in rail.lines), \
         "a decision group holds the lines that decision bought, not its rivals"
+
+
+def test_decision_groups_come_back_in_the_order_of_what_they_are_ABOUT():
+    """`test_rows_and_groups_come_back_in_a_stated_order` states the bay and row
+    orderings and says nothing about this one — and every fixture that has a
+    decision at all had exactly ONE, so `sorted(decisions, key=_decision_order)`
+    was unobservable: a one-element list comes back the same under every
+    comparator, including one keyed on the outcome.
+
+    Two decisions, and the sequence written out rather than recomputed with the
+    key under test. The rail decision chose the LATER sku (RAIL-3050 beats
+    RAIL-3000 on cost) while the infill decision chose the earlier one, so a
+    comparator keyed on `chosen` puts the rail first and this fails — which is
+    the whole point of ordering by what a decision is about: `chosen` moves with
+    the yard's stock, and a view that reshuffled when the yard restocked could
+    not be read beside anything."""
+    result, priced = _with_a_real_choice(and_the_infill=True)
+    assert len(priced.decisions) == 2, \
+        "the fixture must decide TWO things or it cannot observe an order"
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    decisions = [g for g in grouped.groups if g.kind == "decision"]
+    assert [(g.lines[0].role, g.lines[0].slot_key, g.chosen) for g in decisions] == [
+        ("infill", "slat", "SLAT-100"),
+        ("rail", "rail", "RAIL-3050"),
+    ], "ordered by (role, slot_key), never by what was chosen"
+
+
+def test_two_decisions_about_the_same_slot_are_ordered_by_the_lines_they_answered():
+    """The third component of the key, which `(role, slot_key)` alone cannot
+    order: two eligibility groups CAN share a role and a slot (opposite
+    priorities on two bays is the shape `resolve_supply` groups apart), and a
+    two-part key leaves them in input order — a stable sort's tie is not an
+    order, it is whatever the caller happened to pass.
+
+    So they are passed REVERSED here: the decision answering the later
+    requirement ids goes in first, and only a key that reaches the ids can put
+    it back second."""
+    from fenceai.decisions.supply import decision_id
+    result, priced = _with_a_real_choice()
+    rail = next(d for d in priced.decisions if d.role == "rail")
+    ids = sorted(rail.requirement_ids)
+    assert len(ids) >= 4, "the fixture needs a rail decision answering four bays"
+    first = rail.model_copy(update={"requirement_ids": ids[:2]})
+    second = rail.model_copy(update={"requirement_ids": ids[2:]})
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        [second, first])
+    decisions = [g for g in grouped.groups if g.kind == "decision"]
+    assert [g.element_id for g in decisions] == [
+        f"s{decision_id(first)}", f"s{decision_id(second)}"]
 
 
 def _assert_balances(grouped, bom):
