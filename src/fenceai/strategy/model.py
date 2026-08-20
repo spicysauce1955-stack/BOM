@@ -181,7 +181,13 @@ class GenerationRun(BaseModel):
     # demand product selection resolved from knowledge at generation time
     # (DefaultComponent roles rail/screw/concrete/cap) — consumed by derive_requirements
     demand_skus: dict[str, str] = {}
-    objective_preset: str = "least_cost"  # which supply-resolution preset resolve_supply uses
+    # which supply-resolution preset this run was GENERATED under. Reported, not
+    # identity: it left the digest in digest-v3, because a design is what it is
+    # regardless of how it will be bought. It is also NOT the source of truth for
+    # a read — `save_run` is INSERT OR IGNORE, so on an unchanged fence this
+    # field is frozen at the FIRST generation for ever. Read paths take the live
+    # preset from the project's policy and record it on the SupplyRun.
+    objective_preset: str = "least_cost"
     # the fence models this run actually drew from — part of what "generated from"
     # means, so it belongs in the run id (run identity, task 10)
     model_snapshot: list[ModelUse] = []

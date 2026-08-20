@@ -102,12 +102,12 @@ DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_co
 # serialisation change, which is what makes two genuinely different runs able to
 # hash the same.
 #
-# There is deliberately NO fulfillment version here. A run's stored document is
-# the strategy and its graph; the BOM is recomputed on every read and is already
-# a function of mutable inventory. A fulfillment algorithm version belongs to the
-# materialization identity this system does not have yet (see the backend audit
-# response, §1.5) — putting it in the DESIGN digest would deepen exactly the
-# conflation that finding is about.
+# There is deliberately NO fulfillment version here, and now there is somewhere
+# for it to live: `SUPPLY_BEHAVIOR_VERSION` in `fulfillment/supply_run.py`. A
+# run's stored document is the strategy and its graph; what that strategy COSTS
+# is a function of mutable inventory and is named by a SupplyRun. Putting a
+# supply version in the DESIGN digest would deepen exactly the conflation the
+# split removed.
 # v2: a resolved fixing slot carries its `basis` and `qty_per_basis`, from which
 # the elevation derives where the fasteners land. Panel resolution's OUTPUT
 # therefore changed for unchanged inputs, which is exactly what this constant is
@@ -120,7 +120,15 @@ PLANNING_BEHAVIOR_VERSION = "planning-v2"
 # — are different fences once a part moves under them. Without the bump they hash
 # the same and `save_run`'s INSERT OR IGNORE serves the first one's document for the
 # second one's fence.
-RUN_DIGEST_VERSION = "digest-v2"
+# v3: `objective_preset` LEFT the digest, from BOTH places it occupied — by name,
+# and inside `policy`, which DEFAULT_POLICY always populates. A design is what it
+# is regardless of how it will be bought. This is one deliberate discontinuity:
+# stored runs keep their ids and stay readable, and a regeneration of an
+# unchanged project mints a new id ONCE, at this boundary. Digest stability is a
+# property WITHIN a version and is not weakened by the bump — what the bump
+# strands is comments anchored to already-persisted run ids, once. Against that,
+# switching the preset used to strand a thread EVERY time it was switched.
+RUN_DIGEST_VERSION = "digest-v3"
 
 # The catalog attribute by which a product declares the opening width it fits.
 # Fit is DATA, like Product.attrs["length_mm"] for posts: a SKU is an opaque id and
@@ -234,7 +242,14 @@ def generate(
     # INSERT OR IGNORE (store/db.py) serves a stale document under a reused id:
     # - model_snapshot: which fence model(s)/versions the run actually drew from
     # - catalog_hash: the catalog content the run resolved products against
-    # - objective_preset: which supply-resolution preset a later /bom read will use
+    #
+    # `objective_preset` is deliberately NOT here, and it used to be here TWICE:
+    # once by name and once inside `policy`, which DEFAULT_POLICY always
+    # populates — so removing only the named one left the id unmoved and the
+    # change inert while looking done. It is read by nothing in generate() — only
+    # by resolve_supply, the panel preview and the impact preview — so keeping it
+    # made the design id move for a SUPPLY reason. It belongs to the supply
+    # identity (fulfillment/supply_run.py), beside the inventory and the prices.
     run_meta.model_snapshot = sorted(
         {u.sort_key(): u for u in models_used}.values(), key=ModelUse.sort_key
     )
@@ -252,6 +267,10 @@ def generate(
     # exists — a `.get(..., "least_cost")` fallback here could never fire; direct
     # indexing says so instead of implying a fallback that is dead on arrival.
     run_meta.objective_preset = policy["objective_preset"]
+    # exactly ONE key is stripped. `policy` carries design inputs too
+    # (default_height_mm), and dropping the whole dict would make two genuinely
+    # different fences hash the same — the opposite mistake, and the worse one.
+    design_policy = {k: v for k, v in policy.items() if k != "objective_preset"}
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
             # project_id is BOUND AS A SCOPE DIMENSION (bind_scope, above), so a
@@ -261,10 +280,9 @@ def generate(
             # presses Generate, sees their own answer in the response, and every
             # later read serves the other project's fence.
             [project_id, topology.model_dump(), run_meta.knowledge_snapshot,
-             [o.model_dump() for o in overrides], policy,
+             [o.model_dump() for o in overrides], design_policy,
              [u.model_dump() for u in run_meta.model_snapshot], run_meta.catalog_hash,
              [u.model_dump() for u in run_meta.part_snapshot],
-             run_meta.objective_preset,
              PLANNING_BEHAVIOR_VERSION, RUN_DIGEST_VERSION],
             sort_keys=True, default=str,
         ).encode()
