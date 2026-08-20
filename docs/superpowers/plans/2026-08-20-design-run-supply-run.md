@@ -1,22 +1,22 @@
-# DesignRun / MaterialRun Implementation Plan
+# DesignRun / SupplyRun Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Split the one `run_id` that today answers two questions into a `DesignRun`
-(what fence is this — pure, deterministic, for ever) and a `MaterialRun` (what does it
+(what fence is this — pure, deterministic, for ever) and a `SupplyRun` (what does it
 cost to build from the stock we have, under this objective — true of a moment), so that
 two printouts of the same run id can no longer name two different BOMs.
 
 **Architecture:** `objective_preset` leaves the design digest and `RUN_DIGEST_VERSION`
-bumps to `digest-v3`. A new `fulfillment/material.py` owns `FULFILMENT_BEHAVIOR_VERSION`,
+bumps to `digest-v3`. A new `fulfillment/supply_run.py` owns `SUPPLY_BEHAVIOR_VERSION`,
 the `inventory_hash` computation that is currently copy-pasted at three sites in
-`api/app.py`, and a `MaterialRun` document whose id is a digest of
-`(design_id, inventory_hash, catalog_hash, objective_preset, fulfilment_version)`. A new
-append-only `material_runs` table stores it under `INSERT OR IGNORE`, exactly as
+`api/app.py`, and a `SupplyRun` document whose id is a digest of
+`(design_id, inventory_hash, catalog_hash, objective_preset, supply_version)`. A new
+append-only `supply_runs` table stores it under `INSERT OR IGNORE`, exactly as
 `generation_runs` is stored and for the same reason. `/bom` stops being a pure read and
-becomes "materialize this design against today's yard, and return the MaterialRun",
-idempotent by digest. A `Quote` gains `material_id`, so the commercial document can name
-the materialization it froze.
+becomes "resolve supply for this design against today’s yard, and return the SupplyRun",
+idempotent by digest. A `Quote` gains `supply_id`, so the commercial document can name
+the supply run it froze.
 
 **Tech Stack:** Python 3.12, Pydantic v2, FastAPI, SQLite (`store/db.py`), pytest. No new
 dependencies.
@@ -24,6 +24,27 @@ dependencies.
 **Spec:** `docs/superpowers/specs/2026-08-19-design-run-material-run.md` — read it before
 Task 1. Its §1 demonstrates the defect, §4 lists what must NOT change, and §5/§7 carry the
 three decisions this plan implements.
+
+**The spec calls this entity `MaterialRun`; this plan calls it `SupplyRun`, deliberately.**
+`material` is ALREADY a domain word and means something unrelated: it is a catalog product
+attribute from a closed vocabulary (`attrs={"material": "vinyl"}`, `catalog/demo.py:142`),
+declared as a constraint by a part's spec (`SpecField(key="material", value="vinyl")`,
+`parts/demo.py:92`) and rendered in a UI surface called *the material drawer*
+(`fencemodel/preview.py:79`). `MaterialRun` would therefore read as "a run about
+vinyl-versus-steel", which is the opposite of what it is. `supply` is what this codebase
+already calls the half below the demand boundary — `resolve_supply()`,
+`ResolvedSupplyLine`, `SupplyDecision`, `fulfillment/supply.py` — so the entity is a
+`SupplyRun`, its id is `supply_id`, and its behaviour constant is
+`SUPPLY_BEHAVIOR_VERSION`.
+
+**Where it sits, stated as a relation rather than a schema.** `derive_requirements` is the
+last pure stage: a `DemandLine` says what the fence NEEDS, carrying `pegs`, `role`,
+`slot_key` and a frozen `eligibility`, and deliberately no `sku` and no `unit`.
+`resolve_supply(requirements, catalog, inventory, preset)` is the first stage that depends
+on a MOMENT, and `ResolvedSupplyLine(DemandLine)` adds exactly `sku` + `unit`. A `SupplyRun`
+is the persisted, identified form of the in-memory `PricedRun` that `fulfillment/pipeline.py`
+already returns — the same `requirements`/`unresolved`/`bom` bundle, plus the provenance
+that says which yard, which prices and which objective produced it.
 
 ---
 
@@ -39,7 +60,7 @@ three decisions this plan implements.
   byte-identical across the whole plan. If a golden file moves, the change is wrong —
   do not regenerate the goldens.
 - **Decisions taken 2026-08-20** (spec §5, §7): (a) bump `RUN_DIGEST_VERSION`; no
-  garbage collection of MaterialRuns in this change; the impact preview keeps comparing
+  garbage collection of SupplyRuns in this change; the impact preview keeps comparing
   designs and is not touched.
 - **New stored documents follow `store/db.py` conventions**: columns only for what is
   queried by (`id`, `design_id`, `created_at`), everything else in `doc`, audited on write,
@@ -74,7 +95,7 @@ of the project. Every read that takes the preset off the stored run — `api/app
 (`_priced`, which serves /bom, /structure and /quote) and `api/app.py:1053` (the bay
 preview) — would then price under a preset the user has since changed, silently. Task 5
 moves those reads to the project's LIVE policy, which is what the spec's own model implies:
-the preset is a materialization input, sourced from now, exactly as inventory is.
+the preset is a supply run input, sourced from now, exactly as inventory is.
 
 `learning/impact.py:167` also reads `result.run.objective_preset`, but its `result` comes
 from a fresh in-memory `generate()` call with `policy=p.policy`, not from the store, so it
@@ -84,24 +105,24 @@ touched).
 ## File Structure
 
 **Created:**
-- `src/fenceai/fulfillment/material.py` — the materialization identity: the behaviour
-  version, the inventory hash, the material id digest, and the `MaterialRun` document.
+- `src/fenceai/fulfillment/supply_run.py` — the supply run identity: the behaviour
+  version, the inventory hash, the supply id digest, and the `SupplyRun` document.
   One responsibility: naming what a priced BOM was priced against.
-- `tests/fulfillment/test_material.py` — unit tests for that module.
-- `tests/api/test_material_run.py` — the endpoint behaviour, including the spec §1
+- `tests/fulfillment/test_supply_run.py` — unit tests for that module.
+- `tests/api/test_supply_run_api.py` — the endpoint behaviour, including the spec §1
   reproduction.
 
 **Modified:**
 - `src/fenceai/strategy/generator.py` — digest inputs (both preset occurrences),
   `RUN_DIGEST_VERSION` → `digest-v3`, and the comment block that currently explains why
-  there is no fulfilment version.
+  there is no supply version.
 - `src/fenceai/strategy/model.py:184` — `GenerationRun.objective_preset` becomes a
   read-only legacy field; the comment must say so.
-- `src/fenceai/store/db.py` — `material_runs` table + `save_material_run` /
-  `load_material_run` / `list_material_runs`.
-- `src/fenceai/api/app.py` — `_priced` takes an explicit preset; `/bom` materializes;
-  `create_quote` records `material_id`; the bay preview reads the live preset.
-- `src/fenceai/fulfillment/quote.py` — `material_id` field.
+- `src/fenceai/store/db.py` — `supply_runs` table + `save_supply_run` /
+  `load_supply_run` / `list_supply_runs`.
+- `src/fenceai/api/app.py` — `_priced` takes an explicit preset; `/bom` resolves supply;
+  `create_quote` records `supply_id`; the bay preview reads the live preset.
+- `src/fenceai/fulfillment/quote.py` — `supply_id` field.
 - `tests/strategy/test_run_identity.py:39` — `test_the_preset_changes_the_run_id` inverts.
 - `plan/open-work.md` — item 5 moves from SPECIFIED to done.
 - `docs/architecture/` — the backend document gains the new table and routes (the
@@ -109,37 +130,37 @@ touched).
 
 ---
 
-### Task 1: The materialization identity module
+### Task 1: The supply run identity module
 
 The pure half, with no store and no API: a version constant, the inventory hash that three
 sites in `api/app.py` currently each compute for themselves, and the digest.
 
 **Files:**
-- Create: `src/fenceai/fulfillment/material.py`
-- Test: `tests/fulfillment/test_material.py`
+- Create: `src/fenceai/fulfillment/supply_run.py`
+- Test: `tests/fulfillment/test_supply_run.py`
 
 **Interfaces:**
 - Consumes: `Inventory` from `fenceai.fulfillment.fulfill`.
 - Produces:
-  - `FULFILMENT_BEHAVIOR_VERSION: str` (initial value `"fulfilment-v1"`)
+  - `SUPPLY_BEHAVIOR_VERSION: str` (initial value `"supply-v1"`)
   - `inventory_hash(inventory: Inventory) -> str` — 16 hex chars
-  - `material_id(design_id: str, inventory_hash: str, catalog_hash: str, objective_preset: str) -> str`
-    — returns `"mat_" + 12 hex chars`
+  - `supply_id(design_id: str, inventory_hash: str, catalog_hash: str, objective_preset: str) -> str`
+    — returns `"sup_" + 12 hex chars`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/fulfillment/test_material.py`:
+Create `tests/fulfillment/test_supply_run.py`:
 
 ```python
-"""A MaterialRun's id names what a BOM was priced AGAINST. Every input that can
+"""A SupplyRun's id names what a BOM was priced AGAINST. Every input that can
 change the money has to be inside it, or a stored quote silently means something
 else after the engine changes under it."""
 
 import pytest
 
 from fenceai.fulfillment.fulfill import Inventory
-from fenceai.fulfillment.material import (
-    FULFILMENT_BEHAVIOR_VERSION, inventory_hash, material_id,
+from fenceai.fulfillment.supply_run import (
+    SUPPLY_BEHAVIOR_VERSION, inventory_hash, supply_id,
 )
 
 
@@ -155,48 +176,48 @@ def test_a_different_yard_hashes_differently():
     assert inventory_hash(a) != inventory_hash(b)
 
 
-def test_identical_inputs_give_the_identical_material_id():
+def test_identical_inputs_give_the_identical_supply_id():
     args = ("run_abc", "inv0000000000000", "cat0000000000000", "least_cost")
-    assert material_id(*args) == material_id(*args)
-    assert material_id(*args).startswith("mat_")
-    assert len(material_id(*args)) == len("mat_") + 12
+    assert supply_id(*args) == supply_id(*args)
+    assert supply_id(*args).startswith("sup_")
+    assert len(supply_id(*args)) == len("sup_") + 12
 
 
 @pytest.mark.parametrize("position", [0, 1, 2, 3])
-def test_every_input_moves_the_material_id(position):
+def test_every_input_moves_the_supply_id(position):
     """Each argument is load-bearing. A parametrized sweep rather than four
     hand-written cases, because the failure this guards against is one input
     being dropped from the digest and nobody noticing."""
     base = ["run_abc", "inv0000000000000", "cat0000000000000", "least_cost"]
     moved = list(base)
     moved[position] = moved[position] + "X"
-    assert material_id(*base) != material_id(*moved)
+    assert supply_id(*base) != supply_id(*moved)
 
 
-def test_the_fulfilment_behaviour_version_is_part_of_the_material_id(monkeypatch):
+def test_the_supply_behaviour_version_is_part_of_the_supply_id(monkeypatch):
     """The point of §1.6 applied to the half that was left out.
     PLANNING_BEHAVIOR_VERSION covers generation; nothing covered cut planning,
     supply resolution or allocation. A change to the FFD packer must produce a
-    different material id or a stored quote silently means something else."""
-    from fenceai.fulfillment import material
+    different supply id or a stored quote silently means something else."""
+    from fenceai.fulfillment import supply_run
 
-    before = material_id("run_abc", "inv0", "cat0", "least_cost")
-    monkeypatch.setattr(material, "FULFILMENT_BEHAVIOR_VERSION", "fulfilment-vNEXT")
-    assert material_id("run_abc", "inv0", "cat0", "least_cost") != before
+    before = supply_id("run_abc", "inv0", "cat0", "least_cost")
+    monkeypatch.setattr(supply_run, "SUPPLY_BEHAVIOR_VERSION", "supply-vNEXT")
+    assert supply_id("run_abc", "inv0", "cat0", "least_cost") != before
 
 
 def test_the_version_constant_is_named_not_blank():
-    assert FULFILMENT_BEHAVIOR_VERSION.startswith("fulfilment-")
+    assert SUPPLY_BEHAVIOR_VERSION.startswith("supply-")
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/fulfillment/test_material.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'fenceai.fulfillment.material'`
+Run: `uv run pytest tests/fulfillment/test_supply_run.py -q`
+Expected: FAIL — `ModuleNotFoundError: No module named 'fenceai.fulfillment.supply_run'`
 
 - [ ] **Step 3: Write the module**
 
-Create `src/fenceai/fulfillment/material.py`:
+Create `src/fenceai/fulfillment/supply_run.py`:
 
 ```python
 """What a BOM was priced AGAINST, named.
@@ -213,7 +234,7 @@ and put it in no identity and no stored document. One run id could therefore
 print two different BOMs with `GET /api/runs/{id}` byte-identical between them
 (the spec reproduces it: 40 700 then 27 200 agorot after three posts arrive).
 
-`FULFILMENT_BEHAVIOR_VERSION` is the other half of PLANNING_BEHAVIOR_VERSION.
+`SUPPLY_BEHAVIOR_VERSION` is the other half of PLANNING_BEHAVIOR_VERSION.
 That constant covers generation's output; nothing covered cut planning, supply
 resolution or allocation. Bump this one when what a strategy COSTS changes for
 unchanged inputs — a different packer, a different remnant policy, a different
@@ -231,7 +252,7 @@ from fenceai.demand.derive import DemandLine
 from fenceai.fulfillment.fulfill import Bom, Inventory
 from fenceai.fulfillment.lines import ResolvedSupplyLine
 
-FULFILMENT_BEHAVIOR_VERSION = "fulfilment-v1"
+SUPPLY_BEHAVIOR_VERSION = "supply-v1"
 
 
 def inventory_hash(inventory: Inventory) -> str:
@@ -244,32 +265,32 @@ def inventory_hash(inventory: Inventory) -> str:
     return hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16]
 
 
-def material_id(
+def supply_id(
     design_id: str,
     inventory_hash: str,
     catalog_hash: str,
     objective_preset: str,
 ) -> str:
-    """The content address of one materialization.
+    """The content address of one supply run.
 
     Read through the module global rather than a default argument, so
     `monkeypatch.setattr` on the constant moves the id — a default argument would
     bind the version at import time and make the guard untestable.
     """
-    return "mat_" + hashlib.sha256(
+    return "sup_" + hashlib.sha256(
         json.dumps(
             [design_id, inventory_hash, catalog_hash, objective_preset,
-             FULFILMENT_BEHAVIOR_VERSION],
+             SUPPLY_BEHAVIOR_VERSION],
             sort_keys=True, default=str,
         ).encode()
     ).hexdigest()[:12]
 
 
-class MaterialRun(BaseModel):
+class SupplyRun(BaseModel):
     """One design, priced against one yard, under one objective.
 
     `Quote` already froze this thing's numbers without being able to name what
-    produced them; a quote now carries `material_id` and can.
+    produced them; a quote now carries `supply_id` and can.
     """
 
     id: str
@@ -277,7 +298,7 @@ class MaterialRun(BaseModel):
     inventory_hash: str = ""  # what was in the yard
     catalog_hash: str = ""    # narrowed to the skus the run named, as the design does
     objective_preset: str = "least_cost"
-    fulfilment_version: str = ""
+    supply_version: str = ""
     created_at: str = ""
     requirements: list[ResolvedSupplyLine] = []
     # kept, never dropped, for the same reason PricedRun keeps them: a working
@@ -289,19 +310,19 @@ class MaterialRun(BaseModel):
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `uv run pytest tests/fulfillment/test_material.py -q`
+Run: `uv run pytest tests/fulfillment/test_supply_run.py -q`
 Expected: PASS (7 tests, counting the parametrized sweep as four)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/fenceai/fulfillment/material.py tests/fulfillment/test_material.py
-git commit -m "feat(material): the thing a quote freezes gets a name and a version"
+git add src/fenceai/fulfillment/supply_run.py tests/fulfillment/test_supply_run.py
+git commit -m "feat(supply-run): the thing a quote freezes gets a name and a version"
 ```
 
 ---
 
-### Task 2: Storing a MaterialRun
+### Task 2: Storing a SupplyRun
 
 Append-only, `INSERT OR IGNORE` by digest, columns only for what is queried by. The same
 shape `save_run` uses, for the same reason.
@@ -309,81 +330,81 @@ shape `save_run` uses, for the same reason.
 **Files:**
 - Modify: `src/fenceai/store/db.py:28-52` (schema), and the generation-runs section around
   `src/fenceai/store/db.py:590-612` (add the new section directly beneath it)
-- Test: `tests/store/test_material_store.py` (create)
+- Test: `tests/store/test_supply_run_store.py` (create)
 
 **Interfaces:**
-- Consumes: `MaterialRun` from `fenceai.fulfillment.material` (Task 1).
+- Consumes: `SupplyRun` from `fenceai.fulfillment.supply_run` (Task 1).
 - Produces on `Store`:
-  - `save_material_run(self, m: MaterialRun, actor: str = "system") -> None`
-  - `load_material_run(self, material_id: str) -> MaterialRun | None`
-  - `list_material_runs(self, design_id: str) -> list[dict]` — `[{"id", "created_at"}]`,
+  - `save_supply_run(self, m: SupplyRun, actor: str = "system") -> None`
+  - `load_supply_run(self, supply_id: str) -> SupplyRun | None`
+  - `list_supply_runs(self, design_id: str) -> list[dict]` — `[{"id", "created_at"}]`,
     oldest first
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/store/test_material_store.py`:
+Create `tests/store/test_supply_run_store.py`:
 
 ```python
-"""A MaterialRun is append-only and idempotent by digest, exactly as a
+"""A SupplyRun is append-only and idempotent by digest, exactly as a
 GenerationRun is: the same design against the same yard under the same objective
 is ONE fact, however many times it is read."""
 
 from fenceai.fulfillment.fulfill import Bom
-from fenceai.fulfillment.material import MaterialRun
+from fenceai.fulfillment.supply_run import SupplyRun
 from fenceai.store.db import Store
 
 
-def _material(**kw) -> MaterialRun:
-    base = dict(id="mat_aaa", design_id="run_abc", inventory_hash="inv0",
+def _sup(**kw) -> SupplyRun:
+    base = dict(id="sup_aaa", design_id="run_abc", inventory_hash="inv0",
                 catalog_hash="cat0", objective_preset="least_cost",
-                fulfilment_version="fulfilment-v1", bom=Bom())
-    return MaterialRun(**{**base, **kw})
+                supply_version="supply-v1", bom=Bom())
+    return SupplyRun(**{**base, **kw})
 
 
-def test_a_material_run_round_trips():
+def test_a_supply_run_round_trips():
     store = Store(":memory:")
-    store.save_material_run(_material())
-    loaded = store.load_material_run("mat_aaa")
+    store.save_supply_run(_sup())
+    loaded = store.load_supply_run("sup_aaa")
     assert loaded is not None
     assert loaded.design_id == "run_abc"
     assert loaded.objective_preset == "least_cost"
-    assert loaded.fulfilment_version == "fulfilment-v1"
+    assert loaded.supply_version == "supply-v1"
 
 
-def test_an_unknown_material_run_is_none_not_an_error():
-    assert Store(":memory:").load_material_run("mat_nope") is None
+def test_an_unknown_supply_run_is_none_not_an_error():
+    assert Store(":memory:").load_supply_run("sup_nope") is None
 
 
 def test_the_store_stamps_created_at():
     store = Store(":memory:")
-    store.save_material_run(_material())
-    assert store.load_material_run("mat_aaa").created_at
+    store.save_supply_run(_sup())
+    assert store.load_supply_run("sup_aaa").created_at
 
 
 def test_saving_the_same_id_twice_does_not_write_twice():
-    """INSERT OR IGNORE, for the reason save_run uses it: /bom materializes on
+    """INSERT OR IGNORE, for the reason save_run uses it: /bom resolves supply on
     every read, and a project priced daily must not accumulate a row per read of
     an unchanged yard."""
     store = Store(":memory:")
-    store.save_material_run(_material())
-    store.save_material_run(_material(design_id="run_DIFFERENT"))
-    assert store.load_material_run("mat_aaa").design_id == "run_abc"
-    assert len(store.list_material_runs("run_abc")) == 1
+    store.save_supply_run(_sup())
+    store.save_supply_run(_sup(design_id="run_DIFFERENT"))
+    assert store.load_supply_run("sup_aaa").design_id == "run_abc"
+    assert len(store.list_supply_runs("run_abc")) == 1
 
 
-def test_material_runs_are_listed_per_design():
+def test_supply_runs_are_listed_per_design():
     store = Store(":memory:")
-    store.save_material_run(_material(id="mat_a", design_id="run_one"))
-    store.save_material_run(_material(id="mat_b", design_id="run_one"))
-    store.save_material_run(_material(id="mat_c", design_id="run_two"))
-    assert {r["id"] for r in store.list_material_runs("run_one")} == {"mat_a", "mat_b"}
-    assert [r["id"] for r in store.list_material_runs("run_two")] == ["mat_c"]
+    store.save_supply_run(_sup(id="sup_a", design_id="run_one"))
+    store.save_supply_run(_sup(id="sup_b", design_id="run_one"))
+    store.save_supply_run(_sup(id="sup_c", design_id="run_two"))
+    assert {r["id"] for r in store.list_supply_runs("run_one")} == {"sup_a", "sup_b"}
+    assert [r["id"] for r in store.list_supply_runs("run_two")] == ["sup_c"]
 
 
-def test_writing_a_material_run_is_audited():
+def test_writing_a_supply_run_is_audited():
     store = Store(":memory:")
-    store.save_material_run(_material(), actor="expert")
-    assert any(e["action"] == "save_material_run" and e["ref"] == "mat_aaa"
+    store.save_supply_run(_sup(), actor="expert")
+    assert any(e["action"] == "save_supply_run" and e["ref"] == "sup_aaa"
                for e in store.audit_entries())
 ```
 
@@ -392,8 +413,8 @@ def test_writing_a_material_run_is_audited():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/store/test_material_store.py -q`
-Expected: FAIL — `AttributeError: 'Store' object has no attribute 'save_material_run'`
+Run: `uv run pytest tests/store/test_supply_run_store.py -q`
+Expected: FAIL — `AttributeError: 'Store' object has no attribute 'save_supply_run'`
 
 - [ ] **Step 3: Add the table**
 
@@ -401,7 +422,7 @@ In `src/fenceai/store/db.py`, inside the `_SCHEMA` string, directly after the
 `generation_runs` table (line 39-41), add:
 
 ```sql
-CREATE TABLE IF NOT EXISTS material_runs (
+CREATE TABLE IF NOT EXISTS supply_runs (
     id TEXT PRIMARY KEY, design_id TEXT NOT NULL, created_at TEXT NOT NULL,
     doc TEXT NOT NULL);
 ```
@@ -409,7 +430,7 @@ CREATE TABLE IF NOT EXISTS material_runs (
 Add the import beside the existing `GenerationResult` import at the top of the file:
 
 ```python
-from fenceai.fulfillment.material import MaterialRun
+from fenceai.fulfillment.supply_run import SupplyRun
 ```
 
 - [ ] **Step 4: Add the three methods**
@@ -417,12 +438,12 @@ from fenceai.fulfillment.material import MaterialRun
 In `src/fenceai/store/db.py`, immediately after `list_runs` (which ends at line 612), add:
 
 ```python
-    # -- material runs (append-only) --------------------------------------------
+    # -- supply runs (append-only) --------------------------------------------
 
-    def save_material_run(self, m: MaterialRun, actor: str = "system") -> None:
+    def save_supply_run(self, m: SupplyRun, actor: str = "system") -> None:
         """INSERT OR IGNORE, for `save_run`'s reason: the id IS the content, so a
         second write of the same id is the same fact arriving again. /bom
-        materializes on every read, and an unchanged yard must not accumulate a
+        resolves supply on every read, and an unchanged yard must not accumulate a
         row per read.
 
         The clock lives here, as it does for a quote and a correction, and fills
@@ -431,35 +452,35 @@ In `src/fenceai/store/db.py`, immediately after `list_runs` (which ends at line 
         """
         m.created_at = m.created_at or _now()
         self._conn.execute(
-            "INSERT OR IGNORE INTO material_runs (id, design_id, created_at, doc) "
+            "INSERT OR IGNORE INTO supply_runs (id, design_id, created_at, doc) "
             "VALUES (?,?,?,?)",
             (m.id, m.design_id, m.created_at, m.model_dump_json()),
         )
-        self._audit(actor, "save_material_run", m.id)
+        self._audit(actor, "save_supply_run", m.id)
         self._conn.commit()
 
-    def load_material_run(self, material_id: str) -> MaterialRun | None:
+    def load_supply_run(self, supply_id: str) -> SupplyRun | None:
         row = self._conn.execute(
-            "SELECT doc FROM material_runs WHERE id=?", (material_id,)
+            "SELECT doc FROM supply_runs WHERE id=?", (supply_id,)
         ).fetchone()
-        return MaterialRun.model_validate_json(row[0]) if row else None
+        return SupplyRun.model_validate_json(row[0]) if row else None
 
-    def list_material_runs(self, design_id: str) -> list[dict]:
+    def list_supply_runs(self, design_id: str) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT id, created_at FROM material_runs WHERE design_id=? "
+            "SELECT id, created_at FROM supply_runs WHERE design_id=? "
             "ORDER BY created_at, id",
             (design_id,),
         ).fetchall()
         return [{"id": r[0], "created_at": r[1]} for r in rows]
 ```
 
-Note the `ORDER BY created_at, id`: the order must be TOTAL, or two materializations
+Note the `ORDER BY created_at, id`: the order must be TOTAL, or two supply runs
 written in the same second swap between two reads — the same defect `list_corrections`
 (`store/db.py:629`) documents against itself.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `uv run pytest tests/store/test_material_store.py -q`
+Run: `uv run pytest tests/store/test_supply_run_store.py -q`
 Expected: PASS (6 tests)
 
 - [ ] **Step 6: Run the full suite — a schema change touches every stored-state test**
@@ -470,8 +491,8 @@ Expected: PASS, same count as before plus the new tests.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/fenceai/store/db.py tests/store/test_material_store.py
-git commit -m "feat(store): material runs get their own append-only table"
+git add src/fenceai/store/db.py tests/store/test_supply_run_store.py
+git commit -m "feat(store): supply runs get their own append-only table"
 ```
 
 ---
@@ -482,44 +503,44 @@ Smallest possible change, taken before the digest moves so that it lands in isol
 
 **Files:**
 - Modify: `src/fenceai/fulfillment/quote.py:35`
-- Test: `tests/fulfillment/test_quote_material_ref.py` (create)
+- Test: `tests/fulfillment/test_quote_supply_ref.py` (create)
 
 **Interfaces:**
-- Produces: `Quote.material_id: str = ""` — `""` means a quote frozen before
-  materializations had names, which is exactly the population a later migration must be
+- Produces: `Quote.supply_id: str = ""` — `""` means a quote frozen before
+  supply runs had names, which is exactly the population a later migration must be
   able to name.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/fulfillment/test_quote_material_ref.py`:
+Create `tests/fulfillment/test_quote_supply_ref.py`:
 
 ```python
-"""A Quote was always a MaterialRun somebody decided to stand behind. It froze
+"""A Quote was always a SupplyRun somebody decided to stand behind. It froze
 the numbers without being able to name what produced them; now it can."""
 
 from fenceai.fulfillment.fulfill import Bom
 from fenceai.fulfillment.quote import Quote
 
 
-def test_a_quote_carries_the_material_it_froze():
+def test_a_quote_carries_the_supply_run_it_froze():
     q = Quote(id="quote_1", project_id="p", run_id="run_abc",
-              material_id="mat_aaa", bom=Bom())
-    assert q.material_id == "mat_aaa"
+              supply_id="sup_aaa", bom=Bom())
+    assert q.supply_id == "sup_aaa"
 
 
-def test_a_quote_frozen_before_materializations_had_names_still_reads():
+def test_a_quote_frozen_before_supply runs_had_names_still_reads():
     """Quotes are stored as whole JSON documents and re-read with
     model_validate_json, so a required field would make every earlier quote
     unreadable rather than merely out of date."""
     q = Quote.model_validate({"id": "quote_old", "project_id": "p",
                               "run_id": "run_abc", "bom": {}})
-    assert q.material_id == ""
+    assert q.supply_id == ""
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `uv run pytest tests/fulfillment/test_quote_material_ref.py -q`
-Expected: FAIL — pydantic rejects the unexpected keyword `material_id`, or the attribute
+Run: `uv run pytest tests/fulfillment/test_quote_supply_ref.py -q`
+Expected: FAIL — pydantic rejects the unexpected keyword `supply_id`, or the attribute
 does not exist.
 
 - [ ] **Step 3: Add the field**
@@ -527,24 +548,24 @@ does not exist.
 In `src/fenceai/fulfillment/quote.py`, directly after the `catalog_hash` field (line 35):
 
 ```python
-    # WHICH materialization this document froze. A quote was always a MaterialRun
+    # WHICH supply run this document froze. A quote was always a SupplyRun
     # somebody decided to stand behind — it captured the numbers (`requirements`,
     # `bom`) without being able to name the thing that produced them, so two
     # quotes of one run against two different yards were indistinguishable except
-    # by their totals. "" is a quote frozen before materializations had names.
-    material_id: str = ""
+    # by their totals. "" is a quote frozen before supply runs had names.
+    supply_id: str = ""
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `uv run pytest tests/fulfillment/test_quote_material_ref.py -q`
+Run: `uv run pytest tests/fulfillment/test_quote_supply_ref.py -q`
 Expected: PASS (2 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/fenceai/fulfillment/quote.py tests/fulfillment/test_quote_material_ref.py
-git commit -m "feat(quote): a frozen document can name the materialization it froze"
+git add src/fenceai/fulfillment/quote.py tests/fulfillment/test_quote_supply_ref.py
+git commit -m "feat(quote): a frozen document can name the supply run it froze"
 ```
 
 ---
@@ -624,7 +645,7 @@ In `src/fenceai/strategy/generator.py`, replace the comment block and digest at 
     # name and once inside `policy`, which DEFAULT_POLICY always populates. It is
     # read by nothing in generate() — only by resolve_supply, the panel preview
     # and the impact preview — so keeping it made the design id move for a supply
-    # reason. It belongs to the materialization identity (fulfillment/material.py)
+    # reason. It belongs to the supply run identity (fulfillment/supply_run.py)
     # along with the inventory and the catalog prices.
     run_meta.model_snapshot = sorted(
         {u.sort_key(): u for u in models_used}.values(), key=ModelUse.sort_key
@@ -660,9 +681,9 @@ In `src/fenceai/strategy/generator.py`, replace the "There is deliberately NO fu
 version here" paragraph (lines 105-110) — it now describes a system that exists:
 
 ```python
-# The fulfilment version lives in `fulfillment/material.py`, not here. A run's
+# The supply-behaviour version lives in `fulfillment/supply_run.py`, not here. A run's
 # stored document is the strategy and its graph; the BOM is a function of mutable
-# inventory and is named by a MaterialRun. Putting a fulfilment version in the
+# inventory and is named by a SupplyRun. Putting a supply version in the
 # DESIGN digest would deepen exactly the conflation the split removed.
 ```
 
@@ -688,7 +709,7 @@ In `src/fenceai/strategy/model.py`, replace line 184:
     # regardless of how it will be bought). It is also NOT the source of truth
     # for a read — `save_run` is INSERT OR IGNORE, so on an unchanged fence this
     # field is frozen at the first generation for ever. Read paths take the live
-    # preset from the project's policy and record it on the MaterialRun.
+    # preset from the project's policy and record it on the SupplyRun.
     objective_preset: str = "least_cost"
 ```
 
@@ -735,7 +756,7 @@ task is what stops that from becoming a silent mispricing.
 - Modify: `src/fenceai/api/app.py:191-216` (`_priced`), and its four call sites — `get_bom`
   (line 374), `get_structure` (line 409), `create_quote` (line 440), and the bay preview
   (line 1053)
-- Test: `tests/api/test_material_run.py` (create — this file grows in Task 6 too)
+- Test: `tests/api/test_supply_run_api.py` (create — this file grows in Task 6 too)
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
@@ -746,7 +767,7 @@ task is what stops that from becoming a silent mispricing.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/api/test_material_run.py`:
+Create `tests/api/test_supply_run_api.py`:
 
 ```python
 """Once the preset leaves the design digest, the STORED preset freezes: an
@@ -780,20 +801,20 @@ def test_changing_the_preset_changes_what_the_bom_is_priced_under():
         after = client.get(f"/api/runs/{run_id}/bom").json()
         # ...and the read is nonetheless priced under the preset in force NOW,
         # not the one frozen into the stored document at first generation
-        assert after["material"]["objective_preset"] == "honour_priority"
-        assert before["material"]["objective_preset"] == "least_cost"
-        assert after["material"]["id"] != before["material"]["id"]
+        assert after["supply"]["objective_preset"] == "honour_priority"
+        assert before["supply"]["objective_preset"] == "least_cost"
+        assert after["supply"]["id"] != before["supply"]["id"]
 ```
 
-This test asserts the `material` key that Task 6 adds. Land it here as an expected failure
+This test asserts the `supply` key that Task 6 adds. Land it here as an expected failure
 if the two tasks are done by one worker; otherwise split it: assert the pricing effect here
 by reading `state.store.load_run(run_id).run.objective_preset` against the preset actually
-used, and move the `material` assertions to Task 6.
+used, and move the `supply` assertions to Task 6.
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `uv run pytest tests/api/test_material_run.py -q`
-Expected: FAIL — `after["material"]` does not exist, and (the real defect) the preset in
+Run: `uv run pytest tests/api/test_supply_run_api.py -q`
+Expected: FAIL — `after["supply"]` does not exist, and (the real defect) the preset in
 force is the frozen one.
 
 - [ ] **Step 3: Make the preset an explicit argument**
@@ -815,7 +836,7 @@ def _live_preset(project_id: str) -> str:
     unchanged fence regenerates to the same id and `save_run`'s INSERT OR IGNORE
     keeps the first document for ever. Reading the preset off it would price
     every later read under an objective the user has since changed, silently and
-    with no way to see it. The preset is a materialization input, sourced from
+    with no way to see it. The preset is a supply run input, sourced from
     now, exactly as inventory is.
     """
     project = state.store.load_project(project_id)
@@ -862,61 +883,61 @@ decided the impact preview is not touched.
 - [ ] **Step 5: Run the API suite**
 
 Run: `uv run pytest tests/api -q`
-Expected: PASS except the Task 6 half of the new test (`material` key missing). Fix any
+Expected: PASS except the Task 6 half of the new test (`supply` key missing). Fix any
 call site that still passes one argument — a `TypeError: _priced() missing 1 required
 positional argument` is the signature doing its job.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/fenceai/api/app.py tests/api/test_material_run.py
+git add src/fenceai/api/app.py tests/api/test_supply_run_api.py
 git commit -m "fix(read): the preset comes from the project, not from the frozen run doc"
 ```
 
 ---
 
-### Task 6: `/bom` materializes
+### Task 6: `/bom` resolves supply
 
-The endpoint stops being a pure read and becomes "materialize this design against today's
-yard, and return the MaterialRun" — idempotent by digest.
+The endpoint stops being a pure read and becomes "resolve supply for this design against today's
+yard, and return the SupplyRun" — idempotent by digest.
 
 **Files:**
 - Modify: `src/fenceai/api/app.py:371-391` (`get_bom`), and lines 415-416 and 457 (the two
   other inline `inventory_hash` computations)
-- Test: `tests/api/test_material_run.py` (extend)
+- Test: `tests/api/test_supply_run_api.py` (extend)
 
 **Interfaces:**
-- Consumes: `material_id`, `inventory_hash`, `MaterialRun`, `FULFILMENT_BEHAVIOR_VERSION`
-  (Task 1); `save_material_run` (Task 2); `_live_preset` (Task 5).
-- Produces: `GET /api/runs/{run_id}/bom` gains a `material` key —
-  the serialized `MaterialRun`. `inventory_hash` stays on the response at the top level;
+- Consumes: `supply_id`, `inventory_hash`, `SupplyRun`, `SUPPLY_BEHAVIOR_VERSION`
+  (Task 1); `save_supply_run` (Task 2); `_live_preset` (Task 5).
+- Produces: `GET /api/runs/{run_id}/bom` gains a `supply` key —
+  the serialized `SupplyRun`. `inventory_hash` stays on the response at the top level;
   it is what the frontend already reads and this is not the task to move it.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/api/test_material_run.py`:
+Append to `tests/api/test_supply_run_api.py`:
 
 ```python
-def test_the_bom_names_the_materialization_that_produced_it():
+def test_the_bom_names_the_supply run_that_produced_it():
     with TestClient(app) as client:
         _, run_id, _ = _fence(client)
         body = client.get(f"/api/runs/{run_id}/bom").json()
-        m = body["material"]
-        assert m["id"].startswith("mat_")
+        m = body["supply"]
+        assert m["id"].startswith("sup_")
         assert m["design_id"] == run_id
         assert m["inventory_hash"] == body["inventory_hash"]
-        assert m["fulfilment_version"]
+        assert m["supply_version"]
         assert m["bom"] == body["bom"]
 
 
-def test_reading_the_same_bom_twice_is_ONE_materialization():
+def test_reading_the_same_bom_twice_is_ONE_supply run():
     """Idempotent by digest, which is why /bom can write at all: the same design
     against the same yard under the same objective is one fact, however many
     times it is read."""
     with TestClient(app) as client:
         _, run_id, _ = _fence(client)
-        first = client.get(f"/api/runs/{run_id}/bom").json()["material"]["id"]
-        second = client.get(f"/api/runs/{run_id}/bom").json()["material"]["id"]
+        first = client.get(f"/api/runs/{run_id}/bom").json()["supply"]["id"]
+        second = client.get(f"/api/runs/{run_id}/bom").json()["supply"]["id"]
         assert first == second
 
 
@@ -940,22 +961,22 @@ def test_the_spec_defect_is_gone_one_run_id_two_boms_now_have_two_names():
         after = client.get(f"/api/runs/{run_id}/bom").json()
         # the DESIGN is unchanged, and still says so
         assert client.get(f"/api/runs/{run_id}").json() == before_run
-        # the two materializations are different, and each names its own yard
-        assert after["material"]["id"] != before["material"]["id"]
-        assert after["material"]["inventory_hash"] != before["material"]["inventory_hash"]
-        assert after["material"]["design_id"] == before["material"]["design_id"] == run_id
+        # the two supply runs are different, and each names its own yard
+        assert after["supply"]["id"] != before["supply"]["id"]
+        assert after["supply"]["inventory_hash"] != before["supply"]["inventory_hash"]
+        assert after["supply"]["design_id"] == before["supply"]["design_id"] == run_id
 
 
-def test_a_materialization_is_retrievable_after_the_yard_moves_on():
+def test_a_supply run_is_retrievable_after_the_yard_moves_on():
     """The point of storing it: the row outlives the inventory state that
     produced it, which is what makes a printout checkable later."""
     with TestClient(app) as client:
         pid, run_id, _ = _fence(client)
-        mat_id = client.get(f"/api/runs/{run_id}/bom").json()["material"]["id"]
+        sup_id = client.get(f"/api/runs/{run_id}/bom").json()["supply"]["id"]
         inv = client.get(f"/api/projects/{pid}/inventory").json()
         inv["stock"] = {**inv.get("stock", {}), "BAR-POST-LINE": 3}
         client.put(f"/api/projects/{pid}/inventory", json=inv)
-        stored = state.store.load_material_run(mat_id)
+        stored = state.store.load_supply_run(sup_id)
         assert stored is not None and stored.design_id == run_id
 ```
 
@@ -965,16 +986,16 @@ def test_a_materialization_is_retrievable_after_the_yard_moves_on():
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/api/test_material_run.py -q`
-Expected: FAIL — `KeyError: 'material'`
+Run: `uv run pytest tests/api/test_supply_run_api.py -q`
+Expected: FAIL — `KeyError: 'supply'`
 
-- [ ] **Step 3: Materialize in `get_bom`**
+- [ ] **Step 3: Resolve supply in `get_bom`**
 
 Add the imports beside the other fulfillment imports in `src/fenceai/api/app.py`:
 
 ```python
-from fenceai.fulfillment.material import (
-    FULFILMENT_BEHAVIOR_VERSION, MaterialRun, inventory_hash, material_id,
+from fenceai.fulfillment.supply_run import (
+    SUPPLY_BEHAVIOR_VERSION, SupplyRun, inventory_hash, supply_id,
 )
 ```
 
@@ -982,7 +1003,7 @@ Replace the body of `get_bom` (lines 372-391):
 
 ```python
 def get_bom(run_id: str):
-    """Materialize this design against today's yard, and return the MaterialRun.
+    """Resolve supply for this design against today's yard, and return the SupplyRun.
 
     This is deliberately not a pure read any more. It used to be one, and that
     was the defect: /bom read LIVE inventory, so one run id printed two
@@ -993,8 +1014,8 @@ def get_bom(run_id: str):
     yard each was priced against — and neither could the system.
 
     Writing here is safe because the id IS the content: the same design against
-    the same inventory, catalog and preset digests to the same `material_id` and
-    `save_material_run`'s INSERT OR IGNORE does not write twice. Growth tracks
+    the same inventory, catalog and preset digests to the same `supply_id` and
+    `save_supply_run`'s INSERT OR IGNORE does not write twice. Growth tracks
     real changes to the yard, not read volume, which is why no retention policy
     is needed yet (spec §7.2).
     """
@@ -1002,22 +1023,22 @@ def get_bom(run_id: str):
     preset = _live_preset(result.run.project_id)
     _, inventory, priced = _priced(result, preset)
     inv_hash = inventory_hash(inventory)
-    material = MaterialRun(
-        id=material_id(run_id, inv_hash, result.run.catalog_hash, preset),
+    supply = SupplyRun(
+        id=supply_id(run_id, inv_hash, result.run.catalog_hash, preset),
         design_id=run_id,
         inventory_hash=inv_hash,
         catalog_hash=result.run.catalog_hash,
         objective_preset=preset,
-        fulfilment_version=FULFILMENT_BEHAVIOR_VERSION,
+        supply_version=SUPPLY_BEHAVIOR_VERSION,
         requirements=priced.requirements,
         unresolved=priced.unresolved,
         bom=priced.bom,
     )
-    state.store.save_material_run(material)
-    # the audit action keeps its name and gains the material id: the ref used to
+    state.store.save_supply_run(supply)
+    # the audit action keeps its name and gains the supply id: the ref used to
     # be the only place the inventory hash was recorded, and is now a pointer to
     # a row that holds it
-    state.store.log("system", "fulfill", f"{run_id}:inv={inv_hash}:{material.id}")
+    state.store.log("system", "fulfill", f"{run_id}:inv={inv_hash}:{supply.id}")
     # routing an unresolved line out of `requirements` (so a blank sku can never
     # reach fulfill()/the ledger) must not make it disappear from this view —
     # /bom is a working view, so it reports the gap rather than refusing.
@@ -1028,7 +1049,7 @@ def get_bom(run_id: str):
     # drawing has moved on, which is why it groups by `run_ref` and leaves the
     # section TAGS to `js/structure-data.js`, the single tag source.
     return {"requirements": priced.requirements, "unresolved": priced.unresolved,
-            "bom": priced.bom, "inventory_hash": inv_hash, "material": material,
+            "bom": priced.bom, "inventory_hash": inv_hash, "supply": supply,
             "grouped": group_bom(result.strategy, priced.requirements, priced.bom,
                                  priced.decisions, priced.unresolved)}
 ```
@@ -1053,8 +1074,8 @@ user.
 
 - [ ] **Step 5: Run to verify they pass**
 
-Run: `uv run pytest tests/api/test_material_run.py -q`
-Expected: PASS (5 tests, including the Task 5 test that now finds its `material` key)
+Run: `uv run pytest tests/api/test_supply_run_api.py -q`
+Expected: PASS (5 tests, including the Task 5 test that now finds its `supply` key)
 
 - [ ] **Step 6: Run the full suite and the release gate**
 
@@ -1065,57 +1086,57 @@ the action name was kept deliberately.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/fenceai/api/app.py tests/api/test_material_run.py
-git commit -m "feat(bom): /bom materializes, and the BOM it returns has a name"
+git add src/fenceai/api/app.py tests/api/test_supply_run_api.py
+git commit -m "feat(bom): /bom resolves supply, and the BOM it returns has a name"
 ```
 
 ---
 
-### Task 7: The quote records which materialization it froze
+### Task 7: The quote records which supply run it froze
 
 **Files:**
 - Modify: `src/fenceai/api/app.py:432-466` (`create_quote`)
-- Test: `tests/api/test_material_run.py` (extend)
+- Test: `tests/api/test_supply_run_api.py` (extend)
 
 **Interfaces:**
-- Consumes: `Quote.material_id` (Task 3); `material_id`/`MaterialRun`/`inventory_hash`
-  (Task 1); `save_material_run` (Task 2); `_live_preset` (Task 5).
-- Produces: `POST /api/runs/{run_id}/quote` returns a `Quote` whose `material_id` names a
-  row in `material_runs`.
+- Consumes: `Quote.supply_id` (Task 3); `supply_id`/`SupplyRun`/`inventory_hash`
+  (Task 1); `save_supply_run` (Task 2); `_live_preset` (Task 5).
+- Produces: `POST /api/runs/{run_id}/quote` returns a `Quote` whose `supply_id` names a
+  row in `supply_runs`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/api/test_material_run.py`:
+Append to `tests/api/test_supply_run_api.py`:
 
 ```python
-def test_a_quote_names_a_materialization_that_actually_exists():
+def test_a_quote_names_a_supply run_that_actually_exists():
     with TestClient(app) as client:
         _, run_id, _ = _fence(client)
         quote = client.post(f"/api/runs/{run_id}/quote", json={"label": "q1"}).json()
-        assert quote["material_id"].startswith("mat_")
-        stored = state.store.load_material_run(quote["material_id"])
+        assert quote["supply_id"].startswith("sup_")
+        stored = state.store.load_supply_run(quote["supply_id"])
         assert stored is not None
         assert stored.design_id == run_id
         assert stored.bom == quote["bom"] or stored.bom.model_dump() == quote["bom"]
 
 
-def test_the_quote_and_the_bom_read_agree_on_the_materialization():
-    """Same design, same yard, same objective — one material id, whichever route
+def test_the_quote_and_the_bom_read_agree_on_the_supply run():
+    """Same design, same yard, same objective — one supply id, whichever route
     computed it. Two ids here would mean the two paths disagree about what they
     priced, which is the whole class of defect this change removes."""
     with TestClient(app) as client:
         _, run_id, _ = _fence(client)
-        from_bom = client.get(f"/api/runs/{run_id}/bom").json()["material"]["id"]
+        from_bom = client.get(f"/api/runs/{run_id}/bom").json()["supply"]["id"]
         quote = client.post(f"/api/runs/{run_id}/quote", json={"label": "q"}).json()
-        assert quote["material_id"] == from_bom
+        assert quote["supply_id"] == from_bom
 ```
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/api/test_material_run.py -q`
-Expected: FAIL — `quote["material_id"]` is `""`.
+Run: `uv run pytest tests/api/test_supply_run_api.py -q`
+Expected: FAIL — `quote["supply_id"]` is `""`.
 
-- [ ] **Step 3: Materialize in `create_quote` too**
+- [ ] **Step 3: Resolve supply in `create_quote` too**
 
 In `create_quote`, replace the `_priced` call and the `Quote(...)` construction (lines
 440-464). The `unresolved` refusal in between is unchanged and must stay exactly where it
@@ -1130,41 +1151,41 @@ then, after the unresolved check, before building the `Quote`:
 
 ```python
     # the same digest /bom computes, from the same inputs — so a quote and the
-    # BOM read that preceded it name ONE materialization rather than two. Saved
+    # BOM read that preceded it name ONE supply run rather than two. Saved
     # here as well because a quote may be the first thing a project ever asks
     # for, and the document it stands behind must exist.
     inv_hash = inventory_hash(inventory)
-    material = MaterialRun(
-        id=material_id(run_id, inv_hash, result.run.catalog_hash, preset),
+    supply = SupplyRun(
+        id=supply_id(run_id, inv_hash, result.run.catalog_hash, preset),
         design_id=run_id,
         inventory_hash=inv_hash,
         catalog_hash=result.run.catalog_hash,
         objective_preset=preset,
-        fulfilment_version=FULFILMENT_BEHAVIOR_VERSION,
+        supply_version=SUPPLY_BEHAVIOR_VERSION,
         requirements=priced.requirements,
         unresolved=priced.unresolved,
         bom=priced.bom,
     )
-    state.store.save_material_run(material, actor=body.author)
+    state.store.save_supply_run(supply, actor=body.author)
 ```
 
 and add the field to the `Quote(...)` call, beside `catalog_hash`:
 
 ```python
-        material_id=material.id,
+        supply_id=supply.id,
         inventory_hash=inv_hash,
 ```
 
 (replacing the inline `inventory_hash=hashlib.sha256(...)` from Task 6 Step 4 — the local
 `inv_hash` is the same value and now has one source.)
 
-If the two `MaterialRun` constructions in `get_bom` and `create_quote` are byte-identical
+If the two `SupplyRun` constructions in `get_bom` and `create_quote` are byte-identical
 apart from the actor, extract them into one module-level helper in `api/app.py`:
 
 ```python
-def _materialize(result, preset: str, priced, inventory) -> MaterialRun:
+def _supply_run_for(result, preset: str, priced, inventory) -> SupplyRun:
     """One construction, two callers. Two copies of a digest's inputs is how the
-    quote path and the BOM path would come to name different materializations for
+    quote path and the BOM path would come to name different supply runs for
     the same fence."""
 ```
 
@@ -1173,7 +1194,7 @@ Do this extraction — the duplication is exactly the four-copies-of-a-pipeline 
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `uv run pytest tests/api/test_material_run.py -q`
+Run: `uv run pytest tests/api/test_supply_run_api.py -q`
 Expected: PASS (7 tests)
 
 - [ ] **Step 5: Run the full suite and the release gate**
@@ -1184,8 +1205,8 @@ Expected: PASS, goldens byte-identical.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/fenceai/api/app.py tests/api/test_material_run.py
-git commit -m "feat(quote): the frozen document names the materialization it froze"
+git add src/fenceai/api/app.py tests/api/test_supply_run_api.py
+git commit -m "feat(quote): the frozen document names the supply run it froze"
 ```
 
 ---
@@ -1202,7 +1223,7 @@ doc (`plan/open-work.md`, "Smaller, known, and cheap").
   `grep -rln "generation_runs" docs/architecture/`
 - Modify: `plan/open-work.md:84-95` (item 5)
 - Modify: `plan/current-status.md` — add the checkpoint entry, newest first
-- Create: `docs/adr/ADR-00NN-design-and-material-identity.md` — take the next free number
+- Create: `docs/adr/ADR-00NN-design-and-supply-identity.md` — take the next free number
   from `ls docs/adr/` and follow the shape of the existing ADRs exactly
 
 **Interfaces:** none — documentation.
@@ -1216,14 +1237,14 @@ than a plausible-looking one.
 
 - [ ] **Step 2: Update the backend architecture document**
 
-Add `material_runs` to the table list and `material` to what `GET /api/runs/{id}/bom`
+Add `supply_runs` to the table list and `supply` to what `GET /api/runs/{id}/bom`
 returns. Add a sentence naming the split: a design run answers what fence this is; a
-material run answers what it costs to build, from the stock we have, under this objective.
+supply run answers what it costs to build, from the stock we have, under this objective.
 
 - [ ] **Step 3: Write the ADR**
 
 Record: the two questions one id was answering; the decision to bump `RUN_DIGEST_VERSION`
-to `digest-v3` and the one-time discontinuity it buys; `FULFILMENT_BEHAVIOR_VERSION` as the
+to `digest-v3` and the one-time discontinuity it buys; `SUPPLY_BEHAVIOR_VERSION` as the
 missing half of `PLANNING_BEHAVIOR_VERSION`; and the consequence that the stored
 `objective_preset` is frozen by `INSERT OR IGNORE`, which is why reads take the live preset
 from the project. That last one is the non-obvious part and is the reason the ADR is worth
@@ -1240,11 +1261,11 @@ In `plan/open-work.md`, replace item 5's "SPECIFIED, not built" heading and body
 `~~struck~~` DONE entry in the shape items 1-4 use, naming the commits and — following the
 established convention in that file — what was **knowingly not done**:
 
-- the frontend does not yet SHOW the material id; the BOM tab renders the BOM and the
+- the frontend does not yet SHOW the supply id; the BOM tab renders the BOM and the
   `inventory_hash` as before. A reader holding two printouts can now distinguish them via
   the API, not yet on the page.
-- MaterialRuns are never garbage-collected (spec §7.2, decided).
-- the impact preview still compares designs, not materializations (spec §7.3, decided).
+- SupplyRuns are never garbage-collected (spec §7.2, decided).
+- the impact preview still compares designs, not supply runs (spec §7.3, decided).
 - `GenerationRun.objective_preset` is still populated and still stored; it is now only a
   record of what a run was generated under, and correction B is the reason nothing may read
   it for a decision.
@@ -1268,14 +1289,14 @@ git commit -m "docs(identity): the split gets its ADR, and the handoff says what
   (pydantic reads old documents unchanged) rather than removed. Task 4 Step 5 documents it
   instead. **This is a deliberate divergence from the spec** and the reason is that the
   spec's upgrader solves a problem the chosen shape does not have.
-- §3 "a new stored entity, MaterialRun" → Tasks 1 and 2.
-- §3 `FULFILMENT_BEHAVIOR_VERSION` → Task 1.
+- §3 "a new stored entity, SupplyRun" → Tasks 1 and 2.
+- §3 `SUPPLY_BEHAVIOR_VERSION` → Task 1.
 - §3 "/bom stops being a pure read", idempotent by digest → Task 6.
 - §4 "generate() stays pure" / "no BOM arithmetic moves" → Global Constraints, and the
   gate is re-run at Tasks 4, 6 and 7.
 - §4 "a quote still refuses a stale catalog, and gains a better refusal" → Task 7 keeps
   the `_priced` staleness check and the `unresolved` refusal exactly where they are. The
-  quote can now NAME its materialization; making the refusal MESSAGE cite it would need a
+  quote can now NAME its supply run; making the refusal MESSAGE cite it would need a
   new user-visible code in both locale bundles, so it is deliberately not done here.
 - §5 decision (a) → Task 4.
 - §7.2 no GC → not implemented, by decision; recorded in Task 8 Step 5.
@@ -1291,9 +1312,9 @@ still says "read before writing" — the architecture document in Task 8 — bec
 document and section the fitness tests read is a thing the tests themselves should be
 allowed to say.
 
-**Type consistency:** `material_id()` takes `(design_id, inventory_hash, catalog_hash,
+**Type consistency:** `supply_id()` takes `(design_id, inventory_hash, catalog_hash,
 objective_preset)` in Task 1 and is called with exactly those four, in that order, in Tasks
-6 and 7. `inventory_hash` is a function in Task 1 and a field name on `MaterialRun` and
+6 and 7. `inventory_hash` is a function in Task 1 and a field name on `SupplyRun` and
 `Quote` — this shadowing is real and is why `get_bom` and `create_quote` bind the local as
 `inv_hash`. `_priced(result, preset)` is defined in Task 5 and called with two arguments at
 all four sites.

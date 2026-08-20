@@ -5,6 +5,20 @@ persisted identity, so it gets the brainstorm → spec → review → plan treat
 part-spec design got, and it was written for a decision rather than for a commit.
 The decisions it asked for are recorded in §5 and §7; the plan follows from them.
 
+**RENAMED, 2026-08-20: `MaterialRun` is built as `SupplyRun`.** This spec's name
+collides with an existing domain word. `material` is a catalog product attribute
+from a closed vocabulary — `attrs={"material": "vinyl"}` (`catalog/demo.py:142`) —
+which a part's spec declares as a CONSTRAINT rather than a fact
+(`SpecField(key="material", value="vinyl", agree="==")`, `parts/demo.py:92`,
+reading `item.material == "vinyl"`), and which the UI renders in a surface called
+the material drawer (`fencemodel/preview.py:79`). Under that vocabulary
+"MaterialRun" reads as a run about vinyl-versus-steel. The half this entity names
+is the half below the demand boundary, and the codebase already calls that
+**supply**: `resolve_supply()`, `ResolvedSupplyLine`, `SupplyDecision`,
+`fulfillment/supply.py`. So: `SupplyRun`, `supply_id`, `supply_runs`,
+`SUPPLY_BEHAVIOR_VERSION`. Everything else in this spec stands as written; see
+`docs/superpowers/plans/2026-08-20-design-run-supply-run.md`.
+
 Source: backend audit §1.5 (`docs/reviews/backend-audit-2026-08-16-response.md`),
 whose disposition was "its own spec". `plan/open-work.md` item 5.
 
