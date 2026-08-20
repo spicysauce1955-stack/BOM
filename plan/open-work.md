@@ -1,6 +1,6 @@
 # Open work
 
-Handoff, updated 2026-08-20. Everything below is unstarted unless it says
+Handoff, updated 2026-08-20 (item 5 closed the same day). Everything below is unstarted unless it says
 otherwise. State it follows from: `plan/current-status.md` (newest entry first)
 and `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md`,
 whose §11 carries the wave plan with each wave's findings folded back in.
@@ -9,10 +9,9 @@ whose §11 carries the wave plan with each wave's findings folded back in.
 compatibility gate byte-identical**. The `part-picker-repair` arc merged on
 2026-08-20 (`c0f38a4`) after three reviewers over the whole branch.
 
-**Every numbered item below is now closed or specified.** What is left is the
-merge review's own findings (next section), the "smaller, known" list, the
-deferred triggers, and whatever the earlier review rounds recorded as knowingly
-not done.
+**Every numbered item below is now closed.** What is left is the merge review's
+own findings (next section), the "smaller, known" list, the deferred triggers,
+and whatever the earlier review rounds recorded as knowingly not done.
 
 ---
 
@@ -81,18 +80,48 @@ need" differently for a SHARED corner post, because one sums and the other does
 not. Both are right for their own question and the difference is now named on
 screen, but one of them should probably change.
 
-## 5. `DesignRun` / `MaterialRun` — SPECIFIED, not built (backend audit §1.5)
+## ~~5. `DesignRun` / `MaterialRun`~~ — DONE, 2026-08-20, as **`SupplyRun`**
 
-Spec: `docs/superpowers/specs/2026-08-19-design-run-material-run.md`. The defect
-is demonstrated there rather than described — one run id, 40 700 then 27 200
-agorot after three posts arrive in the yard, with `GET /runs/{id}` byte-identical
-between them.
+ADR-0011, `fulfillment/supply_run.py`, the `supply_runs` table, `digest-v3`, and
+`Quote.supply_id`. The spec's §1 reproduction is now a regression test: same run
+id, two yards, two named supply runs, `GET /runs/{id}` byte-identical between
+them. The compatibility gate never moved, which is the evidence this was an
+identity change and not a costing one.
 
-**It stops at a spec on purpose, and needs ONE decision from you** (§5): removing
-`objective_preset` from the design digest means a regeneration of an unchanged
-project produces a new id where it used to return the old one. One deliberate
-discontinuity (recommended) against a permanent conflation. It also strands
-comments anchored to a design run, which item 3 just made concrete.
+**Renamed on the way in.** `material` was already a catalog product attribute
+(vinyl, steel, cedar) that a part's spec declares as a CONSTRAINT on an item
+(`item.material == "vinyl"`), rendered in a UI surface called the material
+drawer. `MaterialRun` would have read as a run about vinyl-versus-steel. The
+half it names is the half below the demand boundary, which this codebase already
+calls supply.
+
+**Two things the spec had wrong, both found by checking it against the code:**
+* `objective_preset` was in the digest TWICE — by name, and inside `policy`,
+  which `DEFAULT_POLICY` always populates. Removing one occurrence would have
+  left the id unmoved and the change inert while looking done.
+* §5 claimed the bump invalidates the property
+  `test_regenerating_the_same_drawing_keeps_the_conversation` depends on. It does
+  not: that test generates twice against ONE digest version, and digest stability
+  is a property within a version. The bump strands persisted run ids once, at the
+  boundary, and nothing after.
+
+**Knowingly not done:**
+* **the frontend does not SHOW the supply id.** The BOM tab renders the BOM and
+  the `inventory_hash` exactly as before; `supply` is an additive key nothing in
+  JS reads yet. A reader holding two printouts can now distinguish them through
+  the API, not yet on the page. This is the obvious next slice.
+* no retention policy — supply runs are append-only and never expire (spec §7.2,
+  decided). Idempotency means growth tracks real yard changes, not read volume,
+  so nothing forces the question yet.
+* the impact preview still compares designs, not supply runs (spec §7.3,
+  decided). It is strictly easier now that there is a thing to diff.
+* `GenerationRun.objective_preset` is still populated and still stored. It is now
+  a record of what a run was generated under and **nothing may read it for a
+  decision** — `save_run` is INSERT OR IGNORE, so on an unchanged fence it is
+  frozen at the first generation for ever. ADR-0011 exists mostly to say this.
+* the quote's staleness refusal can now cite its supply run and does not. Saying
+  so needs a new user-visible code in both locale bundles, which is a separate
+  slice with its own bundle test.
 
 ---
 
