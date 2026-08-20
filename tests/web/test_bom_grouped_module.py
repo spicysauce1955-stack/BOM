@@ -63,6 +63,7 @@ globalThis.fetch = async (url) => ({
 });
 
 import { setLocale } from "./js/i18n.js";
+import { setUnits } from "./js/units.js";
 import { state } from "./js/state.js";
 import { loadStructure } from "./js/structure-data.js";
 import { groupedBomHtml } from "./js/tabs.js";
@@ -144,8 +145,42 @@ out.escaped = groupedBomHtml({
   unassigned: [], from_stock: [], unresolved: [],
 }, PRODUCTS);
 
+// The SAME payload rendered in both display units. A qty is a count unless its
+// unit says it is a length, and every test here had rendered in mm only — so
+// pushing counts through the mm -> display converter was invisible.
+const WITH_A_LENGTH = { ...GROUPED, groups: [{
+  kind: "section", element_id: "run1", chosen: "", rejected: [], preset: "",
+  lines: [
+    { sku: "RAIL-3000", qty: 8, unit: "cut", role: "rail", slot_key: "rail",
+      cut_length_mm: 1500, length_basis: "width" },
+    // a product measured in mm — the one case where the number IS converted,
+    // and where the unit LABEL has to travel with it
+    { sku: "BAR-6000", qty: 6000, unit: "mm", role: "rail", slot_key: "bar",
+      cut_length_mm: null },
+  ] }], unassigned: [{ sku: "SCREW-S10", qty: 7, unit: "each" }] };
+// a step whose `qty` is a COUNT of members: `StepPart` carries no unit, and its
+// length is the separate field beside it
+const PLAN_FOR_UNITS = { model_ref: "M@v1", unplaced: [], steps: [
+  { key: "frame", kind: "assembly", text_i18n: { en: "Fit the rails." },
+    parts: [{ slot_key: "rail", role: "rail", qty: 3, length_mm: 1500 }] }] };
+const nums = (html) => [...html.matchAll(/class="num">([^<]*)</g)].map((m) => m[1]);
+const unitCells = (html) => [...html.matchAll(/<td>(each|cut|mm|cm)<\\/td>/g)].map((m) => m[1]);
+setUnits("mm");
+out.mm_nums = nums(groupedBomHtml(WITH_A_LENGTH, PRODUCTS));
+out.mm_units = unitCells(groupedBomHtml(WITH_A_LENGTH, PRODUCTS));
+out.mm_steps = nums(assemblyPlanHtml(PLAN_FOR_UNITS));
+setUnits("cm");
+out.cm_nums = nums(groupedBomHtml(WITH_A_LENGTH, PRODUCTS));
+out.cm_units = unitCells(groupedBomHtml(WITH_A_LENGTH, PRODUCTS));
+out.cm_steps = nums(assemblyPlanHtml(PLAN_FOR_UNITS));
+setUnits("mm");
+
 await setLocale("he");
 out.he_name = groupedBomHtml(GROUPED, PRODUCTS).includes("מוט מסילה");
+// A decision's runner-up is a Latin sku and a preset name inside a Hebrew
+// sentence. Escaping AFTER interpolating leaves them unisolated, and they
+// reorder on screen beside the sentence's own parentheses.
+out.he_beat = groupedBomHtml(GROUPED, PRODUCTS);
 await setLocale("en");
 
 // --- the assembly sheet ----------------------------------------------------
@@ -307,3 +342,55 @@ def test_an_element_the_tag_source_cannot_name_still_says_which_element_it_is(re
     blank head reads as "no section"; the raw id is at least the machine identity
     the user can match against, isolated so RTL cannot reorder it."""
     assert rendered["heads"]["span@run9:0-1000"] == "<bdi>span@run9:0-1000</bdi>"
+
+
+def test_a_count_is_not_a_length_and_survives_the_display_unit(rendered):
+    """The defect this closes, and the reason it hid: every test here rendered in
+    mm, where the mm -> display converter is the identity. `fmt` is that
+    converter and nothing else, so putting a COUNT through it reported `0.8 each`
+    to anyone who had switched the app to cm — wrong by a factor of ten, in the
+    one table built to answer "what does this section need", while the priced
+    table on the same screen said 8.
+
+    A count is the same number in every display unit. Only the mm-unit line
+    moves."""
+    counts = [n for n in rendered["mm_nums"] if n in ("8", "7")]
+    assert counts == ["8", "7"], "the fixture must carry a count in a group and in a bucket"
+    assert [n for n in rendered["cm_nums"] if n in ("8", "7")] == counts
+    assert rendered["mm_steps"] == ["3"] and rendered["cm_steps"] == ["3"], \
+        "a step fits three rails whatever unit the reader prefers"
+
+
+def test_a_length_qty_converts_with_its_label_or_neither(rendered):
+    """The other half, and the one that reads as a contradiction on screen: when
+    the unit IS `mm` the number must convert AND the label must be swapped for
+    the reader's. Converting the number alone put `600` under a literal `mm`
+    beside a priced table saying `600 cm` for the same line."""
+    assert "6000" in rendered["mm_nums"] and "mm" in rendered["mm_units"]
+    assert "600" in rendered["cm_nums"] and "cm" in rendered["cm_units"], \
+        "the number moved to cm, so the label must too"
+    assert "mm" not in rendered["cm_units"], "a converted figure under a literal mm"
+
+
+def test_a_runner_up_sku_is_direction_isolated_in_a_hebrew_sentence(rendered):
+    """`esc(t(key, params))` escapes AFTER interpolating, which leaves a Latin
+    sku unisolated inside a Hebrew sentence — and this one sits in parentheses,
+    which mirror. Asserted against the bundle's own shape rather than the copy,
+    so rewording is not a regression."""
+    assert "<bdi>RAIL-3050</bdi>" in rendered["he_beat"]
+    assert "<bdi>least_cost</bdi>" in rendered["he_beat"]
+
+
+def test_the_unresolved_bucket_states_how_many_are_missing(rendered):
+    """Its quantity was pinned nowhere: mapping it to `qty: 0` left every test
+    green while the panel told a reader that a part it could not supply is needed
+    zero times — which reads as "nothing is missing", the exact opposite of what
+    this bucket exists to say."""
+    assert ">9<" in rendered["plain"].replace(" ", "")
+
+
+def test_a_product_name_carries_its_own_direction(rendered):
+    """Catalogue text is expert-authored and may be Hebrew or Latin in either
+    UI; the priced table marks the same field `dir="auto"` and the grouped copy
+    dropped it."""
+    assert 'dir="auto"' in rendered["plain"]

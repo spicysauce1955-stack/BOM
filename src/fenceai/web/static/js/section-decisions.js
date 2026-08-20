@@ -20,7 +20,7 @@
 import { apiGet, apiSend, esc } from "./api.js";
 import { currentLocale, t } from "./i18n.js";
 import { on, state } from "./state.js";
-import { currentUnit } from "./units.js";
+import { currentUnit, sentence } from "./units.js";
 
 // The conversation, indexed by the decision it is about — fetched once per
 // render rather than once per decision, because a section has many decisions
@@ -131,10 +131,16 @@ export function sectionHtml(body, threads = new Map(), openOn = null, earlier = 
       ${openOn === d.node_id ? formHtml(d.node_id) : ""}
     </div>`;
   }).join("");
+  // `sentence`, not `esc(t(key, params))`: these two carry a latin run id and a
+  // figure INTO Hebrew prose, and escaping the finished sentence leaves the
+  // parameter without a direction of its own — the id and the comma after it
+  // reorder on screen, in the language the app opens in. Escape the template,
+  // then drop each param in `<bdi>`-wrapped (units.js; warnings.js does the
+  // same behind its code lookup).
   return `<h3>${esc(t("decisions.title"))}</h3>
-    <div class="meta">${esc(t("decisions.hint", { section: body.section_id }))}</div>
+    <div class="meta">${sentence("decisions.hint", { section: body.section_id })}</div>
     ${earlier
-      ? `<div class="meta">${esc(t("decisions.earlier", { count: earlier }))}</div>`
+      ? `<div class="meta">${sentence("decisions.earlier", { count: earlier })}</div>`
       : ""}
     ${threadCount(threads)
       ? `<div class="decision-actions"><button data-act="propose">${

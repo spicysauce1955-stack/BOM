@@ -26,7 +26,7 @@ import { isSelectable, loadModelListing, modelName, modelOptionLabel, rowFor } f
 import { currentLocale, t } from "./i18n.js";
 import { on, reloadProject, state } from "./state.js";
 import {
-  fmt, fmtLen, inputStep, money, roleWord, toDisplayValue, toMm, tu, unitParams,
+  fmt, fmtLen, inputStep, money, roleWord, sentence, toDisplayValue, toMm, tu,
 } from "./units.js";
 import { warningRowHtml } from "./warnings.js";
 
@@ -51,16 +51,8 @@ let elevationSvg = null;     // the last drawing, so the table can light it up
 const panelTabActive = () =>
   !!document.getElementById("tab-panel")?.classList.contains("active");
 
-// A locale sentence whose params are ids, names or dimensions: escape the
-// template first, then drop each param in bidi-isolated. Same shape (and same
-// reason) as warnings.js's localizedByCode — a model name is expert-authored
-// text, and an id or a figure inside a Hebrew sentence needs its own direction.
-function sentence(key, params = {}) {
-  let s = esc(t(key));
-  for (const [k, v] of Object.entries(unitParams(params)))
-    s = s.replaceAll(`{${k}}`, `<bdi>${esc(String(v))}</bdi>`);
-  return s;
-}
+// `sentence()` now lives in units.js — it had two copies here and in
+// warnings.js, and a third was about to be written for the grouped BOM.
 
 export function initPanel() {
   ensureListing().then(renderModelRow);
@@ -358,16 +350,21 @@ export function assemblyPlanHtml(plan) {
     <li class="step" data-step="${esc(step.key)}" data-kind="${esc(step.kind)}">
       <div dir="auto">${esc(said(step))}</div>
       ${step.parts.length
+        // `qty` is a COUNT of members — `StepPart` carries no unit, and its
+        // length is the separate `length_mm` beside it. `fmt` is the mm ->
+        // display converter and nothing else, so pushing a count through it
+        // read "fit ×0.3 rails" to anyone who had switched to cm. Counts are
+        // rendered raw here the same way `structure.js` renders `part.qty`.
         ? `<div class="meta">${step.parts.map((p) => `<span class="sku">${
-            esc(p.slot_key)}</span> ×<span class="num">${fmt(p.qty)}</span>${
+            esc(p.slot_key)}</span> ×<span class="num">${esc(String(p.qty))}</span>${
             p.length_mm == null ? "" : ` · ${esc(fmtLen(p.length_mm))}`}`).join(" · ")}</div>`
         : `<div class="meta">${esc(t("assembly.no_parts"))}</div>`}
     </li>`).join("");
   // a part no step fits is REPORTED: a sheet that omits it reads as a finished
   // panel to the person holding it
   const missed = plan.unplaced.length
-    ? `<div class="warning">${esc(t("assembly.unplaced", {
-        slots: plan.unplaced.map((p) => p.slot_key).join(", ") }))}</div>`
+    ? `<div class="warning">${sentence("assembly.unplaced", {
+        slots: plan.unplaced.map((p) => p.slot_key).join(", ") })}</div>`
     : "";
   return `<div class="panel" id="panel-assembly">
     <h3>${esc(t("assembly.sheet_title"))}</h3>

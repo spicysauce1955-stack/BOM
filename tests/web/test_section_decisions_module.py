@@ -98,6 +98,7 @@ out.keys = {
   start: EN["decisions.start_conversation"], add: EN["decisions.add_comment"],
   none: EN["decisions.none_here"], note: EN["decisions.comment_note"],
   he_start: HE["decisions.start_conversation"],
+  he_hint: HE["decisions.hint"], he_earlier: HE["decisions.earlier"],
 };
 
 // the form appears only on the decision it was opened for
@@ -106,6 +107,18 @@ out.form_count = (out.form_scoped.match(/data-form=/g) || []).length;
 
 await setLocale("he");
 out.he = sectionHtml(BODY);
+
+// The panel's own sentences carry latin parameters INTO Hebrew prose: a run id
+// mid-sentence followed by a comma, and a count opening one. The convention is
+// escape the template, then drop each parameter in wrapped in <bdi>
+// (warnings.js localizedByCode, panel.js sentence) — escaping the whole
+// rendered sentence instead leaves the parameter without its own direction and
+// the id reorders against the punctuation beside it.
+out.he_earlier = sectionHtml(BODY, new Map(), null, 3);
+// escape-then-isolate, not isolate-then-inject-raw: the parameter is machine
+// data here, but the shape has to stay the safe one
+out.he_hostile = sectionHtml(
+  { section_id: '<img src=x onerror="alert(1)">', decisions: [] });
 
 console.log(JSON.stringify(out));
 """
@@ -210,3 +223,30 @@ def test_a_conversation_from_an_earlier_run_is_named_not_hidden(rendered):
 def test_the_panel_speaks_the_readers_language(rendered):
     assert rendered["keys"]["he_start"] in rendered["he"]
     assert rendered["keys"]["start"] not in rendered["he"]
+
+
+def test_a_run_id_inside_a_hebrew_sentence_is_direction_isolated(rendered):
+    """Hebrew is the locale the app opens in, and `decisions.hint` puts a latin
+    run id in the middle of the sentence with a comma right after it. Without
+    `<bdi>` the id and that punctuation swap sides on screen — the classic bidi
+    run reversal. Asserted against the BUNDLE with only the parameter slot
+    filled, so this pins the isolation without spelling the copy out."""
+    expected = rendered["keys"]["he_hint"].replace("{section}", "<bdi>run1</bdi>")
+    assert expected in rendered["he"]
+
+
+def test_a_count_inside_a_hebrew_sentence_is_direction_isolated(rendered):
+    """Same sentence shape, opening figure: `decisions.earlier` leads with the
+    count and continues in Hebrew."""
+    expected = rendered["keys"]["he_earlier"].replace("{count}", "<bdi>3</bdi>")
+    assert expected in rendered["he_earlier"]
+
+
+def test_an_isolated_parameter_is_still_escaped(rendered):
+    """Escape-then-isolate, never isolate-then-inject-raw. The parameter is a
+    run id — machine data — but the ONE convention this codebase has escapes
+    both the template and every value it drops into it, and a pattern that is
+    safe only because of what happens to flow through it today is not safe."""
+    html = rendered["he_hostile"]
+    assert "<bdi>&lt;img src=x onerror=" in html
+    assert "<img src=x" not in html

@@ -8,7 +8,8 @@ import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
 import { emit, on, reloadProject, state } from "./state.js";
 import {
-  fmt, fmtLen, inputStep, money, toDisplayValue, toMm, tu, unitLabel,
+  fmt, fmtLen, inputStep, money, roleWord, sentence, toDisplayValue, toMm, tu,
+  unitLabel,
 } from "./units.js";
 import { loadStructure, sectionOf, tagOf } from "./structure-data.js";
 import { supplyProblemsHtml } from "./warnings.js";
@@ -295,6 +296,23 @@ function wireQuoteButtons(div, products) {
  *  Tags come from `structure-data.js`, the single tag source for this tab and
  *  both drawings; an element it cannot name (a stale report) falls back to its
  *  own id rather than to a blank cell that reads as "no section". */
+/** The quantity cell and its unit cell, together, because they have to agree.
+ *
+ *  A qty is a COUNT ("8 each", "12 cut") unless its unit says it is a length.
+ *  `fmt` is the mm -> display converter and nothing else, so putting every qty
+ *  through it reported `0.8 each` to anyone who had switched the app to cm —
+ *  wrong by a factor of ten, in the one table built to answer "what does this
+ *  section need". And when the unit IS `mm` the number must be converted AND
+ *  the label swapped for `unitLabel()`, or a converted figure sits under a
+ *  literal "mm" while the priced table below it, on the same screen, says cm.
+ *  This is the guard `bomHtml` already applies to the same two fields; the
+ *  grouped view copied the number and not the guard. */
+function qtyCells(qty, unit) {
+  return unit === "mm"
+    ? `<td class="num">${esc(fmt(qty))}</td><td>${esc(unitLabel())}</td>`
+    : `<td class="num">${esc(String(qty))}</td><td>${esc(unit)}</td>`;
+}
+
 export function groupedBomHtml(grouped, products) {
   const groups = grouped?.groups || [];
   if (!groups.length) return "";
@@ -325,16 +343,18 @@ export function groupedBomHtml(grouped, products) {
         <div class="group-head"><strong>${name(g)}</strong>`;
       if (g.kind === "decision" && g.rejected.length)
         // the runner-up belongs BESIDE the choice: "cheaper than the others" is
-        // not an explanation, and this is the view that raised the question
-        html += ` <span class="meta">${esc(t("bom.group_beat", {
-          rejected: g.rejected.join(", "), preset: g.preset }))}</span>`;
+        // not an explanation, and this is the view that raised the question.
+        // `sentence`, not `esc(t(...))`: these params are Latin skus and a
+        // preset name inside a Hebrew sentence's parentheses, and escaping
+        // AFTER interpolating leaves them to reorder on screen.
+        html += ` <span class="meta">${sentence("bom.group_beat", {
+          rejected: g.rejected.join(", "), preset: g.preset })}</span>`;
       html += `</div><table>`;
       for (const line of g.lines) {
         const p = products?.[line.sku];
         html += `<tr><td class="sku">${esc(line.sku)}</td>
-          <td>${esc(p ? lineName(products, { sku: line.sku, name: p.name }) : "")}</td>
-          <td class="num">${fmt(line.qty)}</td>
-          <td>${esc(line.unit)}</td>
+          <td dir="auto">${esc(p ? lineName(products, { sku: line.sku, name: p.name }) : "")}</td>
+          ${qtyCells(line.qty, line.unit)}
           <td class="num">${line.cut_length_mm == null ? ""
             : esc(fmtLen(line.cut_length_mm))}</td></tr>`;
       }
@@ -346,7 +366,7 @@ export function groupedBomHtml(grouped, products) {
     let out = `<div class="group-row"><div class="group-head"><strong>${t(key)}</strong></div><table>`;
     for (const r of rows)
       out += `<tr><td class="sku">${esc(r.sku)}</td><td></td>
-        <td class="num">${fmt(r.qty)}</td><td>${esc(r.unit)}</td><td></td></tr>`;
+        ${qtyCells(r.qty, r.unit)}<td></td></tr>`;
     return out + `</table></div>`;
   };
   // reported, never balanced away — the same two buckets the structure sheet
@@ -357,8 +377,11 @@ export function groupedBomHtml(grouped, products) {
   // no purchase line — so a section missing a part read as complete here. The
   // same failure the panel preview names: "a panel one part short must not
   // preview as complete".
+  // `roleWord` on the fallback: `role` is a backend enum, so a slot with no key
+  // printed a raw "rail" — untranslated English in a Hebrew-first UI, in the
+  // `.sku` cell that forces ltr on what is a translated WORD, not an id.
   html += bucket((grouped.unresolved || []).map((u) => ({
-    sku: u.slot_key || u.role, qty: u.engineering_qty, unit: "",
+    sku: u.slot_key || roleWord(u.role), qty: u.engineering_qty, unit: "",
   })), "bom.group_unresolved");
   return html + `</div>`;
 }
