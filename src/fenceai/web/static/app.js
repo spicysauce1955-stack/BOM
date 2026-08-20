@@ -14,6 +14,7 @@ import { initProfile } from "./js/profile.js";
 import {
   createProject, loadProjects, on, openProject, state,
 } from "./js/state.js";
+import { initSectionDecisions } from "./js/section-decisions.js";
 import { initStructureData } from "./js/structure-data.js";
 import { initStructure } from "./js/structure.js";
 import { initTabs } from "./js/tabs.js";
@@ -65,6 +66,7 @@ async function main() {
   initTabs();
   initPanel();
   initModelEditor();
+  initSectionDecisions();
   initStructureData();
   initStructure();
   initAssembly();

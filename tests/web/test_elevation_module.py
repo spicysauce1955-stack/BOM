@@ -270,6 +270,50 @@ out.posts_off_by_default = (() => {
   return svg.querySelectorAll(".elev-post").length;
 })();
 
+// --- every layer says WHICH member it belongs to ----------------------------
+// The defect this pins, recorded unfixed since 2026-08-16: `.elev-member`
+// carried `data-order` and the outline and seat layers carried nothing, so the
+// correspondence held only because three loops walked one array in one order.
+// The seats loop does NOT walk it one-for-one — it skips a member with no seat
+// — so its Nth rectangle is not the Nth member, and the only thing that made
+// that recoverable was a filter re-implemented in `assembly.js`.
+//
+// The fixture is built to break a positional reading: a BACK-face member sorts
+// to the front of the paint order, and only two of the three members seat.
+const LAYERS = {
+  width_mm: 1000, height_mm: 1000, gaps_mm: [],
+  members: [
+    // front, no seat — the one that shifts every later seat index
+    { slot_key: "plain", role: "infill", index: 0, x_mm: 0, y_mm: 0,
+      w_mm: 100, h_mm: 1000, face: "front", declared: true, sku: "A" },
+    // back, seated: sorts FIRST, so its paint order is not its wire order
+    { slot_key: "behind", role: "infill", index: 0, x_mm: 200, y_mm: 0,
+      w_mm: 100, h_mm: 1000, face: "back", declared: true, sku: "B",
+      seat_start_mm: 0, seat_end_mm: 150 },
+    { slot_key: "seated", role: "infill", index: 0, x_mm: 400, y_mm: 0,
+      w_mm: 100, h_mm: 1000, face: "front", declared: true, sku: "C",
+      seat_start_mm: 0, seat_end_mm: 150 },
+  ],
+};
+out.layer_identity = (() => {
+  const svg = renderElevation(LAYERS, { annotations: false });
+  const read = (sel) => [...svg.querySelectorAll(sel)].map((n) => ({
+    order: n.getAttribute("data-order"),
+    slot: n.getAttribute("data-slot"),
+    x: n.getAttribute("x"),
+  }));
+  return {
+    rects: elevationRects(LAYERS).map((m, order) => ({
+      order, slot: m.slot_key, seats: Boolean(m.seat) })),
+    // single-class selectors: the node stub matches one class list, not a
+    // descendant combinator, and a selector it cannot parse returns [] — which
+    // would make every assertion below pass against nothing
+    members: read(".elev-member"),
+    edges: read(".elev-edge"),
+    seats: read(".elev-seat"),
+  };
+})();
+
 console.log(JSON.stringify(out));
 """
 
@@ -508,3 +552,57 @@ def test_the_posts_are_off_unless_the_caller_asks(ev):
     """The Panel and Structure tabs answer what a panel is made OF. Turning the
     posts on for them would change two drawings nobody asked to change."""
     assert ev["posts_off_by_default"] == 0
+
+
+# --- every layer says which member it belongs to ------------------------------
+# Recorded unfixed on 2026-08-16 and again in `plan/open-work.md`: the outline
+# and seat layers tied a shape to a member by ARRAY POSITION, and only
+# `.elev-member` carried `data-order`. Nothing in the suite touched any of it.
+
+def test_every_drawn_layer_names_the_member_it_belongs_to(ev):
+    """The invariant, stated once: a shape in any layer can be traced back to
+    its member without counting. Position is not identity — `elevationRects`
+    re-sorts by face, and the seats layer skips a member that seats into
+    nothing, so two of the three layers are not even the same length."""
+    got = ev["layer_identity"]
+    for layer in ("members", "edges", "seats"):
+        assert got[layer], f"{layer} drew nothing"
+        assert all(row["order"] is not None for row in got[layer]), \
+            f"{layer} carries no data-order"
+
+
+def test_the_outline_of_a_member_is_the_member_it_outlines(ev):
+    """One edge per member, naming it. A hidden-edge outline is drawn OVER the
+    infill, so an outline paired with the wrong slat is a rail apparently
+    running through the wrong place — visible, and wrong in the drawing this
+    module exists to make trustworthy."""
+    got = ev["layer_identity"]
+    members = {row["order"]: row["x"] for row in got["members"]}
+    assert len(members) == 3, "no members read — the assertion below proves nothing"
+    assert len(got["edges"]) == len(members)
+    for edge in got["edges"]:
+        assert edge["order"] in members, f"edge names no member: {edge}"
+        assert edge["x"] == members[edge["order"]], \
+            "the outline is not on top of the member it names"
+
+
+def test_a_seat_names_its_member_even_though_the_layer_is_a_SUBSET(ev):
+    """The half a positional reading cannot survive. The seats layer skips any
+    member that seats into nothing, so its Nth rectangle is not the Nth member —
+    and the back-face member sorts to the FRONT of the paint order, so it is not
+    the Nth wire member either. The only correct answer is the one the rectangle
+    carries."""
+    got = ev["layer_identity"]
+    seated = {row["order"] for row in got["rects"] if row["seats"]}
+    assert len(seated) == 2 and len(got["rects"]) == 3, \
+        "the fixture must have a member that does NOT seat, or it proves nothing"
+    assert {row["order"] for row in got["seats"]} == {str(o) for o in seated}
+
+
+def test_the_back_face_member_still_paints_first(ev):
+    """The pairing must not have been bought by dropping the sort: a back-face
+    member is painted before the front it sits behind, and its `data-order` is
+    its PAINT order, which is what `raise`/`restore` puts back."""
+    got = ev["layer_identity"]
+    assert [row["slot"] for row in got["rects"]] == ["behind", "plain", "seated"]
+    assert [row["slot"] for row in got["members"]] == ["behind", "plain", "seated"]

@@ -7,6 +7,7 @@
 // they are the storage representation, not a rendered field.
 
 import { emit, state } from "./state.js";
+import { esc } from "./api.js";
 import { t } from "./i18n.js";
 
 export const UNITS = ["mm", "cm"];
@@ -150,6 +151,27 @@ export function unitParams(params = {}) {
 
 export function tu(key, params = {}) {
   return t(key, unitParams(params));
+}
+
+/** A locale sentence whose params are ids, names or figures, ready for
+ *  `innerHTML`: escape the TEMPLATE, then drop each param in bidi-isolated.
+ *
+ *  `esc(t(key, params))` is NOT the same thing and is the bug this replaces.
+ *  Interpolating first and escaping the result leaves a Latin id unisolated
+ *  inside a Hebrew sentence, and the id and the punctuation beside it reorder on
+ *  screen — "נבחר על פני RAIL-3050 (least_cost)" is the classic case, Latin runs
+ *  inside mirrored parentheses. Hebrew is the language this app OPENS in, so
+ *  that is the default reading, not an edge case.
+ *
+ *  Lifted here because there were two copies of it already (`panel.js` and,
+ *  with a code lookup in front, `warnings.js::localizedByCode`) and a third was
+ *  about to be written. It lives beside `unitParams` because that is what turns
+ *  `{…_mm}` into the reader's unit and a raw `role` into its word. */
+export function sentence(key, params = {}) {
+  let s = esc(t(key));
+  for (const [k, v] of Object.entries(unitParams(params)))
+    s = s.replaceAll(`{${k}}`, `<bdi>${esc(String(v))}</bdi>`);
+  return s;
 }
 
 export function currentUnit() {

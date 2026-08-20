@@ -8,8 +8,10 @@ import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
 import { emit, on, reloadProject, state } from "./state.js";
 import {
-  fmt, fmtLen, inputStep, money, toDisplayValue, toMm, tu, unitLabel,
+  fmt, fmtLen, inputStep, money, roleWord, sentence, toDisplayValue, toMm, tu,
+  unitLabel,
 } from "./units.js";
+import { loadStructure, sectionOf, tagOf } from "./structure-data.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
 export function initTabs() {
@@ -204,6 +206,11 @@ async function renderBom() {
   const [products, quotes] = await Promise.all([
     loadCatalogProducts(),
     apiGet(`/api/projects/${state.projectId}/quotes`).catch(() => []),
+    // The grouped panel names its rows from `structure-data.js`, and this tab
+    // was the only consumer that neither awaited nor subscribed to it — so a
+    // /structure fetch that resolved after this render left `run1` and raw span
+    // ids on screen for good. `assembly.js` awaits it for the same reason.
+    loadStructure().catch(() => null),
   ]);
   div.innerHTML = `<div class="panel">
       <button id="btn-save-quote" class="primary">${t("quote.save")}</button>
@@ -220,6 +227,7 @@ async function renderBom() {
     // rendered by nothing, so the BOM was silently short a line.
     + supplyProblemsHtml(data.bom.warnings, data.unresolved)
     + quotesHtml(quotes)
+    + groupedBomHtml(data.grouped, products)
     + bomHtml(data.bom, products);
   const quoteForm = document.getElementById("quote-label-form");
   const quoteInput = document.getElementById("quote-label-input");
@@ -276,6 +284,109 @@ function wireQuoteButtons(div, products) {
     }));
 }
 
+/** The same demand, grouped by what CAUSED it: a section, a panel, or the supply
+ *  decision that put the product on the list.
+ *
+ *  It carries no money, and that is the design rather than an omission. A BOM
+ *  line is a PURCHASE pooled per sku across the whole run — one bar is cut for
+ *  two bays — so a per-section price would be an apportionment nothing measured,
+ *  arriving with the authority of a priced table. The flat table below is where
+ *  money is true.
+ *
+ *  Tags come from `structure-data.js`, the single tag source for this tab and
+ *  both drawings; an element it cannot name (a stale report) falls back to its
+ *  own id rather than to a blank cell that reads as "no section". */
+/** The quantity cell and its unit cell, together, because they have to agree.
+ *
+ *  A qty is a COUNT ("8 each", "12 cut") unless its unit says it is a length.
+ *  `fmt` is the mm -> display converter and nothing else, so putting every qty
+ *  through it reported `0.8 each` to anyone who had switched the app to cm —
+ *  wrong by a factor of ten, in the one table built to answer "what does this
+ *  section need". And when the unit IS `mm` the number must be converted AND
+ *  the label swapped for `unitLabel()`, or a converted figure sits under a
+ *  literal "mm" while the priced table below it, on the same screen, says cm.
+ *  This is the guard `bomHtml` already applies to the same two fields; the
+ *  grouped view copied the number and not the guard. */
+function qtyCells(qty, unit) {
+  return unit === "mm"
+    ? `<td class="num">${esc(fmt(qty))}</td><td>${esc(unitLabel())}</td>`
+    : `<td class="num">${esc(String(qty))}</td><td>${esc(unit)}</td>`;
+}
+
+export function groupedBomHtml(grouped, products) {
+  const groups = grouped?.groups || [];
+  if (!groups.length) return "";
+  const KINDS = ["section", "node", "bay", "decision"];
+  // Three different ids, one tag source. A BAY's key IS an element id; a
+  // SECTION's is a run id, which `tagOf` does not index (it maps elements); and
+  // a NODE's names the post standing there, whose element id is `post@<node>`.
+  // Getting this wrong is not a crash, it is `run1` printed where the schedule
+  // and both drawings say `A` — a third name for one thing, which is exactly
+  // what one tag source exists to prevent.
+  const name = (g) => {
+    if (g.kind === "decision") return esc(g.chosen);
+    const tag = g.kind === "section" ? sectionOf(g.element_id)?.tag
+      : g.kind === "node" ? tagOf(`post@${g.element_id}`)
+        : tagOf(g.element_id);
+    return tag ? esc(tag) : `<bdi>${esc(g.element_id)}</bdi>`;
+  };
+  let html = `<div class="panel" id="bom-grouped">
+    <h3>${t("bom.grouped_title")}</h3>
+    <div class="meta">${t("bom.grouped_hint")}</div>`;
+  for (const kind of KINDS) {
+    const of = groups.filter((g) => g.kind === kind);
+    if (!of.length) continue;
+    html += `<h4 data-group-kind="${kind}">${t(`bom.group_${kind}`)}</h4>`;
+    for (const g of of) {
+      html += `<div class="group-row" data-group="${esc(g.element_id)}"
+                    data-kind="${kind}">
+        <div class="group-head"><strong>${name(g)}</strong>`;
+      if (g.kind === "decision" && g.rejected.length)
+        // the runner-up belongs BESIDE the choice: "cheaper than the others" is
+        // not an explanation, and this is the view that raised the question.
+        // `sentence`, not `esc(t(...))`: these params are Latin skus and a
+        // preset name inside a Hebrew sentence's parentheses, and escaping
+        // AFTER interpolating leaves them to reorder on screen.
+        html += ` <span class="meta">${sentence("bom.group_beat", {
+          rejected: g.rejected.join(", "), preset: g.preset })}</span>`;
+      html += `</div><table>`;
+      for (const line of g.lines) {
+        const p = products?.[line.sku];
+        html += `<tr><td class="sku">${esc(line.sku)}</td>
+          <td dir="auto">${esc(p ? lineName(products, { sku: line.sku, name: p.name }) : "")}</td>
+          ${qtyCells(line.qty, line.unit)}
+          <td class="num">${line.cut_length_mm == null ? ""
+            : esc(fmtLen(line.cut_length_mm))}</td></tr>`;
+      }
+      html += `</table></div>`;
+    }
+  }
+  const bucket = (rows, key) => {
+    if (!rows?.length) return "";
+    let out = `<div class="group-row"><div class="group-head"><strong>${t(key)}</strong></div><table>`;
+    for (const r of rows)
+      out += `<tr><td class="sku">${esc(r.sku)}</td><td></td>
+        ${qtyCells(r.qty, r.unit)}<td></td></tr>`;
+    return out + `</table></div>`;
+  };
+  // reported, never balanced away — the same two buckets the structure sheet
+  // carries, for the same reason
+  html += bucket(grouped.unassigned, "bom.group_unassigned");
+  html += bucket(grouped.from_stock, "bom.group_from_stock");
+  // A line nothing could supply is part of what a section NEEDS and appears on
+  // no purchase line — so a section missing a part read as complete here. The
+  // same failure the panel preview names: "a panel one part short must not
+  // preview as complete".
+  // `roleWord` on the fallback: `role` is a backend enum, so a slot with no key
+  // printed a raw "rail" — untranslated English in a Hebrew-first UI, in the
+  // `.sku` cell that forces ltr on what is a translated WORD, not an id.
+  html += bucket((grouped.unresolved || []).map((u) => ({
+    sku: u.slot_key || roleWord(u.role), qty: u.engineering_qty, unit: "",
+  })), "bom.group_unresolved");
+  return html + `</div>`;
+}
+
+
 function bomHtml(bom, products) {
   let html = `<div class="panel"><h3>${t("bom.title")} — ${t("bom.total")} ${esc(money(bom.total_cents))}</h3>
   <table><tr><th>${t("bom.sku")}</th><th>${t("bom.purchase")}</th><th>${t("bom.engineering")}</th>
@@ -295,7 +406,10 @@ function bomHtml(bom, products) {
   for (const [sku, plan] of Object.entries(bom.cut_plans || {})) {
     // no solver vocabulary and no bound number: the reader wants to know whether
     // the bar count can still come down, not what a relaxation computed
-    html += `<div class="panel"><h3>${t("bom.cut_plan")} — <span class="sku">${esc(sku)}</span>
+    // `cut-plan` is a scoping hook, not decoration: this panel's STOCK column is
+    // what the display-unit check reads, and an unscoped scan of every table in
+    // the tab reads whichever table happens to be first.
+    html += `<div class="panel cut-plan"><h3>${t("bom.cut_plan")} — <span class="sku">${esc(sku)}</span>
       ${plan.certified_optimal ? `<span class="tag active">${t("bom.optimal")}</span>`
         : `<span class="tag medium">${t("bom.best_found")}</span>`}</h3>
       <table><tr><th>${t("bom.bar_source")}</th><th>${tu("bom.stock")}</th><th>${tu("bom.cuts")}</th><th>${tu("bom.leftover")}</th></tr>`;

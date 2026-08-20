@@ -206,6 +206,73 @@ that excluded everybody:
   `no_item_covers_part_spec` at that station rather than a routing sentence about
   heights that are not the problem.
 
+### S17 — A section is asked why, and answered; then argued with
+Three topologies, because the scenario asks three different things. A **6000 mm straight
+run** on soil for the decisions and the conversation, an **L-shape** (runA
+4000 mm, 90° corner at n2, runB 3000 mm) for the two expectations that only
+exist when there is more than one section — isolation, and the corner post they
+share — and an **8000 mm straight run with a 1000 mm gate asked for at station
+3000** for the run-level fact that names no element at all.
+
+This is roadmap step 5 — *"focus on specific sections of the fence and get only
+the decisions related to the selected section. change, comment or start a
+conversation about it!"* — and it is a scenario rather than a unit test because
+the property it defends spans the whole spine: the decision graph, the topology
+that defines what a section IS, the learning store, and the boundary between a
+human's words and what gets built.
+
+Expect:
+
+1. **Only this section's decisions.** Every returned decision settled something
+   about run1. On an L-shape, asking about `runA` returns no `@runB` element.
+   And it says WHAT was decided, not merely that something was — a scenario
+   asserting non-emptiness is a slower unit test. On the straight run: three
+   equal bays (`[0,2000]`, `[2000,4000]`, `[4000,6000]`), the four posts that
+   carry them, and the layout sentence naming both the alternative it beat and
+   the rules that decided it — "Alternative [2438, 2438, 1124] was rejected
+   because of K-EQUAL@v1. Governed by K-EQUAL@v1, K-MAXSPAN@v2."
+2. **The run-level decisions are included.** `run_geometry` and
+   `choose_vertical_mode` decide for the SECTION and name no element; they are
+   what a person asking about a section wants first, and a scope-refs-only
+   reading would drop exactly those. **A gate fact is one of them.** On the
+   gated run the section's story contains the `gate_event` for `ev_gate` — "A
+   gate was asked for between 3000 mm and 4000 mm." — ahead of the two gate
+   posts at 3000 and 4000 that it forced. The gate names no element (the posts
+   and the opening do), so it reaches its section through `run_id` in its
+   payload or not at all; without it the reader is shown the effects and never
+   the cause. These sentences are rendered in the READER's language, so a count
+   inside one is grammar and not a number: at an end node, where one section
+   stops, Hebrew reads «צומת n1 בשרטוט, שבו מסתיים קטע אחד», never the plural
+   «נפגשים 1 קטעים» — and at the L-shape's corner, where two really do meet,
+   the plural is the correct form.
+3. **A shared corner post reaches both sections.** It is decided once and stands
+   on both, so neither section's story has a post that appeared from nowhere.
+4. **Causal order.** Decisions arrive by graph ordinal, which is causal order by
+   construction — every edge points from a lower ordinal to a higher one.
+5. **The section view refuses a moved drawing** (409 `topology_changed`), because
+   a section is a topology object and "the decisions for section A" stops being
+   true when A may no longer be that stretch. `/explain/{element}` does **not**
+   refuse: an element id is self-identifying, and the asymmetry is the difference
+   between the two questions.
+6. **A comment is stored verbatim against the decision**, in
+   `Correction.decision_ref` — scoped by `generation_run_id`, because a decision
+   node id means what it means only within the run that generated it
+   (`core/ids.py`: generated ids may not be referenced across runs).
+7. **The conversation reads back in the order it was said**, with a timestamp on
+   every turn.
+8. **Commenting changes no fence.** The stored run is byte-identical before and
+   after. A comment is evidence; it becomes an interpretation, an interpretation
+   becomes a PROPOSAL, and only a human confirms — the same boundary S12 draws
+   for a correction and S14 for an annotation. **AI never decides.**
+
+9. **The section explains exactly what the setting-out sheet lays on it.** Every
+   element the structure report puts in a section — its setting out and its bays
+   — appears in that section's decision trail. Two independent read models over
+   one run, joined: if the sheet lays out a post the trail never explains, one of
+   them is describing a fence the other did not build. This is the spine's own
+   consistency check, and it is asserted as containment rather than equality
+   because the trail legitimately explains more than the sheet draws.
+
 ## Invariants checked across all scenarios
 
 - span width ≤ applicable hard maximum (unless authorized exception exists — none in demo KB)

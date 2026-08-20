@@ -83,6 +83,13 @@ REFUSAL_CODES = [
     # is a fence that cannot be assembled rather than a worse buy; and
     # `no_item_covers_part_spec` is the generic case. A single merged code would
     # leave "no post found" a mystery, which is what they exist to avoid.
+    # A decision node id is positional, so a `decision_ref` asked for without
+    # the run it was made in names different decisions in different runs. The
+    # unsafe read is refused rather than warned about.
+    "decision_ref_needs_run",
+    # assembly steps read against a panel resolved from a different version of
+    # the model — the same shape as `topology_changed`, one document down
+    "model_changed",
     "post_spec_conflict",
     "post_routing_mismatch",
     "no_item_covers_part_spec",
@@ -93,6 +100,27 @@ def _bundles():
     en = json.loads((STATIC / "i18n" / "en.json").read_text())
     he = json.loads((STATIC / "i18n" / "he.json").read_text())
     return en, he
+
+
+def test_no_bundle_key_is_declared_twice():
+    """`json.load` keeps the LAST value silently, so a duplicate key is not a
+    parse error — it is a string that resolves to whatever happens to come
+    later in the file. It bit for real: a new panel added `assembly.title` and
+    `assembly.hint` above the Assembly TAB's own keys of the same name, and the
+    tab's copy won, so the Panel tab's instruction sheet was headed "Assembly
+    view" and told the reader to pick a bay from a list it does not have.
+
+    Every other test in this file loads the bundle through `json`, so none of
+    them can see this. The text has to be read as TEXT.
+    """
+    import collections
+    import re
+
+    for name in ("en", "he"):
+        raw = (STATIC / "i18n" / f"{name}.json").read_text()
+        keys = re.findall(r'^  "([^"]+)":', raw, re.M)
+        dupes = sorted(k for k, n in collections.Counter(keys).items() if n > 1)
+        assert not dupes, (name, dupes)
 
 
 def test_bundle_key_parity():
@@ -138,6 +166,11 @@ def test_backend_code_list_is_current():
         # route writes `"code": "x"` rather than `code="x"`. Both forms now.
         src / "api" / "app.py",
     ]
+    # ...and every read model, because they emit codes now too. Named as a
+    # DIRECTORY rather than file by file: `report/assembly.py` raised
+    # `model_changed` and this guard could not see it, which is the same blind
+    # spot the route files had before `api/app.py` was added to the list.
+    scanned += sorted((src / "report").glob("*.py"))
     emitted: set[str] = set()
     for path in scanned:
         text = path.read_text()
@@ -416,12 +449,24 @@ def test_the_inspector_renders_its_vocabularies_as_sentences():
 #   * `model.${side}` — a distributed slot's two insets.
 #   * `model.element_n` and the `model.derived.*` sentences — the number and the
 #     reason beside a figure the panel already answered.
+#   * `model.chip.<agree>` and its `_len` sibling — the part picker renders one
+#     chip per fact the part declares, and WHICH template it asks for is chosen
+#     from the agreement and from whether the fact carries a unit. Neither name
+#     is a literal the parity scan can see as belonging to anything, and a
+#     missing one puts a raw `model.chip.eq_len` inside a Hebrew pane.
+#   * `model.<dim>` — the width and thickness a part owns, rendered read-only
+#     where their fields used to be.
 COMPUTED_INSPECTOR_KEYS = [
     "model.inspect.rail", "model.inspect.board", "model.inspect.screws",
     "model.bottom_inset_mm", "model.top_inset_mm",
     "model.element_n", "model.rename_hint",
     "model.derived.margin", "model.derived.at", "model.derived.rails",
     "model.derived.from_param",
+    "model.chip.supplies", "model.chip.among", "model.chip.between",
+    "model.chip.eq", "model.chip.other",
+    "model.chip.among_len", "model.chip.between_len", "model.chip.eq_len",
+    "model.chip.other_len",
+    "model.width_mm", "model.thickness_mm", "model.dim.from_part",
 ]
 
 

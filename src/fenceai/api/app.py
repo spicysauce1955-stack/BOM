@@ -7,6 +7,7 @@ lives here. AI adapters are selected once at startup (stub by default, ADR-0009)
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -56,6 +57,8 @@ from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.project.model import Annotation, Project
+from fenceai.report.bom_groups import group_bom
+from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
 from fenceai.store.db import Store
 from fenceai.strategy.generator import LEGACY_MODEL_ID, generate
@@ -376,8 +379,16 @@ def get_bom(run_id: str):
     # routing an unresolved line out of `requirements` (so a blank sku can never
     # reach fulfill()/the ledger) must not make it disappear from this view —
     # /bom is a working view, so it reports the gap rather than refusing.
+    # The same demand, grouped by what CAUSED it. Derived here rather than in the
+    # client because the pegs are a backend fact and a second inversion of them
+    # in JS is how the two views would come to disagree about which bay bought a
+    # rail. Deliberately NOT topology-dependent: /bom stays readable when the
+    # drawing has moved on, which is why it groups by `run_ref` and leaves the
+    # section TAGS to `js/structure-data.js`, the single tag source.
     return {"requirements": priced.requirements, "unresolved": priced.unresolved,
-            "bom": priced.bom, "inventory_hash": inventory_hash}
+            "bom": priced.bom, "inventory_hash": inventory_hash,
+            "grouped": group_bom(result.strategy, priced.requirements, priced.bom,
+                                 priced.decisions, priced.unresolved)}
 
 
 @app.get("/api/runs/{run_id}/structure")
@@ -510,6 +521,43 @@ def explain(
     return {"element_id": element_id, "explanation": lines}
 
 
+@app.get("/api/runs/{run_id}/sections/{section_id}/decisions")
+def section_decisions(
+    run_id: str,
+    section_id: str,
+    lang: Literal["en", "he"] = "en",
+    units: Literal["mm", "cm"] = "mm",   # display unit only; the graph stores mm
+):
+    """Only the decisions that settled something about ONE section.
+
+    It REFUSES a moved topology, exactly as /structure does and for the same
+    reason: a section is a topology object, so "the decisions for section A" is
+    a false sentence once A may no longer be the stretch the reader is looking
+    at. /explain is per ELEMENT and needs no topology, which is why it does not
+    refuse — the asymmetry is the difference between the two questions, not an
+    inconsistency.
+    """
+    result = _run(run_id)
+    project = _project(result.run.project_id)
+    if project.topology.revision != result.run.topology_revision:
+        raise HTTPException(409, {
+            "code": "topology_changed",
+            "run_topology_revision": result.run.topology_revision,
+            "project_topology_revision": project.topology.revision,
+        })
+    graph = result.graph
+    try:
+        _, _, priced = _priced(result)
+    except HTTPException:
+        # a stale catalog must not cost the reader every other decision — the
+        # same trade /explain makes one route up
+        priced = None
+    if priced is not None:
+        graph = with_supply_decisions(graph, priced.decisions)
+    return decisions_for_section(graph, result.strategy, project.topology,
+                                 section_id, lang=lang, units=units)
+
+
 @app.get("/api/runs/{run_id}/impact/{object_id}")
 def knowledge_impact(run_id: str, object_id: str):
     """Which decisions in this run depend on a knowledge object (impact analysis)."""
@@ -536,6 +584,53 @@ def add_correction(project_id: str, body: CorrectionCreate) -> Correction:
     correction = Correction(id=new_id("corr"), project_id=project_id, **body.model_dump())
     state.store.save_correction(correction, actor=body.author)
     return correction
+
+
+@app.get("/api/projects/{project_id}/corrections")
+def list_corrections(
+    project_id: str,
+    decision_ref: str | None = None,
+    element_ref: str | None = None,
+    generation_run_id: str | None = None,
+):
+    """The conversation, read back.
+
+    There was no GET here at all: a correction went in, the UI alerted, and
+    nothing in the app could show it again — a suggestion box rather than a
+    conversation. `Store.list_corrections` already existed and had exactly one
+    caller, the knowledge proposer.
+
+    The filters are the three anchors a `Correction` carries. They are AND-ed,
+    and an unknown ref returns an empty list rather than a 404: a decision with
+    nothing said about it is a real and ordinary state, not a missing resource.
+
+    Note what a caller must NOT read into a `decision_ref` across runs. Node ids
+    are generated per run (`core/ids.py`), so a ref means what it means only
+    within its `generation_run_id` — which is why every correction carries one
+    and why this route lets you filter by it.
+    """
+    _project(project_id)   # 404 for a project that does not exist
+    if decision_ref is not None and generation_run_id is None:
+        # A decision node id is POSITIONAL — `d0007` is the seventh node the
+        # builder emitted, and inserting one gate event renumbers everything
+        # after it (`decisions/graph.py`, `core/ids.py`). Asking for a
+        # `decision_ref` across runs therefore mixes comments about different
+        # decisions that happen to share an ordinal. The unsafe read is made
+        # unrepresentable rather than warned about in a docstring nobody has to
+        # read; ask for the whole project's conversation instead if that is
+        # genuinely what you want.
+        raise HTTPException(422, {
+            "code": "decision_ref_needs_run",
+            "decision_ref": decision_ref,
+        })
+    out = state.store.list_corrections(project_id)
+    if decision_ref is not None:
+        out = [c for c in out if c.decision_ref == decision_ref]
+    if element_ref is not None:
+        out = [c for c in out if c.element_ref == element_ref]
+    if generation_run_id is not None:
+        out = [c for c in out if c.generation_run_id == generation_run_id]
+    return out
 
 
 @app.post("/api/projects/{project_id}/propose-knowledge")
@@ -1007,6 +1102,62 @@ def get_catalog():
             for sku, product in catalog.products.items()
         },
     }
+
+
+_LOCALE_BUNDLES: dict[str, dict[str, str]] = {}
+
+
+def _locale_bundle(lang: str) -> dict[str, str]:
+    """The frontend's own `i18n/<lang>.json`, read once per process and cached.
+
+    A second reader is expected, not a duplication: the browser and this backend
+    are different runtimes, and a label the server derives (a part type nobody
+    stocked before) needs the same bundle the browser renders everything else
+    from.
+    """
+    if lang not in _LOCALE_BUNDLES:
+        path = Path(__file__).resolve().parents[1] / "web" / "static" / "i18n" / f"{lang}.json"
+        _LOCALE_BUNDLES[lang] = json.loads(path.read_text(encoding="utf-8"))
+    return _LOCALE_BUNDLES[lang]
+
+
+def _part_type_labels(key: str) -> dict[str, str]:
+    labels = {}
+    for lang in ("en", "he"):
+        bundle = _locale_bundle(lang)
+        labels[lang] = bundle.get(f"part_type.{key}", key)
+    return labels
+
+
+@app.get("/api/parts")
+def list_parts() -> dict:
+    """The part library, for the Models editor's picker.
+
+    Each part's spec travels with it: an author choosing "38mm vinyl rail" should be
+    able to see WHY it is that, not only its name. Read-only — creating and editing
+    parts is the arc that builds an editor for them.
+    """
+    library = state.store.part_library()
+    return {"parts": [p.model_dump() for p in
+                      sorted(library.parts, key=lambda p: (p.type, p.id, p.version))]}
+
+
+@app.get("/api/part-types")
+def list_part_types() -> dict:
+    """The types actually in use, with a label per language.
+
+    `PartType` exists as a model and nothing instantiates it, so a route over stored
+    type data would return an empty list. These are derived from the library, which
+    is the honest amount of vocabulary this arc needs; a stored, editable type
+    library belongs to the arc where a NEW part must be given a type.
+
+    The label comes from `part_type.<key>` in the locale bundles and falls back to
+    the raw key, so a company that stocks something new gets a working picker before
+    anyone writes it a word.
+    """
+    library = state.store.part_library()
+    keys = sorted({p.type for p in library.parts})
+    return {"types": [{"key": k, "label_i18n": _part_type_labels(k)} for k in keys]}
 
 
 @app.put("/api/catalog/products")

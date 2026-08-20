@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field as dataclass_field
 
 from fenceai.catalog.model import CATALOG_SCHEMA_VERSION, Catalog, catalog_hash
@@ -607,16 +608,24 @@ def _post_sides(
 
 @dataclass(frozen=True)
 class _ModelPost:
-    """What the model(s) at one post asked for, and what could not be supplied.
+    """What the model(s) at one post asked for.
 
-    The cap's failure travels rather than being raised, because a cap is cosmetic:
-    every other unsupplied slot is a warning and an `unresolved` line, and a post
-    is the exception (without one there is no fence to be one part short of).
+    The cap is a FUNCTION of the post rather than a sku, because which post
+    finally stands here is not this function's decision: `_make_post` puts a
+    forced sku, a masonry mount and a gate reinforcement above the model's post,
+    each of them a post doing a different job. A cap resolved against the post
+    the model WANTED is a cap for a post that is not on the drawing — and it is
+    a wrong line on the BOM rather than a missing one, since it prices and fits
+    nothing. So the answer is deferred to the one place that knows.
+
+    It returns `(cap sku, the model refs that asked and got nothing)`. The
+    failure travels rather than being raised because a cap is cosmetic: every
+    other unsupplied slot is a warning and an `unresolved` line, and a post is
+    the exception (without one there is no fence to be one part short of).
     """
 
     post_sku: str | None = None
-    cap_sku: str | None = None
-    cap_unsupplied: str | None = None   # the model ref that asked for a cap
+    cap_for: Callable[[str], tuple[str | None, str | None]] | None = None
 
 
 def _model_post_skus(
@@ -691,26 +700,28 @@ def _model_post_skus(
     posts = sorted(set.intersection(*(set(skus) for _, _, skus in claims)))
     if not posts:
         raise _no_post_failure(claims, catalog, station)
-    chosen = catalog.products.get(posts[0])
 
-    caps: list[tuple[str, list[str]]] = []
-    for model, panel, _ in claims:
-        if model.post.cap is None:
-            continue        # this line has no opinion about caps
-        caps.append((model.ref, _matched(
+    capped = [(model, panel) for model, panel, _ in claims if model.post.cap is not None]
+    if not capped:
+        return _ModelPost(post_sku=posts[0])   # no line here has an opinion about caps
+
+    def cap_for(stood_sku: str) -> tuple[str | None, str | None]:
+        """The cap for the post that is ACTUALLY standing here.
+
+        Intersected across every claiming model, exactly as the post is: both
+        lines' cap specs apply to the one cap on the one post between them."""
+        stood = catalog.products.get(stood_sku)
+        caps = [(model.ref, _matched(
             model.post.cap.eligibility, catalog,
             {**panel,
-             **(chosen_post_facts(chosen, panel["post"])
-                if chosen is not None else {})},
-        )))
-    if not caps:
-        return _ModelPost(post_sku=posts[0])
-    agreed = sorted(set.intersection(*(set(skus) for _, skus in caps)))
-    return _ModelPost(
-        post_sku=posts[0],
-        cap_sku=agreed[0] if agreed else None,
-        cap_unsupplied=None if agreed else ", ".join(sorted(ref for ref, _ in caps)),
-    )
+             **(chosen_post_facts(stood, panel["post"]) if stood is not None else {})},
+        )) for model, panel in capped]
+        agreed = sorted(set.intersection(*(set(skus) for _, skus in caps)))
+        if agreed:
+            return agreed[0], None
+        return None, ", ".join(sorted(ref for ref, _ in caps))
+
+    return _ModelPost(post_sku=posts[0], cap_for=cap_for)
 
 
 def _post_model(
@@ -739,20 +750,21 @@ def _post_model(
 
 
 def _cap_unsupplied(
-    strategy: Strategy, model_post: _ModelPost, post_id: str, station: Mm,
+    strategy: Strategy, asked: str | None, post_id: str, station: Mm,
 ) -> None:
-    """A model asked for a cap and nothing in the catalog covers the spec.
+    """A model asked for a cap and nothing covers the spec — against the post
+    that ACTUALLY stands here, which is what `_make_post` hands back.
 
     The same code as the post's failure and a different severity, which is the
     whole distinction: a cap is cosmetic, so this is a note on an answer rather
     than a refusal of it."""
-    if model_post.cap_unsupplied is None:
+    if asked is None:
         return
     strategy.warnings.append(StrategyWarning(
         code="no_item_covers_part_spec", severity="warning",
-        message=f"No item in the catalog covers {model_post.cap_unsupplied}'s cap "
-                f"specification at station {station}; the post is uncapped.",
-        params={"model": model_post.cap_unsupplied, "station_mm": station,
+        message=f"No item in the catalog covers {asked}'s cap specification at "
+                f"station {station}; the post is uncapped.",
+        params={"model": asked, "station_mm": station,
                 "slot_key": "cap", "role": "cap"},
         element_refs=[post_id],
     ))
@@ -845,10 +857,16 @@ def _make_post(
     override_nodes: list[str] | None = None,
     tilt_deg: int = 0,
     model_post: str | None = None,
-    model_cap: str | None = None,
-) -> Post:
+    model_cap: Callable[[str], tuple[str | None, str | None]] | None = None,
+) -> tuple[Post, str | None]:
     """Create a post; every selection resolved from knowledge BEFORE the decision
-    node is recorded — elements are never mutated afterwards (critic finding 4)."""
+    node is recorded — elements are never mutated afterwards (critic finding 4).
+
+    Returns the post and, when a model asked for a cap that nothing covers, the
+    refs that asked — the caller files that warning, because it is the one
+    holding the strategy. The cap is resolved HERE and not by the caller for the
+    same reason the post's sku is: the precedence below is what decides which
+    post stands, and a cap chosen before it would be a cap for another post."""
     mounting, mount_sku, governed = _resolve_mounting(kb, scope, surface)
     if forced_mounting:
         mounting = forced_mounting
@@ -871,11 +889,12 @@ def _make_post(
         sku_refs = []
     else:
         sku, sku_refs = _resolve_default_post(kb, scope, surface)
+    cap_sku, cap_unsupplied = model_cap(sku) if model_cap else (None, None)
     post = Post(
         id=post_id, run_ref=run_ref, station_mm=station, kind=kind,  # type: ignore[arg-type]
         reinforced=reinforced, mounting=mounting, sku=sku,  # type: ignore[arg-type]
         ground_z_mm=ground_z_mm, base_z_mm=base_z_mm, tilt_deg=tilt_deg, pinned=pinned,
-        cap_sku=model_cap or "",
+        cap_sku=cap_sku or "",
     )
     builder.add(
         "structural", "place_post",
@@ -889,7 +908,7 @@ def _make_post(
         governed_by=governed + (reinforcement_refs or []) + sku_refs,
         status="pinned" if pinned else "proposed",
     )
-    return post
+    return post, cap_unsupplied
 
 
 # --- node posts ---------------------------------------------------------------
@@ -1006,10 +1025,9 @@ def _generate_node_posts(
                 ) for r, s in touches],
                 resolved_posts,
             )
-        _cap_unsupplied(strategy, model_post, f"post@node:{node.id}", station0)
-        post = _make_post(
+        post, cap_gap = _make_post(
             builder, kb, scope,
-            model_post=model_post.post_sku, model_cap=model_post.cap_sku,
+            model_post=model_post.post_sku, model_cap=model_post.cap_for,
             post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
             station=station0, kind=kind, surface=surface,
             ground_z_mm=ground_z(topology, run0, station0),
@@ -1021,6 +1039,7 @@ def _generate_node_posts(
             forced_sku=forced_sku, forced_mounting=forced_mounting,
             override_nodes=override_nodes,
         )
+        _cap_unsupplied(strategy, cap_gap, post.id, station0)
         strategy.posts.append(post)
 
 
@@ -1401,7 +1420,7 @@ def _generate_run(
         seg_kb, seg_ctx = _segment_view(kb, scope, ctx["run"], model)
         select_node = builder.add(
             "selection", "select_model",
-            payload={"model_ref": model.ref, "source": source,
+            payload={"run_id": run.id, "model_ref": model.ref, "source": source,
                      "options": options},
             inputs=[run_fact.id],
         )
@@ -1412,7 +1431,8 @@ def _generate_run(
         max_span_mm: Mm = next(a.value for a in res.winner.actions if a.kind == "set_param")
         firing = builder.add(
             "rule_firing", "resolve_max_span",
-            payload={"param": "max_span_mm", "value": max_span_mm},
+            payload={"run_id": run.id, "param": "max_span_mm",
+                     "value": max_span_mm},
             inputs=[run_fact.id, select_node.id],
             governed_by=[res.winner.version.ref],
             # a defeated edge cites the LOSING version (decision-model.md); the loser
@@ -1530,7 +1550,12 @@ def _generate_run(
     for gs, ge, _, ev_id in gates:
         fact = builder.add(
             "input_fact", "gate_event",
-            payload={"event_id": ev_id, "start_mm": gs, "end_mm": ge},
+            # `run_id` is how a run-level node names its SECTION
+            # (report/section_decisions.py). A gate names no element — the posts
+            # it forces do — so without it the section that the gate reshaped
+            # gets the reinforced posts and never the gate that caused them.
+            payload={"run_id": run.id, "event_id": ev_id,
+                     "start_mm": gs, "end_mm": ge},
         )
         gate_fact_ids[ev_id] = fact.id
         for s in (gs, ge):
@@ -1671,10 +1696,9 @@ def _generate_run(
         model_post = _model_post_skus(
             library, default_model, catalog, parts,
             _post_sides(post_facts, station, length, kind), resolved_posts)
-        _cap_unsupplied(strategy, model_post, f"post@{run.id}:{station}", station)
-        post = _make_post(
+        post, cap_gap = _make_post(
             builder, kb, scope,
-            model_post=model_post.post_sku, model_cap=model_post.cap_sku,
+            model_post=model_post.post_sku, model_cap=model_post.cap_for,
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
             station=station, kind=kind, surface=surface,
             ground_z_mm=ground_z(topo, run, station),
@@ -1688,6 +1712,7 @@ def _generate_run(
             override_nodes=override_nodes,
             tilt_deg=tilt_deg,
         )
+        _cap_unsupplied(strategy, cap_gap, post.id, station)
         strategy.posts.append(post)
 
     # -- gate elements ---------------------------------------------------------
@@ -1770,7 +1795,12 @@ def _generate_run(
     _surface_conflicts(vert_res.conflicts, builder, strategy)
     vertical_node = builder.add(
         "vertical", "choose_vertical_mode",
-        payload={"mode": vertical, "slope_permille": slope_permille},
+        # `run_id` because this node decides for the SECTION and names no
+        # element. A reader asking what was decided about a section had to infer
+        # it from the evidence closure otherwise, which cannot reach a node
+        # emitted before that run's geometry fact — so say it.
+        payload={"run_id": run.id, "mode": vertical,
+                 "slope_permille": slope_permille},
         inputs=[run_fact.id],
         governed_by=vertical_refs,
         defeated=vertical_defeated,
@@ -1894,6 +1924,7 @@ def _generate_run(
         layout_node = builder.add(
             "structural", "layout_spans",
             payload={
+                "run_id": run.id,
                 "segment": [seg_start, seg_end],
                 "widths": layout.widths,
                 "alternatives": (
@@ -1962,10 +1993,9 @@ def _generate_run(
             model_post = _model_post_skus(
                 library, default_model, catalog, parts,
                 _post_sides(post_facts, s, length, "line"), resolved_posts)
-            _cap_unsupplied(strategy, model_post, f"post@{run.id}:{s}", s)
-            post = _make_post(
+            post, cap_gap = _make_post(
                 builder, kb, scope,
-                model_post=model_post.post_sku, model_cap=model_post.cap_sku,
+                model_post=model_post.post_sku, model_cap=model_post.cap_for,
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
                 station=s, kind="line", surface=surface,
                 ground_z_mm=ground_z(topo, run, s),
@@ -1975,6 +2005,7 @@ def _generate_run(
                 override_nodes=override_nodes,
                 tilt_deg=tilt_deg,
             )
+            _cap_unsupplied(strategy, cap_gap, post.id, s)
             strategy.posts.append(post)
         for s0, s1 in zip(stations, stations[1:]):
             width = s1 - s0

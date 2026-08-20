@@ -73,9 +73,14 @@ export function defaultEligibleMember(sku, priority = 1) {
   return { kind: "catalog_item", sku: sku || "", priority, approval: "auto" };
 }
 
+// `part_id: ""` is the schema's own default and means *this slot names no part
+// yet*. Written out rather than left off so the picker has a field to set and
+// `eligibilitySource` a field to read on a row the "+ Add" button just made —
+// an absent key and an empty one answer the same, and only one of them is what
+// the document says.
 export function defaultRequirement(role) {
   return {
-    role, qty: 1, length_rule: null, overlap_mm: 0,
+    part_id: "", role, qty: 1, length_rule: null, overlap_mm: 0,
     option_axis: null, sku_by_option: {}, eligibility: defaultEligibility(),
   };
 }
@@ -198,4 +203,126 @@ export function idCollision(session, rows) {
   if (!canChooseId(session)) return null;
   const id = (session.model?.id || "").trim();
   return (rows || []).some((row) => row.id === id) ? id : null;
+}
+
+// --- the part picker's logic, kept pure so node can test it ------------------
+// panel-inspector.js is DOM; this is not. The same split base-top.js already has,
+// and the reason the picker can be tested without a browser.
+
+/** Which of four shapes a slot is. Mirrors `PartRequirement.eligibility_source`
+ *  exactly — two answers to one question would drift, and this one decides which
+ *  pane an author sees. `part_id` first: resolution fills `predicate` on a
+ *  part-named slot, and a resolved document must not read as rule-authored. */
+export function eligibilitySource(req) {
+  if (!req) return "unspecified";
+  if (req.part_id) return "part";
+  if (req.eligibility?.predicate) return "authored_predicate";
+  if (req.eligibility?.members?.length) return "authored_members";
+  return "unspecified";
+}
+
+// The dimension fields each holder authors, and that a PART fills once one is
+// named. Mirrors `_refuse_authored_dimensions`' two call sites in
+// `fencemodel/model.py` — `FrameSlot("thickness_mm")` and
+// `Member("width_mm", "thickness_mm")` — and it is the same exclusion `role` is,
+// one level up: the fields sit on the HOLDER rather than on the requirement, so
+// `PartRequirement._part_or_authored` cannot see them and a second validator has
+// to. A fixing rule and the post carry none, so they are absent rather than empty.
+//
+// The editor reads this twice: to HIDE the control (a width field on a slot whose
+// part owns the width is an invitation to a 422 nobody can explain) and to CLEAR
+// what a holder already carries when a part is chosen, in the same act.
+export const PART_DIMENSIONS = {
+  frame: ["thickness_mm"],
+  infill: ["width_mm", "thickness_mm"],
+};
+
+/** The version of a part that a document naming `id` MEANS.
+ *
+ *  Mirrors `PartLibrary.latest_active`, and it has to: `part_id` is unpinned on
+ *  purpose (a slot stores `rail-38`, never `rail-38@v3`), so the backend resolves
+ *  the newest ACTIVE version at generation. `/api/parts` returns EVERY version
+ *  ascending, drafts and retired included — so taking the first row would show v1's
+ *  facts beside a bay priced against v2, label an active part "not published" the
+ *  moment someone drafted a v3, and list one id once per version in the picker.
+ *
+ *  The fallback is the highest version of any status, because a part that has only
+ *  ever been a draft still EXISTS: rendering it as missing would tell the author
+ *  their slot names nothing, which sends them to a different repair. */
+export function latestPart(parts, id) {
+  if (!id) return null;
+  const rows = (parts || []).filter((p) => p.id === id);
+  if (!rows.length) return null;
+  const active = rows.filter((p) => p.status === "active");
+  return (active.length ? active : rows)
+    .reduce((best, p) => (p.version > best.version ? p : best));
+}
+
+/** Parts grouped by type, both levels sorted — a picker that reshuffles between
+ *  renders makes an author lose their place.
+ *
+ *  ONE ENTRY PER ID, not per version. The picker's value is the bare `part_id`, so
+ *  two versions of one part are two options that write the same thing and read as a
+ *  duplicate the author has to guess between. Which version each row SHOWS is
+ *  `latestPart`'s answer, so the option label and the chips below it are the same
+ *  version the generator will resolve. */
+export function partsByType(parts) {
+  const byType = new Map();
+  for (const id of new Set((parts || []).map((p) => p.id))) {
+    const part = latestPart(parts, id);
+    if (!part) continue;
+    if (!byType.has(part.type)) byType.set(part.type, []);
+    byType.get(part.type).push(part);
+  }
+  return [...byType.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([type, list]) => ({
+      type, parts: list.slice().sort((a, b) => a.id.localeCompare(b.id)),
+    }));
+}
+
+/** What the part requires, one chip per declared fact. The author picked a name;
+ *  this is how they see what the name MEANS without leaving the slot.
+ *
+ *  STRUCTURED, never prose. An earlier draft returned a `text` built here, and
+ *  the text was English — in a Hebrew-first app, from the one module that may
+ *  not import i18n (this file is import-free so node can run it, which is the
+ *  whole reason the picker's logic is testable at all). So the fact travels and
+ *  panel-inspector.js renders it through `model.chip.<agree>`: the phrasing is
+ *  data in both bundles, and no sentence is assembled where no locale exists. */
+export function specChips(part) {
+  return (part?.spec || []).map((f) => ({
+    key: f.key, agree: f.agree, value: f.value ?? null, unit: f.unit ?? null,
+  }));
+}
+
+/** Everything the slot pane needs about the part, joined from the slot, the
+ *  library and the preview the editor already fetched.
+ *
+ *  `candidates` and `chosen` come off `PreviewPart.eligible_skus` and `.sku` — no
+ *  new request, because the candidate set is already on the wire.
+ *
+ *  `counted` says whether the preview ANSWERED for this slot at all, and it is not
+ *  the same question as `candidates === 0`. `preview_panel` emits rows for the
+ *  frame, the infill and the fixings only — never for M-VINYL's post or cap — so a
+ *  slot with no row has an UNKNOWN candidate set, not an empty one. Reported apart
+ *  because a zero printed for "nobody asked" reads as a measurement, and the two
+ *  slots the rule-authored pane exists FOR are exactly the ones with no row. */
+export function partSummary(req, { parts = [], preview = null, slotKey = "" } = {}) {
+  const source = eligibilitySource(req);
+  const part = latestPart(parts, req?.part_id);
+  const row = (preview?.parts || []).find((p) => p.slot_key === slotKey)
+    || (preview?.unsupplied || []).find((p) => p.slot_key === slotKey) || null;
+  return {
+    source,
+    part,
+    chips: specChips(part),
+    counted: row !== null,
+    candidates: (row?.eligible_skus || []).length,
+    eligibleSkus: row?.eligible_skus || [],
+    chosen: row?.sku || "",
+    // a slot naming a part the library does not have. Reported, never rendered as
+    // an empty select — an empty select reads as "you never chose one".
+    missing: source === "part" && !part,
+  };
 }

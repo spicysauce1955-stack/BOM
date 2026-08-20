@@ -1,5 +1,389 @@
 # Current status
 
+## The merge review: three reviewers, two blocking defects, one blocking hole (2026-08-20)
+
+Before merging the 40-commit branch: an architecture critic, a test reviewer and
+a frontend-contract reviewer over `origin/main...HEAD` plus the uncommitted tree.
+Verdicts SOUND-WITH-FIXES, GAPS, and 2 BLOCKS-MERGE. Everything blocking is
+fixed; what was left is written up in `plan/open-work.md` with its evidence.
+
+**The two user-visible defects were both mine, and both invisible for the same
+reason: every test rendered in millimetres.** `fmt()` is the mm -> display
+converter and nothing else, and the grouped BOM and the assembly sheet put every
+quantity through it — so the moment a reader switched the app to cm, "8 each"
+became **0.8 each** and a step read "fit ×0.3 rails", while the priced table on
+the same screen said 8. The second half is worse than the arithmetic: when a
+unit genuinely IS `mm` the number must convert AND the label must be swapped for
+the reader's, or a converted figure sits under a literal "mm". `bomHtml` has
+carried exactly this guard for months; the grouped view copied its number and
+not its guard. Both are now one `qtyCells()` with the rule stated once, and five
+new node tests render the same payload in BOTH units — the dimension the whole
+suite was blind to.
+
+**The blocking test hole: the join everything was renamed for reached no test.**
+`decision_id` was made content-derived so the grouped BOM's group, the graph node
+`/explain` prints, the section route and a comment's `decision_ref` would all be
+one name. But NO fixture in the suite produced a supply decision that reached the
+API — the demo models name one product per slot, so `select_supply` never fired
+past the wire. Two mutations proved it with 1570 green: deleting the section
+route's `with_supply_decisions` enrichment, and renaming the id prefix `s` ->
+`sup`. Worse, the test that claimed to defend the join computed its expectation
+with `decision_id` itself — it proved `bom_groups` calls that function and
+nothing about the graph, which is why the rename survived. There is now one API
+test that builds a genuinely deciding fence through the product's own routes (two
+catalog products, a published model with two-member eligibilities) and compares
+two strings from two different routes; it kills both mutations, and the unit test
+now compares against the built graph rather than against the function under test.
+
+**A gate's own section never heard about the gate.** The `gate_event` fact
+carried no `run_id`, so `decisions_for_section` could not reach it: a reader saw
+two reinforced posts appear at 3000 and 4000 with no stated cause, and the
+`gate_event` templates written for that panel were unreachable from it. One line,
+plus S17 assertions. The same round found the Hebrew sentence for an END node
+read «שבו נפגשים 1 קטעים» — "1 sections meet" — where the common case is one
+section stopping; the bundles' existing `_one` convention now covers it.
+
+**And the smaller ones, fixed rather than filed**: `sentence()` (escape the
+template, then drop each param in bidi-isolated) existed twice and was about to
+be written a third time, so it moved to `units.js` — four call sites that were
+interpolating Latin skus and run ids into Hebrew prose and escaping afterwards
+now isolate them; the unresolved bucket printed an untranslated `rail` in a cell
+that forces ltr; the grouped BOM's product-name cell had lost the `dir="auto"`
+the priced table gives the same field; the AI-port fitness test compared two
+COUNTS, so a decoy `class StubSomethingElse:` satisfied it — it now checks
+protocol conformance per port; and S17's doc caught up with two expectations its
+tests had been asserting silently.
+
+**One correction to a reviewer.** The frontend review reported the grouped BOM
+rendering "600 mm" for an mm-unit line in cm mode. The bug is real and is fixed,
+but no demo product is measured in mm — real units are `application`, `cut` and
+`each` — so that reproduction came from a synthetic fixture, not from anything a
+user sees today. It is a guard against a shape the catalog permits, not a
+shipped defect.
+
+1581 pytest · 193 scenario tests · compatibility gate byte-identical · 200/200
+browser checks.
+
+## The seven findings the review left open, closed (2026-08-20)
+
+The 2026-08-20 test review left seven findings open when the session ran out of
+room. All seven are closed: **1570 pytest** (+6) and **200 browser checks** (+1,
+two rewritten). Every new assertion was shown failing against a mutant first —
+including the three browser ones, which cost two full suite runs and were worth
+both.
+
+**The two that were testing nothing.** Decision-group ORDER was unobservable:
+every fixture that decided anything decided exactly ONE thing, and a one-element
+list comes back the same under every comparator — including one keyed on
+`chosen`, which is the outcome-derived ordering `bom_groups.py` argues against at
+length. The fixture now decides two things that disagree in direction (the rail
+takes the LATER sku, the infill the earlier), so a `chosen` key is visibly wrong,
+and a second test splits one decision in two so the key's third component
+(`sorted(requirement_ids)`) is reachable at all — a stable sort's tie is not an
+order, it is whatever the caller happened to pass. `unplaced` had its FIELDS
+pinned and not its order, so a `set` rebuild or a tidy-looking `sorted()` was
+invisible; it is the panel's own slot order (frame, infill, fixings) because that
+is the order a fitter works in.
+
+**The one that was served by nobody.** `grouped.unresolved` was rendered in the
+node harness and asserted at no API level, so deleting the fifth argument at
+`api/app.py:391` left the suite green while a section missing a part read as
+complete. The new route test provokes the gap through the product's own editors —
+a catalog product whose stock is shorter than the piece, and a default component
+aimed at it — rather than by forcing state.
+
+**The tag lookup, which was the riskiest branch in the module and covered
+nowhere.** `groupedBomHtml` resolves three different kinds of id three different
+ways (a section's key is a RUN id, a node's names the POST standing there, a
+bay's is already an element id). `structure-data.js` had never been loaded in the
+node harness, so `tagOf`/`sectionOf` answered null and EVERY group took the
+unknown-element fallback. The harness now drives the real tag source over a
+structure report, and each branch is asserted by equality against the tag that
+element actually has.
+
+**And the browser check that was satisfied by the failure it existed to
+prevent.** It asked that a group head "does not look like a raw id" — which
+printing `A` on every row of the table satisfies, one name for four bays, the
+exact confusion a single tag source exists to prevent. It now re-derives the
+mapping from `/api/runs/{id}/structure` the way `structure-data.js` does and
+compares per element; the mutant that tags everything `A` fails it and failed
+nothing else in the suite, which is the measure of how much the old one was
+worth. This also covers the one thing the node harness cannot: its structure
+fixture is a hand-written literal, so a backend field rename would leave it green
+— the browser check reads the real route.
+
+**Nothing at any level had read a NUMBER out of the grouped table in a browser.**
+The checks counted rows and cells, so a renderer printing the CUT LENGTH in the
+quantity column passed all of them; it now does not (the mutant reports bays
+totalling 5000 against a section's 2500). The property asserted is the one the
+view is built on: a bay is a strict subset of its section, so per sku the bays
+can never total more, and a bay-only part must total exactly the same in both —
+which is what breaks when a `GroupedLine` is shared between two lists and merged
+in place.
+
+**One check now asserts the mechanism instead of a word.** "The instructions are
+the author's own words" was a single Hebrew word copied out of M-VINYL — which
+would equally have matched that sentence rendered under the wrong step, and
+would have broken the day an author reworded it. It now reads the model's own
+`text_i18n` off the API and requires every authored sentence to appear and the
+English of a Hebrew UI not to, which is the actual claim and the one a
+`text_i18n[locale] ?? .en` fallback silently breaks.
+
+**Left in the working tree, not committed.** The three browser checks live in
+`tools/ui_smoke.py`, which another agent also has uncommitted work in — including
+a check that is currently RED because it is unfinished, and the `check(detail=)`
+signature these three depend on. Committing the file would land their in-flight
+work under this message and a failing check with it; that mistake already has an
+archaeology note further down this file. The hunks stay in the tree until their
+branch lands.
+
+## The test review, and the bug it found under a heading (2026-08-20)
+test-reviewer over the grouped BOM and the assembly steps, 45 mutants, 22 alive.
+Verdict GAPS and it was right: the invariants each view is NAMED for were held,
+and the numbers those views print were pinned nowhere.
+
+**Three real defects, not test gaps.** `error.model_changed` — a refusal added
+that same day — was in neither locale bundle and in no code list, so a user
+hitting it got "the action failed (400)". It was invisible to the guard twice
+over: `report/` was not among the scanned files, and the code was passed
+POSITIONALLY where the guard greps for `code="..."`. `StepPart.sku` was copied
+from a field documented "resolved by fulfillment, never here", so it was empty on
+every step of every plan — a column that always fell back and a value no test
+could pin. And the Panel tab's instruction sheet was headed **"Assembly view —
+pick a bay above"** on a tab with no bay list, because two keys were added to
+each bundle that the Assembly TAB already owned: `json.load` keeps the LAST
+value, so the tab's copy won. Every test in that file reads the bundles through
+`json`, which resolves a duplicate silently — the new guard reads the text.
+
+**One correction back to the reviewer.** It reported a shipped double-report, an
+unpegged line counted as `unassigned` AND `from_stock`. Not shipped: with a BOM
+computed from the same requirements there is no `from_stock` row. My TEST built
+the impossible pair — a requirement the BOM had never seen — and then asserted
+too weakly to notice what it had manufactured.
+
+**And the standard, missed by me and caught here.** The merge key gained
+`length_basis` in the architecture-review round *with no failing test behind it*;
+so did the peg de-duplication in the same commit. Both have one now. Nothing
+anywhere asserted a single concrete quantity of a group, so one lost
+`model_copy` — the same line object appended to a section list and a bay list,
+then merged in place — corrupted the first bay into the section's totals with the
+whole suite green. `PanelPreview.assembly` could be blanked without a red test,
+the feature vanishing from the payload and the tab.
+
+Two vacuous fixtures replaced (a "variant slot" test with no variant, running on
+a model `validate_model` rejects; `assert "b" in e`, free because every message
+begins "assembly step") and one browser check that asserted the ABSENCE of a
+warning, so it passed against the feature deleted.
+
+1564 pytest · 191 scenario tests · 198/199 smoke · gate byte-identical.
+
+## The BOM answers the question an estimator asks (2026-08-19)
+`plan/open-work.md` item 4. `Bom.lines` are flat and sorted by sku, which is the
+right shape for placing an order and the wrong one for every question asked
+before it: what does THIS section need, what is in THIS panel, and which choice
+put that product on the list. `report/bom_groups.py` groups the same demand three
+ways, recomputing nothing — every number is an `engineering_qty` `resolve_supply`
+already settled, re-grouped by the pegs the line already carries.
+
+**It carries no money, and that is the design.** A BOM line is a PURCHASE pooled
+per sku across the run — one 3000 mm bar is cut for two bays — so a per-section
+price is an apportionment nothing measured, arriving with the authority of a
+priced table. The missing concept is not arithmetic: it is a named, versioned
+apportionment POLICY, which is an objective in ADR-0007's sense and belongs in an
+ADR. An estimator quoting a two-phase job genuinely needs it, and it is now the
+most valuable single thing left on the list.
+
+A post shared at a node is named rather than given to a side, and the route
+groups by `run_ref` so `/bom` needs no topology and does not inherit
+`/structure`'s 409 when the drawing moves on.
+
+## The two review rounds, and what they cost me (2026-08-20)
+architecture-critic and test-reviewer over the three slices, per CLAUDE.md. Both
+verdicts were SOUND-WITH-FIXES / GAPS and both were worth their cost.
+
+**The finding worth being embarrassed by**: `bom_groups` named a decision group
+`role:slot:chosen` — the outcome-derived id `decisions/supply.py` spends a
+docstring refusing, and which I had fixed there the same day. One decision, two
+names, and the one in the money view changed when the yard restocked.
+
+Three more that would have bitten: an unresolved line was carried by the API and
+rendered by nothing, so a section missing a part read as complete — the failure
+the BOM tab records having had once already; the grouped panel read the tag
+source without awaiting it, the only consumer that neither awaited nor
+subscribed; and the merge key had silently diverged from the schedule's while
+claiming to be the same one, dropping `length_basis` so slope-cut and width-cut
+rails merged.
+
+Twelve mutations survived across the two slices before this round and die now.
+Two whole render functions had no test at all, including one I had written an
+hour earlier.
+
+**Architecture fitness tests** landed in the same pass (audit §5, "the right
+answer to the whole class of drift"). Nine structural assertions — layering, no
+AI in deterministic modules, and the backend doc's route and table inventories
+counted rather than claimed. They found real drift on their first run and not
+mine: the part-library arc had added a table and two routes without touching the
+doc. Two of my own rules were wrong first, and both times the TEST was measuring
+the wrong thing: importing `ai.records` for a data shape is not reaching for an
+AI port, and the doc counts method+path pairs rather than unique paths.
+
+1553 pytest · 191 scenario tests · 198/199 smoke · gate byte-identical.
+
+## A panel can say how it goes together (2026-08-19)
+`plan/open-work.md` item 2, roadmap Admin 3 — the one item with **no foundation
+at all**: nothing on `FenceModel` carried prose, an ordering, or a step.
+
+The line the plan drew is the one the schema draws. *"An instruction that is only
+text is a doc, while an instruction that names slots and an order is data the
+assembly film could already drive."* So a step names the slots it fits, and the
+consequences follow from that alone: the film can order itself by it, a panel's
+parts can be split by it, and a slot no step places is a gap something can
+report. An `assembly` step must name parts; an `installation` step need not —
+"leave the footings to cure" places nothing and is exactly the second half of
+that roadmap line, which is why `kind` exists rather than one flat list.
+
+**The governing property** is the same shape as `Σ(parts) ≡ BOM`: every member of
+the panel is placed by exactly one step, or reported as `unplaced`. A sheet that
+quietly omits the fixings reads as a finished panel to the person holding it,
+which is worse than no sheet at all.
+
+Four calls worth keeping. A model with no steps gets `None` and not an empty
+plan, because "says nothing about its order" and "takes no steps" are different
+facts and the film needs the difference to know whether to fall back. A step may
+name a slot only a VARIANT has — a variant's panel is still this model's panel —
+and a bay without it skips rather than inventing a part. Two steps may not fit
+one slot: a contradiction, not an ordering. And `text_i18n` follows `name_i18n`,
+not the locale bundles: it is expert prose, so it falls back across the languages
+the author actually wrote.
+
+M-VINYL carries real instructions because it is the line where order IS the
+assembly — nothing is screwed, so a board dropped in before its top rail is a
+board that cannot be dropped in at all.
+
+**Not done, and stated rather than implied:** the assembly film still orders
+itself by its role heuristic. For every model in the demo the authored order and
+the heuristic agree, so rewiring it today would add a second ordering path to a
+well-tested feature for no observable difference. The plan is exposed on the
+preview, which is what that rewiring needs; a model whose order genuinely
+disagrees is what should motivate it.
+
+1530 pytest · 198/199 smoke · gate unmoved.
+
+## A section answers why, and you can argue with it (2026-08-19)
+`plan/open-work.md` item 3, roadmap step 5. Two halves, and neither existed.
+
+**Section-scoped decisions.** `/explain/{element}` answers "why is this post
+here"; nothing answered "what was decided about this stretch", because a section
+is a TOPOLOGY object and the graph indexes by strategy element.
+`report/section_decisions.py` renders each node with the same `explain_node` the
+element trail uses — a view that returned node kinds and let the client phrase
+them would be a second explanation. It is a summary in causal order, not a
+deeper trail: one node once, no `←` ancestors, because repeating a rule firing
+under every bay it governed buries the sequence it exists to show.
+
+**Commenting was a write with no read.** The inspector posted a `Correction` and
+alerted; nothing in the app could ever show it again. `Store.list_corrections`
+had exactly one caller, the knowledge proposer. Trying to READ a conversation
+found two defects immediately: nothing stamped `created_at`, so a turn had no
+place in time, and the list ordered by `id` — `corr_<uuid4 hex>`, a shuffle.
+`Correction.decision_ref` is finally populated by something; it had been on the
+learning model since it was written with no code setting or reading it.
+
+**The anchor is the part the review changed.** A decision node id is POSITIONAL —
+`d0007` is the seventh node emitted, and one new gate event renumbers everything
+after it. So `?decision_ref=` without a run mixes comments about different
+decisions, and my own golden test was making that call while the route's
+docstring warned against it: 422 now, unrepresentable rather than documented.
+And after the drawing moves, a comment cannot be matched to a decision in the new
+run — offering to "start a conversation" on one two people already had is a false
+statement about the record, so the panel counts and names them at the level where
+the statement is true. Both halves are pinned: an unchanged drawing regenerates
+to the SAME run and keeps its thread; a moved one does not claim the old
+comments, which are still kept, because evidence is never destroyed.
+
+**The attribution was quietly incomplete.** A run-level node was found by
+descending to its run's `run_geometry` fact — but the builder materialises
+evidence BEFORE the node citing it, so nothing emitted earlier could ever be
+attributed, and the `topology_node` facts that decided the surface under a
+section's own end posts belonged to no section at all. The generator now says
+`run_id` outright on the four run-level nodes and the closure walk is gone. Two
+exclusions became deliberate and tested: a knowledge object is the SOURCE a
+decision cites, and `resolve_demand_products` is one project-wide choice that
+would read as several. The guard for the first checked `kind` where the value is
+an `action` — dead code, found by the test written to pin it.
+
+**The reviews were worth their cost.** Six mutations survived the suite
+(`governed_by`/`defeated`, `units`, the ordinal sort, the run filter, panel
+thread keying, direction isolation) and now die; the boundary test compared the
+RUN, which would still pass if commenting had quietly run the proposer, and now
+compares the knowledge base; and S17 pinned nothing numeric, so it was a slower
+copy of the unit tests rather than a release gate. It now pins three 2000 mm
+bays, four posts and the layout sentence verbatim, and joins the spine by
+asserting the setting-out sheet and the decision trail name the same elements.
+
+Two CLAUDE.md violations in the new module, both real: it read another module's
+DOM (`#run-select`, owned by `inspector.js`) and worked only because `app.js`
+registers that module first, and it painted after two awaits with no in-flight
+guard. Fixed at the source — inspector now SAYS the selection through `state.js`.
+
+1507 pytest · 191 scenario tests · 193/194 smoke · gate byte-identical.
+
+Deferred, both wider than this slice: `select_supply` node ids are positional
+over an inventory-dependent sort (`decisions/supply.py`), and the proposer drops
+a comment's decision provenance (`ai/stub.py`).
+
+## Note for archaeology: it happened again, two agents, one tree (2026-08-19)
+`987e17b` ("test(smoke): the Models tab's slot pane is used, not just opened") is
+Task 5 of the part-picker plan and it also carries the **hermetic-profile fix** —
+`--user-data-dir`, the `shutil` import, the `rmtree` in `finally` — which belongs
+to the diagnosis below and was sitting uncommitted in the shared tree when that
+commit staged the file. My own `6004a29`, whose message describes that fix in
+full, therefore contains only the 15 lines left over: the readiness wait. Neither
+commit is wrong about the CODE; both are wrong about which one holds what.
+
+And in the other direction: `8895c62` carries `docs/architecture/05-frontend.md`'s
+"The slot inspector names a part" section, which was the OTHER agent's work,
+finished and unstaged, swept in by a `git add docs/`. Its message said the doc
+"already describes" that section, which was false — the commit is what added it.
+Amended to say so.
+
+Nothing is lost and nothing in the tree is wrong. This is the third time (see the
+2026-08-16 note): staging by directory is the same mistake as `git add -A` when
+another agent shares the filesystem. `git add <exact paths I edited>`, and read
+`git status` before every commit rather than after.
+
+## The browser gate was never flaky — it was not hermetic (2026-08-19)
+Closing the part-picker arc meant running the suite, and it came back with 33 red
+checks starting at the strategy summary and ending at *"Hebrew RTL is the
+default"*. That exact shape had appeared on 2026-08-17, been re-run green, and
+been written into `plan/open-work.md` as **flakiness under load**. That diagnosis
+was wrong, and the tell was in the evidence at the time: the failing SET was
+near-identical across both runs. Load does not fail the same 33 checks twice.
+
+The screenshot settled it in one look — the app was in **English**. Chrome was
+launched with no `--user-data-dir`, so it could attach to the developer's own
+profile, and `localStorage` for this origin therefore SURVIVED the run.
+`fenceai.locale` and `fenceai.units` are persisted preferences (`i18n.js:32`,
+`units.js:162`) and this suite ends by toggling to English: the next run opened in
+English with every Hebrew assertion red, or in cm with every mm one red. It went
+green whenever Chrome fell back to a throwaway profile because the real one was
+locked by a running browser — which is the whole of the "under load" story.
+
+The profile is now a temp dir beside the temp DB, dropped in the same `finally`
+and for the same reason. Start-up waits for the CDP endpoint and the app to ANSWER
+instead of sleeping a fixed three seconds: a fresh profile initialises slower than
+a warm one, so the hermetic fix first surfaced as a connection-refused traceback,
+and a fixed sleep is what made start-up fragile to begin with.
+
+Proved rather than assumed: the run before the fix ended in English — precisely
+the state that produces the 33 failures — and the run after it passed 187/187.
+
+**The lesson worth keeping is about the diagnosis, not the flag.** "Re-run and
+see" turned a real defect into a note about the weather, and the note then told
+the next reader to do the same thing. A gate whose answer depends on the
+developer's browser profile is not a gate, and an identical failure set across two
+runs is never flakiness.
+
 ## A post is chosen by where it stands (2026-08-18)
 Prompted by the user, twice: the canvas was still *"extremely unintuitive and not
 comfortable"*, and then *"but what about poles, upper and lower bars, rails,
@@ -1532,3 +1916,86 @@ authored members during resolution. Four locale keys nothing emits were DELETED 
 than left as furniture — slice 1B adds them back with their emitters.
 
 1403 pytest · 183 golden scenarios · compatibility gate untouched.
+
+## The part picker — repairing the Models editor (2026-08-19) — COMPLETE
+Spec `docs/superpowers/specs/2026-08-19-part-picker-repair-design.md`, plan
+`docs/superpowers/plans/2026-08-19-part-picker-repair.md`. Arc A of three (B is
+connections, C is item tolerance). Slice 1A moved a slot's eligibility onto the part
+it names and left the editor believing the old shape. The regression it shipped with
+was not exotic: `panel-inspector.js` still wrote `req.eligibility.members` and
+`req.role`, both fields 1A had made RESOLVED rather than authored, and the validator
+it added refuses a document that states both a `part_id` and either one. An expert
+opening the Models tab saw every slot claiming no product, and the save that would
+have fixed it was refused — with a 422 that named a field the editor never showed
+them touching.
+
+**Why 183 green smoke checks did not notice.** The suite has always opened the
+Models tab, driven a different tool entirely — choosing a published model for a
+span — and left again. Not one of those 183 checks ever clicked into the slot
+inspector this arc repairs, so a pane that showed "no product" on every slot and
+refused the fix passed clean, run after run, because passing required using a
+surface nothing used. A tab that is opened and not exercised is not covered; the
+green run was truthful about what it checked and silent about what it did not.
+
+**The repair is a mirror, kept honest by testing both sides of it.**
+`eligibility_source` (Python, `PartRequirement`) answers one question — which of
+four shapes a slot is — and `panel-model.js`'s `eligibilitySource` answers the same
+question in the runtime that has no import path to the first. `part_id` wins ahead
+of everything else, because resolution fills a predicate onto a part-named slot and
+a resolved document must not then read as rule-authored. The two are the deliberate
+duplication CLAUDE.md's reuse rubric does not mean to catch — no shared module runs
+in both a FastAPI process and a browser tab — and what keeps them from drifting is a
+Python test over the real demo models on one side and a node test over the real
+library on the other, not a promise.
+
+**Two fields left authoring, and neither one left the system.** `role` did not move
+behind Advanced; it is gone from the pane entirely, because `_part_or_authored`
+refuses a part-named slot that also states what the piece is — offering the control
+was offering exactly the save the server would refuse. It came back as a RESOLVED
+field: `resolve_model_parts` fills it from the part's own type at generation, so
+`ResolvedSlot.role` is still required and the BOM still reads it. `width_mm` and
+`thickness_mm` are the identical exclusion one level up, on the holder rather than
+the requirement (`_refuse_authored_dimensions`), and the sharpest finding of the arc
+was that the editor had fixed the picker's own pair while leaving this one live —
+`M-SLAT`'s slat names a part and carries `width_mm=0`, and the pane still offered a
+width field with `min: 1` until the fix reached it. Naming a part now clears the
+holder's own dimension in the same act that writes `part_id`, because hiding the
+control alone was not enough — `defaultMember` still wrote a stale 100 mm into a
+freshly added member, which is the same 422 through a door the fix had left open.
+
+**A localization bug the pure/DOM split caught rather than shipped.** `specChips`
+lives in `panel-model.js`, which is deliberately import-free so node can run it —
+that is what makes the four-shape logic testable without a browser, and it is also
+why it cannot call `t()`. An early draft phrased chip text as English prose right
+there, in the one module with no path to i18n, in a Hebrew-first product. The fix
+kept `specChips` returning structured facts — key, agreement, value, unit — and
+moved the sentence assembly into `panel-inspector.js`, through the same `model.chip.*`
+bundle keys every other user-visible string goes through.
+
+**The preference list survives only where a slot genuinely authors one.**
+`authored_members` slots — the two that still name a rebuilt-per-run sku list rather
+than a part, because a fixed sku there would let a company rule get silently
+outranked — keep the ordered picker under Advanced. A `part` slot cannot show it (the
+pair a part-named requirement is refused for), and `authored_predicate` cannot either
+(a list with nothing to order). Getting this branch wrong in either direction was the
+same defect the arc exists to remove, one field over.
+
+**What the smoke suite had to relearn to close its own gap.** Retargeting it past a
+tab-open-and-leave step surfaced staleness the tab-open step had been hiding for two
+tasks: `add-eligible` no longer exists on a part-named slot (narrowed correctly, the
+check was not); a `role`-in-Advanced assertion still listed a field that had left
+authoring, not moved; and a width-field block that looked stale on a first read was
+in fact driving a STARTER template's `authored_members` slot, where both controls
+still legitimately render — read the block without reading what opened it, the first
+time through. Two stalls in the same implementer, same wait-loop pattern, led to an
+escalation to a fresh agent on a more capable model with an explicit instruction to
+poll the smoke run in the background rather than park on it; the escalated run closed
+clean.
+
+**The gate held exactly where it had to.** Nothing in this arc touches resolution or
+field generation — no scenario moved, and `tests/scenarios/compatibility_gate/*.json`
+is byte-identical to the branch's root. The full suite grew by 29 tests across four
+tasks and the smoke suite grew from 183 checks to 187, four of them landing
+specifically inside the slot pane this arc exists to repair.
+
+1432 pytest · 183 golden scenarios · 187/187 smoke · compatibility gate unmoved.

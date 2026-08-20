@@ -1,0 +1,441 @@
+"""The BOM, seen from the fence rather than from the warehouse.
+
+`Bom.lines` are flat and sorted by sku, which is the right shape for ordering and
+the wrong one for every question an estimator actually asks: what does THIS
+section cost me, what is in THIS panel, and which choice put that product on the
+list.
+
+The one thing this view must not do is invent a number. A BOM line is a
+PURCHASE, pooled per sku across the whole run — one 3000 mm bar is cut for two
+different bays — so a section cannot own a fraction of a bar without an
+apportionment nothing measured. What IS exact per element is the engineering
+DEMAND, and that is what is grouped here. The purchase stays where it is true.
+"""
+
+from __future__ import annotations
+
+from fenceai.catalog.demo import demo_catalog
+from fenceai.catalog.model import DivisibleLinear, Product
+from fenceai.fencemodel.model import Eligibility, EligibleItem
+from fenceai.fencemodel.demo import M_SLAT
+from fenceai.fencemodel.library import FenceModelLibrary
+from fenceai.fencemodel.selection import FenceModelChoice
+from fenceai.demand.derive import DemandLine
+from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
+from fenceai.fulfillment.lines import ResolvedSupplyLine
+from fenceai.fulfillment.pipeline import price_strategy
+from fenceai.knowledge.demo import demo_knowledge
+from fenceai.parts.demo import demo_parts
+from fenceai.parts.model import PartLibrary
+from fenceai.report.bom_groups import group_bom
+from fenceai.strategy.generator import generate
+from tests.conftest import straight_topology
+
+PARTS = PartLibrary(parts=demo_parts())
+
+
+def _priced(length_mm: int = 6000):
+    catalog = demo_catalog()
+    result = generate(
+        straight_topology(length_mm), demo_knowledge(), catalog, parts=PARTS,
+        models=FenceModelLibrary(models=[M_SLAT]),
+        default_model=FenceModelChoice(model_id="M-SLAT"),
+    )
+    return result, price_strategy(result.strategy, catalog,
+                                  demand_skus=result.run.demand_skus)
+
+
+def test_every_bay_of_the_fence_is_a_group():
+    """The question "what is in this panel" answered without the reader counting
+    rows: one group per bay, named by the element the rest of the app already
+    tags."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    bays = [g for g in grouped.groups if g.kind == "bay"]
+    assert len(bays) == len(result.strategy.spans)
+    assert {g.element_id for g in bays} == {s.id for s in result.strategy.spans}
+    assert all(g.lines for g in bays)
+
+
+def test_a_bay_group_carries_THAT_bays_numbers_and_not_its_sections():
+    """Nothing anywhere asserted a single concrete quantity of a group, and one
+    lost `model_copy` is enough to break it silently: the same `GroupedLine`
+    object is appended to a section list AND a bay list, so merging in place
+    corrupts the first bay into the whole section's totals. `_assert_balances`
+    skips bays by design, so it cannot see this."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    bay = next(g for g in grouped.groups if g.element_id == "span@run1:0-1500")
+    assert [(x.sku, x.qty, x.unit, x.slot_key, x.cut_length_mm, x.length_basis)
+            for x in bay.lines] == [
+        ("RAIL-3000", 2, "cut", "rail", 1500, "width"),
+        ("SCREW-S10", 48, "each", "screw", None, None),
+        ("SLAT-100", 12, "cut", "slat", 1800, "width")]
+    # and the section is the sum of its bays for a bay-only part
+    per_bay = sum(x.qty for g in grouped.groups if g.kind == "bay"
+                  for x in g.lines if x.sku == "RAIL-3000")
+    section = next(g for g in grouped.groups if g.kind == "section")
+    assert per_bay == next(x.qty for x in section.lines if x.sku == "RAIL-3000") == 8
+
+
+def test_two_cuts_of_one_sku_are_two_rows_and_not_one():
+    """A raked bay cuts its rails on the SLOPE: same sku, same slot, different
+    piece. The merge key gained `length_basis` in the review round with no test
+    behind it — which is the standard this project holds itself to, missed."""
+    result, priced = _priced()
+    span = result.strategy.spans[0].id
+
+    def rail(i, length, basis):
+        return ResolvedSupplyLine.of(
+            DemandLine(id=f"rk{i}", engineering_qty=1, role="rail",
+                       slot_key="rail", pegs=[span], cut_length_mm=length,
+                       length_basis=basis),
+            sku="RAIL-3000", unit="cut")
+
+    extra = [rail(1, 1500, "width"), rail(2, 1500, "width"),
+             rail(3, 1512, "slope"), rail(4, 1500, "slope")]
+    grouped = group_bom(result.strategy, [*priced.requirements, *extra],
+                        priced.bom, priced.decisions)
+    bay = next(g for g in grouped.groups if g.element_id == span)
+    assert [(x.qty, x.cut_length_mm, x.length_basis)
+            for x in bay.lines if x.sku == "RAIL-3000"] == [
+        (4, 1500, "width"), (1, 1500, "slope"), (1, 1512, "slope")]
+
+
+def test_rows_and_groups_come_back_in_a_stated_order():
+    """A view read side by side with the schedule must not shuffle between
+    renders. Both orderings were untested."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    bays = [g for g in grouped.groups if g.kind == "bay"]
+    assert [g.element_id for g in bays] == sorted(s.id for s in result.strategy.spans)
+    for g in grouped.groups:
+        assert [x.sku for x in g.lines] == sorted(x.sku for x in g.lines)
+
+
+def test_a_line_pegged_to_several_elements_is_counted_once_per_group():
+    """The de-duplication the review round added, which nothing exercised: every
+    demand line pegs to exactly one element today, so the set that prevents
+    double-counting was invisible. A fixing that pegs to a bay AND both posts it
+    fixes to is the obvious next shape."""
+    result, priced = _priced()
+    span = result.strategy.spans[0]
+    posts = [p.id for p in result.strategy.posts if p.run_ref == span.run_ref][:2]
+    assert len(posts) == 2, "the fixture needs two posts on the same section"
+    multi = ResolvedSupplyLine.of(
+        DemandLine(id="fix1", engineering_qty=4, role="screw", slot_key="fix",
+                   pegs=[span.id, *posts]),
+        sku="SCREW-S10", unit="each")
+    grouped = group_bom(result.strategy, [*priced.requirements, multi],
+                        priced.bom, priced.decisions)
+    section = next(g for g in grouped.groups if g.kind == "section")
+    fix = [x for x in section.lines if x.slot_key == "fix"]
+    assert [x.qty for x in fix] == [4], "counted once per section, not once per peg"
+    bay = next(g for g in grouped.groups if g.element_id == span.id)
+    assert [x.qty for x in bay.lines if x.slot_key == "fix"] == [4]
+
+
+def test_a_section_is_the_unit_the_estimator_asks_about():
+    """A run is a section, and its group is every element that stands on it —
+    posts and bays alike, which no single existing view rolls up together."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    sections = [g for g in grouped.groups if g.kind == "section"]
+    assert [g.element_id for g in sections] == ["run1"]
+    roles = {line.role for line in sections[0].lines}
+    assert {"post", "rail", "infill"} <= roles, \
+        "a section rolls up its posts AND its bays, not one or the other"
+
+
+def test_a_post_shared_at_a_node_is_named_rather_than_given_to_a_side():
+    """`Post.run_ref` for a terminus is `node:n1`: it belongs to no single run,
+    which is exactly why the setting-out sheet gives it ONE tag and
+    cross-references it from the other section. Grouping it under a run would
+    have to pick a side, and the two sections would disagree about who bought
+    the post."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    nodes = [g for g in grouped.groups if g.kind == "node"]
+    assert [g.element_id for g in nodes] == ["node:n1", "node:n2"]
+    assert all({line.role for line in g.lines} <= {"post", "cap", "concrete"}
+               for g in nodes), "a node carries its post, never a bay's infill"
+
+
+def _with_a_real_choice(*, and_the_infill: bool = False):
+    """A run whose rail slot has two eligible stocks, so `select_supply` actually
+    DECIDES. Every demo model names one product per slot, which is why the plain
+    fixture above records no decision at all — a decision group tested on it
+    would be testing an empty list.
+
+    `and_the_infill` gives the slat slot a rival too, so the run records TWO
+    decisions. One decision is a list that is sorted the same by every
+    comparator, which is why the ordering test below needs this: the order of a
+    one-element list says nothing about the key that produced it.
+    """
+    catalog = demo_catalog()
+    catalog.products["RAIL-3050"] = Product(
+        sku="RAIL-3050", name="Rail stock 3050 mm",
+        consumption=DivisibleLinear(purchase_length_mm=3050, kerf_mm=3,
+                                    min_reusable_remnant_mm=300),
+        price_cents=1850,
+    )
+    model = M_SLAT.model_copy(deep=True)
+    rail = model.default_spec.frame[0].requirement
+    rail.part_id = ""
+    rail.role = "rail"
+    rail.eligibility = Eligibility(members=[
+        EligibleItem(sku="RAIL-3000", priority=1),
+        EligibleItem(sku="RAIL-3050", priority=2),
+    ])
+    if and_the_infill:
+        catalog.products["SLAT-105"] = Product(
+            sku="SLAT-105", name="Slat 100 mm (6000 mm stock)",
+            consumption=DivisibleLinear(purchase_length_mm=6000, kerf_mm=3,
+                                        min_reusable_remnant_mm=300),
+            price_cents=5600,
+            attrs={"type": "infill", "width_mm": 100},
+        )
+        member = model.default_spec.infill.pattern[0]
+        slat = member.requirement
+        slat.part_id = ""
+        slat.role = "infill"
+        # the width the part used to supply: a member that names no part must
+        # carry its own, or `fit_pattern` has no advance to lay out
+        member.width_mm = 100
+        slat.eligibility = Eligibility(members=[
+            EligibleItem(sku="SLAT-100", priority=1),
+            EligibleItem(sku="SLAT-105", priority=2),
+        ])
+    result = generate(
+        straight_topology(6000), demo_knowledge(), catalog, parts=PARTS,
+        models=FenceModelLibrary(models=[model]),
+        default_model=FenceModelChoice(model_id=model.id),
+    )
+    return result, price_strategy(result.strategy, catalog,
+                                  demand_skus=result.run.demand_skus)
+
+
+def test_a_decision_group_says_which_choice_bought_it():
+    """The new grouping, and the one `Bom.lines` cannot express at all: the rows
+    a single supply decision is responsible for, beside the runner-up it beat.
+    "Why is this product on my list" is answerable in the view that raised it."""
+    result, priced = _with_a_real_choice()
+    assert priced.decisions, "the fixture must actually decide something"
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    decisions = [g for g in grouped.groups if g.kind == "decision"]
+    assert decisions
+    rail = next(g for g in decisions if any(x.role == "rail" for x in g.lines))
+    assert rail.chosen in ("RAIL-3000", "RAIL-3050")
+    assert rail.rejected and rail.chosen not in rail.rejected
+    assert rail.preset
+    assert all(line.sku == rail.chosen for line in rail.lines), \
+        "a decision group holds the lines that decision bought, not its rivals"
+
+
+def test_decision_groups_come_back_in_the_order_of_what_they_are_ABOUT():
+    """`test_rows_and_groups_come_back_in_a_stated_order` states the bay and row
+    orderings and says nothing about this one — and every fixture that has a
+    decision at all had exactly ONE, so `sorted(decisions, key=_decision_order)`
+    was unobservable: a one-element list comes back the same under every
+    comparator, including one keyed on the outcome.
+
+    Two decisions, and the sequence written out rather than recomputed with the
+    key under test. The rail decision chose the LATER sku (RAIL-3050 beats
+    RAIL-3000 on cost) while the infill decision chose the earlier one, so a
+    comparator keyed on `chosen` puts the rail first and this fails — which is
+    the whole point of ordering by what a decision is about: `chosen` moves with
+    the yard's stock, and a view that reshuffled when the yard restocked could
+    not be read beside anything."""
+    result, priced = _with_a_real_choice(and_the_infill=True)
+    assert len(priced.decisions) == 2, \
+        "the fixture must decide TWO things or it cannot observe an order"
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    decisions = [g for g in grouped.groups if g.kind == "decision"]
+    assert [(g.lines[0].role, g.lines[0].slot_key, g.chosen) for g in decisions] == [
+        ("infill", "slat", "SLAT-100"),
+        ("rail", "rail", "RAIL-3050"),
+    ], "ordered by (role, slot_key), never by what was chosen"
+
+
+def test_two_decisions_about_the_same_slot_are_ordered_by_the_lines_they_answered():
+    """The third component of the key, which `(role, slot_key)` alone cannot
+    order: two eligibility groups CAN share a role and a slot (opposite
+    priorities on two bays is the shape `resolve_supply` groups apart), and a
+    two-part key leaves them in input order — a stable sort's tie is not an
+    order, it is whatever the caller happened to pass.
+
+    So they are passed REVERSED here: the decision answering the later
+    requirement ids goes in first, and only a key that reaches the ids can put
+    it back second."""
+    from fenceai.decisions.supply import decision_id
+    result, priced = _with_a_real_choice()
+    rail = next(d for d in priced.decisions if d.role == "rail")
+    ids = sorted(rail.requirement_ids)
+    assert len(ids) >= 4, "the fixture needs a rail decision answering four bays"
+    first = rail.model_copy(update={"requirement_ids": ids[:2]})
+    second = rail.model_copy(update={"requirement_ids": ids[2:]})
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        [second, first])
+    decisions = [g for g in grouped.groups if g.kind == "decision"]
+    assert [g.element_id for g in decisions] == [
+        f"s{decision_id(first)}", f"s{decision_id(second)}"]
+
+
+def _assert_balances(grouped, bom):
+    """Per (sku, unit): what the sections and nodes asked for, plus what nothing
+    asked for, less what stock covered, is exactly what the BOM accounts for."""
+    asked: dict[tuple[str, str], int] = {}
+    for group in grouped.groups:
+        if group.kind not in ("section", "node"):
+            continue   # sections and nodes partition it; bays are a subset of
+                       # sections and decisions cut across both
+        for line in group.lines:
+            asked[(line.sku, line.unit)] = asked.get((line.sku, line.unit), 0) + line.qty
+    for total in grouped.unassigned:
+        asked[(total.sku, total.unit)] = asked.get((total.sku, total.unit), 0) + total.qty
+    for total in grouped.from_stock:
+        asked[(total.sku, total.unit)] = asked.get((total.sku, total.unit), 0) - total.qty
+    purchased = {(line.sku, line.engineering_unit): line.engineering_qty
+                 for line in bom.lines}
+    assert {k: v for k, v in asked.items() if v} == purchased
+
+
+def test_a_decision_group_is_named_the_same_thing_the_graph_names_it():
+    """One decision, one name. This view called it `role:slot:chosen` — the
+    outcome-derived id `decisions/supply.py` refuses at length, because `chosen`
+    moves with the inventory. So the money view and the decision graph had two
+    different names for one decision, and the one here changed when the yard
+    restocked: neither `/explain` nor a comment's `decision_ref` could be joined
+    to it.
+
+    The expectation is the GRAPH's node id, read off the graph. It used to be
+    `f"s{decision_id(d)}"` — recomputed with the very function `bom_groups.py`
+    calls one line down — which proved that `group_bom` calls `decision_id` and
+    said nothing whatever about the graph, the one party this test names. So
+    renaming the node in `with_supply_decisions` (its `s` prefix is written
+    there, separately from the one written here) broke the join with this test
+    green, under a docstring claiming to defend exactly that join.
+    """
+    from fenceai.decisions.supply import with_supply_decisions
+    result, priced = _with_a_real_choice()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    named = {g.element_id for g in grouped.groups if g.kind == "decision"}
+    graph = with_supply_decisions(result.graph, priced.decisions)
+    in_the_graph = {n.id for n in graph.nodes if n.action == "select_supply"}
+    assert in_the_graph, "the fixture put no supply decision in the graph"
+    assert named == in_the_graph
+    assert not any(g.chosen in g.element_id
+                   for g in grouped.groups if g.kind == "decision"), \
+        "the id still carries the outcome, which is what moves with stock"
+
+
+def test_the_grouped_demand_adds_up_to_the_bom():
+    """THE governing property, and the same one `Σ(parts) ≡ BOM` states for the
+    structure sheet: grouping may not lose or invent a quantity. Per (sku, unit),
+    what the sections asked for plus what nothing asked for, less what stock
+    covered, is exactly what the BOM accounts for."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    _assert_balances(grouped, priced.bom)
+
+
+def test_what_stock_covered_is_reported_rather_than_balanced_away():
+    """`from_stock` is demand that appears on NO purchase line because inventory
+    met it — the yard still picks it. A grouping that quietly balanced by
+    dropping it would read as a fence with fewer parts than it has."""
+    catalog = demo_catalog()
+    result = generate(
+        straight_topology(1500), demo_knowledge(), catalog, parts=PARTS,
+        models=FenceModelLibrary(models=[M_SLAT]),
+        default_model=FenceModelChoice(model_id="M-SLAT"),
+    )
+    inventory = Inventory(items=[
+        InventoryItem(id="c1", sku="POST-CAP", kind="full_stock", qty=2)])
+    priced = price_strategy(result.strategy, catalog, inventory,
+                            demand_skus=result.run.demand_skus)
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    assert [(t.sku, t.qty) for t in grouped.from_stock] == [("POST-CAP", 2)]
+    _assert_balances(grouped, priced.bom)
+
+
+def test_a_line_pegged_to_nothing_lands_in_unassigned():
+    """The bucket no demo run fills, and the one a grouping loses most easily: a
+    line that pegs to no element belongs to no section, and putting it in a
+    phantom one would show a section nobody built. It is reported instead —
+    which is what keeps the sum honest rather than merely equal."""
+    result, priced = _priced()
+    orphan = ResolvedSupplyLine.of(
+        DemandLine(id="req-orphan", engineering_qty=3, role="screw",
+                   slot_key="screw", pegs=[]),
+        sku="SCREW-S10", unit="each")
+    # A BOM computed from the SAME lines. The first version of this test paired
+    # the orphan with a BOM that had never seen it, which is a state fulfilment
+    # cannot produce — and the inconsistency alone made the shortfall arithmetic
+    # report 3 as `from_stock` as well, i.e. the fixture manufactured a defect
+    # and then the assertion was too weak to notice.
+    reqs = [*priced.requirements, orphan]
+    bom = fulfill(reqs, demo_catalog())
+    grouped = group_bom(result.strategy, reqs, bom, priced.decisions)
+    assert [(t.sku, t.qty) for t in grouped.unassigned] == [("SCREW-S10", 3)]
+    assert grouped.from_stock == [], "an unpegged line is not stock coverage"
+    assert not any(line.sku == "SCREW-S10" and line.qty == 3
+                   for g in grouped.groups for line in g.lines), \
+        "an orphan must not be invented into a section"
+
+
+def test_no_group_carries_money():
+    """Deliberate, and the reason this view is honest. A purchase is pooled per
+    sku across the whole run — one bar is cut for two bays — so a per-section
+    price is an apportionment nothing measured. `open-work.md` scoped this as a
+    read-model addition rather than new arithmetic, and a cost field would be
+    exactly that arithmetic, wearing the authority of a BOM."""
+    result, priced = _priced()
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    for group in grouped.groups:
+        assert not any("cent" in f or "price" in f
+                       for f in group.model_dump())
+        for line in group.lines:
+            assert not any("cent" in f or "price" in f for f in line.model_dump())
+
+
+def test_grouping_is_pure_and_deterministic():
+    result, priced = _priced()
+    once = group_bom(result.strategy, priced.requirements, priced.bom,
+                     priced.decisions)
+    twice = group_bom(result.strategy, priced.requirements, priced.bom,
+                      priced.decisions)
+    assert once == twice
+
+
+def test_a_gate_is_part_of_the_section_it_stands_in():
+    """A gate kit is demand like any other and pegs to the gate element. No
+    fixture had one, so deleting gates from the element→section map left the
+    suite green while a gate's kit belonged to no section at all."""
+    from fenceai.topology.model import GatePayload
+    from tests.conftest import add_point_event
+
+    catalog = demo_catalog()
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "g1", 2000,
+                    GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    result = generate(topo, demo_knowledge(), catalog, parts=PARTS,
+                      models=FenceModelLibrary(models=[M_SLAT]),
+                      default_model=FenceModelChoice(model_id="M-SLAT"))
+    assert result.strategy.gates, "the fixture grew no gate"
+    priced = price_strategy(result.strategy, catalog,
+                            demand_skus=result.run.demand_skus)
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+    section = next(g for g in grouped.groups if g.element_id == "run1")
+    assert "GATE-KIT-1000" in {x.sku for x in section.lines}

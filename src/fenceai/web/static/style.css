@@ -60,6 +60,22 @@ th { background: #eef2f6; }
 #inspector-body .expl { margin: 4px 0; padding: 4px 8px; background: #f8fafc; border-radius: 4px; }
 #inspector-body .expl.sub { margin-inline-start: 14px; color: #475569; }
 
+/* The selected section's decisions, and the conversation about each. Logical
+   properties only — the side column mirrors in RTL like the rest of the chrome
+   (the canvas and the profile are the two that never do). */
+#section-decisions .decision { border-block-end: 1px solid #e2e8f0; padding: 6px 0; }
+#section-decisions .decision:last-of-type { border-block-end: 0; }
+#section-decisions .expl { padding: 4px 8px; background: #f8fafc; border-radius: 4px; }
+#section-decisions .verbatim { background: #f1f5f9; border-inline-start: 3px solid #2563eb;
+  padding: 4px 8px; margin: 4px 0 4px 0; font-style: italic; }
+#section-decisions .decision-actions { margin-block-start: 4px; }
+
+/* The assembly steps of a panel: an ordered list, so the number a fitter counts
+   from is the browser's own and never a hand-written one that can drift. */
+#panel-assembly ol.steps { margin: 6px 0 0; padding-inline-start: 22px; }
+#panel-assembly li.step { margin-block-end: 8px; }
+#panel-assembly li.step[data-kind="installation"] { color: #475569; font-style: italic; }
+
 .tag { display: inline-block; border-radius: 8px; padding: 1px 8px; font-size: 11px; margin-inline-end: 4px; }
 .tag.hard_constraint { background: #fee2e2; }
 .tag.company_rule { background: #fde68a; }
@@ -294,6 +310,25 @@ input[type="number"] { direction: ltr; }
   background: #fff; }
 .pref-item.dragging { opacity: 0.5; }
 .pref-grip { cursor: grab; color: #94a3b8; }
+/* the part a slot names, and what that name MEANS — the chips are the part's
+   own declared facts, so choosing one is not choosing blind */
+.part-field { margin-block: 4px; }
+.part-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-block: 4px; }
+.part-chip { padding: 1px 8px; border: 1px solid #cbd5e1; border-radius: 10px;
+  background: #f8fafc; color: #334155; font-size: 12px; }
+/* "cut from stock" is the part declining to state a length — the bay resolves
+   it — which is a different KIND of fact from a dimension it does state */
+.part-chip.agree-supplies { border-style: dashed; color: #475569; }
+.part-candidates > summary { cursor: pointer; color: #475569; font-size: 12px; }
+.part-candidate-list { list-style: none; margin: 4px 0; padding: 0; }
+.part-candidate-list li { display: flex; gap: 6px; align-items: center;
+  font-size: 12px; }
+.part-candidate-list li.chosen { font-weight: 600; }
+.chosen-mark { color: #16a34a; }
+.part-ref { margin-block-start: 2px; }
+/* the width the PART owns: no field, because authoring it beside the part is
+   refused — the number stands where the field stood, read-only */
+.part-dims { margin-block: 2px; }
 /* an element is called what it IS — "Board 2" — and the key it carries is an
    identifier nobody chose, so it rides in the title and the rename is a mode */
 .element-rename { padding: 2px 8px; border: 1px solid #2563eb; border-radius: 12px; }

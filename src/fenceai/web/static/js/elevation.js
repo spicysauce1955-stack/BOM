@@ -380,15 +380,20 @@ export function renderElevation(elev, {
   // on the cut list. HOW it is housed is the section inset's job (joint.js).
   if (joints) {
     const seats = el("g", { class: "elev-seats" }, svg);
-    for (const m of rects) {
-      if (!m.seat) continue;
+    // `data-order` names the MEMBER, and this layer is the reason it has to be
+    // said rather than counted: a member that seats into nothing contributes no
+    // rectangle, so the Nth seat is not the Nth member. A reader pairing by
+    // position had to re-implement this very filter to correct for it.
+    rects.forEach((m, order) => {
+      if (!m.seat) return;
       el("rect", {
         class: "elev-seat", "data-slot": m.slot_key,
+        "data-order": String(order),
         x: r(px(m.seat.x_mm)), y: r(py(m.seat.y_mm)),
         width: r(Math.max(m.seat.w_mm * s, 0.5)),
         height: r(Math.max(m.seat.h_mm * s, 0.5)),
       }, seats);
-    }
+    });
   }
 
   // Hidden edges, drawn over the infill. A rail on a slat panel is genuinely
@@ -397,12 +402,14 @@ export function renderElevation(elev, {
   // drawing exists to make. Outlines only: they add no rectangle to count, and
   // they carry no fill, so nothing here overstates what is in front of what.
   const edges = el("g", { class: "elev-edges" }, svg);
-  for (const m of rects)
+  rects.forEach((m, order) => {
     el("rect", {
       class: `elev-edge${m.declared ? "" : " elev-nominal"}`,
       x: r(px(m.x_mm)), y: r(py(m.y_mm)),
       width: r(Math.max(m.w_mm * s, 0.5)), height: r(Math.max(m.h_mm * s, 0.5)),
+      "data-slot": m.slot_key, "data-order": String(order),
     }, edges);
+  });
 
   // The fastener PLACES, when the caller wants them. Each carries its own count
   // (`report/elevation.py`), so a panel taking 96 screws is 32 dots reading ×3

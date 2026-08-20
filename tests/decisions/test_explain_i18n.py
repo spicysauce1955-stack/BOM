@@ -45,15 +45,23 @@ def test_every_graph_node_has_hebrew_and_english_templates():
     add_point_event(topo, "run1", "ev_gate", 2000, GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
     ov = Override(id="ov1", run_id="run1", directive=PinPost(station_mm=1000))
     result = generate(topo, knowledge, catalog, overrides=[ov])
-    input_facts = {"topology_node", "run_geometry", "gate_event", "knowledge_version"}
+    # `knowledge_version` is the one node whose payload IS its content — a
+    # knowledge ref, printed verbatim. The other three input facts used to be
+    # here too, rendering their raw payload dict; the section view puts them at
+    # the top of what a person reads, so they became sentences and this test
+    # says the stronger thing about them.
+    embeds_its_payload = {"knowledge_version"}
     for node in result.graph.nodes:
         en = explain_node(result.graph, node, lang="en")
         he = explain_node(result.graph, node, lang="he")
         assert en and he
-        if node.action in input_facts:  # these embed the raw payload dict verbatim
+        if node.action in embeds_its_payload:
             assert node.action in en and node.action in he
         else:
             assert "{" not in en and "{" not in he, (node.action, en, he)
+            # a raw payload DICT specifically; prose legitimately quotes a value
+            # ("Vertical mode 'level' chosen"), so the marker is `{'`
+            assert "{'" not in en and "{'" not in he, (node.action, en, he)
 
 
 def test_template_key_parity():

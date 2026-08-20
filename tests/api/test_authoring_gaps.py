@@ -185,3 +185,76 @@ def test_a_published_version_cannot_be_discarded(client):
 def test_the_compatibility_model_cannot_be_discarded_either(client):
     assert client.delete("/api/fence-models/M-LEGACY/1").status_code == 409
     assert client.get("/api/fence-models/M-LEGACY/1").status_code == 200
+
+
+# --- the slot inspector's contract with PartRequirement ----------------------
+#
+# The regression this arc repairs was a frontend/backend contract break: the
+# editor wrote `eligibility.members` and `role` onto a slot whose part owns both,
+# and the validator refused the pair — so every slot read "no product" and the
+# save that would have fixed it 422'd. A JS-only test would not have caught it,
+# and did not. These three pin the SHAPE the repaired editor must send, so a
+# future change to `PartRequirement` breaks a Python test instead of silently
+# breaking a screen again. They pass on the day they are written: the backend was
+# already correct, and the red bar for the repair is the browser check.
+
+
+def test_the_editors_payload_for_a_part_named_slot_validates():
+    """THE regression this arc repairs. The editor wrote `eligibility.members` and
+    `role` onto a slot that names a part; the part is the one authority on both, and
+    the validator refuses the pair.
+
+    The payload is WRITTEN OUT, not dumped from a `PartRequirement` and handed back:
+    dumping and re-parsing tests pydantic, passes whatever the editor does, and is
+    exactly the shape of green this arc exists to stop. These keys are
+    `defaultRequirement` in `panel-model.js` with `partSelect`'s change handler
+    applied — `part_id` set, `role` and the eligibility cleared in the same act.
+
+    Asserting the key SET (and not just that it parses) is what ties the two sides
+    together: a field added to `PartRequirement` that the pane does not author, or a
+    key the pane sends that the schema dropped, fails here rather than emptying a
+    screen. `tests/web/test_panel_model_module.py` pins the JS half of the same set.
+    """
+    from fenceai.fencemodel.model import PartRequirement
+
+    payload = {
+        "part_id": "rail-rail-3000",
+        "role": "",
+        "qty": 1,
+        "length_rule": None,
+        "overlap_mm": 0,
+        "option_axis": None,
+        "sku_by_option": {},
+        "eligibility": {"members": []},
+    }
+    assert set(payload) == set(PartRequirement.model_fields)
+    req = PartRequirement(**payload)    # raises if the editor's shape is refused
+    assert req.eligibility_source == "part"
+
+
+def test_the_old_editor_payload_is_still_refused():
+    """The guardrail must not be relaxed to make the editor pass. A slot naming a
+    part AND authoring members is the thing that was wrong, and it stays wrong."""
+    import pytest
+    from pydantic import ValidationError
+
+    from fenceai.fencemodel.demo import slat_model
+    from fenceai.fencemodel.model import PartRequirement
+
+    payload = slat_model().default_spec.frame[0].requirement.model_dump()
+    payload["eligibility"] = {"members": [
+        {"kind": "catalog_item", "sku": "RAIL-3000", "priority": 1,
+         "approval": "auto"}]}
+    with pytest.raises(ValidationError, match="members"):
+        PartRequirement(**payload)
+
+
+def test_a_slot_that_names_no_part_may_still_author_members():
+    """M-LEGACY's rail and screw. The preference list stays editable for exactly
+    these, which is why the editor asks `eligibility_source` instead of assuming."""
+    from fenceai.fencemodel.demo import legacy_model
+    from fenceai.parts.resolve import part_requirements
+
+    reqs = dict(part_requirements(legacy_model()))
+    assert reqs["rail"].eligibility_source == "authored_members"
+    assert reqs["rail"].eligibility.members

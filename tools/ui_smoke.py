@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,9 +46,13 @@ def wait_for(c, expr: str, timeout: float = 8.0, step: float = 0.4):
     return value
 
 
-def check(name: str, ok: bool) -> None:
+def check(name: str, ok: bool, detail: object = None) -> None:
+    """`detail` is printed only on a FAIL, and only when the caller has something
+    to say. A check whose JS can fail in several distinct ways otherwise reports
+    one word, and the reader has to re-run the suite to learn which way it went."""
     CHECKS.append((name, bool(ok)))
-    print(("PASS " if ok else "FAIL ") + name)
+    line = ("PASS " if ok else "FAIL ") + name
+    print(line if ok or detail is None else f"{line}  [{detail}]")
 
 
 def hover(c, x: float, y: float) -> None:
@@ -80,6 +85,25 @@ def main() -> int:
     except Exception:
         pass  # port free, good
 
+    # ... and the same question about the BROWSER, which is not a smaller one. A
+    # Chrome already holding :9333 answers `/json/version`, so the readiness loop
+    # below is satisfied by SOMEBODY ELSE'S browser: the fresh profile Chrome
+    # started underneath never binds the port and is never spoken to, and the run
+    # drives the developer's own profile — the surviving `fenceai.locale` and the
+    # whole failure the private profile exists to prevent, back again and quieter
+    # than before, because a readiness wait that succeeds says nothing about WHO
+    # answered.
+    try:
+        urllib.request.urlopen(f"http://localhost:{CDP_PORT}/json/version", timeout=1)
+        # the bracket in the hint is not a typo: `pkill -f` matches the shell's
+        # OWN command line, so the obvious spelling kills the terminal that runs it
+        print(f"FATAL: something is already listening on :{CDP_PORT} — a browser "
+              f"is holding the debug port; kill it first "
+              f"(pkill -f 'remote-debugging-po[r]t={CDP_PORT}')")
+        return 2
+    except Exception:
+        pass  # port free, good
+
     db = tempfile.mktemp(suffix=".db")
     env = {**os.environ, "FENCEAI_DB": db, "FENCEAI_AI": "stub"}
     server = subprocess.Popen(
@@ -87,16 +111,50 @@ def main() -> int:
         env=env, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
+    # A profile of its own, for the same reason the DB above is a fresh file.
+    # Without it Chrome uses the DEFAULT profile — the developer's own — and
+    # `localStorage` for this origin SURVIVES the run: `fenceai.locale` and
+    # `fenceai.units` are persisted preferences (i18n.js:32, units.js:162), and
+    # this suite ends by toggling to English. The next run then opened in English
+    # with every Hebrew assertion failing, or in cm with every mm one failing —
+    # 33 unrelated red checks from the first generation onward, and green again
+    # whenever Chrome happened to fall back to a throwaway profile because the
+    # real one was locked by a running browser. That is not flakiness under load,
+    # which is what it was first written off as: a gate whose answer depends on
+    # the developer's browser profile is not a gate.
+    profile = tempfile.mkdtemp(prefix="fenceai-smoke-profile-")
     chrome = subprocess.Popen(
         ["google-chrome", "--headless", "--disable-gpu", "--no-sandbox",
+         f"--user-data-dir={profile}",
          f"--remote-debugging-port={CDP_PORT}", "--remote-allow-origins=*",
          "--window-size=1400,950", "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
     try:
-        time.sleep(3)
+        # Wait for BOTH to answer rather than sleeping a fixed 3 s. A brand-new
+        # Chrome profile initialises slower than a warm one, so the old sleep
+        # turned a hermetic run into a connection-refused traceback — and a fixed
+        # sleep is what made the whole start-up fragile in the first place.
+        for url in (f"http://localhost:{CDP_PORT}/json/version",
+                    f"http://localhost:{PORT}/api/health"):
+            for _ in range(120):          # 60 s, checked twice a second
+                try:
+                    urllib.request.urlopen(url, timeout=1)
+                    break
+                except Exception:
+                    time.sleep(0.5)
+            else:
+                print(f"FATAL: {url} never answered")
+                return 2
         c = Cdp(f"http://localhost:{PORT}/", cdp_port=CDP_PORT, out_dir=OUT)
-        c.js("window.confirm = () => true; undefined")
+        # `confirm` true so a destructive action proceeds unattended. `alert` is
+        # swallowed for a harder reason: `Page.enable` (cdp.py) makes a JS dialog
+        # BLOCK until it is explicitly handled, and `apiSend` alerts on every
+        # refused request — so one 422 anywhere in the app hangs the evaluate that
+        # triggered it, and the run dies on a socket timeout instead of reporting a
+        # red check. A hang is not a check result: with this stubbed, a save the
+        # server refuses fails the check that asked for it.
+        c.js("window.confirm = () => true; window.alert = () => {}; undefined")
 
         # fresh DBs now open into the seeded sample project (which already has
         # runs + a gate); create an EMPTY project so every check below starts
@@ -186,6 +244,94 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               and str(n_posts) in (summary or ""))
         c.shot("03-generated.png")
 
+        # --- the selected section's decisions, and a conversation about one ----
+        # The roadmap asks to "focus on specific sections of the fence and get
+        # only the decisions related to the selected section — change, comment
+        # or start a conversation about it". Both halves are checked here
+        # because only the browser has the two of them together: the panel reads
+        # its section from the SAME `#run-select` the side column already has,
+        # and a comment has to survive the round trip to the server and come
+        # back rendered — which is the half that did not exist at all (there was
+        # no GET for corrections anywhere).
+        section = c.js("""
+(() => {
+  const host = document.getElementById('section-decisions');
+  if (!host) return null;
+  return {
+    decisions: host.querySelectorAll('.decision').length,
+    sentences: [...host.querySelectorAll('.decision .expl')]
+      .map(d => d.textContent.trim()).filter(Boolean).length,
+    start: !!host.querySelector('[data-act="say"]'),
+    comments: host.querySelectorAll('.verbatim').length,
+  };
+})()""")
+        check("the selected section lists its own decisions, localized",
+              section is not None and section["decisions"] > 0
+              and section["sentences"] == section["decisions"]
+              and section["start"] and section["comments"] == 0)
+
+        # start a conversation on the first decision and read it back
+        c.js("""
+document.querySelector('#section-decisions [data-act="say"]').click(); 'ok'""")
+        time.sleep(0.6)
+        c.js("""
+{
+  const box = document.querySelector('#section-decisions [data-f="comment"]');
+  box.value = 'למה דווקא כאן?';
+  document.querySelector('#section-decisions [data-act="send"]').click();
+}
+'ok'""")
+        time.sleep(1.5)
+        said = c.js("""
+(() => {
+  const host = document.getElementById('section-decisions');
+  return {
+    comments: host.querySelectorAll('.verbatim').length,
+    text: host.textContent,
+    open_forms: host.querySelectorAll('[data-form]').length,
+  };
+})()""")
+        check("a comment on a decision is stored and read back on the panel",
+              said["comments"] == 1 and "למה דווקא כאן?" in said["text"]
+              and said["open_forms"] == 0)
+        # the boundary, visible to the user rather than only true in the backend
+        # against the BUNDLE, not the copy: a wording change is not a regression
+        note = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => b['decisions.comment_note'])""")
+        check("the panel says a comment changes nothing on its own",
+              bool(note) and note in said["text"])
+        # --- and the loop the boundary promises, walked ------------------------
+        # "A comment becomes an interpretation, an interpretation becomes a
+        # PROPOSAL, and only a human confirms." The propose route existed and was
+        # reachable from nothing; a boundary nobody can walk is a sentence in a
+        # doc. The demo proposer reads a narrow vocabulary on purpose, so the
+        # comment below is one it recognises — and the check asserts the answer
+        # is NAMED either way, because "nothing suggests a rule" is the ordinary
+        # outcome and a silent button reads as broken.
+        c.js("""
+document.querySelector('#section-decisions [data-act="say"]').click(); 'ok'""")
+        time.sleep(0.5)
+        c.js("""
+{
+  const box = document.querySelector('#section-decisions [data-f="comment"]');
+  box.value = 'תמיד להשתמש ביסוד קיים';
+  document.querySelector('#section-decisions [data-act="send"]').click();
+}
+'ok'""")
+        time.sleep(1.5)
+        c.js("""document.querySelector('#section-decisions [data-act="propose"]').click(); 'ok'""")
+        time.sleep(2.0)
+        proposed = c.js(
+            "document.getElementById('propose-said')?.textContent || ''")
+        check("a conversation can be turned into a candidate rule",
+              bool(proposed.strip()))
+        queued = c.js("""
+fetch('/api/candidates').then(r => r.json()).then(cs => ({
+  n: cs.length, inert: cs.every(c => c.status === 'proposed')}))""")
+        check("the candidate arrives INERT, for a person to approve",
+              (queued or {}).get("n", 0) > 0 and queued["inert"])
+        c.shot("03b-section-decisions.png")
+
         # --- the map moves: dragging empty canvas pans, a click still edits ---
         vb_before = c.js("document.getElementById('canvas').getAttribute('viewBox')")
         empty = c.canvas_px(1000, 4000)          # away from the run
@@ -252,9 +398,6 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("the structure tab lists setting out and bays",
               all(w in (struct or "") for w in ["מקטע A", "P1", "B1", "סימון בשטח"]))
         rows = c.js("document.querySelectorAll('#structure-body tr[data-element]').length")
-        expected_rows = c.js("""
-fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
-  .then(() => 0)""")
         expected_rows = c.js("""
 (async () => {
   const runs = await (await fetch(
@@ -951,6 +1094,113 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
       .map(h => h.textContent).find(s => /₪/.test(s)) || '',
   };
 })()""")
+        # --- the BOM, grouped by what caused it -------------------------------
+        # `Bom.lines` are flat and sorted by sku, which answers "what do I
+        # order" and none of "what does this section need", "what is in this
+        # panel", "which choice bought that". The grouped panel is checked for
+        # the two things that can go silently wrong: the tags come from
+        # structure-data.js (the single tag source), and NO group carries a
+        # price — a purchase is pooled across the run, so a per-section figure
+        # would be an apportionment nothing measured.
+        grouped = c.js("""
+(async () => {
+  const host = document.getElementById('bom-grouped');
+  if (!host) return null;
+  const rows = [...host.querySelectorAll('.group-row')];
+  // The tags this view has to agree with, taken from the DOCUMENT rather than
+  // from the page. Reading them out of the structure tab would only prove the
+  // app agrees with itself; `structure-data.js` is the single tag source, so an
+  // independent check has to re-derive the mapping the way that module does.
+  const runs = await (await fetch(
+    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const doc = await (await fetch(
+    `/api/runs/${runs[runs.length - 1].id}/structure`)).json();
+  const ofElement = new Map(), ofSection = new Map();
+  for (const s of doc.sections) {
+    ofSection.set(s.run_id, s.tag);
+    for (const r of [...s.setting_out, ...s.bays, ...s.gates])
+      ofElement.set(r.element_id, r.tag);
+  }
+  const expected = (id, kind) =>
+    kind === 'section' ? ofSection.get(id)
+      : kind === 'node' ? ofElement.get(`post@${id}`)
+        : ofElement.get(id);
+  const num = (s) => Number(String(s).replace(/[^0-9.-]/g, ''));
+  return {
+    kinds: [...host.querySelectorAll('[data-group-kind]')]
+      .map(h => h.dataset.groupKind),
+    rows: rows.length,
+    money: (host.textContent.match(/[\u20aa\u20ac$]/g) || []).length,
+    cells: rows.reduce((n, r) => n + r.querySelectorAll('td').length, 0),
+    // what the document calls each row, beside what the row prints. A decision
+    // group is named by the sku it chose, not by a tag, so it is not in here.
+    named: rows.filter(r => r.dataset.kind !== 'decision').map(r => ({
+      kind: r.dataset.kind, id: r.dataset.group,
+      want: expected(r.dataset.group, r.dataset.kind) ?? null,
+      got: (r.querySelector('.group-head strong')?.textContent || '').trim(),
+    })),
+    // the QUANTITIES, which nothing at browser level had ever read: per row,
+    // one (sku -> summed qty) map taken from the column the reader reads
+    qty: rows.map(r => ({
+      kind: r.dataset.kind, id: r.dataset.group,
+      lines: [...r.querySelectorAll('table tr')].reduce((acc, tr) => {
+        const sku = tr.querySelector('td.sku')?.textContent.trim();
+        const cells = [...tr.querySelectorAll('td')];
+        if (sku) acc[sku] = (acc[sku] || 0) + num(cells[2]?.textContent);
+        return acc;
+      }, {}),
+    })),
+  };
+})()""")
+        check("the BOM is grouped by section, panel and decision",
+              grouped is not None
+              and {"section", "bay"} <= set(grouped["kinds"] or [])
+              and grouped["rows"] > 0 and grouped["cells"] > 0)
+        # the tag, not the raw element id: `A/B1` is what the schedule and both
+        # drawings call that bay, and a money view calling it
+        # `span@run1:0-1500` is a third name for one thing.
+        #
+        # Asserted against the DOCUMENT's tag for THAT element, rather than
+        # against the SHAPE of the printed string. "It does not look like a raw
+        # id" is satisfied by printing `A` on every row of the table — one name
+        # for four different bays, which is precisely the confusion a single tag
+        # source exists to prevent, and it passed. Three different lookups feed
+        # this (a section's key is a RUN id, a node's names the post standing
+        # there, a bay's is already an element id), and each can be wrong on its
+        # own; a row the document cannot name at all must fall back to its own
+        # id rather than to a blank cell that reads as "no section".
+        wrong = [r for r in grouped["named"] if r["got"] != (r["want"] or r["id"])]
+        check("every grouped row prints the tag the document gives that element",
+              grouped["named"] and not wrong
+              and len({r["want"] for r in grouped["named"] if r["want"]}) > 1,
+              wrong[:3] or "one tag for every row")
+        check("no group is priced, because a purchase is not per section",
+              grouped["money"] == 0)
+
+        # A NUMBER, read out of the column a reader reads. Nothing at any level
+        # did that in the browser: the checks above count cells and rows, so a
+        # renderer printing the CUT LENGTH where the quantity belongs passed all
+        # of them. Cross-checked rather than merely present, because a lone
+        # number proves only that a digit reached the page.
+        #
+        # The property: a bay is a strict SUBSET of its section (a post belongs
+        # to no bay), so per sku the bays can never total more than the sections
+        # — and a part that lives only in bays must total exactly the same in
+        # both. That second half is what fails when one `GroupedLine` object is
+        # shared between a bay list and a section list and merged in place, the
+        # corruption `report/bom_groups.py` guards with `model_copy`.
+        def total(kind, sku):
+            return sum(g["lines"].get(sku, 0) for g in grouped["qty"]
+                       if g["kind"] == kind)
+        bay_skus = sorted({s for g in grouped["qty"] if g["kind"] == "bay"
+                           for s in g["lines"]})
+        over = [(s, total("bay", s), total("section", s)) for s in bay_skus
+                if total("bay", s) > total("section", s)]
+        exact = [s for s in bay_skus if 0 < total("bay", s) == total("section", s)]
+        check("the quantity column holds quantities, and the bays add up to their section",
+              bay_skus and not over and exact,
+              over[:3] or f"no bay-only sku among {bay_skus}")
+
         check("every price on the BOM tab is a ₪ figure, and no other symbol is left",
               (prices["nis"] or 0) > 0 and prices["other"] == 0
               and "\u20aa" in prices["total"])
@@ -1116,6 +1366,68 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         # says so by carrying no fixing rule at all
         check("a channelled panel buys no screws and reports no gap",
               vinyl["slots"] == ["rail", "slat"] and vinyl["warnings"] == 0)
+        # --- and how it goes together -----------------------------------------
+        # Roadmap Admin 3. M-VINYL is the line where ORDER is the assembly:
+        # nothing is screwed, so a board dropped in before its top rail is a
+        # board that cannot be dropped in at all. Checked here because only the
+        # browser has the model, the resolved panel and the reader's language
+        # together.
+        steps = c.js("""
+(() => {
+  const host = document.getElementById('panel-assembly');
+  if (!host) return null;
+  const li = [...host.querySelectorAll('li.step')];
+  return {
+    n: li.length,
+    kinds: li.map(x => x.dataset.kind),
+    keys: li.map(x => x.dataset.step),
+    text: host.textContent,
+    unplaced: host.querySelectorAll('.warning').length,
+  };
+})()""")
+        check("the panel says how it goes together, in order",
+              steps is not None and steps["keys"] == ["rails", "boards", "cure"]
+              and steps["kinds"] == ["assembly", "assembly", "installation"])
+        # Asserted POSITIVELY. `unplaced == 0` is the absence of a warning, which
+        # is equally absent when the branch that would render it is deleted — a
+        # check that passes against the feature removed. What the sheet claims is
+        # that its steps fit exactly the panel's parts, so compare the two.
+        fitted = c.js("""
+(() => {
+  const steps = [...document.querySelectorAll('#panel-assembly li.step .sku')]
+    .map(x => x.textContent.trim());
+  const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')]
+    .map(r => r.dataset.slot);
+  return { steps, rows,
+           warned: document.querySelectorAll('#panel-assembly .warning').length };
+})()""")
+        check("the steps fit exactly the parts the panel is made of",
+              sorted(fitted["steps"]) == sorted(fitted["rows"])
+              and len(fitted["steps"]) > 0 and fitted["warned"] == 0)
+        # Expert prose, in the reader's language rather than through t() —
+        # asserted against the MODEL's own `text_i18n` rather than against a word
+        # copied out of it. A single word proves too little and breaks too
+        # easily: rewording an instruction is the author's prerogative and not a
+        # regression, and "השחילו" would equally have matched that sentence
+        # rendered under the WRONG step, or one step's text rendered three times.
+        # Every authored sentence must appear, and the English of a Hebrew UI
+        # must not — which is the actual claim, and the one a `text_i18n[locale]
+        # ?? text_i18n.en` fallback silently breaks.
+        prose = c.js("""
+(async () => {
+  const doc = await (await fetch('/api/fence-models/M-VINYL/1')).json();
+  const text = document.getElementById('panel-assembly').textContent;
+  const authored = (doc.assembly || []).map(s => s.text_i18n || {});
+  return {
+    steps: authored.length,
+    missing: authored.map(x => x.he).filter(s => s && !text.includes(s)),
+    leaked: authored.map(x => x.en).filter(s => s && text.includes(s)),
+  };
+})()""")
+        check("every authored instruction is on the sheet, in the reader's language",
+              prose is not None and prose["steps"] == 3
+              and not prose["missing"] and not prose["leaked"],
+              prose and f"missing={len(prose['missing'])} leaked={len(prose['leaked'])}")
         c.shot("18c-panel-vinyl.png")
 
         # the panel is priced from the model, not from a fixed shape: M-LEGACY's
@@ -1194,6 +1506,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         c.shot("19-panel-slat.png")
         c.js("location.reload(); 'ok'")
         time.sleep(5)
+        c.js("window.confirm = () => true; window.alert = () => {}; undefined")
         c.js(f"""
 {{
   const sel = document.getElementById('project-select');
@@ -1407,8 +1720,14 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(1.5)
         bom_text = c.js("document.getElementById('tab-bom').textContent")
         check("BOM cut plan is labelled in the chosen unit", 'ס"מ' in (bom_text or ""))
+        # Scoped to the cut-plan panel. Unscoped it read cell 1 of EVERY table on
+        # the tab, so it measured whichever table came first — and a new panel
+        # whose second column happens to hold a product name ("Rail stock 3000
+        # mm") failed it while every cut length was converted correctly. The
+        # assertion is unchanged: a relabelled-but-unconverted stock length
+        # still reads 3000 and still fails.
         stock = c.js("""
-[...document.querySelectorAll('#tab-bom table tr')]
+[...document.querySelectorAll('#tab-bom .cut-plan table tr')]
   .map(r => r.cells?.[1]?.textContent || '').join('|')""")
         check("BOM cut-plan lengths are converted, not just relabelled",
               "300" in (stock or "") and "3000" not in (stock or ""))
@@ -1460,7 +1779,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         pid = c.js("document.getElementById('project-select').value")
         c.cmd("Page.navigate", url=f"http://localhost:{PORT}/")
         time.sleep(3)
-        c.js("window.confirm = () => true; undefined")  # the reload dropped the stub
+        # the reload dropped both stubs
+        c.js("window.confirm = () => true; window.alert = () => {}; undefined")
         check("the unit preference survives a reload",
               'ס"מ' in (c.js("document.getElementById('btn-units').textContent") or ""))
         # a reload opens the FIRST project in the list — come back to the smoke one
@@ -1860,6 +2180,18 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
               or "עדיין אין" in (stale_text or ""))
         check("a stale schedule leaves no tags on the drawing",
               (c.js("document.querySelectorAll('#g-overlay text.elem-tag').length") or 0) == 0)
+        # ...and the section decisions say the same thing, which is the ONLY
+        # place that 409 branch is reachable: node cannot fetch and no other
+        # check moves the drawing under a generated run. A section is a topology
+        # object, so "the decisions for section A" stops being true here.
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(1.5)
+        stale_decisions = c.js(
+            "document.getElementById('section-decisions')?.textContent || ''")
+        stale_key = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => b['decisions.stale'])""")
+        check("a moved drawing makes the section decisions say so, not answer anyway",
+              bool(stale_key) and stale_key in stale_decisions)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
 
@@ -2179,15 +2511,19 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 }
 'ok'""")
         time.sleep(1.0)
-        c.js("""
-document.querySelector('#model-inspector [data-act="add-eligible"]').click();
-'ok'""")
-        time.sleep(0.8)
+        # THE hole this arc repairs: a fresh slot names no part
+        # (`eligibilitySource` reads "unspecified"), so the pane offers the part
+        # picker, not the members list — `add-eligible` only renders once a slot
+        # already authors a SKU list (`authored_members`), which naming a part is
+        # never allowed to do alongside (`_part_or_authored` refuses the pair).
+        # This step used to click `add-eligible` and hand the row a bare SKU; it
+        # now names the part the demo catalog built FOR this exact SKU
+        # (`rail-rail-3000`, `parts/demo.py`) through the control the repair
+        # actually ships.
         c.js("""
 {
-  const sel = document.querySelector(
-    '#model-inspector [data-eligible-row="0"] [data-f="sku"]');
-  sel.value = 'RAIL-3000'; sel.dispatchEvent(new Event('change'));
+  const sel = document.querySelector('#model-inspector [data-f="part"]');
+  sel.value = 'rail-rail-3000'; sel.dispatchEvent(new Event('change'));
 }
 'ok'""")
         time.sleep(1.0)
@@ -2217,15 +2553,14 @@ fetch('/api/fence-models').then(r => r.json())
 fetch('/api/fence-models/M-SMOKE/1').then(r => r.json()).then(m => {
   const slot = (m.default_spec.frame || [])[0];
   return slot ? {key: slot.key, rule: slot.requirement.length_rule,
-                 members: slot.requirement.eligibility.members} : null;
+                 part_id: slot.requirement.part_id} : null;
 })""")
         check("a model authored from the rows publishes, with the rows in it",
               bool(smoke_row) and smoke_row["active_version"] == 1
               and smoke_row["status"] == "active"
               and stored and stored["key"] == "rail"
               and stored["rule"] == "centre_to_centre"
-              and stored["members"] == [{"kind": "catalog_item", "sku": "RAIL-3000",
-                                         "priority": 1, "approval": "auto"}])
+              and stored["part_id"] == "rail-rail-3000")
         # publishing changes which models are SELECTABLE, and the picker's
         # listing is a cache — without an invalidation it keeps the old library
         c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
@@ -2246,6 +2581,122 @@ fetch('/api/fence-models/M-SMOKE/1').then(r => r.json()).then(m => {
 document.querySelector('#model-list [data-model="M-SMOKE"] [data-act="edit"]').click();
 'ok'""")
         time.sleep(1.5)
+
+        # --- the slot inspector saves what it shows ----------------------------
+        # THE hole this arc repairs. The suite has always opened this tab and
+        # left again, so a slot pane that showed "no product" for every slot and
+        # refused the save that would fix it passed 183 checks. A tab that is
+        # opened and not used is not covered.
+        # `data-slot` is written by elevation.js (`:369`, `:386`, `:417`) on
+        # every drawn member and read back by the canvas' own click handler
+        # (`elevation.js:442`, mirrored in `panel-canvas.js:120` for the Panel
+        # tab's canvas). Scoped to `#model-canvas` — unscoped it can also match
+        # a row `structure.js`/`panel.js` left in the DOM for a tab that is
+        # merely hidden, not gone, from an earlier step of this same run.
+        wait_for(c, "document.querySelectorAll('#model-canvas [data-slot]').length")
+        c.js("""
+document.querySelector('#model-canvas [data-slot]')?.dispatchEvent(
+  new MouseEvent('click', { bubbles: true })); 'ok'""")
+        part_shown = wait_for(
+            c, "document.querySelector('#model-inspector [data-f=\"part\"]')?.value || ''")
+        check("a slot pane names the part the slot names", bool(part_shown))
+
+        chips = c.js(
+            "document.querySelectorAll('#model-inspector [data-chip]').length")
+        check("the part's spec is shown beside its name", (chips or 0) > 0)
+
+        candidates = c.js(
+            "document.querySelector('#model-inspector [data-candidates]')"
+            "?.textContent || ''")
+        check("the slot says how many products can fill it",
+              any(ch.isdigit() for ch in candidates))
+
+        # and the save that used to be refused. `rail-rail-3000-40` is named
+        # rather than "the first other option" on purpose: the picker lists
+        # every part in the library ungated by the slot's own kind
+        # (`partSelect`, `panel-inspector.js`), so an unfiltered pick could just
+        # as easily hand this FRAME slot an infill part. Both it and
+        # `rail-rail-3000` are permanently seeded (`parts/demo.py`), so there is
+        # always an alternative and "nothing to do" is never an answer here.
+        #
+        # THE STORED DOCUMENT IS WHAT IS ASSERTED, and that is the whole point of
+        # the check. `saveDraft` (`model-editor.js`) copies back only
+        # version/status/invalid — `session.model` stays the object this script
+        # itself mutated — so reading the select back after the save answers "did
+        # the JS keep what I typed", which it does whether the PUT returned 200 or
+        # 422. That is the shape of green this arc exists to remove, and it is
+        # what this check used to be. So: name the part, save, and GET the draft
+        # back off the server.
+        #
+        # The diff is taken over every `part_id` in the document rather than over
+        # one slot, because which slot the canvas click selected is the canvas'
+        # answer and not this script's — so the assertion is the exact one that
+        # matters: ONE slot changed, from what it named to what was chosen.
+        #
+        # Reverted at the end so the rest of the run sees the model it expects.
+        # (The publish refusal two blocks down does NOT depend on it: both parts
+        # declare `sku among ['RAIL-3000']`, so that refusal holds either way.)
+        saved = c.js("""
+(async () => {
+  const q = () => document.querySelector('#model-inspector [data-f="part"]');
+  const before = q()?.value;
+  const alt = 'rail-rail-3000-40';
+  if (!before) return 'no-part-selected';
+  if (![...q().options].some((o) => o.value === alt)) return 'alt-not-offered';
+  if (before === alt) return 'already-the-alternative';
+
+  const save = async () => {
+    document.getElementById('btn-model-save')?.click();
+    await new Promise((r) => setTimeout(r, 1600));
+  };
+  // every part_id the STORED draft names, in document order
+  const storedPartIds = async () => {
+    const rows = await (await fetch('/api/fence-models')).json();
+    const v = rows.find((m) => m.id === 'M-SMOKE')?.draft_version;
+    if (!v) return null;
+    const doc = await (await fetch(`/api/fence-models/M-SMOKE/${v}`)).json();
+    const out = [];
+    (function walk(node) {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node && typeof node === 'object') {
+        if (typeof node.part_id === 'string') out.push(node.part_id);
+        Object.values(node).forEach(walk);
+      }
+    })(doc);
+    return out;
+  };
+  const changes = (a, b) => (a && b && a.length === b.length)
+    ? a.map((v, i) => [i, v, b[i]]).filter(([, v, w]) => v !== w) : null;
+
+  await save();                       // materialise the draft as it stands
+  const base = await storedPartIds();
+  if (!base) return 'no-draft-stored';
+
+  const pick = async (value) => {
+    const sel = q();
+    if (!sel) return false;           // the save re-rendered the pane away
+    sel.value = value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await save();
+    return true;
+  };
+
+  if (!await pick(alt)) return 'pane-gone-before-the-change';
+  const changed = changes(base, await storedPartIds());
+  if (!await pick(before)) return 'pane-gone-before-the-revert';
+  const reverted = changes(base, await storedPartIds());
+
+  if (!changed || changed.length !== 1)
+    return `stored ${JSON.stringify(changed)} instead of one change`;
+  if (changed[0][1] !== before || changed[0][2] !== alt)
+    return `stored ${changed[0][1]} -> ${changed[0][2]}`;
+  if (!reverted || reverted.length !== 0)
+    return `revert left ${JSON.stringify(reverted)}`;
+  return 'stored';
+})()""")
+        check("changing a slot's part is STORED, and reads back off the server",
+              saved == "stored", saved)
+
         # The Advanced-JSON escape hatch, exercised with BROKEN json, because
         # the rule is that the exit is never gated on the thing that is broken
         # (`tabs.js:93-95`, learned when the rule editor trapped users behind a
@@ -2565,7 +3016,15 @@ document.querySelector('#model-elements [data-element="infill:slat"]').click(); 
   // `between_frame`, the one rule that reads them, so on a board cut to the
   // panel height their absence is the "never offer what the gate refuses" rule
   // working. Everything else is unconditional.
-  const want = ['role', 'length_rule', 'option_axis', 'face_offset_mm',
+  // `role` was in this set and is deliberately NOT any more: it did not move
+  // behind Advanced, it left AUTHORING. The part's type is the one authority on
+  // what a piece is (`resolve_model_parts` fills `role` from it, and
+  // `PartRequirement` refuses a slot that names a part and states a role too),
+  // so the control was removed rather than deferred. Keeping it here would be a
+  // check demanding the editor re-offer the field whose offer was the defect.
+  // The word is still in the system — `ResolvedSlot.role`, and the BOM reads it
+  // — it is just no longer something an author types.
+  const want = ['length_rule', 'option_axis', 'face_offset_mm',
                 'thickness_mm', 'justification', 'excess'];
   // no claim about the disclosure's open state here: it PERSISTS across
   // renders, and by this point in the session the author has opened it. That it
@@ -2594,6 +3053,18 @@ document.querySelector('#model-elements [data-element="infill:slat"]').click(); 
         check("all eight spacing pairs are reachable, not merely mentioned",
               len(pairs["justification"]) == 4 and len(pairs["excess"]) == 2)
 
+        # BOTH steps below still hold, and it is worth saying why rather than
+        # leaving the next reader to re-derive it. The narrowing this arc shipped
+        # hides `width_mm` on a holder whose PART owns the width, and renders the
+        # preference list only for a slot whose eligibility source is
+        # `authored_members`. Neither narrowing bites here: this block is driving
+        # the `slat` STARTER (`#btn-model-new` → `[data-template="slat"]` above),
+        # not M-SLAT, and `panel-templates.js` builds its board out of
+        # `defaultMember` + `defaultEligibleMember("SLAT-100")` — a member that
+        # authors a sku list and states its own 100 mm width, naming no part. So
+        # the width field renders and `add-eligible` renders, and the two things
+        # these steps prove are still true of the pane they open.
+        #
         # the disclosure must SURVIVE a rebuild — every edit re-renders the pane,
         # and a version that slams it shut loses the author's place on each
         # keystroke. Asserting only "shut on first render" cannot see that.
@@ -2779,6 +3250,7 @@ fetch('/api/fence-models').then(r => r.json())
                 pass
         if os.path.exists(db):
             os.unlink(db)
+        shutil.rmtree(profile, ignore_errors=True)
 
 
 if __name__ == "__main__":

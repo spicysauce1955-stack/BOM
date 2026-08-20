@@ -135,7 +135,16 @@ class StubProposer:
                 scope={"project_id": example.project_id},  # narrowest scope by default
                 actions=[AddNote(text="Prefer snapping posts to existing foundations within 300 mm")],
                 source_text=example.comment or "",
-                derived_from=[c.id for c in foundation_corrections],
+                # The correction ids AND the decisions they were made about. A
+                # candidate born from an argument about a specific decision kept
+                # no link to it, which is the one place the decision graph is the
+                # natural evidence for a proposed rule — a reviewer asking "what
+                # was this about" had only the sentence. A ref is meaningful only
+                # inside its own run (`core/ids.py`), so the run is carried with
+                # it rather than the bare id.
+                derived_from=[c.id for c in foundation_corrections]
+                + sorted({f"{c.generation_run_id}#{c.decision_ref}"
+                          for c in foundation_corrections if c.decision_ref}),
                 attributed_to=f"proposer:{self.interpreter_id}",
                 status="proposed",
             )

@@ -1,13 +1,17 @@
 # Open work
 
-Handoff, updated 2026-08-17. Everything below is unstarted unless it says
+Handoff, updated 2026-08-20. Everything below is unstarted unless it says
 otherwise. State it follows from: `plan/current-status.md` (newest entry first)
 and `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md`,
 whose §11 carries the wave plan with each wave's findings folded back in.
 
-`main` is green: **1152 pytest · 175 scenario tests · 170/170 smoke · compatibility gate
-byte-identical** (plus `vinyl.json`, a new fixture, and the one deliberate proved
-regeneration recorded in the spec's §9).
+The branch is green: **1542 pytest · 191 scenario tests · 198/199 smoke ·
+compatibility gate byte-identical** — the one smoke failure is another agent's
+in-flight check, uncommitted in this tree, not a regression.
+
+**Every numbered item below is now closed or specified.** What is left is the
+"smaller, known" list, the deferred triggers, and whatever the two review rounds
+recorded as knowingly not done.
 
 ---
 
@@ -20,65 +24,162 @@ posts intersect; the three §8 failure codes), `e033f01` (the panel preview
 measures its own model's post). See `plan/current-status.md` for what each
 decided and what building them found.
 
-## 2. Assembly and installation instructions per panel (roadmap Admin 3)
+## ~~2. Assembly and installation instructions per panel~~ — DONE, 2026-08-19
 
-*"Each fence panel has assembly rules and instructions (also support installation
-rules and instructions)."* The only roadmap item with **no foundation at all** —
-nothing on `FenceModel` carries prose, an ordering, or a step. Worth a
-brainstorm before code: an instruction that is only text is a doc, while an
-instruction that names slots and an order is data the assembly film could already
-drive (`js/animate.js` computes a build order today from roles alone).
+`AssemblyStep` on `FenceModel`, `report/assembly.py`, M-VINYL's own instructions,
+and the Panel tab (`6839e25`, `a94048b`, `5d50357`). The plan's own line settled
+the design: a step names slots, so it is data rather than a paragraph, and the
+invariant is that every member is placed by exactly one step or reported
+`unplaced`.
 
-## 3. Section-scoped decisions, and commenting on one (roadmap step 5)
+**Knowingly not done**, both recorded in `report/assembly.py`:
+* the assembly FILM still orders itself by its role heuristic. For every demo
+  model the authored order and the heuristic agree, so rewiring adds a second
+  ordering path to a well-tested feature for no observable difference. A model
+  whose order genuinely disagrees is what should motivate it.
+* the placeable vocabulary is the PANEL's slots, so no step can name a post, its
+  cap or its footing — an installation instruction about posts is prose today.
+  Closing it means giving the read model the bay's posts, a different input.
+* `text_i18n` is versioned with the engineering document, so fixing a typo mints
+  a new product-line version. The split, if it is worth it: keep `key/kind/slots`
+  on the model, move the prose to a separately versioned instruction document.
 
-*"focus on specific sections of the fence and get only the decisions related to
-the selected session. change, comment or start a conversation about it!"*
+## ~~3. Section-scoped decisions, and commenting on one~~ — DONE, 2026-08-19
 
-`/api/runs/{id}/explain/{element}` answers per ELEMENT. Scoping to a section and
-returning only its decisions does not exist; nor does any comment surface.
-Annotations, `Correction` and the AI ports are the machinery to build it on — and
-the boundary holds: a comment becomes an interpretation, an interpretation
-becomes a PROPOSAL, and only a human confirms. AI never decides.
+`report/section_decisions.py`, two routes, the side-panel surface, S17, and the
+propose-a-rule loop (`6db459f`, `47dfcd7`, `28e0e73`, `dda3675`). The boundary
+holds and is on screen: a comment is verbatim, changes no fence, and becomes a
+candidate only a person can approve.
 
-## 4. BOM grouped by section / panel / decision (roadmap step 7)
+**Knowingly not done:**
+* "CHANGE it" — the third verb of that roadmap line — is still the existing
+  override path (pin post, force sku) and is not reachable from this panel.
+* a comment cannot follow its decision into a new run, because a decision id is
+  positional. The panel counts and names earlier-run comments rather than
+  pretending they do not exist; making one MIGRATE needs a semantic anchor
+  (section + action + station) stored beside `decision_ref`.
+* the proposer still reads a comment as raw text, so a QUESTION ("why is this bay
+  1500?") is evidence for a rule in the same way a correction is. A
+  `kind: correction | comment | question` discriminator is the cheap fix.
 
-`Bom.lines` are flat and sorted by sku; `report/structure.py` already inverts
-pegs to put parts on bays and stations, so grouping by section and panel is a
-read-model addition rather than new arithmetic. Grouping by DECISION is the new
-one — `SupplyDecision` and the graph carry what is needed.
+## ~~4. BOM grouped by section / panel / decision~~ — DONE, 2026-08-19
 
-## 5. `DesignRun` / `MaterialRun` (backend audit §1.5)
+`report/bom_groups.py`, the `grouped` key on `/bom`, and the BOM tab (`dfbb154`,
+`5d50357`, `972d767`).
 
-The audit's sharpest finding and verified in code: `/bom` reads LIVE inventory and
-logs an `inventory_hash` that enters no identity, so one `run_id` yields different
-BOMs as stock moves; and `objective_preset` — read only by supply resolution —
-sits inside the DESIGN digest (`generator.py`). Deserves its own spec: it changes
-persisted identity. Dispositions in
-`docs/reviews/backend-audit-2026-08-16-response.md`.
+**Knowingly not done: money per section.** A purchase is pooled per sku across
+the run — one bar is cut for two bays — so a per-section price is an
+apportionment nothing measured. The missing concept is not arithmetic but a
+named, versioned **apportionment policy** (by consumed length / by piece count /
+by list value), which is an objective in the ADR-0007 sense and belongs in an
+ADR rather than in a read model. An estimator quoting a two-phase job genuinely
+needs this; it is the most valuable single thing left on this list.
+
+Also open: the grouped BOM and the structure sheet answer "what does section A
+need" differently for a SHARED corner post, because one sums and the other does
+not. Both are right for their own question and the difference is now named on
+screen, but one of them should probably change.
+
+## 5. `DesignRun` / `MaterialRun` — SPECIFIED, not built (backend audit §1.5)
+
+Spec: `docs/superpowers/specs/2026-08-19-design-run-material-run.md`. The defect
+is demonstrated there rather than described — one run id, 40 700 then 27 200
+agorot after three posts arrive in the yard, with `GET /runs/{id}` byte-identical
+between them.
+
+**It stops at a spec on purpose, and needs ONE decision from you** (§5): removing
+`objective_preset` from the design digest means a regeneration of an unchanged
+project produces a new id where it used to return the old one. One deliberate
+discontinuity (recommended) against a permanent conflation. It also strands
+comments anchored to a design run, which item 3 just made concrete.
 
 ---
 
+## The merge review, 2026-08-20 — found, and NOT fixed
+
+Three reviewers over the branch before it merged (architecture, tests, frontend
+contracts). Verdicts: SOUND-WITH-FIXES, GAPS, and 2 blocking defects. Everything
+blocking was fixed and is in the branch. What follows was found, judged, and
+deliberately left — each with the evidence, so nobody has to rediscover it.
+
+**The biggest one: the model's post and cap are priced choices with no decision
+node.** `strategy/generator.py` takes `sorted(set.intersection(...))[0]` for both
+— the lexicographically smallest sku — throwing away the authored order that
+`_matched()` returns. Then `demand/derive.py` hands `resolve_supply` a
+ONE-MEMBER eligibility, so no decision node is emitted at all. Reproduced: give
+M-VINYL's cap slot two eligible members and the declared first preference loses
+to alphabetical order, `honour_priority` cannot reach the choice, and the cap is
+on the BOM while appearing nowhere in the graph. This violates "every BOM line
+traces through the decision graph" and it is exactly the gap
+`decisions/supply.py`'s own docstring declares CLOSED. Not a regression (the post
+path was always like this and the branch only re-authored the cap alongside it),
+which is why it did not block. Fix direction: either put `cap_sku` and its
+rejected set in the `place_post` payload, or route the model's post/cap through
+`resolve_supply` by giving `derive_requirements` the full matched member list
+instead of `chosen(...)`. Until then the supply.py docstring should stop
+claiming coverage it does not have.
+
+**`unassigned` conflates two different facts.** `report/bom_groups.py` puts
+purchase overage (`purchased − asked > 0`) and demand pegged to nothing in one
+list, appended separately — so one sku can appear twice meaning two different
+things, and the panel renders both under one heading. A reader cannot tell "we
+bought more than the fence needs" from "this demand belongs to no section". Split
+the buckets or tag the entries.
+
+**The backend reads the frontend's locale bundles.** `api/app.py`'s
+`_locale_bundle` / `GET /api/part-types` returns `label_i18n` per type, keyed
+`part_type.<type>`, which the client already has. It puts locale rendering on the
+server against "every user-visible string goes through `t()`", and the
+process-level cache means editing `he.json` needs a restart. Return keys and let
+`panel-inspector.js` call `t("part_type." + key)`.
+
+**Two naming schemes in one panel.** `decisions/explain.py` prints raw ids in
+user-facing prose ("Section runA is 800 cm long…") beside a grouped BOM that is
+scrupulous about routing every row name through the single tag source, precisely
+so a money view does not print a third name for one thing. The section panel says
+`runA` where the drawing and the schedule say `A`. The backend cannot see tags —
+they are a read model — so this needs a decision about where the join happens.
+
+**Clearing the part picker authors an unsaveable slot.** `panel-inspector.js`:
+the empty prompt option is always selectable, and choosing it clears `part_id`
+without restoring `role`, `eligibility`, or the `width_mm`/`thickness_mm` the
+earlier pick zeroed. `validate_model` then refuses the slot. A milder version of
+the same "422 the author cannot see" this arc exists to remove, plus real data
+loss on a dimension the field redisplays as `0`. Recoverable (the pane says
+"Choose a part"), hence not blocking.
+
+**Test gaps left open**, all with a surviving mutation recorded against them:
+* `report/section_decisions.py`'s `by_payload` also reads `run_ref`; no decision
+  node in `src/` carries that key. Reducing it to `run_id` alone leaves 1570
+  green. Dead code, or a real path with no test and a comment overstating it.
+* `test_no_group_carries_money` is a field-NAME substring scan — satisfied by a
+  group with no lines, and by a cost field spelled `total_agorot`. Keep it as a
+  design-intent guard; do not count it as coverage.
+* `test_section_decisions.py`'s "a project-wide choice is excluded" passes for
+  free: `resolve_demand_products` is excluded incidentally (no `run_id`, no scope
+  refs) and nothing implements the rule the docstring claims.
+* the grouped-BOM balance invariant — the analogue of `Σ(parts) ≡ BOM` — runs on
+  the straight 6000 mm fixture only, not over `test_invariants.py::_fixtures()`
+  (raked, slat, L-shape, gates). Parametrize it or move it into the invariants
+  module.
+* two browser checks over-promise in their names: "its own decisions, localized"
+  reads no sentence and asserts no Hebrew, and the smoke project has ONE run at
+  that point so section isolation is not observable there even in principle; and
+  "a conversation can be turned into a candidate rule" concedes in its own
+  comment that it passes either way.
+
 ## Smaller, known, and cheap
 
-- **`elevation.js` layer identity is positional.** `.elev-edges` and `.elev-seats`
-  tie shapes to members by ARRAY POSITION; only `.elev-member` carries
-  `data-order`. A change to one loop mis-pairs an outline with the wrong slat.
-  `assembly.js` defends itself by checking layer lengths agree. Give those rects a
-  `data-order`.
+*(`elevation.js` layer identity, the cap following the stood post, and the
+architecture fitness tests all shipped on 2026-08-19 — `051578c`, `979a1a9`,
+`336cb6f`. The fitness tests found real drift on their first run: the part-library
+arc had added a table and two routes without touching the backend doc.)*
+
 - **Post candidate selection is sorted-first, not cost-based** (`_model_post_skus`).
   Defensible for an indivisible each; the line still carries its full eligibility
   into demand, so the choice stays explainable there. Still true after W3, and
   now visible: a routed line with two acceptable posts buys the alphabetically
   first, and the intersection at a boundary is taken over sets, not over prices.
-- **A model's cap is matched against the MODEL's post, not the one finally
-  written.** `_make_post` puts a forced sku, a masonry mount and a gate
-  reinforcement ABOVE the model's post, so a cap whose predicate reads
-  `post.face_width_mm` reads the face of a post that situation replaced. Narrow —
-  it needs a predicate-matched cap AND a situational post at one station — but it
-  is a wrong answer rather than a missing one when it happens.
-- **Architecture fitness tests** (audit §5): forbidden imports, table inventory,
-  port inventory, route inventory, hash field lists. The right answer to the whole
-  class of drift the audit found. Best done once the import graph stops moving.
 - **Application layer** (audit §1.3): extract a handler when a use case is next
   touched — `generate`, `/bom`, `quote`, `impact` are the four with real
   duplication risk. Rejected as a big-bang restructure.
@@ -97,11 +198,18 @@ persisted identity. Dispositions in
   defects in this arc that pytest structurally could not — a user-visible parts
   ordering change, two JS readers left on migrated catalog keys, a rail painting
   black, a stale bay preview, and a new built-in model absent from the tool that
-  offers them. `TestClient` serialises requests, so no pytest test can see the
-  concurrency class at all. It is also FLAKY under load: one run of this arc
-  reported 32 unrelated failures from the first generation onward and the next
-  clean run passed 170/170. Re-run before believing a broad collapse; believe a
-  single localised failure immediately.
+  offers them, and a Models tab that was opened and never used. `TestClient`
+  serialises requests, so no pytest test can see the concurrency class at all.
+- **It was NOT flaky, and this note used to say it was.** A run reporting ~33
+  unrelated failures from the first generation onward, green again on a re-run,
+  was diagnosed on 2026-08-17 as load. It was a shared Chrome profile: no
+  `--user-data-dir`, so `localStorage` survived the run, and this suite ends by
+  toggling to English — the next run opened in English with every Hebrew
+  assertion red. Fixed at the source (`987e17b`, which gave the run its own
+  profile and its own DB; `6004a29` added the readiness wait a cold profile
+  needs). The lesson generalises: an
+  identical failure SET across two runs is never flakiness, and "re-run and see"
+  is how a real defect gets written off twice.
 - **A new user-visible code needs BOTH locale bundles** and a line in the
   `REFUSAL_CODES`/`WARNING_CODES` list; the guard scans `api/app.py` and both
   `code="..."` spellings.

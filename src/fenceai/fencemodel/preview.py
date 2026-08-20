@@ -47,6 +47,7 @@ from fenceai.fencemodel.resolve import (
     select_variant,
 )
 from fenceai.fulfillment.pipeline import price_strategy
+from fenceai.report.assembly import AssemblyPlan, assembly_plan
 from fenceai.report.elevation import ElevationPost, PanelElevation, panel_elevation
 from fenceai.strategy.model import (
     GenerationResult, PartUse, Span, Strategy, StrategyWarning,
@@ -124,6 +125,10 @@ class PanelPreview(BaseModel):
     # is precisely what `_unsupported_features` exists to prevent. Reported, so
     # the surface that shows the panel can say the panel is not the whole story.
     invalid: list[str] = []
+    # How this panel goes together, when its model says. `None` is "this line
+    # states no order", which the assembly film needs to tell from "it takes no
+    # steps" so it knows whether to fall back to its role-based build order.
+    assembly: AssemblyPlan | None = None
     total_cents: int = 0
 
 
@@ -235,6 +240,7 @@ def preview_panel(
         # resolves again against the SAME (pinned) library — idempotent, and it
         # keeps "which document is validated" one function's business rather than
         # a contract between two.
+        assembly=assembly_plan(model, panel),
         invalid=validate_model(model, catalog, part_library),
         total_cents=priced.bom.total_cents,
     )
