@@ -1,5 +1,69 @@
 # Current status
 
+## The merge review: three reviewers, two blocking defects, one blocking hole (2026-08-20)
+
+Before merging the 40-commit branch: an architecture critic, a test reviewer and
+a frontend-contract reviewer over `origin/main...HEAD` plus the uncommitted tree.
+Verdicts SOUND-WITH-FIXES, GAPS, and 2 BLOCKS-MERGE. Everything blocking is
+fixed; what was left is written up in `plan/open-work.md` with its evidence.
+
+**The two user-visible defects were both mine, and both invisible for the same
+reason: every test rendered in millimetres.** `fmt()` is the mm -> display
+converter and nothing else, and the grouped BOM and the assembly sheet put every
+quantity through it — so the moment a reader switched the app to cm, "8 each"
+became **0.8 each** and a step read "fit ×0.3 rails", while the priced table on
+the same screen said 8. The second half is worse than the arithmetic: when a
+unit genuinely IS `mm` the number must convert AND the label must be swapped for
+the reader's, or a converted figure sits under a literal "mm". `bomHtml` has
+carried exactly this guard for months; the grouped view copied its number and
+not its guard. Both are now one `qtyCells()` with the rule stated once, and five
+new node tests render the same payload in BOTH units — the dimension the whole
+suite was blind to.
+
+**The blocking test hole: the join everything was renamed for reached no test.**
+`decision_id` was made content-derived so the grouped BOM's group, the graph node
+`/explain` prints, the section route and a comment's `decision_ref` would all be
+one name. But NO fixture in the suite produced a supply decision that reached the
+API — the demo models name one product per slot, so `select_supply` never fired
+past the wire. Two mutations proved it with 1570 green: deleting the section
+route's `with_supply_decisions` enrichment, and renaming the id prefix `s` ->
+`sup`. Worse, the test that claimed to defend the join computed its expectation
+with `decision_id` itself — it proved `bom_groups` calls that function and
+nothing about the graph, which is why the rename survived. There is now one API
+test that builds a genuinely deciding fence through the product's own routes (two
+catalog products, a published model with two-member eligibilities) and compares
+two strings from two different routes; it kills both mutations, and the unit test
+now compares against the built graph rather than against the function under test.
+
+**A gate's own section never heard about the gate.** The `gate_event` fact
+carried no `run_id`, so `decisions_for_section` could not reach it: a reader saw
+two reinforced posts appear at 3000 and 4000 with no stated cause, and the
+`gate_event` templates written for that panel were unreachable from it. One line,
+plus S17 assertions. The same round found the Hebrew sentence for an END node
+read «שבו נפגשים 1 קטעים» — "1 sections meet" — where the common case is one
+section stopping; the bundles' existing `_one` convention now covers it.
+
+**And the smaller ones, fixed rather than filed**: `sentence()` (escape the
+template, then drop each param in bidi-isolated) existed twice and was about to
+be written a third time, so it moved to `units.js` — four call sites that were
+interpolating Latin skus and run ids into Hebrew prose and escaping afterwards
+now isolate them; the unresolved bucket printed an untranslated `rail` in a cell
+that forces ltr; the grouped BOM's product-name cell had lost the `dir="auto"`
+the priced table gives the same field; the AI-port fitness test compared two
+COUNTS, so a decoy `class StubSomethingElse:` satisfied it — it now checks
+protocol conformance per port; and S17's doc caught up with two expectations its
+tests had been asserting silently.
+
+**One correction to a reviewer.** The frontend review reported the grouped BOM
+rendering "600 mm" for an mm-unit line in cm mode. The bug is real and is fixed,
+but no demo product is measured in mm — real units are `application`, `cut` and
+`each` — so that reproduction came from a synthetic fixture, not from anything a
+user sees today. It is a guard against a shape the catalog permits, not a
+shipped defect.
+
+1581 pytest · 193 scenario tests · compatibility gate byte-identical · 200/200
+browser checks.
+
 ## The seven findings the review left open, closed (2026-08-20)
 
 The 2026-08-20 test review left seven findings open when the session ran out of

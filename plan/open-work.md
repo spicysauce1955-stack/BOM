@@ -95,6 +95,79 @@ comments anchored to a design run, which item 3 just made concrete.
 
 ---
 
+## The merge review, 2026-08-20 — found, and NOT fixed
+
+Three reviewers over the branch before it merged (architecture, tests, frontend
+contracts). Verdicts: SOUND-WITH-FIXES, GAPS, and 2 blocking defects. Everything
+blocking was fixed and is in the branch. What follows was found, judged, and
+deliberately left — each with the evidence, so nobody has to rediscover it.
+
+**The biggest one: the model's post and cap are priced choices with no decision
+node.** `strategy/generator.py` takes `sorted(set.intersection(...))[0]` for both
+— the lexicographically smallest sku — throwing away the authored order that
+`_matched()` returns. Then `demand/derive.py` hands `resolve_supply` a
+ONE-MEMBER eligibility, so no decision node is emitted at all. Reproduced: give
+M-VINYL's cap slot two eligible members and the declared first preference loses
+to alphabetical order, `honour_priority` cannot reach the choice, and the cap is
+on the BOM while appearing nowhere in the graph. This violates "every BOM line
+traces through the decision graph" and it is exactly the gap
+`decisions/supply.py`'s own docstring declares CLOSED. Not a regression (the post
+path was always like this and the branch only re-authored the cap alongside it),
+which is why it did not block. Fix direction: either put `cap_sku` and its
+rejected set in the `place_post` payload, or route the model's post/cap through
+`resolve_supply` by giving `derive_requirements` the full matched member list
+instead of `chosen(...)`. Until then the supply.py docstring should stop
+claiming coverage it does not have.
+
+**`unassigned` conflates two different facts.** `report/bom_groups.py` puts
+purchase overage (`purchased − asked > 0`) and demand pegged to nothing in one
+list, appended separately — so one sku can appear twice meaning two different
+things, and the panel renders both under one heading. A reader cannot tell "we
+bought more than the fence needs" from "this demand belongs to no section". Split
+the buckets or tag the entries.
+
+**The backend reads the frontend's locale bundles.** `api/app.py`'s
+`_locale_bundle` / `GET /api/part-types` returns `label_i18n` per type, keyed
+`part_type.<type>`, which the client already has. It puts locale rendering on the
+server against "every user-visible string goes through `t()`", and the
+process-level cache means editing `he.json` needs a restart. Return keys and let
+`panel-inspector.js` call `t("part_type." + key)`.
+
+**Two naming schemes in one panel.** `decisions/explain.py` prints raw ids in
+user-facing prose ("Section runA is 800 cm long…") beside a grouped BOM that is
+scrupulous about routing every row name through the single tag source, precisely
+so a money view does not print a third name for one thing. The section panel says
+`runA` where the drawing and the schedule say `A`. The backend cannot see tags —
+they are a read model — so this needs a decision about where the join happens.
+
+**Clearing the part picker authors an unsaveable slot.** `panel-inspector.js`:
+the empty prompt option is always selectable, and choosing it clears `part_id`
+without restoring `role`, `eligibility`, or the `width_mm`/`thickness_mm` the
+earlier pick zeroed. `validate_model` then refuses the slot. A milder version of
+the same "422 the author cannot see" this arc exists to remove, plus real data
+loss on a dimension the field redisplays as `0`. Recoverable (the pane says
+"Choose a part"), hence not blocking.
+
+**Test gaps left open**, all with a surviving mutation recorded against them:
+* `report/section_decisions.py`'s `by_payload` also reads `run_ref`; no decision
+  node in `src/` carries that key. Reducing it to `run_id` alone leaves 1570
+  green. Dead code, or a real path with no test and a comment overstating it.
+* `test_no_group_carries_money` is a field-NAME substring scan — satisfied by a
+  group with no lines, and by a cost field spelled `total_agorot`. Keep it as a
+  design-intent guard; do not count it as coverage.
+* `test_section_decisions.py`'s "a project-wide choice is excluded" passes for
+  free: `resolve_demand_products` is excluded incidentally (no `run_id`, no scope
+  refs) and nothing implements the rule the docstring claims.
+* the grouped-BOM balance invariant — the analogue of `Σ(parts) ≡ BOM` — runs on
+  the straight 6000 mm fixture only, not over `test_invariants.py::_fixtures()`
+  (raked, slat, L-shape, gates). Parametrize it or move it into the invariants
+  module.
+* two browser checks over-promise in their names: "its own decisions, localized"
+  reads no sentence and asserts no Hebrew, and the smoke project has ONE run at
+  that point so section isolation is not observable there even in principle; and
+  "a conversation can be turned into a candidate rule" concedes in its own
+  comment that it passes either way.
+
 ## Smaller, known, and cheap
 
 *(`elevation.js` layer identity, the cap following the stood post, and the
