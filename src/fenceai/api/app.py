@@ -44,6 +44,9 @@ from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.fulfillment.pipeline import PricedRun, price_strategy
 from fenceai.fulfillment.quote import Quote
+from fenceai.fulfillment.supply_run import (
+    SUPPLY_BEHAVIOR_VERSION, SupplyRun, inventory_hash, supply_id,
+)
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion
 from fenceai.learning.impact import (
@@ -236,6 +239,29 @@ def _priced(result, preset: str) -> tuple[Catalog, Inventory, PricedRun]:
     return catalog, inventory, priced
 
 
+def _supply_run_for(result, preset: str, priced: PricedRun,
+                    inventory: Inventory) -> SupplyRun:
+    """One construction, two callers (/bom and /quote).
+
+    Two copies of a digest's inputs is how the quote path and the BOM path would
+    come to name different supply runs for the same fence — the same
+    four-copies-of-a-pipeline shape `fulfillment/pipeline.py`'s own docstring
+    exists to warn about.
+    """
+    inv_hash = inventory_hash(inventory)
+    return SupplyRun(
+        id=supply_id(result.run.id, inv_hash, result.run.catalog_hash, preset),
+        design_id=result.run.id,
+        inventory_hash=inv_hash,
+        catalog_hash=result.run.catalog_hash,
+        objective_preset=preset,
+        supply_version=SUPPLY_BEHAVIOR_VERSION,
+        requirements=priced.requirements,
+        unresolved=priced.unresolved,
+        bom=priced.bom,
+    )
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "interpreter": state.interpreter.interpreter_id}
@@ -390,12 +416,34 @@ def get_run(run_id: str):
 
 @app.get("/api/runs/{run_id}/bom")
 def get_bom(run_id: str):
+    """Resolve supply for this design against today's yard, and return the SupplyRun.
+
+    This is deliberately not a pure read any more. It used to be one, and that
+    was the defect: /bom read LIVE inventory, so one run id printed two different
+    BOMs with `GET /api/runs/{id}` byte-identical between them, and the
+    inventory_hash that would have explained the difference was computed on every
+    read and written only to the audit log. It entered no identity, no stored
+    document and no quote, so a reader holding two printouts could not tell which
+    yard each was priced against — and neither could the system.
+
+    Writing here is safe because the id IS the content: the same design against
+    the same inventory, catalog and preset digests to the same `supply_id` and
+    `save_supply_run`'s INSERT OR IGNORE does not write twice. Growth tracks real
+    changes to the yard, not read volume, which is why no retention policy is
+    needed yet (spec §7.2).
+    """
     result = _run(run_id)
-    _, inventory, priced = _priced(result, _live_preset(result.run.project_id))
-    # the BOM is what a customer gets quoted on: record which inventory state
-    # produced it so a later recomputation is distinguishable (final review, #5)
-    inventory_hash = hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16]
-    state.store.log("system", "fulfill", f"{run_id}:inv={inventory_hash}")
+    preset = _live_preset(result.run.project_id)
+    _, inventory, priced = _priced(result, preset)
+    # the STORED row, not the one just built: on a repeat read INSERT OR IGNORE
+    # keeps the first, and echoing our own object would report a `created_at` the
+    # database does not have — making two reads of an unchanged fence differ
+    supply = state.store.save_supply_run(_supply_run_for(result, preset, priced, inventory))
+    # the audit action keeps its name and gains the supply id: the ref used to be
+    # the only place the inventory hash was recorded, and is now a pointer to a
+    # row that holds it
+    state.store.log("system", "fulfill",
+                    f"{run_id}:inv={supply.inventory_hash}:{supply.id}")
     # routing an unresolved line out of `requirements` (so a blank sku can never
     # reach fulfill()/the ledger) must not make it disappear from this view —
     # /bom is a working view, so it reports the gap rather than refusing.
@@ -406,7 +454,8 @@ def get_bom(run_id: str):
     # drawing has moved on, which is why it groups by `run_ref` and leaves the
     # section TAGS to `js/structure-data.js`, the single tag source.
     return {"requirements": priced.requirements, "unresolved": priced.unresolved,
-            "bom": priced.bom, "inventory_hash": inventory_hash,
+            "bom": priced.bom, "inventory_hash": supply.inventory_hash,
+            "supply": supply,
             "grouped": group_bom(result.strategy, priced.requirements, priced.bom,
                                  priced.decisions, priced.unresolved)}
 
@@ -432,8 +481,7 @@ def get_structure(run_id: str):
     # The layout is a function of the run alone, but the PARTS name the bars a
     # piece is cut from, and those depend on the inventory that was on hand.
     # Stamp it, exactly as /bom does, so two sheets that differ are explainable.
-    report.inventory_hash = hashlib.sha256(
-        inventory.model_dump_json().encode()).hexdigest()[:16]
+    report.inventory_hash = inventory_hash(inventory)
     # A bay with a part nothing can supply must still say so on the setting-out
     # sheet, not just on /bom — stamped the same way as inventory_hash, since
     # build_structure() itself stays a pure function of its inputs.

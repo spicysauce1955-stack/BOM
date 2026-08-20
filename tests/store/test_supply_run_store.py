@@ -59,3 +59,17 @@ def test_writing_a_supply_run_is_audited():
     store.save_supply_run(_sup(), actor="expert")
     assert any(e["action"] == "save_supply_run" and e["ref"] == "sup_aaa"
                for e in store.audit_entries())
+
+
+def test_saving_a_repeat_returns_the_FIRST_stored_row():
+    """The id is the content, so the only field two identical supply runs can
+    legitimately differ by is `created_at`. A caller that echoed its own object
+    would report a timestamp the database does not have, and two reads of an
+    unchanged fence would differ by it — which is exactly how a /bom response
+    comparison meant to prove "a stored run cannot be repriced" fails for a
+    reason that has nothing to do with pricing."""
+    store = Store(":memory:")
+    first = store.save_supply_run(_sup())
+    second = store.save_supply_run(_sup(created_at=""))
+    assert second.created_at == first.created_at
+    assert second == first

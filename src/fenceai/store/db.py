@@ -617,7 +617,7 @@ class Store:
 
     # -- supply runs (append-only) ----------------------------------------------
 
-    def save_supply_run(self, s: SupplyRun, actor: str = "system") -> None:
+    def save_supply_run(self, s: SupplyRun, actor: str = "system") -> SupplyRun:
         """INSERT OR IGNORE, for `save_run`'s reason: the id IS the content, so a
         second write of the same id is the same fact arriving again. /bom
         resolves supply on every read, and an unchanged yard must not accumulate
@@ -626,6 +626,15 @@ class Store:
         The clock lives here, as it does for a quote and a correction, and fills
         a BLANK rather than overwriting: a caller that already established when
         this happened is not second-guessed.
+
+        RETURNS THE STORED ROW, which on a repeat is the FIRST one and not the
+        argument. `created_at` is the one field that legitimately differs between
+        two otherwise-identical supply runs, so a caller that echoed its own
+        object would report a timestamp the database does not have — and two
+        reads of an unchanged fence would differ by it. That is not cosmetic:
+        `test_editing_a_model_cannot_move_a_stored_runs_bom` compares two whole
+        /bom responses to prove a stored run cannot be repriced, and a drifting
+        timestamp breaks that proof for a reason unrelated to pricing.
         """
         s.created_at = s.created_at or _now()
         self._conn.execute(
@@ -635,6 +644,9 @@ class Store:
         )
         self._audit(actor, "save_supply_run", s.id)
         self._conn.commit()
+        stored = self.load_supply_run(s.id)
+        assert stored is not None  # just written, in the same transaction
+        return stored
 
     def load_supply_run(self, supply_id: str) -> SupplyRun | None:
         row = self._conn.execute(
