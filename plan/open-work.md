@@ -5,13 +5,14 @@ otherwise. State it follows from: `plan/current-status.md` (newest entry first)
 and `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md`,
 whose §11 carries the wave plan with each wave's findings folded back in.
 
-The branch is green: **1542 pytest · 191 scenario tests · 198/199 smoke ·
-compatibility gate byte-identical** — the one smoke failure is another agent's
-in-flight check, uncommitted in this tree, not a regression.
+`main` is green: **1581 pytest · 193 scenario tests · 200/200 smoke ·
+compatibility gate byte-identical**. The `part-picker-repair` arc merged on
+2026-08-20 (`c0f38a4`) after three reviewers over the whole branch.
 
 **Every numbered item below is now closed or specified.** What is left is the
-"smaller, known" list, the deferred triggers, and whatever the two review rounds
-recorded as knowingly not done.
+merge review's own findings (next section), the "smaller, known" list, the
+deferred triggers, and whatever the earlier review rounds recorded as knowingly
+not done.
 
 ---
 
