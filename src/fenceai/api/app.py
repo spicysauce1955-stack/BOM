@@ -6,7 +6,6 @@ lives here. AI adapters are selected once at startup (stub by default, ADR-0009)
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from contextlib import asynccontextmanager
@@ -505,7 +504,8 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     # before: this was the only one of the four sites that loaded the catalog
     # directly, which made the one endpoint producing an immutable commercial
     # document the one endpoint that would happily freeze a stale one.
-    _, inventory, priced = _priced(result, _live_preset(result.run.project_id))
+    preset = _live_preset(result.run.project_id)
+    _, inventory, priced = _priced(result, preset)
     if priced.unresolved:
         # An immutable commercial document must not silently price a job that's
         # missing a part — refuse rather than freeze a quote that under-prices it
@@ -519,14 +519,24 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
                 for r in priced.unresolved
             ],
         })
+    # the same digest /bom computes, from the same inputs — so a quote and the
+    # BOM read that preceded it name ONE supply run rather than two. Saved here
+    # as well because a quote may be the first thing a project ever asks for, and
+    # the document it stands behind must exist.
+    supply = state.store.save_supply_run(
+        _supply_run_for(result, preset, priced, inventory), actor=body.author)
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
         label=body.label,
-        inventory_hash=hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16],
+        inventory_hash=supply.inventory_hash,
         knowledge_snapshot_hash=result.run.snapshot_hash,
         # which catalog priced this document, beside which knowledge shaped it —
         # the two inputs that decide what the customer was quoted
         catalog_hash=result.run.catalog_hash,
+        # and WHICH supply run it froze — the thing that was missing, and the
+        # reason two quotes of one run against two yards used to be
+        # indistinguishable except by their totals
+        supply_id=supply.id,
         requirements=priced.requirements, bom=priced.bom,
         total_cents=priced.bom.total_cents,
     )

@@ -97,3 +97,25 @@ def test_a_supply_run_is_retrievable_after_the_yard_moves_on():
         client.put(f"/api/projects/{pid}/inventory", json=inv)
         stored = state.store.load_supply_run(sup_id)
         assert stored is not None and stored.design_id == run_id
+
+
+def test_a_quote_names_a_supply_run_that_actually_exists():
+    with TestClient(app) as client:
+        _, run_id, _ = _fence(client)
+        quote = client.post(f"/api/runs/{run_id}/quote", json={"label": "q1"}).json()
+        assert quote["supply_id"].startswith("sup_")
+        stored = state.store.load_supply_run(quote["supply_id"])
+        assert stored is not None
+        assert stored.design_id == run_id
+        assert stored.bom.model_dump() == quote["bom"]
+
+
+def test_the_quote_and_the_bom_read_agree_on_the_supply_run():
+    """Same design, same yard, same objective — one supply id, whichever route
+    computed it. Two ids here would mean the two paths disagree about what they
+    priced, which is the whole class of defect this change removes."""
+    with TestClient(app) as client:
+        _, run_id, _ = _fence(client)
+        from_bom = client.get(f"/api/runs/{run_id}/bom").json()["supply"]["id"]
+        quote = client.post(f"/api/runs/{run_id}/quote", json={"label": "q"}).json()
+        assert quote["supply_id"] == from_bom
