@@ -1,8 +1,9 @@
 # DesignRun and MaterialRun — design
 
-Date: 2026-08-19. Status: **proposed, not implemented.** It changes persisted
-identity, so it gets the brainstorm → spec → review → plan treatment the
-part-spec design got, and it is written for a decision rather than for a commit.
+Date: 2026-08-19. Status: **decided 2026-08-20, not yet implemented.** It changes
+persisted identity, so it gets the brainstorm → spec → review → plan treatment the
+part-spec design got, and it was written for a decision rather than for a commit.
+The decisions it asked for are recorded in §5 and §7; the plan follows from them.
 
 Source: backend audit §1.5 (`docs/reviews/backend-audit-2026-08-16-response.md`),
 whose disposition was "its own spec". `plan/open-work.md` item 5.
@@ -140,12 +141,25 @@ Two honest options:
   the design id carries a supply field, documenting it as legacy. Cheap, and it
   leaves the conflation this spec exists to remove.
 
-**Recommendation: (a).** The discontinuity is one-time and legible; the
-conflation is permanent and keeps producing the confusion in §1. But it is the
-user's call, because it invalidates the "regenerate and get the same id" property
-that `test_regenerating_the_same_drawing_keeps_the_conversation` now depends on —
-comments anchored to a design run would be stranded by the bump exactly as they
-are by an edited drawing.
+**Recommendation: (a). DECIDED: (a), 2026-08-20.** The discontinuity is one-time
+and legible; the conflation is permanent and keeps producing the confusion in §1.
+
+**A correction to this section, made when the decision was taken.** The paragraph
+above used to claim the bump "invalidates the 'regenerate and get the same id'
+property that `test_regenerating_the_same_drawing_keeps_the_conversation` now
+depends on". That is wrong, and it overstated the cost. That test
+(`tests/api/test_decision_comments.py:139`) builds a project and generates twice
+against ONE digest version, so it stays green across a bump; digest stability is a
+property WITHIN a version, and the bump does not weaken it. What the bump actually
+strands is narrower: comments anchored to already-PERSISTED run ids stop being
+claimed when those projects next regenerate, once, at the boundary. Afterwards the
+property is exactly as strong as it is today.
+
+The payoff sits on the same axis, which is why (a) wins rather than merely costing
+little. Today, switching `objective_preset` mints a new design id and strands the
+thread EVERY time it is switched. After the change it mints a new `material_id`
+and the design thread survives. (a) trades one bounded discontinuity for the
+removal of a recurring one.
 
 ---
 
@@ -160,13 +174,23 @@ are by an edited drawing.
 
 ---
 
-## 7. Open questions for the reader
+## 7. Open questions for the reader — answered 2026-08-20
 
-1. **(a) or (b) in §5.** The one real decision.
+1. **(a) or (b) in §5.** The one real decision. **→ (a): bump
+   `RUN_DIGEST_VERSION`** (`digest-v2` → `digest-v3`), with the reasoning and the
+   correction recorded in §5.
 2. Should a MaterialRun be **garbage-collected**? A project priced daily
    accumulates one row per read. Suggested answer: keep those referenced by a
    quote for ever, and let the rest expire — but that is a retention policy, not
-   a modelling question, and it should not hold this up.
+   a modelling question, and it should not hold this up. **→ No GC in this
+   change.** The table is append-only and `INSERT OR IGNORE` by digest, so
+   idempotency already collapses repeated identical reads and growth tracks real
+   inventory/catalog/preset changes rather than read volume. Retention stays a
+   separate question, to be answered when a real yard's row count motivates it.
 3. Does the **impact preview** compare designs or materializations? It
    regenerates and diffs, so it is a design question today; with prices in it, a
-   reader would reasonably expect the money to move too.
+   reader would reasonably expect the money to move too. **→ Designs only; leave
+   the preview alone.** This change is an identity refactor and must not become a
+   feature (§4). Diffing money is a legitimate follow-up, and it is strictly
+   easier once MaterialRun exists to be the thing diffed — which is an argument
+   for doing it after, not during.
