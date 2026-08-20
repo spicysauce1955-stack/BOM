@@ -399,9 +399,6 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               all(w in (struct or "") for w in ["מקטע A", "P1", "B1", "סימון בשטח"]))
         rows = c.js("document.querySelectorAll('#structure-body tr[data-element]').length")
         expected_rows = c.js("""
-fetch(`/api/runs/${document.getElementById('project-select').value ? '' : ''}`)
-  .then(() => 0)""")
-        expected_rows = c.js("""
 (async () => {
   const runs = await (await fetch(
     `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
@@ -1106,17 +1103,53 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         # price — a purchase is pooled across the run, so a per-section figure
         # would be an apportionment nothing measured.
         grouped = c.js("""
-(() => {
+(async () => {
   const host = document.getElementById('bom-grouped');
   if (!host) return null;
   const rows = [...host.querySelectorAll('.group-row')];
+  // The tags this view has to agree with, taken from the DOCUMENT rather than
+  // from the page. Reading them out of the structure tab would only prove the
+  // app agrees with itself; `structure-data.js` is the single tag source, so an
+  // independent check has to re-derive the mapping the way that module does.
+  const runs = await (await fetch(
+    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const doc = await (await fetch(
+    `/api/runs/${runs[runs.length - 1].id}/structure`)).json();
+  const ofElement = new Map(), ofSection = new Map();
+  for (const s of doc.sections) {
+    ofSection.set(s.run_id, s.tag);
+    for (const r of [...s.setting_out, ...s.bays, ...s.gates])
+      ofElement.set(r.element_id, r.tag);
+  }
+  const expected = (id, kind) =>
+    kind === 'section' ? ofSection.get(id)
+      : kind === 'node' ? ofElement.get(`post@${id}`)
+        : ofElement.get(id);
+  const num = (s) => Number(String(s).replace(/[^0-9.-]/g, ''));
   return {
     kinds: [...host.querySelectorAll('[data-group-kind]')]
       .map(h => h.dataset.groupKind),
     rows: rows.length,
-    heads: rows.map(r => r.querySelector('.group-head')?.textContent.trim() || ''),
     money: (host.textContent.match(/[\u20aa\u20ac$]/g) || []).length,
     cells: rows.reduce((n, r) => n + r.querySelectorAll('td').length, 0),
+    // what the document calls each row, beside what the row prints. A decision
+    // group is named by the sku it chose, not by a tag, so it is not in here.
+    named: rows.filter(r => r.dataset.kind !== 'decision').map(r => ({
+      kind: r.dataset.kind, id: r.dataset.group,
+      want: expected(r.dataset.group, r.dataset.kind) ?? null,
+      got: (r.querySelector('.group-head strong')?.textContent || '').trim(),
+    })),
+    // the QUANTITIES, which nothing at browser level had ever read: per row,
+    // one (sku -> summed qty) map taken from the column the reader reads
+    qty: rows.map(r => ({
+      kind: r.dataset.kind, id: r.dataset.group,
+      lines: [...r.querySelectorAll('table tr')].reduce((acc, tr) => {
+        const sku = tr.querySelector('td.sku')?.textContent.trim();
+        const cells = [...tr.querySelectorAll('td')];
+        if (sku) acc[sku] = (acc[sku] || 0) + num(cells[2]?.textContent);
+        return acc;
+      }, {}),
+    })),
   };
 })()""")
         check("the BOM is grouped by section, panel and decision",
@@ -1127,17 +1160,46 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         # drawings call that bay, and a money view calling it
         # `span@run1:0-1500` is a third name for one thing.
         #
-        # EVERY row, not any: a bay's key is already an element id so it tags
-        # itself, while a section's key is a RUN id and a node's names a post —
-        # asked as `any`, this passed while two of the four kinds printed
-        # `run1` and `node:n1` in a Hebrew UI.
-        named = [h for h in grouped["heads"] if h]
-        check("every grouped row is named by the tag the rest of the app uses",
-              len(named) == grouped["rows"]
-              and not any("@" in h or h.startswith("run") or h.startswith("node:")
-                          for h in named))
+        # Asserted against the DOCUMENT's tag for THAT element, rather than
+        # against the SHAPE of the printed string. "It does not look like a raw
+        # id" is satisfied by printing `A` on every row of the table — one name
+        # for four different bays, which is precisely the confusion a single tag
+        # source exists to prevent, and it passed. Three different lookups feed
+        # this (a section's key is a RUN id, a node's names the post standing
+        # there, a bay's is already an element id), and each can be wrong on its
+        # own; a row the document cannot name at all must fall back to its own
+        # id rather than to a blank cell that reads as "no section".
+        wrong = [r for r in grouped["named"] if r["got"] != (r["want"] or r["id"])]
+        check("every grouped row prints the tag the document gives that element",
+              grouped["named"] and not wrong
+              and len({r["want"] for r in grouped["named"] if r["want"]}) > 1,
+              wrong[:3] or "one tag for every row")
         check("no group is priced, because a purchase is not per section",
               grouped["money"] == 0)
+
+        # A NUMBER, read out of the column a reader reads. Nothing at any level
+        # did that in the browser: the checks above count cells and rows, so a
+        # renderer printing the CUT LENGTH where the quantity belongs passed all
+        # of them. Cross-checked rather than merely present, because a lone
+        # number proves only that a digit reached the page.
+        #
+        # The property: a bay is a strict SUBSET of its section (a post belongs
+        # to no bay), so per sku the bays can never total more than the sections
+        # — and a part that lives only in bays must total exactly the same in
+        # both. That second half is what fails when one `GroupedLine` object is
+        # shared between a bay list and a section list and merged in place, the
+        # corruption `report/bom_groups.py` guards with `model_copy`.
+        def total(kind, sku):
+            return sum(g["lines"].get(sku, 0) for g in grouped["qty"]
+                       if g["kind"] == kind)
+        bay_skus = sorted({s for g in grouped["qty"] if g["kind"] == "bay"
+                           for s in g["lines"]})
+        over = [(s, total("bay", s), total("section", s)) for s in bay_skus
+                if total("bay", s) > total("section", s)]
+        exact = [s for s in bay_skus if 0 < total("bay", s) == total("section", s)]
+        check("the quantity column holds quantities, and the bays add up to their section",
+              bay_skus and not over and exact,
+              over[:3] or f"no bay-only sku among {bay_skus}")
 
         check("every price on the BOM tab is a ₪ figure, and no other symbol is left",
               (prices["nis"] or 0) > 0 and prices["other"] == 0
@@ -1342,9 +1404,30 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         check("the steps fit exactly the parts the panel is made of",
               sorted(fitted["steps"]) == sorted(fitted["rows"])
               and len(fitted["steps"]) > 0 and fitted["warned"] == 0)
-        # expert prose, in the reader's language rather than through t()
-        check("the instructions are the author's own words, localized",
-              "השחילו" in steps["text"])
+        # Expert prose, in the reader's language rather than through t() —
+        # asserted against the MODEL's own `text_i18n` rather than against a word
+        # copied out of it. A single word proves too little and breaks too
+        # easily: rewording an instruction is the author's prerogative and not a
+        # regression, and "השחילו" would equally have matched that sentence
+        # rendered under the WRONG step, or one step's text rendered three times.
+        # Every authored sentence must appear, and the English of a Hebrew UI
+        # must not — which is the actual claim, and the one a `text_i18n[locale]
+        # ?? text_i18n.en` fallback silently breaks.
+        prose = c.js("""
+(async () => {
+  const doc = await (await fetch('/api/fence-models/M-VINYL/1')).json();
+  const text = document.getElementById('panel-assembly').textContent;
+  const authored = (doc.assembly || []).map(s => s.text_i18n || {});
+  return {
+    steps: authored.length,
+    missing: authored.map(x => x.he).filter(s => s && !text.includes(s)),
+    leaked: authored.map(x => x.en).filter(s => s && text.includes(s)),
+  };
+})()""")
+        check("every authored instruction is on the sheet, in the reader's language",
+              prose is not None and prose["steps"] == 3
+              and not prose["missing"] and not prose["leaked"],
+              prose and f"missing={len(prose['missing'])} leaked={len(prose['leaked'])}")
         c.shot("18c-panel-vinyl.png")
 
         # the panel is priced from the model, not from a fixed shape: M-LEGACY's
