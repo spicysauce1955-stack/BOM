@@ -21,7 +21,7 @@ flowchart TB
         PD["generate() · resolve_panel() · fit_pattern()<br/>plan_cuts() · build_structure() · panel_elevation()"]
     end
     subgraph L4["persistence"]
-        ST["store/db.py — 10 tables, documents as JSON"]
+        ST["store/db.py — 11 tables, documents as JSON"]
     end
 
     R --> PI
@@ -119,20 +119,31 @@ built badly, an error describes a part not bought at all.
 
 ## Persistence
 
-Ten tables — nine document stores plus the append-only `audit_log`. Documents are
+Eleven tables — ten document stores plus the append-only `audit_log`. Documents are
 stored as JSON `doc` columns; the schema holds only what is queried or ordered by.
 
 ```sql
 projects(id, doc)
 knowledge_versions(object_id, version, status, doc)   -- PK (object_id, version)
 fence_models(model_id, version, status, doc)          -- PK (model_id, version)
+parts(part_id, version, status, doc)                  -- PK (part_id, version)
 generation_runs(id, project_id, created_at, doc)
+supply_runs(id, design_id, created_at, doc)
 corrections(id, project_id, doc)
 inventories(project_id, doc)
 catalogs(id, doc)
 quotes(id, project_id, status, created_at, doc)
 audit_log(seq, at, actor, action, ref)
 ```
+
+**A run id answers one question; a supply run answers the other.** `generation_runs`
+holds the DESIGN — what fence this is, pure and deterministic and reproducible for
+ever. `supply_runs` holds what it costs to build from a particular yard, at
+particular prices, under a particular objective; that is a statement about a moment
+and is legitimately different tomorrow. One design has many supply runs, and a
+`Quote` is a supply run somebody decided to stand behind. Both tables are append-only
+and idempotent by digest — the id IS the content, so `INSERT OR IGNORE` means a
+repeated read of an unchanged yard writes nothing.
 
 **Versioned rows are append-only.** A knowledge version and a published fence-model
 version are never updated in place; `DELETE` on a fence model is refused **in the
