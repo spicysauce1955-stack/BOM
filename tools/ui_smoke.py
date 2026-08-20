@@ -46,9 +46,13 @@ def wait_for(c, expr: str, timeout: float = 8.0, step: float = 0.4):
     return value
 
 
-def check(name: str, ok: bool) -> None:
+def check(name: str, ok: bool, detail: object = None) -> None:
+    """`detail` is printed only on a FAIL, and only when the caller has something
+    to say. A check whose JS can fail in several distinct ways otherwise reports
+    one word, and the reader has to re-run the suite to learn which way it went."""
     CHECKS.append((name, bool(ok)))
-    print(("PASS " if ok else "FAIL ") + name)
+    line = ("PASS " if ok else "FAIL ") + name
+    print(line if ok or detail is None else f"{line}  [{detail}]")
 
 
 def hover(c, x: float, y: float) -> None:
@@ -77,6 +81,25 @@ def main() -> int:
         urllib.request.urlopen(f"http://localhost:{PORT}/api/health", timeout=1)
         print(f"FATAL: something is already listening on :{PORT} — kill it first "
               f"(pkill -f 'port {PORT}')")
+        return 2
+    except Exception:
+        pass  # port free, good
+
+    # ... and the same question about the BROWSER, which is not a smaller one. A
+    # Chrome already holding :9333 answers `/json/version`, so the readiness loop
+    # below is satisfied by SOMEBODY ELSE'S browser: the fresh profile Chrome
+    # started underneath never binds the port and is never spoken to, and the run
+    # drives the developer's own profile — the surviving `fenceai.locale` and the
+    # whole failure the private profile exists to prevent, back again and quieter
+    # than before, because a readiness wait that succeeds says nothing about WHO
+    # answered.
+    try:
+        urllib.request.urlopen(f"http://localhost:{CDP_PORT}/json/version", timeout=1)
+        # the bracket in the hint is not a typo: `pkill -f` matches the shell's
+        # OWN command line, so the obvious spelling kills the terminal that runs it
+        print(f"FATAL: something is already listening on :{CDP_PORT} — a browser "
+              f"is holding the debug port; kill it first "
+              f"(pkill -f 'remote-debugging-po[r]t={CDP_PORT}')")
         return 2
     except Exception:
         pass  # port free, good
@@ -124,7 +147,14 @@ def main() -> int:
                 print(f"FATAL: {url} never answered")
                 return 2
         c = Cdp(f"http://localhost:{PORT}/", cdp_port=CDP_PORT, out_dir=OUT)
-        c.js("window.confirm = () => true; undefined")
+        # `confirm` true so a destructive action proceeds unattended. `alert` is
+        # swallowed for a harder reason: `Page.enable` (cdp.py) makes a JS dialog
+        # BLOCK until it is explicitly handled, and `apiSend` alerts on every
+        # refused request — so one 422 anywhere in the app hangs the evaluate that
+        # triggered it, and the run dies on a socket timeout instead of reporting a
+        # red check. A hang is not a check result: with this stubbed, a save the
+        # server refuses fails the check that asked for it.
+        c.js("window.confirm = () => true; window.alert = () => {}; undefined")
 
         # fresh DBs now open into the seeded sample project (which already has
         # runs + a gate); create an EMPTY project so every check below starts
@@ -265,9 +295,7 @@ document.querySelector('#section-decisions [data-act="say"]').click(); 'ok'""")
               said["comments"] == 1 and "למה דווקא כאן?" in said["text"]
               and said["open_forms"] == 0)
         # the boundary, visible to the user rather than only true in the backend
-        # — and stated where the CONVERSATION is, so it survives the form closing.
-        # Asserted against the BUNDLE, not the copy: a wording change is not a
-        # regression, and a single word can match the wrong sentence.
+        # against the BUNDLE, not the copy: a wording change is not a regression
         note = c.js("""
 fetch('/i18n/he.json').then(r => r.json()).then(b => b['decisions.comment_note'])""")
         check("the panel says a comment changes nothing on its own",
@@ -1395,6 +1423,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         c.shot("19-panel-slat.png")
         c.js("location.reload(); 'ok'")
         time.sleep(5)
+        c.js("window.confirm = () => true; window.alert = () => {}; undefined")
         c.js(f"""
 {{
   const sel = document.getElementById('project-select');
@@ -1667,7 +1696,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         pid = c.js("document.getElementById('project-select').value")
         c.cmd("Page.navigate", url=f"http://localhost:{PORT}/")
         time.sleep(3)
-        c.js("window.confirm = () => true; undefined")  # the reload dropped the stub
+        # the reload dropped both stubs
+        c.js("window.confirm = () => true; window.alert = () => {}; undefined")
         check("the unit preference survives a reload",
               'ס"מ' in (c.js("document.getElementById('btn-units').textContent") or ""))
         # a reload opens the FIRST project in the list — come back to the smoke one
@@ -2502,29 +2532,87 @@ document.querySelector('#model-canvas [data-slot]')?.dispatchEvent(
         # rather than "the first other option" on purpose: the picker lists
         # every part in the library ungated by the slot's own kind
         # (`partSelect`, `panel-inspector.js`), so an unfiltered pick could just
-        # as easily hand this FRAME slot an infill part. Reverted at the end —
-        # the publish refusal two blocks down names RAIL-3000 by sku, which only
-        # holds if this slot still resolves to it.
+        # as easily hand this FRAME slot an infill part. Both it and
+        # `rail-rail-3000` are permanently seeded (`parts/demo.py`), so there is
+        # always an alternative and "nothing to do" is never an answer here.
+        #
+        # THE STORED DOCUMENT IS WHAT IS ASSERTED, and that is the whole point of
+        # the check. `saveDraft` (`model-editor.js`) copies back only
+        # version/status/invalid — `session.model` stays the object this script
+        # itself mutated — so reading the select back after the save answers "did
+        # the JS keep what I typed", which it does whether the PUT returned 200 or
+        # 422. That is the shape of green this arc exists to remove, and it is
+        # what this check used to be. So: name the part, save, and GET the draft
+        # back off the server.
+        #
+        # The diff is taken over every `part_id` in the document rather than over
+        # one slot, because which slot the canvas click selected is the canvas'
+        # answer and not this script's — so the assertion is the exact one that
+        # matters: ONE slot changed, from what it named to what was chosen.
+        #
+        # Reverted at the end so the rest of the run sees the model it expects.
+        # (The publish refusal two blocks down does NOT depend on it: both parts
+        # declare `sku among ['RAIL-3000']`, so that refusal holds either way.)
         saved = c.js("""
 (async () => {
-  const sel = document.querySelector('#model-inspector [data-f="part"]');
-  const before = sel.value;
+  const q = () => document.querySelector('#model-inspector [data-f="part"]');
+  const before = q()?.value;
   const alt = 'rail-rail-3000-40';
-  if (!before || ![...sel.options].some((o) => o.value === alt))
-    return 'no-alternative';
-  sel.value = alt; sel.dispatchEvent(new Event('change', { bubbles: true }));
-  document.getElementById('btn-model-save')?.click();
-  await new Promise((r) => setTimeout(r, 1200));
-  const kept = document.querySelector('#model-inspector [data-f="part"]')
-    ?.value === alt;
-  const sel2 = document.querySelector('#model-inspector [data-f="part"]');
-  sel2.value = before; sel2.dispatchEvent(new Event('change', { bubbles: true }));
-  document.getElementById('btn-model-save')?.click();
-  await new Promise((r) => setTimeout(r, 1200));
-  return kept ? 'kept' : 'lost';
+  if (!before) return 'no-part-selected';
+  if (![...q().options].some((o) => o.value === alt)) return 'alt-not-offered';
+  if (before === alt) return 'already-the-alternative';
+
+  const save = async () => {
+    document.getElementById('btn-model-save')?.click();
+    await new Promise((r) => setTimeout(r, 1600));
+  };
+  // every part_id the STORED draft names, in document order
+  const storedPartIds = async () => {
+    const rows = await (await fetch('/api/fence-models')).json();
+    const v = rows.find((m) => m.id === 'M-SMOKE')?.draft_version;
+    if (!v) return null;
+    const doc = await (await fetch(`/api/fence-models/M-SMOKE/${v}`)).json();
+    const out = [];
+    (function walk(node) {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node && typeof node === 'object') {
+        if (typeof node.part_id === 'string') out.push(node.part_id);
+        Object.values(node).forEach(walk);
+      }
+    })(doc);
+    return out;
+  };
+  const changes = (a, b) => (a && b && a.length === b.length)
+    ? a.map((v, i) => [i, v, b[i]]).filter(([, v, w]) => v !== w) : null;
+
+  await save();                       // materialise the draft as it stands
+  const base = await storedPartIds();
+  if (!base) return 'no-draft-stored';
+
+  const pick = async (value) => {
+    const sel = q();
+    if (!sel) return false;           // the save re-rendered the pane away
+    sel.value = value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await save();
+    return true;
+  };
+
+  if (!await pick(alt)) return 'pane-gone-before-the-change';
+  const changed = changes(base, await storedPartIds());
+  if (!await pick(before)) return 'pane-gone-before-the-revert';
+  const reverted = changes(base, await storedPartIds());
+
+  if (!changed || changed.length !== 1)
+    return `stored ${JSON.stringify(changed)} instead of one change`;
+  if (changed[0][1] !== before || changed[0][2] !== alt)
+    return `stored ${changed[0][1]} -> ${changed[0][2]}`;
+  if (!reverted || reverted.length !== 0)
+    return `revert left ${JSON.stringify(reverted)}`;
+  return 'stored';
 })()""")
-        check("changing a slot's part saves and survives a reload",
-              saved in ("kept", "no-alternative"))
+        check("changing a slot's part is STORED, and reads back off the server",
+              saved == "stored", saved)
 
         # The Advanced-JSON escape hatch, exercised with BROKEN json, because
         # the rule is that the exit is never gated on the thing that is broken

@@ -300,7 +300,14 @@ export function specChips(part) {
  *  library and the preview the editor already fetched.
  *
  *  `candidates` and `chosen` come off `PreviewPart.eligible_skus` and `.sku` — no
- *  new request, because the candidate set is already on the wire. */
+ *  new request, because the candidate set is already on the wire.
+ *
+ *  `counted` says whether the preview ANSWERED for this slot at all, and it is not
+ *  the same question as `candidates === 0`. `preview_panel` emits rows for the
+ *  frame, the infill and the fixings only — never for M-VINYL's post or cap — so a
+ *  slot with no row has an UNKNOWN candidate set, not an empty one. Reported apart
+ *  because a zero printed for "nobody asked" reads as a measurement, and the two
+ *  slots the rule-authored pane exists FOR are exactly the ones with no row. */
 export function partSummary(req, { parts = [], preview = null, slotKey = "" } = {}) {
   const source = eligibilitySource(req);
   const part = latestPart(parts, req?.part_id);
@@ -310,6 +317,7 @@ export function partSummary(req, { parts = [], preview = null, slotKey = "" } = 
     source,
     part,
     chips: specChips(part),
+    counted: row !== null,
     candidates: (row?.eligible_skus || []).length,
     eligibleSkus: row?.eligible_skus || [],
     chosen: row?.sku || "",

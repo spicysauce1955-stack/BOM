@@ -132,7 +132,9 @@ arc had added a table and two routes without touching the backend doc.)*
   was diagnosed on 2026-08-17 as load. It was a shared Chrome profile: no
   `--user-data-dir`, so `localStorage` survived the run, and this suite ends by
   toggling to English — the next run opened in English with every Hebrew
-  assertion red. Fixed at the source (`6004a29`). The lesson generalises: an
+  assertion red. Fixed at the source (`987e17b`, which gave the run its own
+  profile and its own DB; `6004a29` added the readiness wait a cold profile
+  needs). The lesson generalises: an
   identical failure SET across two runs is never flakiness, and "re-run and see"
   is how a real defect gets written off twice.
 - **A new user-visible code needs BOTH locale bundles** and a line in the

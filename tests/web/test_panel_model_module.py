@@ -187,6 +187,22 @@ def test_every_eligibility_member_carries_its_discriminator(out):
                           "priority": 1, "approval": "auto"}
 
 
+def test_the_requirement_the_editor_builds_carries_every_field_the_schema_has(out):
+    """`defaultRequirement` is what "+ Add slot" writes and, with `part_id` filled
+    in, what the slot pane PUTs. Parsing it proves the server takes it; the KEY SET
+    proves neither side has drifted — a field added to `PartRequirement` that the
+    builder never learned is a key the editor silently omits on every save, and a
+    key the builder writes that the schema dropped is a value silently discarded.
+
+    Its Python-side twin is
+    `tests/api/test_authoring_gaps.py::test_the_editors_payload_for_a_part_named_slot_validates`,
+    which pins the same set against the part-named shape."""
+    from fenceai.fencemodel.model import PartRequirement
+
+    built = out["authored"]["default_spec"]["frame"][0]["requirement"]
+    assert set(built) == set(PartRequirement.model_fields)
+
+
 def test_a_new_variants_condition_is_valid_ast(out):
     """The first thing an author meets after "+ Add variant" is this condition.
     An empty or hand-waved one makes their first experience a 422 about a

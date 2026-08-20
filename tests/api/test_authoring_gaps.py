@@ -202,18 +202,34 @@ def test_the_compatibility_model_cannot_be_discarded_either(client):
 def test_the_editors_payload_for_a_part_named_slot_validates():
     """THE regression this arc repairs. The editor wrote `eligibility.members` and
     `role` onto a slot that names a part; the part is the one authority on both, and
-    the validator refuses the pair. A payload shaped the way the editor now saves
-    must survive a round trip."""
-    from fenceai.fencemodel.demo import slat_model
+    the validator refuses the pair.
+
+    The payload is WRITTEN OUT, not dumped from a `PartRequirement` and handed back:
+    dumping and re-parsing tests pydantic, passes whatever the editor does, and is
+    exactly the shape of green this arc exists to stop. These keys are
+    `defaultRequirement` in `panel-model.js` with `partSelect`'s change handler
+    applied — `part_id` set, `role` and the eligibility cleared in the same act.
+
+    Asserting the key SET (and not just that it parses) is what ties the two sides
+    together: a field added to `PartRequirement` that the pane does not author, or a
+    key the pane sends that the schema dropped, fails here rather than emptying a
+    screen. `tests/web/test_panel_model_module.py` pins the JS half of the same set.
+    """
     from fenceai.fencemodel.model import PartRequirement
 
-    slot = slat_model().default_spec.frame[0]
-    payload = slot.requirement.model_dump()
-    # what the repaired editor sends: the part, and nothing that contradicts it
-    assert payload["part_id"]
-    assert payload["eligibility"]["members"] == []
-    assert payload.get("role", "") == ""
-    PartRequirement(**payload)          # raises if the editor's shape is refused
+    payload = {
+        "part_id": "rail-rail-3000",
+        "role": "",
+        "qty": 1,
+        "length_rule": None,
+        "overlap_mm": 0,
+        "option_axis": None,
+        "sku_by_option": {},
+        "eligibility": {"members": []},
+    }
+    assert set(payload) == set(PartRequirement.model_fields)
+    req = PartRequirement(**payload)    # raises if the editor's shape is refused
+    assert req.eligibility_source == "part"
 
 
 def test_the_old_editor_payload_is_still_refused():

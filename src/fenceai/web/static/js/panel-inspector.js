@@ -74,8 +74,8 @@ import { gapForOverlap, overlapOf } from "./panel-canvas-geom.js";
 import {
   APPROVALS, AXIS_KINDS, BASES, COUNT_PARAMS, EXCESS, JUSTIFICATIONS,
   LENGTH_RULES, PART_DIMENSIONS, PLACEMENT_KINDS, SWATCH_RE,
-  defaultEligibleMember, defaultPlacement, defaultRequirement, eligibilitySource,
-  partSummary, partsByType,
+  defaultEligibility, defaultEligibleMember, defaultPlacement, defaultRequirement,
+  eligibilitySource, partSummary, partsByType,
 } from "./panel-model.js";
 import { fmt, inputStep, toDisplayValue, toMm, tu } from "./units.js";
 
@@ -457,7 +457,7 @@ function partSelect(req, ctx, summary, { holder = null, dims = [] } = {}) {
     req.part_id = sel.value;
     if (req.part_id) {
       req.role = "";
-      req.eligibility = { members: [] };
+      req.eligibility = defaultEligibility();
       // 0 is what an UNDECLARED dimension is here — the elevation renders it
       // `declared=False` rather than drawing a nominal band — so this hands the
       // number to the part rather than inventing one
@@ -547,8 +547,16 @@ function chipNode(chip) {
  * on the wire.
  *
  * The chosen one is marked with a ✓ rather than with a word: it needs no
- * translation, and it survives being read in either direction. */
+ * translation, and it survives being read in either direction.
+ *
+ * `null` when the preview never answered for this slot (`summary.counted`), and
+ * that is the honest answer rather than a tidy one: `preview_panel` emits rows for
+ * frame, infill and fixings only, so M-VINYL's post and cap — the two slots the
+ * rule-authored pane is designed FOR — would otherwise read "0 products can fill
+ * this" about a supply nobody measured. A zero is a measurement; silence is not,
+ * and the count is only worth printing where it was taken. */
 function candidateList(summary) {
+  if (!summary.counted) return null;
   const box = el("details", { class: "part-candidates" });
   // `data-candidates` carries the number as well as marking the element, so a
   // check reads the count without parsing a sentence that exists in two languages
@@ -592,17 +600,25 @@ function partDimensions(part, dims) {
   return box;
 }
 
-/** What supplies this slot — the pane, branching on which of the four it is. */
+/** Appends a node that a renderer may decline to build. `appendChild(null)` throws
+ *  and `append(null)` writes the word "null" onto the page, so the check is here
+ *  once rather than at each call. */
+const addIf = (box, node) => { if (node) box.appendChild(node); };
+
+/** What supplies this slot — the pane, branching on which of the four it is.
+ *
+ *  It READS the requirement and never writes to it. An earlier draft defaulted
+ *  `eligibility` here, which made drawing the pane a document edit: opening a slot
+ *  dirtied the model, and a shape a render invented is a shape no author chose.
+ *  `eligibilitySource` and `partSummary` already answer over an absent field. */
 function partField(req, ctx, { slotKey = "", holder = null, dims = [] } = {}) {
-  req.eligibility ??= { members: [] };
-  req.eligibility.members ??= [];
   const summary = partSummary(req, {
     parts: ctx.parts, preview: ctx.preview, slotKey });
   const box = el("div", { class: "part-field" });
 
   if (summary.source === "authored_predicate") {
     box.appendChild(el("div", { class: "meta", text: t("model.slot.by_rule") }));
-    box.appendChild(candidateList(summary));
+    addIf(box, candidateList(summary));
     return box;
   }
   if (summary.source === "authored_members") {
@@ -610,7 +626,7 @@ function partField(req, ctx, { slotKey = "", holder = null, dims = [] } = {}) {
     box.appendChild(el("div", { class: "meta" },
       el("span", { text: t("model.slot.by_listed_product") }),
       el("bdi", { class: "sku", text: first })));
-    box.appendChild(candidateList(summary));
+    addIf(box, candidateList(summary));
     return box;
   }
 
@@ -632,7 +648,7 @@ function partField(req, ctx, { slotKey = "", holder = null, dims = [] } = {}) {
   for (const chip of summary.chips) chips.appendChild(chipNode(chip));
   box.appendChild(chips);
   if (dims.length) box.appendChild(partDimensions(summary.part, dims));
-  box.appendChild(candidateList(summary));
+  addIf(box, candidateList(summary));
   // the id and the version, as TEXT. Not a link: there is no Parts tab in this
   // arc, and a link that goes nowhere is worse than a readout that does not
   // pretend to.
@@ -711,7 +727,7 @@ function requirementAdvanced(req, ctx, kind) {
     for (const value of axis?.values || []) {
       const vrow = row(el("span", { class: "meta",
         text: t("model.sku_for_option", { option: valueLabel(value) }) }));
-      const skus = req.eligibility.members.map((m) => m.sku).filter(Boolean);
+      const skus = (req.eligibility?.members || []).map((m) => m.sku).filter(Boolean);
       const sel = el("select");
       sel.appendChild(option("", t("model.ref_none"), !req.sku_by_option[value.key]));
       for (const sku of skus)

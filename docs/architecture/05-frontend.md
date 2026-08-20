@@ -201,8 +201,9 @@ renders the ordered sku/priority rows, and it is offered exactly there — not o
 field is still required on `ResolvedSlot` and the BOM still reads it — it just has no
 control in the editor. `width_mm` and `thickness_mm` are the same exclusion one level
 up (`_refuse_authored_dimensions`, on the frame slot's and the member's own fields,
-not the requirement): naming a part **hides** the width/thickness inputs on that
-holder and shows the part's own declared dimension read-only in their place, clearing
+not the requirement): naming a part **hides** the width and thickness inputs the
+INFILL member offers — the frame slot's `thickness_mm` never had a control to hide —
+and shows the part's own declared dimension read-only in their place, clearing
 whatever number the holder carried in the same act that writes `part_id` — a stale
 100 mm left by `defaultMember` is the identical 422 one field over.
 

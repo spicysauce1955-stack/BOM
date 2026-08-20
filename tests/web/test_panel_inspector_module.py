@@ -116,6 +116,7 @@ const parts = %(parts)s;
 const partTypes = %(types)s;
 const models = %(models)s;
 const preview = %(preview)s;
+const vinylPreview = %(vinylPreview)s;
 const out = {};
 
 function pane(model, selection, { locale = "he", preview: pv = null,
@@ -165,6 +166,14 @@ const boardKey = slat.default_spec.infill.pattern[0].key;
 out.part = shape(pane(slat, { kind: "frame", key: railKey }, { preview }));
 out.board = shape(pane(slat, { kind: "infill", key: boardKey }, { preview }));
 out.predicate = shape(pane(models.vinyl, { kind: "post", key: "post" }));
+// ... and the same pane over a preview that ANSWERED. `preview_panel` emits rows
+// for frame, infill and fixings only, so the post and the cap have no row — the
+// count must be absent rather than zero.
+out.predicateCounted = shape(pane(models.vinyl, { kind: "post", key: "post" },
+                                  { preview: vinylPreview }));
+out.vinylRail = shape(pane(models.vinyl,
+  { kind: "frame", key: models.vinyl.default_spec.frame[0].key },
+  { preview: vinylPreview }));
 out.members = shape(pane(models.legacy,
   { kind: "frame", key: models.legacy.default_spec.frame[0].key }));
 
@@ -254,8 +263,12 @@ def _payload() -> str:
     # source it carries, and an id in the assertions below hides that
     vinyl = next(m for k, m in models.items() if "VINYL" in k)
     legacy = next(m for k, m in models.items() if "LEGACY" in k)
+    vinyl_preview = preview_panel(
+        vinyl, PreviewRequest(height_mm=1800, width_mm=2400),
+        demo_catalog(), part_library=library)
     return SCRIPT % {
         "stub": STUB,
+        "vinylPreview": vinyl_preview.model_dump_json(),
         "parts": json.dumps([p.model_dump() for p in library.parts]),
         "types": json.dumps([
             {"key": k, "label_i18n": {"en": k, "he": k}}
@@ -302,6 +315,19 @@ def test_a_slot_chosen_by_a_rule_says_so_and_offers_no_part(pane):
     assert pane["predicate"]["picker"] is False
     assert "כלל" in pane["predicate"]["text"]      # "…by a rule, not a part"
     assert pane["predicate"]["prefList"] is False
+
+
+def test_a_slot_the_preview_never_answered_for_prints_no_count(pane):
+    """M-VINYL's post, over a REAL preview of M-VINYL. `preview_panel` emits rows
+    for the frame, the infill and the fixings — never for the post or the cap — so
+    the candidate count for those two is UNKNOWN, not zero. It used to print "0
+    products can fill this" about a supply nobody measured, on the two slots the
+    rule-authored pane exists for: a zero reads as a measurement, and that one was
+    a report of an absent question."""
+    assert pane["predicateCounted"]["candidates"] is None, pane["predicateCounted"]
+    # and it is suppression of the UNANSWERED, not of the pane: the same model's
+    # rail has a row, and still says how many products can fill it
+    assert int(pane["vinylRail"]["candidates"]) >= 1
 
 
 def test_a_slot_with_an_authored_sku_list_keeps_its_list_and_offers_no_part(pane):
