@@ -708,26 +708,27 @@ def test_a_run_generated_before_fence_models_refuses_with_a_code_not_english(cli
     assert quote.json()["detail"]["code"] == "run_predates_fence_model"
 
 
-def test_a_run_with_an_unrecognised_preset_refuses_rather_than_repricing_silently(client):
-    """objective_preset is stored as a plain str, so a run generated under an
-    older DEFAULT_POLICY (or any bad data) can carry a value outside
-    fulfillment.supply.Preset. resolve_supply now refuses it loudly instead of
-    resolve_supply._choose silently treating it as least-cost (task 10 fix
-    round 1, finding 3) — this proves the refusal reaches the HTTP layer as a
-    clean 400, not an unhandled 500."""
+def test_an_unrecognised_preset_refuses_rather_than_repricing_silently(client):
+    """objective_preset is a plain str, so a project's policy can carry a value
+    outside fulfillment.supply.Preset. resolve_supply refuses it loudly instead
+    of _choose silently treating it as least-cost (task 10 fix round 1, finding
+    3) — this proves the refusal reaches the HTTP layer as a clean 400, not an
+    unhandled 500.
+
+    The POLICY is the vector, not the stored run: since digest-v3 the preset is
+    a supply input read from the project at read time (`_live_preset`), because
+    a stored run's copy is frozen at its first generation and would otherwise
+    price every later read under an objective the user had already changed."""
     from fenceai.api.app import state
 
     pid = make_project(client, name="bad-preset")
     put_straight_topology(client, pid)
     run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
 
-    result = state.store.load_run(run_id)
-    result.run.objective_preset = "fewest_new_stock"   # the vestigial, unimplemented name
-    state.store._conn.execute(
-        "UPDATE generation_runs SET doc=? WHERE id=?",
-        (result.model_dump_json(), run_id),
-    )
-    state.store._conn.commit()
+    project = state.store.load_project(pid)
+    project.policy = {**project.policy,
+                      "objective_preset": "fewest_new_stock"}  # vestigial, unimplemented
+    state.store.save_project(project)
 
     bom_resp = client.get(f"/api/runs/{run_id}/bom")
     assert bom_resp.status_code == 400
@@ -736,6 +737,31 @@ def test_a_run_with_an_unrecognised_preset_refuses_rather_than_repricing_silentl
     structure_resp = client.get(f"/api/runs/{run_id}/structure")
     assert structure_resp.status_code == 400
     assert "fewest_new_stock" in structure_resp.json()["detail"]
+
+
+def test_a_poisoned_preset_on_a_STORED_run_is_inert(client):
+    """The other half of the change, and the reason the test above moved.
+
+    A stored run's `objective_preset` is now reported, never read for a
+    decision. Writing garbage into it must therefore change nothing — before
+    digest-v3 this exact edit produced a 400 on every read of that run, with no
+    user action able to repair it short of editing the database."""
+    from fenceai.api.app import state
+
+    pid = make_project(client, name="inert-preset")
+    put_straight_topology(client, pid)
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    result = state.store.load_run(run_id)
+    result.run.objective_preset = "fewest_new_stock"
+    state.store._conn.execute(
+        "UPDATE generation_runs SET doc=? WHERE id=?",
+        (result.model_dump_json(), run_id),
+    )
+    state.store._conn.commit()
+
+    assert client.get(f"/api/runs/{run_id}/bom").status_code == 200
+    assert client.get(f"/api/runs/{run_id}/structure").status_code == 200
 
 
 def test_impact_preview_reports_vs_accepted_quote(client):
