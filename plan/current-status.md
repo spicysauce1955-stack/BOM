@@ -1,5 +1,55 @@
 # Current status
 
+## DesignRun / SupplyRun: one id was answering two questions (2026-08-20)
+
+`docs/superpowers/plans/2026-08-20-design-run-supply-run.md`, eight tasks,
+ADR-0011. 1608 pytest · 193 scenario · 200/200 smoke · compatibility gate
+byte-identical, which is the evidence that this was an identity change and not a
+costing one.
+
+The demonstration, before and after, on a 6 m fence with three posts arriving in
+the yard between two reads: 31 700 then 24 200 agorot, `GET /runs/{id}`
+byte-identical both times — and now the two BOMs carry different names
+(`sup_500f83e5d2f2`, `sup_537b210c0813`), each naming the yard it was priced
+against. Before, the `inventory_hash` that explained the difference was computed
+on every read and written only to the audit log, entering no identity, no stored
+document and no quote.
+
+**Two things the spec had wrong, and the second one is the whole reason Task 5
+exists.** `objective_preset` was in the design digest TWICE — by name, and inside
+`policy`, which `DEFAULT_POLICY` always populates — so removing the named one
+alone would have left the id unmoved and the change inert while looking done.
+And once the preset leaves the digest it FREEZES: an unchanged fence regenerates
+to the same id, `save_run` is INSERT OR IGNORE, so the stored document is the
+first one for ever and its preset with it. Confirmed empirically before the fix —
+after regenerating under `honour_priority` the stored run still said
+`least_cost`. Six read paths took the preset off that field; they now take it
+from the project's live policy. The spec also claimed the digest bump
+invalidates the property `test_regenerating_the_same_drawing_keeps_the_conversation`
+defends, which it does not: that test generates twice against ONE digest version,
+and digest stability is a property within a version.
+
+**The name changed on the way in.** The spec said `MaterialRun`, but `material`
+is already a catalog product attribute (vinyl, steel, cedar) that a part's spec
+declares as a CONSTRAINT on an item — `item.material == "vinyl"` — and that the
+UI renders in a surface called the material drawer. The half this entity names is
+the half below the demand boundary, which the codebase already calls supply:
+`resolve_supply()`, `ResolvedSupplyLine`, `SupplyDecision`. Hence `SupplyRun`,
+`supply_id`, `SUPPLY_BEHAVIOR_VERSION`.
+
+**An existing test caught a real defect the plan had not anticipated.**
+`INSERT OR IGNORE` skips the second write, but `get_bom` echoed its own
+freshly-stamped object, so two /bom reads of an unchanged fence differed by
+`created_at` — breaking `test_editing_a_model_cannot_move_a_stored_runs_bom`,
+whose whole job is proving a stored run cannot be repriced, for a reason with
+nothing to do with pricing. `save_supply_run` now returns the STORED row, so a
+response always equals persistence.
+
+Knowingly not done, in `plan/open-work.md` item 5: the frontend does not yet SHOW
+the supply id (`supply` is an additive key no JS reads), no retention policy, the
+impact preview still compares designs, and the quote's staleness refusal could
+now cite its supply run but would need a new code in both locale bundles.
+
 ## The merge review: three reviewers, two blocking defects, one blocking hole (2026-08-20)
 
 Before merging the 40-commit branch: an architecture critic, a test reviewer and
