@@ -22,6 +22,7 @@ from fenceai.fulfillment.fulfill import Inventory
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.learning.model import Correction
 from fenceai.parts.model import Part, PartLibrary
+from fenceai.fulfillment.supply_run import SupplyRun
 from fenceai.project.model import Project
 from fenceai.strategy.model import GenerationResult
 
@@ -38,6 +39,9 @@ CREATE TABLE IF NOT EXISTS parts (
     doc TEXT NOT NULL, PRIMARY KEY (part_id, version));
 CREATE TABLE IF NOT EXISTS generation_runs (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, created_at TEXT NOT NULL,
+    doc TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS supply_runs (
+    id TEXT PRIMARY KEY, design_id TEXT NOT NULL, created_at TEXT NOT NULL,
     doc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS corrections (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, doc TEXT NOT NULL);
@@ -608,6 +612,56 @@ class Store:
         rows = self._conn.execute(
             "SELECT id, created_at FROM generation_runs WHERE project_id=? ORDER BY created_at",
             (project_id,),
+        ).fetchall()
+        return [{"id": r[0], "created_at": r[1]} for r in rows]
+
+    # -- supply runs (append-only) ----------------------------------------------
+
+    def save_supply_run(self, s: SupplyRun, actor: str = "system") -> SupplyRun:
+        """INSERT OR IGNORE, for `save_run`'s reason: the id IS the content, so a
+        second write of the same id is the same fact arriving again. /bom
+        resolves supply on every read, and an unchanged yard must not accumulate
+        a row per read.
+
+        The clock lives here, as it does for a quote and a correction, and fills
+        a BLANK rather than overwriting: a caller that already established when
+        this happened is not second-guessed.
+
+        RETURNS THE STORED ROW, which on a repeat is the FIRST one and not the
+        argument. `created_at` is the one field that legitimately differs between
+        two otherwise-identical supply runs, so a caller that echoed its own
+        object would report a timestamp the database does not have — and two
+        reads of an unchanged fence would differ by it. That is not cosmetic:
+        `test_editing_a_model_cannot_move_a_stored_runs_bom` compares two whole
+        /bom responses to prove a stored run cannot be repriced, and a drifting
+        timestamp breaks that proof for a reason unrelated to pricing.
+        """
+        s.created_at = s.created_at or _now()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO supply_runs (id, design_id, created_at, doc) "
+            "VALUES (?,?,?,?)",
+            (s.id, s.design_id, s.created_at, s.model_dump_json()),
+        )
+        self._audit(actor, "save_supply_run", s.id)
+        self._conn.commit()
+        stored = self.load_supply_run(s.id)
+        assert stored is not None  # just written, in the same transaction
+        return stored
+
+    def load_supply_run(self, supply_id: str) -> SupplyRun | None:
+        row = self._conn.execute(
+            "SELECT doc FROM supply_runs WHERE id=?", (supply_id,)
+        ).fetchone()
+        return SupplyRun.model_validate_json(row[0]) if row else None
+
+    def list_supply_runs(self, design_id: str) -> list[dict]:
+        """Oldest first, and TOTALLY ordered: `id` breaks the tie so two supply
+        runs written in the same second cannot swap between two reads — the same
+        defect `list_corrections` records against itself."""
+        rows = self._conn.execute(
+            "SELECT id, created_at FROM supply_runs WHERE design_id=? "
+            "ORDER BY created_at, id",
+            (design_id,),
         ).fetchall()
         return [{"id": r[0], "created_at": r[1]} for r in rows]
 

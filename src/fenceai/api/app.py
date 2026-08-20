@@ -6,7 +6,6 @@ lives here. AI adapters are selected once at startup (stub by default, ADR-0009)
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from contextlib import asynccontextmanager
@@ -44,6 +43,9 @@ from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.fulfillment.pipeline import PricedRun, price_strategy
 from fenceai.fulfillment.quote import Quote
+from fenceai.fulfillment.supply_run import (
+    SUPPLY_BEHAVIOR_VERSION, SupplyRun, inventory_hash, supply_id,
+)
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion
 from fenceai.learning.impact import (
@@ -61,7 +63,7 @@ from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
 from fenceai.store.db import Store
-from fenceai.strategy.generator import LEGACY_MODEL_ID, generate
+from fenceai.strategy.generator import DEFAULT_POLICY, LEGACY_MODEL_ID, generate
 from fenceai.strategy.model import PartUse
 from fenceai.strategy.overrides import Override
 from fenceai.topology.model import Topology
@@ -188,10 +190,30 @@ def _fresh_catalog(result):
     return catalog
 
 
-def _priced(result) -> tuple[Catalog, Inventory, PricedRun]:
+def _live_preset(project_id: str) -> str:
+    """The objective in force NOW, from the project's policy.
+
+    NOT `result.run.objective_preset`. A stored run's preset is frozen at its
+    FIRST generation: since digest-v3 the preset is not a digest input, so an
+    unchanged fence regenerates to the same id and `save_run`'s INSERT OR IGNORE
+    keeps the first document for ever. Reading the preset off it would price
+    every later read under an objective the user has since changed, silently and
+    with no way to see it. The preset is a supply input, sourced from now,
+    exactly as inventory is.
+    """
+    project = state.store.load_project(project_id)
+    policy = project.policy if project else {}
+    return policy.get("objective_preset", DEFAULT_POLICY["objective_preset"])
+
+
+def _priced(result, preset: str) -> tuple[Catalog, Inventory, PricedRun]:
     """The read path every BOM-shaped view shares: check the catalog is the one
     the run was generated against, then run the single domain pipeline, then
     convert its refusals into HTTP.
+
+    The preset is a REQUIRED argument rather than something this helper reads off
+    the run, so that no caller can quietly fall back to the frozen stored value —
+    see `_live_preset`.
 
     This exists because the four copies of that sequence had already diverged —
     `create_quote` called `load_catalog()` directly, so the one endpoint that
@@ -205,7 +227,7 @@ def _priced(result) -> tuple[Catalog, Inventory, PricedRun]:
         priced = price_strategy(
             result.strategy, catalog, inventory,
             demand_skus=result.run.demand_skus,
-            preset=result.run.objective_preset,
+            preset=preset,
         )
     except ReadRefused as e:
         # code + params, not a raw English sentence: a run generated before the
@@ -214,6 +236,29 @@ def _priced(result) -> tuple[Catalog, Inventory, PricedRun]:
     except ValueError as e:
         raise HTTPException(400, str(e))
     return catalog, inventory, priced
+
+
+def _supply_run_for(result, preset: str, priced: PricedRun,
+                    inventory: Inventory) -> SupplyRun:
+    """One construction, two callers (/bom and /quote).
+
+    Two copies of a digest's inputs is how the quote path and the BOM path would
+    come to name different supply runs for the same fence — the same
+    four-copies-of-a-pipeline shape `fulfillment/pipeline.py`'s own docstring
+    exists to warn about.
+    """
+    inv_hash = inventory_hash(inventory)
+    return SupplyRun(
+        id=supply_id(result.run.id, inv_hash, result.run.catalog_hash, preset),
+        design_id=result.run.id,
+        inventory_hash=inv_hash,
+        catalog_hash=result.run.catalog_hash,
+        objective_preset=preset,
+        supply_version=SUPPLY_BEHAVIOR_VERSION,
+        requirements=priced.requirements,
+        unresolved=priced.unresolved,
+        bom=priced.bom,
+    )
 
 
 @app.get("/api/health")
@@ -370,12 +415,34 @@ def get_run(run_id: str):
 
 @app.get("/api/runs/{run_id}/bom")
 def get_bom(run_id: str):
+    """Resolve supply for this design against today's yard, and return the SupplyRun.
+
+    This is deliberately not a pure read any more. It used to be one, and that
+    was the defect: /bom read LIVE inventory, so one run id printed two different
+    BOMs with `GET /api/runs/{id}` byte-identical between them, and the
+    inventory_hash that would have explained the difference was computed on every
+    read and written only to the audit log. It entered no identity, no stored
+    document and no quote, so a reader holding two printouts could not tell which
+    yard each was priced against — and neither could the system.
+
+    Writing here is safe because the id IS the content: the same design against
+    the same inventory, catalog and preset digests to the same `supply_id` and
+    `save_supply_run`'s INSERT OR IGNORE does not write twice. Growth tracks real
+    changes to the yard, not read volume, which is why no retention policy is
+    needed yet (spec §7.2).
+    """
     result = _run(run_id)
-    _, inventory, priced = _priced(result)
-    # the BOM is what a customer gets quoted on: record which inventory state
-    # produced it so a later recomputation is distinguishable (final review, #5)
-    inventory_hash = hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16]
-    state.store.log("system", "fulfill", f"{run_id}:inv={inventory_hash}")
+    preset = _live_preset(result.run.project_id)
+    _, inventory, priced = _priced(result, preset)
+    # the STORED row, not the one just built: on a repeat read INSERT OR IGNORE
+    # keeps the first, and echoing our own object would report a `created_at` the
+    # database does not have — making two reads of an unchanged fence differ
+    supply = state.store.save_supply_run(_supply_run_for(result, preset, priced, inventory))
+    # the audit action keeps its name and gains the supply id: the ref used to be
+    # the only place the inventory hash was recorded, and is now a pointer to a
+    # row that holds it
+    state.store.log("system", "fulfill",
+                    f"{run_id}:inv={supply.inventory_hash}:{supply.id}")
     # routing an unresolved line out of `requirements` (so a blank sku can never
     # reach fulfill()/the ledger) must not make it disappear from this view —
     # /bom is a working view, so it reports the gap rather than refusing.
@@ -386,7 +453,8 @@ def get_bom(run_id: str):
     # drawing has moved on, which is why it groups by `run_ref` and leaves the
     # section TAGS to `js/structure-data.js`, the single tag source.
     return {"requirements": priced.requirements, "unresolved": priced.unresolved,
-            "bom": priced.bom, "inventory_hash": inventory_hash,
+            "bom": priced.bom, "inventory_hash": supply.inventory_hash,
+            "supply": supply,
             "grouped": group_bom(result.strategy, priced.requirements, priced.bom,
                                  priced.decisions, priced.unresolved)}
 
@@ -406,14 +474,13 @@ def get_structure(run_id: str):
             "run_topology_revision": result.run.topology_revision,
             "project_topology_revision": project.topology.revision,
         })
-    catalog, inventory, priced = _priced(result)
+    catalog, inventory, priced = _priced(result, _live_preset(result.run.project_id))
     report = build_structure(project.topology, result.strategy, priced.requirements,
                              priced.bom, run_id=run_id, catalog=catalog)
     # The layout is a function of the run alone, but the PARTS name the bars a
     # piece is cut from, and those depend on the inventory that was on hand.
     # Stamp it, exactly as /bom does, so two sheets that differ are explainable.
-    report.inventory_hash = hashlib.sha256(
-        inventory.model_dump_json().encode()).hexdigest()[:16]
+    report.inventory_hash = inventory_hash(inventory)
     # A bay with a part nothing can supply must still say so on the setting-out
     # sheet, not just on /bom — stamped the same way as inventory_hash, since
     # build_structure() itself stays a pure function of its inputs.
@@ -437,7 +504,8 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     # before: this was the only one of the four sites that loaded the catalog
     # directly, which made the one endpoint producing an immutable commercial
     # document the one endpoint that would happily freeze a stale one.
-    _, inventory, priced = _priced(result)
+    preset = _live_preset(result.run.project_id)
+    _, inventory, priced = _priced(result, preset)
     if priced.unresolved:
         # An immutable commercial document must not silently price a job that's
         # missing a part — refuse rather than freeze a quote that under-prices it
@@ -451,14 +519,24 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
                 for r in priced.unresolved
             ],
         })
+    # the same digest /bom computes, from the same inputs — so a quote and the
+    # BOM read that preceded it name ONE supply run rather than two. Saved here
+    # as well because a quote may be the first thing a project ever asks for, and
+    # the document it stands behind must exist.
+    supply = state.store.save_supply_run(
+        _supply_run_for(result, preset, priced, inventory), actor=body.author)
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
         label=body.label,
-        inventory_hash=hashlib.sha256(inventory.model_dump_json().encode()).hexdigest()[:16],
+        inventory_hash=supply.inventory_hash,
         knowledge_snapshot_hash=result.run.snapshot_hash,
         # which catalog priced this document, beside which knowledge shaped it —
         # the two inputs that decide what the customer was quoted
         catalog_hash=result.run.catalog_hash,
+        # and WHICH supply run it froze — the thing that was missing, and the
+        # reason two quotes of one run against two yards used to be
+        # indistinguishable except by their totals
+        supply_id=supply.id,
         requirements=priced.requirements, bom=priced.bom,
         total_cents=priced.bom.total_cents,
     )
@@ -508,7 +586,7 @@ def explain(
     # instead of another — the decision most worth explaining.
     graph = result.graph
     try:
-        _, _, priced = _priced(result)
+        _, _, priced = _priced(result, _live_preset(result.run.project_id))
     except HTTPException:
         # a stale catalog or an unreadable run must not cost the reader the
         # explanation of everything else in the graph
@@ -547,7 +625,7 @@ def section_decisions(
         })
     graph = result.graph
     try:
-        _, _, priced = _priced(result)
+        _, _, priced = _priced(result, _live_preset(result.run.project_id))
     except HTTPException:
         # a stale catalog must not cost the reader every other decision — the
         # same trade /explain makes one route up
@@ -1050,7 +1128,7 @@ def preview_run_bay(run_id: str, element_id: str, body: BayPreviewRequest) -> Pa
     model = state.store.load_fence_model(plan.model_id, plan.version)
     if model is None:
         raise HTTPException(404, f"{plan.model_id}@v{plan.version} not found")
-    return _preview_or_refuse(model, plan.request, catalog, result.run.objective_preset,
+    return _preview_or_refuse(model, plan.request, catalog, _live_preset(result.run.project_id),
                               result.run.part_snapshot)
 
 

@@ -33,6 +33,12 @@ class Quote(BaseModel):
     # already immutable (requirements and bom are persisted in full), so this
     # records what it MEANT, it does not guard it.
     catalog_hash: str = ""
+    # WHICH supply run this document froze. A quote was always a SupplyRun
+    # somebody decided to stand behind — it captured the numbers (`requirements`,
+    # `bom`) without being able to name the thing that produced them, so two
+    # quotes of one run against two different yards were indistinguishable except
+    # by their totals. "" is a quote frozen before supply runs had names.
+    supply_id: str = ""
     requirements: list[ResolvedSupplyLine] = []
     bom: Bom
     total_cents: Cents = 0

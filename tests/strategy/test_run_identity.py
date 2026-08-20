@@ -36,10 +36,32 @@ def test_a_catalog_change_changes_the_run_id():
     assert a.run.id != b.run.id
 
 
-def test_the_preset_changes_the_run_id():
+def test_the_preset_does_NOT_change_the_run_id():
+    """A design is what it is regardless of how it will be bought.
+
+    `objective_preset` is read by nothing in generate() — only by resolve_supply,
+    the panel preview and the impact preview. Keeping it in the digest made the
+    design id move for a supply reason, which is the mirror image of one run id
+    printing two BOMs: design identity moving when the fence did not, while
+    supply identity did not move at all.
+    """
     topo, kb = straight_topology(3000), demo_knowledge()
     a = generate(topo, kb, demo_catalog())
     b = generate(topo, kb, demo_catalog(), policy={"objective_preset": "honour_priority"})
+    assert a.run.id == b.run.id
+    # the run still REPORTS the preset it was generated under; it simply is not
+    # what the run IS
+    assert b.run.objective_preset == "honour_priority"
+
+
+def test_a_design_policy_field_still_changes_the_run_id():
+    """The guard against over-correcting. `policy` carries design inputs too, and
+    the digest strips exactly ONE key from it — a change that dropped the whole
+    dict would make two genuinely different fences hash the same, and this test
+    is the difference between the two mistakes."""
+    topo, kb = straight_topology(3000), demo_knowledge()
+    a = generate(topo, kb, demo_catalog())
+    b = generate(topo, kb, demo_catalog(), policy={"default_height_mm": 2100})
     assert a.run.id != b.run.id
 
 
