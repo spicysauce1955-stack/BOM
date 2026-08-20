@@ -188,14 +188,42 @@ def test_every_table_is_named_in_the_doc():
 
 def test_every_ai_port_has_a_stub():
     """The stub is what keeps the whole system working offline (CLAUDE.md). A
-    port with no stub implementation is a feature that needs a network."""
+    port with no stub implementation is a feature that needs a network.
+
+    Each port is matched to a stub that actually CONFORMS to it — every method
+    the protocol declares, present and callable on the stub class. It used to
+    compare two COUNTS, `len(implemented) >= len(protocols)`, which any class
+    whose name begins with "Stub" satisfies: adding a port with no stub beside a
+    `class StubSomethingElse:` that implements nothing left this green, and the
+    system it certifies as offline-capable would raise at the first call.
+    """
     from fenceai.ai import ports, stub
 
     # `Protocol` itself is imported into that module; it is the mechanism, not a
     # port, and counting it made this test assert one port too many.
-    protocols = [name for name in dir(ports)
+    protocols = {name: getattr(ports, name) for name in dir(ports)
                  if name[0].isupper() and name != "Protocol"
-                 and hasattr(getattr(ports, name), "__protocol_attrs__")]
+                 and hasattr(getattr(ports, name), "__protocol_attrs__")}
     assert protocols, "no ports found — this test has stopped looking at anything"
-    implemented = [name for name in dir(stub) if name.startswith("Stub")]
-    assert len(implemented) >= len(protocols), (protocols, implemented)
+    stubs = {name: obj for name in dir(stub)
+             if name.startswith("Stub") and isinstance(obj := getattr(stub, name), type)}
+    assert stubs, "no stubs found — this test has stopped looking at anything"
+
+    def conforms(candidate: type, protocol) -> bool:
+        for attr in protocol.__protocol_attrs__:
+            if not hasattr(candidate, attr):
+                return False
+            # ...and a method must be a method: the right NAME of the wrong kind
+            # is not an implementation either
+            if callable(getattr(protocol, attr, None)) and \
+                    not callable(getattr(candidate, attr)):
+                return False
+        return True
+
+    unstubbed = {name: sorted(protocol.__protocol_attrs__)
+                 for name, protocol in protocols.items()
+                 if not any(conforms(c, protocol) for c in stubs.values())}
+    assert not unstubbed, (
+        f"no stub implements these ports: {unstubbed}. "
+        f"The stubs that exist are {sorted(stubs)} — a name is not an "
+        f"implementation.")

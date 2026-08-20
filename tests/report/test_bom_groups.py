@@ -313,13 +313,25 @@ def test_a_decision_group_is_named_the_same_thing_the_graph_names_it():
     moves with the inventory. So the money view and the decision graph had two
     different names for one decision, and the one here changed when the yard
     restocked: neither `/explain` nor a comment's `decision_ref` could be joined
-    to it."""
-    from fenceai.decisions.supply import decision_id
+    to it.
+
+    The expectation is the GRAPH's node id, read off the graph. It used to be
+    `f"s{decision_id(d)}"` — recomputed with the very function `bom_groups.py`
+    calls one line down — which proved that `group_bom` calls `decision_id` and
+    said nothing whatever about the graph, the one party this test names. So
+    renaming the node in `with_supply_decisions` (its `s` prefix is written
+    there, separately from the one written here) broke the join with this test
+    green, under a docstring claiming to defend exactly that join.
+    """
+    from fenceai.decisions.supply import with_supply_decisions
     result, priced = _with_a_real_choice()
     grouped = group_bom(result.strategy, priced.requirements, priced.bom,
                         priced.decisions)
     named = {g.element_id for g in grouped.groups if g.kind == "decision"}
-    assert named == {f"s{decision_id(d)}" for d in priced.decisions}
+    graph = with_supply_decisions(result.graph, priced.decisions)
+    in_the_graph = {n.id for n in graph.nodes if n.action == "select_supply"}
+    assert in_the_graph, "the fixture put no supply decision in the graph"
+    assert named == in_the_graph
     assert not any(g.chosen in g.element_id
                    for g in grouped.groups if g.kind == "decision"), \
         "the id still carries the outcome, which is what moves with stock"
