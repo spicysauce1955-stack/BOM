@@ -1550,7 +1550,12 @@ def _generate_run(
     for gs, ge, _, ev_id in gates:
         fact = builder.add(
             "input_fact", "gate_event",
-            payload={"event_id": ev_id, "start_mm": gs, "end_mm": ge},
+            # `run_id` is how a run-level node names its SECTION
+            # (report/section_decisions.py). A gate names no element — the posts
+            # it forces do — so without it the section that the gate reshaped
+            # gets the reinforced posts and never the gate that caused them.
+            payload={"run_id": run.id, "event_id": ev_id,
+                     "start_mm": gs, "end_mm": ge},
         )
         gate_fact_ids[ev_id] = fact.id
         for s in (gs, ge):

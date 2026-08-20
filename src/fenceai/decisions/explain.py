@@ -208,7 +208,13 @@ TEMPLATES: dict[str, dict[str, str]] = {
         # to `input_fact`, which prints the raw payload dict — acceptable while
         # they appeared only as an indented `←` ancestor, and not once the
         # section view puts them at the top of what a person reads.
-        "topology_node": "Node {node_id} of the drawing, where {runs} section(s) meet.",
+        # Count-dependent phrasing follows the locale bundles' convention
+        # (`strategy.posts_one`, `structure.height_one`): a `_one` key chosen on
+        # the count. Hebrew has no "(s)" escape — "שבו נפגשים 1 קטעים" is simply
+        # wrong — and an END node, where a single section stops, is the common
+        # case rather than the corner one.
+        "topology_node": "Node {node_id} of the drawing, where {runs} sections meet.",
+        "topology_node_one": "Node {node_id} of the drawing, where one section ends.",
         "run_geometry": "Section {run_id} is {length_mm} {u} long, falling {slope_permille}‰.",
         "gate_event": "A gate was asked for between {start_mm} {u} and {end_mm} {u}.",
         "override_applied": "User override {override_id} applied ({action}).",
@@ -346,6 +352,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "מפתחים בקטע {run_id}."
         ),
         "topology_node": "צומת {node_id} בשרטוט, שבו נפגשים {runs} קטעים.",
+        "topology_node_one": "צומת {node_id} בשרטוט, שבו מסתיים קטע אחד.",
         "run_geometry": "אורך קטע {run_id} הוא {length_mm} {u}, בשיפוע {slope_permille}‰.",
         "gate_event": "התבקש שער בין {start_mm} {u} ל-{end_mm} {u}.",
         "override_applied": "דריסת משתמש {override_id} הוחלה ({action}).",
@@ -574,8 +581,9 @@ def explain_node(
                 override_id=p.get("override_id"), action=node.action
             )
         case "topology_node":
-            base = _fmt(t, "topology_node", lang, units,
-                        node_id=p.get("node_id"), runs=p.get("runs"))
+            runs = p.get("runs")
+            base = _fmt(t, "topology_node_one" if runs == 1 else "topology_node",
+                        lang, units, node_id=p.get("node_id"), runs=runs)
         case "run_geometry":
             base = _fmt(t, "run_geometry", lang, units, run_id=p.get("run_id"),
                         length_mm=p.get("length_mm"),

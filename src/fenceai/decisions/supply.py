@@ -35,12 +35,21 @@ def _identity(decision: SupplyDecision) -> tuple:
 
 
 def decision_id(decision: SupplyDecision) -> str:
-    """THE name of a supply decision, for anything that needs to refer to one.
+    """The name of a supply decision WITHIN ONE RUN, for anything referring to one.
 
     Public because a second module needed it and derived its own instead: the
     grouped BOM named a decision by `role:slot:chosen`, which is the exact
     outcome-derived id this module spent its docstring refusing. One decision
     with two names, one of them changing when the yard restocks.
+
+    Stable against INVENTORY, and no further. What the yard holds changes what
+    gets chosen and never this name — that is the defect this id exists to fix.
+    But `_identity` includes the requirement ids, and `DemandLine.id` is
+    positional (`req0004`, `demand/derive.py`): insert a gate and every demand
+    line after it renumbers, renaming every supply decision that answered one in
+    an otherwise unchanged design. So it names a decision within the run that
+    generated it — never a handle to carry across runs or to diff two runs by
+    (`core/ids.py`: generated ids may not be referenced across runs).
     """
     return _digest(decision)
 

@@ -28,6 +28,18 @@ STRAIGHT = {
               {"id": "n2", "x_mm": 6000, "y_mm": 0}],
     "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}],
 }
+# an 8000 mm run with a 1000 mm gate asked for at station 3000
+GATED = {
+    "revision": 1,
+    "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+              {"id": "n2", "x_mm": 8000, "y_mm": 0}],
+    "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2",
+              "point_events": [{"id": "ev_gate",
+                                "anchor": {"segment_index": 0, "offset_mm": 3000,
+                                           "seg_len_at_authoring_mm": 8000},
+                                "payload": {"kind": "gate", "width_mm": 1000,
+                                            "kit_sku": "GATE-KIT-1000"}}]}],
+}
 
 
 def _fence(client, topology) -> tuple[str, str]:
@@ -94,6 +106,51 @@ def test_s17_2_the_run_level_decisions_are_there():
         _, run_id = _fence(client, STRAIGHT)
         actions = {d["action"] for d in _decisions(client, run_id, "run1")["decisions"]}
         assert {"run_geometry", "choose_vertical_mode"} <= actions
+
+
+def test_s17_2b_a_gated_sections_story_states_the_gate_that_caused_it():
+    """A gate fact is run-level too. It names no element — the posts it forced
+    do — so it reaches its section through `run_id` in its payload or not at
+    all, exactly like `run_geometry` and `choose_vertical_mode`. Without it the
+    section's story has two gate posts and a `place_gate` and never says a gate
+    was asked for: the cause is missing from the account of its own effects."""
+    with TestClient(app) as client:
+        _, run_id = _fence(client, GATED)
+        got = _decisions(client, run_id, "run1")["decisions"]
+        caused = [d for d in got if d["action"] == "place_post"
+                  and d["elements"] in (["post@run1:3000"], ["post@run1:4000"])]
+        assert len(caused) == 2, "fixture stopped producing the flanking gate posts"
+        assert any(d["action"] == "place_gate" for d in got)
+        facts = [d for d in got if d["action"] == "gate_event"]
+        assert facts, (
+            "the gate is absent from the story of the section it reshaped: "
+            f"{sorted({d['action'] for d in got})}")
+        assert facts[0]["sentence"] == (
+            "A gate was asked for between 3000 mm and 4000 mm.")
+        # and it is told BEFORE the posts it explains — causal order, by ordinal
+        assert facts[0]["ordinal"] < min(d["ordinal"] for d in caused)
+
+
+def test_s17_2c_a_facts_sentence_is_grammatical_in_the_readers_language():
+    """The section view answers in the reader's language, and a count inside a
+    sentence is grammar, not a number. English can hide behind "section(s)";
+    Hebrew cannot — an END node, where ONE section stops, is the common case and
+    the plural reads as broken Hebrew there."""
+    with TestClient(app) as client:
+        _, straight = _fence(client, STRAIGHT)
+        he = client.get(
+            f"/api/runs/{straight}/sections/run1/decisions?lang=he").json()["decisions"]
+        ends = [d["sentence"] for d in he if d["action"] == "topology_node"]
+        assert ends == ["צומת n1 בשרטוט, שבו מסתיים קטע אחד.",
+                        "צומת n2 בשרטוט, שבו מסתיים קטע אחד."]
+
+        _, corner = _fence(client, L_SHAPE)
+        he_l = client.get(
+            f"/api/runs/{corner}/sections/runA/decisions?lang=he").json()["decisions"]
+        shared = [d["sentence"] for d in he_l if d["action"] == "topology_node"
+                  and "n2" in d["sentence"]]
+        # two really do meet at the corner, and there the plural is correct
+        assert shared == ["צומת n2 בשרטוט, שבו נפגשים 2 קטעים."]
 
 
 def test_s17_3_a_shared_corner_post_reaches_both_sections():
