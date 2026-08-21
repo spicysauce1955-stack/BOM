@@ -636,14 +636,25 @@ class _ModelPost:
     a wrong line on the BOM rather than a missing one, since it prices and fits
     nothing. So the answer is deferred to the one place that knows.
 
-    It returns `(cap sku, the model refs that asked and got nothing)`. The
-    failure travels rather than being raised because a cap is cosmetic: every
-    other unsupplied slot is a warning and an `unresolved` line, and a post is
-    the exception (without one there is no fence to be one part short of).
+    It returns `(cap sku, the model refs that asked and got nothing, the
+    candidates it passed over)`. The failure travels rather than being raised
+    because a cap is cosmetic: every other unsupplied slot is a warning and an
+    `unresolved` line, and a post is the exception (without one there is no fence
+    to be one part short of).
+
+    `post_rejected` and the cap's third element are what make the choice
+    explainable. Both were computed and thrown away at `[0]`, so a post and a cap
+    reached the BOM with no node in the graph naming what they beat — the gap
+    `decisions/supply.py`'s docstring declares closed. They stay HERE, in
+    generation, rather than travelling to `resolve_supply` with the rails,
+    because a post's sku drives geometry: its face width sets the bay's clear
+    width and its declared length reaches the setting-out sheet. Resolved at read
+    time the drawing would move when the yard moved (ADR-0011).
     """
 
     post_sku: str | None = None
-    cap_for: Callable[[str], tuple[str | None, str | None]] | None = None
+    post_rejected: list[str] = dataclass_field(default_factory=list)
+    cap_for: Callable[[str], tuple[str | None, str | None, list[str]]] | None = None
 
 
 def _model_post_skus(
@@ -709,37 +720,42 @@ def _model_post_skus(
         # `_matched`, which is where `match_spec`'s covering rule lives.
         model = _post_model(model, parts, resolved)
         panel = side.facts.at(model, side.station, side.kind)
-        claims.append((model, panel, _matched(
+        claims.append((model, panel, _matched_members(
             model.post.requirement.eligibility, catalog, panel)))
     if not claims:
         return _ModelPost()
 
     station = sides[0].station
-    posts = sorted(set.intersection(*(set(skus) for _, _, skus in claims)))
+    posts = _preferred([members for _, _, members in claims])
     if not posts:
-        raise _no_post_failure(claims, catalog, station)
+        raise _no_post_failure(
+            [(m, p, [x.sku for x in ms]) for m, p, ms in claims], catalog, station)
 
     capped = [(model, panel) for model, panel, _ in claims if model.post.cap is not None]
     if not capped:
-        return _ModelPost(post_sku=posts[0])   # no line here has an opinion about caps
+        # no line here has an opinion about caps
+        return _ModelPost(post_sku=posts[0], post_rejected=posts[1:])
 
-    def cap_for(stood_sku: str) -> tuple[str | None, str | None]:
+    def cap_for(stood_sku: str) -> tuple[str | None, str | None, list[str]]:
         """The cap for the post that is ACTUALLY standing here.
 
         Intersected across every claiming model, exactly as the post is: both
-        lines' cap specs apply to the one cap on the one post between them."""
+        lines' cap specs apply to the one cap on the one post between them. The
+        candidates it did NOT take travel back with it, because a cap that
+        reaches the BOM with no record of what it beat is a priced choice the
+        graph cannot account for."""
         stood = catalog.products.get(stood_sku)
-        caps = [(model.ref, _matched(
+        caps = [(model.ref, _matched_members(
             model.post.cap.eligibility, catalog,
             {**panel,
              **(chosen_post_facts(stood, panel["post"]) if stood is not None else {})},
         )) for model, panel in capped]
-        agreed = sorted(set.intersection(*(set(skus) for _, skus in caps)))
+        agreed = _preferred([members for _, members in caps])
         if agreed:
-            return agreed[0], None
-        return None, ", ".join(sorted(ref for ref, _ in caps))
+            return agreed[0], None, agreed[1:]
+        return None, ", ".join(sorted(ref for ref, _ in caps)), []
 
-    return _ModelPost(post_sku=posts[0], cap_for=cap_for)
+    return _ModelPost(post_sku=posts[0], post_rejected=posts[1:], cap_for=cap_for)
 
 
 def _post_model(
@@ -790,6 +806,47 @@ def _cap_unsupplied(
 
 def _matched(eligibility, catalog: Catalog, facts: dict) -> list[str]:
     return [m.sku for m in match_eligibility(eligibility, catalog, facts).members]
+
+
+def _matched_members(eligibility, catalog: Catalog, facts: dict) -> list:
+    """`_matched`, keeping the PRIORITY — the company's stated preference.
+
+    `_matched` drops it, which was fine while every consumer took `[0]` of a
+    sorted set and threw the order away anyway. That is the bug: a slot offering
+    two products got whichever sku sorted first, so a declared first preference
+    lost to the letter it starts with.
+    """
+    return list(match_eligibility(eligibility, catalog, facts).members)
+
+
+def _preferred(claims: list[list]) -> list[str]:
+    """The candidates EVERY claim accepts, best first.
+
+    Two models can claim one post — a boundary between two lines — and both
+    specs apply to the one post standing between them. Each ranks the common
+    candidates by its own `priority`; if they all rank them the SAME way, that
+    order is the company's answer and it is used.
+
+    If they disagree there is no honest winner, so the tie breaks alphabetically
+    — which is what this code did unconditionally before. Deliberately NOT
+    "first claim wins": claims are built by walking the drawing, so that would
+    make which cap gets bought depend on the shape of the fence, and a
+    preference honoured for a reason nobody can state is worse than a tie
+    admitted.
+
+    Predicate-authored eligibility comes back from `match_eligibility` over
+    `sorted(catalog.products)` with every priority at its default, so every claim
+    ranks it identically and identically to `sorted()` — those slots keep exactly
+    today's behaviour, which is why no golden file moves.
+    """
+    common = set.intersection(*(set(m.sku for m in ms) for ms in claims))
+    if not common:
+        return []
+    orders = {
+        tuple(sorted(common, key=lambda sku: (rank.get(sku, 0), sku)))
+        for rank in ({m.sku: m.priority for m in ms} for ms in claims)
+    }
+    return list(orders.pop()) if len(orders) == 1 else sorted(common)
 
 
 def _no_post_failure(
@@ -875,7 +932,8 @@ def _make_post(
     override_nodes: list[str] | None = None,
     tilt_deg: int = 0,
     model_post: str | None = None,
-    model_cap: Callable[[str], tuple[str | None, str | None]] | None = None,
+    model_post_rejected: list[str] | None = None,
+    model_cap: Callable[[str], tuple[str | None, str | None, list[str]]] | None = None,
 ) -> tuple[Post, str | None]:
     """Create a post; every selection resolved from knowledge BEFORE the decision
     node is recorded — elements are never mutated afterwards (critic finding 4).
@@ -905,9 +963,17 @@ def _make_post(
         # would otherwise silently replace a post chosen for its situation.
         sku = model_post
         sku_refs = []
+        rejected = list(model_post_rejected or [])
     else:
         sku, sku_refs = _resolve_default_post(kb, scope, surface)
-    cap_sku, cap_unsupplied = model_cap(sku) if model_cap else (None, None)
+    # Only the MODEL's post had a field of candidates to pass over. A forced sku,
+    # a masonry mount, a gate reinforcement and the knowledge default each name
+    # ONE product for their own reason, and reporting the model's rejects beside
+    # one of those would credit this post with a comparison it never made.
+    if sku != model_post:
+        rejected = []
+    cap_sku, cap_unsupplied, cap_rejected = (
+        model_cap(sku) if model_cap else (None, None, []))
     post = Post(
         id=post_id, run_ref=run_ref, station_mm=station, kind=kind,  # type: ignore[arg-type]
         reinforced=reinforced, mounting=mounting, sku=sku,  # type: ignore[arg-type]
@@ -918,6 +984,14 @@ def _make_post(
         "structural", "place_post",
         payload={"station_mm": station, "kind": kind, "surface": surface,
                  "mounting": mounting, "sku": sku,
+                 # What this post and its cap were bought INSTEAD OF. Omitted
+                 # when there was nothing to compare: a `rejected: []` beside a
+                 # chosen sku reads as "we looked and the field was empty", and
+                 # every shipped model has exactly one eligible member per slot,
+                 # so the empty key would be on every node of every run.
+                 **({"rejected": rejected} if rejected else {}),
+                 **({"cap_sku": cap_sku} if cap_sku else {}),
+                 **({"cap_rejected": cap_rejected} if cap_rejected else {}),
                  **({"base_z_mm": base_z_mm} if base_z_mm is not None
                     and base_z_mm != ground_z_mm else {}),
                  **({"tilt_deg": tilt_deg} if tilt_deg else {})},
@@ -1045,7 +1119,8 @@ def _generate_node_posts(
             )
         post, cap_gap = _make_post(
             builder, kb, scope,
-            model_post=model_post.post_sku, model_cap=model_post.cap_for,
+            model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
+            model_cap=model_post.cap_for,
             post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
             station=station0, kind=kind, surface=surface,
             ground_z_mm=ground_z(topology, run0, station0),
@@ -1716,7 +1791,8 @@ def _generate_run(
             _post_sides(post_facts, station, length, kind), resolved_posts)
         post, cap_gap = _make_post(
             builder, kb, scope,
-            model_post=model_post.post_sku, model_cap=model_post.cap_for,
+            model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
+            model_cap=model_post.cap_for,
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
             station=station, kind=kind, surface=surface,
             ground_z_mm=ground_z(topo, run, station),
@@ -2013,7 +2089,8 @@ def _generate_run(
                 _post_sides(post_facts, s, length, "line"), resolved_posts)
             post, cap_gap = _make_post(
                 builder, kb, scope,
-                model_post=model_post.post_sku, model_cap=model_post.cap_for,
+                model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
+            model_cap=model_post.cap_for,
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
                 station=s, kind="line", surface=surface,
                 ground_z_mm=ground_z(topo, run, s),

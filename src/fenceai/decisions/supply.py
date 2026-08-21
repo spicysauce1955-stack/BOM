@@ -19,6 +19,20 @@ never touched — reading a run must not change it, and a test pins that.
 Ordinals continue from the stored graph's maximum, so the appended nodes are
 strictly later than everything they point at and the acyclicity invariant
 `GraphBuilder._edge` enforces during generation still holds here.
+
+SCOPE, because this docstring used to claim more than it delivered. What is
+covered here is every choice `resolve_supply` makes — the panel's slots. The
+model's POST and CAP are not among them and never reach this module: they are
+chosen during generation and arrive at `derive_requirements` as one-member
+eligibilities, so `_choose` finds nothing to compare and emits no
+`SupplyDecision`. That is deliberate rather than an omission. A post's sku drives
+geometry — `preview.py` reads its face width for the bay's clear width,
+`report/structure.py` its declared length for the setting-out sheet — so
+resolving it at read time against live inventory would move the DRAWING when the
+yard moved, which is exactly what ADR-0011 separates. Those two choices are
+explained by their own `place_post` node instead, which carries `rejected` and
+`cap_rejected`; between the two mechanisms the "every BOM line traces through the
+graph" claim is now true, which it was not while this paragraph was missing.
 """
 
 from __future__ import annotations
