@@ -191,6 +191,16 @@ function renderPrintTitle(report) {
         { total_mm: report.totals.fence_length_mm }))}</span>
       <span class="meta">${esc(t("structure.printed", { at: printed }))}</span>
       <span class="meta"><bdi>${esc(report.run_id)}</bdi></span>
+      ${report.supply_id
+        // Beside the run id, because the two answer different questions about
+        // this sheet: the run id says what fence it is, the supply id says which
+        // YARD it was cut against. The part rows print `from_bars` — which bar
+        // each piece came from — and those move with the stock on hand, so two
+        // printings of one run can carry different cut lists. Under a title
+        // block naming only the design they were indistinguishable on paper,
+        // which is the whole reason this is here and not only on the BOM tab.
+        // Bare, like the run id: the `run_`/`sup_` prefixes label themselves.
+        ? `<span class="meta"><bdi>${esc(report.supply_id)}</bdi></span>` : ""}
     </div>`;
 }
 

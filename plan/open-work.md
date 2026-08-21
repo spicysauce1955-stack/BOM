@@ -106,10 +106,13 @@ calls supply.
   boundary, and nothing after.
 
 **Knowingly not done:**
-* **the frontend does not SHOW the supply id.** The BOM tab renders the BOM and
-  the `inventory_hash` exactly as before; `supply` is an additive key nothing in
-  JS reads yet. A reader holding two printouts can now distinguish them through
-  the API, not yet on the page. This is the obvious next slice.
+* ~~the frontend does not SHOW the supply id~~ — DONE, 2026-08-21. The print
+  sheet's title block names it beside `run_id`, the BOM tab carries a provenance
+  line, and a viewed quote names what it froze. `/structure` now goes through the
+  same `_supply_run_for` as `/bom`, so the sheet and the BOM cannot name
+  different yards. The print sheet was the surface that mattered: its part rows
+  print `from_bars`, which move with the stock on hand, so two printings of one
+  run could carry different cut lists under an identical title block.
 * no retention policy — supply runs are append-only and never expire (spec §7.2,
   decided). Idempotency means growth tracks real yard changes, not read volume,
   so nothing forces the question yet.
