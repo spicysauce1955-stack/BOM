@@ -135,22 +135,31 @@ contracts). Verdicts: SOUND-WITH-FIXES, GAPS, and 2 blocking defects. Everything
 blocking was fixed and is in the branch. What follows was found, judged, and
 deliberately left — each with the evidence, so nobody has to rediscover it.
 
-**The biggest one: the model's post and cap are priced choices with no decision
-node.** `strategy/generator.py` takes `sorted(set.intersection(...))[0]` for both
-— the lexicographically smallest sku — throwing away the authored order that
-`_matched()` returns. Then `demand/derive.py` hands `resolve_supply` a
-ONE-MEMBER eligibility, so no decision node is emitted at all. Reproduced: give
-M-VINYL's cap slot two eligible members and the declared first preference loses
-to alphabetical order, `honour_priority` cannot reach the choice, and the cap is
-on the BOM while appearing nowhere in the graph. This violates "every BOM line
-traces through the decision graph" and it is exactly the gap
-`decisions/supply.py`'s own docstring declares CLOSED. Not a regression (the post
-path was always like this and the branch only re-authored the cap alongside it),
-which is why it did not block. Fix direction: either put `cap_sku` and its
-rejected set in the `place_post` payload, or route the model's post/cap through
-`resolve_supply` by giving `derive_requirements` the full matched member list
-instead of `chosen(...)`. Until then the supply.py docstring should stop
-claiming coverage it does not have.
+**~~The biggest one: the model's post and cap are priced choices with no decision
+node.~~** — FIXED, 2026-08-21. Both halves: `_preferred()` now orders candidates
+by the company's stated `priority` instead of `sorted(...)[0]`, and the
+`place_post` node carries `rejected` / `cap_rejected` with `explain.py` sentences
+in both languages.
+
+**The handoff offered two fix directions and the code ruled one out.** "Route the
+model's post/cap through `resolve_supply`" would have moved the choice to read
+time — but a post's sku drives GEOMETRY (`preview.py` reads its face width for
+the bay's clear width, `report/structure.py` its declared length for the
+setting-out sheet), so the drawing would move whenever the yard moved. That is
+the opposite of ADR-0011. The choice stays in generation and generation was made
+to explain it instead.
+
+Nothing existing moved, and that was measured rather than hoped: `_matched`
+returns exactly ONE candidate on every call across every gate fixture
+(`{1: 10}`), so preferred-order and alphabetical give the same answer everywhere
+today. Both new behaviours were shown failing against mutants.
+
+**Still open, and smaller than it was:** when two lines claim one post and their
+stated orders CONFLICT, the tie breaks alphabetically and the node does not say
+that it did. A reader sees a preference that was not honoured with no note
+explaining why. Deliberate — "first claim wins" would make the answer depend on
+the walk order — but a `preference_tied` flag in the payload would let the
+sentence admit it.
 
 **`unassigned` conflates two different facts.** `report/bom_groups.py` puts
 purchase overage (`purchased − asked > 0`) and demand pegged to nothing in one

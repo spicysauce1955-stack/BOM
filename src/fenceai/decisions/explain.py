@@ -146,6 +146,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "check the design intent."
         ),
         "place_post_tilt": " Post tilted {tilt_deg}° from vertical.",
+        # The post and the cap are PRICED choices, so what they were bought
+        # instead of belongs in the sentence — the same shape `layout_spans_alt`
+        # uses for a rejected span layout, and for the same reason.
+        "place_post_alt": " {sku} was preferred over {rejected}.",
+        "place_post_cap": " Capped with {cap_sku}.",
+        "place_post_cap_alt": " {cap_sku} was preferred over {cap_rejected}.",
         "gate_past_run_end": (
             "The gate asks for {asked_mm} {u} at station {station_mm} {u}, but only "
             "{available_mm} {u} of the section remains."
@@ -294,6 +300,9 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "בדקו את כוונת התכנון."
         ),
         "place_post_tilt": " העמוד נטוי {tilt_deg}° מהאנך.",
+        "place_post_alt": " {sku} הועדף על פני {rejected}.",
+        "place_post_cap": " כיפה: {cap_sku}.",
+        "place_post_cap_alt": " {cap_sku} הועדפה על פני {cap_rejected}.",
         "gate_past_run_end": (
             "השער מבקש {asked_mm} {u} בתחנה {station_mm} {u}, אך נותרו במקטע "
             "{available_mm} {u} בלבד."
@@ -408,6 +417,15 @@ def explain_node(
             )
             if p.get("tilt_deg"):
                 base += _fmt(t, "place_post_tilt", lang, units, tilt_deg=p["tilt_deg"])
+            if p.get("rejected"):
+                base += _fmt(t, "place_post_alt", lang, units,
+                             sku=p.get("sku"), rejected=", ".join(p["rejected"]))
+            if p.get("cap_sku"):
+                base += _fmt(t, "place_post_cap", lang, units, cap_sku=p["cap_sku"])
+            if p.get("cap_rejected"):
+                base += _fmt(t, "place_post_cap_alt", lang, units,
+                             cap_sku=p.get("cap_sku"),
+                             cap_rejected=", ".join(p["cap_rejected"]))
         case "layout_spans":
             alt = p.get("alternatives") or []
             base = _fmt(t, "layout_spans", lang, units, segment=p.get("segment"), widths=p.get("widths"))
