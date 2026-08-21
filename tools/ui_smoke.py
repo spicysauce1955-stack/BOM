@@ -592,6 +592,14 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("the sheet has a title block naming the job and when it was printed",
               printed["title"] == "block" and "smoke" in (printed["titleText"] or "")
               and "הודפס" in (printed["titleText"] or ""))
+        # The sheet's part rows print `from_bars` — which bar each piece was cut
+        # from — and those move with the stock on hand. So two printings of ONE
+        # run can carry different cut lists, and under a title block naming only
+        # the design they were indistinguishable on paper. Both ids, or the sheet
+        # cannot say which yard it belongs to.
+        check("the title block names the yard it was cut against, not only the fence",
+              "run_" in (printed["titleText"] or "")
+              and "sup_" in (printed["titleText"] or ""))
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.3)
 
@@ -1720,6 +1728,15 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(1.5)
         bom_text = c.js("document.getElementById('tab-bom').textContent")
         check("BOM cut plan is labelled in the chosen unit", 'ס"מ' in (bom_text or ""))
+        # The priced table says what the job costs; this says what it was costed
+        # AGAINST. Without it two totals for one unchanged run are a disagreement
+        # nobody on the page can settle. Localized: the objective is prose, so
+        # finding the English token here would mean it bypassed t().
+        provenance = c.js(
+            "document.querySelector('#tab-bom .supply-provenance')?.textContent || ''")
+        check("the BOM says which yard and objective it was priced against",
+              "sup_" in provenance and "עלות מזערית" in provenance
+              and "least_cost" not in provenance)
         # Scoped to the cut-plan panel. Unscoped it read cell 1 of EVERY table on
         # the tab, so it measured whichever table came first — and a new panel
         # whose second column happens to hold a product name ("Rail stock 3000

@@ -474,13 +474,20 @@ def get_structure(run_id: str):
             "run_topology_revision": result.run.topology_revision,
             "project_topology_revision": project.topology.revision,
         })
-    catalog, inventory, priced = _priced(result, _live_preset(result.run.project_id))
+    preset = _live_preset(result.run.project_id)
+    catalog, inventory, priced = _priced(result, preset)
     report = build_structure(project.topology, result.strategy, priced.requirements,
                              priced.bom, run_id=run_id, catalog=catalog)
     # The layout is a function of the run alone, but the PARTS name the bars a
-    # piece is cut from, and those depend on the inventory that was on hand.
-    # Stamp it, exactly as /bom does, so two sheets that differ are explainable.
-    report.inventory_hash = inventory_hash(inventory)
+    # piece is cut from, and those depend on the inventory that was on hand — so
+    # the sheet goes through the SAME supply run /bom and /quote do. Two ids here
+    # would mean the sheet was cut against a different yard than the BOM was
+    # priced against, which is this defect in its most expensive form; one
+    # construction and an idempotent digest make that unrepresentable.
+    supply = state.store.save_supply_run(
+        _supply_run_for(result, preset, priced, inventory))
+    report.inventory_hash = supply.inventory_hash
+    report.supply_id = supply.id
     # A bay with a part nothing can supply must still say so on the setting-out
     # sheet, not just on /bom — stamped the same way as inventory_hash, since
     # build_structure() itself stays a pure function of its inputs.

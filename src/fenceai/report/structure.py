@@ -197,6 +197,14 @@ class StructureReport(BaseModel):
     # which inventory snapshot the cut-piece provenance was read against; the
     # layout never depends on it, the `from_bars` of a part does
     inventory_hash: str = ""
+    # WHICH supply run produced that provenance, stamped by the caller exactly as
+    # `inventory_hash` is — `build_structure()` stays a pure function of its
+    # inputs and computes neither. The title block prints it beside `run_id`
+    # because the two answer different questions about one sheet: the run id says
+    # what fence this is, the supply id says which yard it was cut against. A
+    # sheet carrying only the first is why two printings of one run, with
+    # genuinely different `from_bars`, were indistinguishable on paper.
+    supply_id: str = ""
     # supply-resolution warnings (no_eligible_item, substitute_needs_approval, ...),
     # stamped by the caller exactly as inventory_hash is — build_structure() itself
     # stays a pure function of (topology, strategy, requirements, bom) and does not

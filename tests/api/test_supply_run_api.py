@@ -119,3 +119,31 @@ def test_the_quote_and_the_bom_read_agree_on_the_supply_run():
         from_bom = client.get(f"/api/runs/{run_id}/bom").json()["supply"]["id"]
         quote = client.post(f"/api/runs/{run_id}/quote", json={"label": "q"}).json()
         assert quote["supply_id"] == from_bom
+
+
+def test_the_structure_sheet_names_the_supply_run_its_cut_list_came_from():
+    """The sheet's part rows print `from_bars` — which bar each piece was cut
+    from — and those come from the cut plan, which is a function of the yard. So
+    two sheets of ONE run, printed a week apart, can carry different cut lists.
+    The title block stamped only run_id, which names the design; without the
+    supply id the two sheets are indistinguishable on paper."""
+    with TestClient(app) as client:
+        _, run_id, _ = _fence(client)
+        report = client.get(f"/api/runs/{run_id}/structure").json()
+        assert report["supply_id"].startswith("sup_")
+        stored = state.store.load_supply_run(report["supply_id"])
+        assert stored is not None and stored.design_id == run_id
+
+
+def test_the_sheet_and_the_bom_name_the_SAME_supply_run():
+    """One fence, one yard, one objective — one supply id, whichever route asked.
+    Two ids here would mean the sheet was cut against a different yard than the
+    BOM was priced against, which is the defect in its most expensive form."""
+    with TestClient(app) as client:
+        _, run_id, _ = _fence(client)
+        sheet = client.get(f"/api/runs/{run_id}/structure").json()
+        bom = client.get(f"/api/runs/{run_id}/bom").json()
+        assert sheet["supply_id"] == bom["supply"]["id"]
+        assert sheet["inventory_hash"] == bom["supply"]["inventory_hash"]
+        # and reading both did not mint two rows
+        assert len(state.store.list_supply_runs(run_id)) == 1

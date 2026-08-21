@@ -228,6 +228,10 @@ async function renderBom() {
     + supplyProblemsHtml(data.bom.warnings, data.unresolved)
     + quotesHtml(quotes)
     + groupedBomHtml(data.grouped, products)
+    // directly above the priced table, for the reason the problems panel is
+    // above it too: it says what that table was priced AGAINST, and a total read
+    // without its yard is a number two people can disagree about for ever
+    + supplyProvenanceHtml(data.supply)
     + bomHtml(data.bom, products);
   const quoteForm = document.getElementById("quote-label-form");
   const quoteInput = document.getElementById("quote-label-input");
@@ -277,11 +281,42 @@ function wireQuoteButtons(div, products) {
       div.innerHTML = `<div class="panel impact">
           <b>${t("quote.snapshot_banner", { label: q.label || q.id.slice(0, 14) })}</b>
           <span class="meta"> · ${esc((q.created_at || "").slice(0, 16).replace("T", " "))}
-          · <bdi>inv ${esc(q.inventory_hash)}</bdi> · <bdi>kb ${esc(q.knowledge_snapshot_hash)}</bdi></span>
+          · <bdi>inv ${esc(q.inventory_hash)}</bdi> · <bdi>kb ${esc(q.knowledge_snapshot_hash)}</bdi>
+          ${q.supply_id ? `· <bdi class="sku">${esc(q.supply_id)}</bdi>` : ""}</span>
           <button id="btn-quote-back">${t("quote.back_live")}</button>
         </div>` + bomHtml(q.bom, products);
       document.getElementById("btn-quote-back").addEventListener("click", renderBom);
     }));
+}
+
+/** What this BOM was priced AGAINST — the yard, the objective, and the id of the
+ *  supply run that names the pair.
+ *
+ *  A run id answers "what fence is this" and nothing else. Two readings of ONE
+ *  unchanged run legitimately produce different money and different cut lists,
+ *  because inventory and the objective preset move underneath them; the backend
+ *  has named that second thing since the design/supply split, and until this
+ *  function nothing put the name on screen. A reader holding two printouts could
+ *  see the totals differ and had no way to learn why.
+ *
+ *  Pure over its argument, so it is pinned under node
+ *  (`tests/web/test_supply_provenance_module.py`) rather than in a browser.
+ *
+ *  The preset is prose and goes through `t()`; a preset with no label degrades to
+ *  its raw token, because showing `bom.preset_fewest_new_stock` to a customer is
+ *  worse than showing the token an engineer can look up. The id and the hash are
+ *  opaque and get `<bdi>` + `.sku`, exactly as SKUs do — RTL must not reorder a
+ *  hash into a different-looking hash. */
+export function supplyProvenanceHtml(supply) {
+  if (!supply?.id) return "";     // nothing to say is said with nothing
+  const presetKey = `bom.preset_${supply.objective_preset}`;
+  const preset = t(presetKey);
+  return `<div class="panel meta supply-provenance">
+      ${esc(t("bom.priced_against"))}
+      <bdi class="sku">${esc(t("bom.yard"))} ${esc(supply.inventory_hash)}</bdi>
+      · ${esc(preset === presetKey ? supply.objective_preset : preset)}
+      · <bdi class="sku">${esc(supply.id)}</bdi>
+    </div>`;
 }
 
 /** The same demand, grouped by what CAUSED it: a section, a panel, or the supply
