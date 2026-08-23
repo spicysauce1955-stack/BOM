@@ -1,5 +1,34 @@
 # Current status
 
+## A post and a cap are priced choices, and now explained ones (2026-08-21)
+
+`_preferred()` ranks candidates by the company's stated `priority` instead of
+`sorted(...)[0]`, and the `place_post` node carries `rejected` / `cap_rejected`
+with sentences in both locale bundles. Closes the merge review's biggest open
+finding and the last hole in "every BOM line traces through the decision graph".
+
+**The handoff offered two fix directions and the code ruled one out.** Routing
+post and cap through `resolve_supply` — the obvious symmetry with rails — would
+move the choice to read time. But a post's sku drives GEOMETRY: `preview.py`
+reads its face width for the bay's clear width and `report/structure.py` its
+declared length for the setting-out sheet, so the drawing would move whenever the
+yard moved. That is precisely what ADR-0011 separates. Generation keeps the
+choice and was made to explain it instead; `decisions/supply.py`'s docstring now
+says which mechanism covers what, having previously claimed coverage it did not
+have.
+
+**Nothing existing moved, and that was measured rather than hoped.** `_matched`
+returns exactly ONE candidate on every call across every gate fixture
+(`{1: 10}`), so preferred-order and alphabetical give the same answer everywhere
+today — which is why the gate stayed byte-identical. Both behaviours were shown
+failing against mutants first.
+
+**Knowingly left:** when two lines claim one post and their stated orders
+CONFLICT the tie breaks alphabetically, and the node does not say that it did. A
+`preference_tied` flag would let the sentence admit it. "First claim wins" was
+rejected deliberately — it would make which cap gets bought depend on the walk
+order, i.e. on the shape of the drawing.
+
 ## DesignRun / SupplyRun: one id was answering two questions (2026-08-20)
 
 `docs/superpowers/plans/2026-08-20-design-run-supply-run.md`, eight tasks,

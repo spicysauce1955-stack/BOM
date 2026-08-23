@@ -1,13 +1,15 @@
 # Open work
 
-Handoff, updated 2026-08-20 (item 5 closed the same day). Everything below is unstarted unless it says
+Handoff, updated 2026-08-21. Everything below is unstarted unless it says
 otherwise. State it follows from: `plan/current-status.md` (newest entry first)
 and `docs/superpowers/specs/2026-08-16-part-specs-and-fence-system-design.md`,
 whose §11 carries the wave plan with each wave's findings folded back in.
 
-`main` is green: **1581 pytest · 193 scenario tests · 200/200 smoke ·
-compatibility gate byte-identical**. The `part-picker-repair` arc merged on
-2026-08-20 (`c0f38a4`) after three reviewers over the whole branch.
+`main` is green: **1617 pytest · 193 scenario tests · 202/202 smoke ·
+compatibility gate byte-identical**, and pushed. The design/supply identity arc
+merged 2026-08-20 (`639d1bf`, `49814c0`) and the post/cap preference fix
+2026-08-21 (`66685de`); the `part-picker-repair` arc merged 2026-08-20
+(`c0f38a4`) after three reviewers over the whole branch.
 
 **Every numbered item below is now closed.** What is left is the merge review's
 own findings (next section), the "smaller, known" list, the deferred triggers,
