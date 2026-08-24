@@ -1,10 +1,11 @@
 # Planning & BOM Engine — design
 
 ```text
-Status:   Design, revised 2026-08-24 (second pass) against the Knowledge team's
-          audit response, which was measured against their store rather than
-          argued from the schema. Seven sections changed; §4, §5 and §6 changed
-          materially, and one invariant was falsified outright.
+Status:   Design, third pass. Revised against the Knowledge team's audit
+          (measured against their store), then against their review of that
+          revision, then against THIS ENGINE — which found seven more defects,
+          two of them in code this document had already published to them.
+          See docs/reviews/planning-self-audit-2026-08-24.md.
 Owner:    this repo (src/fenceai/)
 Contract: docs/integration/ in fence-rag carries the boundary in full.
           audit-response-v0.1.md is their answer; audit-disposition-v0.1.md is
@@ -45,9 +46,16 @@ results changed the design rather than confirming it:
   that would have shipped and been misdiagnosed as an extraction problem. §6 and
   the disposition's §3.2.
 
-The lesson worth keeping: a schema review answers whether a model is coherent. Only
-a census answers whether it fits the data. Every one of the four above was
-invisible to the first kind of reading.
+**And the third finding, which is the one to keep.** After two rounds of careful
+document review the design was *internally consistent* and this engine could not
+implement it. Auditing the agreed design against the code — the same method the
+Knowledge team used against their corpus — produced seven more defects, including
+three in the six-line expansion in §6 that we had published as reference. None was
+visible from the documents, because the documents agree with each other.
+
+A schema review answers whether a model is coherent. A census answers whether it
+fits the data. Neither answers whether the code can run it, and **coherence is not
+the test.**
 
 ---
 
@@ -411,20 +419,53 @@ while the *source* of knowledge changes.
 
 ```python
 KnowledgeVersion(
-    object_id=f"KP-{table.parameter}-{table.scope.id}",
-    version=row_index,
+    # ONE object per ROW. Sharing an id across rows and varying `version` by row
+    # index made `_beats` decide a same-id tie by row POSITION — see the audit.
+    object_id=f"KP-{table.parameter}-{table.scope.id}-r{row_index}",
+    version=table.version,
     type="hard_constraint" if table.task.is_structural else "fact",
+    origin="published",              # never raises on a tie — see §6.1
+    # an unconditioned `stated` row is a FALLBACK, not a peer: one tier weaker, so
+    # any conditioned row beats it and a tie lands outside the hard-failure band.
+    authority=None if row.conditions else _fallback_authority(table.task),
     scope={"product": table.scope.id},
     condition=And(*[Cmp("==", FieldRef(f"site.{k}"), Lit(v))
                     for k, v in row.conditions.items()]),
-    actions=[SetParam(param=table.parameter, value=row.value.amount_milli // 1000)],
+    actions=[SetParam(
+        param=table.parameter,
+        value=round(row.value.amount_milli / 1000),   # round, NEVER //
+        value_milli=row.value.amount_milli,           # exact, for count arithmetic
+    )],
     derived_from=[r.source_ref_id for r in row.provenance],
 )
 ```
 
 The hit-policy check happened on the knowledge side, so precedence never sees a
-tie from one table. Ties *between* tables — a model's `PolicyContribution` against
-a manufacturer table — resolve exactly as they do today.
+tie from one table.
+
+### 6.1 Three defects this expansion had, and the audit that found them
+
+`docs/reviews/planning-self-audit-2026-08-24.md` audited this design against the
+engine rather than against the documents. Three of its seven findings are in the six
+lines above, and all three were invisible from the design:
+
+- **`//` truncates, downward, and it costs a post.** `2463800 // 1000` is 2463, not
+  2464 — and `layout.py:27` does `n = ceil(length / max_span)`, so one millimetre
+  adds a whole post on a 9 855 mm run. `round()`, and `value_milli` carries the exact
+  value for any arithmetic that multiplies.
+- **Rows shared an `object_id` and differed by `version = row_index`.** `_beats`
+  ends `if a.object_id == b.object_id and a.version != b.version: return a.version >
+  b.version` — so an always-true fallback row would beat every conditioned row of its
+  own table by sitting lower in it. Silent, and attributed to a real source.
+- **Every row landed inside the raise band.** `resolve()` raises `GenerationFailure`
+  when two contenders tie, disagree, and both sit at authority ≤ `HARD_AUTHORITY_MAX
+  = 3`; `hard_constraint` is 1 and `fact` is 3. So *adoption* scaled a never-block
+  violation. `origin: authored | published` separates a genuine build error in our own
+  rules from a conflict between two published rows, which warns.
+
+Ties *between* tables — a model's `PolicyContribution` against a manufacturer table
+— now surface as `Conflict` plus a warned line rather than raising, provided at
+least one side is `published`.
 
 **A table declares its value type; rows conform.** Not every parameter a planner
 needs is a number: `stepped_only`, `not_rackable` and `gates are not rackable` are
