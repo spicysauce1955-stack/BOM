@@ -148,12 +148,20 @@ Two defects violate our own binding never-block obligation **today**:
 ```python
 resolve(…)      -> Value | Gap
 resolve_panel() -> ResolvedPanel      # slots may carry Gaps
-generate()      -> Plan               # ALWAYS. never raises.
+generate()      -> Plan               # never fails over a GAP
 ```
 
 `KnowledgeVersion` gains `origin: authored | published`. A disagreeing tie between two
 rules **we** wrote stays a build error; between two **published** rows it becomes a
 `Conflict`, a warned line and a review task.
+
+> **Corrected while building this, 2026-08-25.** The line above first read
+> `generate() -> Plan  # ALWAYS. never raises.` That is not what the contract
+> binds and not what was built: §3.2.4 forbids failing a run over a **gap**, and
+> ten refusal sites survive the audit deliberately — a violated `hard_constraint`
+> and input that cannot be carried out are neither of them gaps. Overstating the
+> promise here is how the third conversion nearly became a fourth and a fifth.
+> `docs/reviews/generation-failure-audit-2026-08-25.md` has the verdict on each.
 
 **Two of the four disagreement channels already behave correctly** — `unresolved` demand
 lines and `StrategyWarning` — and they are the model. A bill of materials that visibly

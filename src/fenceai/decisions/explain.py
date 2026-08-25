@@ -137,6 +137,17 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "knowledge_conflict": (
             "Conflict on '{slot}' between {contenders} — surfaced for review."
         ),
+        # A gap says what nobody told us, and — where a value was needed anyway —
+        # what the run proceeded on. The sentence names the fallback because a
+        # reader who cannot see the number cannot judge the plan.
+        "uncovered_param": (
+            "No rule states '{param}' for section {run_id}; laid out to a "
+            "fallback of {value_mm} {u}, which nothing in the knowledge governs."
+        ),
+        "missing_default": (
+            "No rule names a default product for role '{role}'; {n} element(s) "
+            "stand with no product."
+        ),
         "node_surface_disagreement": (
             "Runs meeting at node {node_id} disagree on base surface ({surfaces}); "
             "'{chosen}' was used."
@@ -291,6 +302,14 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "{opening_width_mm} {u} באירוע השער {event_id}."
         ),
         "knowledge_conflict": "סתירה על '{slot}' בין {contenders} — הוצפה לבדיקה.",
+        "uncovered_param": (
+            "אין כלל הקובע '{param}' עבור הקטע {run_id}; התכנון בוצע לפי ברירת "
+            "מחדל של {value_mm} {u}, שאינה נשענת על אף ידע."
+        ),
+        "missing_default": (
+            "אין כלל הקובע מוצר ברירת מחדל לתפקיד '{role}'; {n} רכיבים עומדים "
+            "ללא מוצר."
+        ),
         "node_surface_disagreement": (
             "קטעים שנפגשים בצומת {node_id} חלוקים לגבי משטח הבסיס ({surfaces}); "
             "נעשה שימוש ב-'{chosen}'."
@@ -541,6 +560,15 @@ def explain_node(
             base = _fmt(t, "knowledge_conflict", lang, units,
                 slot=p.get("slot"), contenders=", ".join(p.get("contenders", []))
             )
+        case "uncovered_param":
+            base = _fmt(t, "uncovered_param", lang, units,
+                # `value_mm`, not `value`: only a `*_mm` key converts to the
+                # reader's display unit, and today's only uncovered param IS a
+                # length (`resolve_max_span` says it the same way)
+                param=p.get("param"), run_id=p.get("run_id"), value_mm=p.get("value"))
+        case "missing_default":
+            base = _fmt(t, "missing_default", lang, units,
+                role=p.get("role"), n=p.get("n"))
         case "node_surface_disagreement":
             base = _fmt(t, "node_surface_disagreement", lang, units,
                 node_id=p.get("node_id"), surfaces=list(p.get("surfaces", [])),

@@ -58,7 +58,9 @@ distinct code paths.
 
 **Buys.** The same safety check can *stop* a job under a `hard_constraint` and merely
 *warn* under a `company_rule`, so a jurisdiction pack changes behaviour with no code
-change. A hard tie is a `GenerationFailure` rather than a silent coin flip.
+change. A hard tie between two rules **we** authored is a `GenerationFailure` rather
+than a silent coin flip; one touching a **published** row is a `Conflict`, because
+contract §3.2.4 forbids failing a run over something only the other team can fix.
 
 **Costs.** Four things to get right whenever a new rule is added, and a real
 authoring burden: someone must decide which kind a number is. Getting it wrong

@@ -31,6 +31,14 @@ class Conflict:
     param_or_action: str
     contenders: list[str]  # version refs
     message: str
+    # This tie sat INSIDE the hard-authority band and survived only because a
+    # contender is `published` — i.e. it would have been a generation failure
+    # between two rules we wrote. It is not an ordinary preference tie and must
+    # not be treated as one: the caller has to resolve it conservatively (it
+    # knows which direction is safe for its own parameter; the evaluator does
+    # not), and it has to be reported BACK, because only the publisher can fix
+    # two of their own rows contradicting each other.
+    hard: bool = False
 
 
 @dataclass
@@ -88,7 +96,8 @@ def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> R
     """Pick a winner among firings that all target the same param/action slot.
 
     Ties are surfaced as Conflicts (never silent); a tie between hard-authority
-    contenders with disagreeing outputs raises GenerationFailure (knowledge-system.md).
+    contenders with disagreeing outputs raises GenerationFailure (knowledge-system.md)
+    — but only when both contenders are `authored`. See `KnowledgeVersion.origin`.
     """
     if not firings:
         return Resolution(winner=None, firings=[], conflicts=[])
@@ -107,12 +116,24 @@ def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> R
             if (
                 winner.version.effective_authority() <= HARD_AUTHORITY_MAX
                 and other.version.effective_authority() <= HARD_AUTHORITY_MAX
+                # ...and both are OURS. A tie between two rules we wrote is a
+                # build error someone here can go and fix. A tie involving a
+                # PUBLISHED row is neither our bug nor fixable here, and the
+                # exposure scales with adoption: our expansion puts published
+                # rows at authority 1 (structural) or 3 (everything else), so
+                # both branches sit inside this band. Raising there would fail a
+                # run over a gap, which contract §3.2.4 forbids — it becomes the
+                # Conflict below: a warned line and a review task.
+                and winner.version.origin == "authored"
+                and other.version.origin == "authored"
             ):
                 raise GenerationFailure(
                     f"hard knowledge conflict on '{key}': {winner.version.ref} vs "
                     f"{other.version.ref} tie with disagreeing outputs",
                     constraint_refs=[winner.version.ref, other.version.ref],
                 )
+            hard = (winner.version.effective_authority() <= HARD_AUTHORITY_MAX
+                    and other.version.effective_authority() <= HARD_AUTHORITY_MAX)
             conflicts.append(
                 Conflict(
                     param_or_action=key,
@@ -121,6 +142,7 @@ def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> R
                         f"'{key}': {winner.version.ref} and {other.version.ref} tie on "
                         "authority and scope; using the former — review required"
                     ),
+                    hard=hard,
                 )
             )
             other.defeated_by.append(winner.version.ref)

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fenceai.api.app import app
+from fenceai.strategy.generator import FALLBACK_MAX_SPAN_MM
 
 
 @pytest.fixture()
@@ -382,13 +383,48 @@ def test_a_quote_records_the_catalog_that_priced_it(client):
 
 
 def test_generation_failure_is_422(client):
+    """The refusal branch of the route, on a failure that carries no code.
+
+    It used to be reached by retiring the only max-span constraint. That is a
+    GAP now (contract §3.2.4) and answers 200 — see the test below — so the
+    code-less 422 is reached the way a reviewer actually meets it: two hard
+    constraints WE authored that tie and disagree, which is a build error nobody
+    outside this repo can fix."""
     pid = make_project(client)
     put_straight_topology(client, pid)
-    # retire the only max-span constraint -> generation must fail loudly
-    client.post("/api/knowledge/K-MAXSPAN/1/retire")
+    assert client.post("/api/knowledge", json={
+        "object_id": "K-MAXSPAN-ALT", "type": "hard_constraint",
+        "title": "a second, disagreeing maximum span",
+        "actions": [{"kind": "set_param", "param": "max_span_mm", "value": 1234}],
+    }).status_code == 200
+
     r = client.post(f"/api/projects/{pid}/generate")
     assert r.status_code == 422
     assert "max_span" in r.json()["detail"]
+
+
+def test_retiring_the_only_max_span_rule_answers_a_warned_plan_not_a_422(client):
+    """The never-block obligation, end to end through the route.
+
+    This is the defect declared at ratification: an uncovered `max_span_mm`
+    produced no plan at all. The run now answers 200 with the bays laid out to a
+    fallback, the fallback named in a warning the client can localize, and a gap
+    saying what would close it."""
+    pid = make_project(client)
+    put_straight_topology(client, pid)
+    client.post("/api/knowledge/K-MAXSPAN/1/retire")
+
+    r = client.post(f"/api/projects/{pid}/generate")
+    assert r.status_code == 200
+    strategy = r.json()["result"]["strategy"]
+    assert strategy["spans"]
+
+    warning = next(w for w in strategy["warnings"] if w["code"] == "uncovered_max_span")
+    assert warning["params"]["value_mm"] == FALLBACK_MAX_SPAN_MM
+    gap = next(g for g in strategy["gaps"] if g["subject"]["ref"] == "max_span_mm")
+    assert gap["kind"] == "uncovered_condition"
+    assert gap["closes_by"] == "knowledge"
+    assert gap["would_close"]
 
 
 def test_a_phantom_sku_refuses_generation_with_a_code_not_a_bare_sentence(client):

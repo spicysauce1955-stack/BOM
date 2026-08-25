@@ -15,6 +15,9 @@ Status: accepted · 2026-08-09
   count of bound scope dimensions; explicit `overrides: [id]` links allowed) → recency
   (same-tier tiebreak). Strict structural wins resolve silently but record `defeated_by`;
   ties produce surfaced conflict objects; a violated hard constraint is a generation failure.
+  A hard TIE is a generation failure only between two `authored` rules — one involving a
+  `published` row is a surfaced conflict, since contract §3.2.4 forbids failing a run over a
+  gap. Absence of a rule is never a failure: it is a `Gap` (`core/gaps.py`).
 - Knowledge objects carry examples/counterexamples executed as tests on every edit and in CI.
 
 ## Rationale

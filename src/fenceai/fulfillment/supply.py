@@ -198,6 +198,36 @@ def resolve_supply(
             out.unresolved.append(line)
             continue
 
+        # An eligibility whose members name NO PRODUCT AT ALL. Distinct from an
+        # empty one above, and it has to be caught here rather than downstream:
+        #
+        # Since the never-block change (contract §3.2.4), knowledge that names no
+        # default ground post leaves the post standing with `sku=""` — the element
+        # is real, its product is unknown. That reaches here as a one-member
+        # eligibility whose sku is blank, which is NOT what the "one candidate, and
+        # the catalog does not have it" branch below is for: that one is a DELETED
+        # product, a real sku that used to exist, and it deliberately keeps the
+        # line so it still shows on the BOM. Blank is not deleted. Sent down that
+        # path, `_resolved` refuses it — `ResolvedSupplyLine.sku` is `min_length=1`
+        # — and the `ValidationError` surfaces from `_priced()` as a raw 400 on
+        # /bom, /structure and /quote. That would move the refusal the never-block
+        # change removed from generation to the first read after it, in an
+        # untranslated pydantic sentence: strictly worse than what it replaced.
+        #
+        # `no_eligible_item` rather than a new code, because it is literally true
+        # and already says the right thing in both bundles: nothing is eligible to
+        # supply this line.
+        if not any(m.sku for m in line.eligibility.members):
+            out.warnings.append(StrategyWarning(
+                code="no_eligible_item", severity="error",
+                message=f"No product is eligible to supply {line.role}.",
+                params={"role": line.role, "slot_key": line.slot_key,
+                        **_element_params(line)},
+                element_refs=list(line.pegs),
+            ))
+            out.unresolved.append(line)
+            continue
+
         usable = _usable(line.eligibility.members, approvals)
         if not usable:
             out.warnings.append(StrategyWarning(

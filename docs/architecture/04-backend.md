@@ -110,10 +110,24 @@ than by an id the server happened to interpolate.
 | Nothing in the catalog can supply a slot | warning `no_eligible_item` + `unresolved` line |
 | Candidates were tried and none fits | warning `no_feasible_item` |
 | A part could not be measured at all | **error** `panel_length_unresolved` |
-| Two hard constraints conflict | `GenerationFailure` |
+| Two **authored** hard constraints conflict | `GenerationFailure` |
+| A tie touching a **published** row, inside the hard band | **error** `knowledge_conflict` + `Gap(disputed)`, resolved to the most restrictive contender |
+| No rule covers a parameter | warning + `Gap`, laid out to a named basis |
+| Knowledge names no default product | **error** + `Gap` + `unresolved` line |
 
-The distinction in the last three rows is deliberate: a warning describes a fence
-built badly, an error describes a part not bought at all.
+The distinction between a warning and an error is deliberate: a warning describes a
+fence built badly, an error describes a part not bought at all. That is also why the
+last row is an error rather than a note — every post in the job is unbought, and
+supply already says so once per post.
+
+A published tie is the one row where never-blocking is not the whole answer. The
+tie-break that picks a winner ends on `object_id`, so letting it decide a safety
+limit means the alphabet decides it: two published maxima of 1200 and 2400 built
+2400 mm bays or 1200 mm bays depending on what the rows were NAMED. The run still
+does not fail — §3.2.4 — but it resolves to the tightest figure every contender
+could live with, at the site that knows which direction is safe for its own
+parameter. The evaluator cannot know: lower is safer for `max_span_mm` and higher
+is safer for `min_rail_separation_mm`.
 
 ---
 

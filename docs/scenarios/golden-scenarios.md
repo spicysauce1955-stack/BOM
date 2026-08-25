@@ -283,3 +283,38 @@ Expect:
 - hard constraints never overridden silently (violations always surface as conflicts/errors)
 - original annotation text preserved verbatim alongside any structured interpretation
 - knowledge candidates never active without human approval
+- **a run is never failed over a gap** — absence produces a warned plan and a `Gap`, never a refusal (see below)
+
+### Never-block — a run is never failed over a gap
+
+*Added 2026-08-25, when the integration contract was ratified at v1.1. It reverses
+what the invariant suite asserted until that day, and the reversal is the point:
+`tests/scenarios/test_invariants.py::test_missing_hard_knowledge_is_generation_failure`
+asserted that an empty knowledge base **must** raise.*
+
+Contract §3.2.4 binds this repo to *"never fail a run over a gap — warned, named,
+unfulfilled lines instead."* Read the old way, an exposure category no published row
+covered produced no plan at all, on `max_span_mm`, the single most important
+parameter in the system; and the exposure grew with every row the other team
+published. A bill of materials that visibly lacks something is more useful than no
+bill of materials.
+
+- **Absence is a `Gap`, never a failure.** A parameter no rule covers, a default
+  nobody stated: the plan is generated, the lines it affected are warned, and the
+  gap carries `would_close` — one sentence naming the row that would resolve it, so
+  a curator reads a work item rather than a filing.
+- **Every gap is visible three ways**: on the drawing (a `StrategyWarning` with
+  `code + params` in both locale bundles), in the trail (a `gap` node, confidence
+  `uncertain`, governed by nothing — which *is* the explanation), and in the report
+  (`Strategy.gaps`). **`POST /gaps` (§3.2.6) is not built** — the gaps are
+  produced, stored and readable on the run, and the route that reports them back
+  to the Knowledge Platform is a named seam, not a shipped feature.
+- **A hard tie fails only between two `authored` rules.** One touching a published
+  row is a `Conflict`: a warned line and a review task.
+- **What still refuses is unchanged**: a violated `hard_constraint`, and input that
+  cannot be carried out (a model id that does not exist, an authored model naming a
+  SKU nobody stocks). A gap is *something nobody told us*; neither of those is.
+
+The audit of all thirteen refusal sites, with the verdict and the reasoning on each,
+is `docs/reviews/generation-failure-audit-2026-08-25.md`. Asserted by
+`tests/strategy/test_never_block.py` and by the invariant suite.

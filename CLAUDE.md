@@ -81,10 +81,15 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
 ## The boundary contract is FROZEN
 
 `docs/integration-contract/contract.md` is a byte-identical copy of the contract in
-`fence-rag/docs/integration/`. **Both are frozen at v1.0. Do not edit either.**
+`fence-rag/docs/integration/`. **Both are frozen at v1.1. Do not edit either.**
+(v1.0 was never ratified — amendment 001 was accepted before signature and cut as
+v1.1. The contract's own header is authoritative on this.)
 
-- Verify before relying on it: `sha256sum -c docs/integration-contract/contract.sha256`.
-  A mismatch means a copy drifted — find the edit, never regenerate the hash.
+- Verify before relying on it:
+  `(cd docs/integration-contract && sha256sum -c contract.sha256)` — the paths inside
+  the file are relative to it, so running it from the repo root reports a MISSING
+  FILE rather than a mismatch, and that is not drift. A genuine mismatch means a copy
+  drifted: find the edit, never regenerate the hash.
 - Changing a **BINDING** item needs a ratified amendment. The four admissible triggers
   (falsification, unimplementable, scope change, defect) and the five steps are in
   `docs/integration-contract/AMENDING.md`. No `amendments/NNN` file, no change.

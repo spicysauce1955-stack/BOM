@@ -45,11 +45,11 @@ item 1. One change, four payoffs.
 
 | # | Work | Blocked by | Obligation |
 |---|---|---|---|
-| **1** | **`Gap` as a return type.** All 13 `GenerationFailure` sites audited; `origin: authored \| published` on `KnowledgeVersion` so a published tie warns rather than raises | nothing | §3.2.4, and delta item 1 |
+| ~~**1**~~ | ~~**`Gap` as a return type.**~~ **DONE 2026-08-25.** Three sites converted, not two — `_resolve_default_post` was a third. `docs/reviews/generation-failure-audit-2026-08-25.md` | — | §3.2.4, and delta item 1 |
 | 2 | `SiteConditions` on `Project`, `site.*` in the evaluation context, `site_revision` + a `409 site_conditions_changed` guard, two warning codes in both locale bundles | nothing | 13's site scope |
 | 3 | Handler registries — fixing bases, length rules, presets. Turn `if kind == …` branches into registrations | nothing | none (internal) |
 | 4 | The declared phase list, so inserting a step is a row rather than a chain edit | 3 | none (internal) |
-| 5 | `ParameterTable` loader — `value_type`, `domain_basis`, `condition_basis`, validity fields, `condition_scope` binding, and a `SetToken` action so a token-valued param has somewhere to land | 2 | 13, 15 |
+| 5 | `ParameterTable` loader — `value_type`, `domain_basis`, `condition_basis`, validity fields, `condition_scope` binding, and a `SetToken` action so a token-valued param has somewhere to land. **Read the two prerequisites above first** | 2 | 13, 15 |
 | 6 | Source policy — **currently zero lines** despite being binding and re-ranked twice. `version_status` is an axis | 5 | 6, §1.4 |
 | 7 | `Provenance` on `SpecField`, and the snapshot-level `source_docs` join with invariant 12's closure check | 5 | 6, 8 |
 | 8 | Warning model — `attaches_to`, the platform/source registry split, and the **annexe** in the structure sheet, which does not exist | 5 | 10 |
@@ -57,7 +57,34 @@ item 1. One change, four payoffs.
 | 10 | Containment → demand: flatten `ContainedSlot` into the panel's slot list under a path key, and the kit-credit rule, which has no home in a demand line today | 5 | — |
 | 11 | `report/assembly.py` — bay and post scopes, `requires` edges as a partial order | 10 | 11, 12 |
 
-**Steps 1–4 need nothing from anybody.** Start there.
+**Steps 1–4 need nothing from anybody.** Step 1 is done; start at step 2.
+
+### Two things item 5 must do BEFORE it loads a published row
+
+Both fell out of the reviews of item 1. Both are inert today for the same reason —
+nothing in `src/` can produce `origin="published"` yet — and both go live the moment
+item 5's loader can.
+
+1. **Build every row through `KnowledgeVersion.from_published(...)`**, never the bare
+   constructor. `origin` defaults to `authored`, which is the safe direction for a
+   field nobody sets, and therefore exactly the trap: a loader that forgets it makes
+   a snapshot look home-grown, two published rows tie and disagree, and generation
+   RAISES — the declared defect reinstated with no test failing, because
+   `demo_knowledge()` holds no published rows to notice. The seam refuses an explicit
+   `origin` argument so it cannot degrade into a suggestion.
+
+2. **Surface conflicts at every resolution site, not three of them.** Only
+   `max_span_mm`, the vertical mode and the layout preference call
+   `_surface_conflicts`. `_resolve_mounting`, `_resolve_reinforcement`,
+   `_resolve_default_post`, `_resolve_demand_skus`, `_resolve_quantity` and the panel
+   limits all discard `Resolution.conflicts`. This is **pre-existing** — `main` did
+   the same — but item 1 widened what it costs: a hard-band tie touching a published
+   row is no longer a raise, so a published `require_mounting` disagreeing with an
+   authored one now picks a winner by tie-break and reports nothing at all. Ground
+   versus masonry, decided silently, on a run nobody warned. The three wired sites
+   file a `Gap(disputed)`; the others cannot, because they have no `strategy` to file
+   it on. Either thread it, or move surfacing into a wrapper so a new call site
+   cannot opt out by omission.
 
 ## Known defects, with file and line
 

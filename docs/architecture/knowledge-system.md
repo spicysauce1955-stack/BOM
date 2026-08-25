@@ -7,7 +7,7 @@ Decisions: ADR-0005 (rules as data), ADR-0006 (versioning). Research: knowledge-
 
 | Type | Authority tier | Behavior |
 |---|---|---|
-| hard_constraint | 1 (non-overridable unless an approved exception exists) | violation ⇒ generation failure or blocking warning |
+| hard_constraint | 1 (non-overridable unless an approved exception exists) | violation ⇒ generation failure or blocking warning; an authored–authored tie fails, a tie touching a published row conflicts |
 | override (project) | 2 | generator must preserve; approved exceptions live here |
 | company_rule | 3 | normally treated as hard within company scope; may allow authorized exceptions |
 | fact | — (not a rule; input data) | exact properties; contribute parameters |
@@ -55,6 +55,23 @@ the decision graph, generation continues with the flagged pick only if categorie
 
 A hard constraint violated by the final strategy (no authorized exception) is a
 **generation failure**, distinct from conflicts.
+
+**A hard tie fails only between rules WE authored.** `KnowledgeVersion.origin`
+separates `authored` from `published`, and the tier rule above is read against it:
+two authored rules that tie and disagree cannot both be right and someone here can
+go and fix that, so it stays a generation failure. A tie involving a row the
+Knowledge Platform **published** is neither our bug nor fixable in this repo — it
+resolves to a `Conflict`, a warned line and a review task. Integration contract
+§3.2.4 (ratified v1.1) forbids failing a run over a gap, and the exposure scales
+with adoption: the snapshot expansion puts published rows at authority 1
+(structural) or 3 (everything else), so **both** branches sit inside the tier band
+that used to raise.
+
+**Absence is never a failure.** A parameter no row covers, or a default nobody
+stated, produces a `Gap` (`core/gaps.py`) — a plan is still generated, every line
+it affected is warned, and the gap names what would close it. The audit of all
+thirteen refusal sites, with the verdict on each, is
+`docs/reviews/generation-failure-audit-2026-08-25.md`.
 
 ### Which dimensions are bound during generation
 

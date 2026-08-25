@@ -13,6 +13,12 @@ from pydantic import BaseModel
 NodeKind = Literal[
     "input_fact", "rule_firing", "structural", "selection", "vertical", "mounting",
     "quantity", "conflict", "assumption", "override_applied", "failure",
+    # a hole in the knowledge, and the value the run proceeded on despite it.
+    # Its own kind rather than an "assumption": an assumption is a value we
+    # chose, a gap is a question nobody answered. Its own kind ALSO so the
+    # annexe (build order item 8) can select on it — nothing in `report/` does
+    # today, and the annexe does not exist yet.
+    "gap",
 ]
 EdgeType = Literal["derived_from", "governed_by", "defeated", "input_from", "assumption_of"]
 

@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
+from fenceai.core.gaps import Gap
 from fenceai.core.units import Mm
 from fenceai.decisions.graph import DecisionGraph
 from fenceai.fencemodel.resolve import ResolvedPanel
@@ -109,6 +110,12 @@ class Strategy(BaseModel):
     spans: list[Span] = []
     gates: list[Gate] = []
     warnings: list[StrategyWarning] = []
+    # Holes in what knowledge told us, carried alongside the plan built anyway
+    # (contract §3.2.4). Here rather than on `GenerationResult` because a gap
+    # travels with the thing it affected: every gap in this list is paired with
+    # a warning above and a `gap` node in the graph, and a reader holding a
+    # stored strategy can already see all three. `POST /gaps` reports from here.
+    gaps: list[Gap] = []
 
     def element_ids(self) -> list[str]:
         return (

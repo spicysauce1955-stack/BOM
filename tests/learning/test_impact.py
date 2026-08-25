@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from fenceai.catalog.demo import demo_catalog
+from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.knowledge.demo import demo_knowledge
-from fenceai.knowledge.model import AddNote, KnowledgeVersion, SetParam
+from fenceai.knowledge.model import (
+    AddNote,
+    DefaultComponent,
+    KnowledgeVersion,
+    SetParam,
+)
 from fenceai.learning.impact import (
     ImpactCase,
     activated_copy,
@@ -70,15 +76,45 @@ def test_advisory_candidate_shows_no_structural_impact():
 
 
 def test_breaking_change_reported_as_generation_failure():
-    """Retiring the only max-span source: preview surfaces the failure per project
-    instead of crashing."""
+    """A hypothetical that breaks generation: preview surfaces the failure per
+    project instead of crashing.
+
+    The break used to be "retire the only max-span source". That is a GAP now
+    (contract §3.2.4) and previews as a warned plan, not a failure — see
+    `test_a_hypothetical_that_only_opens_a_gap_still_previews` below. What
+    genuinely breaks is a second hard constraint on the same slot that disagrees:
+    two rules we authored that cannot both be right."""
+    hypo = KnowledgeVersion(
+        object_id="K-MAXSPAN-ALT", version=1, type="hard_constraint",
+        title="a second, disagreeing maximum span",
+        actions=[SetParam(param="max_span_mm", value=1234)], status="draft",
+    )
+    report = preview_impact(hypo, demo_knowledge(), demo_catalog(), _cases())
+    assert report.projects_affected == 2
+    assert all(i.generation_failure for i in report.impacts)
+
+
+def test_a_hypothetical_that_only_opens_a_gap_still_previews():
+    """The other half of the same reversal, and the reason it is worth having:
+    a reviewer weighing "what if we retired this rule" gets the bays it would
+    warn, not an error page."""
     hypo = KnowledgeVersion(
         object_id="K-MAXSPAN", version=2, type="hard_constraint",
         title="broken: no param action", actions=[AddNote(text="oops")], status="draft",
     )
     report = preview_impact(hypo, demo_knowledge(), demo_catalog(), _cases())
-    assert report.projects_affected == 2
-    assert all(i.generation_failure for i in report.impacts)
+    assert not any(i.generation_failure for i in report.impacts)
+
+    # The claim this test exists to make, pinned rather than asserted in prose:
+    # the fallback IS 1800, the same number the retired rule stated, so not one
+    # bay moves and not one cent changes. Only the warning count does. Without
+    # these, re-tuning the fallback to 5000 takes the bays 4 -> 2 and the BOM by
+    # thousands of cents, and this test still passes.
+    p1 = next(i for i in report.impacts if i.project_id == "p1")
+    assert (p1.spans_before, p1.spans_after) == (4, 4)
+    assert p1.posts_added == p1.posts_removed == p1.posts_modified == 0
+    assert p1.bom_delta_cents == 0
+    assert p1.warnings_after > p1.warnings_before
 
 
 def test_generation_failure_is_code_plus_params_not_a_raw_engine_string():
@@ -102,14 +138,40 @@ def test_generation_failure_is_code_plus_params_not_a_raw_engine_string():
 
 
 def test_generation_failure_without_refs_uses_the_plain_code():
+    """The else-branch of the mapping: a failure that names no knowledge.
+
+    Reached through the AFTER branch — "the change broke it" — which is where
+    the original reached it. A knowledge row naming a rail nobody stocks refuses
+    with a code but no `constraint_refs`, so it exercises `_failure()`'s plain
+    branch while still being a change a reviewer could actually propose."""
     hypo = KnowledgeVersion(
-        object_id="K-MAXSPAN", version=2, type="hard_constraint",
-        title="broken: no param action", actions=[AddNote(text="oops")], status="draft",
+        object_id="K-RAIL-GHOST", version=1, type="fact", status="draft",
+        title="a rail nobody stocks",
+        actions=[DefaultComponent(role="rail", sku="NOT-IN-CATALOG")],
     )
     report = preview_impact(hypo, demo_knowledge(), demo_catalog(), _cases())
     failures = [i.generation_failure for i in report.impacts if i.generation_failure]
     assert failures
     assert all(f.code == "generation_failed" and f.params == {} for f in failures)
+    # the AFTER branch, not the baseline one: the change is what broke it
+    assert all(not i.baseline_failed for i in report.impacts)
+
+
+def test_a_project_already_broken_before_the_change_is_not_evidence_about_it():
+    """The baseline branch, which is a different fact and must not be counted.
+
+    A row that reports "this change would affect 1 project" when the project was
+    already unbuildable attributes someone else's breakage to the reviewer's
+    edit. `baseline_failed` is the field that says so, and nothing in this file
+    asserted the trio that distinguishes the two branches."""
+    cases = [ImpactCase(project_id="p1", topology=straight_topology(6000),
+                        fence_model=FenceModelChoice(model_id="M-NOPE"))]
+    report = preview_impact(hypo_max_span(1400), demo_knowledge(), demo_catalog(), cases)
+
+    impact = report.impacts[0]
+    assert impact.baseline_failed is True
+    assert impact.changed is False
+    assert report.projects_affected == 0
 
 
 def test_activated_copy_mirrors_review_promotion():

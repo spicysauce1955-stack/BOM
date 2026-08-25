@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from fenceai.catalog.demo import demo_catalog
-from fenceai.core.errors import GenerationFailure
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
 from fenceai.fulfillment.supply import resolve_supply
@@ -259,10 +258,34 @@ def test_sliver_span_warning_cites_preference():
     assert "K-SLIVER@v1" in refs
 
 
-def test_missing_hard_knowledge_is_generation_failure():
+def test_missing_hard_knowledge_is_a_gap_not_a_generation_failure():
+    """A run is never failed over a GAP (integration contract §3.2.4, ratified
+    v1.1; docs/scenarios/golden-scenarios.md "Never-block").
+
+    This invariant asserted the opposite until 2026-08-25, and the reversal is
+    the point rather than a relaxation. Reading it the old way, an exposure
+    category no published row covered produced no plan AT ALL — on `max_span_mm`,
+    the single most important parameter in the system — and the exposure grew
+    with every row the Knowledge Platform published. A bill of materials that
+    visibly lacks something is more useful than no bill of materials.
+
+    What still refuses is unchanged and is asserted in
+    `tests/strategy/test_never_block.py`: a violated hard constraint, and input
+    that cannot be carried out.
+    """
     empty = KnowledgeBase(versions=[])
-    with pytest.raises(GenerationFailure):
-        generate(straight_topology(3000), empty, demo_catalog())
+    result = generate(straight_topology(3000), empty, demo_catalog())
+
+    assert result.strategy.spans, "a plan is produced with the holes named"
+    # and the holes ARE named — every one addressable, and every one carrying the
+    # sentence that makes it a work item rather than a filing
+    kinds = {g.kind for g in result.strategy.gaps}
+    assert {"uncovered_condition", "missing_value"} <= kinds
+    assert all(g.would_close for g in result.strategy.gaps)
+    assert all(g.closes_by == "knowledge" for g in result.strategy.gaps)
+    # each gap is visible on the drawing too, never only in a report
+    codes = {w.code for w in result.strategy.warnings}
+    assert {g.code for g in result.strategy.gaps} <= codes
 
 
 @pytest.mark.parametrize("name", sorted(_fixtures()))

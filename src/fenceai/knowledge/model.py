@@ -120,6 +120,19 @@ class KnowledgeVersion(BaseModel):
     version: int
     type: KnowledgeType
     authority: int | None = None  # explicit override of DEFAULT_AUTHORITY
+    # WHO wrote this rule, which decides what a disagreeing tie MEANS.
+    #
+    # Two rules we authored that tie and disagree cannot both be right and
+    # nobody outside this repo can fix it: that is a build error, and raising is
+    # the correct treatment (ADR-0005). Two rows the Knowledge Platform
+    # published that tie and disagree is not our bug and not fixable here — it
+    # is a `Conflict`, a warned line and a review task (contract §3.2.4: never
+    # fail a run over a gap).
+    #
+    # The default is `authored` because every rule in this codebase today was
+    # written by us, and because the safe direction for an unset field is the
+    # one that keeps the build error rather than the one that silences it.
+    origin: Literal["authored", "published"] = "authored"
     scope: dict[str, str] = {}  # bound dimensions: project_id, series, surface, context...
     condition: Expr | None = None
     actions: list[Action] = []
@@ -139,6 +152,26 @@ class KnowledgeVersion(BaseModel):
 
     def display_title(self, lang: str) -> str:
         return self.title_i18n.get(lang) or self.title
+
+    @classmethod
+    def from_published(cls, **fields) -> "KnowledgeVersion":
+        """A row that came out of a Knowledge Platform snapshot.
+
+        THE SEAM, and it exists because the default is a trap. `origin` defaults
+        to `authored`, which is the safe direction for a field nobody sets yet —
+        but it means the snapshot loader (build order item 5) can forget it and
+        produce a base that looks entirely home-grown. Two published rows would
+        then tie, disagree, and RAISE, which is the exact defect the field was
+        added to close, silently reinstated with no test failing: there are no
+        published rows in `demo_knowledge()` to notice.
+
+        So the loader must build its rows through here rather than through the
+        constructor. `origin` is not accepted as an argument — passing it would
+        make this a suggestion rather than a guarantee.
+        """
+        if "origin" in fields:
+            raise ValueError("from_published sets origin; do not pass it")
+        return cls(**fields, origin="published")
 
     def effective_authority(self) -> int:
         return self.authority if self.authority is not None else DEFAULT_AUTHORITY[self.type]

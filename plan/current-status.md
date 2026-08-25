@@ -1,5 +1,102 @@
 # Current status
 
+## `Gap` as a return type — the engine moves, and two signed obligations close (2026-08-25)
+
+Item 1 of `plan/next-session.md`, and the first line of `src/` to change since the
+contract was ratified. **1658 pytest · 193 scenario tests, green.**
+
+**The audit is the deliverable, and it found one more than the plan named.** All
+thirteen `GenerationFailure` sites, verdict and reasoning each, in
+`docs/reviews/generation-failure-audit-2026-08-25.md`. Three converted, ten stay:
+
+- `evaluator.resolve()` — a disagreeing hard tie now raises only when **both**
+  contenders are `authored`. `KnowledgeVersion.origin: authored | published` is the
+  new field, defaulting to `authored` so nothing already in the codebase moves. This
+  was the exposure that scaled with adoption: our expansion puts published rows at
+  authority 1 or 3, so both branches sat inside the raise band.
+- `max_span_mm` uncovered — the declared defect. It laid out no plan at all on the
+  single most important parameter in the system; it lays out to
+  `FALLBACK_MAX_SPAN_MM` now, warns every bay it touched, and files a `Gap` naming
+  the row that would close it.
+- **the third, which the plan did not name:** `_resolve_default_post`. Knowledge
+  naming no ground-post product was also a run failed over a gap. The post now
+  stands with no sku, which demand already reports as an `unresolved` line and
+  `/bom` already renders — the channel existed, nothing was reaching it.
+
+**What the audit found by finishing.** After the three conversions the engine has no
+refusal left that a curator could close: every one of the remaining ten is either a
+fence that must not be built (a violated `hard_constraint`) or an instruction that
+cannot be followed (a model id that does not exist). That is the property §3.2.4
+actually asks for, and it is stronger than "the two declared defects are fixed".
+
+**Recorded, not fixed.** `DEFAULT_RAILS_PER_SPAN` and `DEFAULT_SCREWS_PER_SPAN` have
+been silent fallbacks for unstated quantities since long before this audit — the same
+shape as the max-span fallback, minus the warning. Left alone because closing them
+moves golden numbers on runs that are currently green.
+
+**One open question, deliberately not settled:** `no_item_covers_part_spec` is the
+taxonomy's `unsatisfiable_requirement` almost word for word, and converting the post
+default made "a post with no product" representable. It stays a refusal because the
+catalog is *our* artefact — *"buy a different post"* is not curator work — and a gap
+whose reader cannot action it is the one thing §1.2.1 says a queue must not contain.
+What would reopen it: a `closes_by` that names the tenant.
+
+**An invariant reversed, on purpose.**
+`test_missing_hard_knowledge_is_generation_failure` asserted the opposite until
+today. It is now `..._is_a_gap_not_a_generation_failure`, and the never-block
+invariant is written into `docs/scenarios/golden-scenarios.md` rather than living
+only in a test. Four tests encoded the retired behaviour; each was rewritten against
+what it was actually protecting, not deleted — the API's code-less 422 branch and the
+impact report's refs-free failure branch both still have a caller.
+
+**Also changed:** `core/gaps.py` (the contract's `Gap` shape, unrenamed);
+`Strategy.gaps`; a `gap` node kind with en/he templates; `warning.uncovered_max_span`
+and `warning.no_default_post` in both locale bundles; and the five architecture docs
+plus ADR-0005 that asserted the old rule.
+
+### Then four reviewers read it, and two of the three conversions were wrong
+
+Run at the checkpoint CLAUDE.md asks for. **1658 pytest · 193 scenario tests, green.**
+Full account in the audit's closing section; the short version:
+
+- **The post conversion moved a refusal rather than removing one.** `sku=""` was not
+  the "deleted product" case `resolve_supply` had a branch for, so `/bom`,
+  `/structure` and `/quote` answered a **raw 400** carrying a pydantic sentence —
+  uncoded, untranslated, worse than the 422 it replaced. Found independently by two
+  reviewers. My test stopped one call short of it.
+- **The evaluator conversion let the alphabet decide a safety limit.** Two published
+  maxima that tie resolved by `object_id`, so 1200 vs 2400 built *2000 mm bays* or
+  *1200 mm bays* depending on what the rows were named — exceeding a stated maximum.
+  A contradiction is not a gap: §3.2.4 says do not fail over a gap, and §1.2.1 says a
+  publish-time `disputed` is not a resolution-time `Conflict`. Not blocking was right;
+  picking the looser number was not. It resolves to the most restrictive contender now
+  and files `Gap(disputed, on="value")`, so the people who can fix it hear about it.
+- **The fallback did not stay in its lane** — the audit's own weakest claim. It was
+  consumed by every check that judges against a maximum, so a 2400 mm manufactured
+  panel drew an **error** saying it exceeded "the 1800 mm maximum span". A
+  manufactured width is authored data and the fallback is not; the fallback yields.
+- **`Gap` was emit-only.** It could not parse a published gap: `SourceRef` had been
+  redefined against the contract's `{id, belongs_to}` — reintroducing the exact defect
+  its BINDING clause closes, under the contract's own type name — and `disputed` had
+  lost its `on` discriminator.
+- **Two mutations proved the tests did not bite.** Fallback → 5000 (five-metre bays):
+  green. A fabricated `governed_by=["K-INVENTED@v1"]` on a gap node: green, because
+  the assertion read out-edges and those edges point in. Both fail now, and the
+  leave-one-out property test — retire each knowledge object in turn, demand a plan —
+  is the executable form of the audit's central claim.
+
+**Held up:** the thirteen-site census. No fourteenth site, no "stays" verdict
+overturned, and the non-`GenerationFailure` raises reachable from `generate()`
+(`MissingField`) are caught at every call site.
+
+**Deferred, with the trigger recorded** in `plan/next-session.md` under item 5, because
+both are inert until a published row can exist: the `from_published` seam must be what
+the loader uses, and conflict surfacing must reach more than three of the ~13 resolution
+sites. The second is pre-existing — `main` did the same — but item 1 widened its cost.
+
+**Next:** item 2 — `SiteConditions`, `site.*` binding, `site_revision` + the 409
+guard. Steps 3 and 4 still need nothing from anybody.
+
 ## The boundary contract, ratified — and the engine still unbuilt (2026-08-25)
 
 A full design and negotiation session with the Knowledge Platform team, ending in a

@@ -329,6 +329,8 @@
   "warning.gate_kit_width_mismatch": "Gate kit {sku} fits a {kit_width_mm} {u} opening but {element} is {opening_width_mm} {u} — the wrong gate would be priced",
   "warning.no_gate_kit": "No catalog product fits the {opening_width_mm} {u} opening of {element} — this gate cannot be priced",
   "warning.height_not_supported": "Fence model {model_ref} is not made in {n} of the panel heights in section {run_id} (from {min_mm} {u} to {max_mm} {u}) — change the height or choose another model",
+  "warning.uncovered_max_span": "No rule states the maximum span for {model_ref} in section {run_id}; {n} bay(s) laid out to {value_mm} {u} — confirm before ordering",
+  "warning.no_default_post": "No rule names a default ground-post product; {n} post(s) have no product and are unfilled in the bill of materials",
   "warning.panel_length_unresolved": "Model {model_ref} cannot work out a cut length for {slot} in {n} bay(s) of section {run_id} — the frame members it is measured between leave nothing to measure, so the part would be priced at nothing",
   "warning.clear_gap_exceeded": "A gap of {value_mm} {u} in section {run_id} exceeds the {limit_mm} {u} limit ({n} bay(s)) — narrow the spacing or widen the members",
   "warning.rail_separation_insufficient": "In section {run_id} the rail above the bottom one is only {value_mm} {u} up, under the {limit_mm} {u} anti-climb limit ({n} bay(s))",

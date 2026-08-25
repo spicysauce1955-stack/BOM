@@ -20,6 +20,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from fenceai.catalog.model import CATALOG_SCHEMA_VERSION, Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
+from fenceai.core.gaps import Gap, GapSubject
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
@@ -214,6 +215,7 @@ def generate(
         )
 
     _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
+    _report_unfilled_posts(strategy, builder)
 
     orphaned = [ov.id for ov in overrides if ov.id not in applied]
     for ov_id in orphaned:
@@ -382,7 +384,13 @@ def _resolve_default_post(
     )
     if res.winner:
         return res.winner.actions[0].sku, [res.winner.version.ref]
-    raise GenerationFailure("no default ground-post product in knowledge (role post_ground)")
+    # Knowledge names no default ground post. This used to raise — a run failed
+    # over a gap, which contract §3.2.4 forbids. The post still STANDS where the
+    # geometry puts it; only its product is unknown, and "" is how demand already
+    # says that: `chosen("")` yields an eligibility nothing satisfies, the line
+    # lands in `priced.unresolved`, and /bom reports it rather than refusing.
+    # `_report_unfilled_posts` files the gap once for the run.
+    return "", []
 
 
 DEMAND_ROLE_DEFAULTS = {
@@ -1252,6 +1260,9 @@ class _SegmentModel:
     options: dict[str, str | int]
     select_node_id: str
     max_span: Mm
+    # "" when no rule covered it and `max_span` is the fallback basis below —
+    # an empty ref rather than an invented one, because every `governed_by` edge
+    # citing it would otherwise name a rule nobody wrote.
     max_span_ref: str
     firing_node_id: str
     rails_per_span: int
@@ -1261,6 +1272,16 @@ class _SegmentModel:
     # panels: not a preference, so it does not compete with one
     exact_span: Mm | None = None
     exact_span_ref: str | None = None
+    # No rule covered `max_span_mm` here, so `max_span` is FALLBACK_MAX_SPAN_MM
+    # and every bay laid out to it is warned. Carried on the segment model
+    # because the gap is discovered where the parameter resolves and reported
+    # where the bays it affected are known.
+    max_span_assumed: bool = False
+    # WHICH basis, when there was no rule: our invented fallback, or the width
+    # the model's own line is manufactured in. They are not the same claim and a
+    # warning that called the second one "a fallback" would be telling the reader
+    # we guessed a number the manufacturer stated.
+    max_span_basis: Literal["rule", "fallback", "manufactured_width"] = "rule"
 
 
 LEGACY_MODEL_ID = "M-LEGACY"
@@ -1272,6 +1293,20 @@ LEGACY_MODEL_VERSION = 1
 # positions. Two spellings of `2` would be a post routed for a panel nobody built.
 DEFAULT_RAILS_PER_SPAN = 2
 DEFAULT_SCREWS_PER_SPAN = 8
+
+# The span basis a run is laid out to when NO rule covers `max_span_mm`.
+#
+# This is not a safety limit and must never be read as one. It is a provisional
+# layout basis that exists so an uncovered exposure category produces a plan with
+# a visible hole in it rather than no plan at all (contract §3.2.4). Every bay
+# built to it carries `warning.uncovered_max_span` and the run carries a `Gap`
+# naming the row that would close it, so the number is never the quiet answer —
+# it is the loud one.
+#
+# 1800 mm because it is the most conservative figure in the demo knowledge and
+# a fence laid out tighter than it needs to be is a fence that stands up. A
+# fallback that guessed WIDER would be a fallback that could fall down.
+FALLBACK_MAX_SPAN_MM = 1800
 
 
 def _policy_knowledge(model: FenceModel) -> list[KnowledgeVersion]:
@@ -1519,30 +1554,72 @@ def _generate_run(
         )
 
         res = resolve_param(seg_kb, seg_ctx, "max_span_mm")
-        if res.winner is None:
-            raise GenerationFailure(f"no max_span_mm knowledge applies to run {run.id}")
-        max_span_mm: Mm = next(a.value for a in res.winner.actions if a.kind == "set_param")
-        firing = builder.add(
-            "rule_firing", "resolve_max_span",
-            payload={"run_id": run.id, "param": "max_span_mm",
-                     "value": max_span_mm},
-            inputs=[run_fact.id, select_node.id],
-            governed_by=[res.winner.version.ref],
-            # a defeated edge cites the LOSING version (decision-model.md); the loser
-            # is any firing whose defeated_by is non-empty
-            defeated=[f.version.ref for f in res.firings if f.defeated_by],
+        # No rule covers it. This used to raise, which made an uncovered exposure
+        # category produce no plan at all on the single most important parameter
+        # in the system — a run failed over a GAP, which contract §3.2.4 forbids.
+        # The run proceeds on FALLBACK_MAX_SPAN_MM and says so, twice: a `gap`
+        # node here instead of a rule firing, and one warning per section naming
+        # every bay laid out to it (`_report_uncovered_max_span`).
+        assumed = res.winner is None
+        max_span_mm: Mm = (
+            FALLBACK_MAX_SPAN_MM if assumed
+            else next(a.value for a in res.winner.actions if a.kind == "set_param")
         )
-        _surface_conflicts(res.conflicts, builder, strategy)
-
+        # A DISAGREEING TIE inside the hard band, survivable only because one
+        # contender is published (`evaluator.resolve`). Never let the alphabet
+        # decide a safety limit: the tie-break that picks a winner is
+        # `object_id` last, so renaming a row would otherwise flip a 1200 mm
+        # maximum to 2400 mm and quote it. Take the most restrictive number every
+        # contender could live with. Lower is safer HERE and the direction is not
+        # general — `min_rail_separation_mm` is the opposite — which is why this
+        # is at the site that knows its parameter and not in the evaluator.
+        if any(c.hard for c in res.conflicts):
+            max_span_mm = min(a.value for f in res.firings for a in f.actions
+                              if a.kind == "set_param")
         # a manufactured bay width, if this model's line has one. Resolved under
         # the same segment scope as the rest, so a model contributes it through
-        # `layout_policy` rather than through a private channel.
+        # `layout_policy` rather than through a private channel. Resolved BEFORE
+        # the decision node below, because when the maximum is assumed this is an
+        # input to it — a node reporting 1800 for a basis of 2400 would explain a
+        # fence the run did not build.
         exact_res = resolve_param(seg_kb, seg_ctx, "exact_span_mm")
         exact_span = exact_span_ref = None
         if exact_res.winner is not None:
             exact_span = next(a.value for a in exact_res.winner.actions
                               if a.kind == "set_param")
             exact_span_ref = exact_res.winner.version.ref
+
+        # A manufactured bay width beats an INVENTED maximum. If nobody stated a
+        # max span and the model declares the width its line actually ships in,
+        # that number is authored data and `FALLBACK_MAX_SPAN_MM` is not — so the
+        # fallback yields to it rather than judging it. Without this the run laid
+        # out 1800 mm bays for 2400 mm panels and reported, at ERROR severity,
+        # that the panels exceeded "the 1800 mm maximum span" — a limit nobody
+        # set, against a plan that could not be built. The gap still stands: no
+        # rule covers the parameter, and the section is still warned.
+        yielded_to_exact = bool(assumed and exact_span is not None
+                                and exact_span > max_span_mm)
+        if yielded_to_exact:
+            max_span_mm = exact_span
+
+        firing = builder.add(
+            "gap" if assumed else "rule_firing",
+            "uncovered_param" if assumed else "resolve_max_span",
+            payload={"run_id": run.id, "param": "max_span_mm",
+                     "value": max_span_mm,
+                     # what the basis actually IS, so the explanation cannot
+                     # claim a fallback the layout did not use
+                     **({"basis": "manufactured_width"} if yielded_to_exact
+                        else {"basis": "fallback"} if assumed else {})},
+            inputs=[run_fact.id, select_node.id],
+            # nothing governs an assumed value, and that IS the explanation
+            governed_by=[] if assumed else [res.winner.version.ref],
+            # a defeated edge cites the LOSING version (decision-model.md); the loser
+            # is any firing whose defeated_by is non-empty
+            defeated=[f.version.ref for f in res.firings if f.defeated_by],
+            confidence="uncertain" if assumed else "deterministic",
+        )
+        _surface_conflicts(res.conflicts, builder, strategy)
 
         rails, rails_refs = _resolve_quantity(
             seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN)
@@ -1559,7 +1636,10 @@ def _generate_run(
             options=options,
             select_node_id=select_node.id,
             max_span=max_span_mm,
-            max_span_ref=res.winner.version.ref,
+            max_span_ref="" if assumed else res.winner.version.ref,
+            max_span_assumed=assumed,
+            max_span_basis=("manufactured_width" if yielded_to_exact
+                            else "fallback" if assumed else "rule"),
             firing_node_id=firing.id,
             rails_per_span=rails,
             screws_per_span=screws,
@@ -2010,7 +2090,7 @@ def _generate_run(
             prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
             exact_mm=sm.exact_span,
         )
-        governed = [sm.max_span_ref] + ([layout_pref_ref] if layout_pref_ref else [])
+        governed = [r for r in (sm.max_span_ref, layout_pref_ref) if r]
         if layout.exact_over_max:
             _exact_over_max(builder, strategy, run, sm)
         elif layout.remainder_mm is not None:
@@ -2236,7 +2316,7 @@ def _generate_run(
             if width > sm.max_span:
                 raise GenerationFailure(
                     f"span {span.id} width {width} exceeds hard max {sm.max_span}",
-                    constraint_refs=[sm.max_span_ref],
+                    constraint_refs=[r for r in [sm.max_span_ref] if r],
                 )
             if v_mode == "stepped" and max_gap is not None and 0 < abs(gz1 - gz0) <= max_step \
                     and abs(gz1 - gz0) > max_gap:
@@ -2310,6 +2390,8 @@ def _generate_run(
                         element_refs=[span.id], decision_ref=conflict_node.id,
                     )
                 )
+
+    _report_uncovered_max_span(run, strategy, resolved, spans_by_model)
 
     _check_panel_safety(kb, run, scope, strategy, builder, resolved, spans_by_model,
                         {s.id: s for s in strategy.spans}, ctx["run"])
@@ -2499,6 +2581,128 @@ _PANEL_LIMITS = (
     _PanelLimit(code="rail_separation_insufficient", param="min_rail_separation_mm"),
     _PanelLimit(code="pattern_residual_large", param="max_pattern_residual_mm"),
 )
+
+
+def _report_unfilled_posts(strategy: Strategy, builder: GraphBuilder) -> None:
+    """Posts standing with no product, because knowledge named no default.
+
+    Written against the POSTS rather than against the resolution site, so that a
+    post left empty by any of `_make_post`'s five precedence branches is still
+    seen. **The DIAGNOSIS below is not that general**, and says so honestly: it
+    names `post_ground`, because that is the only branch that can currently come
+    back empty. A second branch that could — a masonry mount with no mount sku —
+    would be reported here under the wrong cause, and closing that means giving
+    this function the reason the sku is missing rather than inferring it.
+
+    One gap for the run, not one per post: the missing thing is a single
+    `default_component` rule, so sixty posts are one work item.
+    """
+    unfilled = sorted(p.id for p in strategy.posts if not p.sku)
+    if not unfilled:
+        return
+    params: dict[str, str | int] = {"role": "post_ground", "n": len(unfilled)}
+    message = (
+        f"Knowledge names no default ground-post product (role post_ground); "
+        f"{len(unfilled)} post(s) have no product and are unfilled in the BOM."
+    )
+    node = builder.add(
+        "gap", "missing_default",
+        payload={"role": "post_ground", "n": len(unfilled)},
+        scope_refs=unfilled, confidence="uncertain",
+    )
+    # ERROR, not warning. `04-backend.md` states the line: a warning describes a
+    # fence built badly, an error describes a part not bought at all. Every post
+    # here is not bought at all — supply already says so, five times, at `error`
+    # (`no_eligible_item`). Reporting the CAUSE more quietly than its own
+    # consequence buries the one message that names why.
+    strategy.warnings.append(StrategyWarning(
+        code="no_default_post", severity="error", message=message,
+        element_refs=unfilled, decision_ref=node.id, params=params,
+    ))
+    strategy.gaps.append(Gap(
+        id="gap:post_ground",
+        kind="missing_value",
+        # a ROLE, so `slot` ("nothing can fill this") rather than `param`
+        # ("no value for this key") — the first queue that groups by subject
+        # kind would otherwise file it with the parameter gaps
+        subject=GapSubject(kind="slot", ref="post_ground"),
+        code="no_default_post", params=params, message=message,
+        would_close="a default_component rule naming the ground-post product for role post_ground",
+        closes_by="knowledge", severity="warns_line",
+    ))
+
+
+def _report_uncovered_max_span(
+    run: Run,
+    strategy: Strategy,
+    resolved: dict,
+    spans_by_model: dict,
+) -> None:
+    """One gap and one warning per section whose span basis nobody stated.
+
+    Reported HERE rather than where the parameter resolves, because a gap is only
+    worth receiving if it names what it cost: the resolution site knows the
+    parameter and the fallback, and this one knows the bays that were laid out to
+    it. Aggregated per section like `height_not_supported`, for the same reason —
+    a systemic hole on a 60-bay fence is one thing to go fix, not sixty.
+
+    `would_close` is BINDING (contract §1.2.1) and is the field that makes this a
+    work item: it names the row, the parameter and the product line, so a curator
+    reads what to author rather than that something is absent.
+    """
+    # Grouped by the model REF, not by the segment. Two segments of one run can
+    # name the same model under different version pins or options, and
+    # `spans_by_model` keys on the whole choice — so a naive loop files the same
+    # missing row twice under one id. It is not two work items: `max_span_mm`
+    # resolves under `series: model.id` (`_segment_view`), so a row that would
+    # close it for one segment closes it for both. One gap, with every bay it
+    # cost listed.
+    by_model: dict[str, list[str]] = {}
+    for key, span_ids in spans_by_model.items():
+        sm = resolved[key]
+        if sm.max_span_assumed:
+            by_model.setdefault(sm.model.ref, []).extend(span_ids)
+
+    for model_ref, span_ids in sorted(by_model.items()):
+        sm = next(resolved[k] for k in spans_by_model
+                  if resolved[k].model.ref == model_ref and resolved[k].max_span_assumed)
+        affected = sorted(span_ids)
+        params: dict[str, str | int] = {
+            "element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
+            "param": "max_span_mm", "value_mm": sm.max_span, "n": len(affected),
+            "basis": sm.max_span_basis,
+        }
+        basis = (
+            "the width its line is manufactured in"
+            if sm.max_span_basis == "manufactured_width" else "a fallback"
+        )
+        message = (
+            f"No rule states max_span_mm for {sm.model.ref} in section {run.id}; "
+            f"{len(affected)} bay(s) laid out to {basis} of {sm.max_span} mm."
+        )
+        strategy.warnings.append(StrategyWarning(
+            code="uncovered_max_span", severity="warning", message=message,
+            element_refs=affected, decision_ref=sm.firing_node_id, params=params,
+        ))
+        strategy.gaps.append(Gap(
+            # the REF, not the id: two versions of one line are two refs, and an
+            # id keyed on the bare model id would collide between them
+            id=f"gap:{run.id}:{model_ref}:max_span_mm",
+            kind="uncovered_condition",
+            subject=GapSubject(kind="param", ref="max_span_mm"),
+            code="uncovered_max_span", params=params, message=message,
+            # Condition-space coordinates, and deliberately NOT the run id. The
+            # BINDING example in §1.2.1 is "a footing row for exposure C,
+            # non-HVHZ, at 6 ft" — a parameter plus the DIMENSIONS it is missing
+            # on. `series` is that dimension here (`_segment_view` scopes the
+            # lookup on it). A section id would be worse than useless: it means
+            # nothing in the curator's store, and §3.1.13 bans a published
+            # condition naming a specific run, so it would ask for a row the
+            # contract forbids them to author. The section stays in `message`,
+            # which is ours to read.
+            would_close=f"a max_span_mm row for series {model_ref}",
+            closes_by="knowledge", severity="warns_line",
+        ))
 
 
 def _check_panel_safety(
@@ -2772,9 +2976,36 @@ def _surface_conflicts(conflicts, builder: GraphBuilder, strategy: Strategy) -> 
         )
         strategy.warnings.append(
             StrategyWarning(
-                code="knowledge_conflict", severity="warning",
+                code="knowledge_conflict", severity="error" if c.hard else "warning",
                 message=c.message,
                 params={"slot": c.param_or_action, "contenders": ", ".join(c.contenders)},
                 decision_ref=node.id,
             )
         )
+        if not c.hard:
+            continue
+        # A hard tie only survives because a contender was PUBLISHED, and only
+        # the publisher can fix two of their own rows contradicting each other.
+        # A `StrategyWarning` alone leaves that entirely inside this repo: it
+        # renders on our drawing and reaches nobody who can act on it. The gap is
+        # what §3.2.6 sends back.
+        #
+        # `disputed` is the honest kind, and `on="value"` is the honest
+        # discriminator: these rows agree about WHEN they apply — that is why
+        # they tied on scope — and disagree about the number. §1.2.1 is careful
+        # that publish-time `disputed` is not the same event as a resolution-time
+        # `Conflict`; this is the second one telling the first what it found, not
+        # the two being conflated.
+        strategy.gaps.append(Gap(
+            id=f"gap:disputed:{c.param_or_action}:" + ",".join(sorted(c.contenders)),
+            kind="disputed", on="value",
+            subject=GapSubject(kind="param", ref=c.param_or_action),
+            code="knowledge_conflict",
+            params={"slot": c.param_or_action, "contenders": ", ".join(c.contenders)},
+            message=c.message,
+            would_close=(
+                f"a decision on which of {', '.join(sorted(c.contenders))} states "
+                f"{c.param_or_action}, or conditions that separate them"
+            ),
+            closes_by="knowledge", severity="warns_line",
+        ))

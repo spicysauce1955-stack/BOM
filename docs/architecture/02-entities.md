@@ -516,7 +516,9 @@ means *not applicable* — never *false*.
 **Seven types, four distinct handlings.** `fact`, `hard_constraint`, `company_rule`,
 `preference`, `heuristic`, `override`, `candidate`. A hard constraint is not a
 preference is not an objective is not an override — they have different types and
-different code paths. A hard tie is a **generation failure**, not a coin flip.
+different code paths. A hard tie between two **authored** rules is a **generation
+failure**, not a coin flip; `origin: authored | published` decides, and a tie touching
+a published row is a surfaced `Conflict` instead (contract §3.2.4).
 
 **Versions are immutable and runs stamp their snapshot set**, so editing a rule
 cannot change what an old run meant. `source_text` holds the human's verbatim words

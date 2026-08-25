@@ -32,6 +32,10 @@ WARNING_CODES = [
     "no_feasible_item",
     "substitute_needs_approval",
     "height_not_supported",
+    # The two never-block gaps (contract §3.2.4): a run that used to refuse now
+    # produces a plan with the hole named, and the hole is named HERE.
+    "uncovered_max_span",
+    "no_default_post",
     "panel_length_unresolved",
     "clear_gap_exceeded",
     "rail_separation_insufficient",
@@ -731,3 +735,36 @@ def test_every_joint_kind_and_consumption_model_has_a_word_in_both_bundles():
     for value in kinds:
         for name, table in (("en", en), ("he", he)):
             assert f"consumption.{value}" in table, (name, value)
+
+
+def test_gap_warning_placeholders_match_the_params_a_real_run_emits():
+    """Key presence is not enough: a bundle string interpolates `{name}`, and
+    nothing checked those names against what the backend actually sends.
+
+    Renaming `value_mm` on either side renders a literal `{value_mm}` to the
+    reader in BOTH languages with a green suite — and the browser smoke suite
+    cannot see it either, because no smoke scenario retires a rule, so neither
+    of these strings is ever rendered in a page.
+
+    Driven by a REAL run rather than a fixture, so the params are the ones the
+    generator emits, not the ones a test author remembered.
+    """
+    import re
+
+    from fenceai.catalog.demo import demo_catalog
+    from fenceai.knowledge.model import KnowledgeBase
+    from fenceai.strategy.generator import generate
+    from tests.conftest import straight_topology
+
+    result = generate(straight_topology(6000), KnowledgeBase(versions=[]), demo_catalog())
+    emitted = {w.code: set(w.params) for w in result.strategy.warnings}
+    assert {"uncovered_max_span", "no_default_post"} <= set(emitted)
+
+    for lang in ("en", "he"):
+        bundle = json.loads((STATIC / "i18n" / f"{lang}.json").read_text(encoding="utf-8"))
+        for code, params in emitted.items():
+            placeholders = set(re.findall(r"\{(\w+)\}", bundle[f"warning.{code}"]))
+            # `{u}` is the display-unit word, supplied by the renderer, never by
+            # the backend (CLAUDE.md: locale strings use `{…_mm}` + `{u}`)
+            missing = placeholders - params - {"u"}
+            assert not missing, f"{lang} warning.{code} interpolates {missing}, never sent"
