@@ -59,6 +59,39 @@ item 1. One change, four payoffs.
 
 **Steps 1–4 need nothing from anybody.** Steps 1–3 are done; step 4 is next and depends on 3.
 
+### The frontend is behind the engine — four things, all created by items 1–3
+
+The backend/frontend SEPARATION is intact (ES modules still talk only through
+`state.js`, no module touches another's DOM, no build step, both bundles stay
+key-identical, 202/202 smoke green). What is not intact is PARITY: three engine
+features are unreachable from the app, and one backend field is English prose in
+a Hebrew-first product.
+
+1. **Site conditions have no UI at all.** `PUT /projects/{id}/site` is the only
+   way in, so an estimator cannot enter an exposure category — which means the
+   whole of item 2 is invisible in the app. This also means the three strings
+   added for it (`error.site_conditions_changed`, `structure.site_changed`,
+   `decisions.stale_site`) have **never been rendered by a browser**: they are
+   wired in `structure-data.js` and `section-decisions.js`, but no smoke scenario
+   can reach them because nothing can move a site condition through the UI. The
+   202/202 does not cover them and cannot until this lands.
+2. **The panel editor's vocabulary arrays are the closed half of item 3.**
+   Registering `per_corner` makes it authorable through the API and turns
+   `test_the_editor_and_the_backend_agree_on_the_vocabularies` RED until
+   `js/panel-model.js` names it too. Deliberate — the red test is the reminder —
+   but it means the seam is only half open. Closing it: serve
+   `FIXING_BASES.names()` / `LENGTH_RULES.names()` from a route the editor reads.
+3. **`Gap.would_close` is generated English with no `code`/`params`.** Every other
+   user-visible string in this system carries a code and renders from a locale
+   bundle; this one is prose the backend writes. It is defensible on the wire to
+   the Knowledge Platform (it goes to them, and §1.2.1 defines it as a sentence),
+   and NOT defensible the moment the annexe renders gaps to a curator here, which
+   is item 8. Decide before item 8, not during it.
+4. **`Strategy.gaps` has no reader.** Gaps are produced, stored and returned by
+   `/generate`, and nothing renders them — the warnings carry the same facts, so
+   nothing is invisible to a user today, but the gap list itself is write-only
+   until the annexe exists.
+
 ### Owed from item 2's review, and NOT done
 
 1. **`site.*` does not reach model variant conditions or eligibility predicates.**
