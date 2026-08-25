@@ -148,7 +148,17 @@ the guard does not watch.
 
 So the slice also adds `site_revision: int` on `GenerationRun`, extends the same
 409 with a parallel `site_conditions_changed`, and adds
-`warning.site_conditions_changed` to both locale bundles.
+`error.site_conditions_changed` to both locale bundles.
+
+> Two corrections from building it. **`error.`, not `warning.`** — it is a
+> refusal, not a note on an answer, and it belongs in `REFUSAL_CODES`. And the
+> guard compares **`run.site_facts` against `project.site.facts()`**, never the
+> revision: the digest hashes the facts, so re-saving identical conditions bumped
+> the counter, regenerated to the same run id, and `INSERT OR IGNORE` kept the
+> stored document carrying the old number — every derived view then answered 409
+> for ever with no user action able to repair it. A guard and a digest have to
+> agree on what "the site" means. The revision survives as a reported number and
+> is guarded on by nothing.
 
 **New warning codes:** `site_condition_missing`, `conservative_parameter_used`,
 `site_conditions_changed`.

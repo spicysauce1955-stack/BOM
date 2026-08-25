@@ -473,6 +473,29 @@ def get_bom(run_id: str):
                                  priced.decisions, priced.unresolved)}
 
 
+def _refuse_moved_site(project: Project, result) -> None:
+    """The `topology_changed` failure through a door that guard cannot watch.
+
+    Compares the FACTS, not the revision. A revision counts saves, so guarding on
+    it meant that re-saving identical site conditions bricked the run: the digest
+    hashes facts, so regeneration returned the same id, `INSERT OR IGNORE` kept
+    the stored document with the old counter, and no user action could repair it.
+
+    It names the dimensions that moved, because "the site conditions changed" on
+    a five-field form sends the reader to compare them by eye.
+    """
+    was, now = result.run.site_facts, project.site.facts()
+    if was == now:
+        return
+    moved = sorted(k for k in set(was) | set(now) if was.get(k) != now.get(k))
+    raise HTTPException(409, {
+        "code": "site_conditions_changed",
+        "changed": ", ".join(moved),
+        "run_site_revision": result.run.site_revision,
+        "project_site_revision": project.site.revision,
+    })
+
+
 @app.get("/api/runs/{run_id}/structure")
 def get_structure(run_id: str):
     """How the fence is laid out and what each element consists of — a derived view
@@ -492,12 +515,7 @@ def get_structure(run_id: str):
     # conditions are not part of `topology`, so changing a project from Exposure
     # B to C moves the span limit, moves the posts — and this document would
     # render the old layout without complaint. That document goes to site.
-    if project.site.revision != result.run.site_revision:
-        raise HTTPException(409, {
-            "code": "site_conditions_changed",
-            "run_site_revision": result.run.site_revision,
-            "project_site_revision": project.site.revision,
-        })
+    _refuse_moved_site(project, result)
     preset = _live_preset(result.run.project_id)
     catalog, inventory, priced = _priced(result, preset)
     report = build_structure(project.topology, result.strategy, priced.requirements,
@@ -535,6 +553,13 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     # before: this was the only one of the four sites that loaded the catalog
     # directly, which made the one endpoint producing an immutable commercial
     # document the one endpoint that would happily freeze a stale one.
+    # ...and the SITE staleness check, by the same argument one line up. /bom and
+    # /structure stay permissive because they are working views; a quote is the
+    # one endpoint that freezes an immutable commercial document, so a quote
+    # priced under Exposure B while the project now says C is signed and sent.
+    # (This is a staleness guard, unlike `topology_changed` next door, which
+    # exists because /structure MIXES a stored run with a live topology.)
+    _refuse_moved_site(_project(result.run.project_id), result)
     preset = _live_preset(result.run.project_id)
     _, inventory, priced = _priced(result, preset)
     if priced.unresolved:
@@ -658,12 +683,7 @@ def section_decisions(
     # conditions are not part of `topology`, so changing a project from Exposure
     # B to C moves the span limit, moves the posts — and this document would
     # render the old layout without complaint. That document goes to site.
-    if project.site.revision != result.run.site_revision:
-        raise HTTPException(409, {
-            "code": "site_conditions_changed",
-            "run_site_revision": result.run.site_revision,
-            "project_site_revision": project.site.revision,
-        })
+    _refuse_moved_site(project, result)
     graph = result.graph
     try:
         _, _, priced = _priced(result, _live_preset(result.run.project_id))
@@ -842,6 +862,10 @@ def _impact_cases() -> list[ImpactCase]:
             overrides=p.overrides, inventory=state.store.load_inventory(p.id),
             accepted_quote_cents=accepted.total_cents if accepted else None,
             fence_model=p.fence_model, policy=p.policy,
+            # ...and the SITE, or the preview regenerates a project built to
+            # Exposure C as if nobody had said, and reports the rule that
+            # decides it as costing nothing
+            site=p.site,
         ))
     return cases
 

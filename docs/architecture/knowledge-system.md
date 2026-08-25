@@ -93,6 +93,44 @@ Anything that varies **along** a run is not a site condition — it is an interv
 payload on the topology, the pattern `ElevationSamplePayload` and
 `PostTiltPayload` already establish. Soil class is the likely first case.
 
+### A conditioned rule outranks an unconditioned one
+
+`specificity()` counts bound scope dimensions **plus the context field paths a
+rule's condition tests**. Conditions used to count for nothing, which made the
+most natural authoring act in the system a build error: *"we already say the
+maximum is 1500; in Exposure C say 1200"* produces two rules of one type at one
+authority, one conditioned and one not. Neither beat the other, and inside the
+hard band a disagreeing tie is a `GenerationFailure` — so adding an ordinary
+conditioned rule bricked every project until somebody reverse-engineered the
+authority ladder and hand-tuned `authority=`. A rule that applies *sometimes* is
+more specific than one that always applies: scope narrows by dimension, a
+condition narrows by value.
+
+### A context that cannot answer is a bug, not a "no"
+
+`MissingField` means *the user did not tell us*, and "not applicable" is the
+right answer to that. It cannot, on its own, distinguish that from *the caller
+never bound the namespace* — and those need opposite treatments. Since
+`SiteConditions.facts()` returns `{}` and never absence, `"site" in ctx`
+separates them, and `evaluator._assert_namespaces_bound` raises on the second.
+Without it, a resolution path that never received `site` evaluates every
+site-conditioned rule as not-applicable and produces a plausible fence built to
+rules that never fired — which is how the impact preview came to report that a
+rule relaying the whole fence would cost nothing.
+
+### What `site.*` does NOT reach
+
+Knowledge rules only. A **fence model's variant condition**
+(`fencemodel/resolve.py`) and an **eligibility predicate** (`fencemodel/match.py`)
+evaluate against a panel/product context carrying no `site` namespace, so a
+variant conditioned on `site.hvhz` resolves to *not satisfied* and the model
+falls through to its default spec, silently. That is a real gap, not a decision
+made and defended — an HVHZ panel build-up is exactly what a variant is for.
+Recorded rather than half-closed, because whether a MODEL should see the site is
+a design question, and inventing the answer while shipping something else is how
+the entity retracted in the engine spec's §6 came to exist. The guard above
+covers the knowledge path and does not reach these two.
+
 ### Which dimensions are bound during generation
 
 A dimension is only a key/value pair in the evaluation context — there is no enum of

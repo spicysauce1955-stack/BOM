@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from fenceai.core.errors import GenerationFailure
-from fenceai.knowledge.ast import MissingField, evaluate_expr
+from fenceai.knowledge.ast import MissingField, evaluate_expr, field_paths
 from fenceai.knowledge.model import Action, KnowledgeBase, KnowledgeVersion
 
 # Authority tiers at or above company_rule are "hard": a tie between them with
@@ -61,6 +61,7 @@ def applicable_firings(kb: KnowledgeBase, ctx: dict) -> list[Firing]:
         if not _scope_matches(v, ctx):
             continue
         if v.condition is not None:
+            _assert_namespaces_bound(v, ctx)
             try:
                 if not evaluate_expr(v.condition, ctx):
                     continue
@@ -77,6 +78,45 @@ def applicable_firings(kb: KnowledgeBase, ctx: dict) -> list[Firing]:
         )
     )
     return firings
+
+
+# Namespaces a rule may condition on that a CALLER has to bind. `scope`, `run`,
+# `post` and `panel` are built by whichever site is resolving; `site` is a
+# whole-run fact threaded from `generate()`. The distinction below is between an
+# unanswered dimension and an unbound namespace, and it is not pedantry — see
+# `_assert_namespaces_bound`.
+_CALLER_BOUND = ("site",)
+
+
+def _assert_namespaces_bound(v: KnowledgeVersion, ctx: dict) -> None:
+    """A context that cannot answer a question is a BUG, not a "no".
+
+    `MissingField` means *the user did not tell us*, and the correct response is
+    "not applicable" — that is the hook the whole site-conditions design leans
+    on. But it cannot distinguish that from *the caller forgot to bind the
+    namespace at all*, and the two need opposite treatments: the first is a fact
+    about the project, the second is a fact about our code.
+
+    `SiteConditions.facts()` returns `{}` — never absence — for a project that
+    answered nothing, so `"site" in ctx` separates them cleanly. Without this
+    check, a resolution path that never received `site` silently evaluates every
+    site-conditioned rule as not-applicable and produces a plausible fence built
+    to rules that never fired. That is exactly how the impact preview came to
+    report "this rule costs nothing" for a rule that relays the whole fence.
+
+    Raising rather than warning is deliberate: no project data can cause it, only
+    a call site we wrote, so it is a build error in the same sense a disagreeing
+    tie between two authored rules is.
+    """
+    for ns in _CALLER_BOUND:
+        if ns in ctx:
+            continue
+        if any(p.startswith(f"{ns}.") for p in field_paths(v.condition)):
+            raise GenerationFailure(
+                f"{v.ref} conditions on '{ns}.*' but the evaluation context has no "
+                f"'{ns}' namespace — the caller did not bind it",
+                constraint_refs=[v.ref],
+            )
 
 
 def _beats(a: KnowledgeVersion, b: KnowledgeVersion) -> bool:

@@ -994,3 +994,70 @@ def test_the_site_revision_is_bumped_by_the_server_not_the_client(client):
         project = client.put(f"/api/projects/{pid}/site",
                              json={"exposure_category": "C", "revision": 99}).json()
         assert project["site"]["revision"] == expected
+
+
+def test_an_unknown_exposure_category_is_refused_at_the_boundary(client):
+    """`Project.site`'s own comment claims a typo has to fail at the boundary
+    rather than at generation. Both kinds of typo, now: an unknown VALUE, and a
+    misspelled FIELD NAME — the second used to validate clean, store all-None,
+    and leave the run behaving as if the estimator had said nothing."""
+    pid = make_project(client, name="site-typo")
+    assert client.put(f"/api/projects/{pid}/site",
+                      json={"exposure_category": "A"}).status_code == 422
+    assert client.put(f"/api/projects/{pid}/site",
+                      json={"exposure_catgeory": "C"}).status_code == 422
+    # ...and nothing was stored by either attempt
+    assert client.get(f"/api/projects/{pid}").json()["site"]["revision"] == 0
+
+
+def test_a_quote_refuses_a_site_that_moved(client):
+    """A working view stays permissive; an immutable commercial document does
+    not. A quote priced under Exposure B while the project says C is signed and
+    sent — the same argument the catalog-staleness check already makes here."""
+    pid = make_project(client, name="site-quote")
+    put_straight_topology(client, pid)
+    client.put(f"/api/projects/{pid}/site", json={"exposure_category": "B"})
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+    assert client.post(f"/api/runs/{run_id}/quote", json={}).status_code == 200
+
+    client.put(f"/api/projects/{pid}/site", json={"exposure_category": "C"})
+    r = client.post(f"/api/runs/{run_id}/quote", json={})
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "site_conditions_changed"
+
+
+def test_resaving_identical_site_conditions_does_not_brick_the_run(client):
+    """The defect this guard was rewritten for.
+
+    The digest hashes the site FACTS and the guard used to compare a REVISION.
+    Those agree only if every bump changes the facts — and a no-op save does not.
+    So re-saving the same conditions bumped the counter, regenerated to the SAME
+    run id, and `INSERT OR IGNORE` kept the stored document carrying the old
+    number: every derived view answered 409 for ever, with no user action able to
+    repair it, while the generate response cheerfully reported the new revision.
+    """
+    pid = make_project(client, name="site-noop")
+    put_straight_topology(client, pid)
+    client.put(f"/api/projects/{pid}/site", json={"exposure_category": "B"})
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+
+    client.put(f"/api/projects/{pid}/site", json={"exposure_category": "B"})
+    again = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]
+    assert again["id"] == run_id          # same fence, same site: one run
+    assert again["site_revision"] != 1    # the counter did move
+    assert client.get(f"/api/runs/{run_id}/structure").status_code == 200
+
+
+def test_the_refusal_names_which_condition_moved(client):
+    """"The site conditions changed" on a five-field form sends the reader to
+    compare them by eye."""
+    pid = make_project(client, name="site-named")
+    put_straight_topology(client, pid)
+    client.put(f"/api/projects/{pid}/site",
+               json={"exposure_category": "B", "hvhz": False})
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+    client.put(f"/api/projects/{pid}/site",
+               json={"exposure_category": "B", "hvhz": True})
+
+    detail = client.get(f"/api/runs/{run_id}/structure").json()["detail"]
+    assert detail["changed"] == "hvhz"

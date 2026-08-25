@@ -44,17 +44,25 @@ from fenceai.catalog.demo import demo_catalog
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.strategy.generator import generate
-from tests.scenarios.test_invariants import LIBRARY, PARTS, _fixtures
+from tests.scenarios.test_invariants import EXPOSURE_KB, LIBRARY, PARTS, _fixtures
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "compatibility_gate"
 
 
 def _spine(name: str) -> dict:
-    """One fixture, all the way to a priced BOM, as plain JSON-ready data."""
-    topo, overrides, inventory, *model = _fixtures()[name]
+    """One fixture, all the way to a priced BOM, as plain JSON-ready data.
+
+    Reads the fixture's own knowledge base and site, exactly as `spine` does: a
+    site-conditioned fixture priced against `demo_knowledge()` and no site would
+    pin a fence nobody builds, which is a pin that pins nothing.
+    """
+    topo, overrides, inventory, *rest = _fixtures()[name]
+    choice = rest[0] if rest else None
+    site = rest[1] if len(rest) > 1 else None
     catalog = demo_catalog()
-    result = generate(topo, demo_knowledge(), catalog, overrides=overrides,
-                      models=LIBRARY, parts=PARTS, default_model=model[0] if model else None)
+    result = generate(topo, EXPOSURE_KB if site is not None else demo_knowledge(),
+                      catalog, overrides=overrides, models=LIBRARY, parts=PARTS,
+                      default_model=choice, site=site)
     priced = price_strategy(result.strategy, catalog, inventory,
                             demand_skus=result.run.demand_skus,
                             preset=result.run.objective_preset)

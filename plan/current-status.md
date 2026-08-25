@@ -2,7 +2,7 @@
 
 ## Site conditions — the prerequisite for anything conditional (2026-08-25)
 
-Item 2. **1676 pytest · 193 scenario tests, green.** The acceptance criterion the
+Item 2. **1704 pytest · 203 scenario tests, green.** The acceptance criterion the
 design named is now a test: **one rule on exposure yields two span limits on two
 sites** — same fence, same knowledge, `B` gives four 1500 mm bays and `C` gives five
 1200 mm ones.
@@ -46,6 +46,58 @@ building it now means inventing a task class to switch on, which is the retracti
 in the engine spec's §6 all over again); and **no UI** — site conditions are settable
 only through the route, so an estimator cannot enter them from the app yet. The
 engine reads them, so nothing downstream is blocked.
+
+### Then two reviewers read item 2, and the guard was wrong
+
+**1704 pytest · 203 scenario tests, green.** The compatibility gate is untouched —
+only the new fixture's golden file was written, so every existing job still prices
+byte-identically.
+
+- **A no-op site save bricked the run, permanently.** The digest hashes the site
+  FACTS and the guard compared a REVISION; those agree only if every bump changes
+  the facts, and re-saving the same form does not. Regeneration returned the same
+  run id, `INSERT OR IGNORE` kept the document carrying the old counter, and every
+  derived view answered 409 for ever with no user action able to repair it — while
+  the generate response reported the new revision. The run now stamps `site_facts`
+  and the guard compares those, so guard and digest agree on what "the site" means.
+  It also answers §15: nothing persisted said which site a run was built for, and
+  `Project.site` is mutable with no history, so a run's own explanation became
+  unreconstructible the moment somebody edited the form.
+- **The impact preview was site-blind**, so a rule that relays the whole fence
+  previewed as `bom_delta_cents: 0` on the screen the docs call the single
+  highest-value review feature. Same class as item 1's dropped conflicts, in a new
+  form — and the fix that makes the CLASS loud rather than this instance: the
+  evaluator now refuses a context that cannot answer a question a rule asks.
+  `facts()` returns `{}` and never absence, so `"site" in ctx` separates "the user
+  did not answer" from "the caller forgot to bind".
+- **A conditioned rule did not outrank an unconditioned one.** `specificity()`
+  counted scope keys only, so *"we say 1500; in Exposure C say 1200"* tied inside
+  the hard band and FAILED the run. My own acceptance test carried `authority=0`
+  with the comment "beats the unconditioned demo maximum" — that comment was the
+  bug, written down and not noticed. Conditions count now, and the test no longer
+  tunes precedence by hand.
+- **The acceptance test's B arm was a no-op** — B was 1800, the value the demo rule
+  already sets, so deleting the B rule left every assertion passing. "Two span
+  limits on two sites" was testing one. B, C and the unconditioned baseline are
+  three distinct answers now.
+- **Four of six binding sites had no test.** Mutating `"site": site` to `"site": {}`
+  left 1676 tests green at four of them, including panel safety — a site-conditioned
+  HARD limit dropped in silence. There is a test per binding site now, and each one
+  fails when its own site breaks.
+
+Also: `/quote` refuses a moved site (a working view stays permissive; an immutable
+commercial document must not freeze a stale one), `extra="forbid"` so a misspelled
+field fails at the boundary as its docstring always claimed, both locale bundles
+carry the sentences the frontend now actually renders, and both version constants
+moved — `planning-v4` for the precedence change, `digest-v4` for `site_facts`
+joining the digest's inputs.
+
+**Owed and recorded, not silently skipped:** `site.*` does not reach model variant
+conditions or eligibility predicates, so a variant conditioned on `site.hvhz` falls
+through to the default spec silently. That is a design question — should a MODEL see
+the site? — and inventing the answer while shipping something else is how the
+retracted entity in the engine spec's §6 happened. It is in `plan/next-session.md`
+with the two ways to close it.
 
 **Next:** item 3 — handler registries for fixing bases, length rules and presets.
 Then item 4, the declared phase list, which depends on it.

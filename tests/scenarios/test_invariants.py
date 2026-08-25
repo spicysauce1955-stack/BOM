@@ -9,7 +9,9 @@ from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
 from fenceai.fulfillment.supply import resolve_supply
 from fenceai.knowledge.demo import demo_knowledge
-from fenceai.knowledge.model import KnowledgeBase
+from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
+from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
 from fenceai.strategy.overrides import ForceVertical, Override, PinPost
 from fenceai.topology.model import (
@@ -117,28 +119,53 @@ def _fixtures():
             straight_topology(1200), [],
             Inventory(items=[InventoryItem(id="rem1", sku="RAIL-3000", kind="remnant", length_mm=1250)]),
         ),
+        # A fence whose span limit came from a SITE rule rather than an
+        # unconditioned one. Without it no invariant in this battery ever walked
+        # a site-conditioned run: not traceability, not determinism, not
+        # span-never-exceeds-max — while the exposure path produces a different
+        # bay AND post count through `_segment_view`, and emits a decision-node
+        # kind (`gap`) that `test_decision_edges_reference_existing_nodes` had
+        # never seen.
+        "site_exposure_c": (straight_topology(6000), [], None, SLAT,
+                            SiteConditions(exposure_category="C")),
     }
+
+
+# The demo base plus one exposure-conditioned maximum. Separate from
+# `demo_knowledge()` so every other fixture keeps resolving exactly what it did.
+EXPOSURE_KB = KnowledgeBase(versions=[
+    *demo_knowledge().versions,
+    KnowledgeVersion(
+        object_id="K-EXPOSURE-C", version=1, type="hard_constraint",
+        title="max span 1200 on exposure C",
+        condition=Cmp(cmp="==", left=FieldRef(path="site.exposure_category"),
+                      right=Lit(value="C")),
+        actions=[SetParam(param="max_span_mm", value=1200)],
+    ),
+])
 
 
 @pytest.fixture(params=list(_fixtures()))
 def spine(request):
-    topo, overrides, inventory, *model = _fixtures()[request.param]
-    choice = model[0] if model else None
-    knowledge, catalog = demo_knowledge(), demo_catalog()
+    topo, overrides, inventory, *rest = _fixtures()[request.param]
+    choice = rest[0] if rest else None
+    site = rest[1] if len(rest) > 1 else None
+    knowledge = EXPOSURE_KB if site is not None else demo_knowledge()
+    catalog = demo_catalog()
     result = generate(topo, knowledge, catalog, overrides=overrides,
-                      models=LIBRARY, parts=PARTS, default_model=choice)
+                      models=LIBRARY, parts=PARTS, default_model=choice, site=site)
     reqs = derive_requirements(result.strategy, catalog)
     reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
-    return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge, choice)
+    return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge, choice, site)
 
 
 @pytest.fixture()
 def rerun(spine):
     """Regenerate the whole spine from the same inputs (real determinism check)."""
-    _, _, _, catalog, (topo, overrides, inventory, knowledge, choice) = spine
+    _, _, _, catalog, (topo, overrides, inventory, knowledge, choice, site) = spine
     result = generate(topo, knowledge, catalog, overrides=overrides,
-                      models=LIBRARY, parts=PARTS, default_model=choice)
+                      models=LIBRARY, parts=PARTS, default_model=choice, site=site)
     reqs = derive_requirements(result.strategy, catalog)
     reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)

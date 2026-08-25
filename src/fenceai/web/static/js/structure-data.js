@@ -59,6 +59,7 @@ export async function loadStructure() {
       staleDetail = refusalCode(msg);
       staleReason = msg.includes("catalog_changed") ? "catalog"
         : msg.includes("topology_changed") ? "topology"
+        : msg.includes("site_conditions_changed") ? "site"
         : msg.includes("run_predates_fence_model") ? "predates"
         // Anything ELSE is still a refusal. This used to fall back to `null`,
         // which means "no attempt yet", so the tab said "generate a strategy to
@@ -80,7 +81,7 @@ export function isStale() {
   return staleReason !== null;
 }
 
-// "topology" | "catalog" | "predates" | "unknown" | null — why the last attempt failed
+// "topology" | "catalog" | "site" | "predates" | "unknown" | null — why it failed
 export function staleKind() {
   return staleReason;
 }
@@ -100,6 +101,7 @@ export function staleKind() {
 export function refusalKey(noRunKey) {
   if (!isStale()) return noRunKey;
   return staleKind() === "catalog" ? "structure.catalog_changed"
+    : staleKind() === "site" ? "structure.site_changed"
     : staleKind() === "predates" ? "error.run_predates_fence_model"
     : staleKind() === "unknown" ? "structure.unreadable"
     : "structure.stale";

@@ -189,7 +189,28 @@ class GenerationRun(BaseModel):
     # changes, posts move — and without this the structure sheet renders the old
     # layout without complaint. 0 is a run generated before site conditions
     # existed, which is exactly what it was generated against.
+    #
+    # REPORTED, never guarded on. A revision counts SAVES, and a save that
+    # changes nothing still moves it — see `site_facts` below.
     site_revision: int = 0
+    # The site facts this run was actually built from: what the guard compares,
+    # and what makes the run explainable.
+    #
+    # A counter could not do this job, and the way it failed is worth keeping.
+    # The digest hashes the FACTS — two runs of one fence must share an id — so
+    # re-saving IDENTICAL site conditions bumped the revision, regenerated to the
+    # same run id, and `INSERT OR IGNORE` kept the stored document carrying the
+    # old number. Every derived view then answered 409 for ever, with no user
+    # action able to repair it; the generate response even reported the new
+    # revision while the store held the old one. Guard and digest have to agree
+    # on what "the site" means, and the facts are that meaning.
+    #
+    # It also answers foundation §15. "Why is this bay 1200 mm" resolves to a
+    # rule whose condition is `site.exposure_category == "C"`, and without this
+    # nothing persisted said the site WAS C: `Project.site` is mutable and keeps
+    # no history, so the run's own explanation became unreconstructible the
+    # moment somebody edited the form.
+    site_facts: dict = {}
     knowledge_snapshot: list[tuple[str, int]] = []
     snapshot_hash: str = ""
     overrides_applied: list[str] = []

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from typing import Literal
 
@@ -53,6 +53,11 @@ class SiteConditions(BaseModel):
     between, which is exactly the silent wrong answer the contract's regime guard
     refuses. It rides on the snapshot.
     """
+
+    # `Project.site`'s own comment claims a typo has to fail at the boundary.
+    # Field-NAME typos did not: `{"exposure_catgeory": "C"}` validated clean,
+    # stored all-None, and the run behaved as if the estimator had said nothing.
+    model_config = ConfigDict(extra="forbid")
 
     exposure_category: Literal["B", "C", "D"] | None = None
     hvhz: bool | None = None                # high-velocity hurricane zone

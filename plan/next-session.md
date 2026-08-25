@@ -59,6 +59,22 @@ item 1. One change, four payoffs.
 
 **Steps 1–4 need nothing from anybody.** Steps 1 and 2 are done; start at step 3.
 
+### Owed from item 2's review, and NOT done
+
+1. **`site.*` does not reach model variant conditions or eligibility predicates.**
+   `fencemodel/resolve.py` and `match.py` evaluate against contexts with no `site`
+   namespace, so a variant conditioned on `site.hvhz` silently falls through to the
+   default spec — the silent-wrong-answer shape, and an HVHZ panel build-up is
+   exactly what a variant is for. Decide it rather than inherit it: either bind
+   `site` into `PanelContext.condition_ctx()` and extend the missing-dimension scan
+   to model conditions, or have `validate_model` REFUSE a variant condition reading
+   `site.*` so it fails at authoring instead of at the fence.
+2. **No UI.** Site conditions are settable only through `PUT /projects/{id}/site`,
+   so an estimator cannot enter them. `error.site_conditions_changed` and
+   `structure.site_changed` are therefore strings no browser has ever rendered.
+3. **`conservative_parameter_used`** — deferred to item 5 on purpose; it keys on a
+   `ParameterTable.task` class that does not exist yet.
+
 ### Two things item 5 must do BEFORE it loads a published row
 
 Both fell out of the reviews of item 1. Both are inert today for the same reason —

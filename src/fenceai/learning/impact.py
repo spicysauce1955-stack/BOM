@@ -22,6 +22,7 @@ from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.parts.model import PartLibrary
+from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
 from fenceai.strategy.model import Strategy
 from fenceai.strategy.overrides import Override
@@ -55,6 +56,14 @@ class ImpactCase(BaseModel):
     # from the one it is built to reports the delta of two changes at once, and
     # attributes both to the rule being previewed
     fence_model: FenceModelChoice | None = None
+    # ...and its SITE, for the same reason again, and this one bites hardest: a
+    # preview that regenerates under no site conditions evaluates every
+    # `site.*`-conditioned rule as not-applicable, so a rule that relays the
+    # entire fence reports `bom_delta_cents: 0` on the screen a curator approves
+    # from. `SiteConditions()` — all dimensions unset — rather than None, so the
+    # namespace is always BOUND and `_assert_namespaces_bound` can tell "nobody
+    # answered" from "nobody asked".
+    site: SiteConditions = SiteConditions()
     # and its policy, for the same reason: `objective_preset` decides which
     # product supply resolution buys, so previewing under DEFAULT_POLICY reports
     # a delta the real run would never produce
@@ -150,7 +159,8 @@ def _failure(e: GenerationFailure) -> ImpactFailure:
 
 
 def _spine(topology, kb, catalog, overrides, inventory, project_id="",
-           models=None, default_model=None, policy=None, parts=None):
+           models=None, default_model=None, policy=None, parts=None,
+           site=None):
     # project_id is a bound scope dimension during generation — a project-scoped
     # rule must behave in the preview exactly as it will in the real run. `parts`
     # travels for the same reason: a slot's products come from the part it names,
@@ -158,7 +168,7 @@ def _spine(topology, kb, catalog, overrides, inventory, project_id="",
     # from the one Generate would build.
     result = generate(topology, kb, catalog, overrides=overrides, project_id=project_id,
                       models=models, default_model=default_model, policy=policy,
-                      parts=parts)
+                      parts=parts, site=site)
     # the SAME pipeline the read routes run, not a fourth hand-rolled copy of it:
     # a preview that priced a job differently from /bom would be worse than no
     # preview at all
@@ -255,7 +265,7 @@ def _preview(
             strategy_before, bom_before = _spine(
                 case.topology, kb_before, catalog, case.overrides, case.inventory,
                 case.project_id, library_before, case.fence_model, case.policy,
-                parts,
+                parts, case.site,
             )
         except (GenerationFailure, ValueError) as e:
             # The project cannot generate as it STANDS — a broken rule, a SKU
@@ -274,7 +284,7 @@ def _preview(
             strategy_after, bom_after = _spine(
                 case.topology, kb_after, catalog, case.overrides, case.inventory,
                 case.project_id, library_after, case.fence_model, case.policy,
-                parts,
+                parts, case.site,
             )
         except GenerationFailure as e:
             impact.generation_failure = _failure(e)

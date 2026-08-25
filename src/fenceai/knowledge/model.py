@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, Field
 
 from fenceai.core.units import Mm
-from fenceai.knowledge.ast import Expr
+from fenceai.knowledge.ast import Expr, field_paths
 
 KnowledgeType = Literal[
     "fact", "hard_constraint", "company_rule", "preference", "heuristic", "override", "candidate"
@@ -177,7 +177,26 @@ class KnowledgeVersion(BaseModel):
         return self.authority if self.authority is not None else DEFAULT_AUTHORITY[self.type]
 
     def specificity(self) -> int:
-        return len(self.scope)
+        """How narrowly this rule is aimed — bound scope dimensions PLUS the
+        context fields its condition tests.
+
+        Conditions used to count for nothing, and that made the most natural
+        authoring act in the system a build error: *"we already say the maximum
+        is 1500; in Exposure C say 1200"* produced two rules of the same type at
+        the same authority, one conditioned and one not. `_beats` returned False
+        both ways, and inside the hard band a disagreeing tie is a
+        `GenerationFailure` — so adding a perfectly ordinary conditioned rule
+        bricked every project until someone reverse-engineered the authority
+        ladder and hand-tuned `authority=`.
+
+        A rule that applies sometimes IS more specific than one that always
+        applies, which is the same principle `len(self.scope)` already encodes:
+        scope narrows by dimension, a condition narrows by value. Counting the
+        distinct field PATHS rather than the node count keeps it a measure of how
+        many things a rule pins down, so `a == 1 AND a == 1` does not outrank
+        `a == 1 AND b == 2`.
+        """
+        return len(self.scope) + len(field_paths(self.condition) if self.condition else ())
 
 
 class KnowledgeBase(BaseModel):

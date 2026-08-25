@@ -74,8 +74,13 @@ export async function render() {
     // and "the decisions for section A" is no longer a true sentence. Named,
     // exactly as structure-data.js names the same refusal.
     if (stale()) return;
-    const key = String(err?.message || "").includes("topology_changed")
-      ? "decisions.stale" : null;
+    // ...and the site-conditions twin of it: the fence was laid out to a site
+    // the project no longer describes, so "the decisions for section A" is no
+    // more true than it is over a moved drawing.
+    const detail = String(err?.message || "");
+    const key = detail.includes("topology_changed") ? "decisions.stale"
+      : detail.includes("site_conditions_changed") ? "decisions.stale_site"
+      : null;
     host.innerHTML = `<h3>${esc(t("decisions.title"))}</h3>
       <div class="meta">${esc(t(key || "decisions.unavailable"))}</div>`;
     return;

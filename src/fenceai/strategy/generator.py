@@ -116,7 +116,13 @@ DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_co
 # for — without the bump an existing project regenerates to the same run id,
 # `save_run`'s INSERT OR IGNORE keeps the document that predates the fields, and
 # its bays draw no fasteners for ever with no user action able to repair it.
-PLANNING_BEHAVIOR_VERSION = "planning-v3"
+PLANNING_BEHAVIOR_VERSION = "planning-v4"
+# v4: `specificity()` counts the field paths a rule's CONDITION tests, not only
+# its bound scope dimensions. A conditioned rule now outranks an unconditioned one
+# at the same authority, where before they tied — and inside the hard band a
+# disagreeing tie is a failure, so "we say 1500; in Exposure C say 1200" used to
+# brick every project. Precedence deciding differently is an output change for
+# unchanged inputs.
 # v3: site conditions bind into every evaluation context, so a rule conditioned on
 # `site.*` now fires where it previously could not — the same project against the
 # same knowledge can resolve a different span limit. That is an OUTPUT change for
@@ -134,7 +140,12 @@ PLANNING_BEHAVIOR_VERSION = "planning-v3"
 # property WITHIN a version and is not weakened by the bump — what the bump
 # strands is comments anchored to already-persisted run ids, once. Against that,
 # switching the preset used to strand a thread EVERY time it was switched.
-RUN_DIGEST_VERSION = "digest-v3"
+# v4: `site_facts` joined the digest's inputs — two projects that differ only in
+# their site are different fences and must not share a run id. (It joined in the
+# same commit that cut planning-v3, which moved every digest anyway; bumping this
+# too is what lets a later reader see that v3's INPUTS changed and not just its
+# behaviour, which is the whole reason the two constants are separate.)
+RUN_DIGEST_VERSION = "digest-v4"
 
 # The catalog attribute by which a product declares the opening width it fits.
 # Fit is DATA, like Product.attrs["length_mm"] for posts: a SKU is an opaque id and
@@ -227,7 +238,10 @@ def generate(
 
     _check_post_lengths(topology, knowledge, scope, site_facts, catalog, builder, strategy)
     _report_unfilled_posts(strategy, builder)
-    _report_missing_site_conditions(knowledge, site_facts, strategy, builder)
+    _report_missing_site_conditions(
+        knowledge, site_facts, scope, {u.model_id for u in models_used},
+        strategy, builder,
+    )
 
     orphaned = [ov.id for ov in overrides if ov.id not in applied]
     for ov_id in orphaned:
@@ -249,6 +263,9 @@ def generate(
         # what the run was generated AGAINST, so a derived view can refuse to be
         # laid over conditions that have moved since (409 site_conditions_changed)
         site_revision=site.revision if site is not None else 0,
+        # ...and the FACTS, which are what the guard compares. The revision is
+        # reported beside them and never guarded on.
+        site_facts=dict(site_facts),
         knowledge_snapshot=knowledge.snapshot_set(),
         snapshot_hash=knowledge.snapshot_hash(),
         overrides_applied=sorted(applied),
@@ -2623,8 +2640,33 @@ _PANEL_LIMITS = (
 )
 
 
+def _could_apply(v: KnowledgeVersion, scope: dict[str, str], series_used: set[str]) -> bool:
+    """Could this rule ever fire on THIS run, ignoring its condition?
+
+    Only a filter against dimensions the run actually bound. A rule scoped to
+    another project, or to a product line this fence is not built from, cannot
+    apply here — and asking the estimator to fill in a site dimension for it is
+    an item they cannot clear: entering a value changes nothing, because the rule
+    still will not fire. That is standing noise on the one signal this adds.
+
+    Deliberately conservative. An unbound dimension is NOT treated as a mismatch,
+    because `bind_scope` leaves a dimension unbound exactly when the fact is
+    absent, and a rule scoped to something we cannot rule out has to be assumed
+    reachable. Erring toward reporting is the safe direction: a false nag is
+    noise, a missed one is the silence this whole warning exists to break.
+    """
+    for key, value in v.scope.items():
+        if key == "series":
+            if series_used and value not in series_used:
+                return False
+        elif key in scope and scope[key] != value:
+            return False
+    return True
+
+
 def _report_missing_site_conditions(
-    kb: KnowledgeBase, site_facts: dict, strategy: Strategy, builder: GraphBuilder,
+    kb: KnowledgeBase, site_facts: dict, scope: dict[str, str],
+    series_used: set[str], strategy: Strategy, builder: GraphBuilder,
 ) -> None:
     """Rules that asked about this site, and a site that did not answer.
 
@@ -2647,16 +2689,26 @@ def _report_missing_site_conditions(
     in the Knowledge Platform's review queue that nobody there can action, which
     is the one property contract §1.2.1 says that queue must have.
     """
-    wanted: set[str] = set()
+    wanted: dict[str, str] = {}   # dimension -> the strongest type that wanted it
     for v in kb.active():
         if v.type == "candidate" or v.condition is None:
             continue
+        if not _could_apply(v, scope, series_used):
+            continue
         for path in field_paths(v.condition):
-            if path.startswith("site."):
-                wanted.add(path.split(".", 1)[1])
-    missing = sorted(wanted - set(site_facts))
+            if not path.startswith("site."):
+                continue
+            dim = path.split(".", 1)[1]
+            if wanted.get(dim) != "hard_constraint":
+                wanted[dim] = v.type
+    missing = sorted(set(wanted) - set(site_facts))
     if not missing:
         return
+    # A HARD constraint that could not be evaluated is not the same event as a
+    # preference that did not fire. "Hard constraint is not preference" is a
+    # foundation rule, and it should reach the report rather than stopping at
+    # the resolver.
+    hard = any(wanted[d] == "hard_constraint" for d in missing)
     params: dict[str, str | int] = {
         "dimensions": ", ".join(missing), "n": len(missing),
     }
@@ -2669,8 +2721,8 @@ def _report_missing_site_conditions(
         payload=dict(params), confidence="uncertain",
     )
     strategy.warnings.append(StrategyWarning(
-        code="site_condition_missing", severity="warning", message=message,
-        params=params, decision_ref=node.id,
+        code="site_condition_missing", severity="error" if hard else "warning",
+        message=message, params=params, decision_ref=node.id,
     ))
 
 
