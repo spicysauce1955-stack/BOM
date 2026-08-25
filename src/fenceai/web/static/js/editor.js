@@ -22,6 +22,7 @@ import {
   currentUnit, enumWord, fmt, fmtLen, inputStep, money, parseTypedLength,
   toDisplayValue, toMm, tu,
 } from "./units.js";
+import { gapsPanelHtml } from "./gaps.js";
 import { localizedByCode, warningRowHtml } from "./warnings.js";
 
 const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin", "model"];
@@ -36,7 +37,9 @@ export function initEditor() {
   renderGrid();
   loadCatalogProducts(); // warm the cache so the gate popover opens instantly
   on("project-loaded", () => { renderAllCanvas(); renderHandles(); });
-  on("result-changed", () => { renderOverlay(); renderWarnings(); renderStrategySummary(); });
+  on("result-changed", () => {
+    renderOverlay(); renderWarnings(); renderGaps(); renderStrategySummary();
+  });
   on("tool-changed", () => {
     updateToolButtons(); renderHandles(); updateStatus(); closePopover();
     clearLengthBuffer();
@@ -56,6 +59,7 @@ function renderAllCanvas() {
   renderTopology();
   renderOverlay();
   renderWarnings();
+  renderGaps();
   renderStrategySummary();
 }
 
@@ -1169,6 +1173,22 @@ function renderStrategySummary() {
     ev.preventDefault();
     document.querySelector('#tabs button[data-tab="bom"]')?.click();
   });
+}
+
+/** The gap surface beside the warnings, on the screen where a run is read.
+ *
+ *  Its own container rather than more rows inside `#warnings`: a warning is a
+ *  note about this plan and a gap is a work item about the knowledge behind
+ *  every plan, and folding the second into the first is how `would_close` — the
+ *  only field that makes a gap worth receiving — ends up with nowhere to go. */
+function renderGaps() {
+  const div = document.getElementById("gaps");
+  if (!div) return;
+  // `empty: true` is deliberate on THIS surface: after a generation, "no gaps"
+  // is an answer to a question the reader is entitled to ask, and silence is
+  // indistinguishable from a panel that failed to render.
+  div.innerHTML = state.result
+    ? gapsPanelHtml(state.result.strategy?.gaps, { empty: true }) : "";
 }
 
 function renderWarnings() {

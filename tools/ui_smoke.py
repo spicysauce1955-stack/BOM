@@ -22,8 +22,11 @@ import urllib.request
 
 from cdp import Cdp
 
-PORT = 8791
-CDP_PORT = 9333
+# Overridable so two worktrees can run the suite at once. Both preflight checks
+# below abort on a busy port, and without this the second run's only options are
+# to wait or to kill somebody else's browser.
+PORT = int(os.environ.get("FENCEAI_SMOKE_PORT", "8791"))
+CDP_PORT = int(os.environ.get("FENCEAI_SMOKE_CDP_PORT", "9333"))
 OUT = os.path.join(os.path.dirname(__file__), "smoke-out")
 CHECKS: list[tuple[str, bool]] = []
 
@@ -2370,6 +2373,27 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               and "לספק" in bom_panel)
         check("the BOM tab still prices what it CAN supply beside the gap",
               (c.js("document.querySelectorAll('#bom-body table').length") or 0) >= 2)
+        # ...and the PRICED table has to look short too. The problems panel above
+        # it was the only place that said anything, so the table a reader prints
+        # and adds up looked complete while missing a part, and the total at its
+        # head read as the price of the fence rather than the price of the part
+        # of it that can be bought.
+        priced = c.js("""
+(() => {
+  const panels = [...document.querySelectorAll('#bom-body .panel')];
+  const p = panels.find(x => x.querySelector('tr.unfulfilled'));
+  return {
+    rows: document.querySelectorAll('#bom-body tr.unfulfilled').length,
+    heading: p ? p.querySelector('h3').textContent : '',
+    incomplete: !!p && p.classList.contains('incomplete'),
+    row: p ? p.querySelector('tr.unfulfilled').textContent : '',
+  };
+})()""")
+        check("the priced BOM carries the line it cannot supply, with no money on it",
+              priced["rows"] >= 1 and "מסילה" in priced["row"]
+              and "לא סופק" in priced["row"], priced)
+        check("the priced total says it excludes the lines nothing supplies",
+              priced["incomplete"] and "לא כולל" in priced["heading"], priced)
         c.shot("15-bom-unsupplied.png")
         c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
         time.sleep(2)
@@ -3194,6 +3218,145 @@ fetch('/api/fence-models').then(r => r.json())
               and "M-SMOKE:disabled" in after_retire)
         c.js("document.querySelector('#tabs button[data-tab=\"models\"]').click(); 'ok'")
         time.sleep(1.0)
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.5)
+
+        # --- a hole in the knowledge is a NAMED hole, not a missing plan ------
+        # LAST, because it retires a rule the whole demo knowledge base rests on
+        # and nothing in the UI puts one back.
+        #
+        # Retiring K-MAXSPAN leaves the run with no maximum-span knowledge at
+        # all. Until `Gap` became a return type that produced NO PLAN — a 422, an
+        # empty canvas, and a user with nothing to correct — on the single most
+        # important parameter in the system, and an exposure category no
+        # published row covers reaches the same state without anyone retiring
+        # anything. The boundary contract's §3.2.4 forbids it: "never fail a run
+        # over a gap; warned, named, unfulfilled lines instead."
+        #
+        # These gap codes had never been rendered by a browser at all, in either
+        # language, which is why the check reads the PANEL and not the page.
+        retired = c.js("""
+(async () => {
+  const a = await fetch('/api/knowledge/K-MAXSPAN/1/retire', {method: 'POST'});
+  // ...and the ground-post default, which is the SECOND converted site (audit
+  // row 3). It gives the same screen the other half of the story: posts that
+  // stand with no product, which demand already reports as unresolved lines.
+  // One gap explains a plan; two show that the panel is a QUEUE.
+  const b = await fetch('/api/knowledge/K-POST-DEFAULT/1/retire', {method: 'POST'});
+  return [a.status, b.status].join(',');
+})()""")
+        check("the two rules under the converted failure sites can be retired",
+              retired == "200,200", retired)
+        c.js("document.getElementById('new-project-name').value = 'gap'; 'ok'")
+        c.click(*c.element_center("#btn-new-project"))
+        time.sleep(1.5)
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.canvas_px(0, 0))
+        c.click(*c.canvas_px(6000, 0))
+        c.key("Enter")
+        time.sleep(1.2)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(3)
+        posts_after_gap = c.js("document.querySelectorAll('#g-overlay circle').length") or 0
+        check("a run with no max-span and no post knowledge still produces a plan",
+              posts_after_gap >= 3, posts_after_gap)
+        gaps = c.js("""
+(() => {
+  const panel = document.querySelector('#gaps .panel.gaps');
+  if (!panel) return null;
+  const rows = [...panel.querySelectorAll('.gap')];
+  const group = (k) => panel.querySelector(`.gap-group[data-closes-by="${k}"]`);
+  const span = rows.find(r => r.dataset.gapCode === 'uncovered_max_span');
+  return {
+    text: panel.textContent,
+    codes: rows.map(r => r.dataset.gapCode),
+    knowledge: group('knowledge') ? group('knowledge').textContent : '',
+    planning: group('planning') ? group('planning').textContent : '',
+    subjects: rows.map(r => r.querySelector('.gap-subject')?.textContent.trim() || ''),
+    span_severity: span ? span.dataset.severity : '',
+    span_closes: span ? span.dataset.closesBy : '',
+    would_close: span ? (span.querySelector('.gap-verbatim')?.textContent || '') : '',
+    would_close_lang: span ? (span.querySelector('.gap-verbatim')?.lang || '') : '',
+    would_close_dir: span ? (span.querySelector('.gap-verbatim')?.getAttribute('dir') || '') : '',
+    raw_keys: /gaps\\.[a-z_]+/.test(panel.textContent),
+  };
+})()""")
+        check("the gap surface renders at all", bool(gaps), gaps)
+        gaps = gaps or {}
+        check("it NAMES both holes, in Hebrew, from the code and not the English message",
+              set(gaps.get("codes") or []) == {"uncovered_max_span", "no_default_post"}
+              and "אין כלל הקובע מפתח מרבי" in (gaps.get("text") or "")
+              and "אין כלל הקובע מוצר ברירת מחדל" in (gaps.get("text") or ""),
+              {"codes": gaps.get("codes"), "text": gaps.get("text", "")[:200]})
+        # the contract's first binding clause: a gap that only says something is
+        # missing sends a curator hunting. It is on the row, not behind a click.
+        check("it shows what would close it, verbatim and marked as English",
+              "max_span_mm row for series" in (gaps.get("would_close") or "")
+              and gaps.get("would_close_lang") == "en"
+              and gaps.get("would_close_dir") == "ltr", gaps.get("would_close"))
+        check("the curator sentence is labelled as written for the knowledge team",
+              "נכתב עבור אוצרי הידע" in (gaps.get("text") or ""))
+        # ...and the second binding clause. Both of today's gaps close on the
+        # knowledge platform, so what the browser can prove is the half that
+        # matters most: the panel offers exactly the group with work in it, and
+        # does NOT print an empty "needs a change in this repository" heading
+        # over nothing. The other direction — a `planning` row never landing in a
+        # curator's group — has no backend fixture and is pinned in node
+        # (tests/web/test_gaps_module.py).
+        check("every gap is filed under who can close it, and no empty group is offered",
+              "uncovered_max_span" in (gaps.get("knowledge") or "")
+              and "no_default_post" in (gaps.get("knowledge") or "")
+              and gaps.get("planning") == "",
+              {"k": (gaps.get("knowledge") or "")[:160], "p": gaps.get("planning")})
+        # a parameter and a slot are different subjects and are named as such —
+        # the first queue that groups by subject kind depends on it
+        check("each gap says WHAT is missing, addressably",
+              any("max_span_mm" in s for s in gaps.get("subjects") or [])
+              and any("post_ground" in s for s in gaps.get("subjects") or []),
+              gaps.get("subjects"))
+        check("a gap that costs a line is marked as costing one",
+              gaps.get("span_severity") == "warns_line"
+              and gaps.get("span_closes") == "knowledge"
+              and "משפיע על שורה" in (gaps.get("text") or ""))
+        check("no raw locale key reached the gap panel", not gaps.get("raw_keys"))
+        # the SAME fact reaches the warning list beside it, from the same code
+        warn_text = c.js("document.getElementById('warnings').textContent") or ""
+        check("the gap is a warning row too, in Hebrew",
+              "מפתח מרבי" in warn_text)
+        # the panel sits under the drawing, so an unscrolled shot is a shot of
+        # the canvas — a screenshot that proves nothing about the thing it is named for
+        c.js("""
+document.querySelector('#gaps .panel.gaps')
+  ?.scrollIntoView({block: 'center'}); 'ok'""")
+        time.sleep(0.5)
+        c.shot("18-gaps.png")
+        # and it is on the money view as well, because "why is this BOM short?"
+        # and "why is this rule missing?" are one question with one answer
+        c.js("document.querySelector('#tabs button[data-tab=\"bom\"]').click(); 'ok'")
+        time.sleep(2.5)
+        bom_gaps = c.js(
+            "document.querySelector('#bom-body .panel.gaps')?.textContent || ''")
+        check("the BOM tab carries the same gap surface",
+              "uncovered_max_span" in bom_gaps and "max_span_mm" in bom_gaps)
+        # ...and the BOM below it is visibly short, because a post with no
+        # product is a line nothing supplies. This is the pair the design asks
+        # for: the missing LINE and the missing RULE, on one screen, so "why is
+        # this short?" is answered where it is asked.
+        short = c.js("""
+(() => {
+  const panels = [...document.querySelectorAll('#bom-body .panel')];
+  const p = panels.find(x => x.querySelector('tr.unfulfilled'));
+  return {
+    rows: document.querySelectorAll('#bom-body tr.unfulfilled').length,
+    heading: p ? p.querySelector('h3').textContent : '',
+    incomplete: !!p && p.classList.contains('incomplete'),
+  };
+})()""")
+        check("the priced BOM shows the posts nothing can supply and says the "
+              "total excludes them",
+              short["rows"] >= 1 and short["incomplete"]
+              and "לא כולל" in short["heading"], short)
+        c.shot("19-bom-gaps.png")
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.5)
 

@@ -12,6 +12,7 @@ import {
   unitLabel,
 } from "./units.js";
 import { loadStructure, sectionOf, tagOf } from "./structure-data.js";
+import { gapsPanelHtml } from "./gaps.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
 export function initTabs() {
@@ -226,13 +227,18 @@ async function renderBom() {
     // include. `bom.warnings` and `unresolved` were populated by the API and
     // rendered by nothing, so the BOM was silently short a line.
     + supplyProblemsHtml(data.bom.warnings, data.unresolved)
+    // ...and, above the same table, what the RUN could not resolve. A missing
+    // line and a missing rule are two different questions with one answer
+    // between them - "why is this BOM short?" - and reading only the first sends
+    // the reader looking for a product when the hole is in the knowledge.
+    + gapsPanelHtml(state.result?.strategy?.gaps)
     + quotesHtml(quotes)
     + groupedBomHtml(data.grouped, products)
     // directly above the priced table, for the reason the problems panel is
     // above it too: it says what that table was priced AGAINST, and a total read
     // without its yard is a number two people can disagree about for ever
     + supplyProvenanceHtml(data.supply)
-    + bomHtml(data.bom, products);
+    + bomHtml(data.bom, products, { unresolved: data.unresolved });
   const quoteForm = document.getElementById("quote-label-form");
   const quoteInput = document.getElementById("quote-label-input");
   const saveQuote = async () => {
@@ -422,8 +428,26 @@ export function groupedBomHtml(grouped, products) {
 }
 
 
-function bomHtml(bom, products) {
-  let html = `<div class="panel"><h3>${t("bom.title")} — ${t("bom.total")} ${esc(money(bom.total_cents))}</h3>
+/** The priced table.
+ *
+ *  `unresolved` is what the fence NEEDS and no product could supply. It used to
+ *  live only in the panel above this one, so the table itself — the thing a
+ *  reader prints, sends and adds up — looked complete while being short a part,
+ *  and the total at its head read as the price of the fence rather than the
+ *  price of the part of it that can be bought. The design's rule is blunt about
+ *  it: "a BOM missing something must LOOK like it is missing something". So the
+ *  missing lines are rows in this table, carrying no money, and the heading says
+ *  the total excludes them.
+ *
+ *  Optional, because a saved quote is rendered through here too and carries no
+ *  unresolved list: a quote cannot be saved while a part has no supplier, so
+ *  there is nothing to say about one. */
+function bomHtml(bom, products, { unresolved = [] } = {}) {
+  const short = (unresolved || []).length;
+  let html = `<div class="panel${short ? " incomplete" : ""}">
+  <h3>${t("bom.title")} — ${t("bom.total")} ${esc(money(bom.total_cents))}
+  ${short ? `<span class="tag low">${esc(t(short === 1 ? "bom.total_excludes_one"
+      : "bom.total_excludes", { n: short }))}</span>` : ""}</h3>
   <table><tr><th>${t("bom.sku")}</th><th>${t("bom.purchase")}</th><th>${t("bom.engineering")}</th>
   <th>${t("bom.overage")}</th><th>${tu("bom.unit_price")}</th><th>${tu("bom.line_total")}</th><th>${t("bom.notes")}</th></tr>`;
   for (const l of bom.lines) {
@@ -436,6 +460,20 @@ function bomHtml(bom, products) {
       <td class="num">${esc(money(l.unit_price_cents))}</td>
       <td class="num">${esc(money(l.total_cents))}</td>
       <td>${esc((l.notes || []).join("; "))}</td></tr>`;
+  }
+  // A row with no sku, no unit price and no total — because that is precisely
+  // what is known about it. `roleWord` rather than the raw enum: `role` is a
+  // backend word, and an untranslated "rail" in the first column of a Hebrew
+  // table reads as an identifier rather than as the part it names.
+  for (const u of unresolved || []) {
+    html += `<tr class="unfulfilled"><td>${esc(roleWord(u.role))}`
+      + (u.slot_key && u.slot_key !== u.role
+        ? ` <span class="meta">${esc(u.slot_key)}</span>` : "")
+      + `<br><span class="meta">${esc(t("bom.unfulfilled_note"))}</span></td>
+      <td>—</td>
+      <td><span class="num">${esc(String(u.engineering_qty))}</span></td>
+      <td></td><td>—</td><td>—</td>
+      <td>${esc(t("bom.unfulfilled"))}</td></tr>`;
   }
   html += "</table></div>";
   for (const [sku, plan] of Object.entries(bom.cut_plans || {})) {
