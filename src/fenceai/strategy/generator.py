@@ -30,12 +30,12 @@ from fenceai.fencemodel.match import (
     post_panel_facts, sole_excluding_term,
 )
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
-from fenceai.knowledge.ast import field_paths
 from fenceai.fencemodel.resolve import (
     PanelContext, ResolvedPanel, choose_variant, choose_variant_by, clear_opening_mm,
     height_supported, rail_positions_mm, resolve_panel,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
+from fenceai.knowledge.ast import field_paths
 from fenceai.knowledge.evaluator import (
     Resolution,
     preference_firings,
@@ -45,6 +45,7 @@ from fenceai.knowledge.evaluator import (
 )
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
 from fenceai.parts.model import PartLibrary
+from fenceai.project.model import SiteConditions
 from fenceai.parts.resolve import resolve_model_parts
 from fenceai.strategy.layout import boundaries, layout_segment
 from fenceai.strategy.model import (
@@ -115,7 +116,11 @@ DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_co
 # for — without the bump an existing project regenerates to the same run id,
 # `save_run`'s INSERT OR IGNORE keeps the document that predates the fields, and
 # its bays draw no fasteners for ever with no user action able to repair it.
-PLANNING_BEHAVIOR_VERSION = "planning-v2"
+PLANNING_BEHAVIOR_VERSION = "planning-v3"
+# v3: site conditions bind into every evaluation context, so a rule conditioned on
+# `site.*` now fires where it previously could not — the same project against the
+# same knowledge can resolve a different span limit. That is an OUTPUT change for
+# unchanged inputs, which is exactly what this version exists to record.
 # v2: `part_snapshot` joined the digest's inputs. A model names a part_id and not a
 # version, so two runs of the identical model document — same id, same content hash
 # — are different fences once a part moves under them. Without the bump they hash
@@ -169,6 +174,7 @@ def generate(
     models: FenceModelLibrary | None = None,
     default_model: FenceModelChoice | None = None,
     parts: PartLibrary | None = None,
+    site: SiteConditions | None = None,
 ) -> GenerationResult:
     """`parts` is threaded in exactly as `models` is, and for the same reason:
     `generate()` is pure (ADR-0004), so it may not reach for a store. `None` means
@@ -177,6 +183,11 @@ def generate(
     overrides = overrides or []
     models = models or FenceModelLibrary()
     policy = {**DEFAULT_POLICY, **(policy or {})}
+    # Bound ONCE, here, and threaded read-only from this point: `generate()` is
+    # pure (ADR-0004), so it may not reach for the project. Unset dimensions are
+    # OMITTED by `.facts()` rather than sent as None, which is what makes a rule
+    # conditioned on one *not applicable* instead of false.
+    site_facts = site.facts() if site is not None else {}
     builder = GraphBuilder()
     strategy = Strategy(id="strategy")
     applied: set[str] = set()
@@ -184,7 +195,7 @@ def generate(
     # bound where they become facts
     scope = bind_scope({"project_id": project_id})
 
-    demand_skus, demand_refs = _resolve_demand_skus(knowledge, scope)
+    demand_skus, demand_refs = _resolve_demand_skus(knowledge, scope, site_facts)
     builder.add(
         "quantity", "resolve_demand_products",
         payload=dict(demand_skus),
@@ -196,8 +207,8 @@ def generate(
     # move during a generation, so this is a memo and not a second answer.
     resolved_posts: dict[str, FenceModel] = {}
     _generate_node_posts(
-        topology, knowledge, scope, catalog, overrides, policy, builder, strategy,
-        applied, models, default_model, parts, resolved_posts,
+        topology, knowledge, scope, site_facts, catalog, overrides, policy, builder,
+        strategy, applied, models, default_model, parts, resolved_posts,
     )
     # every fence model actually drawn from, across all runs — part of the run id
     # (a model swap changes what the run means even though the digest's other
@@ -209,13 +220,14 @@ def generate(
     parts_used: list[PartUse] = []
     for run in topology.runs:
         _generate_run(
-            topology, run, knowledge, scope, catalog, overrides, policy,
+            topology, run, knowledge, scope, site_facts, catalog, overrides, policy,
             builder, strategy, applied, demand_skus, models_used,
             models, default_model, parts, parts_used, resolved_posts,
         )
 
-    _check_post_lengths(topology, knowledge, scope, catalog, builder, strategy)
+    _check_post_lengths(topology, knowledge, scope, site_facts, catalog, builder, strategy)
     _report_unfilled_posts(strategy, builder)
+    _report_missing_site_conditions(knowledge, site_facts, strategy, builder)
 
     orphaned = [ov.id for ov in overrides if ov.id not in applied]
     for ov_id in orphaned:
@@ -234,6 +246,9 @@ def generate(
         id="run",
         project_id=project_id,
         topology_revision=topology.revision,
+        # what the run was generated AGAINST, so a derived view can refuse to be
+        # laid over conditions that have moved since (409 site_conditions_changed)
+        site_revision=site.revision if site is not None else 0,
         knowledge_snapshot=knowledge.snapshot_set(),
         snapshot_hash=knowledge.snapshot_hash(),
         overrides_applied=sorted(applied),
@@ -285,6 +300,13 @@ def generate(
              [o.model_dump() for o in overrides], design_policy,
              [u.model_dump() for u in run_meta.model_snapshot], run_meta.catalog_hash,
              [u.model_dump() for u in run_meta.part_snapshot],
+             # The site FACTS, not `site_revision`. A revision is a counter that
+             # moves when somebody saves the form, so hashing it would split the
+             # digest between two runs of an identical fence; the facts are what
+             # actually changed the answer. Exposure B and C are different
+             # fences, and `save_run` is INSERT OR IGNORE — without this they
+             # share an id and every later read of the second serves the first.
+             site_facts,
              PLANNING_BEHAVIOR_VERSION, RUN_DIGEST_VERSION],
             sort_keys=True, default=str,
         ).encode()
@@ -341,20 +363,28 @@ def bind_scope(*bindings: dict) -> dict[str, str]:
     return out
 
 
-def _post_ctx(scope: dict[str, str], surface: str, context: str = "") -> dict:
+def _post_ctx(
+    scope: dict[str, str], site: dict, surface: str, context: str = ""
+) -> dict:
     return {
         "scope": bind_scope(scope, {"surface": surface, "context": context}),
         "post": {"surface": surface, "context": context},
+        # Whole-site facts, in EVERY context and never only in some: a site fact
+        # that reached the bays and not the posts beside them would be a fence
+        # built to two different sites. Threaded rather than read from anywhere,
+        # because `generate()` is pure (ADR-0004).
+        "site": site,
     }
 
 
 def _resolve_mounting(
-    kb: KnowledgeBase, scope: dict[str, str], surface: str
+    kb: KnowledgeBase, scope: dict[str, str], site: dict, surface: str
 ) -> tuple[str, str | None, list[str]]:
     """(mounting, rule sku, governed refs) for a base surface — slot-scoped so rules
     for other surfaces never compete (critic finding 5)."""
     res = resolve_actions(
-        kb, _post_ctx(scope, surface), "require_mounting", match=lambda a: a.surface == surface
+        kb, _post_ctx(scope, site, surface), "require_mounting",
+        match=lambda a: a.surface == surface,
     )
     if res.winner:
         act = res.winner.actions[0]
@@ -363,11 +393,11 @@ def _resolve_mounting(
 
 
 def _resolve_reinforcement(
-    kb: KnowledgeBase, scope: dict[str, str]
+    kb: KnowledgeBase, scope: dict[str, str], site: dict
 ) -> tuple[str | None, list[str]]:
     """(reinforced-post sku, governed refs) for gate context, or (None, [])."""
     res = resolve_actions(
-        kb, _post_ctx(scope, "", context="gate"), "require_post_reinforcement",
+        kb, _post_ctx(scope, site, "", context="gate"), "require_post_reinforcement",
         match=lambda a: a.context == "gate",
     )
     if res.winner:
@@ -376,10 +406,10 @@ def _resolve_reinforcement(
 
 
 def _resolve_default_post(
-    kb: KnowledgeBase, scope: dict[str, str], surface: str
+    kb: KnowledgeBase, scope: dict[str, str], site: dict, surface: str
 ) -> tuple[str, list[str]]:
     res = resolve_actions(
-        kb, _post_ctx(scope, surface), "default_component",
+        kb, _post_ctx(scope, site, surface), "default_component",
         match=lambda a: a.role == "post_ground",
     )
     if res.winner:
@@ -402,7 +432,7 @@ DEMAND_ROLE_DEFAULTS = {
 
 
 def _resolve_demand_skus(
-    kb: KnowledgeBase, scope: dict[str, str]
+    kb: KnowledgeBase, scope: dict[str, str], site: dict
 ) -> tuple[dict[str, str], list[str]]:
     """Demand product selection is knowledge (DefaultComponent roles), never a
     code literal — swapping the whole fence system (e.g. to a Barrette catalog)
@@ -411,7 +441,7 @@ def _resolve_demand_skus(
     refs: list[str] = []
     for role, (key, fallback) in DEMAND_ROLE_DEFAULTS.items():
         res = resolve_actions(
-            kb, _post_ctx(scope, ""),
+            kb, _post_ctx(scope, site, ""),
             "default_component", match=lambda a, role=role: a.role == role,
         )
         if res.winner:
@@ -522,6 +552,7 @@ class _PostFacts:
     run: Run
     kb: KnowledgeBase
     scope: dict[str, str]
+    site: dict
     run_ctx: dict
     policy: dict
     vertical: str
@@ -555,7 +586,8 @@ class _PostFacts:
     def count_params(self, model: FenceModel) -> dict[str, int]:
         cached = self._params.get(model.ref)
         if cached is None:
-            seg_kb, seg_ctx = _segment_view(self.kb, self.scope, self.run_ctx, model)
+            seg_kb, seg_ctx = _segment_view(
+                self.kb, self.scope, self.site, self.run_ctx, model)
             cached = {
                 "rails_per_span": _resolve_quantity(
                     seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN)[0],
@@ -571,6 +603,7 @@ def _run_post_facts(
     run: Run,
     kb: KnowledgeBase,
     scope: dict[str, str],
+    site: dict,
     overrides: list[Override],
     policy: dict,
 ) -> tuple[_PostFacts, Resolution, list[str], list[str]]:
@@ -585,10 +618,11 @@ def _run_post_facts(
     run_ctx = {"length_mm": run_length(topo, run),
                "slope_permille": max_slope_permille(topo, run)}
     vertical, refs, defeated, res = _vertical_mode(
-        kb, {"scope": bind_scope(scope), "run": run_ctx}, run_ctx["slope_permille"]
+        kb, {"scope": bind_scope(scope), "run": run_ctx, "site": site},
+        run_ctx["slope_permille"],
     )
     facts = _PostFacts(
-        topo=topo, run=run, kb=kb, scope=scope, run_ctx=run_ctx, policy=policy,
+        topo=topo, run=run, kb=kb, scope=scope, site=site, run_ctx=run_ctx, policy=policy,
         vertical=vertical,
         force_vertical=[ov for ov in overrides if ov.run_id == run.id
                         and ov.directive.kind == "force_vertical"],
@@ -922,6 +956,7 @@ def _make_post(
     builder: GraphBuilder,
     kb: KnowledgeBase,
     scope: dict[str, str],
+    site: dict,
     *,
     post_id: str,
     run_ref: str,
@@ -951,7 +986,7 @@ def _make_post(
     holding the strategy. The cap is resolved HERE and not by the caller for the
     same reason the post's sku is: the precedence below is what decides which
     post stands, and a cap chosen before it would be a cap for another post."""
-    mounting, mount_sku, governed = _resolve_mounting(kb, scope, surface)
+    mounting, mount_sku, governed = _resolve_mounting(kb, scope, site, surface)
     if forced_mounting:
         mounting = forced_mounting
     if forced_sku:
@@ -973,7 +1008,7 @@ def _make_post(
         sku_refs = []
         rejected = list(model_post_rejected or [])
     else:
-        sku, sku_refs = _resolve_default_post(kb, scope, surface)
+        sku, sku_refs = _resolve_default_post(kb, scope, site, surface)
     # Only the MODEL's post had a field of candidates to pass over. A forced sku,
     # a masonry mount, a gate reinforcement and the knowledge default each name
     # ONE product for their own reason, and reporting the model's rejects beside
@@ -1017,6 +1052,7 @@ def _generate_node_posts(
     topology: Topology,
     kb: KnowledgeBase,
     scope: dict[str, str],
+    site: dict,
     catalog: Catalog,
     overrides: list[Override],
     policy: dict,
@@ -1035,7 +1071,7 @@ def _generate_node_posts(
             (run, run_length(topology, run))
         )
 
-    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope)
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope, site)
 
     for node in topology.nodes:
         touches = sorted(touches_by_node.get(node.id, []), key=lambda t: t[0].id)
@@ -1120,13 +1156,13 @@ def _generate_node_posts(
             model_post = _model_post_skus(
                 library, default_model, catalog, parts,
                 [_PostSide(
-                    _run_post_facts(topology, r, kb, scope, overrides, policy)[0],
+                    _run_post_facts(topology, r, kb, scope, site, overrides, policy)[0],
                     s, s if s == 0 else s - 1, kind,
                 ) for r, s in touches],
                 resolved_posts,
             )
         post, cap_gap = _make_post(
-            builder, kb, scope,
+            builder, kb, scope, site,
             model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
             model_cap=model_post.cap_for,
             post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
@@ -1346,7 +1382,8 @@ def _policy_knowledge(model: FenceModel) -> list[KnowledgeVersion]:
 
 
 def _segment_view(
-    kb: KnowledgeBase, scope: dict[str, str], run_ctx: dict, model: FenceModel,
+    kb: KnowledgeBase, scope: dict[str, str], site: dict, run_ctx: dict,
+    model: FenceModel,
 ) -> tuple[KnowledgeBase, dict]:
     """The knowledge and the context a model's numbers resolve under.
 
@@ -1361,7 +1398,8 @@ def _segment_view(
     """
     seg_kb = (KnowledgeBase(versions=[*kb.versions, *_policy_knowledge(model)])
               if model.layout_policy else kb)
-    return seg_kb, {"scope": bind_scope(scope, {"series": model.id}), "run": run_ctx}
+    return seg_kb, {"scope": bind_scope(scope, {"series": model.id}),
+                    "run": run_ctx, "site": site}
 
 
 def _vertical_mode(
@@ -1477,6 +1515,7 @@ def _generate_run(
     run: Run,
     kb: KnowledgeBase,
     scope: dict[str, str],
+    site: dict,
     catalog: Catalog,
     overrides: list[Override],
     policy: dict,
@@ -1500,6 +1539,7 @@ def _generate_run(
     ctx = {
         "scope": bind_scope(scope),
         "run": {"length_mm": length, "slope_permille": slope_permille},
+        "site": site,
     }
 
     # -- the model, and everything scoped to it --------------------------------
@@ -1545,7 +1585,7 @@ def _generate_run(
         # model's layout policy joins the knowledge BEFORE anything under this
         # scope is resolved: a contribution added after `max_span_mm` had resolved
         # would be a contribution that never applied.
-        seg_kb, seg_ctx = _segment_view(kb, scope, ctx["run"], model)
+        seg_kb, seg_ctx = _segment_view(kb, scope, site, ctx["run"], model)
         select_node = builder.add(
             "selection", "select_model",
             payload={"run_id": run.id, "model_ref": model.ref, "source": source,
@@ -1783,7 +1823,7 @@ def _generate_run(
     fixed |= set(fence_model_transition_stations(topo, run))
     fixed_sorted = sorted(fixed)
 
-    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope)
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope, site)
 
     # -- the panel facts every post of this run is matched against -------------
     # Resolved here rather than beside the `choose_vertical_mode` node below,
@@ -1791,7 +1831,7 @@ def _generate_run(
     # read `panel.vertical`. The node still belongs where the graph already puts
     # it; what moves is the answer, which is now asked once and used twice.
     post_facts, vert_res, vertical_refs, vertical_defeated = _run_post_facts(
-        topo, run, kb, scope, overrides, policy
+        topo, run, kb, scope, site, overrides, policy
     )
     vertical = post_facts.vertical
 
@@ -1870,7 +1910,7 @@ def _generate_run(
             library, default_model, catalog, parts,
             _post_sides(post_facts, station, length, kind), resolved_posts)
         post, cap_gap = _make_post(
-            builder, kb, scope,
+            builder, kb, scope, site,
             model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
             model_cap=model_post.cap_for,
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
@@ -2168,7 +2208,7 @@ def _generate_run(
                 library, default_model, catalog, parts,
                 _post_sides(post_facts, s, length, "line"), resolved_posts)
             post, cap_gap = _make_post(
-                builder, kb, scope,
+                builder, kb, scope, site,
                 model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
             model_cap=model_post.cap_for,
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
@@ -2393,7 +2433,7 @@ def _generate_run(
 
     _report_uncovered_max_span(run, strategy, resolved, spans_by_model)
 
-    _check_panel_safety(kb, run, scope, strategy, builder, resolved, spans_by_model,
+    _check_panel_safety(kb, run, scope, site, strategy, builder, resolved, spans_by_model,
                         {s.id: s for s in strategy.spans}, ctx["run"])
 
     for model_ref, offenders in unsupported_heights.items():
@@ -2583,6 +2623,57 @@ _PANEL_LIMITS = (
 )
 
 
+def _report_missing_site_conditions(
+    kb: KnowledgeBase, site_facts: dict, strategy: Strategy, builder: GraphBuilder,
+) -> None:
+    """Rules that asked about this site, and a site that did not answer.
+
+    Silence is the failure mode here. A rule conditioned on an unset dimension is
+    NOT APPLICABLE — correctly, and that is the behaviour the whole design leans
+    on — so it simply does not fire, the fence is built to whatever unconditioned
+    rule was left, and nothing tells the estimator that the one fact deciding it
+    was never entered. The plan looks complete and is answering a question nobody
+    asked.
+
+    Read off the RULES rather than off a list of dimensions, so it reports what
+    this snapshot actually wanted: a knowledge base that never mentions exposure
+    does not nag about exposure, and the day one starts publishing exposure rows
+    the warning appears without a code change.
+
+    **Not a `Gap`.** A gap declares `closes_by: knowledge | planning`, and this is
+    neither — no curator can author this and no schema change in this repo fixes
+    it. It is a field on the project that a person here has to fill in, so it is
+    a warning on the run and nothing else. Filing it as a gap would put an item
+    in the Knowledge Platform's review queue that nobody there can action, which
+    is the one property contract §1.2.1 says that queue must have.
+    """
+    wanted: set[str] = set()
+    for v in kb.active():
+        if v.type == "candidate" or v.condition is None:
+            continue
+        for path in field_paths(v.condition):
+            if path.startswith("site."):
+                wanted.add(path.split(".", 1)[1])
+    missing = sorted(wanted - set(site_facts))
+    if not missing:
+        return
+    params: dict[str, str | int] = {
+        "dimensions": ", ".join(missing), "n": len(missing),
+    }
+    message = (
+        f"{len(missing)} site condition(s) decide rules in this snapshot and are "
+        f"not set: {', '.join(missing)}. Rules needing them did not apply."
+    )
+    node = builder.add(
+        "gap", "site_condition_missing",
+        payload=dict(params), confidence="uncertain",
+    )
+    strategy.warnings.append(StrategyWarning(
+        code="site_condition_missing", severity="warning", message=message,
+        params=params, decision_ref=node.id,
+    ))
+
+
 def _report_unfilled_posts(strategy: Strategy, builder: GraphBuilder) -> None:
     """Posts standing with no product, because knowledge named no default.
 
@@ -2709,6 +2800,7 @@ def _check_panel_safety(
     kb: KnowledgeBase,
     run: Run,
     scope: dict[str, str],
+    site: dict,
     strategy: Strategy,
     builder: GraphBuilder,
     resolved: dict,
@@ -2737,7 +2829,7 @@ def _check_panel_safety(
         # length or grade would otherwise resolve against a fence that does not
         # exist — and this context can raise, when the winner is a hard constraint
         ctx = {"scope": bind_scope(scope, {"series": sm.model.id}),
-               "run": dict(run_facts)}
+               "run": dict(run_facts), "site": site}
         for limit_rule in _PANEL_LIMITS:
             code, param = limit_rule.code, limit_rule.param
             res = resolve_param(kb, ctx, param)
@@ -2807,6 +2899,7 @@ def _check_post_lengths(
     topology: Topology,
     kb: KnowledgeBase,
     scope: dict[str, str],
+    site: dict,
     catalog: Catalog,
     builder: GraphBuilder,
     strategy: Strategy,
@@ -2819,7 +2912,7 @@ def _check_post_lengths(
     on every post here, so the elevation draws the footing the length check paid
     for and the two cannot drift apart."""
     embed, embed_refs = _resolve_quantity(
-        kb, {"scope": bind_scope(scope)}, "post_embed_mm", 600
+        kb, {"scope": bind_scope(scope), "site": site}, "post_embed_mm", 600
     )
     # The embedment gets a node of its own, the same shape `resolve_span_quantities`
     # has one function away. It used to cite `embed_refs` ONLY in the failure

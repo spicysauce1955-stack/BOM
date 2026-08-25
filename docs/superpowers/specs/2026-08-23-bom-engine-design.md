@@ -153,6 +153,27 @@ So the slice also adds `site_revision: int` on `GenerationRun`, extends the same
 **New warning codes:** `site_condition_missing`, `conservative_parameter_used`,
 `site_conditions_changed`.
 
+> **BUILT 2026-08-25**, except one. `SiteConditions` is on `Project`, `site.*` is
+> bound into **every** evaluation context (not only the span one — a site fact
+> that reached the bays and not the posts beside them would be a fence built to
+> two different sites), `site_revision` is stamped on the run and guards
+> `/structure` and the section-decisions view with a `409
+> site_conditions_changed`, and the site FACTS are in the run digest, so Exposure
+> B and Exposure C are different runs rather than one run served twice.
+>
+> **`conservative_parameter_used` is NOT built**, and could not be: §2.3 keys
+> conservative selection on the table's `task` class, and there are no
+> `ParameterTable`s until build-order item 5. The seam is the warning code and
+> the §2.3 table above; the work is one branch in the resolution path once a task
+> class exists to read. Building it now would mean inventing a task class to
+> switch on, which is the shape of mistake the retraction in §6 of the engine
+> architecture spec records.
+>
+> **No UI**, deliberately and worth stating: site conditions are settable only
+> through `PUT /api/projects/{id}/site` today, so an estimator cannot enter them
+> from the app. That is a frontend slice, not this one — but the engine reads
+> them, so nothing downstream is blocked on it.
+
 ---
 
 ## 3. The semantic package

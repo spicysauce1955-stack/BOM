@@ -947,3 +947,50 @@ def test_structure_refuses_a_run_read_against_a_different_catalog(client):
     response = client.get(f"/api/runs/{run_id}/structure")
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "catalog_changed"
+
+
+def test_moving_the_site_refuses_the_derived_views(client):
+    """The `topology_changed` failure through a door that guard cannot watch.
+
+    Site conditions are not part of the topology, so changing a project from
+    Exposure B to C moves the span limit, moves the posts — and without this the
+    structure sheet renders the OLD layout without complaint. That document goes
+    to site.
+    """
+    pid = make_project(client, name="site-guard")
+    put_straight_topology(client, pid)
+
+    assert client.put(f"/api/projects/{pid}/site",
+                      json={"exposure_category": "B"}).status_code == 200
+    run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+    assert client.get(f"/api/runs/{run_id}/structure").status_code == 200
+
+    # the site moves under the stored run
+    assert client.put(f"/api/projects/{pid}/site",
+                      json={"exposure_category": "C"}).status_code == 200
+
+    r = client.get(f"/api/runs/{run_id}/structure")
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "site_conditions_changed"
+    assert detail["run_site_revision"] == 1
+    assert detail["project_site_revision"] == 2
+    # ...and the section-decisions view refuses it too, for the same reason
+    section = client.get(f"/api/runs/{run_id}/sections/run1/decisions")
+    assert section.status_code == 409
+    assert section.json()["detail"]["code"] == "site_conditions_changed"
+
+    # regenerating restores the view, against the site it was generated for
+    new_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
+    assert new_id != run_id
+    assert client.get(f"/api/runs/{new_id}/structure").status_code == 200
+
+
+def test_the_site_revision_is_bumped_by_the_server_not_the_client(client):
+    """A client that forgot to increment it would make a stale document look
+    current — the same argument the topology PUT already makes."""
+    pid = make_project(client, name="site-rev")
+    for expected in (1, 2, 3):
+        project = client.put(f"/api/projects/{pid}/site",
+                             json={"exposure_category": "C", "revision": 99}).json()
+        assert project["site"]["revision"] == expected

@@ -58,7 +58,7 @@ from fenceai.learning.impact import (
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
-from fenceai.project.model import Annotation, Project
+from fenceai.project.model import Annotation, Project, SiteConditions
 from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
@@ -289,6 +289,19 @@ def get_project(project_id: str) -> Project:
     return _project(project_id)
 
 
+@app.put("/api/projects/{project_id}/site")
+def put_site_conditions(project_id: str, site: SiteConditions) -> Project:
+    """What kind of site this is. Revisioned like the topology, and bumped HERE
+    rather than trusted from the client, for the same reason: the revision is
+    what every derived view checks itself against, so a client that forgot to
+    increment it would silently make a stale document look current."""
+    project = _project(project_id)
+    site.revision = project.site.revision + 1
+    project.site = site
+    state.store.save_project(project)
+    return project
+
+
 @app.put("/api/projects/{project_id}/topology")
 def put_topology(project_id: str, topology: Topology) -> Project:
     project = _project(project_id)
@@ -386,6 +399,7 @@ def generate_route(project_id: str):
             default_model=project.fence_model,
             # threaded in, never read from inside: `generate()` is pure (ADR-0004)
             parts=state.store.part_library(),
+            site=project.site,
         )
     except GenerationFailure as e:
         # code + params when the failure carries them, exactly as the read routes
@@ -473,6 +487,16 @@ def get_structure(run_id: str):
             "code": "topology_changed",
             "run_topology_revision": result.run.topology_revision,
             "project_topology_revision": project.topology.revision,
+        })
+    # The SAME failure through a door the guard above cannot watch. Site
+    # conditions are not part of `topology`, so changing a project from Exposure
+    # B to C moves the span limit, moves the posts — and this document would
+    # render the old layout without complaint. That document goes to site.
+    if project.site.revision != result.run.site_revision:
+        raise HTTPException(409, {
+            "code": "site_conditions_changed",
+            "run_site_revision": result.run.site_revision,
+            "project_site_revision": project.site.revision,
         })
     preset = _live_preset(result.run.project_id)
     catalog, inventory, priced = _priced(result, preset)
@@ -629,6 +653,16 @@ def section_decisions(
             "code": "topology_changed",
             "run_topology_revision": result.run.topology_revision,
             "project_topology_revision": project.topology.revision,
+        })
+    # The SAME failure through a door the guard above cannot watch. Site
+    # conditions are not part of `topology`, so changing a project from Exposure
+    # B to C moves the span limit, moves the posts — and this document would
+    # render the old layout without complaint. That document goes to site.
+    if project.site.revision != result.run.site_revision:
+        raise HTTPException(409, {
+            "code": "site_conditions_changed",
+            "run_site_revision": result.run.site_revision,
+            "project_site_revision": project.site.revision,
         })
     graph = result.graph
     try:

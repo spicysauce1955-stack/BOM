@@ -36,6 +36,10 @@ WARNING_CODES = [
     # produces a plan with the hole named, and the hole is named HERE.
     "uncovered_max_span",
     "no_default_post",
+    # A rule in this snapshot asks about the site and the site did not answer.
+    # A warning and NOT a gap: `closes_by` is knowledge|planning and this is
+    # neither — it is a field on the project for a person here to fill in.
+    "site_condition_missing",
     "panel_length_unresolved",
     "clear_gap_exceeded",
     "rail_separation_insufficient",
@@ -62,6 +66,9 @@ CRITIQUE_CODES = ["narrow_span"]
 # generic "the action failed (422)".
 REFUSAL_CODES = [
     "run_predates_fence_model",
+    # the site-conditions twin of `topology_changed`: a derived view refuses to
+    # be laid over conditions the run was not generated against
+    "site_conditions_changed",
     "fence_model_unknown_sku",
     "fence_model_invalid",
     "fence_model_not_found",

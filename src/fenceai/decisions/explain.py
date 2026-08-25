@@ -148,6 +148,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "No rule names a default product for role '{role}'; {n} element(s) "
             "stand with no product."
         ),
+        "site_condition_missing": (
+            "{n} site condition(s) that decide rules here are not set "
+            "({dimensions}); rules needing them did not apply."
+        ),
         "node_surface_disagreement": (
             "Runs meeting at node {node_id} disagree on base surface ({surfaces}); "
             "'{chosen}' was used."
@@ -309,6 +313,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "missing_default": (
             "אין כלל הקובע מוצר ברירת מחדל לתפקיד '{role}'; {n} רכיבים עומדים "
             "ללא מוצר."
+        ),
+        "site_condition_missing": (
+            "{n} תנאי אתר שקובעים כאן כללים אינם מוגדרים ({dimensions}); "
+            "כללים הזקוקים להם לא הופעלו."
         ),
         "node_surface_disagreement": (
             "קטעים שנפגשים בצומת {node_id} חלוקים לגבי משטח הבסיס ({surfaces}); "
@@ -569,6 +577,9 @@ def explain_node(
         case "missing_default":
             base = _fmt(t, "missing_default", lang, units,
                 role=p.get("role"), n=p.get("n"))
+        case "site_condition_missing":
+            base = _fmt(t, "site_condition_missing", lang, units,
+                dimensions=p.get("dimensions"), n=p.get("n"))
         case "node_surface_disagreement":
             base = _fmt(t, "node_surface_disagreement", lang, units,
                 node_id=p.get("node_id"), surfaces=list(p.get("surfaces", [])),

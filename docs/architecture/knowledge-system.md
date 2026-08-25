@@ -73,6 +73,26 @@ it affected is warned, and the gap names what would close it. The audit of all
 thirteen refusal sites, with the verdict on each, is
 `docs/reviews/generation-failure-audit-2026-08-25.md`.
 
+### The `site.*` namespace
+
+Whole-site facts — exposure category, HVHZ, frost depth, jurisdiction, code
+edition — reach rules through the **evaluation context**, not `scope`, and are
+bound in every context a run builds. `FieldRef.path` is a dotted lookup into a
+plain dict, so this is additive: no AST change and no evaluator change.
+
+An **unset** dimension is omitted from the namespace rather than sent as `None`,
+which makes a rule conditioned on it *not applicable* rather than false — the
+evaluator's existing `MissingField` behaviour, used as the hook rather than as an
+error path. The run then warns `site_condition_missing`, naming every dimension
+this snapshot's rules asked about and the project did not answer, because the
+failure mode here is silence: the rule does not fire, the fence is built to
+whatever unconditioned rule was left, and nothing says the deciding fact was
+never entered.
+
+Anything that varies **along** a run is not a site condition — it is an interval
+payload on the topology, the pattern `ElevationSamplePayload` and
+`PostTiltPayload` already establish. Soil class is the likely first case.
+
 ### Which dimensions are bound during generation
 
 A dimension is only a key/value pair in the evaluation context — there is no enum of

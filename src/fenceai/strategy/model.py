@@ -181,6 +181,15 @@ class GenerationRun(BaseModel):
     id: str
     project_id: str = ""
     topology_revision: int = 0
+    # The site conditions this run was generated against. Same job as
+    # `topology_revision` and guarded the same way: a derived view laid over
+    # conditions that have moved since describes a different fence, and site
+    # conditions are NOT part of the topology, so the `topology_changed` guard
+    # cannot see them. Change a project from Exposure B to C and the span limit
+    # changes, posts move — and without this the structure sheet renders the old
+    # layout without complaint. 0 is a run generated before site conditions
+    # existed, which is exactly what it was generated against.
+    site_revision: int = 0
     knowledge_snapshot: list[tuple[str, int]] = []
     snapshot_hash: str = ""
     overrides_applied: list[str] = []

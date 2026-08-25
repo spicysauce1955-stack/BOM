@@ -1,5 +1,55 @@
 # Current status
 
+## Site conditions — the prerequisite for anything conditional (2026-08-25)
+
+Item 2. **1676 pytest · 193 scenario tests, green.** The acceptance criterion the
+design named is now a test: **one rule on exposure yields two span limits on two
+sites** — same fence, same knowledge, `B` gives four 1500 mm bays and `C` gives five
+1200 mm ones.
+
+`SiteConditions` sits on `Project` because these are whole-site facts; anything that
+varies ALONG a run stays an interval payload on the topology, which is where soil
+class will go. `site.*` binds into **every** evaluation context — threaded explicitly
+through thirteen functions rather than smuggled inside `scope`, because a hidden
+channel is exactly what the item 1 review criticised elsewhere, and because a site
+fact that reached the bays and not the posts beside them would be a fence built to
+two different sites.
+
+**Three things that were not obvious until they were built:**
+
+- **An unset dimension is OMITTED, not sent as `None`.** That is what makes a rule
+  conditioned on it *not applicable* rather than false — the evaluator's existing
+  `MissingField` behaviour used as the hook. But the failure mode of getting that
+  right is silence: the rule does not fire, the fence is built to whatever
+  unconditioned rule was left, and nothing says the deciding fact was never entered.
+  So `site_condition_missing` reads the dimensions off the RULES in the snapshot, not
+  off a hardcoded list — a base that never mentions exposure does not nag about it,
+  and the day one starts publishing exposure rows the warning appears with no code
+  change. **Not a `Gap`:** `closes_by` is `knowledge | planning` and this is neither,
+  it is a field on the project for a person here to fill in. A gap whose reader
+  cannot action it is the one thing §1.2.1 says that queue must not contain.
+- **The digest takes the site FACTS, not `site_revision`.** A revision moves when
+  somebody saves the form; the facts are what changed the answer. Hashing the counter
+  would split the digest between two runs of an identical fence.
+  `PLANNING_BEHAVIOR_VERSION` moves to `planning-v3`, because a rule conditioned on
+  `site.*` now fires where it could not before — an output change for unchanged
+  inputs, which is what that constant exists to record.
+- **The 409 is a door the existing guard could not watch.** Site conditions are not
+  part of `topology`, so `topology_changed` never fires on them: change a project from
+  Exposure B to C and the structure sheet would render the old layout without
+  complaint, and that document goes to site.
+
+**Deliberately not built, both stated rather than discovered later:**
+`conservative_parameter_used` (§2.3 keys conservative selection on a
+`ParameterTable.task` class, and there are no parameter tables until item 5 —
+building it now means inventing a task class to switch on, which is the retraction
+in the engine spec's §6 all over again); and **no UI** — site conditions are settable
+only through the route, so an estimator cannot enter them from the app yet. The
+engine reads them, so nothing downstream is blocked.
+
+**Next:** item 3 — handler registries for fixing bases, length rules and presets.
+Then item 4, the declared phase list, which depends on it.
+
 ## `Gap` as a return type — the engine moves, and two signed obligations close (2026-08-25)
 
 Item 1 of `plan/next-session.md`, and the first line of `src/` to change since the

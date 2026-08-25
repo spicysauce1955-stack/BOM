@@ -43,11 +43,11 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ## The API surface
 
-51 routes. Grouped by what they are for rather than by path:
+52 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
-| Projects & topology | `GET/POST /projects`, `GET /projects/{id}`, `PUT /projects/{id}/topology` | Topology PUT bumps `revision` |
+| Projects & topology | `GET/POST /projects`, `GET /projects/{id}`, `PUT /projects/{id}/topology`, `PUT /projects/{id}/site` | Both PUTs bump their own `revision`, server-side — a client that forgot to would make a stale document look current |
 | Generation | `POST /projects/{id}/generate`, `GET /projects/{id}/runs`, `GET /runs/{id}` | The only write that decides a fence |
 | Explanation | `GET /runs/{id}/explain/{element_id}`, `GET /runs/{id}/sections/{section_id}/decisions`, `GET /runs/{id}/impact/{object_id}` | Takes `lang` **and** `units`. The section view 409s on a moved topology and the element view does not — see below |
 | Read models | `GET /runs/{id}/structure`, `GET /runs/{id}/bom` | 409 on stale topology or catalog. `/bom` also carries `grouped` — the same demand by section, panel and decision, and it does NOT 409 on topology. Both are read models that WRITE: `/bom` returns the `supply` run it stored and `/structure` stamps its `supply_id`, through one construction so the sheet and the BOM can never name different yards. Idempotent by digest (ADR-0011) |
@@ -106,6 +106,7 @@ than by an id the server happened to interpolate.
 | Situation | Shape |
 |---|---|
 | The drawing moved under a stored run | 409 `topology_changed` |
+| The SITE moved under a stored run | 409 `site_conditions_changed` |
 | A product this run bought was repriced | 409 `catalog_changed` |
 | Nothing in the catalog can supply a slot | warning `no_eligible_item` + `unresolved` line |
 | Candidates were tried and none fits | warning `no_feasible_item` |

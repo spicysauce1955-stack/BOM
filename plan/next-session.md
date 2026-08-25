@@ -46,7 +46,7 @@ item 1. One change, four payoffs.
 | # | Work | Blocked by | Obligation |
 |---|---|---|---|
 | ~~**1**~~ | ~~**`Gap` as a return type.**~~ **DONE 2026-08-25.** Three sites converted, not two — `_resolve_default_post` was a third. `docs/reviews/generation-failure-audit-2026-08-25.md` | — | §3.2.4, and delta item 1 |
-| 2 | `SiteConditions` on `Project`, `site.*` in the evaluation context, `site_revision` + a `409 site_conditions_changed` guard, two warning codes in both locale bundles | nothing | 13's site scope |
+| ~~2~~ | ~~`SiteConditions`…~~ **DONE 2026-08-25.** `conservative_parameter_used` deferred to item 5 (it keys on a `ParameterTable.task` class that does not exist yet); no UI — settable only via `PUT /projects/{id}/site` | — | 13's site scope |
 | 3 | Handler registries — fixing bases, length rules, presets. Turn `if kind == …` branches into registrations | nothing | none (internal) |
 | 4 | The declared phase list, so inserting a step is a row rather than a chain edit | 3 | none (internal) |
 | 5 | `ParameterTable` loader — `value_type`, `domain_basis`, `condition_basis`, validity fields, `condition_scope` binding, and a `SetToken` action so a token-valued param has somewhere to land. **Read the two prerequisites above first** | 2 | 13, 15 |
@@ -57,7 +57,7 @@ item 1. One change, four payoffs.
 | 10 | Containment → demand: flatten `ContainedSlot` into the panel's slot list under a path key, and the kit-credit rule, which has no home in a demand line today | 5 | — |
 | 11 | `report/assembly.py` — bay and post scopes, `requires` edges as a partial order | 10 | 11, 12 |
 
-**Steps 1–4 need nothing from anybody.** Step 1 is done; start at step 2.
+**Steps 1–4 need nothing from anybody.** Steps 1 and 2 are done; start at step 3.
 
 ### Two things item 5 must do BEFORE it loads a published row
 

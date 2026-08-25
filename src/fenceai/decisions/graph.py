@@ -13,7 +13,8 @@ from pydantic import BaseModel
 NodeKind = Literal[
     "input_fact", "rule_firing", "structural", "selection", "vertical", "mounting",
     "quantity", "conflict", "assumption", "override_applied", "failure",
-    # a hole in the knowledge, and the value the run proceeded on despite it.
+    # a hole in what the run was TOLD — by the knowledge, or by the project's own
+    # site conditions — and the value it proceeded on despite it.
     # Its own kind rather than an "assumption": an assumption is a value we
     # chose, a gap is a question nobody answered. Its own kind ALSO so the
     # annexe (build order item 8) can select on it — nothing in `report/` does
