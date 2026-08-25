@@ -108,7 +108,7 @@ a Hebrew-first product.
 3. **`conservative_parameter_used`** — deferred to item 5 on purpose; it keys on a
    `ParameterTable.task` class that does not exist yet.
 
-### Two things item 5 must do BEFORE it loads a published row
+### One thing item 5 must do BEFORE it loads a published row
 
 Both fell out of the reviews of item 1. Both are inert today for the same reason —
 nothing in `src/` can produce `origin="published"` yet — and both go live the moment
@@ -122,18 +122,13 @@ item 5's loader can.
    `demo_knowledge()` holds no published rows to notice. The seam refuses an explicit
    `origin` argument so it cannot degrade into a suggestion.
 
-2. **Surface conflicts at every resolution site, not three of them.** Only
-   `max_span_mm`, the vertical mode and the layout preference call
-   `_surface_conflicts`. `_resolve_mounting`, `_resolve_reinforcement`,
-   `_resolve_default_post`, `_resolve_demand_skus`, `_resolve_quantity` and the panel
-   limits all discard `Resolution.conflicts`. This is **pre-existing** — `main` did
-   the same — but item 1 widened what it costs: a hard-band tie touching a published
-   row is no longer a raise, so a published `require_mounting` disagreeing with an
-   authored one now picks a winner by tie-break and reports nothing at all. Ground
-   versus masonry, decided silently, on a run nobody warned. The three wired sites
-   file a `Gap(disputed)`; the others cannot, because they have no `strategy` to file
-   it on. Either thread it, or move surfacing into a wrapper so a new call site
-   cannot opt out by omission.
+2. ~~**Surface conflicts at every resolution site, not three of them.**~~ **DONE
+   2026-08-25.** A `ConflictSink` is threaded beside `site` and drained once in
+   `generate()`, so all thirteen sites record. Deduped on drain — the same slot is
+   resolved once per run, so a two-run fence reported the identical disagreement
+   twice. An AST-based test refuses a fourteenth site that neither records nor hands
+   its `Resolution` back, and that test has its own test, because the first version
+   of it waved through a function reading `.winner` and discarding the conflicts.
 
 ## Known defects, with file and line
 

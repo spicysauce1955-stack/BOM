@@ -421,3 +421,198 @@ def test_a_manufactured_width_beats_an_invented_maximum():
     # the manufacturer's own number a fallback
     gap = _gaps(result, "uncovered_condition")[0]
     assert gap.params["basis"] == "manufactured_width"
+
+
+# -- a Conflict cannot be silently dropped -------------------------------------
+
+def _published_mounting(object_id: str, sku: str) -> KnowledgeVersion:
+    from fenceai.knowledge.model import RequireMounting
+
+    return KnowledgeVersion(
+        object_id=object_id, version=1, type="company_rule", origin="published",
+        title=f"{object_id} mounting",
+        actions=[RequireMounting(surface="masonry_wall", mounting="masonry", sku=sku)],
+    )
+
+
+def test_a_published_tie_at_a_NON_span_site_is_still_surfaced():
+    """Conflicts were surfaced at three of the ~13 resolution sites and dropped at
+    the rest — which was survivable only while every hard-band tie RAISED.
+
+    Once a tie touching a published row became a flagged pick (§3.2.4), a
+    published `require_mounting` disagreeing with an authored one picked a winner
+    by tie-break order and reported NOTHING: ground versus masonry, decided
+    silently, on a run nobody warned. `_resolve_mounting` is one of the ten that
+    dropped them.
+    """
+    from fenceai.topology.model import BasePayload
+    from tests.conftest import add_interval_event
+
+    kb = demo_knowledge()
+    kb.versions = [v for v in kb.versions if v.object_id != "K-MASONRY"]
+    kb.versions += [_published_mounting("P-MOUNT-A", "POST-M"),
+                    _published_mounting("P-MOUNT-B", "POST-S")]
+
+    topo = straight_topology(7000)
+    add_interval_event(topo, "run1", "base", 4000, 7000,
+                       BasePayload(surface="masonry_wall"))
+    result = generate(topo, kb, demo_catalog())
+
+    surfaced = [w for w in result.strategy.warnings if w.code == "knowledge_conflict"]
+    assert surfaced, "a published tie on mounting was resolved and never reported"
+    assert "P-MOUNT-A@v1" in surfaced[0].params["contenders"]
+    # ...and it is traceable, like every other conflict
+    assert result.graph.node(surfaced[0].decision_ref).action == "knowledge_conflict"
+
+
+def test_a_published_tie_on_a_QUANTITY_is_still_surfaced():
+    """`_resolve_quantity` served rails, screws, step thresholds and embedment —
+    four params through one helper that threw its conflicts away."""
+    kb = demo_knowledge()
+    kb.versions = [v for v in kb.versions if v.object_id != "K-RAILS"]
+    for object_id, value in (("P-RAILS-A", 2), ("P-RAILS-B", 3)):
+        kb.versions.append(KnowledgeVersion(
+            object_id=object_id, version=1, type="fact", origin="published",
+            title=object_id, actions=[SetParam(param="rails_per_span", value=value)]))
+
+    result = generate(straight_topology(6000), kb, demo_catalog())
+    surfaced = [w for w in result.strategy.warnings if w.code == "knowledge_conflict"]
+    assert any("rails_per_span" in w.params["slot"] for w in surfaced)
+
+
+def test_every_conflict_is_surfaced_exactly_once():
+    """The sink is drained in one place, so a conflict recorded by a memoised
+    resolution cannot be reported twice — a run claiming two disagreements where
+    there is one is its own wrong answer."""
+    kb = demo_knowledge()
+    kb.versions = [v for v in kb.versions if v.object_id != "K-RAILS"]
+    for object_id, value in (("P-RAILS-A", 2), ("P-RAILS-B", 3)):
+        kb.versions.append(KnowledgeVersion(
+            object_id=object_id, version=1, type="fact", origin="published",
+            title=object_id, actions=[SetParam(param="rails_per_span", value=value)]))
+
+    # A TWO-RUN topology, deliberately: the same slot is resolved once per run,
+    # so a single-run fence proves nothing here. It reported the identical
+    # disagreement twice before the drain deduped.
+    from fenceai.topology.model import Node, Run, Topology
+
+    lshape = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=4000, y_mm=0),
+               Node(id="n3", x_mm=4000, y_mm=3000)],
+        runs=[Run(id="runA", start_node_id="n1", end_node_id="n2"),
+              Run(id="runB", start_node_id="n2", end_node_id="n3")])
+    result = generate(lshape, kb, demo_catalog())
+    rails = [w for w in result.strategy.warnings
+             if w.code == "knowledge_conflict" and "rails_per_span" in w.params["slot"]]
+    assert len(rails) == 1, "one disagreement, reported once per place we looked"
+
+
+def _resolutions_that_go_nowhere(path) -> list[str]:
+    """Every resolution in `path` that neither records its conflicts nor hands the
+    `Resolution` back. Shared with the self-test below, which is what keeps this
+    from being a check that only ever passes."""
+    import ast
+
+    tree = ast.parse(path.read_text())
+    RESOLVERS = {"resolve_param", "resolve_actions", "evaluator_resolve", "resolve"}
+    lost = []
+
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for stmt in ast.walk(fn):
+            if not isinstance(stmt, ast.Assign):
+                continue
+            call = stmt.value
+            if not (isinstance(call, ast.Call)
+                    and getattr(call.func, "id", None) in RESOLVERS):
+                continue
+            name = getattr(stmt.targets[0], "id", None)
+            if name is None:
+                continue
+
+            # recorded: `<sink>.extend(<name>.conflicts)` or
+            # `_surface_conflicts(<name>.conflicts, …)` anywhere in this function
+            recorded = any(
+                isinstance(n, ast.Attribute) and n.attr == "conflicts"
+                and getattr(n.value, "id", None) == name
+                for n in ast.walk(fn)
+            )
+            # handed back: the Resolution ITSELF is returned, not something read
+            # off it. `return later.winner` is not handing it back — that was the
+            # hole the first version of this check had.
+            def bare(node) -> bool:
+                """`res` handed back, as opposed to something READ off it.
+
+                An Attribute subtree is not bare by definition: `return
+                res.winner` gives the caller a value, not the Resolution, so it
+                cannot record the conflicts. Set subtraction gets this wrong when
+                one name appears BOTH ways — `return res.winner, res` does hand it
+                back."""
+                if isinstance(node, ast.Name):
+                    return node.id == name
+                if isinstance(node, ast.Attribute):
+                    return False
+                return any(bare(c) for c in ast.iter_child_nodes(node))
+
+            handed_back = any(
+                bare(r) for r in ast.walk(fn) if isinstance(r, ast.Return))
+            if not (recorded or handed_back):
+                lost.append(f"{fn.name}() line {stmt.lineno}: {name}")
+    return lost
+
+
+def test_no_resolution_in_the_generator_drops_its_conflicts():
+    """The guard against the NEXT call site, not this one.
+
+    Every resolution in the generator must have its `Resolution.conflicts` reach
+    the sink, or a disagreement is decided by tie-break order and reported to
+    nobody. Thirteen sites are fine today; the one that matters is the
+    fourteenth. `test_backend_code_list_is_current` guards new warning codes the
+    same way and for the same reason.
+
+    Parsed rather than line-windowed: the max-span site records 67 lines below
+    the call, past the comment explaining the never-block change, and
+    `_vertical_mode` legitimately hands its `Resolution` back for the caller to
+    record. A proximity heuristic calls both of those bugs.
+    """
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "strategy" / "generator.py"
+    lost = _resolutions_that_go_nowhere(src)
+    assert not lost, (
+        "these resolutions neither record their conflicts into the sink nor hand "
+        "the Resolution back to a caller that does — a published tie there is "
+        "decided by tie-break order and reported to nobody:\n  "
+        + "\n  ".join(lost)
+    )
+
+
+def test_that_guard_actually_catches_a_dropped_conflict(tmp_path):
+    """The guard's own test. The first version of it passed a function that read
+    `.winner` off the resolution and threw the conflicts away, because "the name
+    appears in a return statement" is not the same claim as "the Resolution was
+    handed back" — so the check that was supposed to catch the fourteenth site
+    would have waved it through."""
+    forgetful = tmp_path / "forgetful.py"
+    forgetful.write_text(
+        "def newcomer(kb, ctx):\n"
+        "    later = resolve_param(kb, ctx, 'p')\n"
+        "    return 1 if later.winner else 0\n"
+    )
+    assert _resolutions_that_go_nowhere(forgetful) == ["newcomer() line 2: later"]
+
+    careful = tmp_path / "careful.py"
+    careful.write_text(
+        "def newcomer(kb, ctx, sink):\n"
+        "    later = resolve_param(kb, ctx, 'p')\n"
+        "    sink.extend(later.conflicts)\n"
+        "    return 1 if later.winner else 0\n"
+    )
+    assert _resolutions_that_go_nowhere(careful) == []
+
+    handing_back = tmp_path / "handing_back.py"
+    handing_back.write_text(
+        "def helper(kb, ctx):\n"
+        "    res = resolve_param(kb, ctx, 'p')\n"
+        "    return res.winner, res\n"
+    )
+    assert _resolutions_that_go_nowhere(handing_back) == []

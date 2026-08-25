@@ -199,6 +199,9 @@ def generate(
     # OMITTED by `.facts()` rather than sent as None, which is what makes a rule
     # conditioned on one *not applicable* instead of false.
     site_facts = site.facts() if site is not None else {}
+    # Created once and threaded read-write into every resolution. Drained in ONE
+    # place below, after the strategy exists to hang the warnings on.
+    sink = ConflictSink()
     builder = GraphBuilder()
     strategy = Strategy(id="strategy")
     applied: set[str] = set()
@@ -206,7 +209,7 @@ def generate(
     # bound where they become facts
     scope = bind_scope({"project_id": project_id})
 
-    demand_skus, demand_refs = _resolve_demand_skus(knowledge, scope, site_facts)
+    demand_skus, demand_refs = _resolve_demand_skus(knowledge, scope, site_facts, sink)
     builder.add(
         "quantity", "resolve_demand_products",
         payload=dict(demand_skus),
@@ -218,7 +221,7 @@ def generate(
     # move during a generation, so this is a memo and not a second answer.
     resolved_posts: dict[str, FenceModel] = {}
     _generate_node_posts(
-        topology, knowledge, scope, site_facts, catalog, overrides, policy, builder,
+        topology, knowledge, scope, site_facts, sink, catalog, overrides, policy, builder,
         strategy, applied, models, default_model, parts, resolved_posts,
     )
     # every fence model actually drawn from, across all runs — part of the run id
@@ -231,17 +234,21 @@ def generate(
     parts_used: list[PartUse] = []
     for run in topology.runs:
         _generate_run(
-            topology, run, knowledge, scope, site_facts, catalog, overrides, policy,
+            topology, run, knowledge, scope, site_facts, sink, catalog, overrides, policy,
             builder, strategy, applied, demand_skus, models_used,
             models, default_model, parts, parts_used, resolved_posts,
         )
 
-    _check_post_lengths(topology, knowledge, scope, site_facts, catalog, builder, strategy)
+    _check_post_lengths(topology, knowledge, scope, site_facts, sink, catalog, builder, strategy)
     _report_unfilled_posts(strategy, builder)
     _report_missing_site_conditions(
         knowledge, site_facts, scope, {u.model_id for u in models_used},
         strategy, builder,
     )
+    # Every conflict the run produced, surfaced together. Three sites used to do
+    # this inline and the other ten dropped theirs; draining here is what makes
+    # "a Conflict cannot be silently discarded" structural rather than a habit.
+    _surface_conflicts(sink, builder, strategy)
 
     orphaned = [ov.id for ov in overrides if ov.id not in applied]
     for ov_id in orphaned:
@@ -380,6 +387,29 @@ def bind_scope(*bindings: dict) -> dict[str, str]:
     return out
 
 
+class ConflictSink(list):
+    """Every `Conflict` a run produces, in one place, so none can be dropped.
+
+    Conflicts were surfaced at three of the ~13 resolution sites and discarded at
+    the rest — `_resolve_mounting`, `_resolve_reinforcement`,
+    `_resolve_default_post`, `_resolve_demand_skus`, `_resolve_quantity` and the
+    panel limits all read `res.winner` and threw `res.conflicts` away. That was
+    survivable while every hard-band tie RAISED. It stopped being survivable when
+    a tie involving a published row became a flagged pick (contract §3.2.4): a
+    published `require_mounting` disagreeing with an authored one now picks a
+    winner by tie-break order and, at those sites, reported nothing at all —
+    ground versus masonry, decided silently, on a run nobody warned.
+
+    A sink rather than a return value, because the failure mode is FORGETTING:
+    threading conflicts back up through six helpers means six chances to drop one,
+    and the one that gets dropped is invisible. Passed once, everything lands in
+    it, and `generate()` drains it in one place.
+
+    A plain `list` subclass so it is obvious what it is at every call site, and so
+    a caller cannot accidentally treat it as a value to be returned.
+    """
+
+
 def _post_ctx(
     scope: dict[str, str], site: dict, surface: str, context: str = ""
 ) -> dict:
@@ -395,7 +425,7 @@ def _post_ctx(
 
 
 def _resolve_mounting(
-    kb: KnowledgeBase, scope: dict[str, str], site: dict, surface: str
+    kb: KnowledgeBase, scope: dict[str, str], site: dict, sink: ConflictSink, surface: str
 ) -> tuple[str, str | None, list[str]]:
     """(mounting, rule sku, governed refs) for a base surface — slot-scoped so rules
     for other surfaces never compete (critic finding 5)."""
@@ -403,6 +433,7 @@ def _resolve_mounting(
         kb, _post_ctx(scope, site, surface), "require_mounting",
         match=lambda a: a.surface == surface,
     )
+    sink.extend(res.conflicts)
     if res.winner:
         act = res.winner.actions[0]
         return act.mounting, act.sku, [res.winner.version.ref]
@@ -410,25 +441,27 @@ def _resolve_mounting(
 
 
 def _resolve_reinforcement(
-    kb: KnowledgeBase, scope: dict[str, str], site: dict
+    kb: KnowledgeBase, scope: dict[str, str], site: dict, sink: ConflictSink
 ) -> tuple[str | None, list[str]]:
     """(reinforced-post sku, governed refs) for gate context, or (None, [])."""
     res = resolve_actions(
         kb, _post_ctx(scope, site, "", context="gate"), "require_post_reinforcement",
         match=lambda a: a.context == "gate",
     )
+    sink.extend(res.conflicts)
     if res.winner:
         return res.winner.actions[0].sku, [res.winner.version.ref]
     return None, []
 
 
 def _resolve_default_post(
-    kb: KnowledgeBase, scope: dict[str, str], site: dict, surface: str
+    kb: KnowledgeBase, scope: dict[str, str], site: dict, sink: ConflictSink, surface: str
 ) -> tuple[str, list[str]]:
     res = resolve_actions(
         kb, _post_ctx(scope, site, surface), "default_component",
         match=lambda a: a.role == "post_ground",
     )
+    sink.extend(res.conflicts)
     if res.winner:
         return res.winner.actions[0].sku, [res.winner.version.ref]
     # Knowledge names no default ground post. This used to raise — a run failed
@@ -449,7 +482,7 @@ DEMAND_ROLE_DEFAULTS = {
 
 
 def _resolve_demand_skus(
-    kb: KnowledgeBase, scope: dict[str, str], site: dict
+    kb: KnowledgeBase, scope: dict[str, str], site: dict, sink: ConflictSink
 ) -> tuple[dict[str, str], list[str]]:
     """Demand product selection is knowledge (DefaultComponent roles), never a
     code literal — swapping the whole fence system (e.g. to a Barrette catalog)
@@ -461,6 +494,7 @@ def _resolve_demand_skus(
             kb, _post_ctx(scope, site, ""),
             "default_component", match=lambda a, role=role: a.role == role,
         )
+        sink.extend(res.conflicts)
         if res.winner:
             skus[key] = res.winner.actions[0].sku
             refs.append(res.winner.version.ref)
@@ -469,8 +503,11 @@ def _resolve_demand_skus(
     return skus, refs
 
 
-def _resolve_quantity(kb: KnowledgeBase, ctx: dict, param: str, default: int) -> tuple[int, list[str]]:
+def _resolve_quantity(
+    kb: KnowledgeBase, ctx: dict, param: str, default: int, sink: ConflictSink,
+) -> tuple[int, list[str]]:
     res = resolve_param(kb, ctx, param)
+    sink.extend(res.conflicts)
     if res.winner:
         return (
             next(a.value for a in res.winner.actions if a.kind == "set_param"),
@@ -570,6 +607,7 @@ class _PostFacts:
     kb: KnowledgeBase
     scope: dict[str, str]
     site: dict
+    sink: ConflictSink
     run_ctx: dict
     policy: dict
     vertical: str
@@ -604,12 +642,14 @@ class _PostFacts:
         cached = self._params.get(model.ref)
         if cached is None:
             seg_kb, seg_ctx = _segment_view(
-                self.kb, self.scope, self.site, self.run_ctx, model)
+                self.kb, self.scope, self.site, self.sink, self.run_ctx, model)
             cached = {
                 "rails_per_span": _resolve_quantity(
-                    seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN)[0],
+                    seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN,
+                    self.sink)[0],
                 "screws_per_span": _resolve_quantity(
-                    seg_kb, seg_ctx, "screws_per_span", DEFAULT_SCREWS_PER_SPAN)[0],
+                    seg_kb, seg_ctx, "screws_per_span", DEFAULT_SCREWS_PER_SPAN,
+                    self.sink)[0],
             }
             self._params[model.ref] = cached
         return cached
@@ -621,6 +661,7 @@ def _run_post_facts(
     kb: KnowledgeBase,
     scope: dict[str, str],
     site: dict,
+    sink: ConflictSink,
     overrides: list[Override],
     policy: dict,
 ) -> tuple[_PostFacts, Resolution, list[str], list[str]]:
@@ -639,7 +680,8 @@ def _run_post_facts(
         run_ctx["slope_permille"],
     )
     facts = _PostFacts(
-        topo=topo, run=run, kb=kb, scope=scope, site=site, run_ctx=run_ctx, policy=policy,
+        topo=topo, run=run, kb=kb, scope=scope, site=site, sink=sink, run_ctx=run_ctx,
+        policy=policy,
         vertical=vertical,
         force_vertical=[ov for ov in overrides if ov.run_id == run.id
                         and ov.directive.kind == "force_vertical"],
@@ -974,6 +1016,7 @@ def _make_post(
     kb: KnowledgeBase,
     scope: dict[str, str],
     site: dict,
+    sink: ConflictSink,
     *,
     post_id: str,
     run_ref: str,
@@ -1003,7 +1046,7 @@ def _make_post(
     holding the strategy. The cap is resolved HERE and not by the caller for the
     same reason the post's sku is: the precedence below is what decides which
     post stands, and a cap chosen before it would be a cap for another post."""
-    mounting, mount_sku, governed = _resolve_mounting(kb, scope, site, surface)
+    mounting, mount_sku, governed = _resolve_mounting(kb, scope, site, sink, surface)
     if forced_mounting:
         mounting = forced_mounting
     if forced_sku:
@@ -1025,7 +1068,7 @@ def _make_post(
         sku_refs = []
         rejected = list(model_post_rejected or [])
     else:
-        sku, sku_refs = _resolve_default_post(kb, scope, site, surface)
+        sku, sku_refs = _resolve_default_post(kb, scope, site, sink, surface)
     # Only the MODEL's post had a field of candidates to pass over. A forced sku,
     # a masonry mount, a gate reinforcement and the knowledge default each name
     # ONE product for their own reason, and reporting the model's rejects beside
@@ -1070,6 +1113,7 @@ def _generate_node_posts(
     kb: KnowledgeBase,
     scope: dict[str, str],
     site: dict,
+    sink: ConflictSink,
     catalog: Catalog,
     overrides: list[Override],
     policy: dict,
@@ -1088,7 +1132,7 @@ def _generate_node_posts(
             (run, run_length(topology, run))
         )
 
-    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope, site)
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope, site, sink)
 
     for node in topology.nodes:
         touches = sorted(touches_by_node.get(node.id, []), key=lambda t: t[0].id)
@@ -1173,13 +1217,13 @@ def _generate_node_posts(
             model_post = _model_post_skus(
                 library, default_model, catalog, parts,
                 [_PostSide(
-                    _run_post_facts(topology, r, kb, scope, site, overrides, policy)[0],
+                    _run_post_facts(topology, r, kb, scope, site, sink, overrides, policy)[0],
                     s, s if s == 0 else s - 1, kind,
                 ) for r, s in touches],
                 resolved_posts,
             )
         post, cap_gap = _make_post(
-            builder, kb, scope, site,
+            builder, kb, scope, site, sink,
             model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
             model_cap=model_post.cap_for,
             post_id=f"post@node:{node.id}", run_ref=f"node:{node.id}",
@@ -1399,7 +1443,7 @@ def _policy_knowledge(model: FenceModel) -> list[KnowledgeVersion]:
 
 
 def _segment_view(
-    kb: KnowledgeBase, scope: dict[str, str], site: dict, run_ctx: dict,
+    kb: KnowledgeBase, scope: dict[str, str], site: dict, sink: ConflictSink, run_ctx: dict,
     model: FenceModel,
 ) -> tuple[KnowledgeBase, dict]:
     """The knowledge and the context a model's numbers resolve under.
@@ -1533,6 +1577,7 @@ def _generate_run(
     kb: KnowledgeBase,
     scope: dict[str, str],
     site: dict,
+    sink: ConflictSink,
     catalog: Catalog,
     overrides: list[Override],
     policy: dict,
@@ -1602,7 +1647,7 @@ def _generate_run(
         # model's layout policy joins the knowledge BEFORE anything under this
         # scope is resolved: a contribution added after `max_span_mm` had resolved
         # would be a contribution that never applied.
-        seg_kb, seg_ctx = _segment_view(kb, scope, site, ctx["run"], model)
+        seg_kb, seg_ctx = _segment_view(kb, scope, site, sink, ctx["run"], model)
         select_node = builder.add(
             "selection", "select_model",
             payload={"run_id": run.id, "model_ref": model.ref, "source": source,
@@ -1640,6 +1685,7 @@ def _generate_run(
         # input to it — a node reporting 1800 for a basis of 2400 would explain a
         # fence the run did not build.
         exact_res = resolve_param(seg_kb, seg_ctx, "exact_span_mm")
+        sink.extend(exact_res.conflicts)
         exact_span = exact_span_ref = None
         if exact_res.winner is not None:
             exact_span = next(a.value for a in exact_res.winner.actions
@@ -1676,12 +1722,12 @@ def _generate_run(
             defeated=[f.version.ref for f in res.firings if f.defeated_by],
             confidence="uncertain" if assumed else "deterministic",
         )
-        _surface_conflicts(res.conflicts, builder, strategy)
+        sink.extend(res.conflicts)
 
         rails, rails_refs = _resolve_quantity(
-            seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN)
+            seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN, sink)
         screws, screws_refs = _resolve_quantity(
-            seg_kb, seg_ctx, "screws_per_span", DEFAULT_SCREWS_PER_SPAN)
+            seg_kb, seg_ctx, "screws_per_span", DEFAULT_SCREWS_PER_SPAN, sink)
 
         sm = _SegmentModel(
             model=model,
@@ -1811,7 +1857,7 @@ def _generate_run(
     # base-top STEPS >= threshold force a structural boundary; the threshold is
     # knowledge, not code (K-STEP-POST) — sections-model addendum
     step_threshold, step_refs = _resolve_quantity(
-        kb, ctx, "base_top_step_boundary_mm", 100
+        kb, ctx, "base_top_step_boundary_mm", 100, sink
     )
     base_steps = base_top_step_stations(topo, run, step_threshold)
     step_info = {station: (delta, ev_id, "base_top_step")
@@ -1821,15 +1867,18 @@ def _generate_run(
         step_info.setdefault(station, (delta, None, "ground_step"))
     step_stations = set(step_info)
     # buildability ceiling: a single step a fence can absorb (rule-editable)
-    max_step, max_step_refs = _resolve_quantity(kb, ctx, "max_panel_step_mm", 600)
+    max_step, max_step_refs = _resolve_quantity(kb, ctx, "max_panel_step_mm", 600, sink)
     # optional plumb-consequence rules: only checked when a rule exists
     gap_res = resolve_param(kb, ctx, "max_panel_gap_mm")
+    sink.extend(gap_res.conflicts)
     max_gap = (next(a.value for a in gap_res.winner.actions if a.kind == "set_param")
                if gap_res.winner else None)
     height_res = resolve_param(kb, ctx, "max_fence_height_mm")
+    sink.extend(height_res.conflicts)
     max_height = (next(a.value for a in height_res.winner.actions if a.kind == "set_param")
                   if height_res.winner else None)
     gate_slope_res = resolve_param(kb, ctx, "gate_max_slope_permille")
+    sink.extend(gate_slope_res.conflicts)
     max_gate_slope = (
         next(a.value for a in gate_slope_res.winner.actions if a.kind == "set_param")
         if gate_slope_res.winner else None)
@@ -1840,7 +1889,7 @@ def _generate_run(
     fixed |= set(fence_model_transition_stations(topo, run))
     fixed_sorted = sorted(fixed)
 
-    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope, site)
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope, site, sink)
 
     # -- the panel facts every post of this run is matched against -------------
     # Resolved here rather than beside the `choose_vertical_mode` node below,
@@ -1848,7 +1897,7 @@ def _generate_run(
     # read `panel.vertical`. The node still belongs where the graph already puts
     # it; what moves is the answer, which is now asked once and used twice.
     post_facts, vert_res, vertical_refs, vertical_defeated = _run_post_facts(
-        topo, run, kb, scope, site, overrides, policy
+        topo, run, kb, scope, site, sink, overrides, policy
     )
     vertical = post_facts.vertical
 
@@ -1927,7 +1976,7 @@ def _generate_run(
             library, default_model, catalog, parts,
             _post_sides(post_facts, station, length, kind), resolved_posts)
         post, cap_gap = _make_post(
-            builder, kb, scope, site,
+            builder, kb, scope, site, sink,
             model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
             model_cap=model_post.cap_for,
             post_id=f"post@{run.id}:{station}", run_ref=run.id,
@@ -2023,7 +2072,7 @@ def _generate_run(
     # because a post's predicate may read `panel.vertical` and a post stands
     # before any bay does; the node and its conflicts stay here, where the graph
     # already puts them.
-    _surface_conflicts(vert_res.conflicts, builder, strategy)
+    sink.extend(vert_res.conflicts)
     vertical_node = builder.add(
         "vertical", "choose_vertical_mode",
         # `run_id` because this node decides for the SECTION and names no
@@ -2102,7 +2151,7 @@ def _generate_run(
     layout_pref_ref = prefer_equal_ref
     if width_firing is not None and equal_firing is not None:
         res_layout = evaluator_resolve([width_firing, equal_firing], "span_layout_preference")
-        _surface_conflicts(res_layout.conflicts, builder, strategy)
+        sink.extend(res_layout.conflicts)
         prefer_equal = res_layout.winner is equal_firing
         layout_pref_ref = res_layout.winner.version.ref
     elif width_firing is not None:
@@ -2225,7 +2274,7 @@ def _generate_run(
                 library, default_model, catalog, parts,
                 _post_sides(post_facts, s, length, "line"), resolved_posts)
             post, cap_gap = _make_post(
-                builder, kb, scope, site,
+                builder, kb, scope, site, sink,
                 model_post=model_post.post_sku, model_post_rejected=model_post.post_rejected,
             model_cap=model_post.cap_for,
                 post_id=f"post@{run.id}:{s}", run_ref=run.id,
@@ -2450,7 +2499,7 @@ def _generate_run(
 
     _report_uncovered_max_span(run, strategy, resolved, spans_by_model)
 
-    _check_panel_safety(kb, run, scope, site, strategy, builder, resolved, spans_by_model,
+    _check_panel_safety(kb, run, scope, site, sink, strategy, builder, resolved, spans_by_model,
                         {s.id: s for s in strategy.spans}, ctx["run"])
 
     for model_ref, offenders in unsupported_heights.items():
@@ -2853,6 +2902,7 @@ def _check_panel_safety(
     run: Run,
     scope: dict[str, str],
     site: dict,
+    sink: ConflictSink,
     strategy: Strategy,
     builder: GraphBuilder,
     resolved: dict,
@@ -2885,6 +2935,7 @@ def _check_panel_safety(
         for limit_rule in _PANEL_LIMITS:
             code, param = limit_rule.code, limit_rule.param
             res = resolve_param(kb, ctx, param)
+            sink.extend(res.conflicts)
             if res.winner is None:
                 continue  # no rule, no check — a limit nobody stated is not zero
             limit = next(a.value for a in res.winner.actions if a.kind == "set_param")
@@ -2952,6 +3003,7 @@ def _check_post_lengths(
     kb: KnowledgeBase,
     scope: dict[str, str],
     site: dict,
+    sink: ConflictSink,
     catalog: Catalog,
     builder: GraphBuilder,
     strategy: Strategy,
@@ -2964,7 +3016,7 @@ def _check_post_lengths(
     on every post here, so the elevation draws the footing the length check paid
     for and the two cannot drift apart."""
     embed, embed_refs = _resolve_quantity(
-        kb, {"scope": bind_scope(scope), "site": site}, "post_embed_mm", 600
+        kb, {"scope": bind_scope(scope), "site": site}, "post_embed_mm", 600, sink
     )
     # The embedment gets a node of its own, the same shape `resolve_span_quantities`
     # has one function away. It used to cite `embed_refs` ONLY in the failure
@@ -3114,7 +3166,24 @@ def _span_height(
 
 
 def _surface_conflicts(conflicts, builder: GraphBuilder, strategy: Strategy) -> None:
+    """Surface each DISTINCT disagreement once.
+
+    The same slot is resolved many times in a run — once per segment, once per
+    run, once per post — so two published rows that tie produce one conflict per
+    RESOLUTION, and a two-run fence reported the identical disagreement twice. It
+    is one fact about the knowledge, not one fact per place we happened to look:
+    a run claiming two disagreements where there is one is its own wrong answer,
+    and the count is what a reviewer triages by.
+
+    Keyed on the slot AND the contenders, so a slot that genuinely ties against
+    different rules under two scopes is still two findings.
+    """
+    seen: set[tuple] = set()
     for c in conflicts:
+        key = (c.param_or_action, tuple(c.contenders))
+        if key in seen:
+            continue
+        seen.add(key)
         node = builder.add(
             "conflict", "knowledge_conflict",
             payload={"slot": c.param_or_action, "contenders": c.contenders},
