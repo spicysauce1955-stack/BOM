@@ -145,6 +145,20 @@ class ResolvedSlot(BaseModel):
     # and `length_mm`, so the drawing reports what resolution decided and
     # recomputes no length from them (foundation §15).
     joint: str = "butt"              # this slot's own JointKind
+    # WHICH rule produced `length_mm`, recorded rather than inferred from the
+    # number. Continuity across an intermediate post combines per-bay lengths,
+    # and how they combine depends on what was measured (`CONTINUITY_JOINS`); a
+    # deriver that guessed the rule back from "length == width" would be reading
+    # a coincidence. "" is a run stored before this existed, and derives nothing.
+    length_rule: str = ""
+    # The AUTHORED override on continuity, carried from the spec so the derived
+    # answer and the authored one can be compared in ONE place (`strategy/
+    # continuity.py`) and their disagreement reported. Never the answer itself.
+    continuity: str = "derived"
+    # unstated | lands | through — the authored CAPABILITY (see `PostJoint`).
+    # Only frame slots have one; an infill member's value is always "unstated"
+    # because continuity is refused on infill at authoring.
+    post_joint: str = "unstated"
     channel_depth_mm: Mm = 0         # frame slots: how deep this member receives
     insertion_margin_mm: Mm = 0      # ... and the clearance left at its bottom
     base_ref: str | None = None      # infill: the frame slot it starts at
@@ -598,6 +612,8 @@ def resolve_panel(
             slot_key=frame_slot.key, role=req.role, qty=count * req.qty,
             slot_kind="frame",
             length_mm=_length_for(req, ctx), length_basis=ctx.length_basis,
+            length_rule=req.length_rule or "", continuity=frame_slot.continuity,
+            post_joint=frame_slot.post_joint,
             eligibility=eligibility,
             option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
             orientation=frame_slot.orientation,
@@ -646,6 +662,7 @@ def resolve_panel(
                 # that ignores the slope says the opposite to every reader of
                 # the structure sheet.
                 length_basis="width" if rule == "between_frame" else ctx.length_basis,
+                length_rule=rule or "", continuity=member.continuity,
                 eligibility=eligibility, fit=fit,
                 option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
                 orientation=spec.infill.orientation,

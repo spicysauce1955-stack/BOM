@@ -251,11 +251,17 @@ function partLine(part) {
     ? ` · ${esc(tu("structure.cut", { cut_mm: part.cut_length_mm }))}`
       + (part.length_basis ? ` <span class="meta">${esc(t("structure.basis." + part.length_basis))}</span>` : "")
     : "";
+  // A piece that crosses more than one bay is listed under each bay it crosses,
+  // because the crew meets it in each — so the row has to say it is the SAME
+  // piece, or four bays of one continuous rail read as four rails.
+  const shared = part.shared_with?.length
+    ? ` <span class="meta">${esc(t("structure.shared_with",
+        { n: part.shared_with.length }))}</span>` : "";
   // the slot is what a rectangle on the elevation and a line in this cell have
   // in common — it is how clicking the drawing finds the row
   return `<div class="part" data-slot="${esc(part.slot_key || "")}">`
     + `<span class="num">${esc(String(part.qty))}</span>×`
-    + ` <span class="sku">${esc(part.sku)}</span>${cut}${bars}</div>`;
+    + ` <span class="sku">${esc(part.sku)}</span>${cut}${shared}${bars}</div>`;
 }
 
 const partsCell = (parts) => parts.map(partLine).join("");

@@ -255,6 +255,14 @@ Every entity proposed and later retracted was invented while looking at the wron
 | 7 | Source policy — a first implementation (currently zero lines) | 5 |
 | 8 | Warning model, registry split, annexe rendering | 5 |
 | 9 | `Member.continuity` and continuous-member promotion | boundary v0.4 |
+
+**Built, 2026-08-25, and step 9 landed differently from this sketch.** The members
+that needed promoting were not promoted into `Element`s: a member run is its own
+record on the strategy (`Strategy.member_runs`), which is what a thing belonging to
+no bay (contract §3.1.12) actually needs. `Member.continuity` survives as the
+authored override only; the property itself is derived in `strategy/continuity.py`
+from stock length against the resolved spacing. See `plan/current-status.md` and
+`docs/architecture/material-optimization.md`.
 | 10 | Containment → demand, with the kit-credit rule | 5 |
 
 ### Item 10, as built (2026-08-25) — and the seam it deliberately did NOT use

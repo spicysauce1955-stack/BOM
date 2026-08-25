@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
 from fenceai.fencemodel.bases import FIXING_BASES
-from fenceai.fencemodel.lengths import LENGTH_RULES
+from fenceai.fencemodel.lengths import CONTINUITY_JOINS, LENGTH_RULES
 from fenceai.fencemodel.step_order import step_order
 from fenceai.knowledge.ast import Expr, field_paths
 # `parts.model` is a leaf — it imports `core.units` and nothing else — so naming
@@ -72,6 +72,37 @@ def _known_fixing_basis(v: str) -> str:
 # why `validate_model` refuses a kind whose numbers are all zero — "channel"
 # with no depth and no engagement is a butt joint wearing a better name.
 JointKind = Literal["butt", "channel", "groove", "bracket", "overlap"]
+
+# Whether a member PASSES the post it meets or lands on it — obligation 14's
+# capability, and its own field rather than a sixth `JointKind`.
+#
+# `joint` cannot carry it. On a frame slot `joint` names the housing this member
+# provides for the INFILL — it is validated against `channel_depth_mm`
+# (`_joint_errors`) and drawn against it (`report/elevation.py`) — which is a
+# different relation from member-to-post. M-VINYL is the proof: its rail is
+# `joint="channel"` because boards seat into it, and a routed rail that ALSO ran
+# through its posts would have had to give one of the two up.
+#
+# `unstated` is the default and is deliberately NOT a synonym for `lands`. Every
+# model in this portfolio was authored before continuity was derived at all, and
+# reading their silence as "stops at the post" would be authoring the answer on
+# their behalf — the flattening obligation 14 retracted. It RESOLVES to per bay,
+# which is what those fences were built and priced to, and the difference is kept
+# so an author can now say `lands` and mean it, and so closing the silence is an
+# audit of the portfolio rather than a change of meaning under everyone's feet.
+PostJoint = Literal["unstated", "lands", "through"]
+
+# Whether a member runs continuously through an intermediate post is DERIVED —
+# from stock length against the resolved spacing — and this is the escape hatch
+# the boundary contract keeps for the one case the derivation cannot serve: a
+# guide that states the behaviour outright and gives no length (obligation 14).
+#
+# `derived` is the default and must stay it. v0.4 of the contract made continuity
+# an authored boolean and that flattened a derived property into a fact; an
+# authored value here therefore DISAGREES with an answer the engine also computes,
+# and a disagreement is warned (`warning.continuity_override_disagrees`) rather
+# than settled in silence.
+MemberContinuity = Literal["derived", "continuous", "per_bay"]
 
 # The two kinds whose mechanic the schema can express: a housing of some depth,
 # and a member seated into it. `bracket` and `overlap` are in the vocabulary
@@ -338,6 +369,22 @@ class FrameSlot(BaseModel):
     # than drawing a nominal band that reads as measured.
     thickness_mm: Mm = 0
     joint: JointKind = "butt"
+    # Does this member run PAST the post, or stop at it? See `PostJoint`. The
+    # capability obligation 14's derivation is gated on, and never the answer:
+    # a `through` rail at 12 ft stock and 97" spacing is still cut per bay,
+    # which is the obligation's own example.
+    post_joint: PostJoint = "unstated"
+    # The AUTHORED assertion that overrides a derived property — never the
+    # property itself, and NOT an ADR-0004 `Override` (those are run-scoped
+    # patches anchored to `(run_id, station, kind)`; this is a sentence in a
+    # model document).
+    # See `MemberContinuity`. It lives on the frame slot as well as on `Member`
+    # because in this engine a rail IS a frame slot: `Member` is the infill
+    # pattern's element, and the member that threads an intermediate post is the
+    # horizontal frame one. The contract names `Member.continuity`; internal
+    # structure is ours (contract §4), so both carry it and only the one the
+    # derivation can serve is honoured.
+    continuity: MemberContinuity = "derived"
     # how deep this member RECEIVES an infill member — the U of a bottom channel,
     # the groove routed into a top rail. Measured from the receiving face inwards,
     # so it is bounded by nothing here and by `thickness_mm` in the shop; the
@@ -374,6 +421,11 @@ class Member(BaseModel):
     # not the opening it fills.
     base_engagement_mm: Mm = 0
     top_engagement_mm: Mm = 0
+    # The contract's own field (obligation 14). Carried here so the boundary
+    # shape is expressible, and REFUSED by `_unsupported_features` above
+    # "derived" until an infill member can be continuous — see the seam named
+    # there. Accepted-and-ignored is the failure that table exists to close.
+    continuity: MemberContinuity = "derived"
     requirement: PartRequirement
 
     @model_validator(mode="after")
@@ -860,7 +912,52 @@ def _unsupported_features(model: FenceModel) -> list[str]:
                     "claimed otherwise"
                 )
 
+        for slot in spec.frame:
+            wants_continuity = (slot.post_joint == "through"
+                                or slot.continuity == "continuous")
+            if wants_continuity and slot.orientation != "horizontal":
+                # A member runs through an INTERMEDIATE POST, and the posts are
+                # what a bay is bounded by along the fence. A vertical frame
+                # member is bounded by the ground and the panel top, meets no
+                # post between two bays, and would be handed to a derivation
+                # with nothing to derive from.
+                errors.append(
+                    f"frame slot {slot.key!r}: continuity on an "
+                    f"orientation={slot.orientation!r} member is {_UNSUPPORTED}: "
+                    "only a horizontal member meets the intermediate post it "
+                    "would run through, so this would be carried and never read"
+                )
+            elif wants_continuity and slot.requirement.length_rule not in CONTINUITY_JOINS:
+                # The rule decides what the piece MEASURES, so it decides how two
+                # bays' worth of it combine. Without a registered join the
+                # derivation would have to invent the length of a piece that
+                # crosses a post — the plausible-but-wrong answer this table
+                # exists to refuse — so the member stays per bay and says so.
+                errors.append(
+                    f"frame slot {slot.key!r}: continuity with "
+                    f"length_rule={slot.requirement.length_rule!r} is "
+                    f"{_UNSUPPORTED}: no continuity join is registered for that "
+                    "rule, so nothing could say how long one piece across two "
+                    "bays is. Registered: "
+                    + ", ".join(CONTINUITY_JOINS.names())
+                )
+
         for member in (spec.infill.pattern if spec.infill else []):
+            if member.continuity != "derived":
+                # THE SEAM, named rather than left as a silent no-op. An infill
+                # member is placed by `fit_pattern` against ONE bay's opening, so
+                # a continuous one would have to be fitted across the group —
+                # which changes where every board lands, not merely how long it
+                # is cut. `Member` carries the field because the contract names
+                # it (obligation 14); honouring it needs a group-scoped fit, and
+                # until that exists the rail is where continuity is derived.
+                errors.append(
+                    f"infill member {member.key!r}: continuity is {_UNSUPPORTED} "
+                    "on infill: `fit_pattern` fits a pattern to one bay's "
+                    "opening, so a member crossing two bays would need a "
+                    "group-scoped fit that decides where every board lands. "
+                    "Derived continuity is a FRAME member's today"
+                )
             seats = [n for n, mm in (("base_engagement_mm", member.base_engagement_mm),
                                      ("top_engagement_mm", member.top_engagement_mm)) if mm]
             if seats and member.requirement.length_rule != "between_frame":

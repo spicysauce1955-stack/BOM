@@ -26,7 +26,8 @@ _LENGTH_LISTS = frozenset({"widths", "alt_widths", "heights_mm"})
 # Enum VALUES that appear as words inside a sentence get translated; ids, SKUs and
 # knowledge refs never pass through here (they stay verbatim Latin in every
 # language). English is identity — the enum name IS the English word.
-_ENUM_PARAMS = frozenset({"kind", "mounting", "surface", "surfaces", "vertical", "mode", "chosen"})
+_ENUM_PARAMS = frozenset({"kind", "mounting", "surface", "surfaces", "vertical", "mode",
+                          "chosen", "authored"})
 _ENUM_WORDS: dict[str, dict[str, str]] = {
     "en": {},
     "he": {
@@ -40,6 +41,8 @@ _ENUM_WORDS: dict[str, dict[str, str]] = {
         "level": "מאוזן", "stepped": "מדורג", "raked": "משופע", "follow": "עוקב",
         # post orientation
         "plumb": "אנכי לחלוטין", "perpendicular": "ניצב לקרקע", "custom": "זווית מותאמת",
+        # MemberContinuity — the authored assertion, quoted inside a sentence
+        "derived": "נגזר", "per_bay": "לפי מפתח", "continuous": "רציף",
     },
 }
 
@@ -241,6 +244,33 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "{contained} ships {qty} more than slot {slot} needs in {n} bay(s) of "
             "section {run_id}: the surplus credits nothing."
         ),
+        # Obligation 14. The sentence names both inputs — the stock length and
+        # the bays — because "why is this one piece" is asked of the cut list,
+        # and an answer that named only the length would read as a coincidence.
+        "derive_continuity": (
+            "{slot} runs through {bays} bay(s) of section {run_id} as one "
+            "{length_mm} {u} piece, {qty} of them: {stock_length_mm} {u} stock "
+            "reaches that far."
+        ),
+        "derive_continuity_authored": (
+            "{slot} runs through {bays} bay(s) of section {run_id} as one "
+            "{length_mm} {u} piece, {qty} of them, because the model says so."
+        ),
+        "continuity_override_disagrees": (
+            "{slot} in section {run_id} is authored continuity “{authored}”, "
+            "which is built ({built_bays} bay(s) per piece) — the stock length "
+            "and the spacing derive {derived_bays}."
+        ),
+        "continuity_override_unbuildable": (
+            "{slot} in section {run_id} is authored continuous, but "
+            "{stock_length_mm} {u} stock cannot reach past one {span_mm} {u} "
+            "bay, so it is cut per bay."
+        ),
+        "continuity_stock_length_unknown": (
+            "{slot} in section {run_id} is detailed to run through its posts "
+            "and no product for it states a stock length, so nothing bounds how "
+            "far one piece reaches: {built_bays} bay(s) per piece."
+        ),
         # The input FACTS a section's story opens with. They used to fall through
         # to `input_fact`, which prints the raw payload dict — acceptable while
         # they appeared only as an indented `←` ancestor, and not once the
@@ -414,6 +444,30 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "contained_credit_surplus": (
             "{contained} כולל {qty} יותר מהנדרש בחריץ {slot} ב-{n} מפתחים בקטע "
             "{run_id}: העודף אינו מזכה דבר."
+        ),
+        "derive_continuity": (
+            "{slot} עובר דרך {bays} מפתחים בקטע {run_id} כפריט אחד באורך "
+            "{length_mm} {u}, {qty} כאלה: מוט באורך {stock_length_mm} {u} מגיע "
+            "עד לשם."
+        ),
+        "derive_continuity_authored": (
+            "{slot} עובר דרך {bays} מפתחים בקטע {run_id} כפריט אחד באורך "
+            "{length_mm} {u}, {qty} כאלה, משום שכך נקבע בדגם."
+        ),
+        "continuity_override_disagrees": (
+            "ל{slot} בקטע {run_id} הוגדרה רציפות “{authored}”, וכך נבנה "
+            "({built_bays} מפתחים לפריט) — אורך המלאי והמרווח גוזרים "
+            "{derived_bays}."
+        ),
+        "continuity_override_unbuildable": (
+            "ל{slot} בקטע {run_id} הוגדרה רציפות, אך מוט באורך "
+            "{stock_length_mm} {u} אינו מגיע מעבר למפתח אחד ({span_mm} {u}), "
+            "ולכן הוא נחתך לפי מפתח."
+        ),
+        "continuity_stock_length_unknown": (
+            "ל{slot} בקטע {run_id} תוכנן מעבר דרך העמודים ואף מוצר עבורו אינו "
+            "מצהיר אורך מלאי, ולכן דבר אינו תוחם עד כמה מגיע מוט אחד: "
+            "{built_bays} מפתחים למוט."
         ),
         "topology_node": "צומת {node_id} בשרטוט, שבו נפגשים {runs} קטעים.",
         "topology_node_one": "צומת {node_id} בשרטוט, שבו מסתיים קטע אחד.",
@@ -671,6 +725,33 @@ def explain_node(
                 model_ref=p.get("model_ref"), contained=p.get("contained"),
                 slot=p.get("slot"), qty=p.get("qty"),
                 run_id=p.get("run_id"), n=p.get("n"))
+        case "derive_continuity":
+            # two sentences for two different reasons, because they are two
+            # different answers: a derived piece is as long as the stock allows,
+            # and an authored one is as long as the guide said. Naming a stock
+            # length in the authored sentence would credit the derivation for a
+            # decision it did not make.
+            base = _fmt(
+                t,
+                "derive_continuity" if p.get("basis") == "stock_length"
+                else "derive_continuity_authored",
+                lang, units,
+                slot=p.get("slot"), bays=p.get("bays"), run_id=p.get("run_id"),
+                length_mm=p.get("length_mm"), qty=p.get("qty"),
+                stock_length_mm=p.get("stock_length_mm"))
+        case "continuity_override_disagrees":
+            base = _fmt(t, "continuity_override_disagrees", lang, units,
+                slot=p.get("slot"), run_id=p.get("run_id"),
+                authored=p.get("authored"), built_bays=p.get("built_bays"),
+                derived_bays=p.get("derived_bays"))
+        case "continuity_override_unbuildable":
+            base = _fmt(t, "continuity_override_unbuildable", lang, units,
+                slot=p.get("slot"), run_id=p.get("run_id"),
+                stock_length_mm=p.get("stock_length_mm"), span_mm=p.get("span_mm"))
+        case "continuity_stock_length_unknown":
+            base = _fmt(t, "continuity_stock_length_unknown", lang, units,
+                slot=p.get("slot"), run_id=p.get("run_id"),
+                built_bays=p.get("built_bays", 1))
         case action if action in _OVERRIDE_ACTIONS:
             base = _fmt(t, "override_applied", lang, units,
                 override_id=p.get("override_id"), action=node.action

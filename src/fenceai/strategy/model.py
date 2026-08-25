@@ -10,6 +10,7 @@ from fenceai.core.gaps import Gap
 from fenceai.core.units import Mm
 from fenceai.decisions.graph import DecisionGraph
 from fenceai.fencemodel.resolve import ResolvedPanel
+from fenceai.strategy.continuity import MemberRunPlan
 
 
 class Post(BaseModel):
@@ -86,6 +87,31 @@ class Span(BaseModel):
     panel: ResolvedPanel | None = None
 
 
+class MemberRun(MemberRunPlan):
+    """A member that is ONE piece across several bays — obligation 14's answer,
+    recorded so nothing downstream has to ask the question again.
+
+    A rail threaded through an intermediate post belongs to no bay (contract
+    §3.1.12), so it cannot live on a `Span` the way `rail_count` does. It hangs
+    off the strategy beside the posts and the bays, and names the spans it
+    covers — which is what lets demand emit ONE line pegged to all of them
+    instead of one line per bay, and what stops the BOM over-ordering by exactly
+    the factor the obligation is about.
+
+    A SUBCLASS of the derivation's own output rather than a restatement of it:
+    two hand-kept copies of this shape is how the cut length on the plan and the
+    cut length on the drawing come to differ. All this adds is identity — an id
+    to peg to and the run it belongs to.
+
+    The derivation's INPUTS ride along (`stock_length_mm`, `authored`, `basis`)
+    because "why is this one piece" is a question a reader asks of the cut list,
+    and the `derive_continuity` decision node is built from these fields.
+    """
+
+    id: str
+    run_ref: str
+
+
 class Gate(BaseModel):
     id: str
     run_ref: str
@@ -116,10 +142,22 @@ class Strategy(BaseModel):
     # a warning above and a `gap` node in the graph, and a reader holding a
     # stored strategy can already see all three. `POST /gaps` reports from here.
     gaps: list[Gap] = []
+    # Members that are one piece across several bays. Empty is the normal case
+    # and the one every fence built before obligation 14 has: nothing is
+    # continuous unless the model details it to pass a post AND the stock it is
+    # bought in reaches. See `strategy/continuity.py`.
+    member_runs: list[MemberRun] = []
 
     def element_ids(self) -> list[str]:
+        # Member runs are here for the same reason posts and bays are: they have
+        # an id, the decision graph scopes a node to it, and `/explain/{element}`
+        # answers for it. Nothing PEGS to one — a demand line for a continuous
+        # member pegs to the bays it crosses, which is what keeps the structure
+        # sheet able to show it under each — so adding them widens what can be
+        # explained without widening what has to be accounted for.
         return (
-            [p.id for p in self.posts] + [s.id for s in self.spans] + [g.id for g in self.gates]
+            [p.id for p in self.posts] + [s.id for s in self.spans]
+            + [g.id for g in self.gates] + [m.id for m in self.member_runs]
         )
 
 

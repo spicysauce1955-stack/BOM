@@ -43,6 +43,13 @@ class Part(BaseModel):
     cut_length_mm: Mm | None = None
     length_basis: str | None = None  # "width" | "slope"
     from_bars: list[str] = []  # cut-plan bar provenance ("new #2", an inventory id)
+    # The OTHER elements this same physical piece also serves. A rail derived
+    # continuous crosses several bays (contract obligation 14), and its one
+    # demand line pegs to all of them — so it appears in each bay's parts, which
+    # is right (the crew meets it in each) and would read as one piece per bay
+    # unless the row says otherwise. Inverted from the line's own pegs, never
+    # counted here: this is a read model, and the quantity is the BOM's.
+    shared_with: list[str] = []
 
 
 class Station(BaseModel):
@@ -264,7 +271,11 @@ def _parts_by_element(requirements: list[ResolvedSupplyLine], bom: Bom) -> _Ledg
         asked[key] = asked.get(key, 0) + req.engineering_qty
         if req.pegs:
             for element_id in req.pegs:
-                per_element.setdefault(element_id, []).append(part)
+                per_element.setdefault(element_id, []).append(
+                    part.model_copy(update={
+                        "shared_with": [p for p in req.pegs if p != element_id]})
+                    if len(req.pegs) > 1 else part
+                )
         else:
             # nobody's part: it belongs in the unassigned bucket, not in a
             # phantom element that no table would ever show
@@ -300,7 +311,8 @@ def _merge_parts(parts: list[Part]) -> list[Part]:
     """One line per (sku, unit, cut length): two rails of the same cut read as 2, not 1+1."""
     merged: dict[tuple, Part] = {}
     for p in parts:
-        key = (p.sku, p.unit, p.role, p.slot_key, p.cut_length_mm, p.length_basis)
+        key = (p.sku, p.unit, p.role, p.slot_key, p.cut_length_mm, p.length_basis,
+               tuple(p.shared_with))
         if key in merged:
             merged[key].qty += p.qty
             merged[key].from_bars = merged[key].from_bars + p.from_bars

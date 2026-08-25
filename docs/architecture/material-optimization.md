@@ -14,6 +14,11 @@ Pure function `derive_requirements(strategy, catalog, demand_skus) -> [Requireme
   run stored before fence models existed and is refused (`run_predates_fence_model`), never
   silently back-filled from the legacy `rail_count`/`screws_count`;
 - soil posts → concrete coverage applications;
+- **members the run derived continuous → ONE line per `Strategy.member_run`**, pegged to
+  every bay it crosses, with the group's cut length and the slot's own `qty` — NOT the
+  slot's qty times the bays. The per-bay lines for those bays are suppressed, or the same
+  rail would be ordered twice. Demand does not decide continuity and does not re-derive it
+  (see below);
 - gates → kit sku (exploded later).
 Length basis (chord vs slope) is chosen per vertical mode and named in the line payload
 (Research A pitfall 4).
@@ -23,6 +28,55 @@ eligibility set and the chosen product's `Consumption`, in one statement — the
 balances asked-vs-purchased per `(sku, unit)` and reads the purchased side from
 `BomLine.engineering_unit`, so a unit demand guessed for itself can disagree with what
 `fulfill()` did and report one demand as unassigned *and* from stock at once.
+
+### Continuity (`strategy/continuity.py`, boundary contract obligation 14)
+
+Whether a member runs continuously through an intermediate post is **derived** from the
+product's manufactured `stock_length` against the RESOLVED bay spacing — never authored.
+It is derived during generation, once per run, after the run is laid out, because:
+
+- it needs the spacing, so it cannot be a property of the part;
+- a second derivation downstream could disagree with the first, and then the drawing and
+  the cut list disagree about whether a rail is one piece or three. Foundation §15 —
+  a read model never recomputes a quantity — makes that a defect, not a nuisance.
+
+The answer is recorded as `Strategy.member_runs`. Demand reads it, `plan_cuts` sees the
+group's length as one piece, and the structure sheet inverts the line's pegs the way it
+inverts every other line's — carrying `shared_with` so a piece listed under each bay it
+crosses does not read as one piece per bay.
+
+Inputs, in the order they are asked:
+
+1. **The capability.** `FrameSlot.post_joint` — `unstated | lands | through`. Only
+   `through` puts a member on the table, and it is not the answer: the same `through` rail
+   is two bays per piece in 16 ft stock and one in 12 ft. It is its own field rather than a
+   `JointKind`, because `joint` names the housing a frame member gives the INFILL and is
+   validated and drawn against `channel_depth_mm`. `unstated` is the default and resolves
+   to per bay — what every fence authored before this was priced to — without claiming the
+   model said `lands`.
+2. **What ends a chain**, whatever the stock length is: a post that is not a `line` post
+   (a corner, a gate, a junction, a transition — or no post at all), a bay that climbs or
+   steps at the post, a different panel, a different candidate set, a different rail count.
+3. **The stock length**, taken as the SHORTEST every candidate product can be bought in;
+   the longest is recorded beside it on the decision node, so a reader can see that a
+   longer bar was on the table and that adding a short one to the catalog is what would
+   shorten every piece on the next run.
+   Which product fills the slot is `resolve_supply`'s answer, so a slot with several
+   candidates has not decided its own stock length; the shortest claims continuity only
+   where every candidate could make the piece, and `plan_cuts` refuses a piece longer than
+   its stock.
+4. **The join**, per length rule (`CONTINUITY_JOINS` in `fencemodel/lengths.py`): how the
+   per-bay lengths a bay already resolved combine into one piece. A rule with no registered
+   join is not continuable.
+
+`FrameSlot.continuity` / `Member.continuity` is the authored override the contract keeps
+for a guide that states the behaviour outright and gives no length. It wins, and a
+disagreement with the derived answer is reported (`warning.continuity_override_disagrees`)
+rather than settled in silence. The one thing it cannot win against is the length of a bar
+(`warning.continuity_override_unbuildable`). Where no candidate states a stock length at
+all, the assertion runs the whole chain and `warning.continuity_stock_length_unknown` says
+that nothing bounded it — the chain is a real limit (a corner, a gate, a grade ends it) but
+not one anybody chose, and `plan_cuts`' length guard only covers divisible stock.
 
 ## Fulfillment pipeline (`fulfillment` module)
 
