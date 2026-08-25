@@ -2650,3 +2650,60 @@ requirements and BOM are byte-identical and no golden file was regenerated — t
 moved" for the change that most needed it to.
 
 1823 pytest (+30) · 203 golden scenarios · compatibility gate unmoved.
+
+### The architecture review, and the two defects it found (same day)
+
+`architecture-critic` returned **RETHINK** on the first cut, and it was right. The
+verdict was narrow and specific — `qty` had been overloaded — and both defects live in
+the gap that overloading opened between *how many pieces are in this panel* and *how
+many are left to buy*.
+
+**Nesting under a credited slot double-counted.** A hinge that ships two washers, in a
+panel wanting four hinges with a kit supplying two, listed eight washers under `hinges`
+plus four under `kit/hinge`: twelve washers for four hinges that hold eight. The
+contents were expanded from the count the panel *would* have bought, because flattening
+ran before crediting. Nothing downstream could have caught it — a contained member is
+not a purchase, so it never reaches the BOM, the cut plan or the parts ledger, which is
+exactly why the invariant battery was silent. Credits now settle first, and the
+multiplication lives in `walk_contained_qty`, shared by the flatten and the credit sized
+from it, so the two numbers cannot drift apart.
+
+**Crediting a slot that is drawn at a position broke the elevation.**
+`_parts_per_rect` weights every fastener by a frame slot's count, so a four-rail slot
+credited two drew three fasteners instead of five and invented two `fixings_unplaced` —
+on a fence that had not changed. There is no honest answer available: draw the full
+count and the panel buys fewer than it shows; draw what it buys and the fence is missing
+members that are physically there. A contained piece has an identity but no PLACE, so
+the target is refused at authoring. Hardware is what this feature is for and a fixing
+has no drawn extent, so the real case pays nothing; a test pins that the allowed case
+leaves the drawing byte-identical.
+
+**Four more, each an accepted-and-ignored or a sentence that was false.** A credit chain
+is refused (the answer would come out of resolution order). `_assembly_step_errors`
+refused a step naming a contained path when no library was supplied — the same document
+valid or invalid depending on the caller, reachable as a `GenerationFailure` — so it and
+the credit checks that read resolved state got the same guard `_containment_errors`
+already had. The `credit_contained` node is per TARGET now: two containers each
+supplying half a slot wrote two nodes, each claiming "needs 4, 2 ship inside X, so the
+panel buys 0", false twice, in direct contradiction of the comment sitting on it.
+`ResolvedPanel.credit_notes` had one reader, so an author aiming a credit at a slot
+their model does not build saw nothing in the editor — `preview_panel` surfaces them
+now, and the two sentences dropped their run-and-section clause so one wording serves
+both callers. A pin on a contained slot got its own `slot_not_purchasable` rather than
+`sku_not_eligible`, whose sentence tells the reader to choose a product that is never
+offered. `credits` and `contained` on a post or cap are refused outright.
+
+**And the battery was pointed at the shape.** Every invariant here — Σ(parts) ≡ BOM,
+the four-hop traceability chain, determinism, cut-plan conservation — plus the
+byte-compared gate ran over a portfolio in which no model contained anything, which is
+why two defects in the one shape that matters were found by a reviewer rather than by a
+red test. `M-KIT` is now a fixture: a kit shipping two of the four hinges its panel
+wants, so each bay buys two. Regenerating rewrote all twelve existing gate files and git
+reported a change to none of them — that self-proving property is what makes ADDING a
+fixture the one safe regeneration, and the module docstring now says so.
+
+Six mutants against the reworked code, all dead: uncapped credit, the old ordering, a
+drawn target allowed, a chain allowed, a credit node for an uncredited slot, and the
+library guard removed.
+
+1840 pytest · 213 golden scenarios · compatibility gate unmoved (one fixture added).

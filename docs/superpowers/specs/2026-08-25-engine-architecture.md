@@ -302,11 +302,44 @@ items that cover it are interchangeable, so a kit with hinges and a kit without 
 parts. That answer holds until a company stocks one part number that ships differently by
 finish, which is the fact that would reopen this.
 
+**Two rules the architecture review forced, and both are about the same thing:
+`qty` on a credited slot means WHAT IS LEFT TO BUY.**
+
+* **Credits settle before contents are expanded.** A credited slot may itself hold
+  contents — a hinge that ships a washer — and those are a multiple of what the panel
+  actually buys. Expanding first read the count the panel *would* have bought: with a
+  kit supplying 2 of 4 hinges, twelve washers for four hinges that hold eight. Nothing
+  downstream could catch it, because a contained member is not a purchase and never
+  reaches the BOM. The multiplication now lives in one function shared by the flatten
+  and the credit sized from it, so the two numbers cannot drift.
+* **A credit may not target a slot that is DRAWN at a position.** `report/elevation.py`
+  weights every fastener by a frame slot's count, so a 4-rail slot credited 2 drew 3
+  fasteners instead of 5 and invented two `fixings_unplaced`, on a fence that had not
+  changed. A contained piece has an identity but no PLACE, so there is no honest answer
+  — draw the full count and the panel buys fewer than it shows, or draw what it buys and
+  the fence is missing members that are physically there. Refused at authoring. Hardware
+  is what this feature is for and a fixing has no drawn extent, so the real case pays
+  nothing. Lifting it means giving a contained piece a position, which is a different
+  feature.
+
+A **credit chain** — crediting a slot that itself contains a credit source — is refused
+for a third reason of the same family: how many boxes the panel buys would depend on a
+credit whose size depends on how many boxes it buys, and one resolution pass would answer
+that by whichever slot happened to resolve first.
+
 **Still open after item 10:** posts, caps and gates. Containment is resolved over the
 PANEL's slots, and a post's cap and a gate kit are elements of the BAY that
 `demand/derive.py` builds from `strategy.posts` / `strategy.gates` with no slot list and
 no path key — the same boundary `report/assembly.py` already records for assembly steps,
-and it closes the same way.
+and it closes the same way. `credits` and `contained` on a post or cap requirement are
+REFUSED rather than accepted and ignored, so the gap is visible to an author instead of
+being a field that silently does nothing.
+
+**One authority still unreconciled.** `AssemblyKit.components` on the PRODUCT states the
+same physical fact `Part.contains` states about the part, and nothing cross-checks them.
+This slice is what makes the divergence consequential; the check the argument above
+implies — refuse a container slot whose eligible products disagree with its part — is not
+built.
 
 **Steps 1–4 need nothing from anybody.** Step 1 is first because it is the only item that
 is simultaneously a live defect, a binding-obligation violation, a prerequisite for the
