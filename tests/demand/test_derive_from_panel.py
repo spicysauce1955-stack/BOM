@@ -73,10 +73,17 @@ def test_a_zero_qty_slot_asks_for_nothing_at_all():
 
     Containment made the case ordinary rather than hypothetical: a panel whose
     hinges all arrive inside a gate kit resolves its hinge slot to qty 0 every
-    time. So a slot asking for nothing now asks for NOTHING: no line, and the
-    fact that it resolved to zero stays where it can be read and acted on — on
-    the panel's own slot (with `credited_qty` and `credited_by` where a credit
-    emptied it) and in the decision graph.
+    time. So a slot asking for nothing now asks for NOTHING.
+
+    What is left to read it by, stated precisely rather than generously. For a
+    slot a CREDIT emptied, the trace is complete: the panel's own slot carries
+    `credited_qty` and `credited_by`, and a `credit_contained` node carries the
+    subtraction. For a slot a KNOWLEDGE PARAM emptied — `rails_per_span=0`, the
+    case this test was originally written for — there is no such node, and the
+    only remaining evidence is the resolved slot itself at qty 0 inside the
+    stored panel. That is a real narrowing of what the demand line used to say
+    out loud, and it is the honest reading: the line said "buy zero rails", which
+    no purchaser acts on and no BOM line could peg to.
     """
     panel = ResolvedPanel(model_ref="M-TEST", slots=[
         ResolvedSlot(

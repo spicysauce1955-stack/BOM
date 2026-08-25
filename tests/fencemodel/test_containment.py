@@ -843,3 +843,45 @@ def test_a_contained_piece_must_bring_at_least_one_of_itself():
 
     with pytest.raises(ValidationError):
         ContainedPart(key="hinge", role="fixing", qty=0)
+
+
+def test_the_structure_sheet_lists_what_was_BOUGHT_and_the_plan_what_is_PLACED():
+    """The one place the two documents deliberately disagree, asserted so a
+    change in either direction is loud.
+
+    `report/structure.py` builds a bay's parts by INVERTING pegs, and a contained
+    member has none — it is not a purchase. So `kit/hinge` is absent there and
+    present in the assembly plan, and the pair is the whole point rather than a
+    gap: the sheet answers "what did this bay cost", the plan answers "what does
+    a fitter put in it".
+    """
+    from fenceai.report.structure import build_structure
+
+    model = _model(assembly=[
+        AssemblyStep(key="fit", slots=["rail", "kit", "kit/hinge", "hinges"]),
+    ])
+    result, resolution, bom = _priced(model, _parts())
+    report = build_structure(straight_topology(3000), result.strategy,
+                             resolution.requirements, bom, run_id=result.run.id)
+
+    bay = next(b for section in report.sections for b in section.bays)
+    sheet = {part.slot_key for part in bay.parts}
+    assert "kit" in sheet and "hinges" in sheet     # bought, so they are costed
+    assert not any(k.startswith("kit/") for k in sheet)
+
+    placed = {p.slot_key for step in assembly_plan(model, result.strategy.spans[0].panel).steps
+              for p in step.parts}
+    assert "kit/hinge" in placed
+
+
+def test_a_model_carrying_credits_survives_the_round_trip_the_editor_makes():
+    """The editor PUTs the whole document back. A field the schema has and the
+    round trip drops is a credit that silently stops applying on the next save —
+    and `credits` is authored, so it is the half that cannot be refilled from a
+    part."""
+    from fenceai.fencemodel.model import FenceModel
+
+    model = _model()
+    back = FenceModel.model_validate(model.model_dump())
+    assert back == model
+    assert back.default_spec.fixings[0].requirement.credits == {"hinge": "hinges"}
