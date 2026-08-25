@@ -46,12 +46,19 @@ def along_grade(base: Mm, ctx: "PanelContext") -> Mm:
     return base
 
 
-@LENGTH_RULES.register("between_frame")
-def _between_frame(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
-    """Answered by `resolve_panel` with the placed frame, not from the bay. A
-    frame slot that declares the rule is refused at load, so it gets no length
-    here rather than quietly getting a width."""
-    return None
+@LENGTH_RULES.register("clear_between_posts")
+def _clear_between_posts(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
+    return along_grade(ctx.clear_width_mm, ctx)
+
+
+@LENGTH_RULES.register("centre_to_centre")
+def _centre_to_centre(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
+    return along_grade(ctx.centre_width_mm, ctx)
+
+
+@LENGTH_RULES.register("overlap")
+def _overlap(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
+    return along_grade(ctx.centre_width_mm + req.overlap_mm, ctx)
 
 
 @LENGTH_RULES.register("panel_height")
@@ -69,16 +76,9 @@ def _panel_height(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
     return ctx.height_mm
 
 
-@LENGTH_RULES.register("clear_between_posts")
-def _clear_between_posts(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
-    return along_grade(ctx.clear_width_mm, ctx)
-
-
-@LENGTH_RULES.register("overlap")
-def _overlap(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
-    return along_grade(ctx.centre_width_mm + req.overlap_mm, ctx)
-
-
-@LENGTH_RULES.register("centre_to_centre")
-def _centre_to_centre(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
-    return along_grade(ctx.centre_width_mm, ctx)
+@LENGTH_RULES.register("between_frame")
+def _between_frame(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
+    """Answered by `resolve_panel` with the placed frame, not from the bay. A
+    frame slot that declares the rule is refused at load, so it gets no length
+    here rather than quietly getting a width."""
+    return None

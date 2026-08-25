@@ -45,14 +45,11 @@ FixingBasisFn = Callable[[PanelCounts], int]
 FIXING_BASES: Registry[FixingBasisFn] = Registry("fixing basis")
 
 
-@FIXING_BASES.register("per_panel")
-def _per_panel(counts: PanelCounts) -> int:
-    return 1
-
-
-@FIXING_BASES.register("per_frame_member")
-def _per_frame_member(counts: PanelCounts) -> int:
-    return counts.frame_count
+@FIXING_BASES.register("per_member_crossing")
+def _per_member_crossing(counts: PanelCounts) -> int:
+    """Counted ARITHMETICALLY — members x frame members — not by walking real
+    intersections. `report/elevation.py` says the same thing where it draws them."""
+    return counts.member_count * counts.frame_count
 
 
 @FIXING_BASES.register("per_member")
@@ -72,8 +69,11 @@ def _per_gap(counts: PanelCounts) -> int:
     return max(counts.placed_count - 1, 0)
 
 
-@FIXING_BASES.register("per_member_crossing")
-def _per_member_crossing(counts: PanelCounts) -> int:
-    """Counted ARITHMETICALLY — members x frame members — not by walking real
-    intersections. `report/elevation.py` says the same thing where it draws them."""
-    return counts.member_count * counts.frame_count
+@FIXING_BASES.register("per_frame_member")
+def _per_frame_member(counts: PanelCounts) -> int:
+    return counts.frame_count
+
+
+@FIXING_BASES.register("per_panel")
+def _per_panel(counts: PanelCounts) -> int:
+    return 1

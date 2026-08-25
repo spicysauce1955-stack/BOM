@@ -81,10 +81,23 @@ class Registry(Generic[F]):
             ) from None
 
     def names(self) -> list[str]:
-        """Sorted, because this reaches users: it is interpolated into the
-        refusal an author sees, and an order that varied with import order would
-        make the same mistake read differently on two machines."""
+        """Sorted, because THIS reaches an error message: it is interpolated into
+        the refusal an author sees, and an order that varied with import order
+        would make the same mistake read differently on two machines."""
         return sorted(self._fns)
+
+    def declared(self) -> list[str]:
+        """Registration order, because THIS reaches a select.
+
+        The sequence a vocabulary is declared in is an editorial judgement —
+        `clear_between_posts` first because it is what most rails are, `per_panel`
+        last because it is the coarsest — and alphabetising a dropdown discards it
+        silently. `names()` and this are not redundant: one answers *"what could
+        you have meant?"* after a mistake, where a stable order is the whole
+        point, and the other answers *"what may I choose?"* before one, where the
+        author's ordering is information.
+        """
+        return list(self._fns)
 
     def __contains__(self, name: object) -> bool:
         return name in self._fns

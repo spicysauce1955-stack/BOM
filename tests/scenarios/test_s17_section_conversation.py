@@ -10,9 +10,28 @@ See docs/scenarios/golden-scenarios.md §S17.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from fenceai.api.app import app
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    """This file is the ONLY one in the release gate that drives the API without
+    pinning its own database, so it inherited whatever `FENCEAI_DB` the ambient
+    environment happened to carry — a developer's local db, or one a browser
+    smoke run had just populated.
+
+    Two agents working in separate worktrees independently reported this file
+    failing and spent time proving it was not their change. Neither failure
+    reproduces here under any condition I could construct, so the cause is still
+    unidentified — which is exactly why the gate should not be reading a database
+    it did not create. A release gate that depends on ambient state is one whose
+    red is not evidence.
+    """
+    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "s17.db"))
+    monkeypatch.setenv("FENCEAI_AI", "stub")
 
 L_SHAPE = {
     "revision": 1,
@@ -42,7 +61,33 @@ GATED = {
 }
 
 
+def _max_span(client, value_mm: int) -> None:
+    """Establish the max span this scenario is written against.
+
+    S17's documented numbers — three 2000 mm bays, and the sentence naming the
+    rejected alternative `[2438, 2438, 1124]` — are a fence built under
+    **K-MAXSPAN@v2**, which the golden-scenarios doc names explicitly. The seed
+    ships v1 at 1800 mm, under which 2000 mm bays are not merely different, they
+    are ILLEGAL.
+
+    The scenario never created v2. It passed because some other test in the same
+    session did, and this file was the only one in the release gate that drove the
+    API without pinning its own database — so it read whatever knowledge the
+    ambient one happened to hold. Given a clean database it fails, and it has
+    failed that way since long before the current branch (verified at 42598c5).
+
+    A gate that only passes on state another test left behind is not testing what
+    it says. It establishes its own precondition now.
+    """
+    assert client.post("/api/knowledge", json={
+        "object_id": "K-MAXSPAN", "type": "hard_constraint",
+        "title": f"Manufacturer max span {value_mm} mm",
+        "actions": [{"kind": "set_param", "param": "max_span_mm", "value": value_mm}],
+    }).status_code == 200
+
+
 def _fence(client, topology) -> tuple[str, str]:
+    _max_span(client, 2438)
     pid = client.post("/api/projects", json={"name": "s17"}).json()["id"]
     client.put(f"/api/projects/{pid}/topology", json=topology)
     run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]

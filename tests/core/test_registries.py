@@ -184,3 +184,39 @@ def test_a_preset_never_sees_an_infeasible_candidate():
 
     source = inspect.getsource(supply._choose)
     assert source.index("feasible = [") < source.index("PRESETS.get(")
+
+
+def test_names_are_for_messages_and_declared_is_for_selects(clean):
+    """Two orders, two questions. `names()` answers "what could you have meant?"
+    after a mistake — stable, sorted, so one typo reads the same on two machines.
+    `declared()` answers "what may I choose?" before one, where the order a
+    vocabulary was declared in is an editorial judgement a dropdown should keep."""
+    from fenceai.fencemodel.lengths import LENGTH_RULES
+
+    assert LENGTH_RULES.names() == sorted(LENGTH_RULES.names())
+    # ...and the declared order is NOT alphabetical, which is what makes the
+    # distinction worth having rather than a second name for one list
+    assert LENGTH_RULES.declared() != LENGTH_RULES.names()
+    assert set(LENGTH_RULES.declared()) == set(LENGTH_RULES.names())
+
+
+def test_the_declared_order_is_the_one_the_editor_already_shows():
+    """The refactor to registries must not silently reorder a dropdown.
+
+    `panel-model.js` has always listed these in the order the `Literal` declared
+    them — `clear_between_posts` first because it is what most rails are,
+    `per_panel` last because it is the coarsest. Registering them in a different
+    sequence changes what an author sees with nothing failing, which is the kind
+    of regression a refactor is supposed not to have.
+    """
+    from fenceai.fencemodel.bases import FIXING_BASES
+    from fenceai.fencemodel.lengths import LENGTH_RULES
+
+    assert LENGTH_RULES.declared() == [
+        "clear_between_posts", "centre_to_centre", "overlap", "panel_height",
+        "between_frame",
+    ]
+    assert FIXING_BASES.declared() == [
+        "per_member_crossing", "per_member", "per_end_member",
+        "per_gap", "per_frame_member", "per_panel",
+    ]
