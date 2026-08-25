@@ -173,10 +173,25 @@ def test_a_container_this_bay_placed_none_of_contains_nothing():
 def test_a_contained_part_is_placed_but_never_bought():
     """The kit is on the BOM; its hinges are not. That is the divergence the
     feature exists to express — and the hinges are still members, which is what
-    obligation 9 asks."""
-    _, resolution, bom = _priced(_model(), _parts())
-    assert not any(r.slot_key.startswith("kit/") for r in resolution.requirements)
+    obligation 9 asks.
+
+    Asserted against the DEMAND lines and not only against the resolved ones,
+    which is not fussiness: a contained slot carries no eligibility, so a demand
+    line for one does not reach `requirements` at all — it lands in `unresolved`
+    under a `no_eligible_item` ERROR. Checking the resolved list alone let the
+    mutation that removes the skip survive with the whole suite green and every
+    priced fence carrying two spurious errors per bay.
+    """
+    catalog = demo_catalog()
+    result, resolution, bom = _priced(_model(), _parts())
+    reqs = derive_requirements(result.strategy, catalog)
+    assert not any(r.slot_key.startswith("kit/") for r in reqs)
+    assert resolution.unresolved == [] and resolution.warnings == []
     assert "GATE-KIT-1000" in {l.sku for l in bom.lines}
+    # ... and the hinges are not bought a second time under their own SKU: the
+    # only HINGE-SET on this BOM is the two the panel still wants
+    assert next(l for l in bom.lines if l.sku == "HINGE-SET").engineering_qty == \
+        2 * len(result.strategy.spans)
 
 
 def test_a_contained_member_is_placeable_by_an_assembly_step_and_otherwise_unplaced():
@@ -185,6 +200,10 @@ def test_a_contained_member_is_placeable_by_an_assembly_step_and_otherwise_unpla
     model = _model(assembly=[
         AssemblyStep(key="fit", slots=["rail", "kit", "kit/hinge", "hinges"]),
     ])
+    # the step may NAME it, which is the half a check over `spec_requirements`
+    # alone would refuse — leaving every contained piece permanently unplaceable
+    # while the suite stayed green
+    assert validate_model(model, demo_catalog(), _parts()) == []
     panel = _panel(model, _parts())
     plan = assembly_plan(model, panel)
     # the step's own order, which is the order a person does it in
@@ -192,6 +211,21 @@ def test_a_contained_member_is_placeable_by_an_assembly_step_and_otherwise_unpla
         ["rail", "kit", "kit/hinge", "hinges"]
     assert next(p for p in plan.steps[0].parts if p.slot_key == "kit/hinge").qty == 2
     assert [p.slot_key for p in plan.unplaced] == ["kit/latch"]
+
+
+def test_a_slot_emptied_by_a_credit_is_neither_placed_nor_unplaced():
+    """Every hinge came in the box, so the `hinges` slot has nothing to fit. It
+    must not appear in `unplaced`: a "fit 0 hinges" row tells a fitter to look
+    for parts that are not in the pile, which is the same lie `unplaced` exists
+    to prevent, told the other way round. The pieces themselves ARE in the plan,
+    under the path key of the container that brought them."""
+    model = _model(_spec(2), assembly=[
+        AssemblyStep(key="fit", slots=["rail", "kit", "kit/hinge"]),
+    ])
+    plan = assembly_plan(model, _panel(model, _parts()))
+    assert [p.slot_key for p in plan.unplaced] == ["kit/latch"]
+    assert all(p.qty > 0 for p in plan.unplaced)
+    assert "hinges" not in {p.slot_key for s in plan.steps for p in s.parts}
 
 
 def test_a_step_naming_a_contained_part_that_does_not_exist_is_refused_at_authoring():

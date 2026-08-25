@@ -6,12 +6,25 @@
 > declare an ordered list of named steps, each with its input and output type, so
 > inserting *credit kits against assemblies* or *certify combinations* is a row.
 
-Both beneficiaries are real and pending — kit credit is build order item 10, and
-`certify()` for `Combination` is contract obligation 17, where the shape is agreed
-and the seam is named but nothing reads one yet. Both are steps in the MIDDLE of
-this chain, which is where a hardcoded call order costs most: a middle insert
-means reading three statements, working out what each one hands the next, and
-hoping the mental model matches.
+`certify()` for `Combination` is contract obligation 17 — the shape is agreed and
+the seam is named, but nothing reads one yet. It is a step in the MIDDLE of this
+chain, which is where a hardcoded call order costs most: a middle insert means
+reading three statements, working out what each one hands the next, and hoping
+the mental model matches.
+
+**The kit credit was the other named beneficiary and it did NOT land here**, which
+is a finding rather than an omission (build order item 10;
+`docs/superpowers/specs/2026-08-25-engine-architecture.md` §7 records it in full).
+A phase after `resolve_supply` can only credit by reading the CHOSEN product's
+`AssemblyKit.components` — "this line bought a kit, the kit lists HINGE-SET, so
+knock the panel's HINGE-SET demand down". That credits hinges nobody asked that
+panel to place, on every job that happens to buy both, and a saving is invisible
+on the finished document because the line is simply not there. Containment is
+authored instead (`Part.contains` + `PartRequirement.credits`) and resolved where
+the panel's member list is settled, which is upstream of this chain entirely.
+
+So `derive_demand` already receives a panel whose credited slots carry what is
+LEFT to buy. Nothing in this file changed for it, and that is the point.
 
 **A phase declares what it reads and what it writes**, which is what makes a row
 safe to add. `check_order` refuses a step placed before the thing it reads

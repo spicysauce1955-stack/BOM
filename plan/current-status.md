@@ -2556,3 +2556,97 @@ tasks and the smoke suite grew from 183 checks to 187, four of them landing
 specifically inside the slot pane this arc exists to repair.
 
 1432 pytest · 183 golden scenarios · 187/187 smoke · compatibility gate unmoved.
+
+---
+
+## Containment → demand, and the kit credit (2026-08-25) — build order item 10
+
+A part may now declare what ships **inside** it, and the panel places those pieces
+without buying them twice. Contract obligation 9 asks a published panel to place
+"every one of its members … **including parts contained inside other parts**", and
+until this the engine had no way to say a gate kit arrives with its hinges in the
+box, let alone to stop the panel ordering hinges as well.
+
+**Where each half of the fact lives, and why the pair is split.** What ships inside a
+piece is the PART's fact — `Part.contains` — so two models naming one gate kit cannot
+disagree about what is in the box. `resolve_model_parts` copies it onto
+`PartRequirement.contained`, which is filled-never-authored, the same lifetime `role`,
+`eligibility` and `Member.width_mm` already have and for the same reason:
+`resolve_panel` is pure over `(spec, ctx)` and holds no library, so a contents list
+left only on the part would be unreachable at the one moment the member list is built.
+What a contained piece SUPPLIES is the MODEL's fact — `PartRequirement.credits` — because
+a hinge in a box does not know that this model calls its hinge slot `gate_hinges`. It
+is a dict keyed by the contained path, which makes it structurally impossible to spend
+one physical piece against two slots.
+
+**The path key is an ordinary slot key.** `<container>/<piece>`, built in one function,
+composing to any depth (`kit/hinge/washer`). That is deliberate rather than terse: a
+`slot_key` is already the identity `demand`, the structure sheet's `(element, slot)`
+map, the elevation and the panel canvas address a part by, so a contained member
+inherits every guarantee it had — including `validate_model`'s duplicate refusal, now
+run over MEMBERS rather than requirements. An authored key containing the separator is
+refused, so a path can never be forged into a collision.
+
+**A credit is a supply route, not a negative line and not a shrunken number.** A BOM
+line of −2 hinges is a document a purchaser cannot act on, and a count that quietly
+drops is a number nobody can trace back. So the contained slot records which slot it
+supplies, the demanding slot records `credited_qty` + `credited_by`, and what remains
+on it is what the panel buys — one honest positive line, smaller. `credit_contained`
+carries the whole subtraction into the decision graph (what was needed, what came in
+the box, what is left), because a saving leaves no BOM line of its own to trace
+through it and "every BOM line traces through the graph" is only ever true of a line
+that exists.
+
+**Over-crediting is refused three ways, because it is the failure that leaves no
+mark.** `validate_model` refuses at authoring a credit whose target no spec declares,
+whose target is a different ROLE, and whose target is its own container. Per bay, a
+target this variant does not build credits nothing. And what is applied is capped at
+what the slot actually wanted — a kit shipping four hinges into a two-hinge panel
+saves two, never four — with the surplus reported. `contained_credit_unmatched` and
+`contained_credit_surplus` are warnings and not errors on purpose: under-crediting
+costs a customer a spare part, and refusing a buildable fence over a generous kit
+would be the worse trade.
+
+**Two demand rules changed, one of them fixing a latent hole.** A contained member
+emits no requirement line — what supplies it is the BOM line that bought its
+container, one `contained_in` hop away — and a slot credited to zero emits none
+either. The second is not new behaviour dressed up: a zero-quantity line was always a
+requirement no BOM line could peg to, i.e. a hole in `covered == req_ids`, and it
+survived only because every fixture that had one also bought that SKU for another
+slot. `tests/demand/test_derive_from_panel.py` now pins the stronger property with the
+reason written down.
+
+**The seam that was named and deliberately not used.** `fulfillment/phases.py` was
+built with "credit kits against assemblies" as its first beneficiary — a phase after
+`resolve_supply` reading the chosen product's `AssemblyKit.components`. That is
+exactly the phantom saving this item had to refuse: a kit's component list is what the
+BOM note prints, and reading it as a claim about a particular panel's members credits
+hinges nobody asked that panel to place. It would also have moved the compatibility
+gate on day one, because `GATE-KIT-1000` already declares a `HINGE-SET` component. The
+spec §7 records the reversal; the phase list is unchanged and `derive_demand` simply
+receives a panel that already knows what is left to buy.
+
+**Known boundaries, stated rather than discovered later.** Containment resolves over
+the PANEL's slots, so a post's cap and a gate kit — elements of the BAY, built by
+`demand/derive.py` from `strategy.posts` / `strategy.gates` with no slot list and no
+path key — cannot contain anything yet. That is the same boundary
+`report/assembly.py` already records for assembly steps and it closes the same way. A
+credit that depended on WHICH product supplies the container is a `host`-layer
+question and is not expressible; within the part model it should not need to be, since
+a part is a specification and two items covering it are interchangeable.
+
+**Seven mutants, and two of them lived first time.** A contained member reaching demand
+survived the whole suite, because the test asserted on the RESOLVED lines and a
+contained slot carries no eligibility — the mutant put two `no_eligible_item` errors on
+every bay instead of double-buying, and nothing looked. An assembly step being unable
+to name a contained part survived too, because no test proved a valid step VALIDATES.
+Both tests were strengthened until the mutants died; the other five (uncapped credit,
+unmultiplied contained quantity, unrecorded credit source, an emptied slot reported
+`unplaced`, containment never reaching the slot) died on the first try.
+
+**The gate did not move.** No shipped model contains anything, so every fixture's
+requirements and BOM are byte-identical and no golden file was regenerated — the
+`DemandLine` shape is untouched, which is what kept the gate able to say "nothing
+moved" for the change that most needed it to.
+
+1823 pytest (+30) · 203 golden scenarios · compatibility gate unmoved.
