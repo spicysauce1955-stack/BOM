@@ -29,8 +29,13 @@ place.
 Both teams hold `contract.md` and `contract.sha256`, byte-identical.
 
 ```bash
-sha256sum -c contract.sha256      # in either repo. must print: contract.md: OK
+sha256sum -c contract.sha256      # both lines must print OK
 ```
+
+The manifest covers **`contract.md` and this file**. A procedure that protects a frozen
+document while being itself unprotected can have its protection edited away silently —
+which was true of this one until ratification, and is the kind of hole that only shows up
+when you write down what you are signing.
 
 **If that fails, stop.** Someone edited a frozen document, or the copies have drifted.
 Neither side should build against an unverified contract, and the fix is to find which copy
@@ -98,7 +103,7 @@ to prevent.
 ```bash
 # both repos, identically:
 #   1. apply the accepted text, bump the version, date it
-#   2. sha256sum contract.md > contract.sha256
+#   2. sha256sum contract.md AMENDING.md > contract.sha256
 #   3. commit both, one commit, message naming every amendment in the batch
 #   4. verify the other repo's hash matches before either side builds on it
 ```
