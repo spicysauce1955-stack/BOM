@@ -49,7 +49,7 @@ item 1. One change, four payoffs.
 | ~~2~~ | ~~`SiteConditions`…~~ **DONE 2026-08-25.** `conservative_parameter_used` deferred to item 5 (it keys on a `ParameterTable.task` class that does not exist yet); no UI — settable only via `PUT /projects/{id}/site` | — | 13's site scope |
 | ~~3~~ | ~~Handler registries~~ **DONE 2026-08-25.** `core/registry.py` + three registries; the `Literal`s became registry-validated `str`. The EDITOR's hardcoded arrays are the remaining closed half | — | none (internal) |
 | ~~4~~ | ~~The declared phase list~~ **DONE 2026-08-25.** `fulfillment/phases.py`; a phase declares what it reads and writes, and `check_order` refuses a step placed before its input exists | — | none (internal) |
-| 5 | `ParameterTable` loader — `value_type`, `domain_basis`, `condition_basis`, validity fields, `condition_scope` binding, and a `SetToken` action so a token-valued param has somewhere to land. **Read the two prerequisites above first** | 2 | 13, 15 |
+| ~~5~~ | ~~`ParameterTable` loader~~ **DONE 2026-08-25.** `knowledge/parameters.py`: the contract's §1.3 type, expansion into published `KnowledgeVersion`s through `from_published`, `SetToken` + `resolve_token`, `to_mm` as the one rounding point, uncovered/lapsed/nonconforming as gaps. **Not consumed by a route yet** — no snapshot loader, and no reader for the gaps | — | 13, 15 |
 | 6 | Source policy — **currently zero lines** despite being binding and re-ranked twice. `version_status` is an axis | 5 | 6, §1.4 |
 | 7 | `Provenance` on `SpecField`, and the snapshot-level `source_docs` join with invariant 12's closure check | 5 | 6, 8 |
 | 8 | Warning model — `attaches_to`, the platform/source registry split, and the **annexe** in the structure sheet, which does not exist | 5 | 10 |

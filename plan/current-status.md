@@ -1,5 +1,63 @@
 # Current status
 
+## Published parameter tables land as ordinary knowledge (2026-08-25)
+
+Item 5, and the last item that needed nothing from the other team. **1751 pytest ·
+203 scenario tests, green.**
+
+`ParameterTable` is the contract's §1.3 type, built field-for-field from the
+contract rather than from memory — the last boundary type built from memory
+invented a `SourceRef` with the wrong fields under the contract's own name, so the
+parsing tests come first here and use the contract's shapes verbatim.
+
+**The expansion is the design.** A published table becomes ordinary
+`KnowledgeVersion`s, one per row, whose condition reads the namespace that row's
+keys are scoped to — so the existing evaluator resolves them beside everything
+else, at their own authority, with the same precedence and the same conflict
+reporting. No second selection path, no privileged channel into the generator.
+That also satisfies obligation 13 without a scheduler: a row conditioned on
+`post.role` becomes a rule conditioned on `post.role`, expanded now and selected
+when a post exists.
+
+**Every version is built through `from_published`** — the seam recorded as item
+5's prerequisite. A loader using the constructor would make published rows look
+home-grown, and two that tie and disagree would RAISE: the exact defect `origin`
+was added to close, reinstated with nothing failing, because `demo_knowledge()`
+holds no published rows to notice.
+
+**Four things the contract is specific about, and why:**
+
+- **`to_mm` rounds, it does not truncate** (§1.1 BINDING). A span limit passes
+  through `n = ceil(run_length / max_span)`, so 2463.8 floored rather than rounded
+  buys an extra post, footing and pour on a 9.8 m run. Python's `round()` is
+  banker's and sends 2500 thousandths to 2, so the half-up form is written out.
+- **`value_type` is declared once on the TABLE**, so one column cannot hold both
+  `10000 deg_milli` and `not_rackable`. `SetToken` is a separate action rather
+  than a union-typed `SetParam.value` for the same reason: a resolver asking for
+  a length must not typecheck against a word.
+- **`domain_basis` changes what an uncovered point MEANS** — against `measured`
+  the table really does not cover it; against `declared` we may not know the
+  table's extent. Different facts, different `would_close`, different work.
+- **A lapsed row is marked and still expanded.** Dropping it would turn a lapsed
+  authority into a coverage hole, and those are different fixes. Judged against
+  the run's pinned `as_of`, never a clock (obligation 16): no `as_of` means no
+  expiry judgement rather than today's date.
+
+**The frontend gap widened here, and this is the notification.** Three new codes
+(`uncovered_parameter_point`, `parameter_authority_lapsed`,
+`parameter_value_nonconforming`) are produced and **nothing renders them** — they
+are `Gap.code`s, `Strategy.gaps` still has no reader, and the annexe is item 8.
+They are in both locale bundles with placeholders verified against the params
+actually emitted, so the surface that eventually reads them is not also the change
+that has to invent their Hebrew. The locale guard did not catch them, because it
+never scanned `knowledge/parameters.py`; that hole is closed.
+
+**Also not wired:** nothing calls `expand()` in a route. There is no snapshot
+loader — the contract's payload arrives as a whole `KnowledgeSnapshot` and that
+ingestion is not built, so this item delivers the type, the expansion and the
+gaps, and stops at the point where a real published snapshot would enter.
+
+
 ## The pricing chain is a declared list, and the API did not move (2026-08-25)
 
 Item 4, the second extension seam, and **steps 1–4 of the build order are done.**

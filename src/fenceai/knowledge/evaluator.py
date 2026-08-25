@@ -200,6 +200,25 @@ def resolve_param(kb: KnowledgeBase, ctx: dict, param: str) -> Resolution:
     return resolve(relevant, param, values_agree=same_value)
 
 
+def resolve_token(kb: KnowledgeBase, ctx: dict, param: str) -> Resolution:
+    """Resolve a `SetToken` value — the word form of `resolve_param`.
+
+    Separate from `resolve_param` on purpose. A resolver asking for a length must
+    not receive a word, and the two can never compete for one parameter anyway:
+    a `ParameterTable` declares `value_type` ONCE, so a parameter is a quantity
+    or a token for the whole table. Sharing one function would mean every caller
+    branching on the type of the value it got back, which is exactly the cost
+    §1.3 puts `value_type` on the table to avoid.
+    """
+    relevant: list[Firing] = []
+    for f in applicable_firings(kb, ctx):
+        acts = [a for a in f.actions if a.kind == "set_token" and a.param == param]
+        if acts:
+            relevant.append(Firing(version=f.version, actions=acts))
+    same_value = len({a.value for f in relevant for a in f.actions}) <= 1
+    return resolve(relevant, param, values_agree=same_value)
+
+
 def resolve_actions(
     kb: KnowledgeBase,
     ctx: dict,

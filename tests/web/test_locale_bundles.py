@@ -40,6 +40,15 @@ WARNING_CODES = [
     # A warning and NOT a gap: `closes_by` is knowledge|planning and this is
     # neither — it is a field on the project for a person here to fill in.
     "site_condition_missing",
+    # Emitted by the `ParameterTable` loader as `Gap.code`. NOTHING RENDERS THESE
+    # YET — the annexe (build order item 8) is the surface that will, and
+    # `Strategy.gaps` has no reader today. They are here anyway: the guard's job
+    # is to force a code into both bundles the moment the backend can produce it,
+    # so that the surface which eventually reads them is not also the change that
+    # has to invent their Hebrew.
+    "uncovered_parameter_point",
+    "parameter_authority_lapsed",
+    "parameter_value_nonconforming",
     "panel_length_unresolved",
     "clear_gap_exceeded",
     "rail_separation_insufficient",
@@ -172,6 +181,11 @@ def test_backend_code_list_is_current():
         # no locale entry because nothing scanned the file that raised it)
         src / "fencemodel" / "preview.py",
         src / "demand" / "derive.py",
+        # the ParameterTable loader emits codes too, and was invisible to this
+        # guard for the same reason every earlier hole was: the file was not on
+        # the list. A code with no bundle entry renders as raw English inside a
+        # Hebrew sentence the day something first shows it.
+        src / "knowledge" / "parameters.py",
         # the ROUTES emit codes too, in HTTP detail bodies, and they were
         # invisible to this guard twice over: the file was not scanned, and a
         # route writes `"code": "x"` rather than `code="x"`. Both forms now.

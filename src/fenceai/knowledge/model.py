@@ -35,6 +35,27 @@ class SetParam(BaseModel):
     value: int
 
 
+class SetToken(BaseModel):
+    """A parameter whose value is a WORD from a closed set, not a number.
+
+    `SetParam.value` is an `int`, so `slope_method = stepped_only` had nowhere to
+    land — one of the five mechanisms the self-audit found specified and unbuilt.
+    Coercing it into `SetParam` would mean an integer code for a word, which is
+    the enum-in-disguise the contract refuses at the boundary: `not_rackable` is
+    not an angle, it is a different parameter, and a table that mixed the two
+    would make every consumer branch on the type of every cell.
+
+    A separate action rather than a union-typed `value` on `SetParam`, because a
+    resolver asking for a length and receiving a word should not typecheck. The
+    two never compete: a table declares `value_type` ONCE, so a parameter is a
+    quantity or a token for the whole table and cannot be both.
+    """
+
+    kind: Literal["set_token"] = "set_token"
+    param: str
+    value: str
+
+
 class RequireMounting(BaseModel):
     kind: Literal["require_mounting"] = "require_mounting"
     surface: str  # base surface this applies to
@@ -93,6 +114,7 @@ class FlagForReview(BaseModel):
 Action = Annotated[
     Union[
         SetParam,
+        SetToken,
         RequireMounting,
         RequirePostReinforcement,
         PreferEqualSpans,
