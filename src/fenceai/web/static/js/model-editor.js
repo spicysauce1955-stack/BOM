@@ -28,8 +28,8 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import {
-  el, field, loadCatalogProducts, loadPartTypes, loadParts, option,
-  updateAdvancedUi,
+  el, field, loadCatalogProducts, loadPartTypes, loadParts, loadVocabularies,
+  option, updateAdvancedUi,
 } from "./builder-ui.js";
 import {
   CONDITION_CMPS, CONDITION_FIELDS, readSentence, writeSentence,
@@ -46,7 +46,7 @@ import { TEMPLATES } from "./panel-templates.js";
 import {
   GRADES, blankModel, canChooseId, defaultFixing, defaultInfill, defaultMember,
   defaultSlot, defaultVariant, draftCopyOf, duplicateOf, freeId, idCollision,
-  specOf,
+  setVocabularies, specOf,
 } from "./panel-model.js";
 import { on } from "./state.js";
 import { warningRowHtml } from "./warnings.js";
@@ -957,13 +957,22 @@ function addBar(spec) {
   return bar;
 }
 
-// The catalog, the part library and the type vocabulary are all awaited BEFORE
-// the host is written, so two renders racing each other rebuild the pane rather
-// than leaving a half-built one behind. All three are cached promises, so this
-// costs one request each per session however often the pane rebuilds.
+// The catalog, the part library, the type vocabulary and the schema's own
+// vocabularies are all awaited BEFORE the host is written, so two renders racing
+// each other rebuild the pane rather than leaving a half-built one behind. All
+// four are cached promises, so this costs one request each per session however
+// often the pane rebuilds.
+//
+// The fourth is the one whose ABSENCE has to survive the trip: `setVocabularies
+// (null)` is a real answer — "this session does not know what the backend
+// accepts" — and the inspector renders those selects as unavailable rather than
+// guessing. Set on every pass, including a failing one, so that a later
+// successful fetch replaces an earlier failure and a session never renders a
+// vocabulary it has stopped being able to confirm.
 async function renderInspectorPane() {
-  const [products, parts, partTypes] = await Promise.all(
-    [loadCatalogProducts(), loadParts(), loadPartTypes()]);
+  const [products, parts, partTypes, vocab] = await Promise.all(
+    [loadCatalogProducts(), loadParts(), loadPartTypes(), loadVocabularies()]);
+  setVocabularies(vocab);
   const host = document.getElementById("model-inspector");
   if (!host || !session) return;
   renderInspector(host, {

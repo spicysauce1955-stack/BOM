@@ -11,6 +11,7 @@ tools/smoke-out/, and exits non-zero on any failed check.
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import shutil
@@ -2545,6 +2546,32 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               deferred["rule"] and deferred["inside_advanced"]
               and deferred["starts_shut"] is True)
         time.sleep(0.6)
+        # ... and it is populated from the BACKEND, not from a list in the JS.
+        # The editor used to carry its own array of length rules and fixing
+        # bases, pinned to the schema by a test that a person had to notice. Now
+        # `GET /api/vocabularies` answers, and this is the only check that can
+        # see the whole path — module, request, route, schema — with a real
+        # browser doing the fetching. A stale hardcoded fallback reintroduced
+        # "just in case" would still render a working select in every unit test;
+        # it shows up here as options the server does not offer.
+        #
+        # `between_frame` is excluded on a FRAME slot on purpose (it is the one
+        # rule that reads a member's base/top refs, which a slot has none of), so
+        # the expected set is the served vocabulary minus that one — narrowing a
+        # served list is allowed, inventing one is not.
+        served = json.loads(urllib.request.urlopen(
+            f"http://localhost:{PORT}/api/vocabularies", timeout=5).read())
+        rule_select = c.js("""
+{
+  const rule = document.querySelector('#model-inspector [data-f="length_rule"]');
+  ({options: [...rule.options].map((o) => o.value).filter((v) => v !== ""),
+    disabled: rule.disabled});
+}""")
+        check("the length rule select is populated from /api/vocabularies",
+              rule_select["disabled"] is False
+              and rule_select["options"]
+              == [r for r in served["length_rules"] if r != "between_frame"],
+              (rule_select, served["length_rules"]))
         c.js("""
 {
   const rule = document.querySelector('#model-inspector [data-f="length_rule"]');
@@ -2951,6 +2978,28 @@ document.querySelector('#model-elements [data-element^="fixing:"]').click(); 'ok
         check("the basis diagram is drawn, not merely present",
               diagram["tag"] == "svg" and diagram["w"] > 10
               and diagram["h"] > 10 and diagram["dots"] > 0)
+        # the other half of the served vocabulary, on the control that is a whole
+        # SENTENCE ("where every board meets every rail"): every basis the
+        # backend offers, in the backend's order, and every one of them worded
+        # — a member registered after the bundles were written would show its
+        # raw token here rather than a blank or a dotted key
+        basis_select = c.js("""
+{
+  const b = document.querySelector('#model-inspector [data-f="basis"]');
+  ({options: [...b.options].map((o) => o.value).filter((v) => v !== ""),
+    labels: [...b.options].map((o) => o.textContent),
+    disabled: b.disabled});
+}""")
+        served_bases = json.loads(urllib.request.urlopen(
+            f"http://localhost:{PORT}/api/vocabularies", timeout=5).read())["fixing_bases"]
+        check("the fixing basis select is populated from /api/vocabularies",
+              basis_select["disabled"] is False
+              and basis_select["options"] == served_bases,
+              (basis_select["options"], served_bases))
+        check("every offered basis is worded, never a raw i18n key",
+              all(lbl and not lbl.startswith("model.basis.")
+                  for lbl in basis_select["labels"]),
+              basis_select["labels"])
         c.js("""
 document.querySelector('#model-elements [data-element^="fixing:"]').click(); 'ok'""")
         time.sleep(0.8)

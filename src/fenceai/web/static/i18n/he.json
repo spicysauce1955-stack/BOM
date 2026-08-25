@@ -809,6 +809,8 @@
   "model.preview_hint": "מתומחר תוך כדי עריכה, לפני שנשמר משהו. זו אינה הצעת מחיר ושום דבר כאן אינו נשמר על פרויקט.",
   "model.preview_failed": "עדיין אי אפשר לפרוס את הטיוטה הזאת לפאנל.",
   "model.unsaved_changes": "יש שינויים שלא נשמרו",
+  "model.vocabulary_unavailable": "השרת לא מסר אילו ערכים השדה הזה מקבל — יש לרענן ולנסות שוב",
+  "model.vocabulary_unavailable_option": "— לא זמין —",
   "model.id_taken": "{id} כבר קיים — שמירה תחתיו תוסיף גרסה לדגם ההוא",
   "model.duplicate_from": "שכפול מהגרסה הזאת",
   "model.retire_version": "הוצאת גרסה {version} משימוש — לא ניתן יהיה לבחור בה",

@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -53,13 +54,77 @@ def _placement_kinds() -> set[str]:
 
 def _js_const(name: str) -> set[str]:
     """A `const NAME = [...]` array out of panel-model.js — the values the
-    editor OFFERS, read from the vocabulary rather than restated."""
+    editor OFFERS, read from the vocabulary rather than restated.
+
+    Only the CLOSED vocabularies are still spelled this way. The three the
+    backend serves are not in the file at all; `_js_offered` asks the module."""
     import re
 
     src = (STATIC / "js" / "panel-model.js").read_text()
     body = re.search(rf"const {name} = \[(.*?)\];", src, re.S)
     assert body, f"{name} is no longer a const array in panel-model.js"
     return set(re.findall(r'"([a-z_]+)"', body.group(1)))
+
+
+@pytest.fixture()
+def served(tmp_path, monkeypatch) -> dict[str, list[str]]:
+    """`GET /api/vocabularies` through the real app.
+
+    The ROUTE rather than `fencemodel.vocabulary` directly: the browser can only
+    reach the vocabulary through HTTP, so a route that renamed a key or dropped
+    one would leave a direct call green and every select empty.
+
+    Scratch DB and stub AI for the same reason `tests/api/test_parts_routes.py`
+    uses them — the store is only populated inside `app`'s lifespan, and a bare
+    client would write into the repo's own `fenceai.db`."""
+    from fastapi.testclient import TestClient
+
+    from fenceai.api.app import app
+
+    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("FENCEAI_AI", "stub")
+    with TestClient(app) as client:
+        response = client.get("/api/vocabularies")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _js_offered(served: dict) -> dict:
+    """What panel-model.js hands out — before it is told anything, after it is
+    given `served`, and after a failed fetch hands it null.
+
+    RUN, not read. The point of the change this pins is that the vocabularies are
+    no longer text in the file, so the only honest way to ask the editor what it
+    offers is to ask the module."""
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    # the three the script below asks for by name; a route that grew a fourth
+    # would otherwise be compared against three and pass
+    assert set(served) == {"length_rules", "fixing_bases", "objective_presets"}
+    module = (STATIC / "js" / "panel-model.js").as_posix()
+    script = f"""
+import {{ fixingBases, lengthRules, objectivePresets, setVocabularies }}
+  from "{module}";
+const offered = () => ({{
+  length_rules: lengthRules(),
+  fixing_bases: fixingBases(),
+  objective_presets: objectivePresets(),
+}});
+const before = offered();
+setVocabularies({json.dumps(served)});
+const after = offered();
+// what `loadVocabularies()` resolves to when the request fails
+setVocabularies(null);
+const after_failure = offered();
+console.log(JSON.stringify({{before, after, after_failure}}));
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "offered.mjs"
+        path.write_text(script)
+        proc = subprocess.run(["node", str(path)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
 
 SCRIPT = """
 import {
@@ -329,40 +394,94 @@ def test_the_swatch_field_refuses_anything_but_plain_hex(out):
             f"got: {sink.strip()}")
 
 
-def test_the_editor_and_the_backend_agree_on_the_vocabularies():
-    """Each select offers a vocabulary the backend defines. A value the editor
-    offers and the backend rejects is a save that 422s; one the backend has and
-    the editor lacks is a product line nobody can author.
+def test_the_editor_and_the_backend_agree_on_the_vocabularies(served):
+    """The three OPEN vocabularies — length rules, fixing bases, objective
+    presets — travel from the schema through `GET /api/vocabularies` into the
+    select, and this pins every joint in that chain.
 
-    EQUALITY in both directions, and every expected set derived rather than
-    retyped — a subset assertion passes with the editor's array emptied, and a
-    hand-copied set passes when a new arm is added to the backend alone.
+    A value the editor offers and the schema rejects is a save that 422s; one the
+    schema has and the editor lacks is a product line nobody can author. Serving
+    the list fixes the second outright, and would create the first if the editor
+    ever fell back to a copy of its own — so the third assertion is that it does
+    not: with no answer from the backend, the editor offers NOTHING, and
+    `choice()` renders that as a disabled control rather than as a guess.
 
-    **Two of the five moved.** Length rules and fixing bases used to be `Literal`s
-    in `model.py` and are REGISTRIES now (`core/registry.py`), so a new one is a
-    registration rather than a type edit plus a branch plus a release. The
-    property this test defends is unchanged; only where truth lives moved, and
-    it is derived from the new home rather than retyped here.
+    EQUALITY in both directions, and neither side retyped here. The backend side
+    is introspected from the `Literal`s that still define these; the editor side
+    is what `panel-model.js` actually HANDS OUT, taken by running it. A subset
+    assertion would pass with the editor emptied; a hand-copied set would pass
+    when a member is added to the schema alone; and comparing the route to the
+    module alone would pass when both drifted from `model.py` together.
 
-    Which leaves the editor as the closed half: registering `per_corner` makes it
-    authorable through the API and this test then FAILS until the editor's array
-    names it too. That failure is correct and is the point — it is the reminder
-    that a vocabulary served to a browser as a hardcoded array is not open yet.
-    Closing it means serving `FIXING_BASES.names()` from a route the editor reads.
-    """
-    from typing import get_args
-
+    Lists, not sets: order is an editorial judgement (`clear_between_posts`
+    first because most rails are, `per_panel` last because it is the coarsest),
+    it reaches the select, and a `set` comparison discards it silently."""
     from fenceai.fencemodel.bases import FIXING_BASES
     from fenceai.fencemodel.lengths import LENGTH_RULES
+    from fenceai.fulfillment.presets import PRESETS
+
+    # (1) the ROUTE says exactly what the schema accepts, no more and no fewer.
+    #
+    # Derived from the REGISTRIES, which are where these three vocabularies live
+    # since build item 3 — this test was written against the `Literal`s that
+    # preceded them and needed exactly this one edit, which is what the seam in
+    # `fencemodel/vocabulary.py` predicted it would cost.
+    #
+    # `declared()`, never `names()`. The registry sorts for error messages, where
+    # a stable order is the point; these reach a SELECT, where the declaration
+    # sequence is an editorial judgement. Asserting against the sorted list would
+    # pin the dropdown to alphabetical order and call that agreement.
+    assert set(served) == {"length_rules", "fixing_bases", "objective_presets"}
+    assert served["length_rules"] == LENGTH_RULES.declared()
+    assert served["fixing_bases"] == FIXING_BASES.declared()
+    assert served["objective_presets"] == PRESETS.declared()
+
+    # (2) the EDITOR offers exactly what the route says — run, not read, so a
+    # module that accepted the payload and then handed back something else is
+    # visible here
+    offered = _js_offered(served)
+    assert offered["after"] == served
+
+    # (3) ... and before the fetch resolves, and after one that failed, it offers
+    # nothing at all. `null` is the load-bearing value: an empty list would let a
+    # select render as "you never chose one", and a stale array would offer a
+    # value the schema may have dropped.
+    unknown = {name: None for name in served}
+    assert offered["before"] == unknown
+    assert offered["after_failure"] == unknown
+
+
+def test_the_editor_and_the_schema_agree_on_the_closed_vocabularies():
+    """The vocabularies that are still `Literal` PLUS a branch, so extending one
+    is a release either way and the editor may hold its own copy.
+
+    Same claim as the served ones and the same standard of proof: equality in
+    both directions, every expected set derived rather than retyped."""
+    from typing import get_args
+
     from fenceai.fencemodel.model import EligibleItem, InfillSpec
 
-    assert _js_const("LENGTH_RULES") == set(LENGTH_RULES.names())
-    assert _js_const("BASES") == set(FIXING_BASES.names())
     assert _js_const("JUSTIFICATIONS") == set(
         get_args(InfillSpec.model_fields["justification"].annotation))
     assert _js_const("APPROVALS") == set(
         get_args(EligibleItem.model_fields["approval"].annotation))
     assert _js_const("PLACEMENT_KINDS") == _placement_kinds()
+
+
+def test_the_editor_no_longer_keeps_a_copy_of_a_served_vocabulary():
+    """The defect the route exists to delete, asserted as an absence.
+
+    Everything above stays green if somebody reintroduces `const BASES = [...]`
+    beside the fetch "just as a fallback" — the module would still hand out the
+    served list once it arrived, and the array would only be reached on the path
+    no test drives. That path is the 422: a fallback written in March offers a
+    basis the schema dropped in June, the author picks it, and the save fails
+    with a message about a union tag."""
+    src = (STATIC / "js" / "panel-model.js").read_text()
+    for name in ("BASES", "LENGTH_RULES", "PRESETS", "OBJECTIVE_PRESETS"):
+        assert f"const {name} = [" not in src, (
+            f"{name} is served by /api/vocabularies; a copy here is the second "
+            "answer that route exists to delete")
 
 
 def test_the_editor_offers_every_role_the_ui_can_name_and_no_other():

@@ -40,6 +40,7 @@ from fenceai.fencemodel.preview import (
     preview_panel,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
+from fenceai.fencemodel.vocabulary import vocabularies
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.fulfillment.pipeline import PricedRun, price_strategy
 from fenceai.fulfillment.quote import Quote
@@ -1283,6 +1284,26 @@ def list_parts() -> dict:
     library = state.store.part_library()
     return {"parts": [p.model_dump() for p in
                       sorted(library.parts, key=lambda p: (p.type, p.id, p.version))]}
+
+
+@app.get("/api/vocabularies")
+def list_vocabularies() -> dict:
+    """The vocabularies a client may OFFER, so the editor offers exactly them.
+
+    Read-only, project-independent and free of stored state — the same shape as
+    /api/part-types above, and for the same reason: the browser cannot derive
+    what the schema accepts, so it either asks or it keeps a second copy, and the
+    second copy is the defect. A value the editor offers and the schema rejects
+    is a save that 422s; one the schema has and the editor lacks is a product
+    line nobody can author. Both halves are fixed by there being one list.
+
+    Names only, no labels — unlike /api/part-types, whose types come from stored
+    data the browser has never seen. These are rendered through `model.basis.*`
+    and `model.length_rule.*`, keys the browser's own bundle already holds, so
+    sending a label here would be a SECOND answer to "what is this called" that
+    goes stale on the locale toggle without a refetch.
+    """
+    return vocabularies()
 
 
 @app.get("/api/part-types")

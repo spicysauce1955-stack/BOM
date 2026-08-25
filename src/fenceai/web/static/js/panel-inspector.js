@@ -72,10 +72,10 @@ import { el as svgEl } from "./geom.js";
 import { currentLocale, t } from "./i18n.js";
 import { gapForOverlap, overlapOf } from "./panel-canvas-geom.js";
 import {
-  APPROVALS, AXIS_KINDS, BASES, COUNT_PARAMS, EXCESS, JUSTIFICATIONS,
-  LENGTH_RULES, PART_DIMENSIONS, PLACEMENT_KINDS, SWATCH_RE,
+  APPROVALS, AXIS_KINDS, COUNT_PARAMS, EXCESS, JUSTIFICATIONS,
+  PART_DIMENSIONS, PLACEMENT_KINDS, SWATCH_RE,
   defaultEligibility, defaultEligibleMember, defaultPlacement, defaultRequirement,
-  eligibilitySource, partSummary, partsByType,
+  eligibilitySource, fixingBases, lengthRules, partSummary, partsByType,
 } from "./panel-model.js";
 import { fmt, inputStep, toDisplayValue, toMm, tu } from "./units.js";
 
@@ -153,9 +153,52 @@ export function text(obj, key, labelKey, { size = 16, ltr = false, nullable = fa
   return field(labelKey, i);
 }
 
+/** The word for a vocabulary member, or the member itself.
+ *
+ *  A basis registered after the bundles were written has no phrase, and `t()`
+ *  answers a missing key with THE KEY — so the select would read
+ *  `model.basis.sentence.per_corner` inside a Hebrew form. The raw token is not
+ *  a translation either, but it is the thing the author is choosing and it is
+ *  honest about being untranslated; a dotted i18n key is neither. Same
+ *  degradation `tabs.js` already applies to an unlabelled objective preset.
+ *
+ *  This is a runtime floor, not a licence: `test_locale_bundles.py` reads the
+ *  served vocabularies and fails when a member has no word in both bundles, so a
+ *  raw token reaches a screen only in a session running against a backend newer
+ *  than its own translations. */
+const vocabWord = (key, token) => {
+  const word = t(key);
+  return word === key ? token : word;
+};
+
 export function choice(obj, key, values, labelFor, labelKey,
                        { rerender = false, nullKey = null } = {}) {
   const s = el("select", { "data-f": key });
+  // `values === null` is "the backend has not told us what it accepts" — a
+  // served vocabulary whose fetch has not resolved or has failed. It is NOT an
+  // empty vocabulary, and the two must not render alike: an empty select reads
+  // as "you never chose one", and the other tempting fallback — a list written
+  // into the JS — is the second copy this whole route exists to delete, offering
+  // a value the schema may since have dropped and turning a save into a 422 the
+  // author cannot act on.
+  //
+  // So the editor declines to offer anything. The control is disabled, says why,
+  // and still SHOWS what the document already carries, because a session that
+  // cannot confirm a vocabulary must not rewrite a value authored under it
+  // either. Everything else on the pane stays editable.
+  if (values === null) {
+    s.disabled = true;
+    s.title = t("model.vocabulary_unavailable");
+    const current = obj[key];
+    // NOT `nullKey` here, even where the control has one. On the length rule
+    // that key reads "— not cut to length —", which is a real authored answer
+    // and a lie about a field the editor simply cannot offer yet.
+    s.appendChild(option(
+      current ?? "",
+      current ? labelFor(current) : t("model.vocabulary_unavailable_option"),
+      true));
+    return field(labelKey, s);
+  }
   if (nullKey) s.appendChild(option("", t(nullKey), obj[key] === null || obj[key] === undefined));
   for (const v of values) s.appendChild(option(v, labelFor(v), obj[key] === v));
   // a value the resolver does not honour is never OFFERED, but a document that
@@ -175,7 +218,8 @@ export function choice(obj, key, values, labelFor, labelKey,
  * key — so "Screws at: where every board meets every rail" is one control over
  * an enum that has not moved. */
 function sentenceChoice(obj, key, values, prefix, labelKey, opts = {}) {
-  return choice(obj, key, values, (v) => t(`${prefix}sentence.${v}`), labelKey, opts);
+  return choice(obj, key, values,
+                (v) => vocabWord(`${prefix}sentence.${v}`, v), labelKey, opts);
 }
 
 function removeButton(onclick) {
@@ -699,8 +743,13 @@ function requirementAdvanced(req, ctx, kind) {
   // there. Same principle as the narrowed `excess` list: offering a value the
   // gate then refuses invites an author into a document they can only fix by
   // undoing the choice the editor invited.
-  const rules = kind === "frame"
-    ? LENGTH_RULES.filter((r) => r !== "between_frame") : LENGTH_RULES;
+  //
+  // `lengthRules()` is null until `GET /api/vocabularies` has answered, and the
+  // narrowing has to survive that: filtering null would throw and take the whole
+  // pane with it, and defaulting to a list here would reintroduce the guess.
+  const served = lengthRules();
+  const rules = served && kind === "frame"
+    ? served.filter((r) => r !== "between_frame") : served;
   first.appendChild(sentenceChoice(req, "length_rule", rules,
     "model.length_rule.", "model.length_rule",
     { rerender: true, nullKey: "model.length_rule.none" }));
@@ -944,6 +993,12 @@ const DIAGRAM_DOTS = {
 };
 
 function basisDiagram(basis) {
+  // A basis this drawing has no dots for is one registered since the picture was
+  // drawn, and the honest answer is NO picture. The frame-and-boards outline
+  // with nothing on it is not neutral — it is a legible claim that this basis
+  // puts a screw nowhere, which is the one thing no fixing basis does. The
+  // sentence in the select above still says what it counts.
+  if (!DIAGRAM_DOTS[basis]) return document.createTextNode("");
   const svg = svgEl("svg", { class: "basis-diagram", viewBox: "0 0 60 40",
                              width: "90", height: "60", "aria-hidden": "true" });
   for (const y of [5, 29])
@@ -1244,7 +1299,7 @@ function fixingInspector(host, key, ctx) {
     ctx.onRemove({ kind: "fixing", key });
   }));
   host.appendChild(group("model.inspect.where",
-    row(sentenceChoice(fix, "basis", BASES, "model.basis.", "model.basis",
+    row(sentenceChoice(fix, "basis", fixingBases(), "model.basis.", "model.basis",
       { rerender: true })),
     basisDiagram(fix.basis),
     unplacedNote(fix.key, ctx.elevation),

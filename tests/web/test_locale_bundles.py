@@ -394,36 +394,69 @@ def test_every_gap_vocabulary_value_has_a_word_in_both_bundles():
                      for k in expected if k not in table)
     assert not missing, missing
 
+def _js_vocabulary(name: str) -> list[str]:
+    """A `const NAME = [...]` array out of panel-model.js — one of the CLOSED
+    vocabularies, which the editor still writes out because extending one is a
+    release either way."""
+    import re
+
+    src = (STATIC / "js" / "panel-model.js").read_text()
+    body = re.search(rf"const {name} = \[(.*?)\];", src, re.S)
+    assert body, f"{name} is no longer a const array in panel-model.js"
+    values = re.findall(r'"([a-z_]+)"', body.group(1))
+    assert values, name
+    return values
+
+
+def _served_vocabulary(name: str) -> list[str]:
+    """One of the OPEN vocabularies, from the backend that serves it.
+
+    These are no longer written into panel-model.js: the editor asks
+    `GET /api/vocabularies`, so a basis registered on the backend is offered by
+    the select without anyone editing JS. Which is exactly why the LABELS have to
+    be checked from here — a member that appears in a Hebrew select with no word
+    in the bundle is the failure that change makes reachable, and the source of
+    truth for "which members exist" is no longer a file this test can grep."""
+    from fenceai.fencemodel.vocabulary import vocabularies
+
+    values = vocabularies()[name]
+    assert values, name
+    return values
+
 
 def test_every_value_the_model_vocabulary_offers_has_a_word_in_both_bundles():
-    """The editor renders its closed vocabularies through COMPUTED keys —
+    """The editor renders its vocabularies through COMPUTED keys —
     `t("model.basis." + b)` and a dozen siblings — which key-parity scanning
     cannot see, because neither bundle contains the literal.
 
-    This is the hole the other tests open: `test_the_editor_and_the_schema_agree
-    _on_the_closed_vocabularies` forces panel-model.js's arrays to track `model.py`,
-    so adding a `LengthRule` makes the editor offer it automatically — and
-    without this, that ships a green suite with a raw `model.length_rule.foo`
-    on screen in both languages."""
-    import re
+    This is the hole the other tests open: `test_the_editor_and_the_backend_agree
+    _on_the_vocabularies` forces the editor to offer exactly what the backend
+    accepts, so a new `LengthRule` reaches the select with nobody touching the
+    frontend — and without this, that ships a green suite with a raw
+    `model.length_rule.foo` on screen in both languages.
 
+    The runtime does not go blank when that happens (`vocabWord` shows the token
+    rather than the dotted key), but a raw token in a Hebrew form is a defect,
+    not a feature, and this is where it is caught before it ships."""
     en, he = _bundles()
-    src = (STATIC / "js" / "panel-model.js").read_text()
-
-    def values(name):
-        body = re.search(rf"const {name} = \[(.*?)\];", src, re.S)
-        assert body, name
-        return re.findall(r'"([a-z_]+)"', body.group(1))
 
     expected = set()
-    for const, prefix in [("ROLES", "role."), ("LENGTH_RULES", "model.length_rule."),
+    for const, prefix in [("ROLES", "role."),
                           ("PLACEMENT_KINDS", "model.placement."),
                           ("JUSTIFICATIONS", "model.justification."),
-                          ("EXCESS", "model.excess."), ("BASES", "model.basis."),
+                          ("EXCESS", "model.excess."),
                           ("APPROVALS", "model.approval."), ("GRADES", "model.grade."),
                           ("AXIS_KINDS", "model.axis_kind."),
                           ("COUNT_PARAMS", "action.param.")]:
-        expected |= {prefix + v for v in values(const)}
+        expected |= {prefix + v for v in _js_vocabulary(const)}
+    for served, prefix in [("length_rules", "model.length_rule."),
+                           ("fixing_bases", "model.basis."),
+                           # the objective is not offered by the panel editor,
+                           # but tabs.js already RENDERS it beside every BOM
+                           # (`bom.preset_<v>`), so a preset added to the backend
+                           # with no word shows a raw token to a customer
+                           ("objective_presets", "bom.preset_")]:
+        expected |= {prefix + v for v in _served_vocabulary(served)}
     # the keys built from a literal rather than from a const array
     expected |= {"model.orientation.horizontal", "model.orientation.vertical",
                  "model.length_rule.none", "model.option_axis.none",
@@ -444,11 +477,17 @@ def test_every_value_the_model_vocabulary_offers_has_a_word_in_both_bundles():
 # them, so adding one is a code change with tests. Only the PHRASING is data,
 # which is what makes it correctable without a release.
 SENTENCE_VOCABULARIES = [
-    ("BASES", "model.basis."),
     ("PLACEMENT_KINDS", "model.placement."),
     ("JUSTIFICATIONS", "model.justification."),
     ("EXCESS", "model.excess."),
-    ("LENGTH_RULES", "model.length_rule."),
+]
+
+# ... and the two of them the backend now SERVES rather than the editor holding
+# a copy. Same claim, different source: `_js_vocabulary` cannot answer "which
+# fixing bases exist" any more, because the answer is no longer in the JS.
+SERVED_SENTENCE_VOCABULARIES = [
+    ("fixing_bases", "model.basis."),
+    ("length_rules", "model.length_rule."),
 ]
 
 # ... and the two the inspector renders as sentences from LITERALS rather than
@@ -466,16 +505,11 @@ def test_every_sentence_vocabulary_value_has_both_a_label_and_a_phrasing():
     `model.basis.<v>`. A value carrying only one of the two renders either a raw
     key inside a Hebrew sentence or a sentence where a chip should be — and
     neither is visible to key-parity scanning, because both keys are computed."""
-    import re
-
     en, he = _bundles()
-    src = (STATIC / "js" / "panel-model.js").read_text()
     missing = []
-    for const, prefix in SENTENCE_VOCABULARIES:
-        body = re.search(rf"const {const} = \[(.*?)\];", src, re.S)
-        assert body, const
-        values = re.findall(r'"([a-z_]+)"', body.group(1))
-        assert values, const
+    sources = ([(_js_vocabulary(c), p) for c, p in SENTENCE_VOCABULARIES]
+               + [(_served_vocabulary(n), p) for n, p in SERVED_SENTENCE_VOCABULARIES])
+    for values, prefix in sources:
         for value in values:
             for key in (f"{prefix}{value}", f"{prefix}sentence.{value}"):
                 for lang, table in (("en", en), ("he", he)):
@@ -501,11 +535,20 @@ def test_the_inspector_renders_its_vocabularies_as_sentences():
     body = body[:body.index("\n}\n")]
     assert "sentence." in body, (
         "sentenceChoice must render the phrasing key, not the label key")
+    # ... and it degrades to the VALUE, not to the key. Two of these vocabularies
+    # are served by the backend now, so a member can exist before its word does —
+    # and `t()` answers a missing key with the key, which would put
+    # `model.basis.sentence.per_corner` inside a Hebrew form. The test above
+    # keeps that from shipping; this keeps the runtime honest when it happens
+    # anyway, against a backend newer than the bundles.
+    assert "vocabWord(" in body, (
+        "an unworded vocabulary member must render as its own token, never as a "
+        "raw i18n key")
     # ... and every vocabulary that HAS a phrasing is rendered with one. Two
     # spellings are legitimate: handed to `sentenceChoice` as a prefix, or built
     # inline where the control does more than set a field (the placement select
     # rebuilds the whole placement object on change).
-    for const, prefix in SENTENCE_VOCABULARIES:
+    for const, prefix in SENTENCE_VOCABULARIES + SERVED_SENTENCE_VOCABULARIES:
         assert f'"{prefix}"' in src or f"{prefix}sentence." in src, (const, prefix)
 
 

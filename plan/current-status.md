@@ -1,5 +1,57 @@
 # Current status
 
+## The frontend catches up: three slices, built in parallel (2026-08-25)
+
+**1780 pytest · 203 scenario tests · 237/237 browser smoke** (was 202). Three
+agents in isolated worktrees, merged one at a time with the suite and the smoke
+run between each.
+
+- **Site conditions are enterable** (`js/site.js`). `null` is a control state, not
+  an absence: `hvhz` is a three-option select because a checkbox cannot say
+  "nobody has stated it", which is the state the evaluator turns into *not
+  applicable*. `depthFromField` is a named function so a measured `0` is not
+  erased by a falsy check. The whole of engine item 2 was unreachable from the app
+  until this.
+- **Gaps have a reader** (`js/gaps.js`). `closes_by` GROUPS the panel rather than
+  tagging a row — a badge in a mixed list still hands a curator an engineer's
+  work, which is the property §1.2.1 says the queue must have. `severity` changes
+  a row's weight and never its group: where work goes is not a function of how
+  loud it is. Unsuppliable lines are now rows in the priced BOM table with no sku
+  and no money, because a table a reader prints and adds up must not look
+  complete when it is not.
+- **The editor asks what it may offer** (`GET /api/vocabularies`). The hardcoded
+  arrays are gone. When the vocabulary cannot be fetched the select is DISABLED
+  and says why, rather than offering a stale guess that 422s on save.
+
+**Eight strings that had never been rendered by a browser now are**, and are
+asserted: `warning.site_condition_missing`, `structure.site_changed`,
+`decisions.stale_site`, and the gap panel's rendering of `uncovered_max_span` and
+`no_default_post` in Hebrew from the code rather than the English `message`.
+
+**`would_close` renders as quoted foreign text** — `lang="en" dir="ltr"` inside
+the RTL page, with a Hebrew label saying it is written for the knowledge curators
+and never translated here. The precedent is the frontend design's own rule for a
+manufacturer's warning: translating someone's liability sentence and publishing it
+as theirs manufactures a claim. The long-term answer is a `close.<code>` registry
+beside the warning registry, deliberately NOT invented here — a code vocabulary
+the Knowledge team has not agreed to is a second vocabulary at the boundary.
+
+**Two things the agents found that I had wrong:**
+
+- **S17 only ever passed on leaked state.** It was the one gate file driving the
+  API without pinning a database. Two agents reported it failing, I could not
+  reproduce it and said so; they were right. The doc's numbers were correct and
+  the scenario simply never created the `K-MAXSPAN@v2` the doc names — fixed by
+  making it establish its own precondition, not by moving the numbers.
+- **Item 3 silently reordered two dropdowns.** `Registry.names()` sorts, which is
+  right for an error message and wrong for a select. `declared()` now answers the
+  second question, and the editorial order the editor has always shown is pinned.
+
+**Still owed:** `Gap.would_close` wants a code registry (above); `frost_depth_mm`
+has no `ge=0` bound on the model, so the browser is the only thing refusing a
+negative depth; and nothing calls `ParameterTable.expand()` from a route, so item
+5 is still reachable only from tests.
+
 ## The gaps the engine produces now have a reader (2026-08-25)
 
 Frontend build-order step 8, the gap half. **1762 pytest · 217/217 smoke.**
