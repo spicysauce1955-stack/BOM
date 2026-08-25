@@ -675,3 +675,13 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 .elem-tag.bay { fill: #2563eb; font-weight: 500; }
 .profile-dim.gate { stroke: #0891b2; }
 .profile-dim-label.gate { fill: #0891b2; }
+
+/* Site conditions (js/site.js). One field per line: the labels are whole
+   phrases ("exposure category", "frost depth"), and a wrapped inline row put
+   a label on one line and its control on the next, which reads as two fields. */
+#site-conditions .site-fields { display: flex; flex-direction: column; gap: 4px; }
+#site-conditions .builder-field { justify-content: space-between; gap: 8px; }
+#site-conditions .builder-field select,
+#site-conditions .builder-field input { inline-size: 55%; }
+#site-conditions input.invalid { border-color: #dc2626; background: #fef2f2; }
+#site-conditions .site-error { color: #b91c1c; }

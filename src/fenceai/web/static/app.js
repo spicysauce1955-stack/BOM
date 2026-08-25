@@ -15,6 +15,7 @@ import {
   createProject, loadProjects, on, openProject, state,
 } from "./js/state.js";
 import { initSectionDecisions } from "./js/section-decisions.js";
+import { initSite } from "./js/site.js";
 import { initStructureData } from "./js/structure-data.js";
 import { initStructure } from "./js/structure.js";
 import { initTabs } from "./js/tabs.js";
@@ -67,6 +68,7 @@ async function main() {
   initPanel();
   initModelEditor();
   initSectionDecisions();
+  initSite();
   initStructureData();
   initStructure();
   initAssembly();

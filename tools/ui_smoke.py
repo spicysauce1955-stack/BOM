@@ -3221,6 +3221,330 @@ fetch('/api/fence-models').then(r => r.json())
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.5)
 
+        # --- site conditions: the panel that makes a conditional rule reachable
+        #
+        # Until this panel existed, `PUT /projects/{id}/site` was the only way in,
+        # so THREE shipped strings had never been rendered by a browser —
+        # `warning.site_condition_missing`, `structure.site_changed` and
+        # `decisions.stale_site` — and no smoke scenario could reach them, because
+        # nothing in the app could move a site condition. That is what this block
+        # is for: not that a form saves, but that the engine's answer changes and
+        # that the three refusals say so in Hebrew.
+        #
+        # The rule is arranged through the API (the knowledge form authors actions,
+        # not conditions) and everything after it is done by clicking. 1200 is not
+        # 1800: the unconditioned demo maximum lays a 6 m run out as 4 x 1500, and
+        # exposure C lays the same run out as 5 x 1200 — the engine's own
+        # acceptance criterion for site conditions, walked in a browser.
+        c.js("""
+fetch('/api/knowledge', {method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({object_id: 'K-EXPOSURE-C', type: 'hard_constraint',
+    title: 'max span 1200 on exposure C',
+    condition: {op: 'cmp', cmp: '==',
+      left: {op: 'field', path: 'site.exposure_category'},
+      right: {op: 'lit', value: 'C'}},
+    actions: [{kind: 'set_param', param: 'max_span_mm', value: 1200}]})})
+  .then(r => r.ok)""")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.5)
+        c.js("document.getElementById('new-project-name').value = 'site'; 'ok'")
+        c.click(*c.element_center("#btn-new-project"))
+        time.sleep(1.5)
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.canvas_px(0, 0))
+        c.click(*c.canvas_px(6000, 0))
+        c.key("Enter")
+        time.sleep(1.2)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(2.5)
+        posts_before = c.js("document.querySelectorAll('#g-overlay circle').length")
+
+        # The conservative-substitution case the frontend design names in §7 —
+        # "exposure category not set" — said out loud for the first time. A rule
+        # in this snapshot asks about the site and the site has not answered.
+        # the needle is the longest LITERAL run of the bundle sentence — the
+        # string starts with `{n}`, so cutting at the first placeholder would
+        # leave an empty needle and a check that passes against anything
+        missing = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => {
+  const stem = b['warning.site_condition_missing']
+    .split('}').map(p => p.split('{')[0].trim())
+    .sort((a, b) => b.length - a.length)[0];
+  const text = document.getElementById('warnings').textContent || '';
+  return {stem, said: text.includes(stem), key: text.includes('warning.site_condition')};
+})""")
+        # the CODE is printed beside the sentence on purpose (`warningRowHtml`);
+        # what must never appear is the bundle KEY, which is what a warning with
+        # no entry in this language renders as
+        check("an unstated exposure category is SAID, in Hebrew, not left silent",
+              len(missing["stem"]) > 12 and missing["said"] and not missing["key"],
+              missing)
+
+        panel = c.js("""
+(() => {
+  const host = document.getElementById('site-conditions');
+  if (!host) return null;
+  return {
+    fields: ['#site-exposure', '#site-hvhz', '#site-frost', '#site-jurisdiction',
+             '#site-code-edition'].filter(s => host.querySelector(s)).length,
+    categories: [...host.querySelectorAll('#site-exposure option')].map(o => o.value),
+    hvhz_options: [...host.querySelectorAll('#site-hvhz option')].map(o => o.value),
+    status: document.getElementById('site-status').textContent,
+    keys: /site\\.[a-z_]/.test(host.textContent),
+  };
+})()""")
+        none_set = c.js(
+            "fetch('/i18n/he.json').then(r => r.json()).then(b => b['site.none_set'])")
+        # the unset option is a VALUE OF ITS OWN in both closed vocabularies: a
+        # two-state control could not express "nobody has said", which is the
+        # state the evaluator turns into "this rule does not apply"
+        check("the site panel offers all five dimensions, with an unset state",
+              panel is not None and panel["fields"] == 5
+              and panel["categories"] == ["", "B", "C", "D"]
+              and panel["hvhz_options"] == ["", "true", "false"]
+              and not panel["keys"]
+              # the needle has to BE something: an empty bundle value would make
+              # every `includes` in this block a vacuous pass
+              and len(none_set or "") > 20 and none_set in panel["status"], panel)
+
+        # --- "no" is not "nobody has said" -----------------------------------
+        # Answering the hurricane-zone question with NO must reach the server as
+        # `false`, while the four dimensions nobody touched stay `null`. The
+        # engine leans on the difference: a missing dimension makes a rule not
+        # applicable, `false` makes it decide.
+        c.js("""
+{
+  const s = document.getElementById('site-hvhz');
+  s.value = 'false'; s.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        c.click(*c.element_center("#btn-site-save"))
+        time.sleep(1.5)
+        said_no = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => p.site)""")
+        check("saying NO to the hurricane zone is stored as false, not as unset",
+              said_no["hvhz"] is False
+              and said_no["exposure_category"] is None
+              and said_no["frost_depth_mm"] is None
+              and said_no["jurisdiction"] is None and said_no["code_edition"] is None
+              # the client never sends a revision; the route owns the counter
+              and said_no["revision"] == 1, said_no)
+        # ...and the CONTROL says it back. The panel was rebuilt from the server's
+        # answer by `reloadProject`, so a `|| null` on the way home would show
+        # "not stated" to an estimator who answered no — the same fact lost on the
+        # return leg, where the payload assertion above cannot see it.
+        shown = c.js("""
+(() => {
+  const v = (id) => document.getElementById(id).value;
+  return {hvhz: v('site-hvhz'), exposure: v('site-exposure'), frost: v('site-frost')};
+})()""")
+        check("the control shows NO after the reload, not 'not stated'",
+              shown == {"hvhz": "false", "exposure": "", "frost": ""}, shown)
+        # Saving site conditions is NOT a topology change, and the rule that says
+        # so is invisible to every other check in this suite: `openProject()`
+        # instead of `reloadProject()` resets history, and the undo stack of
+        # whoever was drawing is gone. The run drawn above is still undoable.
+        undo_alive = c.js("!document.getElementById('btn-undo').disabled")
+        check("saving the site leaves the drawing's undo stack alone", bool(undo_alive))
+
+        # --- an exposure category, and a length through the display boundary ---
+        c.click(*c.element_center("#btn-units"))     # drive the depth in cm
+        time.sleep(0.6)
+        c.js("""
+{
+  const e = document.getElementById('site-exposure');
+  e.value = 'C'; e.dispatchEvent(new Event('change'));
+  const f = document.getElementById('site-frost');
+  f.value = '90'; f.dispatchEvent(new Event('input'));
+  const j = document.getElementById('site-jurisdiction');
+  j.value = 'Miami-Dade County'; j.dispatchEvent(new Event('input'));
+}
+'ok'""")
+        c.click(*c.element_center("#btn-site-save"))
+        time.sleep(1.5)
+        stored = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => p.site)""")
+        check("a depth typed in cm is stored as integer millimetres, and the rest holds",
+              stored["frost_depth_mm"] == 900 and stored["exposure_category"] == "C"
+              and stored["hvhz"] is False
+              and stored["jurisdiction"] == "Miami-Dade County"
+              and stored["code_edition"] is None and stored["revision"] == 2, stored)
+        # BOTH sides of the round trip are read, and the cm side FIRST: a panel
+        # that stopped converting on the way out would still say 900 in mm, so an
+        # mm-only assertion passes with the display boundary deleted.
+        in_cm = c.js("document.getElementById('site-frost').value")
+        c.click(*c.element_center("#btn-units"))     # back to mm
+        time.sleep(0.8)
+        in_mm = c.js("document.getElementById('site-frost').value")
+        chosen = c.js("document.getElementById('site-exposure').value")
+        check("the depth reads 90 in cm and 900 in mm — the round trip is lossless",
+              in_cm == "90" and in_mm == "900" and chosen == "C",
+              {"cm": in_cm, "mm": in_mm, "exposure": chosen})
+        c.shot("29-site-conditions.png")
+
+        # --- the two refusals that had never reached a browser ----------------
+        # The strategy on screen was laid out for a site the project no longer
+        # describes. Both derived views must NAME that, in Hebrew, rather than
+        # print a code or claim there is nothing to show.
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(2.0)
+        stale_structure = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => {
+  const text = document.getElementById('structure-body').textContent || '';
+  const sentence = b['structure.site_changed'];
+  return {said: sentence.length > 20 && text.includes(sentence),
+          raw: text.includes('site_conditions_changed'),
+          no_run: text.includes(b['structure.empty']), text: text.slice(0, 160)};
+})""")
+        check("the structure sheet refuses a run laid out for other site conditions",
+              stale_structure["said"] and not stale_structure["raw"]
+              and not stale_structure["no_run"], stale_structure)
+        c.shot("30-structure-site-changed.png")
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(1.5)
+        stale_decisions = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => {
+  const text = document.getElementById('section-decisions').textContent || '';
+  const sentence = b['decisions.stale_site'];
+  const status = document.getElementById('site-status').textContent || '';
+  return {said: sentence.length > 20 && text.includes(sentence),
+          raw: text.includes('site_conditions_changed'),
+          // ...and the panel that CAUSED the refusal says so itself, rather than
+          // leaving the estimator to find it by opening another tab
+          panel: b['site.run_stale'].length > 20 && status.includes(b['site.run_stale']),
+          text: text.slice(0, 160)};
+})""")
+        check("the section's decisions refuse the same way, naming the site",
+              stale_decisions["said"] and not stale_decisions["raw"], stale_decisions)
+        check("the site panel says the strategy on screen predates these conditions",
+              stale_decisions["panel"], stale_decisions)
+
+        # --- and the whole point: the fence itself is different ---------------
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(2.5)
+        posts_after = c.js("document.querySelectorAll('#g-overlay circle').length")
+        spans = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}/runs`)
+  .then(r => r.json()).then(l => fetch(`/api/runs/${l[l.length - 1].id}`))
+  .then(r => r.json()).then(o => o.strategy.spans.map(s => s.width_mm))""")
+        check("an exposure category entered in the app changes the fence that is planned",
+              posts_before == 5 and posts_after == 6 and spans == [1200] * 5,
+              {"before": posts_before, "after": posts_after, "spans": spans})
+        settled = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => {
+  const text = document.getElementById('warnings').textContent || '';
+  const stem = b['warning.site_condition_missing']
+    .split('}').map(p => p.split('{')[0].trim())
+    .sort((a, b) => b.length - a.length)[0];
+  return !text.includes(stem);
+})""")
+        check("and the run generated FOR that site no longer says nobody stated it",
+              bool(settled))
+        c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
+        time.sleep(2.0)
+        readable = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => {
+  const text = document.getElementById('structure-body').textContent || '';
+  return {rows: document.querySelectorAll('#structure-body tr').length,
+          stale: text.includes(b['structure.site_changed'])};
+})""")
+        check("the regenerated run lays out again, so the refusal was a state and not a wall",
+              readable["rows"] > 0 and not readable["stale"], readable)
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(1.0)
+
+        # --- a depth that is not a depth is refused BEFORE the server ---------
+        # `SiteConditions` is `extra="forbid"` and `Mm` is an integer: the panel
+        # must not turn a fat-fingered figure into a site nobody measured, and it
+        # must not report a save that did not happen.
+        c.js("""
+{
+  const f = document.getElementById('site-frost');
+  // a number input SANITISES a non-numeric string to "", which reads as
+  // "not stated" and is a legitimate answer — a negative depth is the typo
+  // that actually has to be caught
+  f.value = '-5'; f.dispatchEvent(new Event('input'));
+}
+'ok'""")
+        c.click(*c.element_center("#btn-site-save"))
+        time.sleep(1.0)
+        refused = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(async (b) => {
+  const id = document.getElementById('project-select').value;
+  const p = await (await fetch(`/api/projects/${id}`)).json();
+  const sentence = b['site.invalid_frost'];
+  return {said: sentence.length > 20 && document.getElementById('site-status')
+            .textContent.includes(sentence),
+          revision: p.site.revision, depth: p.site.frost_depth_mm};
+})""")
+        check("an unreadable depth is named and nothing is saved",
+              refused["said"] and refused["revision"] == 2
+              and refused["depth"] == 900, refused)
+        c.click(*c.element_center("#btn-site-revert"))
+        time.sleep(0.8)
+        reverted = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(b => ({
+  depth: document.getElementById('site-frost').value,
+  error: document.getElementById('site-status').textContent
+    .includes(b['site.invalid_frost']),
+}))""")
+        check("discarding the edit restores the stored depth and clears the complaint",
+              reverted["depth"] == "900" and not reverted["error"], reverted)
+
+        # --- un-saying a condition is a statement too --------------------------
+        # The other half of the tri-state, and the half a server that MERGED
+        # instead of replacing would break in silence: returning exposure to
+        # "not stated" must reach the wire as `null`, make the rule not
+        # applicable again, and lay the fence back out as 4 x 1500.
+        c.js("""
+{
+  const e = document.getElementById('site-exposure');
+  e.value = ''; e.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        c.click(*c.element_center("#btn-site-save"))
+        time.sleep(1.5)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(2.5)
+        unsaid = c.js("""
+fetch('/i18n/he.json').then(r => r.json()).then(async (b) => {
+  const id = document.getElementById('project-select').value;
+  const p = await (await fetch(`/api/projects/${id}`)).json();
+  const stem = b['warning.site_condition_missing']
+    .split('}').map(q => q.split('{')[0].trim())
+    .sort((x, y) => y.length - x.length)[0];
+  return {exposure: p.site.exposure_category, revision: p.site.revision,
+          depth: p.site.frost_depth_mm, hvhz: p.site.hvhz,
+          posts: document.querySelectorAll('#g-overlay circle').length,
+          missing_again: (document.getElementById('warnings').textContent || '')
+            .includes(stem)};
+})""")
+        check("clearing a condition says 'nobody has stated it' again, and the fence follows",
+              unsaid["exposure"] is None and unsaid["revision"] == 3
+              # the dimensions nobody touched are untouched: a PUT replaces the
+              # site, and the depth stated two saves ago is still stated
+              and unsaid["depth"] == 900 and unsaid["hvhz"] is False
+              and unsaid["posts"] == 5 and unsaid["missing_again"], unsaid)
+
+        # --- and it is a panel in the OTHER language too -----------------------
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.2)
+        english = c.js("""
+fetch('/i18n/en.json').then(r => r.json()).then(b => {
+  const host = document.getElementById('site-conditions');
+  const text = host.textContent || '';
+  return {title: text.includes(b['site.title']),
+          category: [...host.querySelectorAll('#site-exposure option')]
+            .some(o => o.textContent.trim() === b['site.exposure.C']),
+          keys: /site\\.[a-z_]/.test(text)};
+})""")
+        check("the site panel is localized, not Hebrew strings in an English page",
+              english["title"] and english["category"] and not english["keys"], english)
+        c.click(*c.element_center("#btn-locale"))   # back to Hebrew for what follows
+        time.sleep(1.2)
         # --- a hole in the knowledge is a NAMED hole, not a missing plan ------
         # LAST, because it retires a rule the whole demo knowledge base rests on
         # and nothing in the UI puts one back.

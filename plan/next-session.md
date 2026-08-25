@@ -67,14 +67,17 @@ key-identical, 202/202 smoke green). What is not intact is PARITY: three engine
 features are unreachable from the app, and one backend field is English prose in
 a Hebrew-first product.
 
-1. **Site conditions have no UI at all.** `PUT /projects/{id}/site` is the only
-   way in, so an estimator cannot enter an exposure category — which means the
-   whole of item 2 is invisible in the app. This also means the three strings
-   added for it (`error.site_conditions_changed`, `structure.site_changed`,
-   `decisions.stale_site`) have **never been rendered by a browser**: they are
-   wired in `structure-data.js` and `section-decisions.js`, but no smoke scenario
-   can reach them because nothing can move a site condition through the UI. The
-   202/202 does not cover them and cannot until this lands.
+1. ~~**Site conditions have no UI at all.**~~ **DONE 2026-08-25.** `js/site.js`
+   owns a `#site-conditions` panel in the canvas aside: the five dimensions, each
+   with an explicit UNSET state, `PUT`ing the five declared fields and never a
+   `revision`, saved with `reloadProject()` so it cannot wipe an undo stack.
+   `null` is a control state rather than an absence — `hvhz` is a three-option
+   select, because a checkbox cannot say "nobody has stated it" and that is the
+   state the evaluator turns into *not applicable*. The smoke suite now walks the
+   engine's own acceptance criterion in a browser (a 6 m run laid out 4 x 1500
+   with nothing stated, 5 x 1200 under exposure C) and renders three strings no
+   browser had ever rendered: `warning.site_condition_missing`,
+   `structure.site_changed` and `decisions.stale_site`.
 2. **The panel editor's vocabulary arrays are the closed half of item 3.**
    Registering `per_corner` makes it authorable through the API and turns
    `test_the_editor_and_the_backend_agree_on_the_vocabularies` RED until
@@ -102,9 +105,9 @@ a Hebrew-first product.
    `site` into `PanelContext.condition_ctx()` and extend the missing-dimension scan
    to model conditions, or have `validate_model` REFUSE a variant condition reading
    `site.*` so it fails at authoring instead of at the fence.
-2. **No UI.** Site conditions are settable only through `PUT /projects/{id}/site`,
-   so an estimator cannot enter them. `error.site_conditions_changed` and
-   `structure.site_changed` are therefore strings no browser has ever rendered.
+2. ~~**No UI.**~~ **DONE 2026-08-25** — see the parity list above. Site conditions
+   are entered in the app, and the refusals they cause are rendered and asserted
+   in the browser suite.
 3. **`conservative_parameter_used`** — deferred to item 5 on purpose; it keys on a
    `ParameterTable.task` class that does not exist yet.
 

@@ -1,6 +1,6 @@
 # 05 — Frontend
 
-24 ES modules under `src/fenceai/web/static/js/`, plus SVG and CSS. **No framework,
+34 ES modules under `src/fenceai/web/static/js/`, plus SVG and CSS. **No framework,
 no build step, no CDN** — fonts are bundled, modules are loaded natively by the
 browser (ADR-0010). Hebrew-first RTL with an English toggle.
 
@@ -51,6 +51,7 @@ flowchart TD
         PA["panel.js"]
         ME["model-editor.js"]
         TB["tabs.js"]
+        SI["site.js — site conditions"]
     end
 
     SS --> AP
@@ -133,6 +134,33 @@ sequenceDiagram
 * **Anchors are segment-local.** Author with `geom.anchorFor`, resolve with
   `geom.stationOfAnchor`. These mirror backend `make_anchor` / `anchor_station`
   exactly. Never read `anchor.offset_mm` as a station.
+
+---
+
+## Three states, not two: the site-conditions panel
+
+`site.js` owns `#site-conditions` in the canvas aside — the only surface that can
+say what KIND of site this is, and therefore the prerequisite for every rule the
+Knowledge Platform publishes with a condition on it.
+
+Every control has an **unset** state that is not a value. `null` means *nobody has
+stated it*, and the evaluator turns a missing context field into *not applicable*
+rather than false — so a checkbox for `hvhz` would have destroyed the distinction
+the whole feature rests on, and the control is a three-option select instead. The
+same rule runs through the mapping: `?? null` and never `|| null`, so a stated
+`false` and a stated `0` survive a reload as themselves.
+
+The pure half (`draftFromSite` / `sitePayload` / `unsetDimensions` / `siteChanged`)
+is node-tested against the Pydantic model it feeds, because a form is where "" ,
+`false` and "not stated" all look like the same emptiness. It sends the five
+declared fields and never a `revision`: the route owns that counter, and every
+derived view checks itself against it.
+
+Saving is the canonical **non-topology** mutation — no history snapshot, and
+`reloadProject()` rather than `openProject()`. Afterwards the derived views refuse
+the run that was laid out for the old site (`409 site_conditions_changed`), which
+`structure-data.js` and `section-decisions.js` render as `structure.site_changed`
+and `decisions.stale_site`.
 
 ---
 
