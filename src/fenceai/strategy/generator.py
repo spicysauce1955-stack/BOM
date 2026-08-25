@@ -2427,36 +2427,34 @@ def _generate_run(
                     scope_refs=[span.id], inputs=[sm.select_node_id, span_node.id],
                 ).id)
             for slot in span.panel.slots:
-                # One node per credit that was actually APPLIED in this bay.
-                # A credit is the one thing here that makes the panel buy less,
-                # and a smaller purchase leaves no trace on the BOM of its own —
-                # the line is simply shorter, or gone. So the reduction gets a
-                # node of its own rather than a footnote on the panel's: "every
+                # One node per SLOT whose purchase a credit reduced — not one per
+                # credit. A credit is the one thing here that makes the panel buy
+                # less, and a smaller purchase leaves no trace on the BOM of its
+                # own: the line is simply shorter, or gone. So the reduction gets
+                # a node rather than a footnote on the panel's, because "every
                 # BOM line traces through the graph" is only true of a line that
-                # exists, and this is the node a reader lands on when they ask
-                # why the panel bought two hinges and placed four.
+                # exists, and this is where a reader lands when they ask why the
+                # panel bought two hinges and placed four.
                 #
-                # Driven off the CONTAINED slot, which credits at most one target
-                # by construction (`PartRequirement.credits` is keyed by the
-                # contained path), so this is one node per credit and never one
-                # per (container, target) pair counted twice.
-                if not slot.credits_slot_key or not slot.credited_qty:
+                # Per TARGET, because the sentence is a subtraction and it has to
+                # add up. Two containers each supplying two of a four-hinge slot
+                # used to write two nodes, each claiming "needs 4, 2 ship inside
+                # X, so the panel buys 0" — false twice, and the comment right
+                # here asked for the opposite. `credited_by` carries every source,
+                # so one node states the whole sum: of - qty == remaining, always.
+                if not slot.credited_qty:
                     continue
-                target = next((s for s in span.panel.slots
-                               if s.slot_key == slot.credits_slot_key), None)
                 panel_inputs.append(builder.add(
                     "structural", "credit_contained",
-                    payload={"contained": slot.slot_key,
-                             "container": slot.contained_in,
-                             "slot": slot.credits_slot_key,
+                    payload={"slot": slot.slot_key,
                              "role": slot.role,
+                             # what the slot asked for, what arrived in a box, and
+                             # what is left to buy. All three, because a reader
+                             # given only the difference cannot check it.
+                             "of": slot.qty + slot.credited_qty,
                              "qty": slot.credited_qty,
-                             # what the slot asked for before the credit, and
-                             # what is left to buy after it. Both, because the
-                             # sentence is a subtraction and a reader given only
-                             # the difference cannot check it.
-                             "of": (target.qty + target.credited_qty) if target else 0,
-                             "remaining": target.qty if target else 0},
+                             "remaining": slot.qty,
+                             "contained": ", ".join(slot.credited_by)},
                     scope_refs=[span.id], inputs=[sm.select_node_id, span_node.id],
                 ).id)
             builder.add(

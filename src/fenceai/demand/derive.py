@@ -124,13 +124,24 @@ def derive_requirements(
                 # `report/assembly.py` over the panel's slots, where this member IS.
                 continue
             if slot.qty <= 0:
-                # Every one of this slot's pieces arrived inside a container
-                # (`credited_qty` says how many, and from where). A zero line
-                # would ask `fulfill()` to buy nothing and then be a requirement
-                # no BOM line pegs to — the traceability identity broken by a row
-                # that means nothing. The trace lives on the slot and in the
-                # `credit_contained` decision node, which is where a reader can
-                # act on it.
+                # A slot that asks for nothing asks for NOTHING. A zero line
+                # would tell `fulfill()` to buy nothing and then be a requirement
+                # no BOM line pegs to — a hole in `covered == req_ids`, which the
+                # scenario suite asserts as `Sigma(parts) = BOM`. It survived only
+                # because every fixture that had one also bought that SKU for
+                # another slot, so a shared BOM line's pegs happened to cover it.
+                #
+                # THREE ways a slot lands here, not one. Containment made the
+                # third ordinary — every piece arrived inside a container, and
+                # `credited_qty` says how many and from where — but a fitted
+                # pattern that placed no members and a fixing basis that came out
+                # zero reach it too, and those two did produce a zero line before
+                # this. That is a deliberate change and not a side effect: the
+                # line meant nothing in those cases either.
+                #
+                # Nothing is lost by dropping it. The slot is still on the panel
+                # with its count and, where a credit emptied it, its source — and
+                # the `credit_contained` node carries the subtraction.
                 continue
             # No unit here. A slot's cut length says the part is cut TO a length,
             # not that its product is bought BY the metre: an indivisible post

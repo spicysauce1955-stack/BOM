@@ -189,11 +189,32 @@ def walk_contained(
     deterministic: `resolve_supply` groups on member signatures and the whole run
     digest rests on the same answer coming back twice.
     """
-    out: list[tuple[str, ContainedPart]] = []
+    return [(path, piece) for path, piece, _ in
+            walk_contained_qty(contains, container_key, 1)]
+
+
+def walk_contained_qty(
+    contains: list[ContainedPart], container_key: str, factor: int
+) -> list[tuple[str, ContainedPart, int]]:
+    """The same walk, carrying the running MULTIPLICATION.
+
+    Two kits each holding two hinges are four hinges, and a hinge holding two
+    washers makes eight — the count of a piece is its own quantity times every
+    container above it. `factor` is the container's resolved quantity at the
+    root of the walk.
+
+    This is the one place that arithmetic lives. `resolve._flatten` builds the
+    panel's members from it and `resolve._plan_credits` sizes a credit from it,
+    and those two numbers MUST be the same number: a credit sized from a second
+    copy of this multiplication could hand back more pieces than the box holds,
+    which is the phantom saving the whole feature exists to refuse.
+    """
+    out: list[tuple[str, ContainedPart, int]] = []
     for child in contains:
         path = contained_path(container_key, child.key)
-        out.append((path, child))
-        out += walk_contained(child.contains, path)
+        qty = factor * child.qty
+        out.append((path, child, qty))
+        out += walk_contained_qty(child.contains, path, qty)
     return out
 
 

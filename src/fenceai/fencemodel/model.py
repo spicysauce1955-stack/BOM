@@ -1218,7 +1218,7 @@ def _variant_reach_errors(model: FenceModel) -> list[str]:
     return errors
 
 
-def _assembly_step_errors(model: FenceModel) -> list[str]:
+def _assembly_step_errors(model: FenceModel, contained_known: bool) -> list[str]:
     """The rules that keep an instruction from being a paragraph.
 
     A step names slots because that is what makes it DATA: the film can order
@@ -1230,6 +1230,15 @@ def _assembly_step_errors(model: FenceModel) -> list[str]:
     variant's panel is still this model's panel — refusing a step for naming a
     slot the default lacks would leave a model unable to say how its own variants
     go together.
+
+    `contained_known` is False when `validate_model` was given no library. A
+    contained piece's path key exists only after `resolve_model_parts` copies the
+    part's contents onto the slot, so without a library the membership test below
+    cannot see one — and the same document would validate clean with a library
+    and be REFUSED without it, which `generate(..., parts=None)` turns into a
+    `GenerationFailure` on a model nothing is wrong with. Skipped rather than
+    guessed, exactly as `_containment_errors` skips its role-agreement check and
+    the width and thickness rules skip theirs.
     """
     if not model.assembly:
         return []            # no opinion, exactly as an empty `post` is
@@ -1238,8 +1247,14 @@ def _assembly_step_errors(model: FenceModel) -> list[str]:
     # or reported `unplaced`. A step that could not name one would leave the
     # hinges in a gate kit permanently unplaceable — the check green, the fitter
     # short two hinges.
-    known = {key for spec in [model.default_spec, *(v.spec for v in model.variants)]
-             for key, _ in spec_members(spec)}
+    specs = [model.default_spec, *(v.spec for v in model.variants)]
+    known = {key for spec in specs for key, _ in spec_members(spec)}
+    if not contained_known:
+        # Without a library the contained half of `spec_members` is empty, so a
+        # step naming a path key would be refused for a piece nobody has looked
+        # up. Every AUTHORED key is still checked.
+        known |= {slot for step in model.assembly for slot in step.slots
+                  if PATH_SEP in slot}
     errors: list[str] = []
     seen_keys: set[str] = set()
     placed_by: dict[str, str] = {}
@@ -1271,7 +1286,7 @@ def _assembly_step_errors(model: FenceModel) -> list[str]:
     return errors
 
 
-def _containment_errors(model: FenceModel, roles_known: bool) -> list[str]:
+def _containment_errors(model: FenceModel, resolved: bool) -> list[str]:
     """Containment and its credits, checked where an author can still fix them.
 
     A credit that would remove a purchase is the dangerous half.
@@ -1288,11 +1303,19 @@ def _containment_errors(model: FenceModel, roles_known: bool) -> list[str]:
     different fact and is warned about per bay (`contained_credit_unmatched`) —
     that one is not answerable here.
 
-    `roles_known` is False when `validate_model` was given no library: roles are
-    filled from the part, so without one every role reads `""` and the agreement
-    check below would refuse every credit in the portfolio for a fact nobody has
-    looked up yet. Skipped rather than guessed, exactly as the width and
-    thickness rules are.
+    `resolved` is False when `validate_model` was given no library. `contained`
+    and `role` are both FILLED from the part, so without one a slot's contents
+    read as empty and every role reads `""` — and the checks that depend on them
+    would refuse the whole portfolio for facts nobody has looked up yet. Worse,
+    they would refuse a document that validates clean WITH a library, so the same
+    model would be valid or invalid depending on the caller. Those checks are
+    skipped, exactly as the width and thickness rules skip theirs.
+
+    The three that survive without a library are the ones answerable from the
+    AUTHORED document alone: a piece crediting its own container, a credit aimed
+    at a slot that is drawn at a position, and a credit aimed at a slot that is
+    itself a container. All three read `spec.frame` / `spec.fixings` / `credits`,
+    which are written down rather than resolved.
     """
     errors: list[str] = []
     specs = [model.default_spec, *(v.spec for v in model.variants)]
@@ -1301,6 +1324,43 @@ def _containment_errors(model: FenceModel, roles_known: bool) -> list[str]:
     # may not aim at one of these: see the refusal below.
     inside = {path for spec in specs for key, req in spec_requirements(spec)
               for path, _ in walk_contained(req.contained, key)}
+    # Slots DRAWN at a position: a frame member sits at a placement, an infill
+    # member sits in the fitted pattern. A credit may not aim at one of these
+    # either — see the refusal below.
+    drawn = {s.key for spec in specs for s in spec.frame}
+    drawn |= {m.key for spec in specs if spec.infill for m in spec.infill.pattern}
+    # Slots that CONTAIN a credit source. A credit may not aim at one of these:
+    # crediting a container would change how many boxes the panel buys, which
+    # changes how many pieces are in them, which changes the credit — a loop with
+    # no fixed point that one resolution pass would answer by accident of order.
+    containers = {key for spec in specs for key, req in spec_requirements(spec)
+                  if req.credits}
+    # A post and its cap are elements of the BAY, not members of the panel.
+    # `parts.resolve.part_requirements` walks them, so `contained` IS filled
+    # there from the part — but `resolve_panel` is never handed the post, so
+    # nothing expands those contents and nothing applies a credit written on
+    # them. Accepted-and-ignored is the one outcome this codebase refuses by
+    # policy, so it is refused by name instead, with what would close it said
+    # out loud: containment on a post needs `demand/derive.py` to build posts
+    # from a slot list, which is the same boundary `report/assembly.py` records
+    # for assembly steps.
+    if model.post is not None:
+        for label, req in (("post", model.post.requirement),
+                           ("post.cap", model.post.cap)):
+            if req is None:
+                continue
+            if req.credits:
+                errors.append(
+                    f"{label}: declares credits, and nothing reads them — a post "
+                    "and its cap are elements of the bay, so `resolve_panel` "
+                    "never sees them and no purchase would ever be credited"
+                )
+            if req.contained:
+                errors.append(
+                    f"{label}: the part it names ships parts inside it, and "
+                    "nothing places them — a post and its cap are elements of "
+                    "the bay, so those pieces would reach no panel's member list"
+                )
     for spec in specs:
         for key, req in spec_requirements(spec):
             contained = dict(walk_contained(req.contained, key))
@@ -1320,12 +1380,17 @@ def _containment_errors(model: FenceModel, roles_known: bool) -> list[str]:
                 path = contained_path(key, relative)
                 piece = contained.get(path)
                 if piece is None:
-                    errors.append(
-                        f"slot {key}: credits {relative!r}, which is not a piece "
-                        f"contained in this slot — nothing would be credited on "
-                        f"any bay of any job built to this model"
-                    )
-                    continue
+                    if resolved:
+                        errors.append(
+                            f"slot {key}: credits {relative!r}, which is not a "
+                            f"piece contained in this slot — nothing would be "
+                            f"credited on any bay of any job built to this model"
+                        )
+                        continue
+                    # Unresolved: `contained` is empty for EVERY slot, so this
+                    # says nothing about the document. The authored-only checks
+                    # below still run; anything reading `piece` is skipped.
+                    piece = None
                 if target == key:
                     errors.append(
                         f"slot {key}: {relative!r} credits its own container. A "
@@ -1333,14 +1398,14 @@ def _containment_errors(model: FenceModel, roles_known: bool) -> list[str]:
                         "panel would stop buying the container that brings it"
                     )
                     continue
-                if target not in role_of:
+                if resolved and target not in role_of:
                     errors.append(
                         f"slot {key}: {relative!r} credits slot {target}, which "
                         f"no spec of this model declares, so the credit would "
                         f"land on nothing on every bay of every job"
                     )
                     continue
-                if target in inside:
+                if resolved and target in inside:
                     # Crediting a piece that itself arrives in a box saves
                     # NOTHING — a contained member is never bought — and it is
                     # not harmless: the credit would reduce that member's count,
@@ -1355,7 +1420,40 @@ def _containment_errors(model: FenceModel, roles_known: bool) -> list[str]:
                         "in the box"
                     )
                     continue
-                if roles_known and piece.role != role_of[target]:
+                if target in drawn:
+                    # A contained piece has an IDENTITY but no PLACE. A frame or
+                    # infill slot's members are drawn at positions and its count
+                    # is what `report/elevation.py` weights every fastener by, so
+                    # crediting one leaves the drawing with no honest answer:
+                    # draw the full count and the panel buys fewer than it shows,
+                    # or draw what it buys and the fence is missing members that
+                    # are physically there. Measured, not argued — a 4-rail slot
+                    # credited 2 drew 3 fasteners instead of 5 and invented two
+                    # `fixings_unplaced`, on a fence that had not changed.
+                    #
+                    # Hardware is the case this feature is for (hinges, latches,
+                    # screws, brackets), and a fixing slot has no drawn extent, so
+                    # the restriction costs it nothing. Lifting it means giving a
+                    # contained piece a position, which is a different feature.
+                    errors.append(
+                        f"slot {key}: {relative!r} credits slot {target}, which is "
+                        "drawn at a position. A contained piece has no place of "
+                        "its own, so the elevation would either draw members the "
+                        "panel does not buy or omit members the fence has. Credit "
+                        "a slot with no drawn extent (a fixing)"
+                    )
+                    continue
+                if target in containers:
+                    errors.append(
+                        f"slot {key}: {relative!r} credits slot {target}, which "
+                        "itself contains a piece that credits something. How many "
+                        "boxes the panel buys would then depend on a credit whose "
+                        "size depends on how many boxes the panel buys — the "
+                        "answer would come out of the order the slots happen to "
+                        "resolve in"
+                    )
+                    continue
+                if resolved and piece is not None and piece.role != role_of[target]:
                     errors.append(
                         f"slot {key}: {relative!r} is a {piece.role or '(no role)'} "
                         f"and credits slot {target}, which is a "
@@ -1405,8 +1503,8 @@ def validate_model(
     if model.post is not None:
         errors += _post_slot_errors(model.post, catalog)
         errors += _variant_reach_errors(model)
-    errors += _assembly_step_errors(model)
-    errors += _containment_errors(model, roles_known=library is not None)
+    errors += _assembly_step_errors(model, contained_known=library is not None)
+    errors += _containment_errors(model, resolved=library is not None)
 
     for axis in model.option_axes:
         for value in axis.values:

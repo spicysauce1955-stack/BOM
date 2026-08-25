@@ -235,7 +235,8 @@ def preview_panel(
                                  request.height_mm, post_panel, catalog)),
         parts=parts,
         unsupplied=[_part(line, None) for line in priced.unresolved],
-        warnings=priced.warnings + ([post_note] if post_note is not None else []),
+        warnings=(priced.warnings + _credit_warnings(panel, model.ref)
+                  + ([post_note] if post_note is not None else [])),
         # Already resolved above when a library was given, and `validate_model`
         # resolves again against the SAME (pinned) library — idempotent, and it
         # keeps "which document is validated" one function's business rather than
@@ -587,3 +588,41 @@ def _part(line, bom_line) -> PreviewPart:
         purchase_qty=bom_line.purchase_qty if bom_line else 0,
         total_cents=bom_line.total_cents if bom_line else 0,
     )
+
+
+def _credit_warnings(panel: ResolvedPanel, model_ref: str) -> list[StrategyWarning]:
+    """A credit that did not land, said in the ONE place an author can fix it.
+
+    `ResolvedPanel.credit_notes` had exactly one reader — the generator — so an
+    author who aimed a credit at a slot their model does not build, or shipped a
+    kit with one hinge too many, saw nothing in the model editor and found out
+    only after generating a real project. The preview is the surface this
+    feature's mistakes are made on; it has to be the surface they show on.
+
+    Same codes and same params as the generator's, deliberately: one sentence per
+    fact, in both bundles, rather than a preview dialect of the same warning. The
+    sentences carry `{n}` and no run — a bay is a bay whether it is previewed or
+    built, and which bays are affected travels in `element_refs`, exactly as
+    `no_eligible_item` already reports its own.
+    """
+    out: list[StrategyWarning] = []
+    for note in panel.credit_notes:
+        params = {"model_ref": model_ref, "contained": note.contained_key,
+                  "slot": note.slot_key, "qty": note.qty, "n": 1}
+        if note.kind == "unmatched":
+            out.append(StrategyWarning(
+                code="contained_credit_unmatched", severity="warning",
+                message=f"{note.contained_key} credits slot {note.slot_key}, "
+                        f"which model {model_ref} does not build in this bay: "
+                        "nothing is credited there",
+                params=params, element_refs=[PREVIEW_SPAN_ID],
+            ))
+        else:
+            out.append(StrategyWarning(
+                code="contained_credit_surplus", severity="warning",
+                message=f"{note.contained_key} ships {note.qty} more than slot "
+                        f"{note.slot_key} needs in this bay: the surplus credits "
+                        "nothing",
+                params=params, element_refs=[PREVIEW_SPAN_ID],
+            ))
+    return out

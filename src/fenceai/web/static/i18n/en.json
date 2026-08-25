@@ -340,8 +340,8 @@
   "warning.parameter_value_nonconforming": "A published {parameter} row does not match the table's declared type ({value_type}) and was not used",
   "warning.parameter_scope_unmappable": "A published {parameter} table is scoped to a {entity_kind}, which this engine cannot aim at — the table was not applied",
   "warning.panel_length_unresolved": "Model {model_ref} cannot work out a cut length for {slot} in {n} bay(s) of section {run_id} — the frame members it is measured between leave nothing to measure, so the part would be priced at nothing",
-  "warning.contained_credit_unmatched": "{contained} is meant to supply the {slot} of this panel, but model {model_ref} does not build a {slot} in {n} bay(s) of section {run_id} — those pieces arrive in the box and cover nothing, so nothing was taken off the order",
-  "warning.contained_credit_surplus": "{contained} brings {qty} more than the {slot} of this panel needs in {n} bay(s) of section {run_id} — the extra pieces arrive in the box and cover nothing, so only what was needed came off the order",
+  "warning.contained_credit_unmatched": "{contained} is meant to supply the {slot} of this panel, but model {model_ref} does not build a {slot} in {n} bay(s) — those pieces arrive in the box and cover nothing, so nothing was taken off the order",
+  "warning.contained_credit_surplus": "{contained} brings {qty} more than the {slot} of this panel needs in {n} bay(s) — the extra pieces arrive in the box and cover nothing, so only what was needed came off the order",
   "warning.clear_gap_exceeded": "A gap of {value_mm} {u} in section {run_id} exceeds the {limit_mm} {u} limit ({n} bay(s)) — narrow the spacing or widen the members",
   "warning.rail_separation_insufficient": "In section {run_id} the rail above the bottom one is only {value_mm} {u} up, under the {limit_mm} {u} anti-climb limit ({n} bay(s))",
   "warning.pattern_residual_large": "Section {run_id} leaves {value_mm} {u} of the pattern unfilled, over the {limit_mm} {u} tolerance ({n} bay(s))",
@@ -956,5 +956,6 @@
   "bom.total_excludes": "excludes {n} lines",
   "bom.total_excludes_one": "excludes 1 line",
   "bom.unfulfilled": "not supplied",
-  "bom.unfulfilled_note": "needed; no product supplies it"
+  "bom.unfulfilled_note": "needed; no product supplies it",
+  "error.slot_not_purchasable": "{slot_key} is a part that comes inside another part, so no product is bought for it separately — it arrives with whatever supplies the part that contains it."
 }

@@ -66,6 +66,8 @@ def _parts(hinges_per_kit: int = 2, nested: bool = False) -> PartLibrary:
              spec=[SpecField(key="sku", value=["LATCH"], agree="among")]),
         Part(id="fix-washer", version=1, type="fixing",
              spec=[SpecField(key="sku", value=["SCREW-S10"], agree="among")]),
+        Part(id="screw-s10", version=1, type="screw",
+             spec=[SpecField(key="sku", value=["SCREW-S10"], agree="among")]),
         Part(id="kit-gate", version=1, type="gate_kit",
              spec=[SpecField(key="sku", value=["GATE-KIT-1000"], agree="among")],
              contains=[
@@ -76,7 +78,7 @@ def _parts(hinges_per_kit: int = 2, nested: bool = False) -> PartLibrary:
 
 
 def _spec(hinges_wanted: int, credits: dict[str, str] | None = None,
-          with_hinge_slot: bool = True) -> PanelSpec:
+          with_hinge_slot: bool = True, screws: bool = False) -> PanelSpec:
     fixings = [FixingRule(
         key="kit", basis="per_panel", qty_per_basis=1,
         requirement=PartRequirement(
@@ -87,6 +89,13 @@ def _spec(hinges_wanted: int, credits: dict[str, str] | None = None,
         fixings.append(FixingRule(
             key="hinges", basis="per_panel", qty_per_basis=hinges_wanted,
             requirement=PartRequirement(part_id="fix-hinge"),
+        ))
+    if screws:
+        # a second UNDRAWN slot of a different role, so the role-agreement
+        # refusal can be provoked without also tripping the drawn-target one
+        fixings.append(FixingRule(
+            key="screws", basis="per_panel", qty_per_basis=4,
+            requirement=PartRequirement(part_id="screw-s10"),
         ))
     return PanelSpec(
         frame=[FrameSlot(key="rail", orientation="horizontal",
@@ -369,7 +378,7 @@ def test_both_ways_a_credit_can_miss_reach_the_user_as_a_warning():
     ({"handle": "hinges"}, "not a piece contained in this slot"),
     ({"hinge": "nowhere"}, "no spec of this model declares"),
     ({"hinge": "kit"}, "credits its own container"),
-    ({"hinge": "rail"}, "A credit removes a purchase"),
+    ({"hinge": "rail"}, "drawn at a position"),
     # crediting a piece that ALSO arrives in a box. It saves nothing — nothing
     # is bought for a contained member — and it is not harmless: it deletes that
     # member from the panel, so the sheet says one latch fewer than the box
@@ -464,7 +473,12 @@ def test_a_part_that_contains_itself_is_refused_by_name():
 def test_a_pin_on_a_contained_slot_is_refused_rather_than_ignored():
     """Nothing chooses a contained piece — it arrives inside whatever supplies
     its container — so there is no eligibility for a pin to narrow. Accepted and
-    ignored would price a panel nobody asked for."""
+    ignored would price a panel nobody asked for.
+
+    Its OWN code, deliberately: `sku_not_eligible` ends "choose one of the
+    products offered for that part", and no product is ever offered for a
+    contained piece — advice impossible to follow on a refusal the user causes
+    by clicking."""
     from fenceai.core.errors import RequestRefused
 
     resolved, _ = resolve_model_parts(_model(), _parts())
@@ -472,7 +486,7 @@ def test_a_pin_on_a_contained_slot_is_refused_rather_than_ignored():
                        slot_skus={"kit/hinge": "HINGE-SET"})
     with pytest.raises(RequestRefused) as caught:
         resolve_panel(resolved.default_spec, ctx)
-    assert caught.value.code == "sku_not_eligible"
+    assert caught.value.code == "slot_not_purchasable"
 
 
 # --- 6 · the run stays what a run has to be -------------------------------------
@@ -509,3 +523,89 @@ def test_a_model_that_contains_nothing_resolves_exactly_as_it_did():
     assert [s.slot_key for s in panel.slots] == ["rail", "kit"]
     assert all(s.contained_in == "" and s.credited_qty == 0 for s in panel.slots)
     assert panel.credit_notes == []
+
+
+# --- 7 · the two defects the architecture review found --------------------------
+
+def test_a_credited_slots_own_contents_expand_from_what_the_panel_buys():
+    """The regression for the ordering defect: credits settle BEFORE contents are
+    expanded.
+
+    A hinge ships two washers. The panel wants four hinges and the kit supplies
+    two, so the panel buys two hinges (four washers) and the kit brings two (four
+    washers) — eight washers for four hinges. Expanding the contents first read
+    the count the panel WOULD have bought and produced twelve, and nothing
+    downstream could have caught it: a contained member is not a purchase, so it
+    never reaches the BOM or the parts ledger.
+    """
+    library = _parts()
+    hinge = next(p for p in library.parts if p.id == "fix-hinge")
+    hinge.contains = [ContainedPart(key="washer", part_id="fix-washer", qty=2)]
+    panel = _panel(_model(_spec(4)), library)
+
+    assert _slot(panel, "hinges").qty == 2          # bought
+    assert _slot(panel, "hinges/washer").qty == 4   # ... and THEIR washers
+    assert _slot(panel, "kit/hinge").qty == 2       # in the box
+    assert _slot(panel, "kit/hinge/washer").qty == 4
+    washers = sum(s.qty for s in panel.slots if s.slot_key.endswith("/washer"))
+    assert washers == 8, "four hinges hold eight washers, however they arrived"
+
+
+def test_a_credit_may_not_target_a_slot_that_is_drawn_at_a_position():
+    """The regression for the elevation defect.
+
+    A contained piece has an identity but no PLACE, and a frame slot's count is
+    what `report/elevation.py` weights every fastener by. Crediting one made the
+    drawing report three fasteners instead of five and invent two
+    `fixings_unplaced`, on a fence that had not changed. Refused at authoring
+    instead — hardware is what this feature is for, and a fixing has no drawn
+    extent.
+    """
+    errors = validate_model(_model(_spec(4, credits={"hinge": "rail"})),
+                            demo_catalog(), _parts())
+    assert any("drawn at a position" in e for e in errors), errors
+
+
+def test_crediting_a_fixing_leaves_the_drawing_alone():
+    """The other half of the rule above: the case that IS allowed must not move
+    the elevation. All eight screws are still fitted — four of them merely came
+    in a box — so the drawing shows exactly what it always did."""
+    from fenceai.report.elevation import panel_elevation
+
+    def elevation(credits):
+        spec = _spec(4, credits=credits, screws=True)
+        return panel_elevation(_panel(_model(spec), _parts()), 1500, 1800)
+
+    plain = elevation({})
+    credited = elevation({"hinge": "hinges"})
+    assert [(f.slot_key, f.qty) for f in credited.fixings] == \
+        [(f.slot_key, f.qty) for f in plain.fixings]
+    assert credited.fixings_unplaced == plain.fixings_unplaced
+
+
+def test_a_credit_chain_is_refused_rather_than_answered_by_accident_of_order():
+    """Crediting a container would change how many boxes the panel buys, which
+    changes how many pieces are in them, which changes the credit. One resolution
+    pass would answer that by whichever slot happened to resolve first."""
+    spec = _spec(4)
+    spec.fixings.append(FixingRule(
+        key="outer", basis="per_panel", qty_per_basis=1,
+        requirement=PartRequirement(part_id="kit-gate", credits={"latch": "kit"}),
+    ))
+    errors = validate_model(_model(spec), demo_catalog(), _parts())
+    assert any("order the slots happen to resolve in" in e for e in errors), errors
+
+
+def test_a_model_validates_the_same_with_and_without_a_part_library():
+    """A step naming a contained path is checked against a vocabulary that only
+    exists once the parts are resolved. Without a library that vocabulary is
+    empty, and the same document was refused for a piece nobody had looked up —
+    reachable as a `GenerationFailure` through `generate(..., parts=None)`."""
+    model = _model(assembly=[
+        AssemblyStep(key="fit", slots=["rail", "kit", "kit/hinge", "hinges"]),
+    ])
+    assert validate_model(model, demo_catalog(), _parts()) == []
+    assert validate_model(model, demo_catalog(), None) == []
+    # ... and an authored key that is simply wrong is still refused either way
+    bad = _model(assembly=[AssemblyStep(key="fit", slots=["nonexistent"])])
+    assert validate_model(bad, demo_catalog(), None) != []

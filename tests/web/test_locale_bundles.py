@@ -109,6 +109,11 @@ REFUSAL_CODES = [
     # refusal the user causes by clicking, so it must say which slot and which
     # product rather than "the action failed (422)".
     "sku_not_eligible",
+    # A pin on a part that comes INSIDE another part. Deliberately not
+    # `sku_not_eligible`: that sentence tells the reader to choose one of the
+    # products offered for the slot, and no product is ever offered for a
+    # contained piece — advice impossible to follow.
+    "slot_not_purchasable",
     # A model's post specification that no product satisfies. `post_spec_conflict`
     # is two models disagreeing about the post between them;
     # `post_routing_mismatch` is ROUTING alone excluding every candidate, which

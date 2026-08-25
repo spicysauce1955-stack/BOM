@@ -21,7 +21,7 @@ from fenceai.fencemodel.model import (
     HeightSupport, Member, PanelSpec, PartRequirement, spec_requirements,
 )
 from fenceai.knowledge.ast import MissingField, evaluate_expr
-from fenceai.parts.model import contained_path
+from fenceai.parts.model import PATH_SEP, contained_path, walk_contained_qty
 
 
 class PanelContext(BaseModel):
@@ -555,8 +555,14 @@ def _refuse_unknown_slots(slots: list[ResolvedSlot], ctx: PanelContext) -> None:
             # than accepted and ignored, for the reason the refusals above are: a
             # pin that quietly does nothing prices a panel nobody asked for and
             # presents the number as the answer to the question that was asked.
+            # Its OWN code, not `sku_not_eligible`. That one's sentence ends
+            # "choose one of the products offered for that part", and no product
+            # is ever offered for a contained piece — advice impossible to
+            # follow, on a refusal the user causes by clicking. A new code is a
+            # registry addition, not an amendment (CLAUDE.md), so there is no
+            # cost to saying the true thing.
             raise RequestRefused(
-                code="sku_not_eligible",
+                code="slot_not_purchasable",
                 message=f"slot {slot_key} is a part contained inside another "
                         "part, so no product is chosen for it",
                 slot_key=slot_key, sku=sku,
@@ -681,14 +687,21 @@ def resolve_panel(
             option_axis=option_axis, option_value=option_value, pinned_sku=pinned,
         ))
 
-    # Containment runs LAST, over the finished slot list, and the ordering is
-    # structural rather than tidy: a contained piece's count is a multiple of its
-    # container's, and a container's count is not known until the fit and the
-    # fixing bases have run. Crediting then runs over the flattened list, so a
-    # credit can name any slot of the panel — including one this bay resolved to
-    # a different quantity than the last.
-    slots += _contained_slots(slots, spec)
-    notes = _apply_credits(slots, spec)
+    # Containment runs LAST, over the finished slot list: a contained piece's
+    # count is a multiple of its container's, and a container's count is not
+    # known until the fit and the fixing bases have run.
+    #
+    # CREDITS SETTLE FIRST, and that order is the correction of a real defect
+    # rather than a preference. A credited slot may itself hold contents — a
+    # hinge that ships a washer — and those contents are a multiple of how many
+    # of that piece the panel actually buys. Expanding them before the credit
+    # reduced the count expanded them from the number the panel WOULD have
+    # bought: with a kit supplying 2 of 4 hinges, the panel listed 8 washers
+    # under `hinges` plus 4 under `kit/hinge` — twelve washers for four hinges
+    # that hold eight. Nothing downstream could have caught it, because a
+    # contained member is not a purchase and never reaches the BOM.
+    notes, credited = _plan_credits(slots, spec)
+    slots += _contained_slots(slots, spec, credited)
 
     _refuse_unknown_slots(slots, ctx)
     return ResolvedPanel(model_ref=model_ref, variant_index=variant_index,
@@ -696,7 +709,7 @@ def resolve_panel(
 
 
 def _contained_slots(
-    slots: list[ResolvedSlot], spec: PanelSpec
+    slots: list[ResolvedSlot], spec: PanelSpec, credited: dict[str, tuple[str, int]]
 ) -> list[ResolvedSlot]:
     """Every part inside another part, as a member of the panel in its own right.
 
@@ -708,10 +721,14 @@ def _contained_slots(
     duplicate path exactly as it refuses a duplicate slot key, and refuses an
     authored key containing the separator so a path can never be forged.
 
-    `qty` MULTIPLIES: two kits each holding two hinges are four hinges, and a
-    panel that counted two would leave a fitter two short. Nesting multiplies
-    again, which is why the walk carries the running count rather than reading
-    each piece's own.
+    `qty` MULTIPLIES, through `walk_contained_qty` — the one place that
+    arithmetic lives, shared with the credit that is sized from it.
+
+    Runs AFTER `_plan_credits`, so `slot.qty` here is already what the panel
+    BUYS for that slot. That is what a credited slot's own contents must be a
+    multiple of: the hinges that arrive inside a kit bring their washers under
+    the kit's path, and counting them again under the slot they credit is twelve
+    washers for four hinges.
     """
     by_key = {slot.slot_key: slot for slot in slots}
     out: list[ResolvedSlot] = []
@@ -719,31 +736,35 @@ def _contained_slots(
         slot = by_key.get(key)
         if slot is None or slot.qty <= 0 or not req.contained:
             # A slot this bay placed none of — an infill member with no room, a
-            # fixing basis that came out zero — contains nothing here either.
-            # Emitting its contents anyway would put members in the panel that
-            # arrived in a box nobody bought.
+            # fixing basis that came out zero, a slot every piece of which came
+            # in somebody else's box — contains nothing here either. Emitting its
+            # contents anyway would put members in the panel that arrived in a
+            # box nobody bought.
             continue
-        out += _flatten(req.contained, key, slot.qty)
+        out += _flatten(req.contained, key, slot.qty, credited)
     return out
 
 
-def _flatten(contained, container_key: str, factor: int) -> list[ResolvedSlot]:
+def _flatten(
+    contained, container_key: str, factor: int, credited: dict[str, tuple[str, int]]
+) -> list[ResolvedSlot]:
     out: list[ResolvedSlot] = []
-    for piece in contained:
-        path = contained_path(container_key, piece.key)
-        qty = factor * piece.qty
+    for path, piece, qty in walk_contained_qty(contained, container_key, factor):
+        target, applied = credited.get(path, ("", 0))
         out.append(ResolvedSlot(
             slot_key=path, role=piece.role, qty=qty, slot_kind="contained",
             # `contained_in` names the IMMEDIATE container, not the root: the
             # question a reader asks of a nested piece is which box it came out
             # of, and the root is one split away from the path either way.
-            contained_in=container_key,
+            contained_in=path.rsplit(PATH_SEP, 1)[0],
+            credits_slot_key=target, credited_qty=applied,
         ))
-        out += _flatten(piece.contains, path, qty)
     return out
 
 
-def _apply_credits(slots: list[ResolvedSlot], spec: PanelSpec) -> list[CreditNote]:
+def _plan_credits(
+    slots: list[ResolvedSlot], spec: PanelSpec
+) -> tuple[list[CreditNote], dict[str, tuple[str, int]]]:
     """Spend what arrived in the box against what the panel would have bought.
 
     A credit is NOT a negative demand line and NOT a silently smaller number. It
@@ -751,51 +772,55 @@ def _apply_credits(slots: list[ResolvedSlot], spec: PanelSpec) -> list[CreditNot
     which slot it supplies, the demanding slot says how many of its requirement
     came that way and from where, and what remains on the demanding slot is what
     the panel still buys. A purchaser reads one honest positive line; a reader
-    asking why it is smaller than the panel's member count is answered by the
-    slot itself and by the `credit_contained` decision node the generator writes
-    from these same numbers.
+    asking why it is smaller is answered by the slot itself and by the
+    `credit_contained` decision node the generator writes from these numbers.
 
-    Over-crediting is refused three ways, because it is the only failure here
-    that is invisible on the finished document — a saving is a line that is not
-    there:
+    Runs BEFORE the contained members are materialised, which is why the source
+    quantity is computed from the spec (`walk_contained_qty`) rather than read
+    off a slot: the slots do not exist yet, deliberately, because their counts
+    depend on the answer this function produces.
+
+    Over-crediting is refused four ways, because it is the only failure here that
+    is invisible on the finished document — a saving is a line that is not there:
 
     1. `validate_model` has already refused a credit whose target no spec
-       declares, whose target is a different ROLE, and whose target is the
-       container itself.
-    2. A target this BAY does not have credits nothing and is reported.
-    3. What is applied is capped at what the target actually wanted, and the
+       declares, whose target is a different ROLE, whose target is the container
+       itself or another contained piece, and whose target is drawn at a position
+       (a contained piece has an identity but no PLACE).
+    2. It has also refused a chain — a credit whose container is itself credited
+       — so every source's container has its final quantity here and one pass in
+       spec order is exact rather than order-dependent.
+    3. A target this BAY does not have credits nothing and is reported.
+    4. What is applied is capped at what the target actually wanted, and the
        surplus is reported. A kit shipping four hinges into a two-hinge panel
        saves two hinges, never four.
-
-    Deterministic when several credits land on one slot: a slot's credits are
-    spent in sorted path order and slots are visited in the order they were
-    resolved. The whole run digest rests on the same answer coming back twice.
     """
     by_key = {slot.slot_key: slot for slot in slots}
     notes: list[CreditNote] = []
+    credited: dict[str, tuple[str, int]] = {}
     for key, req in spec_requirements(spec):
-        if key not in by_key:
-            continue          # a slot this bay placed none of
+        container = by_key.get(key)
+        if container is None or container.qty <= 0:
+            continue          # a slot this bay placed none of brings no box
+        available = {path: qty for path, _, qty
+                     in walk_contained_qty(req.contained, key, container.qty)}
         for relative, target_key in sorted(req.credits.items()):
             path = contained_path(key, relative)
-            piece = by_key.get(path)
-            if piece is None or piece.qty <= 0:
-                continue      # the container itself resolved to nothing here
+            have = available.get(path, 0)
+            if have <= 0:
+                continue
             target = by_key.get(target_key)
             if target is None:
                 notes.append(CreditNote(kind="unmatched", contained_key=path,
-                                        slot_key=target_key, qty=piece.qty))
+                                        slot_key=target_key, qty=have))
                 continue
-            available = piece.qty - piece.credited_qty
-            applied = min(available, target.qty)
+            applied = min(have, target.qty)
             if applied > 0:
                 target.qty -= applied
                 target.credited_qty += applied
                 target.credited_by.append(path)
-                piece.credited_qty += applied
-                piece.credits_slot_key = target_key
-            if available - applied > 0:
+                credited[path] = (target_key, applied)
+            if have - applied > 0:
                 notes.append(CreditNote(kind="surplus", contained_key=path,
-                                        slot_key=target_key,
-                                        qty=available - applied))
-    return notes
+                                        slot_key=target_key, qty=have - applied))
+    return notes, credited
