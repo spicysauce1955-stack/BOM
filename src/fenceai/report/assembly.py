@@ -16,10 +16,20 @@ A model with no steps gets no plan at all — `None`, not an empty one. "No opin
 and "an empty instruction sheet" are different facts, and the assembly film needs
 to tell them apart to know whether to fall back to its role-based build order.
 
+**Parts contained inside other parts are members like any other.** The contract
+says so in as many words — "every member ... including parts contained inside
+other parts" — and this is the read model that has to mean it. A gate kit's
+hinges reach `panel.slots` under a path key (`gate_kit/hinge`), so a step can
+name one, `unplaced` can report one, and the count is the panel's own. They are
+NOT on the BOM, and that is the point rather than a gap: the BOM says what is
+bought and this says what is placed, and containment is exactly where those two
+lists stop being the same. What supplies a contained member is the line that
+bought its container, one `contained_in` hop away.
+
 **The scope, stated because the roadmap line is wider than it.** These steps
 describe how the PANEL goes together: the placeable vocabulary is the panel's own
-slots — frame, infill, fixings — and the invariant below accounts for exactly
-those. A post, its cap and its footing are elements of the BAY, not members of
+slots — frame, infill, fixings, and what those contain — and the invariant below
+accounts for exactly those. A post, its cap and its footing are elements of the BAY, not members of
 the panel, and this function is not given them; an `installation` step therefore
 carries site prose and names no part, which is honest for "leave the footings to
 cure" and is a real limitation for "set the posts plumb in concrete". Making a
@@ -90,7 +100,12 @@ def assembly_plan(model: FenceModel, panel: ResolvedPanel) -> AssemblyPlan | Non
         )
     if not model.assembly:
         return None
-    by_slot = {slot.slot_key: slot for slot in panel.slots}
+    # Members, which is what a step places. A slot resolved to zero pieces —
+    # every one of them supplied by a container it credits — has nothing to fit,
+    # so it is neither placed nor `unplaced`: the pieces themselves are in this
+    # list under their contained path keys, and counting the emptied slot as well
+    # would tell a fitter to fit hinges that are not in the pile.
+    by_slot = {slot.slot_key: slot for slot in panel.slots if slot.qty > 0}
     placed: set[str] = set()
     steps: list[ResolvedStep] = []
     for step in model.assembly:
@@ -98,9 +113,12 @@ def assembly_plan(model: FenceModel, panel: ResolvedPanel) -> AssemblyPlan | Non
         for key in step.slots:
             slot = by_slot.get(key)
             if slot is None:
-                # This bay is built to a variant that has no such slot. Not an
-                # error — `validate_model` already proved the slot exists in SOME
-                # spec of this model — and not a phantom part either.
+                # This bay is built to a variant that has no such slot, or to a
+                # slot every piece of which arrived inside a container it credits.
+                # Neither is an error — `validate_model` already proved the slot
+                # exists in SOME spec of this model — and neither is a phantom
+                # part: in the second case the pieces are in this same plan under
+                # the path keys of the container that brought them.
                 continue
             placed.add(key)
             parts.append(StepPart(
@@ -112,6 +130,6 @@ def assembly_plan(model: FenceModel, panel: ResolvedPanel) -> AssemblyPlan | Non
     unplaced = [
         StepPart(slot_key=s.slot_key, role=s.role, qty=s.qty,
                  length_mm=s.length_mm)
-        for s in panel.slots if s.slot_key not in placed
+        for s in panel.slots if s.slot_key not in placed and s.qty > 0
     ]
     return AssemblyPlan(model_ref=panel.model_ref, steps=steps, unplaced=unplaced)

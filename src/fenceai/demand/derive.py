@@ -109,6 +109,29 @@ def derive_requirements(
                 span_id=span.id,
             )
         for slot in span.panel.slots:
+            if slot.slot_kind == "contained":
+                # A part inside another part is a MEMBER of the panel, not a
+                # purchase: the thing that was bought is its container, and the
+                # container's line already pays for it. A demand line here would
+                # buy the hinges a second time — which is the mistake the whole
+                # credit rule exists to prevent, arriving from the other side.
+                #
+                # The identity still closes. `Sigma(parts) = BOM` is asserted over
+                # requirement lines and BOM pegs, and this member has neither; what
+                # SUPPLIES it is the BOM line that bought its container, which is
+                # one `contained_in` hop away on the panel. Obligation 9's list —
+                # every member placed or reported `unplaced` — is answered by
+                # `report/assembly.py` over the panel's slots, where this member IS.
+                continue
+            if slot.qty <= 0:
+                # Every one of this slot's pieces arrived inside a container
+                # (`credited_qty` says how many, and from where). A zero line
+                # would ask `fulfill()` to buy nothing and then be a requirement
+                # no BOM line pegs to — the traceability identity broken by a row
+                # that means nothing. The trace lives on the slot and in the
+                # `credit_contained` decision node, which is where a reader can
+                # act on it.
+                continue
             # No unit here. A slot's cut length says the part is cut TO a length,
             # not that its product is bought BY the metre: an indivisible post
             # carrying attrs.length_mm is explicitly allowed to back a

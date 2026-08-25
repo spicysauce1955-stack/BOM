@@ -54,6 +54,14 @@ WARNING_CODES = [
     # table built in a unit test carries no scope at all.
     "parameter_scope_unmappable",
     "panel_length_unresolved",
+    # Containment. Both say a credit did NOT happen — a credit that lands
+    # cleanly is a smaller purchase and needs no warning — and both exist
+    # because a saving is invisible on the finished document: the line is
+    # simply shorter, or gone. `unmatched` is a credit aimed at a slot this
+    # bay does not build; `surplus` is a kit shipping more of a piece than the
+    # panel wanted, capped at what it wanted.
+    "contained_credit_unmatched",
+    "contained_credit_surplus",
     "clear_gap_exceeded",
     "rail_separation_insufficient",
     "pattern_residual_large",

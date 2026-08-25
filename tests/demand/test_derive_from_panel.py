@@ -57,12 +57,27 @@ def test_a_span_with_no_panel_raises_rather_than_silently_defaulting():
         derive_requirements(strategy, demo_catalog())
 
 
-def test_a_zero_qty_slot_produces_a_zero_qty_line_that_fulfils_harmlessly():
+def test_a_zero_qty_slot_asks_for_nothing_at_all():
     """A knowledge param overridden to 0 (e.g. rails_per_span=0) resolves to a
     ResolvedSlot with qty=0 rather than the slot being omitted (Task 3 finding,
-    carried forward). derive_requirements does not special-case it — the line
-    flows through with engineering_qty=0, and it must not produce a spurious BOM
-    line, cut plan entry, or warning."""
+    carried forward). What CHANGED, deliberately, is what demand does with it.
+
+    It used to emit the line with `engineering_qty=0` and rely on the rest of the
+    pipeline treating it harmlessly — no BOM line, no bars, no warning. That was
+    true and it was not enough: a requirement no BOM line pegs to is a hole in
+    `covered == req_ids`, the identity `tests/scenarios/test_invariants.py`
+    asserts as `Sigma(parts) = BOM`. The zero line satisfied it only by accident,
+    because every fixture that had one also bought that SKU for some OTHER slot,
+    so the shared BOM line's pegs happened to cover it. Alone — which is exactly
+    the shape below — it does not.
+
+    Containment made the case ordinary rather than hypothetical: a panel whose
+    hinges all arrive inside a gate kit resolves its hinge slot to qty 0 every
+    time. So a slot asking for nothing now asks for NOTHING: no line, and the
+    fact that it resolved to zero stays where it can be read and acted on — on
+    the panel's own slot (with `credited_qty` and `credited_by` where a credit
+    emptied it) and in the decision graph.
+    """
     panel = ResolvedPanel(model_ref="M-TEST", slots=[
         ResolvedSlot(
             slot_key="rail", role="rail", qty=0, length_mm=1500, length_basis="width",
@@ -74,17 +89,13 @@ def test_a_zero_qty_slot_produces_a_zero_qty_line_that_fulfils_harmlessly():
              width_mm=1500, slope_len_mm=1500, panel=panel)
     ])
     reqs = derive_requirements(strategy, demo_catalog())
-    zero_line = next(r for r in reqs if r.role == "rail")
-    assert zero_line.engineering_qty == 0
+    assert [r for r in reqs if r.role == "rail"] == []
 
+    # and nothing downstream invents one either
     resolution = resolve_supply(reqs, demo_catalog())
-    assert resolution.warnings == []
-    assert resolution.requirements[0].sku == "RAIL-3000"
-
+    assert resolution.warnings == [] and resolution.requirements == []
     bom = fulfill(resolution.requirements, demo_catalog())
-    assert bom.lines == []
-    assert bom.cut_plans["RAIL-3000"].bars == []
-    assert bom.cut_plans["RAIL-3000"].new_bar_count == 0
+    assert bom.lines == [] and bom.cut_plans == {}
 
 
 def test_demand_names_no_unit_because_it_has_not_chosen_a_product_yet():
