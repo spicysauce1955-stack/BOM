@@ -776,6 +776,8 @@
   "model.preview_hint": "Priced as you edit, before anything is saved. This is not a quote and nothing here is stored on a project.",
   "model.preview_failed": "This draft cannot be laid out into a panel yet.",
   "model.unsaved_changes": "unsaved changes",
+  "model.vocabulary_unavailable": "the server has not said which values this field accepts — reload to try again",
+  "model.vocabulary_unavailable_option": "— unavailable —",
   "model.id_taken": "{id} already exists — saving under it would add a version to THAT model",
   "model.duplicate_from": "duplicate from this version",
   "model.retire_version": "take version {version} out of use — it can no longer be chosen",

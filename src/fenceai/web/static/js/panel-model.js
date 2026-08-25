@@ -1,24 +1,70 @@
-// The fence model as DATA: the closed vocabularies the schema fixes, and the
-// shape of every row an "+ Add" button appends.
+// The fence model as DATA: the vocabularies a select may offer, and the shape of
+// every row an "+ Add" button appends.
 //
 // Pure — no DOM, no state, no fetch — because three surfaces now read it: the
 // editor's lifecycle (model-editor.js), the inspector that renders a selected
 // element's controls (panel-inspector.js), and the starter templates
-// (panel-templates.js). A second copy of BASES is two answers to "which fixing
-// bases exist", and they diverge the first time one of them is extended.
+// (panel-templates.js). A second copy of the fixing bases is two answers to
+// "which fixing bases exist", and they diverge the first time one of them is
+// extended.
 //
-// The vocabularies are pinned against `fencemodel/model.py` in BOTH directions
-// by tests/web/test_panel_model_module.py: a value offered and not in the schema
-// is a save that 422s, and one in the schema and not here is a product line
-// nobody can author.
+// TWO KINDS OF VOCABULARY LIVE HERE, and the difference is the whole point:
+//
+//   * the CLOSED ones below are `Literal` in `fencemodel/model.py` AND a branch
+//     somewhere, so extending one is a release either way. They are written out
+//     here and pinned against the schema in both directions by
+//     tests/web/test_panel_model_module.py.
+//   * the OPEN ones — length rules, fixing bases, objective presets — are the
+//     three the engine-architecture spec (§3, §4) moves behind handler
+//     registries, where adding a member is a REGISTRATION and not a release.
+//     Writing those out here would mean a `per_corner` basis that the API
+//     accepts and the editor cannot offer, until a person notices a red test and
+//     hand-edits an array. So they are not written out: `setVocabularies()` is
+//     fed `GET /api/vocabularies` and `vocabulary()` hands them out.
+//
+// Still no fetch in this module — builder-ui.js owns the request, exactly as it
+// owns the catalog and part caches — which is what keeps this file runnable in
+// node with nothing stubbed.
+
+// --- the OPEN vocabularies: served, never guessed -----------------------------
+
+let SERVED = null;
+
+/** Take the answer to `GET /api/vocabularies`. Anything else — a rejected
+ *  fetch, a body of the wrong shape — puts the editor back in "I do not know
+ *  what the backend accepts", which is a state it can render honestly. */
+export function setVocabularies(payload) {
+  SERVED = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload : null;
+}
+
+/** The members of one served vocabulary, or NULL for "unknown".
+ *
+ *  Null is not an empty list and the callers must not collapse the two. An empty
+ *  select reads as "you never chose one"; a stale hardcoded fallback reads as a
+ *  working choice and then 422s on save. Null means the editor declines to guess
+ *  — see `choice()` in panel-inspector.js, which renders it as a disabled
+ *  control that still shows what the document already says.
+ *
+ *  A served-but-EMPTY list answers null too: there is nothing to offer either
+ *  way, and the honest rendering of "nothing to offer" is the same one. */
+export function vocabulary(name) {
+  const v = SERVED?.[name];
+  return Array.isArray(v) && v.length ? v : null;
+}
+
+// One accessor per served vocabulary, rather than three exported name strings.
+// The old `LENGTH_RULES` / `BASES` were ARRAYS: a name string exported under the
+// same identifier would let `values.includes(v)` quietly become a substring test
+// in any call site that was not updated. Renaming instead makes a missed call
+// site a module-load error naming the export, which is the loudest failure
+// available and the one worth having.
+export const lengthRules = () => vocabulary("length_rules");
+export const fixingBases = () => vocabulary("fixing_bases");
+export const objectivePresets = () => vocabulary("objective_presets");
 
 // --- the closed vocabularies, read from fencemodel/model.py -------------------
 export const ROLES = ["post", "cap", "concrete", "rail", "screw", "infill", "spacer"];
-export const LENGTH_RULES = ["clear_between_posts", "centre_to_centre", "overlap",
-  "panel_height",
-  // the one rule that reads the "starts at" / "ends at" selects below; under any
-  // other rule the schema now refuses a member that sets them
-  "between_frame"];
 export const PLACEMENT_KINDS = ["distributed", "from_bottom", "from_top", "fraction"];
 export const JUSTIFICATIONS = ["start", "end", "center", "spread_to_fit"];
 // `trim_last` and `extension_clip` are schema-expressible and NOT built
@@ -28,10 +74,6 @@ export const JUSTIFICATIONS = ["start", "end", "center", "spread_to_fit"];
 // and an existing document carrying one still shows it, rather than being
 // silently rewritten to something it does not say.
 export const EXCESS = ["truncate", "space"];
-export const BASES = [
-  "per_member_crossing", "per_member", "per_end_member",
-  "per_gap", "per_frame_member", "per_panel",
-];
 export const APPROVALS = ["auto", "suggest_only"];
 export const GRADES = ["residential", "commercial", "industrial"];
 // `numeric` is schema-expressible and unbuilt, for the same reason `trim_last`

@@ -132,6 +132,26 @@ admitting our own vocabularies deserve the same question.
 refactor; the same registry over fifteen is a migration. None of this is urgent today and
 all of it gets more expensive with every rule the Knowledge Platform publishes.
 
+### The client half of the first seam is already closed
+
+Build item 3 has two halves, and only one of them is a backend refactor. The other was a
+SECOND copy of the same vocabularies, hand-written in `web/static/js/panel-model.js`, and
+it had the property that makes a seam not a seam: registering `per_corner` would make it
+authorable through the API and not offerable in the editor, until a person noticed a red
+test and edited a JS array.
+
+That half is done. `GET /api/vocabularies` serves the length rules, the fixing bases and
+the objective presets; the editor asks, and holds no list of its own. The route reads
+`fencemodel/vocabulary.py`, which introspects the `Literal`s **today** and becomes
+`FIXING_BASES.names()` / `LENGTH_RULES.names()` / `PRESETS.names()` when the registries
+land — one file, three functions, nothing above it changes.
+
+So build item 3 is now the backend refactor alone: replace the `Literal` plus its branch
+with a registry, and point those three functions at it. The day a new basis is a
+registration, it is also a select entry, with no frontend change and no release — which
+is the property the seam was for, and the half that is easy to forget is the half that
+lives in another language.
+
 ---
 
 ## 5. `Gap` as a return type — the one change that pays for itself twice

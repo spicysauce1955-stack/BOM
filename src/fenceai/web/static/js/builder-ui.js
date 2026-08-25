@@ -106,6 +106,23 @@ export function loadPartTypes() {
   return partTypesPromise;
 }
 
+// The vocabularies the schema accepts — the fixing bases, the length rules and
+// the objective presets — from `GET /api/vocabularies`.
+//
+// Cached like the two above, and with ONE deliberate difference: a failed fetch
+// resolves to NULL, never to `[]`. The other two degrade to an empty list
+// because an empty picker is a truthful "nothing here yet"; this one cannot,
+// because an empty vocabulary select does not read as "not loaded", it reads as
+// "you have not chosen one" — and the alternative degradation, falling back to a
+// list written into the JS, is exactly the second copy this route exists to
+// delete. Null travels to `vocabulary()` and the control renders as unavailable.
+let vocabulariesPromise = null;
+export function loadVocabularies() {
+  vocabulariesPromise ??= apiGet("/api/vocabularies")
+    .catch(() => { vocabulariesPromise = null; return null; });
+  return vocabulariesPromise;
+}
+
 // show/hide the structured editor vs. the raw-JSON textarea; the toggle button's
 // data-i18n key is swapped so applyStatic keeps it correct across locale changes.
 // `backKey` names the surface being returned to — the inventory tab has no rule
