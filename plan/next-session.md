@@ -1,190 +1,154 @@
-# Next session — build the engine against a ratified contract
+# Next session — internal engine work, because the boundary cannot be checked yet
 
 ```text
-Written:  2026-08-25, closing the design/negotiation session.
-Read:     this first, then plan/current-status.md for where the code is.
-State:    The boundary is DONE. The engine is not. Nothing below needs another
-          design round — every shape it names is agreed and signed.
+Written:  2026-08-25, closing the implementation session that built items 1-5.
+Rewritten: same day, when the Knowledge team's state changed the plan.
+Read:     this first, then plan/current-status.md (newest entry first).
+State:    Items 1-5 done and pushed. Items 6-7 are OFF the table for now, and
+          the reason is the most important thing on this page.
 ```
 
-## Where things actually are
+## The fact that reorders everything
 
-**The contract is ratified at v1.1 by both teams** (`fence-rag/docs/integration/audit/11`).
-Eighteen binding obligations, one amendment filed and accepted, zero open. Both repos hold
-byte-identical copies; verify with `sha256sum -c docs/integration-contract/contract.sha256`
-before relying on it, and **never edit it** — `AMENDING.md` carries the procedure.
+**The Knowledge Platform team is still in DESIGN.** They have published nothing, and the
+two early publishes the old plan waited on are not coming soon.
 
-**The engine has not moved this whole session.** Roughly six thousand lines of design
-across two repos, zero lines of `src/`. Two obligations are violated in code today and we
-signed the contract declaring them, which is on the record in `audit/11` §2.
+The contract is still ratified at v1.1 and still binding — that has not changed. What
+changed is that there is no counterparty data to check an implementation against, and
+this repo has already learned what that costs. From the ratification's own record:
 
-## The rule for the next session, from the ratification itself
+> An addition made at the boundary has no substance on either side to check it against
+> until someone holds it up to one. That is why `continuity` and obligation 13 were both
+> wrong — sound against our engine, which was the only substance we had.
 
-> Each component designs and implements **its own internals**, and preserves the
-> **integration points** with the others.
+So the rule for this session is narrower than the last one's:
 
-Concretely, for this repo:
-
-- **Free to change without asking anyone:** pipeline phases, fact-space layers, extension
-  seams, registries, read models, storage, resolution order, the decision graph's internals.
-  `docs/superpowers/specs/2026-08-25-engine-architecture.md` is the design and it binds
-  nobody outside this repo.
-- **Cannot change without an amendment:** anything in the 18 obligations — the snapshot
-  payload, `Gap`, `Provenance`, `ParameterTable`, `condition_scope`, `stock_length`,
-  `as_of`, the never-block rule.
-- **The test:** if it changes what crosses the boundary, it is an amendment. If it changes
-  how we compute, it is ours.
+- **Build what this repo can verify end to end.** Internal design, read models, the
+  engine's own arithmetic, the frontend.
+- **Do not build binding boundary behaviour against the spec alone.** Item 6 (source
+  policy) is the clearest case: BINDING, zero lines, re-ranked twice, and unverifiable
+  until somebody publishes a row with a real `source_class` on it.
+- **Do produce evidence for their design.** That is not the same thing — see "the one
+  boundary item worth doing" below.
 
 ---
 
-## Build order
+## What is done
 
-Item 1 first, and not for tidiness: it is simultaneously a live defect, a violation of an
-obligation we just signed, a prerequisite for the seams, and the Knowledge team's delta
-item 1. One change, four payoffs.
+| # | Item | State |
+|---|---|---|
+| 1 | `Gap` as a return type — a run is never failed over a gap | done (`622551a`, fixed in `00a8387`) |
+| 2 | `SiteConditions`, `site.*` binding, the 409 guard | done (`b60e7e2`, fixed in `00a8387`) |
+| 3 | Handler registries — bases, length rules, presets | done (`a2f7db4`) |
+| 4 | The declared pricing phase list | done (`360639c`) |
+| 5 | `ParameterTable` loader | **built, never validated** (`b2b8400`) |
 
-| # | Work | Blocked by | Obligation |
+Plus a frontend round (three agents, merged): site conditions are enterable, gaps have a
+reader, the editor asks `GET /api/vocabularies` instead of keeping its own copy.
+**1780 pytest · 203 scenario tests · 237/237 browser smoke.**
+
+Both prerequisites recorded for item 5 are closed: `KnowledgeVersion.from_published` is
+the seam the loader uses, and a `ConflictSink` means a `Conflict` can no longer be
+silently dropped at ten of thirteen resolution sites.
+
+### Item 5 is the largest piece of unverified work in the repo
+
+Say it plainly to whoever picks this up. `ParameterTable` was built field-for-field from
+contract §1.3, is tested hard, and **has never seen a table anyone actually published**.
+Nothing calls `expand()` from a route. Treat its shape as a hypothesis with good tests,
+not as settled.
+
+---
+
+## Build order from here
+
+| # | Work | Blocked by | Ours to verify? |
 |---|---|---|---|
-| ~~**1**~~ | ~~**`Gap` as a return type.**~~ **DONE 2026-08-25.** Three sites converted, not two — `_resolve_default_post` was a third. `docs/reviews/generation-failure-audit-2026-08-25.md` | — | §3.2.4, and delta item 1 |
-| ~~2~~ | ~~`SiteConditions`…~~ **DONE 2026-08-25.** `conservative_parameter_used` deferred to item 5 (it keys on a `ParameterTable.task` class that does not exist yet); no UI — settable only via `PUT /projects/{id}/site` | — | 13's site scope |
-| ~~3~~ | ~~Handler registries~~ **DONE 2026-08-25.** `core/registry.py` + three registries; the `Literal`s became registry-validated `str`. The EDITOR's hardcoded arrays are the remaining closed half | — | none (internal) |
-| ~~4~~ | ~~The declared phase list~~ **DONE 2026-08-25.** `fulfillment/phases.py`; a phase declares what it reads and writes, and `check_order` refuses a step placed before its input exists | — | none (internal) |
-| ~~5~~ | ~~`ParameterTable` loader~~ **DONE 2026-08-25.** `knowledge/parameters.py`: the contract's §1.3 type, expansion into published `KnowledgeVersion`s through `from_published`, `SetToken` + `resolve_token`, `to_mm` as the one rounding point, uncovered/lapsed/nonconforming as gaps. **Not consumed by a route yet** — no snapshot loader, and no reader for the gaps | — | 13, 15 |
-| 6 | Source policy — **currently zero lines** despite being binding and re-ranked twice. `version_status` is an axis | 5 | 6, §1.4 |
-| 7 | `Provenance` on `SpecField`, and the snapshot-level `source_docs` join with invariant 12's closure check | 5 | 6, 8 |
-| 8 | Warning model — `attaches_to`, the platform/source registry split, and the **annexe** in the structure sheet, which does not exist | 5 | 10 |
-| 9 | `stock_length` consumed; continuity derived against resolved spacing | 5 | 14 |
-| 10 | Containment → demand: flatten `ContainedSlot` into the panel's slot list under a path key, and the kit-credit rule, which has no home in a demand line today | 5 | — |
-| 11 | `report/assembly.py` — bay and post scopes, `requires` edges as a partial order | 10 | 11, 12 |
+| **A** | **The conforming fixture + ingestion** — see below | nothing | yes |
+| **9** | `stock_length` consumed; continuity **derived** against resolved spacing | nothing | yes |
+| **10** | Containment → demand: flatten `ContainedSlot` into the panel's slot list under a path key, and the kit-credit rule, which has no home in a demand line today | nothing | yes |
+| **11** | `report/assembly.py` — bay and post scopes, `requires` edges as a partial order | 10 | yes |
+| **8** | Warning model — `attaches_to`, the platform/source registry split, and the **annexe** | partly boundary | annexe yes, the rest no |
+| ~~6~~ | ~~Source policy~~ | **the other team** | **no — do not start** |
+| ~~7~~ | ~~`Provenance` on `SpecField`, the `source_docs` join~~ | **the other team** | **no — do not start** |
 
-**Steps 1–4 are done.** Step 5 wants the Knowledge team's first early publish to validate against — read the two prerequisites below before starting it.
+**9, 10 and 11 are genuinely parallel** — different modules, different read models — which
+items 6-11 never were as a chain. They are the right shape for concurrent agents.
 
-### The frontend is behind the engine — four things, all created by items 1–3
+### 9, 10 and 11, and why each is ours
 
-The backend/frontend SEPARATION is intact (ES modules still talk only through
-`state.js`, no module touches another's DOM, no build step, both bundles stay
-key-identical, 202/202 smoke green). What is not intact is PARITY: three engine
-features are unreachable from the app, and one backend field is English prose in
-a Hebrew-first product.
+- **9.** `stock_length_mm` already exists on catalog products and `parts/compile.py`
+  already reads it. Obligation 14's real content is that continuity is **derived, not
+  authored**: the same rail is continuous in 16 ft White and per-bay in 12 ft Blend at a
+  97″ maximum spacing, and a rail cut for rolling terrain is per-bay on the graded bays
+  only. `Member.continuity` survives as an authored OVERRIDE for the case where a guide
+  states the behaviour and gives no length. All of that is our engine deciding from data
+  we hold.
+- **10.** `ContainedSlot` does not exist yet — greenfield, no boundary surface at all.
+  The kit-credit rule is the interesting half: a gate kit that ships its own hinges must
+  credit them against the hinges the panel would otherwise buy, and there is nowhere in a
+  demand line to say so today.
+- **11.** `AssemblyStep` and `report/assembly.py` exist. This closes something already
+  recorded as knowingly-not-done in `plan/open-work.md`: the placeable vocabulary is the
+  PANEL's slots, so no step can name a post, its cap or its footing — an installation
+  instruction about posts is prose today. Closing it means giving the read model the
+  bay's posts, which is a different input.
 
-1. ~~**Site conditions have no UI at all.**~~ **DONE 2026-08-25.** `js/site.js`
-   owns a `#site-conditions` panel in the canvas aside: the five dimensions, each
-   with an explicit UNSET state, `PUT`ing the five declared fields and never a
-   `revision`, saved with `reloadProject()` so it cannot wipe an undo stack.
-   `null` is a control state rather than an absence — `hvhz` is a three-option
-   select, because a checkbox cannot say "nobody has stated it" and that is the
-   state the evaluator turns into *not applicable*. The smoke suite now walks the
-   engine's own acceptance criterion in a browser (a 6 m run laid out 4 x 1500
-   with nothing stated, 5 x 1200 under exposure C) and renders three strings no
-   browser had ever rendered: `warning.site_condition_missing`,
-   `structure.site_changed` and `decisions.stale_site`.
-2. **The panel editor's vocabulary arrays are the closed half of item 3.**
-   Registering `per_corner` makes it authorable through the API and turns
-   `test_the_editor_and_the_backend_agree_on_the_vocabularies` RED until
-   `js/panel-model.js` names it too. Deliberate — the red test is the reminder —
-   but it means the seam is only half open. Closing it: serve
-   `FIXING_BASES.names()` / `LENGTH_RULES.names()` from a route the editor reads.
-3. **`Gap.would_close` is generated English with no `code`/`params`.** Every other
-   user-visible string in this system carries a code and renders from a locale
-   bundle; this one is prose the backend writes. It is defensible on the wire to
-   the Knowledge Platform (it goes to them, and §1.2.1 defines it as a sentence),
-   and NOT defensible the moment the annexe renders gaps to a curator here, which
-   is item 8. Decide before item 8, not during it.
-4. **`Strategy.gaps` has no reader.** Gaps are produced, stored and returned by
-   `/generate`, and nothing renders them — the warnings carry the same facts, so
-   nothing is invisible to a user today, but the gap list itself is write-only
-   until the annexe exists.
+### The one boundary item worth doing: item A
 
-### Owed from item 2's review, and NOT done
+Write a **conforming fixture** — a hand-authored snapshot with a real `ParameterTable`
+matching §1.3, including a `declared` domain, an `uncovered` point and a lapsed row — and
+wire the ingestion path that loads it.
 
-1. **`site.*` does not reach model variant conditions or eligibility predicates.**
-   `fencemodel/resolve.py` and `match.py` evaluate against contexts with no `site`
-   namespace, so a variant conditioned on `site.hvhz` silently falls through to the
-   default spec — the silent-wrong-answer shape, and an HVHZ panel build-up is
-   exactly what a variant is for. Decide it rather than inherit it: either bind
-   `site` into `PanelContext.condition_ctx()` and extend the missing-dimension scan
-   to model conditions, or have `validate_model` REFUSE a variant condition reading
-   `site.*` so it fails at authoring instead of at the fence.
-2. ~~**No UI.**~~ **DONE 2026-08-25** — see the parity list above. Site conditions
-   are entered in the app, and the refusals they cause are rendered and asserted
-   in the browser suite.
-3. **`conservative_parameter_used`** — deferred to item 5 on purpose; it keys on a
-   `ParameterTable.task` class that does not exist yet.
+Three things it buys, and the third is the point:
 
-### One thing item 5 must do BEFORE it loads a published row
+1. It exercises item 5 against a whole document instead of unit fixtures.
+2. It makes item 5 REACHABLE, so `uncovered_parameter_point`,
+   `parameter_authority_lapsed` and `parameter_value_nonconforming` stop being strings
+   nothing renders.
+3. **It is evidence for the Knowledge team while they are still designing.** This is not
+   speculative boundary work, it is the opposite: the frontend design already makes the
+   argument for its own step 1 — *"building against it is what tells the Knowledge team
+   whether their endpoint returns what a reviewer actually needs — before they implement
+   it."* A team in design phase is when that is worth most.
 
-Both fell out of the reviews of item 1. Both are inert today for the same reason —
-nothing in `src/` can produce `origin="published"` yet — and both go live the moment
-item 5's loader can.
+Keep the fixture obviously a fixture. It is what we expect to receive, not something
+anyone published, and a file that could be mistaken for real published data is how a
+hypothesis becomes a fact nobody checked.
 
-1. **Build every row through `KnowledgeVersion.from_published(...)`**, never the bare
-   constructor. `origin` defaults to `authored`, which is the safe direction for a
-   field nobody sets, and therefore exactly the trap: a loader that forgets it makes
-   a snapshot look home-grown, two published rows tie and disagree, and generation
-   RAISES — the declared defect reinstated with no test failing, because
-   `demo_knowledge()` holds no published rows to notice. The seam refuses an explicit
-   `origin` argument so it cannot degrade into a suggestion.
+---
 
-2. ~~**Surface conflicts at every resolution site, not three of them.**~~ **DONE
-   2026-08-25.** A `ConflictSink` is threaded beside `site` and drained once in
-   `generate()`, so all thirteen sites record. Deduped on drain — the same slot is
-   resolved once per run, so a two-run fence reported the identical disagreement
-   twice. An AST-based test refuses a fourteenth site that neither records nor hands
-   its `Resolution` back, and that test has its own test, because the first version
-   of it waved through a function reading `.winner` and discarding the conflicts.
+## Still owed, and small
 
-## Known defects, with file and line
+- **`Gap.would_close` is generated English with no `code`/`params`**, rendered in the UI
+  as quoted foreign text with a Hebrew label saying it is written for curators and never
+  translated here. The long-term answer is a `close.<code>` registry beside the warning
+  registry, with the prose demoted to a fallback the way `message` already is.
+  Deliberately NOT invented yet: a code vocabulary the Knowledge team has not agreed to is
+  a second vocabulary at the boundary, which is what the freeze exists to stop.
+- **`frost_depth_mm` has no `ge=0` bound** on `SiteConditions`, so the browser is the only
+  thing refusing a negative depth. `PUT /site` accepts `-500` from anything that is not
+  that panel. One-line engine fix.
+- **`site.*` does not reach model variant conditions or eligibility predicates**
+  (`fencemodel/resolve.py`, `match.py`), so a variant conditioned on `site.hvhz` falls
+  through to the default spec silently. Decide it: bind `site` into
+  `PanelContext.condition_ctx()`, or have `validate_model` REFUSE such a condition so it
+  fails at authoring rather than at the fence.
+- **`DEFAULT_RAILS_PER_SPAN` and `DEFAULT_SCREWS_PER_SPAN`** are silent fallbacks of
+  exactly the shape `FALLBACK_MAX_SPAN_MM` has, minus the warning. Closing them moves
+  golden numbers on runs that are currently green, so it wants its own change.
 
-Both were declared at ratification rather than discovered, and both close with item 1:
+---
 
-| Where | What |
-|---|---|
-| `strategy/generator.py:1521` | `resolve_param` returns no winner → `raise GenerationFailure`. An uncovered exposure category produces **no plan at all**, on the single most important parameter in the system |
-| `knowledge/evaluator.py:107` | Two contenders tie, disagree, both at authority ≤ `HARD_AUTHORITY_MAX = 3` → raise. Our expansion puts published rows at authority 1 or 3, so **both branches are inside the raise band** and the exposure grows as the other team publishes |
+## Two habits this session earned the hard way
 
-## Five mechanisms specified with no implementation
+**A subagent gets its own worktree, cut from the RIGHT commit.** Two of three agents were
+branched from `main` rather than the working branch and one of them built an entire
+backend that had to be deleted. Check `git worktree list` before briefing anyone. And
+never edit the shared tree while an agent is running mutation tests in it — a reviewer's
+`git checkout` silently wiped uncommitted work three times before the cause was spotted.
 
-From the second self-audit pass. Each is designed and none is built:
-
-1. A token-valued parameter has no `Action` that can carry it — `SetParam.value: int`.
-2. There is no annexe in `report/`, so the 68% of warnings that are document-scoped have
-   nowhere to render.
-3. The source policy has zero lines.
-4. `Provenance` has no field to attach to on `SpecField`.
-5. The `Param` coverage anchor cannot resolve — `PanelContext.params` is a hardcoded
-   two-key dict, and footing depth resolves on a different pass.
-
-## What the other team is doing, so we do not duplicate it
-
-Their four, from `audit/11` §3: the cell bounding box, the eleven-warning starter list,
-the two early publishes (one `ParameterTable` with a `declared` domain, one definition
-carrying a superseded `contributing_source`), and `also_filed_as`.
-
-**We need none of it for steps 1–4.** Step 5 wants the first early publish to validate
-against; step 6 wants the second.
-
-## Parked, with what would reopen each
-
-Gates (target `GateModel` shape recorded, publish as a `Gap`); `Combination` (pinned but
-inert, `certify()` seam named); concrete and gravel (`site_material` reserved); stock
-length constraining layout (publish now, consume later); `soil_class` (belongs in the
-topology). Full list with reopen conditions: `fence-rag/docs/integration/where-we-stand.md`.
-
-## Two habits worth carrying in
-
-**Check against a substance, not against the design.** Five rounds each found what the
-previous could not, because each checked against something different — their corpus, a
-second reader, our codebase, our own additions, then a cold re-read before signature. After
-round two the design was internally consistent and unimplementable. Coherence was never the
-test.
-
-**Anything invented at the boundary goes to the other side to be measured before it is
-binding.** Their formulation, better than ours: an addition made at the boundary has no
-substance on either side to check it against until someone holds it up to one. That is why
-`continuity` and obligation 13 were both wrong — sound against our engine, which was the
-only substance we had.
-
-## Definition of done for the next session
-
-Not "the design is agreed" — that is done. **Item 1 merged with the scenario suite green**,
-and `plan/current-status.md` carrying an entry that says so.
+**A gate that only goes green on state another test left behind is not testing what it
+claims.** `test_s17_1b` passed for months because it was the one gate file driving the API
+without pinning its own database; two agents reported it failing and were told it passed.
+Its red was not evidence, and neither was its green.

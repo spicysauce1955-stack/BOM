@@ -338,6 +338,7 @@
   "warning.uncovered_parameter_point": "ל-{parameter} אין ערך שפורסם עבור {point} — אשרו לפני הזמנה",
   "warning.parameter_authority_lapsed": "השורה מטעם {authority} עבור {parameter} הייתה בתוקף עד {valid_until}, לפני תאריך הריצה {as_of}",
   "warning.parameter_value_nonconforming": "שורה שפורסמה עבור {parameter} אינה תואמת לסוג המוצהר בטבלה ({value_type}) ולא נעשה בה שימוש",
+  "warning.parameter_scope_unmappable": "טבלת {parameter} שפורסמה מוגבלת ל-{entity_kind}, שאין לו ממד במנוע — הטבלה לא הוחלה",
   "warning.panel_length_unresolved": "דגם {model_ref} אינו יכול לחשב אורך חיתוך עבור {slot} ב-{n} מפתחים בקטע {run_id} — אלמנטי המסגרת שביניהם הוא נמדד אינם משאירים מה למדוד, ולכן החלק יתומחר באפס",
   "warning.clear_gap_exceeded": "מרווח של {value_mm} {u} בקטע {run_id} חורג מהמגבלה של {limit_mm} {u} ({n} מפתחים) — צמצמו את הריווח או הרחיבו את השלבים",
   "warning.rail_separation_insufficient": "בקטע {run_id} המסילה שמעל התחתונה נמצאת {value_mm} {u} בלבד מעליה, מתחת למגבלת מניעת הטיפוס של {limit_mm} {u} ({n} מפתחים)",

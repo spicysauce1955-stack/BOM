@@ -1,0 +1,128 @@
+{
+  "snapshot_id": "FIXTURE-not-a-real-snapshot",
+  "tenant": "not-a-real-tenant",
+  "spine_version": "0.1.0",
+  "contract_version": "1.1.0",
+  "policy_version": "0.0.0",
+  "retain_until": "2030-01-01",
+  "regime": "us_astm",
+
+  "parameters": [
+    {
+      "parameter": "max_span_mm",
+      "scope": {"kind": "product_line", "id": "M-VINYL"},
+      "task": "structural",
+      "hit_policy": "unique",
+      "value_type": "quantity(mm)",
+      "domain": {"exposure_category": ["B", "C", "D"], "hvhz": [true, false]},
+      "domain_basis": "measured",
+      "condition_scope": {"exposure_category": "site", "hvhz": "site"},
+      "rows": [
+        {
+          "conditions": {"exposure_category": "B", "hvhz": false},
+          "condition_basis": "stated",
+          "value": {"amount_milli": 1828800, "unit": "mm", "value_raw": ["72\""]},
+          "provenance": {
+            "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}],
+            "source_class": "manufacturer", "curation_level": 2,
+            "version_status": "active"
+          },
+          "valid_from": "2024-01-01", "valid_until": "2030-01-01",
+          "authority": "ASCE 7-16"
+        },
+        {
+          "conditions": {"exposure_category": "C", "hvhz": false},
+          "condition_basis": "stated",
+          "value": {"amount_milli": 1219200, "unit": "mm", "value_raw": ["48\""]},
+          "provenance": {
+            "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}],
+            "source_class": "manufacturer", "curation_level": 2,
+            "version_status": "active"
+          },
+          "valid_from": "2024-01-01", "valid_until": "2030-01-01",
+          "authority": "ASCE 7-16"
+        },
+        {
+          "conditions": {"exposure_category": "C", "hvhz": true},
+          "condition_basis": "stated",
+          "value": {"amount_milli": 914400, "unit": "mm", "value_raw": ["36\""]},
+          "provenance": {
+            "cites": [{"id": "FIXTURE-src-2", "belongs_to": "sha256:fixture-doc-b"}],
+            "source_class": "engineer_sealed", "curation_level": 2,
+            "version_status": "active"
+          },
+          "valid_from": "2019-01-01",
+          "valid_until": "2025-01-01",
+          "authority": "NOA 19-0101.01"
+        }
+      ],
+      "uncovered": [
+        {"exposure_category": "D", "hvhz": false},
+        {"exposure_category": "D", "hvhz": true}
+      ]
+    },
+    {
+      "parameter": "slope_method",
+      "scope": {"kind": "product_line", "id": "M-VINYL"},
+      "task": "descriptive",
+      "hit_policy": "unique",
+      "value_type": "token(stepped_only|racked|either)",
+      "domain": {"exposure_category": ["B", "C", "D"]},
+      "domain_basis": "declared",
+      "condition_scope": {"exposure_category": "site"},
+      "rows": [
+        {
+          "conditions": {},
+          "condition_basis": "stated",
+          "value": "stepped_only",
+          "provenance": {
+            "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}],
+            "source_class": "manufacturer", "curation_level": 1,
+            "version_status": "active"
+          },
+          "authority": "Bufftech installation guide"
+        }
+      ],
+      "uncovered": []
+    }
+  ],
+
+  "gaps": [
+    {
+      "id": "FIXTURE-gap-gate-1",
+      "kind": "unmodellable_entity",
+      "subject": {"kind": "entity", "ref": "product:vinyl-gate-48"},
+      "code": "gate_not_modelled",
+      "params": {"product": "vinyl-gate-48"},
+      "message": "The corpus describes a gate; PanelSpec models no gate.",
+      "cites": [{"id": "FIXTURE-src-3", "belongs_to": "sha256:fixture-doc-c"}],
+      "would_close": "a gate type in the Planning schema carrying handedness, swing direction, fixed leaf and latch height",
+      "closes_by": "planning",
+      "severity": "warns_line"
+    },
+    {
+      "id": "FIXTURE-gap-rack-1",
+      "kind": "disputed",
+      "on": "conditions",
+      "subject": {"kind": "param", "ref": "max_rack"},
+      "code": "readers_disagreed_on_bracket",
+      "params": {"parameter": "max_rack"},
+      "message": "Two readers disagreed on which heights this rack limit applies to.",
+      "cites": [{"id": "FIXTURE-src-2", "belongs_to": "sha256:fixture-doc-b"}],
+      "would_close": "a statement from the manufacturer of which fence heights the 4 inch rack limit covers",
+      "closes_by": "knowledge",
+      "severity": "informational"
+    }
+  ],
+
+  "part_types": [], "parts": [], "models": [], "procedures": [],
+  "warnings": [{"note": "FIXTURE: carried, not consumed by this engine today"}],
+  "combinations": [], "rules": [],
+  "source_docs": [
+    {"content_hash": "sha256:fixture-doc-a", "source_class": "manufacturer",
+     "version_status": "active", "issue_date": "2024-01-01"},
+    {"content_hash": "sha256:fixture-doc-b", "source_class": "engineer_sealed",
+     "version_status": "superseded", "issue_date": "2019-01-01",
+     "superseded_by": "sha256:fixture-doc-a"}
+  ]
+}

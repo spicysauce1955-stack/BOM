@@ -49,6 +49,10 @@ WARNING_CODES = [
     "uncovered_parameter_point",
     "parameter_authority_lapsed",
     "parameter_value_nonconforming",
+    # A table scoped to an entity kind this engine has no dimension for. Closes
+    # by a schema change HERE, not by a curator — the fixture found it, because a
+    # table built in a unit test carries no scope at all.
+    "parameter_scope_unmappable",
     "panel_length_unresolved",
     "clear_gap_exceeded",
     "rail_separation_insufficient",

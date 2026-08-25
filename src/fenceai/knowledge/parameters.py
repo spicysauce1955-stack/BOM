@@ -149,6 +149,36 @@ def to_mm(q: Quantity) -> int:
     return -whole if q.amount_milli < 0 else whole
 
 
+# A table's `scope` is an **EntityRef** — `{kind, id, tenant}`, naming which
+# product or assembly it applies to. The evaluator's `scope` is a set of bound
+# DIMENSIONS — `{"series": "M-VINYL"}`. They share a word and are not the same
+# thing, and copying one into the other produces a rule that can never fire:
+# `_scope_matches` requires every key to be present in the context, and nothing
+# ever binds `kind` or `id`. It cost nothing in unit tests, where tables are
+# built without a scope, and showed up the first time a whole document was
+# ingested — which is what the fixture is for.
+_ENTITY_DIMENSION = {
+    "product_line": "series",
+    "model": "series",
+}
+
+
+def _scope_for(table: ParameterTable) -> tuple[dict[str, str], str | None]:
+    """The table's EntityRef as bound dimensions, or the kind we cannot map.
+
+    An unmappable kind is NOT dropped. Dropping the scope would leave the table
+    applying to EVERY product, which is the silent wrong answer: a rule scoped to
+    something we do not understand must not become a rule scoped to nothing.
+    """
+    if not table.scope:
+        return {}, None
+    kind = str(table.scope.get("kind", ""))
+    dimension = _ENTITY_DIMENSION.get(kind)
+    if dimension is None:
+        return {}, kind or "(unnamed)"
+    return {dimension: str(table.scope.get("id", ""))}, None
+
+
 def _condition_for(table: ParameterTable, row: ParameterRow) -> Expr | None:
     """A row's conditions as an evaluator expression, each key in the namespace
     its declared scope names.
@@ -194,6 +224,12 @@ def expand(
     gaps: list[Gap] = []
     tokens = table.token_values()
 
+    scope, unmappable = _scope_for(table)
+    if unmappable is not None:
+        # Nothing is expanded. A table we cannot aim is not a table we may apply
+        # everywhere, and this closes by a schema change HERE, not by a curator.
+        return [], [_unmappable_scope_gap(table, unmappable)]
+
     for index, row in enumerate(table.rows):
         action = _action_for(table, row, tokens)
         if action is None:
@@ -206,7 +242,7 @@ def expand(
             # `fact` is the tier the demo base already gives measured inputs, and
             # the row's own `authority` field is what a policy will read later.
             type="fact",
-            scope=dict(table.scope),
+            scope=scope,
             condition=_condition_for(table, row),
             actions=[action],
             title=f"{table.parameter} = {_display(row.value)}",
@@ -283,6 +319,23 @@ def _lapsed_gap(table: ParameterTable, row: ParameterRow, index: int, as_of: str
                  f"before this run's as_of {as_of}."),
         would_close=f"a reissue of {row.authority or 'the authority'} covering {as_of}",
         closes_by="knowledge", severity="warns_line",
+    )
+
+
+def _unmappable_scope_gap(table: ParameterTable, kind: str) -> Gap:
+    return Gap(
+        id=f"gap:unmappable_scope:{table.parameter}:{kind}",
+        kind="unmodellable_entity",
+        subject=GapSubject(kind="entity", ref=f"{kind}:{table.scope.get('id', '')}"),
+        code="parameter_scope_unmappable",
+        params={"parameter": table.parameter, "entity_kind": kind},
+        message=(f"{table.parameter} is scoped to a {kind}, which this engine has no "
+                 "dimension for; the table was not applied."),
+        would_close=(f"an evaluator dimension for a {kind} in the Planning repo, so a "
+                     f"table scoped to one can be aimed at it"),
+        # BINDING (§1.2.1): `unmodellable_entity` closes by a schema change HERE.
+        # Showing a curator this row would be showing them work they cannot do.
+        closes_by="planning", severity="warns_line",
     )
 
 
