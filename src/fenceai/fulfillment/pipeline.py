@@ -19,10 +19,11 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from fenceai.catalog.model import Catalog
-from fenceai.demand.derive import DemandLine, derive_requirements
-from fenceai.fulfillment.fulfill import Bom, Inventory, fulfill
+from fenceai.demand.derive import DemandLine
+from fenceai.fulfillment.fulfill import Bom, Inventory
 from fenceai.fulfillment.lines import ResolvedSupplyLine
-from fenceai.fulfillment.supply import SupplyDecision, resolve_supply
+from fenceai.fulfillment.phases import PIPELINE, Phase, PipelineState
+from fenceai.fulfillment.supply import SupplyDecision
 from fenceai.strategy.model import Strategy, StrategyWarning
 
 
@@ -54,20 +55,30 @@ def price_strategy(
     inventory: Inventory | None = None,
     demand_skus: dict | None = None,
     preset: str = "least_cost",
+    phases: tuple[Phase, ...] = PIPELINE,
 ) -> PricedRun:
     """Engineering demand, supply resolution and fulfilment, in that order.
+
+    The order is DECLARED rather than written out here — `fulfillment/phases.py`
+    — so inserting a step (credit kits against assemblies, certify combinations)
+    is a row in that list instead of an edit to this function and a re-reading of
+    what each statement hands the next. `phases` is an argument so a caller can
+    run a different chain without a mutable global; the default is the one chain
+    every route runs.
 
     Raises `ValueError` (including `core.errors.ReadRefused`, which carries a
     code + params) when the run cannot be read or the preset is unknown.
     """
-    requirements = derive_requirements(strategy, catalog, demand_skus)
-    resolution = resolve_supply(requirements, catalog, inventory, preset=preset)
-    bom = fulfill(resolution.requirements, catalog, inventory)
-    bom.warnings = resolution.warnings
+    state = PipelineState(
+        strategy=strategy, catalog=catalog, inventory=inventory,
+        demand_skus=demand_skus, preset=preset,
+    )
+    for phase in phases:
+        phase.fn(state)
     return PricedRun(
-        requirements=resolution.requirements,
-        unresolved=resolution.unresolved,
-        warnings=resolution.warnings,
-        decisions=resolution.decisions,
-        bom=bom,
+        requirements=state.requirements,
+        unresolved=state.unresolved,
+        warnings=state.warnings,
+        decisions=state.decisions,
+        bom=state.bom,
     )

@@ -1,5 +1,50 @@
 # Current status
 
+## The pricing chain is a declared list, and the API did not move (2026-08-25)
+
+Item 4, the second extension seam, and **steps 1–4 of the build order are done.**
+**1725 pytest · 203 scenario tests, green.**
+
+`derive → resolve → fulfil` was three statements in `price_strategy`. It is a
+declared tuple in `fulfillment/phases.py` now, because both things the seam exists
+for are MIDDLE inserts: kit credit (item 10) and `certify()` for `Combination`
+(contract obligation 17, shape agreed, seam named, nothing reads one yet). A
+middle insert into a hardcoded chain means reading three statements, working out
+what each hands the next, and hoping the mental model matches.
+
+**A phase declares what it reads and what it writes**, which is the "input and
+output type" the spec asks for — expressed as field names on a shared state
+rather than static types, because the state being ONE object is what lets a new
+step add a field without changing the signature of every step around it.
+`check_order` then refuses a step placed before its input exists, at import. The
+failure that prevents is quiet: `credit_kits` above `resolve_supply` reads
+`requirements`, finds the empty list it was initialised with, credits nothing,
+and prices a job that looks fine.
+
+**Not a registry, deliberately.** The ORDER is the design, so it is one tuple a
+reader sees whole rather than a name→function map assembled by import order — a
+pricing chain that depended on what was imported is a job priced differently on
+two machines. `price_strategy(phases=…)` takes it as an argument instead of
+reading a mutable global.
+
+**The API did not move, and I checked rather than assumed.** `PricedRun` is what
+`/bom`, `/structure` and `/quote` all return. A live `/bom` response is
+byte-identical across the refactor once per-invocation ids and timestamps are
+normalised (26,462 bytes), the compatibility gate's twelve fixtures still match
+their committed golden files, and a test pins `PricedRun`'s field set so a later
+change to it has to be a deliberate client-facing decision.
+
+**Frontend parity is unchanged by this item and still owed** — four items in
+`plan/next-session.md`, the load-bearing one being that site conditions have no UI
+at all, which also means three locale strings added for them have never been
+rendered by a browser.
+
+**Next:** item 5 — the `ParameterTable` loader. It is the first item that wants
+something from the other team (their early publish, to validate against), and the
+two prerequisites recorded under it must land first: the `from_published` seam
+must be what the loader uses, and conflict surfacing must reach more than three of
+the ~13 resolution sites.
+
 ## Three vocabularies moved from closed to open (2026-08-25)
 
 Item 3, the first of the four extension seams. **1718 pytest · 203 scenario

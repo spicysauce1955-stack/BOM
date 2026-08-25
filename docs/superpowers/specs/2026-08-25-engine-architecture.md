@@ -93,13 +93,15 @@ One rule explains every case:
 |---|---|
 | knowledge rules · part types · parts | `Action` kinds (10, discriminated union) |
 | panel models · catalog products | joint kinds · placements · decision node kinds |
-| overrides · warning codes | the phase chain (a hardcoded call order) |
-| condition dimensions · source classes | the layer list (hardcoded namespaces) |
+| overrides · warning codes | the layer list (hardcoded namespaces) |
+| condition dimensions · source classes | |
 | **objective presets** ✓ | |
 | **fixing bases** ✓ | |
 | **length rules** ✓ | |
+| **the pricing phase chain** ✓ | |
 
-> ✓ **Moved 2026-08-25** (build order item 3). Each was a `Literal` naming the
+> ✓ **Moved 2026-08-25** (build order items 3 and 4). The first three were a
+> `Literal` naming the
 > members plus a branch that knew what each meant; each is a `Registry` of named
 > functions over one signature now (`core/registry.py`,
 > `fencemodel/bases.py`, `fencemodel/lengths.py`, `fulfillment/presets.py`), and
@@ -113,6 +115,15 @@ One rule explains every case:
 > both ways — so registering `per_corner` makes it authorable through the API and
 > turns that test red until the editor names it too. Closing it means serving
 > `FIXING_BASES.names()` from a route the editor reads, and it is not done.
+>
+> **The pricing chain** (item 4) is not a registry and deliberately so: the ORDER
+> is the design, so it lives in one declared tuple a reader can see whole
+> (`fulfillment/phases.py`) rather than a name→function map assembled by import
+> order. Each phase declares what it reads and writes, and `check_order` refuses a
+> step placed before its input exists — so `credit_kits` inserted above
+> `resolve_supply` fails at import instead of quietly crediting the empty list it
+> was initialised with. `price_strategy(phases=…)` takes the chain as an argument,
+> so a caller can run a different one without a mutable global.
 
 Nothing about the *concepts* makes a fixing basis harder to extend than a part type. One
 is data; the other is a branch.
