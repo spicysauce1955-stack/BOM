@@ -1,5 +1,34 @@
 # Current status
 
+## The boundary contract, ratified — and the engine still unbuilt (2026-08-25)
+
+A full design and negotiation session with the Knowledge Platform team, ending in a
+**contract ratified at v1.1 by both sides**. Five review rounds: an audit against their
+corpus (29 items), their review of our revision (6 defects), our audit against this
+codebase (7, two in code we had published to them), our audit of our own additions (6,
+every one in something we invented), and a cold re-read before signature that found
+obligation 6 contradicting §1.4 — filed as amendment 001, accepted, cut as v1.1.
+
+**What changed in this repo:** `docs/superpowers/specs/2026-08-25-engine-architecture.md`
+(phases vs layers, four extension seams, the open/closed rule, and the retraction of an
+entity we proposed and did not need); the engine and frontend designs rewritten against the
+measured corpus; `docs/reviews/planning-self-audit-2026-08-24.md`; and
+`docs/integration-contract/` — our byte-identical copy of the frozen contract, verified by
+hash and governed by `AMENDING.md`.
+
+**What did not change: `src/`.** Not one line. Two obligations are violated in code today
+and we signed the contract declaring them:
+
+- `strategy/generator.py:1521` — an uncovered `max_span` raises rather than warning, so an
+  uncovered exposure category produces no plan at all.
+- `knowledge/evaluator.py:107` — two published rows that tie and disagree raise rather than
+  conflicting, and the exposure grows as the other team publishes more.
+
+Both close with `Gap` as a return type, which is also the other team's delta item 1.
+
+**Next:** `plan/next-session.md` carries the build order. Steps 1–4 need nothing from
+anybody, and step 1 is the one above.
+
 ## A post and a cap are priced choices, and now explained ones (2026-08-21)
 
 `_preferred()` ranks candidates by the company's stated `priority` instead of
