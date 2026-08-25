@@ -48,6 +48,39 @@ svg#canvas { width: 100%; height: 500px; background: #fff; border: 1px solid #d4
 .warning { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 5px 10px; margin: 3px 0; font-size: 13px; }
 .warning.error { background: #fee2e2; border-color: #dc2626; }
 
+/* Gaps: what the run knows it does not know (js/gaps.js).
+   Grouped by WHO can close it, so the two groups have to look like two groups
+   — a queue that mixes a curator's work with an engineer's is the property the
+   boundary contract says it must not have. Logical properties throughout: this
+   panel sits in the chrome, which mirrors in RTL. */
+#gaps { margin-top: 6px; }
+.panel.gaps h4 { margin: 10px 0 2px; font-size: 13px; }
+.gap-group { border-inline-start: 3px solid #cbd5e1; padding-inline-start: 8px; margin: 6px 0; }
+.gap-group[data-closes-by="knowledge"] { border-inline-start-color: #2563eb; }
+.gap-group[data-closes-by="planning"] { border-inline-start-color: #7c3aed; }
+.gap { background: #f8fafc; border: 1px solid #d4dae2; border-radius: 6px;
+  padding: 6px 10px; margin: 6px 0; font-size: 13px; }
+/* a gap that costs a line looks like it costs a line; one that does not, does not */
+.gap.warns_line { background: #fef3c7; border-color: #f59e0b; }
+.gap-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.gap-kind { font-size: 11px; color: #475569; }
+.tag.warns_line { background: #fde68a; }
+.tag.informational { background: #e2e8f0; color: #475569; }
+.gap-what { margin: 3px 0; }
+/* `would_close` is never behind a click: it is the field that makes a gap a work
+   item rather than a complaint. It is also English prose in a Hebrew-first page,
+   so it is quoted and left-to-right — verbatim text written by someone else,
+   treated the way this app already treats verbatim text. */
+.gap-close { margin-top: 4px; }
+.gap-close-label { font-weight: 600; font-size: 12px; }
+.gap-verbatim { display: block; background: #f1f5f9; border-inline-start: 3px solid #2563eb;
+  padding: 4px 8px; margin: 3px 0; font-style: italic; text-align: start; }
+
+/* A BOM missing something has to LOOK like it is missing something. */
+.panel.incomplete { border-color: #f59e0b; }
+tr.unfulfilled td { background: repeating-linear-gradient(135deg,
+  #fff7ed, #fff7ed 6px, #ffedd5 6px, #ffedd5 12px); color: #7c2d12; }
+
 .card { background: #fff; border: 1px solid #d4dae2; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 13px; }
 .card .meta { color: #64748b; font-size: 12px; }
 .card .verbatim { background: #f1f5f9; border-inline-start: 3px solid #2563eb; padding: 4px 8px; margin: 4px 0; font-style: italic; }

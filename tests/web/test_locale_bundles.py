@@ -349,6 +349,52 @@ def test_one_module_owns_each_shared_renderer():
         "editor is a second answer to how a product is named")
 
 
+def test_every_gap_vocabulary_value_has_a_word_in_both_bundles():
+    """`gaps.js` renders a gap's kind, severity, subject and `closes_by` through
+    COMPUTED keys — `t("gaps.kind." + gap.kind)` and three siblings — so key
+    parity cannot see any of them, and `WARNING_CODES` above covers only the
+    SENTENCE a gap shares with its paired warning.
+
+    The list is read off `core/gaps.py` rather than repeated here, because the
+    failure this guards is the one that arrives from outside: the Knowledge
+    Platform publishes a `Gap` of a kind this engine has never emitted, every
+    Python type accepts it (the whole point of one shared type), and it lands on
+    screen as the literal string `gaps.kind.unquantified` in both languages with
+    nothing red anywhere. Six of the eight kinds are in exactly that position
+    today.
+    """
+    import typing
+
+    from fenceai.core.gaps import Gap, GapKind, GapSubject
+
+    en, he = _bundles()
+    expected = {f"gaps.kind.{k}" for k in typing.get_args(GapKind)}
+    expected |= {f"gaps.subject.{k}"
+                 for k in typing.get_args(GapSubject.model_fields["kind"].annotation)}
+    # `closes_by` is rendered as a GROUP heading rather than as a chip on a row —
+    # the split has to be structural or it does not deliver what §1.2.1 asks for
+    # — so its two keys per value are the heading and its hint.
+    for field, prefix in (("closes_by", "gaps.group_"),
+                          ("severity", "gaps.severity."),
+                          ("on", "gaps.on.")):
+        values = [v for v in typing.get_args(Gap.model_fields[field].annotation)
+                  if isinstance(v, str)]
+        # `on` is `Literal[...] | None`, so its args nest one level down
+        if not values:
+            inner = next(a for a in typing.get_args(Gap.model_fields[field].annotation)
+                         if a is not type(None))
+            values = list(typing.get_args(inner))
+        expected |= {prefix + v for v in values}
+        if field == "closes_by":
+            expected |= {prefix + v + "_hint" for v in values}
+    expected |= {"gaps.title", "gaps.hint", "gaps.none", "gaps.cites",
+                 "gaps.would_close", "gaps.would_close_note"}
+
+    missing = sorted(f"{lang}:{k}" for lang, table in (("en", en), ("he", he))
+                     for k in expected if k not in table)
+    assert not missing, missing
+
+
 def test_every_value_the_model_vocabulary_offers_has_a_word_in_both_bundles():
     """The editor renders its closed vocabularies through COMPUTED keys —
     `t("model.basis." + b)` and a dozen siblings — which key-parity scanning

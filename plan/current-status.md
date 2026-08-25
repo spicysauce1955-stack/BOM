@@ -1,5 +1,49 @@
 # Current status
 
+## The gaps the engine produces now have a reader (2026-08-25)
+
+Frontend build-order step 8, the gap half. **1762 pytest · 217/217 smoke.**
+`Strategy.gaps` was returned by `/generate` and read by nothing: six gap codes
+existed, none had ever been rendered by a browser in either language.
+
+`web/static/js/gaps.js` is the surface — pure, string-returning, no DOM of its
+own, the same shape as `warnings.js`, and it calls that module's
+`localizedByCode` rather than growing a second code→sentence mapping. The editor
+injects it under `#gaps`; the BOM tab injects the same panel above the priced
+table.
+
+**The panel groups by `closes_by` rather than chipping it.** That is what the
+BINDING clause actually asks for — *"a queue that shows a curator work only an
+engineer can perform is a queue whose items are not actionable"* — and a badge
+in a mixed list does not deliver it. `severity` changes the weight of a row and
+never its group: where the work goes is not a function of how loud it is. An
+empty group is not offered; both of today's codes close on the knowledge
+platform, so the browser shows one group, and the `planning` side is pinned in
+node against a synthetic `unmodellable_entity`.
+
+**`would_close` is on the row, never behind a click** — the other BINDING clause
+— and it is the one honest hole in the i18n story: generated English prose with
+no code and no params, in a Hebrew-first product. It is rendered as what it is,
+quoted, `lang="en" dir="ltr"`, labelled in Hebrew as a note written for the
+knowledge curators, exactly as §6 requires for a manufacturer's warning text
+(*"verbatim and untranslated — never offer a translate affordance"*). **The
+long-term fix is a `close.<code>` registry beside the warning registry** — a
+registry addition, which needs no amendment — with the prose demoted to a
+fallback. It was not invented here because a code registry the other team has
+not agreed to is a second vocabulary at the boundary.
+
+**And the BOM now looks short when it is short** (§7). Unresolved lines were
+reported only in the panel above the priced table, so the table a reader prints
+and adds up looked complete; they are rows in it now, carrying no money, under a
+heading that says the total excludes them.
+
+**Untouched:** the engine. No gap is emitted that was not already emitted, and
+`core/gaps.py` is unchanged.
+
+**Pre-existing and not from this work:**
+`tests/scenarios/test_s17_section_conversation.py::test_s17_1b` fails on
+`b2b8400` itself, with or without a stray `fenceai.db` in the tree.
+
 ## Published parameter tables land as ordinary knowledge (2026-08-25)
 
 Item 5, and the last item that needed nothing from the other team. **1751 pytest ·
