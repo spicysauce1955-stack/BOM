@@ -78,6 +78,27 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
   SKUs/ids/dimensions get `.sku`/`.num`/`<bdi>` isolation.
 - **XSS**: any user/expert text interpolated into `innerHTML` goes through `esc()`.
 
+## The boundary contract is FROZEN
+
+`docs/integration-contract/contract.md` is a byte-identical copy of the contract in
+`fence-rag/docs/integration/`. **Both are frozen at v1.0. Do not edit either.**
+
+- Verify before relying on it: `sha256sum -c docs/integration-contract/contract.sha256`.
+  A mismatch means a copy drifted — find the edit, never regenerate the hash.
+- Changing a **BINDING** item needs a ratified amendment. The four admissible triggers
+  (falsification, unimplementable, scope change, defect) and the five steps are in
+  `docs/integration-contract/AMENDING.md`. No `amendments/NNN` file, no change.
+- **Registry additions are not amendments** — new part types, warning codes, condition
+  dimensions and source classes need no ratification, and routing them through it would
+  destroy the property that lets the two teams move at different speeds.
+- Internal design — pipeline phases, fact-space layers, read models, extension seams —
+  is not the contract's business and changes freely. `docs/superpowers/specs/` owns it.
+
+The failure this prevents does not feel like a violation while it happens: the contract
+was revised six times in one session, each time defensibly, and the result was that
+neither team could point at a stable document. If you are editing a binding item as a
+side effect of other work, that is the thing the freeze exists to stop.
+
 ## Project agents & skills
 
 - `architecture-critic` / `test-reviewer` agents: run after slices touching domain
