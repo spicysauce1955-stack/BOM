@@ -1,5 +1,73 @@
 # Current status
 
+## Site conditions reach the app (2026-08-25)
+
+Frontend parity item 1. The engine has bound `site.*` into every rule context since
+build-order item 2, and `PUT /projects/{id}/site` was the only way in — so an
+estimator could not enter an exposure category, and the whole of that item was
+invisible in the product. **1763 pytest passing · 219/219 smoke** (202 before this
+slice). One RED, inherited and untouched by this work:
+`test_s17_1b_the_section_says_WHAT_was_decided…` expects a 6 m run to lay out as
+3 × 2000 and this engine lays it out as 4 × 1500 — see the note at the end.
+
+`js/site.js` owns `#site-conditions` in the canvas aside: the five whole-site
+dimensions, a save, and a discard. Nothing else moved. What the slice is actually
+about is the state a form is worst at holding.
+
+**`null` is a control state, not an absence.** "Nobody has stated it" is a
+different claim from "no, this site is not in a hurricane zone": the evaluator
+turns a MISSING context field into *not applicable*, and `false` turns the same
+rule into a decision. So `hvhz` is a three-option select rather than a checkbox —
+a checkbox cannot say the first thing — and `exposure_category` opens on an unset
+option that is a value of its own. The mapping is `?? null` and never `|| null` in
+both directions, and the empty frost field is "nobody measured" while `0` is a
+measured at-grade depth. `depthFromField` exists as a named function for exactly
+that reason: `mm || null` inside an event handler would erase a stated zero, and
+no assertion about the payload could see it.
+
+**The payload is the five declared fields and never a `revision`.** The route owns
+that counter for the same reason the topology's does — every derived view checks
+itself against it, so a client that incremented it would make a stale document
+look current. `extra="forbid"` means a stray key is a 422 rather than a field the
+server ignores, and a refused PUT leaves the panel saying so instead of claiming a
+save that did not happen.
+
+**Three strings no browser had ever rendered.** `warning.site_condition_missing`,
+`structure.site_changed` and `decisions.stale_site` were wired in
+`structure-data.js` and `section-decisions.js` and unreachable, because nothing in
+the app could move a site condition. The smoke block now walks the engine's own
+acceptance criterion through the browser: a 6 m run laid out 4 × 1500 with nothing
+stated, the panel and both derived views refusing the run that predates the change,
+5 × 1200 after regenerating under exposure C — and then the return trip, because
+un-saying a condition is a statement too: clear it, regenerate, and the fence is
+4 × 1500 again with the "nobody stated it" warning back.
+
+**What the reviews changed.** The first version proved `false` on the wire and
+never read it back out of the CONTROL; proved the frost depth in mm and never in
+cm, so deleting the display conversion would have passed; and never sent `0`
+through the field at all. All three are asserted now, plus the undo stack surviving
+a save — the `reloadProject()` / `openProject()` rule, which regresses silently and
+which nothing in this repo tested until now.
+
+**One thing deliberately left open.** `frost_depth_mm >= 0` is enforced in the
+panel and nowhere else: `Mm` is a bare `int` and `SiteConditions` puts no bound on
+the field, so the route accepts a negative depth from anything that is not this
+panel. A rule that only the browser knows is the shape this codebase refuses
+elsewhere; the fix is `Field(ge=0)` on the model, and it belongs to the engine
+slice rather than to a frontend one. It is named in `depthFromField`'s docstring so
+it cannot be lost.
+
+**And one disagreement this slice did not create and must not silently reconcile.**
+`tests/scenarios/test_s17_section_conversation.py:75` asserts a 6000 mm run on the
+demo knowledge produces three 2000 mm spans. The engine produces four of 1500 —
+which is what `tests/strategy/test_site_conditions.py`'s own baseline asserts, and
+what the new smoke block observed in a browser before any site condition was
+entered. Two witnesses now say 4 × 1500 and one scenario says 3 × 2000; the demo
+maximum is 1800, so 2000 cannot be right. It is red on `gap-as-a-return-type`
+before this slice's first line, and per CLAUDE.md it belongs to whoever owns the
+scenario rather than to a frontend branch quietly editing the number.
+
+
 ## Published parameter tables land as ordinary knowledge (2026-08-25)
 
 Item 5, and the last item that needed nothing from the other team. **1751 pytest ·
