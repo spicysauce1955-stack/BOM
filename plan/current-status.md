@@ -2707,3 +2707,63 @@ drawn target allowed, a chain allowed, a credit node for an uncredited slot, and
 library guard removed.
 
 1840 pytest · 213 golden scenarios · compatibility gate unmoved (one fixture added).
+
+### The test review, and the defect a missing test was hiding
+
+`test-reviewer` returned **GAPS** and named fourteen mutants that survived the suite.
+Its headline was the right one: the single-container credit path was well covered, and
+the two properties the feature exists to protect were each one mutant from silence.
+
+**One of the gaps was hiding a live defect.** Writing the missing two-container test
+failed on its first run for a reason I had not predicted: the `credit_contained` node
+keyed on `credited_qty`, and BOTH ENDS of a credit carry that number — the demanding
+slot counts what it received, the contained piece counts what it gave away. So the
+generator wrote a node for the source as well, with an empty `contained` and a
+subtraction belonging to a different slot: three nodes per bay where there is one
+credit. It keys on `credited_by` now, which only the demanding slot ever has. The
+reviewer had flagged the area as untested; the test found more than the reviewer did.
+
+**The sharpest gap, and why its failure is the worst kind.** Two containers crediting
+one slot had no test at all. Each credit is capped by what REMAINS on the target, not by
+the original requirement — cap against the original and both kits spend the full amount:
+three hinges wanted, four credited, `qty == -1`. A negative count is not a small number,
+it is a broken one, and it is invisible: `demand/derive.py` skips a slot at or below
+zero, so the panel buys nothing and places four. The code was already correct; nothing
+proved it. Now a test pins the arithmetic and both source names, and a scenario-wide
+invariant asserts no slot of any bay of any fixture resolves negative.
+
+**The explanation was rendering unchecked.** The credit sentence asserted only that no
+`{` survived, so every one of its three numbers could be read from the wrong payload
+field and pass — verified by mutation, which produced "Slot hinges needs **None None**"
+in both languages. It now checks the values. And the two containment WARNINGS are graph
+nodes whose templates were rendered by nothing at all: `test_explain_i18n` walks only
+the demo graph, which has no containment, so both were key-paired and dead. Pushed
+through `explain_node` in both languages now.
+
+**Three assertions that read as coverage they did not provide.** The elevation test
+compared two derived lists to each other and passed when both were empty — a mutation
+that stops emitting fixings entirely went unnoticed; it pins the absolute list now. The
+BOM test pinned a ratio (`uncredited == 2 × credited`) that holds if both sides halve.
+The assembly test never named the emptied slot in a step, so only half the filter it was
+written for was exercised. A fourth was renamed to say what it checks.
+
+**And what was implemented but untested:** library immutability under resolution (the
+deep copy that stops resolving one model from editing every other model naming the same
+part, and the object `library_at` hands back for a pinned snapshot), a nested piece as a
+credit SOURCE, the missing-contained-part refusal, a `library_at` round-trip — which is
+what stamping contained parts is actually for — the stored graph's containment payload,
+which could be deleted whole because the gate pins `requirements` and `bom` and the
+graph is byte-compared nowhere, and asymmetric credit numbers so `of`, `qty` and
+`remaining` cannot be read from each other's fields.
+
+**One claim was narrowed rather than defended.** The zero-qty docstring said the fact
+"stays on the panel's own slot and in the decision graph". True for a slot a CREDIT
+emptied; a slot a knowledge param emptied (`rails_per_span=0`) gets no
+`credit_contained` node, and the only remaining evidence is the resolved slot inside the
+stored panel. Said precisely.
+
+**Sixteen mutants, all dead**, re-run against committed code so a stray `git checkout`
+during mutation cannot revert an uncommitted fix — which it did twice in this session
+before the habit stuck.
+
+1866 pytest · 213 golden scenarios · compatibility gate unmoved.
