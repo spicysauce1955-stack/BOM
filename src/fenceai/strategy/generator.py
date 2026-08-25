@@ -2442,7 +2442,15 @@ def _generate_run(
                 # X, so the panel buys 0" — false twice, and the comment right
                 # here asked for the opposite. `credited_by` carries every source,
                 # so one node states the whole sum: of - qty == remaining, always.
-                if not slot.credited_qty:
+                # `credited_by`, not `credited_qty`. BOTH ENDS of a credit carry
+                # `credited_qty` — the demanding slot counts what it received and
+                # the contained piece counts what it gave away — so keying on it
+                # wrote a node for the source as well: an empty `contained` and a
+                # subtraction belonging to a different slot, three nodes per bay
+                # where there is one credit. Only the demanding slot names where
+                # its pieces came from, and that is exactly the slot whose
+                # purchase shrank.
+                if not slot.credited_by:
                     continue
                 panel_inputs.append(builder.add(
                     "structural", "credit_contained",

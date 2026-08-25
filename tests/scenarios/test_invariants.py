@@ -325,6 +325,31 @@ def test_knowledge_refs_resolve_to_snapshot(spine):
             assert e.knowledge_ref in snapshot, e.knowledge_ref
 
 
+def test_no_panel_slot_asks_for_a_negative_quantity(spine):
+    """A count below zero is not a small number, it is a broken one.
+
+    The only thing in this engine that SUBTRACTS from a resolved quantity is a
+    kit credit, and every way of getting one wrong ends here: crediting against
+    the original requirement instead of what is left, letting two containers each
+    spend the full amount, double-applying one source. All of them are invisible
+    downstream — `demand/derive.py` skips a slot at or below zero, so the panel
+    quietly buys nothing and places pieces nobody ordered, which is the "saving
+    that leaves no mark" this whole feature is built to refuse.
+
+    One assertion over every slot of every bay of every fixture, because the
+    property is cheap to state and the failure is expensive to find.
+    """
+    result, _, _, _, _ = spine
+    for span in result.strategy.spans:
+        if span.panel is None:
+            continue
+        for slot in span.panel.slots:
+            assert slot.qty >= 0, f"{span.id} {slot.slot_key} resolved to {slot.qty}"
+            assert slot.credited_qty >= 0
+            # what a credit moved can never exceed what was asked for
+            assert slot.credited_qty <= slot.qty + slot.credited_qty
+
+
 def test_coverage_and_cap_quantities_plain():
     """S01 spine: 5 posts -> 5 caps; 5 soil footings at 0.5 bag -> 3 bags (odd
     round-up boundary) — coverage semantics numerically pinned (finding 2/3)."""

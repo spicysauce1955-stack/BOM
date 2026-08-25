@@ -175,6 +175,12 @@ def test_a_container_this_bay_placed_none_of_contains_nothing():
     spec.fixings[0].qty_per_basis = 0
     panel = _panel(_model(spec), _parts())
     assert [s for s in panel.slots if s.contained_in] == []
+    # ... and no box means no CREDIT either. Asserting only the absence of the
+    # members left the panel free to have taken a saving from a kit it never
+    # bought, which is the phantom saving in its purest form.
+    assert _slot(panel, "hinges").qty == 4
+    assert _slot(panel, "hinges").credited_qty == 0
+    assert panel.credit_notes == []
 
 
 # --- 2 · containment does not become demand -------------------------------------
@@ -228,13 +234,17 @@ def test_a_slot_emptied_by_a_credit_is_neither_placed_nor_unplaced():
     for parts that are not in the pile, which is the same lie `unplaced` exists
     to prevent, told the other way round. The pieces themselves ARE in the plan,
     under the path key of the container that brought them."""
+    # the step NAMES `hinges`, which is the half that matters: with the slot
+    # merely absent from every step, only the `unplaced` filter is exercised and
+    # dropping the one on `by_slot` goes unnoticed
     model = _model(_spec(2), assembly=[
-        AssemblyStep(key="fit", slots=["rail", "kit", "kit/hinge"]),
+        AssemblyStep(key="fit", slots=["rail", "kit", "kit/hinge", "hinges"]),
     ])
     plan = assembly_plan(model, _panel(model, _parts()))
+    assert [p.slot_key for p in plan.steps[0].parts] == ["rail", "kit", "kit/hinge"]
+    assert "hinges" not in {p.slot_key for s in plan.steps for p in s.parts}
     assert [p.slot_key for p in plan.unplaced] == ["kit/latch"]
     assert all(p.qty > 0 for p in plan.unplaced)
-    assert "hinges" not in {p.slot_key for s in plan.steps for p in s.parts}
 
 
 def test_a_step_naming_a_contained_part_that_does_not_exist_is_refused_at_authoring():
@@ -274,8 +284,11 @@ def test_the_credit_reaches_the_bom_as_a_smaller_positive_line_never_a_negative_
         return next(l for l in bom.lines if l.sku == "HINGE-SET")
 
     assert all(l.purchase_qty > 0 for l in credited.lines)
-    # one bay of a 3000 mm run at max span is two bays; 4 wanted, 2 credited each
-    assert hinges(uncredited).purchase_qty == 2 * hinges(credited).purchase_qty
+    # ABSOLUTE, not a ratio: `uncredited == 2 * credited` also holds if both
+    # halve. A 3000 mm run at max span is two bays, each wanting 4 hinges, each
+    # kit shipping 2.
+    assert hinges(uncredited).purchase_qty == 8
+    assert hinges(credited).purchase_qty == 4
     assert credited.total_cents < uncredited.total_cents
 
 
@@ -316,6 +329,12 @@ def test_the_credit_is_explained_by_a_decision_node_in_both_languages():
     for lang in ("en", "he"):
         line = explain_node(result.graph, node, lang=lang)
         assert line and "{" not in line
+        # the VALUES, not merely that something rendered. Numbers and a path key
+        # are language-independent, so both bundles are held to the same three:
+        # asserting only "no braces survived" let every one of them be read from
+        # the wrong payload field and still pass.
+        assert "4" in line and "2" in line and "kit/hinge" in line, (lang, line)
+        assert "None" not in line
 
 
 # --- 4 · over-crediting ---------------------------------------------------------
@@ -337,9 +356,12 @@ def test_a_credit_aimed_at_a_slot_this_bay_does_not_build_credits_nothing():
     cannot answer that — it is per bay — so the resolver reports it and takes no
     saving."""
     panel = _panel(_model(_spec(4, with_hinge_slot=False)), _parts())
-    assert [(n.kind, n.slot_key) for n in panel.credit_notes] == \
-        [("unmatched", "hinges")]
+    # the QUANTITY too: two pieces credited nothing, and a note that lost the
+    # number cannot tell a reader how much was not saved
+    assert [(n.kind, n.slot_key, n.qty) for n in panel.credit_notes] == \
+        [("unmatched", "hinges", 2)]
     assert _slot(panel, "kit/hinge").credited_qty == 0
+    assert _slot(panel, "kit/hinge").credits_slot_key == ""
 
 
 def test_both_ways_a_credit_can_miss_reach_the_user_as_a_warning():
@@ -369,7 +391,12 @@ def test_both_ways_a_credit_can_miss_reach_the_user_as_a_warning():
     surplus = next(w for w in result.strategy.warnings
                    if w.code == "contained_credit_surplus")
     assert surplus.params["qty"] == 3 and surplus.decision_ref
-    assert surplus.element_refs      # named bays, not "somewhere in this fence"
+    # EVERY affected bay, named. `element_refs` truthy passes when the warning
+    # kept only the first of sixty, which is the aggregation quietly losing the
+    # thing it aggregates.
+    spans = {span.id for span in result.strategy.spans}
+    assert set(surplus.element_refs) == spans
+    assert surplus.params["n"] == len(spans)
 
 
 # --- 5 · what the author is refused ---------------------------------------------
@@ -419,8 +446,16 @@ def test_an_authored_slot_key_may_not_spell_a_path():
     assert any("reserved" in e for e in errors)
 
 
-def test_a_contained_path_that_collides_with_a_slot_key_is_a_duplicate():
-    """Held to the same uniqueness a slot key always had, because it IS one."""
+def test_two_slots_sharing_one_key_is_a_duplicate():
+    """Held to the same uniqueness a slot key always had, because it IS one.
+
+    Named for what it checks. It was called "a contained path that collides with
+    a slot key", which cannot happen and so was not what it built: an authored
+    key may not contain the separator (the test above), so no authored key can
+    ever spell a path. The widened walk over `spec_members` is belt-and-braces
+    against that rule being relaxed, and this case — two authored keys the same —
+    is what it shares with the check that predates containment.
+    """
     spec = _spec(4)
     spec.fixings[0].key = "kit"
     spec.fixings[1].key = "kit"
@@ -578,9 +613,14 @@ def test_crediting_a_fixing_leaves_the_drawing_alone():
 
     plain = elevation({})
     credited = elevation({"hinge": "hinges"})
+    # The absolute list, because comparing two derived lists to each other passes
+    # just as happily when BOTH are empty — which is what a mutation that stops
+    # emitting fixings altogether produces.
+    assert [(f.slot_key, f.qty) for f in plain.fixings] == \
+        [("kit", 1), ("hinges", 4), ("screws", 4)]
     assert [(f.slot_key, f.qty) for f in credited.fixings] == \
         [(f.slot_key, f.qty) for f in plain.fixings]
-    assert credited.fixings_unplaced == plain.fixings_unplaced
+    assert credited.fixings_unplaced == plain.fixings_unplaced == []
 
 
 def test_a_credit_chain_is_refused_rather_than_answered_by_accident_of_order():
@@ -609,3 +649,197 @@ def test_a_model_validates_the_same_with_and_without_a_part_library():
     # ... and an authored key that is simply wrong is still refused either way
     bad = _model(assembly=[AssemblyStep(key="fit", slots=["nonexistent"])])
     assert validate_model(bad, demo_catalog(), None) != []
+
+
+# --- 8 · what the test review found untested ------------------------------------
+
+def _two_kits(hinges_wanted: int) -> PanelSpec:
+    """Two containers, each shipping two hinges, into one slot."""
+    spec = _spec(hinges_wanted)
+    spec.fixings.append(FixingRule(
+        key="kitB", basis="per_panel", qty_per_basis=1,
+        requirement=PartRequirement(part_id="kit-gate", credits={"hinge": "hinges"}),
+    ))
+    return spec
+
+
+def test_two_containers_crediting_one_slot_spend_what_is_LEFT_not_what_was_asked():
+    """The property with the sharpest failure and no test at all until now.
+
+    Each credit is capped by what REMAINS on the target, not by the original
+    requirement. Capping against the original lets both kits spend the full
+    amount: three hinges wanted, four credited, `qty == -1`. That is not a small
+    number, it is a broken one — and it is invisible, because `demand/derive.py`
+    skips a slot at or below zero, so the panel buys nothing and places four.
+    """
+    panel = _panel(_model(_two_kits(3)), _parts())
+    hinges = _slot(panel, "hinges")
+    # 3 wanted; the first kit spends 2, the second is capped at the 1 that is
+    # left. Capping both against the original 3 gives 4 credited and qty == -1.
+    assert hinges.qty == 0
+    assert hinges.credited_qty == 3
+    assert hinges.qty >= 0
+    # BOTH sources named, in the order they were spent. `credited_by` is a list
+    # for exactly this case, and a `= [path]` in place of the append keeps only
+    # whichever happened to be applied last.
+    assert hinges.credited_by == ["kit/hinge", "kitB/hinge"]
+    # the second kit had one hinge left over, and it saves nothing
+    assert [(n.kind, n.contained_key, n.qty) for n in panel.credit_notes] == \
+        [("surplus", "kitB/hinge", 1)]
+    assert _slot(panel, "kit/hinge").credited_qty == 2
+    assert _slot(panel, "kitB/hinge").credited_qty == 1
+
+
+def test_two_containers_are_explained_by_ONE_node_whose_arithmetic_adds_up():
+    """Per TARGET, not per credit. Two nodes each said "needs 4, 2 ship inside X,
+    so the panel buys 0" — false twice, and said twice."""
+    from fenceai.decisions.explain import explain_node
+
+    result, _, _ = _priced(_model(_two_kits(4)), _parts())
+    nodes = [n for n in result.graph.nodes if n.action == "credit_contained"]
+    per_bay = {n.scope_refs[0] for n in nodes}
+    assert len(nodes) == len(per_bay)          # one per bay, not one per source
+    node = nodes[0]
+    assert node.payload["of"] - node.payload["qty"] == node.payload["remaining"]
+    assert node.payload["contained"] == "kit/hinge, kitB/hinge"
+    for lang in ("en", "he"):
+        line = explain_node(result.graph, node, lang=lang)
+        assert "kit/hinge, kitB/hinge" in line and "None" not in line
+
+
+def test_the_credit_node_carries_three_numbers_that_are_not_the_same_number():
+    """4 wanted / 2 shipped makes `of`, `qty` and `remaining` read 4, 2, 2 — and
+    2 is also `2 * 1`, so any of the three can be computed from the wrong field
+    and still pass. Five wanted and two shipped tells them apart."""
+    result, _, _ = _priced(_model(_spec(5)), _parts())
+    node = next(n for n in result.graph.nodes if n.action == "credit_contained")
+    assert (node.payload["of"], node.payload["qty"], node.payload["remaining"]) \
+        == (5, 2, 3)
+
+
+def test_the_stored_graph_carries_what_the_panel_did_with_containment():
+    """`_panel_slots_payload`'s containment block could be deleted whole with a
+    green suite: the compatibility gate pins `requirements` and `bom` and the
+    decision graph is byte-compared nowhere."""
+    result, _, _ = _priced(_model(_spec(4)), _parts())
+    node = next(n for n in result.graph.nodes if n.action == "resolve_panel")
+    by_key = {s["key"]: s for s in node.payload["slots"]}
+    assert by_key["kit/hinge"]["contained_in"] == "kit"
+    assert by_key["kit/hinge"]["credits"] == "hinges"
+    assert by_key["hinges"]["credited_qty"] == 2
+    assert by_key["hinges"]["credited_by"] == ["kit/hinge"]
+    # a slot containment never touched says nothing about it
+    assert "contained_in" not in by_key["rail"]
+    assert "credited_qty" not in by_key["rail"]
+
+
+def test_both_containment_warnings_render_in_both_languages():
+    """They are graph nodes — `builder.add("conflict", warning.code, ...)` — and
+    `test_explain_i18n` only walks the demo graph, which has no containment. So
+    their templates existed, were key-paired, and were rendered by nothing."""
+    from fenceai.decisions.explain import explain_node
+
+    spec = _spec(1)
+    spec.fixings.append(FixingRule(
+        key="spare", basis="per_panel", qty_per_basis=1,
+        requirement=PartRequirement(part_id="kit-gate", credits={"latch": "latches"}),
+    ))
+    variant = _spec(1)
+    variant.fixings.append(FixingRule(
+        key="latches", basis="per_panel", qty_per_basis=1,
+        requirement=PartRequirement(part_id="fix-latch"),
+    ))
+    model = _model(spec, variants=[Variant(
+        condition=Cmp(cmp="==", left=FieldRef(path="panel.vertical"),
+                      right=Lit(value="raked")),
+        spec=variant)])
+    result, _, _ = _priced(model, _parts(hinges_per_kit=4))
+
+    seen = set()
+    for warning in result.strategy.warnings:
+        if not warning.code.startswith("contained_credit_"):
+            continue
+        node = next(n for n in result.graph.nodes if n.id == warning.decision_ref)
+        for lang in ("en", "he"):
+            line = explain_node(result.graph, node, lang=lang)
+            assert line and "{" not in line and "None" not in line
+            assert warning.params["slot"] in line
+        seen.add(warning.code)
+    assert seen == {"contained_credit_surplus", "contained_credit_unmatched"}
+
+
+def test_resolution_never_writes_on_the_callers_part_library():
+    """`_resolve_contained` fills `role` and `contains` onto contained pieces. If
+    those are the LIBRARY's own objects rather than copies, resolving one model
+    edits every other model that names the same part — and edits the object
+    `library_at` hands back for a pinned snapshot, so a stored run would be
+    re-read against a library this session mutated."""
+    library = _parts()
+    before = library.model_dump_json()
+    resolve_model_parts(_model(), library)
+    assert library.model_dump_json() == before
+
+
+def test_a_nested_piece_can_be_the_source_of_a_credit():
+    """`PartRequirement.credits` documents relative paths like `hinge/pin`, so
+    the deep case has to work rather than merely be describable."""
+    library = _parts()
+    hinge = next(p for p in library.parts if p.id == "fix-hinge")
+    hinge.contains = [ContainedPart(key="washer", part_id="fix-washer", qty=2)]
+    spec = _spec(4, credits={"hinge/washer": "screws"}, screws=True)
+    panel = _panel(_model(spec), library)
+
+    # 1 kit x 2 hinges x 2 washers = 4, against a slot wanting 4 screws
+    assert _slot(panel, "kit/hinge/washer").qty == 4
+    assert _slot(panel, "kit/hinge/washer").credits_slot_key == "screws"
+    assert _slot(panel, "screws").qty == 0
+    assert _slot(panel, "screws").credited_by == ["kit/hinge/washer"]
+
+
+def test_a_contained_piece_naming_a_part_that_does_not_exist_is_refused_by_name():
+    """The panel would place a member nothing says anything about. Refused where
+    the author can still fix it, rather than resolving to a roleless row."""
+    library = _parts()
+    library.parts = [p for p in library.parts if p.id != "fix-latch"]
+    errors = validate_model(_model(), demo_catalog(), library)
+    assert any("fix-latch" in e and "no active version" in e for e in errors), errors
+
+
+def test_a_run_re_read_through_its_own_snapshot_resolves_the_same_contained_pieces():
+    """What stamping contained parts is FOR. `library_at` pins the versions the
+    run recorded; without the hinge in that snapshot the re-read resolves today's
+    part into a fence that was priced against another one."""
+    from fenceai.parts.resolve import library_at
+
+    result, _, _ = _priced(_model(), _parts())
+    pinned = library_at(_parts(), result.run.part_snapshot)
+    replayed = _panel(_model(), pinned)
+    original = result.strategy.spans[0].panel
+
+    assert {(s.slot_key, s.qty) for s in replayed.slots if s.contained_in} == \
+        {(s.slot_key, s.qty) for s in original.slots if s.contained_in}
+
+
+def test_a_part_may_not_hold_two_pieces_with_one_key():
+    """One path would name both, and every reader addresses a member by its
+    path."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="two pieces called"):
+        Part(id="kit", version=1, type="gate_kit",
+             spec=[SpecField(key="sku", value=["GATE-KIT-1000"], agree="among")],
+             contains=[ContainedPart(key="hinge", role="fixing"),
+                       ContainedPart(key="hinge", role="fixing")])
+    # ... at every depth, not only the top one
+    with pytest.raises(ValidationError, match="two pieces called"):
+        ContainedPart(key="hinge", role="fixing",
+                      contains=[ContainedPart(key="pin", role="fixing"),
+                                ContainedPart(key="pin", role="fixing")])
+
+
+def test_a_contained_piece_must_bring_at_least_one_of_itself():
+    """`qty=0` is a piece that is in the box and not in the box."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ContainedPart(key="hinge", role="fixing", qty=0)
