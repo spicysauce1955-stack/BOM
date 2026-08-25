@@ -1271,8 +1271,10 @@ def _assembly_step_errors(model: FenceModel) -> list[str]:
     return errors
 
 
-def _credit_errors(model: FenceModel, roles_known: bool) -> list[str]:
-    """A credit that would remove a purchase, checked where it can still be fixed.
+def _containment_errors(model: FenceModel, roles_known: bool) -> list[str]:
+    """Containment and its credits, checked where an author can still fix them.
+
+    A credit that would remove a purchase is the dangerous half.
 
     A credit is the one construct here that makes the panel buy LESS, so every
     way of getting it wrong is a saving nobody earned — and a saving is invisible
@@ -1295,9 +1297,25 @@ def _credit_errors(model: FenceModel, roles_known: bool) -> list[str]:
     errors: list[str] = []
     specs = [model.default_spec, *(v.spec for v in model.variants)]
     role_of = {key: role for spec in specs for key, role in spec_members(spec)}
+    # every member that ARRIVES INSIDE something, across the whole model. A credit
+    # may not aim at one of these: see the refusal below.
+    inside = {path for spec in specs for key, req in spec_requirements(spec)
+              for path, _ in walk_contained(req.contained, key)}
     for spec in specs:
         for key, req in spec_requirements(spec):
             contained = dict(walk_contained(req.contained, key))
+            for path, piece in contained.items():
+                if not piece.part_id and not piece.role:
+                    # A member with no role reaches the instruction sheet as a
+                    # nameless row and the credit's agreement check as `""`. The
+                    # same refusal a slot that names no part and declares no
+                    # product earns, one level down: it publishes cleanly and
+                    # then says nothing about itself on every job.
+                    errors.append(
+                        f"contained part {path}: names no part and declares no "
+                        "role, so the panel would place a member nothing says "
+                        "anything about"
+                    )
             for relative, target in sorted(req.credits.items()):
                 path = contained_path(key, relative)
                 piece = contained.get(path)
@@ -1320,6 +1338,21 @@ def _credit_errors(model: FenceModel, roles_known: bool) -> list[str]:
                         f"slot {key}: {relative!r} credits slot {target}, which "
                         f"no spec of this model declares, so the credit would "
                         f"land on nothing on every bay of every job"
+                    )
+                    continue
+                if target in inside:
+                    # Crediting a piece that itself arrives in a box saves
+                    # NOTHING — a contained member is never bought — and it is
+                    # not harmless: the credit would reduce that member's count,
+                    # so the panel would place fewer of a piece the box still
+                    # contains. Silent, and only ever visible to the fitter
+                    # holding the leftover.
+                    errors.append(
+                        f"slot {key}: {relative!r} credits {target}, which is "
+                        "itself a part contained inside another part. Nothing is "
+                        "bought for it, so there is no purchase to credit — the "
+                        "panel would simply place fewer of a piece that is still "
+                        "in the box"
                     )
                     continue
                 if roles_known and piece.role != role_of[target]:
@@ -1373,7 +1406,7 @@ def validate_model(
         errors += _post_slot_errors(model.post, catalog)
         errors += _variant_reach_errors(model)
     errors += _assembly_step_errors(model)
-    errors += _credit_errors(model, roles_known=library is not None)
+    errors += _containment_errors(model, roles_known=library is not None)
 
     for axis in model.option_axes:
         for value in axis.values:

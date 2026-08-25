@@ -370,6 +370,11 @@ def test_both_ways_a_credit_can_miss_reach_the_user_as_a_warning():
     ({"hinge": "nowhere"}, "no spec of this model declares"),
     ({"hinge": "kit"}, "credits its own container"),
     ({"hinge": "rail"}, "A credit removes a purchase"),
+    # crediting a piece that ALSO arrives in a box. It saves nothing — nothing
+    # is bought for a contained member — and it is not harmless: it deletes that
+    # member from the panel, so the sheet says one latch fewer than the box
+    # holds. Silent, and only ever visible to the fitter with the leftover.
+    ({"hinge": "kit/latch"}, "no purchase to credit"),
 ])
 def test_a_credit_that_could_not_work_is_refused_where_it_can_still_be_fixed(
         credits, expected):
@@ -382,6 +387,17 @@ def test_a_credit_that_could_not_work_is_refused_where_it_can_still_be_fixed(
 
 def test_a_valid_credit_validates_clean():
     assert validate_model(_model(_spec(4)), demo_catalog(), _parts()) == []
+
+
+def test_a_contained_piece_that_says_nothing_about_itself_is_refused():
+    """It would reach the instruction sheet as a nameless row and the credit's
+    agreement check as `""` — the same refusal a slot naming no part and
+    declaring no product already earns, one level down."""
+    library = _parts()
+    kit = next(p for p in library.parts if p.id == "kit-gate")
+    kit.contains = [ContainedPart(key="mystery", qty=1)]
+    errors = validate_model(_model(_spec(4, credits={})), demo_catalog(), library)
+    assert any("kit/mystery" in e and "declares no role" in e for e in errors), errors
 
 
 def test_an_authored_slot_key_may_not_spell_a_path():
