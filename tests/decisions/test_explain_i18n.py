@@ -211,13 +211,18 @@ def test_every_enum_value_has_a_hebrew_word():
     from typing import get_args
 
     from fenceai.decisions.explain import _ENUM_WORDS
+    from fenceai.fencemodel.model import FrameSlot
     from fenceai.strategy.model import Post, Span
     from fenceai.topology.model import BasePayload, PostTiltPayload, TopLinePayload
 
     values = set()
     for model, field in [(Post, "kind"), (Post, "mounting"), (Span, "vertical"),
                          (BasePayload, "surface"), (PostTiltPayload, "mode"),
-                         (TopLinePayload, "mode")]:
+                         (TopLinePayload, "mode"),
+                         # the authored continuity assertion is quoted INSIDE the
+                         # `continuity_override_disagrees` sentence, so its values
+                         # are words a Hebrew reader reads, not ids
+                         (FrameSlot, "continuity")]:
         values |= set(get_args(model.model_fields[field].annotation))
     missing = sorted(v for v in values if v not in _ENUM_WORDS["he"])
     assert not missing, missing

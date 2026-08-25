@@ -28,6 +28,9 @@ from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.parts.demo import demo_parts
 from fenceai.parts.model import PartLibrary
 from tests.conftest import add_interval_event, add_point_event, straight_topology
+from tests.scenarios.continuity_fixture import (
+    MAX_SPAN_MM, RUN_MM, board_library, catalog_with_two_colours, white_choice,
+)
 
 LIBRARY = FenceModelLibrary(models=list(demo_models().values()))
 # The part library those models name. Supplied at every `generate` that supplies a
@@ -61,6 +64,16 @@ def _fixtures():
     raked = straight_topology(6000)
     add_point_event(raked, "run1", "z0", 0, ElevationSamplePayload(z_mm=0))
     add_point_event(raked, "run1", "z1", 6000, ElevationSamplePayload(z_mm=1000))
+
+    # A fence whose rails are DERIVED continuous (contract obligation 14): four
+    # 2400 mm bays under a 97 in maximum, 16 ft stock, so one piece crosses one
+    # intermediate post. It is here rather than only in S18 because none of the
+    # invariants below had ever run over a strategy containing a `MemberRun` —
+    # a demand line pegged to TWO elements is a new shape for the traceability
+    # chain, and a 4800 mm piece in a 4877 mm bar is a new one for the cut-plan
+    # conservation check. It brings its own catalog and library; see the module
+    # docstring in `continuity_fixture.py` for why it must not use the shared one.
+    through_rail = straight_topology(RUN_MM)
 
     lshape = Topology(
         nodes=[
@@ -128,6 +141,8 @@ def _fixtures():
         # never seen.
         "site_exposure_c": (straight_topology(6000), [], None, SLAT,
                             SiteConditions(exposure_category="C")),
+        "through_rail": (through_rail, [], None, white_choice(), None,
+                         catalog_with_two_colours(), board_library()),
     }
 
 
@@ -150,22 +165,29 @@ def spine(request):
     topo, overrides, inventory, *rest = _fixtures()[request.param]
     choice = rest[0] if rest else None
     site = rest[1] if len(rest) > 1 else None
+    # A fixture may bring its OWN catalog and model library. Only the continuity
+    # one does: its two rail stocks must not join the shared catalog, where they
+    # would sit in front of every predicate eligibility in the portfolio (S15
+    # records the same constraint for the same reason).
+    catalog = rest[2] if len(rest) > 2 and rest[2] is not None else demo_catalog()
+    library = rest[3] if len(rest) > 3 and rest[3] is not None else LIBRARY
     knowledge = EXPOSURE_KB if site is not None else demo_knowledge()
-    catalog = demo_catalog()
     result = generate(topo, knowledge, catalog, overrides=overrides,
-                      models=LIBRARY, parts=PARTS, default_model=choice, site=site)
+                      models=library, parts=PARTS, default_model=choice, site=site)
     reqs = derive_requirements(result.strategy, catalog)
     reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
-    return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge, choice, site)
+    return result, reqs, bom, catalog, (topo, overrides, inventory, knowledge,
+                                       choice, site, library)
 
 
 @pytest.fixture()
 def rerun(spine):
     """Regenerate the whole spine from the same inputs (real determinism check)."""
-    _, _, _, catalog, (topo, overrides, inventory, knowledge, choice, site) = spine
+    _, _, _, catalog, (topo, overrides, inventory, knowledge,
+                       choice, site, library) = spine
     result = generate(topo, knowledge, catalog, overrides=overrides,
-                      models=LIBRARY, parts=PARTS, default_model=choice, site=site)
+                      models=library, parts=PARTS, default_model=choice, site=site)
     reqs = derive_requirements(result.strategy, catalog)
     reqs = resolve_supply(reqs, catalog, inventory).requirements
     bom = fulfill(reqs, catalog, inventory)
@@ -173,8 +195,13 @@ def rerun(spine):
 
 
 def test_span_never_exceeds_hard_max(spine):
-    result, _, _, _, _ = spine
-    assert all(sp.width_mm <= 1800 for sp in result.strategy.spans)
+    """1800 mm for every fixture built to the demo knowledge base; the
+    continuity fixture carries its own maximum as a `layout_policy` contribution
+    (97 in), which is the point of that fixture and not an exception to this
+    rule."""
+    result, _, _, _, rest = spine
+    limit = MAX_SPAN_MM if rest[4] is not None and rest[4].model_id == "M-BOARD" else 1800
+    assert all(sp.width_mm <= limit for sp in result.strategy.spans)
 
 
 def test_cut_plans_feasible_and_conserving(spine):
@@ -249,13 +276,33 @@ def test_determinism(spine, rerun):
 
 
 def test_knowledge_refs_resolve_to_snapshot(spine):
-    """Every governed_by/defeated edge cites a version present in the run's
-    knowledge snapshot (test-review finding 7)."""
+    """Every governed_by/defeated edge cites a version the run PINNED.
+
+    Two pins, because there are two kinds of governing version and only one of
+    them is a knowledge object. A model's `layout_policy` enters the evaluator as
+    a synthesised version whose ref reads `M-BOARD#max_span_mm@v1`, and
+    `_policy_knowledge` says outright that those "are never stored — the run's
+    model snapshot (id, version, content hash) is what makes them reproducible".
+    So the property is *pinned somewhere*, not *pinned in one list*.
+
+    Widened when the `through_rail` fixture arrived: it is the first fixture in
+    this battery to carry a `layout_policy` at all, and the assertion as written
+    read a by-design ref as a dangling one. The narrower version was not
+    protecting anything the wider one gives up — an unpinned ref still fails.
+    """
     result, _, _, _, _ = spine
     snapshot = {f"{oid}@v{ver}" for oid, ver in result.run.knowledge_snapshot}
+    models = {f"{m.model_id}@v{m.version}" for m in result.run.model_snapshot}
     for e in result.graph.edges:
-        if e.knowledge_ref is not None:
-            assert e.knowledge_ref in snapshot, e.knowledge_ref
+        if e.knowledge_ref is None:
+            continue
+        ref = e.knowledge_ref
+        if "#" in ref:      # a model policy contribution, pinned by its MODEL
+            model_id, _, param_and_version = ref.partition("#")
+            version = param_and_version.split("@")[-1]
+            assert f"{model_id}@{version}" in models, ref
+        else:
+            assert ref in snapshot, ref
 
 
 def test_coverage_and_cap_quantities_plain():
@@ -329,9 +376,13 @@ def test_no_generated_run_carries_a_pinned_product(name):
     enforcement, and that a future caller wiring `slot_skus` into generation
     would create exactly the fifth category the architecture forbids.
     """
-    topo, overrides, inventory, *model = _fixtures()[name]
-    result = generate(topo, demo_knowledge(), demo_catalog(), overrides=overrides,
-                      models=LIBRARY, parts=PARTS, default_model=model[0] if model else None)
+    topo, overrides, inventory, *rest = _fixtures()[name]
+    catalog = rest[2] if len(rest) > 2 and rest[2] is not None else demo_catalog()
+    library = rest[3] if len(rest) > 3 and rest[3] is not None else LIBRARY
+    site = rest[1] if len(rest) > 1 else None
+    result = generate(topo, EXPOSURE_KB if site is not None else demo_knowledge(),
+                      catalog, overrides=overrides, models=library, parts=PARTS,
+                      default_model=rest[0] if rest else None, site=site)
     pinned = [(sp.id, slot.slot_key, slot.pinned_sku)
               for sp in result.strategy.spans
               for slot in (sp.panel.slots if sp.panel else [])

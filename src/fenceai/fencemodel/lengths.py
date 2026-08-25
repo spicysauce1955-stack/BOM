@@ -82,3 +82,61 @@ def _between_frame(req: "PartRequirement", ctx: "PanelContext") -> Mm | None:
     frame slot that declares the rule is refused at load, so it gets no length
     here rather than quietly getting a width."""
     return None
+
+
+# --- how a member built to a rule combines ACROSS an intermediate post -------
+#
+# A member that runs through a post is one piece covering several bays, and how
+# long that piece is depends on what the rule was measuring. This is arithmetic
+# over lengths the bays ALREADY resolved — never a second evaluation of the rule
+# — which is the only way the cut list and the drawing can agree about a piece
+# that belongs to no single bay (contract §3.1.12).
+#
+# **A rule with no registered join is not continuable.** That is a real answer,
+# not a gap: `panel_height` measures a VERTICAL member, which meets no
+# intermediate post at all, and `between_frame` measures inside one panel's own
+# frame, which the next bay does not share. Registering a join is what says "a
+# member built to this rule can be one piece across two bays", so a new rule is
+# per-bay until someone says how it would join — the safe direction, because the
+# unsafe one buys a piece nobody can cut.
+#
+# The signature: `(lengths, widths, faces) -> Mm`, all of one candidate group in
+# order — `lengths` the per-bay resolved cut lengths, `widths` the bays'
+# centre-to-centre widths, `faces` the face widths of the n+1 posts the group
+# runs between (`faces[1:-1]` are the ones the member passes THROUGH).
+JoinFn = Callable[[list[Mm], list[Mm], list[Mm]], Mm]
+
+CONTINUITY_JOINS: Registry[JoinFn] = Registry("continuity join")
+
+
+@CONTINUITY_JOINS.register("centre_to_centre")
+def _join_centre_to_centre(lengths: list[Mm], widths: list[Mm], faces: list[Mm]) -> Mm:
+    """Centre to centre of the OUTER posts — which is the sum, exactly."""
+    return sum(lengths)
+
+
+@CONTINUITY_JOINS.register("clear_between_posts")
+def _join_clear_between_posts(lengths: list[Mm], widths: list[Mm], faces: list[Mm]) -> Mm:
+    """The one opening the group leaves, measured the way every opening is.
+
+    Through `clear_opening_mm` itself rather than by adding the interior faces
+    back onto the bays' own openings: that recomposition is right to within the
+    integer half of an odd face width, and "right to within a millimetre" is the
+    class of number this system refuses to put on a cut list. The import is
+    deferred because `resolve` imports this module — the direction that matters
+    is that there is ONE definition of a clear opening, not which file it sits in.
+    """
+    from fenceai.fencemodel.resolve import clear_opening_mm
+    return clear_opening_mm(sum(widths), faces[0], faces[-1])
+
+
+@CONTINUITY_JOINS.register("overlap")
+def _join_overlap(lengths: list[Mm], widths: list[Mm], faces: list[Mm]) -> Mm:
+    """Centre to centre of the outer posts, plus the ONE authored overlap.
+
+    The overlap is a run-out past the ends, so it is spent once over the whole
+    piece rather than once per bay: `lengths[0] - widths[0]` is the authored
+    `overlap_mm` read back off the answer the rule already gave, not a second
+    reading of the requirement.
+    """
+    return sum(widths) + (lengths[0] - widths[0])

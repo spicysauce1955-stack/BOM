@@ -59,9 +59,13 @@ def _spine(name: str) -> dict:
     topo, overrides, inventory, *rest = _fixtures()[name]
     choice = rest[0] if rest else None
     site = rest[1] if len(rest) > 1 else None
-    catalog = demo_catalog()
+    # a fixture may bring its own catalog and library — see `spine` in
+    # test_invariants.py, and `continuity_fixture.py` for why the continuity one
+    # must not put its two rail stocks into the shared catalog
+    catalog = rest[2] if len(rest) > 2 and rest[2] is not None else demo_catalog()
+    library = rest[3] if len(rest) > 3 and rest[3] is not None else LIBRARY
     result = generate(topo, EXPOSURE_KB if site is not None else demo_knowledge(),
-                      catalog, overrides=overrides, models=LIBRARY, parts=PARTS,
+                      catalog, overrides=overrides, models=library, parts=PARTS,
                       default_model=choice, site=site)
     priced = price_strategy(result.strategy, catalog, inventory,
                             demand_skus=result.run.demand_skus,

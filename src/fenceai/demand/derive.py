@@ -93,6 +93,15 @@ def derive_requirements(
             add(1, [post.id], role="concrete",
                 eligibility=chosen(policy["concrete_sku"]))
 
+    # Members the run already decided are ONE piece across several bays
+    # (contract obligation 14, derived in `strategy/continuity.py`). Demand does
+    # not decide this and does not re-derive it: it reads the answer and buys
+    # what the answer says. A rail running through three bays is one piece bought
+    # once — emitting the per-bay line as well would order three.
+    continuous = {(span_id, member.slot_key)
+                  for member in strategy.member_runs
+                  for span_id in member.span_ids}
+
     for span in strategy.spans:
         if span.panel is None:
             # A run stored before the fence-model change has rail_count and
@@ -109,6 +118,9 @@ def derive_requirements(
                 span_id=span.id,
             )
         for slot in span.panel.slots:
+            if (span.id, slot.slot_key) in continuous:
+                # bought once for the whole member run, below — not once per bay
+                continue
             # No unit here. A slot's cut length says the part is cut TO a length,
             # not that its product is bought BY the metre: an indivisible post
             # carrying attrs.length_mm is explicitly allowed to back a
@@ -121,8 +133,49 @@ def derive_requirements(
                 role=slot.role, slot_key=slot.slot_key, eligibility=slot.eligibility,
             )
 
+    for member in strategy.member_runs:
+        # ONE line, pegged to every bay the piece crosses. `qty` is the slot's own
+        # count and is NOT multiplied by the bays: two rails run the length of the
+        # member run, they do not become two per bay. That multiplication is
+        # exactly the over-ordering obligation 14 exists to stop.
+        add(
+            member.qty, list(member.span_ids),
+            cut_length_mm=member.length_mm, length_basis=member.length_basis,
+            role=member.role, slot_key=member.slot_key,
+            eligibility=_first_span_eligibility(strategy, member),
+        )
+
     for gate in strategy.gates:
         if gate.kit_sku:  # no kit fits this opening — the strategy already said so
             add(1, [gate.id], role="gate_kit", eligibility=chosen(gate.kit_sku))
 
     return lines
+
+
+def _first_span_eligibility(strategy: Strategy, member) -> Eligibility:
+    """The candidate set the member run was derived against.
+
+    Read off the first bay it covers rather than stored a second time on the
+    member run: the derivation only groups bays whose candidate sets are
+    identical (`continuity._chain_break`), so every bay in the run answers this
+    the same way, and one copy cannot drift from the other.
+    """
+    span = next((s for s in strategy.spans if s.id == member.span_ids[0]), None)
+    slot = next((s for s in (span.panel.slots if span and span.panel else [])
+                 if s.slot_key == member.slot_key), None)
+    if slot is None:
+        # A stored strategy whose member run names a bay or a slot that is no
+        # longer there. Refused with a code for the same reason
+        # `run_predates_fence_model` is, a few lines up: a bare `next()` would
+        # raise StopIteration inside a generator expression and reach the route
+        # as an unexplained RuntimeError, and the remedy — regenerate — is one
+        # the reader can act on only if they are told it.
+        raise ReadRefused(
+            code="member_run_unreadable",
+            message=f"member run {member.id} names span "
+                    f"{member.span_ids[0]} / slot {member.slot_key}, which this "
+                    "strategy does not have — regenerate the run",
+            member_id=member.id, span_id=member.span_ids[0],
+            slot_key=member.slot_key,
+        )
+    return slot.eligibility

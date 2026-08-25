@@ -15,6 +15,11 @@ STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "stat
 # every StrategyWarning.code the generator emits + every CritiqueNote.code
 WARNING_CODES = [
     "orphaned_override",
+    # continuity, derived from stock length against the resolved spacing
+    # (boundary contract obligation 14) — emitted from strategy/continuity.py
+    "continuity_override_disagrees",
+    "continuity_override_unbuildable",
+    "continuity_stock_length_unknown",
     "sliver_span",
     "unknown_product",
     "knowledge_conflict",
@@ -79,6 +84,9 @@ CRITIQUE_CODES = ["narrow_span"]
 # generic "the action failed (422)".
 REFUSAL_CODES = [
     "run_predates_fence_model",
+    # a stored strategy whose derived member run points at a bay or slot that is
+    # no longer in it — same class, same remedy
+    "member_run_unreadable",
     # the site-conditions twin of `topology_changed`: a derived view refuses to
     # be laid over conditions the run was not generated against
     "site_conditions_changed",
@@ -190,6 +198,11 @@ def test_backend_code_list_is_current():
         # the list. A code with no bundle entry renders as raw English inside a
         # Hebrew sentence the day something first shows it.
         src / "knowledge" / "parameters.py",
+        # Continuity's codes are LITERALS here and reach `StrategyWarning` as
+        # `code=note.code` — a variable — so scanning the generator finds nothing
+        # and the guard was blind to all three. Exactly the hole every entry
+        # above was added to close: the file was not on the list.
+        src / "strategy" / "continuity.py",
         # the ROUTES emit codes too, in HTTP detail bodies, and they were
         # invisible to this guard twice over: the file was not scanned, and a
         # route writes `"code": "x"` rather than `code="x"`. Both forms now.

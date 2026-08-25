@@ -27,7 +27,7 @@ from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
 from fenceai.fencemodel.match import (
     chosen_post_facts, item_value, match_eligibility, match_spec, panel_facts,
-    post_panel_facts, sole_excluding_term,
+    post_panel_facts, sole_excluding_term, stock_length_mm,
 )
 from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
 from fenceai.fencemodel.resolve import (
@@ -47,9 +47,11 @@ from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
 from fenceai.parts.model import PartLibrary
 from fenceai.project.model import SiteConditions
 from fenceai.parts.resolve import resolve_model_parts
+from fenceai.strategy.continuity import BayFacts, SlotFacts, derive_member_runs
 from fenceai.strategy.layout import boundaries, layout_segment
 from fenceai.strategy.model import (
     Gate,
+    MemberRun,
     GenerationResult,
     GenerationRun,
     ModelUse,
@@ -2179,6 +2181,9 @@ def _generate_run(
     # empties the rail set, refs that invert at this height — so the only place
     # left to say it is here. (model_ref, slot_key) -> span ids.
     unmeasured_slots: dict[tuple[str, str], list[str]] = {}
+    # span id -> the `create_span` node that fixed it, so a decision about a
+    # member crossing several bays can name every bay it crosses as an input
+    span_nodes: dict[str, str] = {}
     for seg_start, seg_end in zip(fixed_sorted, fixed_sorted[1:]):
         if any(gs <= seg_start and seg_end <= ge for gs, ge in gate_intervals):
             continue
@@ -2377,6 +2382,7 @@ def _generate_run(
             # before, which exists only for a model that declares variants — so
             # on the plainest model the bay's own height was not upstream of the
             # panel cut to it.
+            span_nodes[span.id] = span_node.id
             panel_inputs = [layout_node.id, sm.select_node_id, quantity_node.id,
                             span_node.id]
             if model.variants:
@@ -2497,6 +2503,8 @@ def _generate_run(
                     )
                 )
 
+    _derive_continuity(builder, strategy, run, length, catalog, span_nodes)
+
     _report_uncovered_max_span(run, strategy, resolved, spans_by_model)
 
     _check_panel_safety(kb, run, scope, site, sink, strategy, builder, resolved, spans_by_model,
@@ -2558,6 +2566,178 @@ def _generate_run(
                         "run_id": run.id, "n": len(affected)},
             )
         )
+
+
+# --- obligation 14: continuity, derived once, here ---------------------------
+
+_CONTINUITY_MESSAGES = {
+    "continuity_override_disagrees": (
+        "Slot {slot} in section {run_id} is authored continuity={authored}, but "
+        "{stock} against a {span_mm} mm bay derives {derived_bays} bay(s) per "
+        "piece. The authored answer is built ({built_bays} bay(s) per piece)."
+    ),
+    "continuity_override_unbuildable": (
+        "Slot {slot} in section {run_id} is authored continuity=continuous, but "
+        "{stock} cannot make a piece reaching past the first {span_mm} mm bay, "
+        "so it is cut per bay."
+    ),
+    "continuity_stock_length_unknown": (
+        "Slot {slot} in section {run_id} is detailed to run through its posts, "
+        "but no candidate product declares a stock length, so nothing says how "
+        "far one piece reaches and it is cut per bay."
+    ),
+}
+
+
+def _eligibility_key(eligibility) -> str:
+    """The candidate set as one comparable string.
+
+    Sorted, so two bays offered the same shelf in a different order are the same
+    shelf. A slot with no usable member keys to "" and gets no stock length,
+    which is the honest answer: nothing can be bought, so nothing can be long.
+    """
+    return ",".join(sorted(m.sku for m in eligibility.members))
+
+
+def _shortest_stock_mm(eligibility, catalog: Catalog) -> Mm | None:
+    """The shortest length EVERY candidate can be bought in, or None.
+
+    Which product fills the slot is `resolve_supply`'s answer, not generation's,
+    so a slot with several candidates has not decided its own stock length.
+    Claiming continuity on the longest would plan a piece the cheaper candidate
+    cannot cut — and the cut planner refuses a piece longer than its stock, which
+    would turn a preference into a failed run. The shortest claims continuity
+    only where every candidate can make the piece.
+    """
+    lengths = _candidate_stock_lengths(eligibility, catalog)
+    return min(lengths) if lengths else None
+
+
+def _candidate_stock_lengths(eligibility, catalog: Catalog) -> list[Mm] | None:
+    """Every candidate's stock length, or None if any of them has none."""
+    lengths: list[Mm] = []
+    for member in eligibility.members:
+        product = catalog.products.get(member.sku)
+        if product is None:
+            return None
+        length = stock_length_mm(product)
+        if length is None:
+            return None
+        lengths.append(length)
+    return lengths or None
+
+
+def _derive_continuity(
+    builder: GraphBuilder,
+    strategy: Strategy,
+    run: Run,
+    run_len: Mm,
+    catalog: Catalog,
+    span_nodes: dict[str, str],
+) -> None:
+    """Contract obligation 14, for one run.
+
+    Called after the whole run is laid out, because the derivation's second input
+    IS the layout: a member's continuity is its stock length measured against the
+    RESOLVED spacing, and the spacing is not a fact about the part. It runs once
+    per run rather than once per segment so that a chain is broken by the facts
+    that break it — a corner, a gate, a grade, a different panel — rather than by
+    where one segment happened to end.
+    """
+    bays = [s for s in strategy.spans if s.run_ref == run.id]
+    bays.sort(key=lambda s: s.start_station_mm)
+    if len(bays) < 2:
+        return
+    by_id = {s.id: s for s in bays}
+    starts = {s.start_station_mm: s for s in bays}
+    faces = {st: _post_face_width(strategy, run, st, run_len, catalog)
+             for st in {s.start_station_mm for s in bays} | {s.end_station_mm for s in bays}}
+
+    facts: list[BayFacts] = []
+    slots_by_span: dict[str, dict[str, SlotFacts]] = {}
+    stock_lengths: dict[str, Mm | None] = {}
+    stock_spread: dict[str, Mm] = {}
+    for span in bays:
+        nxt = starts.get(span.end_station_mm)
+        post = _post_at(strategy, run, span.end_station_mm, run_len) if nxt else None
+        facts.append(BayFacts(
+            span_id=span.id, width_mm=span.width_mm, vertical=span.vertical,
+            height_mm=span.height_mm,
+            bottom_z_start_mm=span.bottom_z_start_mm,
+            bottom_z_end_mm=span.bottom_z_end_mm,
+            panel_key=(f"{span.panel.model_ref}#{span.panel.variant_index}"
+                       if span.panel else ""),
+            start_face_mm=faces[span.start_station_mm],
+            end_face_mm=faces[span.end_station_mm],
+            through_post_id=post.id if post is not None else None,
+            through_post_kind=post.kind if post is not None else "",
+        ))
+        entry: dict[str, SlotFacts] = {}
+        for slot in (span.panel.slots if span.panel else []):
+            key = _eligibility_key(slot.eligibility)
+            if key not in stock_lengths:
+                stock_lengths[key] = _shortest_stock_mm(slot.eligibility, catalog)
+                spread = _candidate_stock_lengths(slot.eligibility, catalog)
+                # The candidate that did NOT decide, kept so the explanation can
+                # say why the extent is what it is. A slot whose candidates
+                # disagree has its continuity fixed by the shortest of them, and
+                # a reader looking at one number cannot tell that a longer bar
+                # was on the table — nor that adding a short one to the catalog
+                # is what would shorten every piece on the next run.
+                stock_spread[key] = (max(spread) if spread else 0)
+            entry[slot.slot_key] = SlotFacts(
+                slot_key=slot.slot_key, role=slot.role, qty=slot.qty,
+                length_mm=slot.length_mm, length_rule=slot.length_rule,
+                slot_kind=slot.slot_kind, orientation=slot.orientation,
+                joint=slot.joint, continuity=slot.continuity,
+                post_joint=slot.post_joint,
+                length_basis=slot.length_basis or "width",
+                eligibility_key=key,
+            )
+        slots_by_span[span.id] = entry
+
+    plans, notes = derive_member_runs(facts, slots_by_span, stock_lengths)
+
+    for plan in plans:
+        first, last = by_id[plan.span_ids[0]], by_id[plan.span_ids[-1]]
+        member = MemberRun(
+            **plan.model_dump(),
+            id=f"member@{run.id}:{first.start_station_mm}-"
+               f"{last.end_station_mm}#{plan.slot_key}",
+            run_ref=run.id,
+        )
+        strategy.member_runs.append(member)
+        builder.add(
+            "structural", "derive_continuity",
+            payload={"run_id": run.id, "slot": plan.slot_key,
+                     "bays": len(plan.span_ids), "length_mm": plan.length_mm,
+                     "qty": plan.qty,
+                     "stock_length_mm": plan.stock_length_mm or 0,
+                     "longest_candidate_mm": stock_spread.get(
+                         slots_by_span[plan.span_ids[0]][plan.slot_key]
+                         .eligibility_key, 0),
+                     "basis": plan.basis, "authored": plan.authored,
+                     "through_posts": plan.through_post_ids},
+            scope_refs=[member.id, *plan.span_ids],
+            inputs=[span_nodes[sid] for sid in plan.span_ids if sid in span_nodes],
+        )
+
+    for note in notes:
+        params = {**note.params, "run_id": run.id}
+        stock = params.get("stock_length_mm") or 0
+        node = builder.add(
+            "conflict", note.code,
+            payload={**params, "spans": note.span_ids},
+            scope_refs=note.span_ids,
+        )
+        strategy.warnings.append(StrategyWarning(
+            code=note.code, severity="warning",
+            message=_CONTINUITY_MESSAGES[note.code].format(
+                **params,
+                stock=(f"{stock} mm stock" if stock else "no declared stock length"),
+            ),
+            element_refs=note.span_ids, decision_ref=node.id, params=params,
+        ))
 
 
 def _panel_slots_payload(panel: ResolvedPanel) -> list[dict]:

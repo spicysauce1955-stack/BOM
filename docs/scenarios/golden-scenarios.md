@@ -273,6 +273,78 @@ Expect:
    consistency check, and it is asserted as containment rather than equality
    because the trail legitimately explains more than the sheet draws.
 
+### S18 — The same rail, continuous in one colour and per-bay in another
+Boundary contract obligation 14, in its own words: *whether a member runs
+continuously through an intermediate post is **derived** from stock length
+against the resolved spacing, not authored.*
+
+Own catalog and own model (the shared demo catalog has one rail stock, and giving
+it a second would move S07 exactly as S15 records). **M-BOARD**: one horizontal
+frame slot, `length_rule="centre_to_centre"`, `joint="through"`, a `colour` option
+axis, and a `layout_policy` contribution of `max_span_mm = 2464` (97 in). Two
+products behind the axis: `RAIL-16FT-WHITE` (4877 mm stock, kerf 3) and
+`RAIL-12FT-BLEND` (3658 mm, kerf 3). Topology: 9600 mm straight run on soil,
+which lays out as four 2400 mm bays with three intermediate line posts.
+
+**Nothing in the model says "continuous".** `post_joint="through"` says the rail
+is detailed to pass the post rather than stop at it — a capability, on its own
+field because `joint` already names the housing a frame member gives the infill.
+The behaviour is derived, and the two colours derive differently from the
+identical document:
+
+| colour | stock | two bays (4800 mm) | pieces | 16 ft/12 ft bars |
+|---|---|---|---|---|
+| White | 4877 mm | fits | 2 runs × 2 rails, each 4800 mm | **4** |
+| Blend | 3658 mm | does not | 4 bays × 2 rails, each 2400 mm | **8** |
+
+Expect:
+
+1. **Two `MemberRun`s in White, none in Blend.** Each White run covers two bays,
+   threads exactly one line post, and records the stock length it was derived
+   against (`basis="stock_length"`, `authored="derived"`).
+2. **The demand line is emitted once for the run, pegged to every bay it
+   crosses** — `engineering_qty` 2, not 2 per bay. Four rail pieces in White
+   against eight in Blend is the over-ordering the obligation exists to stop; the
+   cut plan then buys 4 bars against 8, because a 2400 mm piece and its kerf
+   cannot be paired inside 3658 mm.
+3. **A rail cut for rolling terrain is per-bay on the graded bays only.** With
+   elevations 0 mm at 0 and 4800 and 800 mm at 9600, the two flat bays are one
+   piece and the two climbing ones are cut per bay. The *mode* (`Span.vertical`)
+   is resolved for a whole run, so it cannot be the test; the bay's own
+   elevations are.
+4. **`continuity` survives as an authored override, and never decides in
+   silence.** Authored `per_bay` against a derived two-bay piece is built per bay
+   and carries `warning.continuity_override_disagrees` with both answers in its
+   params. Authored `continuous` on a butt-jointed rail is built continuous —
+   the case the contract keeps it for, *"a guide states the behaviour outright
+   and gives no length"* — and carries the same warning. The one thing it cannot
+   do is order a piece longer than the bar: 12 ft stock against a 2400 mm bay
+   gives `warning.continuity_override_unbuildable` and a per-bay cut.
+5. **The structure sheet and the bill agree.** A continuous rail appears under
+   every bay it crosses, because the crew meets it in each, and its row carries
+   `shared_with` — the demand line's own pegs, inverted — so four bays of one
+   continuous rail do not read as four rails. Nothing in `report/` recomputes it.
+6. **Both `derive_continuity` and all three warnings render in Hebrew and
+   English** from `decisions/explain.py` templates, not from the generic payload
+   dump.
+
+Authoring refusals (`validate_model`): continuity on a vertical frame member, and
+continuity under a length rule with no registered `CONTINUITY_JOINS` entry. Both
+are carried-and-never-read otherwise, which is what that table exists to close.
+
+S18's fence is also a fixture in the cross-scenario invariant battery
+(`through_rail`) with its own committed gate file, because no other fixture puts a
+`MemberRun` in front of the traceability, determinism and cut-plan-conservation
+invariants. It carries its own catalog and model library, for the reason S15
+records: two more rail stocks in `demo_catalog()` would move S07.
+
+**S16 is not a counter-example.** A routed vinyl rail "goes through the post" in
+S16's prose, and `RAIL-V-3000` over two 1500 mm bays is exactly 3000 mm — yet
+M-VINYL derives per bay, correctly. Its rail is `centre_to_centre`, *"cut to the
+post centrelines, each end seats half a face deep into the hole it was punched
+for"*: one bay long, with two rails meeting inside each intermediate post. The
+hole passes through the post; the rail does not.
+
 ## Invariants checked across all scenarios
 
 - span width ≤ applicable hard maximum (unless authorized exception exists — none in demo KB)

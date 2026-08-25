@@ -1,5 +1,187 @@
 # Current status
 
+## Item 9 — continuity, derived (2026-08-25)
+
+**1861 pytest · 235 scenario tests · 237/237 browser smoke** (was 1793 · 203).
+The compatibility gate did not move: not one requirement line and not one BOM
+number changed in any of the twelve existing fixtures, and that is a claim about
+the design rather than a happy accident — see "what stops the demo fence going
+continuous" below. A **thirteenth** fixture was added, `through_rail`, and it is
+the only file in `compatibility_gate/` that changed.
+
+Both project reviewers ran against this slice. The architecture critic returned
+SOUND-WITH-FIXES and the test reviewer GAPS; the dispositions are at the end of
+this entry.
+
+Boundary contract obligation 14 is implemented. Whether a member runs continuously
+through an intermediate post is derived from the product's manufactured
+`stock_length` against the RESOLVED bay spacing, and it is derived exactly once.
+
+- **Where it lives: `strategy/continuity.py`, called from `_generate_run` once the
+  run is laid out.** It cannot live on the part (it needs the spacing) and it must
+  not be recomputed downstream (`foundation §15`: a read model never recomputes a
+  quantity — and a read model that recomputed this could disagree with the BOM
+  about whether a rail is one piece or three). The answer is recorded as
+  `Strategy.member_runs`; demand, the cut plan and the structure sheet all read
+  that one record.
+- **Per RUN, not per segment**, so a chain is broken by the facts that break it —
+  a corner, a gate, a grade, a different panel — and not by where a segment ended.
+- **What it does to demand.** One `DemandLine` per member run, pegged to every bay
+  it crosses, `engineering_qty` the slot's own count and NOT multiplied by the
+  bays. The per-bay lines for those bays are not emitted. A rail crossing three
+  bays is one piece bought once; emitting both would order four.
+- **Authored vs derived.** The model authors a CAPABILITY — `FrameSlot.post_joint`
+  (`unstated | lands | through`): does this member run past the post, or stop at
+  it? The engine derives the behaviour. `FrameSlot.continuity` /
+  `Member.continuity` is the authored ASSERTION the contract keeps for a guide
+  that states the behaviour and gives no length; it WINS, and a disagreement with
+  the derivation is reported (`continuity_override_disagrees`) rather than
+  settled in silence. The one thing it cannot do is order a piece longer than the
+  bar (`continuity_override_unbuildable`).
+
+  It is **not** an ADR-0004 `Override` despite the warning code's name — those are
+  run-scoped patches anchored to `(run_id, station, kind)`; this is a sentence in
+  a model document. Named in the code so a later reader does not wire it to the
+  run-override machinery.
+- **Three warning codes, both locale bundles, and `decisions/explain.py` templates
+  for all three plus `derive_continuity`** — a new node kind with no template
+  falls through to the generic payload dump, which is an English dict shown to a
+  Hebrew reader.
+
+### What stops the demo fence going continuous
+
+Deriving from stock length alone would make almost every fixture in the repo
+continuous — RAIL-3000 over two 1500 mm bays is exactly 3000 mm — and would move
+every golden number in the compatibility gate. It would also be wrong: an
+M-LEGACY rail is screwed to the post face and stops there. So the derivation asks
+`post_joint` first; only `through` puts a member on the table, and no built-in
+model says it, so nothing in the repo changed. That is not a re-authoring of
+continuity — the same `through` rail is two bays per piece in 16 ft stock and one
+in 12 ft, which is obligation 14's own example, and no author can say otherwise
+without the engine reporting that they did.
+
+**Why `post_joint` and not `JointKind`.** The first cut added `"through"` to
+`JointKind`, and that was wrong twice over. On a frame slot `joint` names the
+housing the member provides for the INFILL — `validate_model` ties it to
+`channel_depth_mm` and `report/elevation.py` draws the two together — so a routed
+rail that houses boards in a channel AND ran through its posts would have had to
+give one of them up. And `butt` is a DEFAULT: reading a model's silence as "stops
+at the post" authors the answer on its behalf, which is the flattening obligation
+14 retracted. Hence a tri-state whose default is `unstated`.
+
+**M-VINYL is not a counter-example, though it reads like one.** S16's prose says
+the rails "go through" the post and `RAIL-V-3000` over two 1500 mm bays is exactly
+3000 mm, so the derivation would fire if the slot said `through`. It does not, and
+should not: the model's own comment is *"cut to the post centrelines, each end
+seats half a face deep into the hole it was punched for"*, and the rule is
+`centre_to_centre`. A rail cut to centre-to-centre is ONE bay long — two of them
+meet inside each intermediate post. What passes through the post is the hole, not
+the rail. The engine and the model agree; only the English is ambiguous, and it is
+recorded here so the next reader does not have to re-derive it.
+
+### Named seams left open
+
+- **Infill continuity is refused at authoring, not ignored.** `Member.continuity`
+  exists because the contract names it, and `_unsupported_features` refuses any
+  value but `derived`: an infill member is placed by `fit_pattern` against ONE
+  bay's opening, so a continuous one needs a group-scoped fit that decides where
+  every board lands.
+- **`CONTINUITY_JOINS` (`fencemodel/lengths.py`)** — how per-bay lengths combine
+  across a post, registered per length rule beside the rules themselves. A rule
+  with no join is not continuable, which is the safe direction: the unsafe one
+  buys a piece nobody can cut. Registered: `centre_to_centre`,
+  `clear_between_posts`, `overlap`.
+- **`continuity_stock_length_unknown` is reachable only through the M-LEGACY seam**
+  (an eligibility rebuilt at generation from resolved `demand_skus`, which the
+  validator never sees). Kept as a warning rather than an assertion for that
+  reason, and rendered by a template a unit test exercises directly. It now fires
+  for the AUTHORED case too: `continuity="continuous"` with no stated stock length
+  runs the whole chain, and an unbounded piece is the one branch that invents a
+  number rather than reporting one — `_piece_too_long` guards divisible stock only.
+
+- **`post_joint="unstated"` resolves to per bay, which every fence in this
+  portfolio was built and priced to.** Closing that silence properly means
+  auditing the model portfolio and saying `lands` where it is meant — a data
+  migration, not this slice. The schema now keeps the two apart so that audit is
+  possible; until it happens, `unstated` is an answer the engine gives on the
+  model's behalf, and that is the one place continuity is still effectively
+  authored.
+
+- **Fixings still resolve per bay.** The demo knowledge itself says "8 screws per
+  span (2 per rail-end connection)", and continuity removes rail ENDS at a through
+  post. Nothing is wrong in tree — S18's fixings are `per_panel` — but a
+  `per_rail_end` basis would need to read `member_runs`, and nothing does.
+
+- **`report/assembly.py` still speaks per bay** (`StepPart(qty=slot.qty,
+  length_mm=slot.length_mm)`). Only reachable from `fencemodel/preview.py` today,
+  which has no run, so it cannot disagree with a BOM yet. The moment assembly
+  steps appear on a run-scoped sheet they must read `member_runs`, or the
+  instructions will say "cut 2 rails at 2400" while the BOM buys 4877 mm bars —
+  precisely the disagreement this item exists to prevent.
+
+- **The elevation still draws the rail terminating at its bay.** `shared_with`
+  corrects the parts table in text; a continuity marker on the drawn member would
+  close the loop.
+
+New: `docs/scenarios/golden-scenarios.md` §S18, `tests/scenarios/test_s18_continuity.py`,
+`tests/strategy/test_continuity.py`, `tests/scenarios/continuity_fixture.py`,
+`tests/scenarios/compatibility_gate/through_rail.json`.
+
+### The `through_rail` fixture, and what it found on arrival
+
+The invariant battery had never run over a strategy containing a `MemberRun`: a
+demand line pegged to TWO elements is a new shape for the traceability chain, and
+a 4800 mm piece in a 4877 mm bar is a new one for cut-plan conservation. So the
+fence is now a fixture in `test_invariants.py::_fixtures()` and has its own gate
+file. It carries its **own catalog and model library** — `_fixtures()` entries may
+now supply both — because putting a 16 ft and a 12 ft rail into `demo_catalog()`
+would sit them in front of every predicate eligibility in the portfolio, which is
+how S07's "RAIL-3000 is the only rail stock" answer moves. S15 records the same
+constraint for the same reason.
+
+It immediately paid for itself. `test_knowledge_refs_resolve_to_snapshot` asserted
+that every `governed_by` edge cites a version in the run's KNOWLEDGE snapshot, and
+`through_rail` is the first fixture in the battery to carry a `layout_policy` at
+all — whose contributions are synthesised versions (`M-BOARD#max_span_mm@v1`) that
+`_policy_knowledge` says outright "are never stored", being pinned by the model
+snapshot instead. The invariant was reading a by-design ref as a dangling one. It
+now checks *pinned somewhere*, which is the property it was always after; an
+unpinned ref still fails.
+
+### Review dispositions
+
+**Acted on** — the capability moved off `JointKind` onto `FrameSlot.post_joint`
+(`unstated | lands | through`), because `joint` already names the housing a frame
+member gives the INFILL and `unstated` must not read as `lands`; an authored
+`continuous` with no stated stock length no longer runs a chain in silence;
+`basis` now credits the stock length when the arithmetic decided and the model
+only agreed; the disagreement warning names every bay it settled; the demand read
+path refuses with `member_run_unreadable` instead of a bare `next()`; the node
+records the longest candidate beside the binding shortest.
+
+Test gaps closed, each verified by re-running the reviewer's own mutation: the
+rolling-terrain case (it passed with the derivation deleted — now pins the
+partition), the `derive_continuity_authored` sentence (rendered by nothing, and a
+branch inversion shipped green — now asserts the two sentences differ), the three
+warning codes (invisible to the locale guard because they reached
+`StrategyWarning` through a variable — the codes are now `code="…"` literals and
+`continuity.py` is on the scanned list), `_shortest_stock_mm` (`min`→`max` survived
+because every test narrowed eligibility to one product — now a two-candidate
+fixture), the exact-stock boundary, the graph wiring, `_merge_parts`' `shared_with`
+key, `element_ids`, and the infill refusal.
+
+**Rejected, with the evidence** — the claim that M-VINYL is a through-rail the
+gate denies. See the M-VINYL paragraph above: `centre_to_centre` plus "each end
+seats half a face deep" is a one-bay piece. The hole passes through the post; the
+rail does not.
+
+**Also raised and left open**: `authored` is rendered as a Hebrew word now
+(`_ENUM_WORDS`), but the browser smoke suite still cannot produce a continuous
+member, so `structure.shared_with` has no rendered path — closing that needs a
+demo model to carry `post_joint`, which is the same product-data decision as
+M-VINYL's.
+
+
 ## The frontend catches up: three slices, built in parallel (2026-08-25)
 
 **1780 pytest · 203 scenario tests · 237/237 browser smoke** (was 202). Three
