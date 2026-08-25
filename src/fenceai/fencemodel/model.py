@@ -18,10 +18,12 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
+from fenceai.fencemodel.bases import FIXING_BASES
+from fenceai.fencemodel.lengths import LENGTH_RULES
 from fenceai.knowledge.ast import Expr, field_paths
 
 if TYPE_CHECKING:      # `parts.resolve` imports this module; the runtime imports
@@ -29,12 +31,34 @@ if TYPE_CHECKING:      # `parts.resolve` imports this module; the runtime import
 
 _SWATCH = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-LengthRule = Literal[
-    "clear_between_posts", "centre_to_centre", "overlap", "panel_height",
-    # a member cut to fit BETWEEN two frame members, plus whatever seats into
-    # them. The only rule that reads `Member.base_ref`/`top_ref`.
-    "between_frame",
-]
+# A plain `str` validated against the REGISTRY (`fencemodel/lengths.py`), not a
+# `Literal`. That is the whole point of the seam: a new rule — `between_rails`,
+# `minus_hardware` — is a registration, where before it was an edit to this type
+# AND a branch in `resolve._length_for` AND a release. The vocabulary is open;
+# the SIGNATURE is what stays closed. See `core/registry.py`.
+#
+# Validation has not been given up, only moved: `_known_length_rule` below
+# refuses an unregistered name at parse time, so a typo still fails at the
+# boundary and with a message naming the alternatives, which a `Literal` never
+# did as well.
+LengthRule = str
+
+
+def _known_length_rule(v: str | None) -> str | None:
+    if v is not None and v not in LENGTH_RULES:
+        raise ValueError(
+            f"unknown length rule {v!r}; registered: {', '.join(LENGTH_RULES.names())}"
+        )
+    return v
+
+
+def _known_fixing_basis(v: str) -> str:
+    if v not in FIXING_BASES:
+        raise ValueError(
+            f"unknown fixing basis {v!r}; registered: {', '.join(FIXING_BASES.names())}"
+        )
+    return v
+
 
 # How a member meets the one it lands on. The kind is a WORD for the shop and
 # the drawing; the millimetres beside it are what the cut list reads, which is
@@ -131,6 +155,7 @@ class PartRequirement(BaseModel):
     role: str = ""
     qty: int = 1
     length_rule: LengthRule | None = None
+    _check_length_rule = field_validator("length_rule")(_known_length_rule)
     overlap_mm: Mm = 0
     option_axis: str | None = None
     sku_by_option: dict[str, str] = {}
@@ -331,10 +356,9 @@ class InfillSpec(BaseModel):
 
 class FixingRule(BaseModel):
     key: str
-    basis: Literal[
-        "per_member_crossing", "per_member", "per_end_member",
-        "per_gap", "per_frame_member", "per_panel",
-    ]
+    # registry-validated, for `LengthRule`'s reasons
+    basis: str
+    _check_basis = field_validator("basis")(_known_fixing_basis)
     qty_per_basis: int
     qty_param: str | None = None   # knowledge param, as Distributed.count_param
     requirement: PartRequirement

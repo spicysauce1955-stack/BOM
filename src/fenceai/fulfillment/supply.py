@@ -11,7 +11,6 @@ the cuts. Lexicographic tiers with named presets (ADR-0007), never raw weights.
 
 from __future__ import annotations
 
-from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -21,12 +20,15 @@ from fenceai.demand.derive import DemandLine
 from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.cutplan import CutPiece, RemnantStock, plan_cuts
 from fenceai.fulfillment.fulfill import Inventory, engineering_unit_for
+from fenceai.fulfillment.presets import PRESETS, RankInputs
 from fenceai.strategy.model import StrategyWarning
 
-Preset = Literal["least_cost", "honour_priority"]
-# introspected from the Literal itself so the runtime check and the type can
-# never drift apart (task 10 fix round 1, finding 3)
-_PRESETS: frozenset[str] = frozenset(get_args(Preset))
+# A plain `str`, validated against the REGISTRY rather than declared as a
+# `Literal`. It was introspected from the Literal so the runtime check and the
+# type could not drift apart; the registry keeps that property and moves the
+# vocabulary from closed to open — a new preset is a registration, not an edit
+# to a type plus an edit to a branch plus a release (`core/registry.py`).
+Preset = str
 
 _INFEASIBLE = 2**62
 
@@ -168,9 +170,9 @@ def resolve_supply(
     # the failure mode this checks for: an unrecognised preset is a loud error
     # at the one boundary every caller (get_bom, get_structure, create_quote,
     # impact preview) funnels through, not a quiet reinterpretation.
-    if preset not in _PRESETS:
+    if preset not in PRESETS:
         raise ValueError(
-            f"unknown objective preset {preset!r}; expected one of {sorted(_PRESETS)}"
+            f"unknown objective preset {preset!r}; expected one of {PRESETS.names()}"
         )
     approvals = approvals or set()
     out = SupplyResolution()
@@ -400,16 +402,19 @@ def _choose(usable, lines, catalog, inventory, preset) -> "EligibleItem | None":
     # only now, with a real choice to make, is it worth planning cuts per candidate
     costs = {m.sku: _candidate_cost(m.sku, lines, catalog, inventory) for m in feasible}
 
+    key = PRESETS.get(preset)
+
     def rank(m):
-        cost = costs[m.sku]
         # `_waste` plans real cuts for `sku` — only safe once `_candidate_cost`
         # has already proved the sku buildable. Every member of `feasible` has,
         # by the filter above, so this tier can never reach a sku plan_cuts
-        # would raise on.
-        waste = _waste(m.sku, lines, catalog, inventory)
-        if preset == "honour_priority":
-            return (m.priority, cost, waste, m.sku)
-        return (cost, waste, m.priority, m.sku)
+        # would raise on — and neither can a preset, which is what makes it
+        # structurally impossible for a new one to rank an unsuppliable sku
+        # first.
+        return key(RankInputs(
+            sku=m.sku, priority=m.priority, cost_cents=costs[m.sku],
+            waste_mm=_waste(m.sku, lines, catalog, inventory),
+        ))
 
     winner = min(feasible, key=rank)
     ranked = [

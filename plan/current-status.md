@@ -1,5 +1,56 @@
 # Current status
 
+## Three vocabularies moved from closed to open (2026-08-25)
+
+Item 3, the first of the four extension seams. **1718 pytest · 203 scenario
+tests, green.** The rule the engine spec states, applied:
+
+> A vocabulary is **open** when a general mechanism reads it, and **closed** when
+> `if kind == "…"` branches on it somewhere.
+
+Fixing bases, length rules and objective presets were each a `Literal` naming the
+members plus a branch that knew what each one meant — so `per_corner` was a type
+edit, a branch edit and a release, while adding a part type or a warning code was
+a row. Nothing about the concepts made a fixing basis harder to extend. One was
+data; the other was a branch.
+
+Each is a `Registry` of named functions over ONE signature now, and the `Literal`
+became a `str` validated against the registry. **Validation was moved, not given
+up** — and it got better: a typo is refused at parse time with a message naming
+what IS registered, which the `Literal` never did.
+
+**The signature is the contract**, which is what keeps this from being a plugin
+system. The spec's escalation test decides: a `per_corner` basis is
+`(PanelCounts) -> int` like every other and registers; a basis that must see the
+neighbouring bay cannot be written that way, and that is the signal it needs a
+release rather than a row.
+
+**Three things worth recording:**
+
+- **Registration refuses to overwrite.** Two modules registering `per_member`,
+  resolved by import order, is a fence counted by whichever loaded last. Re-adding
+  the *same* function is fine — that is an idempotent import, not a conflict.
+- **The slope factor stopped being a tail.** It was applied to whatever the
+  length if-chain returned, with `panel_height` returning early to dodge it. It
+  corrects a HORIZONTAL member for running along the grade, so whether it applies
+  is a property of the RULE — it is `along_grade()` for rules to opt into now,
+  which is also what makes a new vertical-member rule safe to register.
+- **A preset can be a row because it is only a key function.** Every preset ranks
+  the same candidates on the same measured facts and differs in what it puts
+  first. `_choose` filters infeasible candidates BEFORE any preset runs, so a new
+  preset structurally cannot rank an unsuppliable product first — a test asserts
+  that ordering, because it is the guarantee that makes the vocabulary safe to
+  open.
+
+**The editor is now the closed half, and deliberately visible.**
+`js/panel-model.js` still carries hardcoded arrays, and the test asserting
+editor/backend equality points at the registries now — so registering `per_corner`
+makes it authorable through the API and turns that test RED until the editor names
+it too. That failure is the reminder, not a bug. Closing it means serving
+`FIXING_BASES.names()` from a route the editor reads; it is not done.
+
+**Next:** item 4 — the declared phase list, which depends on this.
+
 ## Site conditions — the prerequisite for anything conditional (2026-08-25)
 
 Item 2. **1704 pytest · 203 scenario tests, green.** The acceptance criterion the

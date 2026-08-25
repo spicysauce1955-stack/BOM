@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 from fenceai.core.errors import RequestRefused
 from fenceai.core.units import Mm
+from fenceai.fencemodel.bases import FIXING_BASES, PanelCounts
+from fenceai.fencemodel.lengths import LENGTH_RULES
 from fenceai.fencemodel.fit import FitResult, fit_pattern
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, FenceModel, Fraction, FromBottom, FromTop,
@@ -314,37 +316,17 @@ def _between_frame_extent(
 def _length_for(req: PartRequirement, ctx: PanelContext) -> Mm | None:
     """Every rule that can be answered from the BAY alone.
 
-    `between_frame` is not one of them: it measures against the panel's own
-    frame and fixes where the member sits as well as how long it is, so
-    `resolve_panel` resolves it through `_between_frame_extent` — with the frame
-    it just placed passed in, never reached for, so resolution stays a pure
-    function of its arguments. A frame slot that declares the rule (refused at
-    load) therefore gets no length here rather than quietly getting a width.
+    The rules themselves live in `fencemodel/lengths.py` as a registry, so a new
+    one is a registration rather than a branch here plus a `Literal` edit
+    (`core/registry.py`). `None` — from an unset rule, or from `between_frame`,
+    which measures against the panel's own frame — means *not answerable from the
+    bay*, and `resolve_panel` answers `between_frame` separately with the frame
+    it just placed passed IN, never reached for, so resolution stays a pure
+    function of its arguments.
     """
-    if req.length_rule is None or req.length_rule == "between_frame":
+    if req.length_rule is None:
         return None
-    if req.length_rule == "panel_height":
-        # A member spanning the panel's full height — a picket, a slat, a baluster.
-        # Constant in every vertical mode: a raked bay's top follows the grade and
-        # its bottom follows the ground, so the two datums stay parallel, and a
-        # stepped bay is a rectangle. A member constrained to a frame slot
-        # (base_ref/top_ref) can vary along the bay, which is what `between_frame`
-        # above is for.
-        #
-        # The slope factor below deliberately does NOT apply: it corrects a
-        # HORIZONTAL member for running along the grade, and a vertical member
-        # does not run along the grade at all.
-        return ctx.height_mm
-    if req.length_rule == "clear_between_posts":
-        base = ctx.clear_width_mm
-    elif req.length_rule == "overlap":
-        base = ctx.centre_width_mm + req.overlap_mm
-    else:
-        base = ctx.centre_width_mm
-    if ctx.length_basis == "slope" and ctx.slope_len_mm is not None:
-        # the slope factor applies to the same rule, not to a raw width
-        return base + (ctx.slope_len_mm - ctx.centre_width_mm)
-    return base
+    return LENGTH_RULES.get(req.length_rule)(req, ctx)
 
 
 def _qty(count: int, param: str | None, params: dict[str, int]) -> int:
@@ -601,15 +583,10 @@ def resolve_panel(
     placed_count = next((s.fit.count for s in slots if s.fit is not None), 0)
     for rule in spec.fixings:
         per = _qty(rule.qty_per_basis, rule.qty_param, ctx.params)
-        basis = {
-            "per_panel": 1,
-            "per_frame_member": frame_count,
-            "per_member": member_count,
-            # first and last ALONG THE AXIS: a placement question
-            "per_end_member": min(placed_count, 2),
-            "per_gap": max(placed_count - 1, 0),
-            "per_member_crossing": member_count * frame_count,
-        }[rule.basis]
+        basis = FIXING_BASES.get(rule.basis)(PanelCounts(
+            member_count=member_count, placed_count=placed_count,
+            frame_count=frame_count,
+        ))
         if not basis:
             continue
         eligibility, option_axis, option_value = _chosen_option(rule.requirement, ctx)

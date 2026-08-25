@@ -329,23 +329,35 @@ def test_the_swatch_field_refuses_anything_but_plain_hex(out):
             f"got: {sink.strip()}")
 
 
-def test_the_editor_and_the_schema_agree_on_the_closed_vocabularies():
-    """Each select offers a closed vocabulary that lives in `model.py`. A value
-    the editor offers and the schema rejects is a save that 422s; one the schema
-    has and the editor lacks is a product line nobody can author.
+def test_the_editor_and_the_backend_agree_on_the_vocabularies():
+    """Each select offers a vocabulary the backend defines. A value the editor
+    offers and the backend rejects is a save that 422s; one the backend has and
+    the editor lacks is a product line nobody can author.
 
     EQUALITY in both directions, and every expected set derived rather than
     retyped — a subset assertion passes with the editor's array emptied, and a
-    hand-copied set passes when a new arm is added to the schema alone."""
+    hand-copied set passes when a new arm is added to the backend alone.
+
+    **Two of the five moved.** Length rules and fixing bases used to be `Literal`s
+    in `model.py` and are REGISTRIES now (`core/registry.py`), so a new one is a
+    registration rather than a type edit plus a branch plus a release. The
+    property this test defends is unchanged; only where truth lives moved, and
+    it is derived from the new home rather than retyped here.
+
+    Which leaves the editor as the closed half: registering `per_corner` makes it
+    authorable through the API and this test then FAILS until the editor's array
+    names it too. That failure is correct and is the point — it is the reminder
+    that a vocabulary served to a browser as a hardcoded array is not open yet.
+    Closing it means serving `FIXING_BASES.names()` from a route the editor reads.
+    """
     from typing import get_args
 
-    from fenceai.fencemodel.model import (
-        EligibleItem, FixingRule, InfillSpec, LengthRule,
-    )
+    from fenceai.fencemodel.bases import FIXING_BASES
+    from fenceai.fencemodel.lengths import LENGTH_RULES
+    from fenceai.fencemodel.model import EligibleItem, InfillSpec
 
-    assert _js_const("LENGTH_RULES") == set(get_args(LengthRule))
-    assert _js_const("BASES") == set(
-        get_args(FixingRule.model_fields["basis"].annotation))
+    assert _js_const("LENGTH_RULES") == set(LENGTH_RULES.names())
+    assert _js_const("BASES") == set(FIXING_BASES.names())
     assert _js_const("JUSTIFICATIONS") == set(
         get_args(InfillSpec.model_fields["justification"].annotation))
     assert _js_const("APPROVALS") == set(

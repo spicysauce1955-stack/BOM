@@ -92,12 +92,27 @@ One rule explains every case:
 | Open — a row, no release | Closed — a branch, needs a release |
 |---|---|
 | knowledge rules · part types · parts | `Action` kinds (10, discriminated union) |
-| panel models · catalog products | objective presets (`Literal` + a check) |
-| overrides · warning codes | fixing bases (`Literal` + a dict branch) |
-| condition dimensions · source classes | length rules (`Literal` + an if-chain) |
-| | joint kinds · placements · decision node kinds |
-| | the phase chain (a hardcoded call order) |
-| | the layer list (hardcoded namespaces) |
+| panel models · catalog products | joint kinds · placements · decision node kinds |
+| overrides · warning codes | the phase chain (a hardcoded call order) |
+| condition dimensions · source classes | the layer list (hardcoded namespaces) |
+| **objective presets** ✓ | |
+| **fixing bases** ✓ | |
+| **length rules** ✓ | |
+
+> ✓ **Moved 2026-08-25** (build order item 3). Each was a `Literal` naming the
+> members plus a branch that knew what each meant; each is a `Registry` of named
+> functions over one signature now (`core/registry.py`,
+> `fencemodel/bases.py`, `fencemodel/lengths.py`, `fulfillment/presets.py`), and
+> the `Literal` became a `str` validated against the registry — so a typo still
+> fails at the boundary, with a message naming the alternatives, which the
+> `Literal` never did as well.
+>
+> **The editor is now the closed half**, and that is visible rather than hidden:
+> `js/panel-model.js` still carries hardcoded arrays, and
+> `test_the_editor_and_the_backend_agree_on_the_vocabularies` asserts equality
+> both ways — so registering `per_corner` makes it authorable through the API and
+> turns that test red until the editor names it too. Closing it means serving
+> `FIXING_BASES.names()` from a route the editor reads, and it is not done.
 
 Nothing about the *concepts* makes a fixing basis harder to extend than a part type. One
 is data; the other is a branch.
