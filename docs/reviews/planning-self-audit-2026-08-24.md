@@ -306,3 +306,146 @@ artefact.
 
 We asked them to check the model against the data they hold. We should have been
 running the same check against the code we hold, at the same time.
+
+---
+
+# Second pass — one rule, pointed at what we invented
+
+```text
+Rule:    For every item we ADDED or MODIFIED rather than accepted, find the
+         mechanism that runs it. Accepted items arrived with the other team's
+         evidence attached; modified ones we invented, and nobody checked them.
+Result:  12 checked. 6 have no mechanism. 4 pass. 2 work and were mis-costed.
+```
+
+The first pass audited the design as a whole. This one audits only our own
+contributions, on the theory that they are the least-verified part — and they are.
+
+## Broken — no mechanism exists
+
+### S1 · A token-valued parameter cannot be expressed at all
+
+`knowledge/model.py:93` — the `Action` union has ten members. `SetParam.value: int`.
+The others carry `sku: str`, `surface: str`, `width_mm: Mm`, a note. **Nothing sets a
+named parameter to a string.**
+
+So N2 — the modification we told the Knowledge team was *better than what they asked
+for* — has no expansion target. `slope_method → stepped_only` has nowhere to land.
+We designed the table shape, argued it improved on their proposal, and never checked
+that a token could become a rule.
+
+**Fix:** `SetParam.value: int | str`, or a `SetToken` action. Small, but it is a
+tier-1 change to the action vocabulary and it should have been in the disposition.
+
+### S2 · The anchor that "earns the machinery" cannot resolve
+
+`generator.py:2142`:
+
+```python
+params={"rails_per_span": rails_per_span,
+        "screws_per_span": screws_per_span},
+```
+
+`PanelContext.params` is a hardcoded two-key dict. A `Param(footing_depth)` anchor
+has no key to read and no mechanism to carry one — and footing depth is resolved on
+a **run-level** pass (`_check_post_lengths`), while coverage is evaluated inside
+panel resolution. The anchor points at a value settled on a different pass.
+
+We told them: *"It fails on exactly one case and fails badly — `POST
+LENGHT-(DEPTH+7)`… `Param` is the anchor that earns the machinery."* That case is
+the one anchor that cannot run.
+
+**Fix:** `PanelContext.params` must carry resolved knowledge params generally, and
+coverage evaluation must happen after the run-level pass — an ordering change, not a
+field.
+
+### S3 · There is no annexe
+
+`report/` holds `assembly · bom_groups · elevation · section_decisions · structure`.
+No annexe, and no non-slot section of any kind.
+
+We promised them a rendering table: `document`, `warranty` and `maintenance`
+warnings land *"in the plan's annexe, once, never on a line."* That surface does not
+exist — so **68% of the corpus's warnings have nowhere to go**, and the choice today
+is between the noise failure we said we would avoid and dropping them.
+
+The rendering table is what made their `attaches_to` usable. We specified a consumer
+that has no implementation.
+
+### S4 · The source policy has no code at all
+
+```
+$ grep -rn "source_class\|SourcePolicy\|curation_level" --include=*.py src/
+(no output)
+```
+
+Zero. No `admitted_by`, no `min_curation`, no ranking, no admissibility.
+
+We re-ranked this table, made a substantive and consequential decision about it
+(N18 — install manuals admissible for structural work at level 2), argued it changes
+which bottleneck matters, and told them it puts their cell-box work on the critical
+path. **All of that is about a subsystem with no implementation.**
+
+This is the largest gap in the design and the one we were least aware of.
+
+### S5 · `Provenance` has no field to attach to
+
+`SpecField` is `key · value · agree · unit`. N15 says every published value carries
+its `source_class` and `curation_level`. There is nowhere to put them.
+
+Additive and small, but asserted as though it existed.
+
+### S6 · `Reused` is actively refused, with a reasoned argument against it
+
+`fencemodel/model.py:1178`:
+
+```python
+elif slot in placed_by:
+    errors.append(
+        f"assembly step {step.key}: slot {slot} is already fitted by "
+        f"step {placed_by[slot]}. A part is fitted once — two steps "
+        f"naming it is a contradiction, not an ordering")
+```
+
+We invented `Reused(slot_path)` for the temporary-spacer rail. `validate_model`
+rejects it at authoring time, and its message argues precisely against the thing we
+proposed. The design is still right — a jig-then-install is real — but it must be a
+target kind the validator can *tell apart*, and `step.slots` is a flat list of
+strings that cannot carry the distinction.
+
+## Passes — recorded so they are not re-litigated
+
+- **The B6 fallback tier works as designed.** `effective_authority()` returns
+  `self.authority if self.authority is not None else DEFAULT_AUTHORITY[self.type]`,
+  so publishing a fallback row one tier weaker needs no new mechanism.
+- **The warning registry split needs no test change.** A source warning has no
+  `code` by construction, so `test_every_backend_code_has_locale_entries` never
+  enumerates it. Exempt automatically.
+- **Site dimensions bind.** `site.*` is additive to the evaluation context.
+- **Post roles are reachable.** `side.kind` is available where posts resolve.
+
+## Mis-costed — works, wrong price quoted
+
+- **N16 `per_end_member_by_edge`.** We told them *"either is cheap; nothing else in
+  §3 needs to move."* `FixingRule.basis` is a closed `Literal` **and**
+  `resolve.py:609` branches on it by name in a dict literal. Adding a basis is a
+  spine release — which is exactly what our own escalation test classifies as *"No →
+  a gap raised to Planning."* We applied that test to their extensions and not to
+  our own.
+- **Invariant 4 is enforced better than we claimed.** We described it as a read-model
+  report; `validate_model` catches a double placement **at authoring**. Worth telling
+  them, because it means a bad procedure is refused before publish rather than
+  rendering oddly after.
+
+## What this pass says about the design
+
+Six of twelve of our own contributions have no mechanism. The rate did not drop
+between the first pass and this one, and the two largest findings — the source
+policy with no code, and the anchor grammar we justified with a case that cannot
+resolve — are both in things we *added* rather than accepted.
+
+**The design is not ready to hand over for review.** Not because the shapes are
+wrong — the other team has stress-tested those twice — but because we have been
+specifying consumers we do not have, and the other team cannot see that from where
+they sit. Handing them a third iteration now would spend their review budget on
+holes we already know about.
