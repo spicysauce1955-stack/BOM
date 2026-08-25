@@ -54,6 +54,14 @@ WARNING_CODES = [
     # table built in a unit test carries no scope at all.
     "parameter_scope_unmappable",
     "panel_length_unresolved",
+    # Containment. Both say a credit did NOT happen — a credit that lands
+    # cleanly is a smaller purchase and needs no warning — and both exist
+    # because a saving is invisible on the finished document: the line is
+    # simply shorter, or gone. `unmatched` is a credit aimed at a slot this
+    # bay does not build; `surplus` is a kit shipping more of a piece than the
+    # panel wanted, capped at what it wanted.
+    "contained_credit_unmatched",
+    "contained_credit_surplus",
     "clear_gap_exceeded",
     "rail_separation_insufficient",
     "pattern_residual_large",
@@ -101,6 +109,11 @@ REFUSAL_CODES = [
     # refusal the user causes by clicking, so it must say which slot and which
     # product rather than "the action failed (422)".
     "sku_not_eligible",
+    # A pin on a part that comes INSIDE another part. Deliberately not
+    # `sku_not_eligible`: that sentence tells the reader to choose one of the
+    # products offered for the slot, and no product is ever offered for a
+    # contained piece — advice impossible to follow.
+    "slot_not_purchasable",
     # A model's post specification that no product satisfies. `post_spec_conflict`
     # is two models disagreeing about the post between them;
     # `post_routing_mismatch` is ROUTING alone excluding every candidate, which

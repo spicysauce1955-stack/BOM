@@ -2179,6 +2179,15 @@ def _generate_run(
     # empties the rail set, refs that invert at this height — so the only place
     # left to say it is here. (model_ref, slot_key) -> span ids.
     unmeasured_slots: dict[tuple[str, str], list[str]] = {}
+    # Credits that did not land cleanly on a bay, aggregated the same way again.
+    # A credit makes the panel buy LESS, and a saving is invisible on the
+    # finished document — the line is simply not there — so both ways of getting
+    # one wrong have to be said out loud. `validate_model` has already refused
+    # every credit that is wrong on PAPER (an unknown target, a mismatched role,
+    # a piece crediting its own container); what is left is per-bay and only
+    # answerable here. (model_ref, kind, contained path, target slot) -> [(span,
+    # qty)].
+    credit_notes: dict[tuple[str, str, str, str], list[tuple[str, int]]] = {}
     for seg_start, seg_end in zip(fixed_sorted, fixed_sorted[1:]):
         if any(gs <= seg_start and seg_end <= ge for gs, ge in gate_intervals):
             continue
@@ -2354,6 +2363,10 @@ def _generate_run(
                 if slot.length_unresolved:
                     unmeasured_slots.setdefault(
                         (model.ref, slot.slot_key), []).append(span.id)
+            for note in span.panel.credit_notes:
+                credit_notes.setdefault(
+                    (model.ref, note.kind, note.contained_key, note.slot_key),
+                    []).append((span.id, note.qty))
             strategy.spans.append(span)
             span_ids.append(span.id)
             spans_by_model.setdefault(choice.key() if choice else None, []).append(span.id)
@@ -2411,6 +2424,45 @@ def _generate_run(
                              # exactly one member survives a narrowing, by
                              # construction: it is the member the option named
                              "sku": slot.eligibility.members[0].sku},
+                    scope_refs=[span.id], inputs=[sm.select_node_id, span_node.id],
+                ).id)
+            for slot in span.panel.slots:
+                # One node per SLOT whose purchase a credit reduced — not one per
+                # credit. A credit is the one thing here that makes the panel buy
+                # less, and a smaller purchase leaves no trace on the BOM of its
+                # own: the line is simply shorter, or gone. So the reduction gets
+                # a node rather than a footnote on the panel's, because "every
+                # BOM line traces through the graph" is only true of a line that
+                # exists, and this is where a reader lands when they ask why the
+                # panel bought two hinges and placed four.
+                #
+                # Per TARGET, because the sentence is a subtraction and it has to
+                # add up. Two containers each supplying two of a four-hinge slot
+                # used to write two nodes, each claiming "needs 4, 2 ship inside
+                # X, so the panel buys 0" — false twice, and the comment right
+                # here asked for the opposite. `credited_by` carries every source,
+                # so one node states the whole sum: of - qty == remaining, always.
+                # `credited_by`, not `credited_qty`. BOTH ENDS of a credit carry
+                # `credited_qty` — the demanding slot counts what it received and
+                # the contained piece counts what it gave away — so keying on it
+                # wrote a node for the source as well: an empty `contained` and a
+                # subtraction belonging to a different slot, three nodes per bay
+                # where there is one credit. Only the demanding slot names where
+                # its pieces came from, and that is exactly the slot whose
+                # purchase shrank.
+                if not slot.credited_by:
+                    continue
+                panel_inputs.append(builder.add(
+                    "structural", "credit_contained",
+                    payload={"slot": slot.slot_key,
+                             "role": slot.role,
+                             # what the slot asked for, what arrived in a box, and
+                             # what is left to buy. All three, because a reader
+                             # given only the difference cannot check it.
+                             "of": slot.qty + slot.credited_qty,
+                             "qty": slot.credited_qty,
+                             "remaining": slot.qty,
+                             "contained": ", ".join(slot.credited_by)},
                     scope_refs=[span.id], inputs=[sm.select_node_id, span_node.id],
                 ).id)
             builder.add(
@@ -2559,6 +2611,48 @@ def _generate_run(
             )
         )
 
+    for (model_ref, kind, contained, slot_key), hits in sorted(credit_notes.items()):
+        # Both kinds are WARNINGS and neither is an error, and the asymmetry is
+        # deliberate. Under-crediting costs a customer a spare part; the fence
+        # gets built. Over-crediting would leave a fitter without one — so the
+        # resolver never over-credits (it caps at what the slot wanted), and what
+        # is reported here is the evidence that it capped. A refusal would stop a
+        # buildable fence over a kit that ships one hinge too many.
+        affected = sorted(span_id for span_id, _ in hits)
+        # The largest surplus, not the sum: the reader has to change a model or a
+        # kit, and "2" said once is what they act on. `unmatched` carries the
+        # count that credited nothing for the same reason.
+        qty = max(q for _, q in hits)
+        params = {"model_ref": model_ref, "contained": contained,
+                  "slot": slot_key, "qty": qty, "run_id": run.id,
+                  "n": len(affected)}
+        # Two branches rather than one `code=f"contained_credit_{kind}"`, and not
+        # for readability: `tests/web/test_locale_bundles.py` proves every code
+        # the backend can emit has a sentence in BOTH bundles by grepping for the
+        # literal `code="..."`, and a code assembled from a fragment is invisible
+        # to it — a raw English string inside a Hebrew sentence the first day
+        # something shows it.
+        if kind == "unmatched":
+            warning = StrategyWarning(
+                code="contained_credit_unmatched", severity="warning",
+                message=f"{contained} credits slot {slot_key}, which model "
+                        f"{model_ref} does not build in {len(affected)} bay(s) "
+                        f"of section {run.id}: nothing is credited there",
+                params=params, element_refs=affected,
+            )
+        else:
+            warning = StrategyWarning(
+                code="contained_credit_surplus", severity="warning",
+                message=f"{contained} ships {qty} more than slot {slot_key} "
+                        f"needs in {len(affected)} bay(s) of section {run.id}: "
+                        "the surplus credits nothing",
+                params=params, element_refs=affected,
+            )
+        warning.decision_ref = builder.add(
+            "conflict", warning.code, payload=params, scope_refs=affected,
+        ).id
+        strategy.warnings.append(warning)
+
 
 def _panel_slots_payload(panel: ResolvedPanel) -> list[dict]:
     """One `resolve_panel` payload entry per slot: what it is, how many, and —
@@ -2592,6 +2686,18 @@ def _panel_slots_payload(panel: ResolvedPanel) -> list[dict]:
     entries: list[dict] = []
     for slot in panel.slots:
         entry: dict = {"key": slot.slot_key, "role": slot.role, "qty": slot.qty}
+        # Added ONLY where containment is in play, so every panel that contains
+        # nothing produces the payload it always did — the graph is stored on the
+        # run and a new key on every slot of every bay would read as a change to
+        # fences that have not changed.
+        if slot.contained_in:
+            entry["contained_in"] = slot.contained_in
+        if slot.credited_qty:
+            entry["credited_qty"] = slot.credited_qty
+            if slot.credits_slot_key:
+                entry["credits"] = slot.credits_slot_key
+            if slot.credited_by:
+                entry["credited_by"] = list(slot.credited_by)
         if slot.length_mm is not None:
             entry["length_mm"] = slot.length_mm
         if slot.span_start_mm is not None:

@@ -57,10 +57,21 @@ concept (how do five bays' stage-1s interleave?) that nothing has asked for. The
 motivating case is the one it always was: a model whose authored order and the
 role heuristic genuinely disagree.
 
-**Still not placeable**, and named rather than left to be rediscovered: parts
-contained inside other parts (build-order item 10). When containment lands, a
-contained part becomes a member like any other and joins `unplaced` by the same
-rule — this function needs no new concept for it, only the panel to carry them.
+**Parts contained inside other parts ARE members here** (build-order item 10,
+landed alongside this). The contract says so in as many words — "every member ...
+including parts contained inside other parts" — and this is the read model that
+has to mean it. A gate kit's hinges reach `panel.slots` under a path key
+(`gate_kit/hinge`), so a step can name one and `unplaced` can report one. They
+are NOT on the BOM, and that is the point rather than a gap: the BOM says what is
+BOUGHT and this says what is PLACED, and containment is exactly where those two
+lists stop being the same. What supplies a contained member is the line that
+bought its container, one `contained_in` hop away.
+
+That prediction is worth keeping visible because it held: this function needed no
+new concept for containment, only the panel to carry it. The one change it did
+force is in `by_slot` below — a slot credited down to zero pieces has nothing to
+fit, so it is neither placed nor unplaced, and counting it would tell a fitter to
+fit hinges that are not in the pile.
 """
 
 from __future__ import annotations
@@ -199,7 +210,12 @@ def assembly_plan(
     stage_of = {key: i for i, stage in enumerate(order.stages) for key in stage}
     by_key = {step.key: step for step in model.assembly}
 
-    by_slot = {slot.slot_key: slot for slot in panel.slots}
+    # Members, which is what a step places. A slot resolved to zero pieces —
+    # every one of them supplied by a container it credits — has nothing to fit,
+    # so it is neither placed nor `unplaced`: the pieces themselves are in this
+    # list under their contained path keys, and counting the emptied slot as well
+    # would tell a fitter to fit hinges that are not in the pile.
+    by_slot = {slot.slot_key: slot for slot in panel.slots if slot.qty > 0}
     by_bay_key = {part.slot_key: part for part in (bay or [])}
     placed: set[str] = set()
     bay_placed: set[str] = set()
@@ -217,9 +233,13 @@ def assembly_plan(
             for slot_key in step.slots:
                 slot = by_slot.get(slot_key)
                 if slot is None:
-                    # This bay is built to a variant that has no such slot. Not an
-                    # error — `validate_model` already proved the slot exists in
-                    # SOME spec of this model — and not a phantom part either.
+                    # This bay is built to a variant that has no such slot, OR to
+                    # a slot every piece of which arrived inside a container it
+                    # credits. Neither is an error — `validate_model` already
+                    # proved the slot exists in SOME spec of this model — and
+                    # neither is a phantom part: in the second case the pieces are
+                    # in this same plan under the path keys of the container that
+                    # brought them.
                     continue
                 placed.add(slot_key)
                 parts.append(StepPart(
@@ -244,7 +264,7 @@ def assembly_plan(
     unplaced = [
         StepPart(slot_key=s.slot_key, role=s.role, qty=s.qty,
                  length_mm=s.length_mm)
-        for s in panel.slots if s.slot_key not in placed
+        for s in panel.slots if s.slot_key not in placed and s.qty > 0
     ]
     unplaced_bay = [
         part.model_copy()

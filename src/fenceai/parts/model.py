@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from fenceai.core.units import Mm
 
@@ -90,6 +90,134 @@ def is_dimension(f: SpecField) -> bool:
     return f.unit == "mm" and f.agree == "==" and isinstance(f.value, int)
 
 
+# The separator that turns a container's slot key and a contained piece's own key
+# into ONE addressable identity. Declared here, beside the type that creates the
+# need for it, and imported by everything that builds or reads a path.
+#
+# `/` and not `.`: `.` is already the separator `parts.resolve.part_requirements`
+# uses for a VARIANT's validation key (`variant0.rail`), which is a different
+# namespace with different rules, and one character meaning two things is how a
+# reader ends up parsing the wrong tree. `/` also survives an HTML attribute, a
+# `data-slot` selector and the `kind:slot_key:index` handle ids `panel-canvas-geom.js`
+# builds, none of which is true of every punctuation mark.
+PATH_SEP = "/"
+
+
+def contained_path(container_key: str, contained_key: str) -> str:
+    """The one place a path key is spelled. Both callers — the resolver that
+    creates the slot and the validator that checks a credit names a real one —
+    go through it, so a path can never be built two ways."""
+    return f"{container_key}{PATH_SEP}{contained_key}"
+
+
+class ContainedPart(BaseModel):
+    """A piece that ships INSIDE another piece.
+
+    A gate kit arrives with its hinges in the box; a post cap assembly arrives
+    with its screw. Those pieces are members of the panel — a fitter places them,
+    obligation 9 counts them — and they are NOT purchases, because the thing that
+    was bought is the container. Containment is exactly where "what you buy" and
+    "what you place" stop being the same list, which is why the contract names it
+    ("every one of its members ... including parts contained inside other parts").
+
+    Declared on the PART and not on the model's slot, for the reason
+    `PartRequirement._part_or_authored` already enforces one level up: what a
+    piece IS belongs to the part, and two models naming one gate kit must not be
+    able to disagree about what is in the box. What a contained piece is USED FOR
+    in a particular panel is a different fact and lives on the model, as
+    `PartRequirement.credits`.
+
+    `part_id` is unpinned exactly as `PartRequirement.part_id` is, and for the
+    same reason: fixing a hinge spec once has to reach every kit that ships one.
+
+    `role` is authored ONLY when no part is named. A contained piece that names a
+    part takes its role from that part, because the part is the one authority on
+    what a piece is — the same rule, in the same words, that a slot obeys.
+    """
+
+    key: str
+    part_id: str = ""
+    role: str = ""
+    qty: int = Field(default=1, ge=1)
+    # Nesting is real and is not decoration: a kit ships a hinge, and the hinge
+    # ships its own pin. The path key composes, so depth costs the readers
+    # nothing — `gate_kit/hinge/pin` is one string like every other slot key.
+    contains: list["ContainedPart"] = []
+
+    @model_validator(mode="after")
+    def _key_cannot_forge_a_path(self) -> "ContainedPart":
+        if not self.key:
+            raise ValueError("a contained part needs a key — it is its identity")
+        if PATH_SEP in self.key:
+            raise ValueError(
+                f"contained part key {self.key!r} contains {PATH_SEP!r}, which is "
+                "the path separator — a key that spells its own path can collide "
+                "with a sibling's descendant and address two different pieces"
+            )
+        said = [name for name, authored in (
+            ("role", bool(self.role)), ("contains", bool(self.contains)),
+        ) if authored]
+        if self.part_id and said:
+            # The same refusal `PartRequirement._part_or_authored` makes, one
+            # level down and for the same reason: `parts.resolve` OVERWRITES both
+            # from the named part, so a document carrying either was accepted,
+            # validated clean, and then silently had the authored half deleted.
+            # Assignment is deliberately unvalidated (pydantic's default), which
+            # is what lets resolution write the resolved answer onto a copy.
+            raise ValueError(
+                f"contained part {self.key!r} names part {self.part_id!r} and also "
+                f"authors {', '.join(said)} — the part is the one authority on "
+                "what a piece is, and resolution would overwrite what is written here"
+            )
+        seen: set[str] = set()
+        for child in self.contains:
+            if child.key in seen:
+                raise ValueError(
+                    f"contained part {self.key!r} holds two pieces called "
+                    f"{child.key!r}, so one path would name both"
+                )
+            seen.add(child.key)
+        return self
+
+
+def walk_contained(
+    contains: list[ContainedPart], container_key: str
+) -> list[tuple[str, ContainedPart]]:
+    """Every piece inside a container, at every depth, under its path key.
+
+    Depth-first in authored order, which is what makes the resolved slot list
+    deterministic: `resolve_supply` groups on member signatures and the whole run
+    digest rests on the same answer coming back twice.
+    """
+    return [(path, piece) for path, piece, _ in
+            walk_contained_qty(contains, container_key, 1)]
+
+
+def walk_contained_qty(
+    contains: list[ContainedPart], container_key: str, factor: int
+) -> list[tuple[str, ContainedPart, int]]:
+    """The same walk, carrying the running MULTIPLICATION.
+
+    Two kits each holding two hinges are four hinges, and a hinge holding two
+    washers makes eight — the count of a piece is its own quantity times every
+    container above it. `factor` is the container's resolved quantity at the
+    root of the walk.
+
+    This is the one place that arithmetic lives. `resolve._flatten` builds the
+    panel's members from it and `resolve._plan_credits` sizes a credit from it,
+    and those two numbers MUST be the same number: a credit sized from a second
+    copy of this multiplication could hand back more pieces than the box holds,
+    which is the phantom saving the whole feature exists to refuse.
+    """
+    out: list[tuple[str, ContainedPart, int]] = []
+    for child in contains:
+        path = contained_path(container_key, child.key)
+        qty = factor * child.qty
+        out.append((path, child, qty))
+        out += walk_contained_qty(child.contains, path, qty)
+    return out
+
+
 class PartType(BaseModel):
     """The filing vocabulary, shared by parts and products.
 
@@ -112,6 +240,24 @@ class Part(BaseModel):
     type: str
     name_i18n: dict[str, str] = {}
     spec: list[SpecField] = []
+    # What ships inside one of these. Empty is the ordinary case and means "this
+    # piece is just itself" — not "unknown", which is why nothing infers
+    # containment from a product's `AssemblyKit.components`: a kit's component
+    # list is what the BOM note prints, and reading it as a panel's members would
+    # credit the panel for hinges no model ever asked it to place.
+    contains: list[ContainedPart] = []
+
+    @model_validator(mode="after")
+    def _contained_keys_are_unique(self) -> "Part":
+        seen: set[str] = set()
+        for child in self.contains:
+            if child.key in seen:
+                raise ValueError(
+                    f"{self.id}: holds two pieces called {child.key!r}, so one "
+                    "path would name both"
+                )
+            seen.add(child.key)
+        return self
 
     @property
     def ref(self) -> str:

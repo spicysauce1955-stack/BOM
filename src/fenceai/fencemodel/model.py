@@ -26,6 +26,12 @@ from fenceai.fencemodel.bases import FIXING_BASES
 from fenceai.fencemodel.lengths import LENGTH_RULES
 from fenceai.fencemodel.step_order import step_order
 from fenceai.knowledge.ast import Expr, field_paths
+# `parts.model` is a leaf — it imports `core.units` and nothing else — so naming
+# it here costs no cycle. `parts.resolve` and `parts.validate` are the modules
+# that import THIS one, and their imports stay deferred below.
+from fenceai.parts.model import (
+    PATH_SEP, ContainedPart, contained_path, walk_contained,
+)
 
 if TYPE_CHECKING:      # `parts.resolve` imports this module; the runtime imports
     from fenceai.parts.model import PartLibrary   # are deferred into the functions
@@ -161,6 +167,29 @@ class PartRequirement(BaseModel):
     option_axis: str | None = None
     sku_by_option: dict[str, str] = {}
     eligibility: Eligibility = Eligibility()
+    # What ships INSIDE the piece this slot holds. Filled by
+    # `parts.resolve.resolve_model_parts` from the part, never authored beside a
+    # `part_id` — the same lifetime `eligibility`, `role` and `Member.width_mm`
+    # have, and for the same reason: a piece's contents are the part's fact, and
+    # a model able to restate them is a model able to disagree with the part.
+    #
+    # A slot naming NO part may author this directly, exactly as such a slot
+    # authors its own eligibility (M-VINYL's post and cap). That is the one shape
+    # where nothing else can supply the answer.
+    contained: list[ContainedPart] = []
+    # ... and what those contained pieces SUPPLY in this panel. Authored here and
+    # nowhere else, because it is the only fact in the pair that is about the
+    # panel rather than about the piece: a hinge in a box does not know that this
+    # model calls its hinge slot `gate_hinges`.
+    #
+    #     {"<contained path, relative to this slot>": "<slot key it supplies>"}
+    #
+    # A dict and not a list of pairs, so one contained piece cannot be spent
+    # twice: crediting one physical hinge against two slots would remove two
+    # purchases for one piece, which is the phantom saving this whole feature
+    # exists to refuse. The keys are RELATIVE (`hinge`, `hinge/pin`) because a
+    # part cannot know the key of the slot it happens to be placed in.
+    credits: dict[str, str] = {}
 
     @property
     def eligibility_source(self) -> Literal[
@@ -220,6 +249,12 @@ class PartRequirement(BaseModel):
                 ("eligibility.members", bool(self.eligibility.members)),
                 ("eligibility.predicate", self.eligibility.predicate is not None),
                 ("role", bool(self.role)),
+                # `contained` joins the list because what is in the box is the
+                # PART's fact and `resolve_model_parts` overwrites whatever is
+                # written here. `credits` deliberately does NOT: what a contained
+                # piece is used for in this panel is placement, which is exactly
+                # what this document is the authority on.
+                ("contained", bool(self.contained)),
             ) if authored
         ]
         if said:
@@ -639,6 +674,28 @@ def spec_requirements(spec: PanelSpec) -> list[tuple[str, PartRequirement]]:
     if spec.infill:
         out += [(m.key, m.requirement) for m in spec.infill.pattern]
     out += [(f.key, f.requirement) for f in spec.fixings]
+    return out
+
+
+def spec_members(spec: PanelSpec) -> list[tuple[str, str]]:
+    """Every MEMBER of a panel under the key that addresses it, and its role.
+
+    Wider than `spec_requirements` by exactly the parts that ship inside other
+    parts: a slot's own key, then one path key per contained piece at every
+    depth. This is the vocabulary obligation 9 counts — "every member ...
+    including parts contained inside other parts" — so it is what an assembly
+    step may name and what `unplaced` is measured against.
+
+    Kept beside `spec_requirements` and expressed in terms of it, because the two
+    answer different questions about one structure and a second walk of that
+    structure is the drift hazard `part_requirements` already warns about:
+    `spec_requirements` is "what could be BOUGHT", this is "what is PLACED", and
+    containment is precisely where those two lists stop being the same.
+    """
+    out: list[tuple[str, str]] = []
+    for key, req in spec_requirements(spec):
+        out.append((key, req.role))
+        out += [(path, child.role) for path, child in walk_contained(req.contained, key)]
     return out
 
 
@@ -1241,7 +1298,7 @@ def _variant_reach_errors(model: FenceModel) -> list[str]:
     return errors
 
 
-def _assembly_step_errors(model: FenceModel) -> list[str]:
+def _assembly_step_errors(model: FenceModel, contained_known: bool) -> list[str]:
     """The rules that keep an instruction from being a paragraph.
 
     A step names slots because that is what makes it DATA: the film can order
@@ -1253,11 +1310,31 @@ def _assembly_step_errors(model: FenceModel) -> list[str]:
     variant's panel is still this model's panel — refusing a step for naming a
     slot the default lacks would leave a model unable to say how its own variants
     go together.
+
+    `contained_known` is False when `validate_model` was given no library. A
+    contained piece's path key exists only after `resolve_model_parts` copies the
+    part's contents onto the slot, so without a library the membership test below
+    cannot see one — and the same document would validate clean with a library
+    and be REFUSED without it, which `generate(..., parts=None)` turns into a
+    `GenerationFailure` on a model nothing is wrong with. Skipped rather than
+    guessed, exactly as `_containment_errors` skips its role-agreement check and
+    the width and thickness rules skip theirs.
     """
     if not model.assembly:
         return []            # no opinion, exactly as an empty `post` is
-    known = {key for spec in [model.default_spec, *(v.spec for v in model.variants)]
-             for key, _ in spec_requirements(spec)}
+    # `spec_members`, not `spec_requirements`: a contained piece is a member of
+    # the panel and obligation 9 says every member is placed by exactly one step
+    # or reported `unplaced`. A step that could not name one would leave the
+    # hinges in a gate kit permanently unplaceable — the check green, the fitter
+    # short two hinges.
+    specs = [model.default_spec, *(v.spec for v in model.variants)]
+    known = {key for spec in specs for key, _ in spec_members(spec)}
+    if not contained_known:
+        # Without a library the contained half of `spec_members` is empty, so a
+        # step naming a path key would be refused for a piece nobody has looked
+        # up. Every AUTHORED key is still checked.
+        known |= {slot for step in model.assembly for slot in step.slots
+                  if PATH_SEP in slot}
     errors: list[str] = []
     seen_keys: set[str] = set()
     placed_by: dict[str, str] = {}
@@ -1361,6 +1438,184 @@ def _step_order_errors(steps: list[AssemblyStep]) -> list[str]:
     return errors
 
 
+def _containment_errors(model: FenceModel, resolved: bool) -> list[str]:
+    """Containment and its credits, checked where an author can still fix them.
+
+    A credit that would remove a purchase is the dangerous half.
+
+    A credit is the one construct here that makes the panel buy LESS, so every
+    way of getting it wrong is a saving nobody earned — and a saving is invisible
+    on a BOM, because the line simply is not there. That asymmetry is why the
+    rules below refuse rather than warn: under-crediting costs a customer one
+    spare hinge, over-crediting hands a fitter a gate with nothing to hang it on.
+
+    Slot keys are collected across the default spec AND every variant, exactly as
+    an assembly step's are, because a variant's panel is still this model's
+    panel. A credit whose target is missing from the ONE bay being built is a
+    different fact and is warned about per bay (`contained_credit_unmatched`) —
+    that one is not answerable here.
+
+    `resolved` is False when `validate_model` was given no library. `contained`
+    and `role` are both FILLED from the part, so without one a slot's contents
+    read as empty and every role reads `""` — and the checks that depend on them
+    would refuse the whole portfolio for facts nobody has looked up yet. Worse,
+    they would refuse a document that validates clean WITH a library, so the same
+    model would be valid or invalid depending on the caller. Those checks are
+    skipped, exactly as the width and thickness rules skip theirs.
+
+    The three that survive without a library are the ones answerable from the
+    AUTHORED document alone: a piece crediting its own container, a credit aimed
+    at a slot that is drawn at a position, and a credit aimed at a slot that is
+    itself a container. All three read `spec.frame` / `spec.fixings` / `credits`,
+    which are written down rather than resolved.
+    """
+    errors: list[str] = []
+    specs = [model.default_spec, *(v.spec for v in model.variants)]
+    role_of = {key: role for spec in specs for key, role in spec_members(spec)}
+    # every member that ARRIVES INSIDE something, across the whole model. A credit
+    # may not aim at one of these: see the refusal below.
+    inside = {path for spec in specs for key, req in spec_requirements(spec)
+              for path, _ in walk_contained(req.contained, key)}
+    # Slots DRAWN at a position: a frame member sits at a placement, an infill
+    # member sits in the fitted pattern. A credit may not aim at one of these
+    # either — see the refusal below.
+    drawn = {s.key for spec in specs for s in spec.frame}
+    drawn |= {m.key for spec in specs if spec.infill for m in spec.infill.pattern}
+    # Slots that CONTAIN a credit source. A credit may not aim at one of these:
+    # crediting a container would change how many boxes the panel buys, which
+    # changes how many pieces are in them, which changes the credit — a loop with
+    # no fixed point that one resolution pass would answer by accident of order.
+    containers = {key for spec in specs for key, req in spec_requirements(spec)
+                  if req.credits}
+    # A post and its cap are elements of the BAY, not members of the panel.
+    # `parts.resolve.part_requirements` walks them, so `contained` IS filled
+    # there from the part — but `resolve_panel` is never handed the post, so
+    # nothing expands those contents and nothing applies a credit written on
+    # them. Accepted-and-ignored is the one outcome this codebase refuses by
+    # policy, so it is refused by name instead, with what would close it said
+    # out loud: containment on a post needs `demand/derive.py` to build posts
+    # from a slot list, which is the same boundary `report/assembly.py` records
+    # for assembly steps.
+    if model.post is not None:
+        for label, req in (("post", model.post.requirement),
+                           ("post.cap", model.post.cap)):
+            if req is None:
+                continue
+            if req.credits:
+                errors.append(
+                    f"{label}: declares credits, and nothing reads them — a post "
+                    "and its cap are elements of the bay, so `resolve_panel` "
+                    "never sees them and no purchase would ever be credited"
+                )
+            if req.contained:
+                errors.append(
+                    f"{label}: the part it names ships parts inside it, and "
+                    "nothing places them — a post and its cap are elements of "
+                    "the bay, so those pieces would reach no panel's member list"
+                )
+    for spec in specs:
+        for key, req in spec_requirements(spec):
+            contained = dict(walk_contained(req.contained, key))
+            for path, piece in contained.items():
+                if not piece.part_id and not piece.role:
+                    # A member with no role reaches the instruction sheet as a
+                    # nameless row and the credit's agreement check as `""`. The
+                    # same refusal a slot that names no part and declares no
+                    # product earns, one level down: it publishes cleanly and
+                    # then says nothing about itself on every job.
+                    errors.append(
+                        f"contained part {path}: names no part and declares no "
+                        "role, so the panel would place a member nothing says "
+                        "anything about"
+                    )
+            for relative, target in sorted(req.credits.items()):
+                path = contained_path(key, relative)
+                piece = contained.get(path)
+                if piece is None:
+                    if resolved:
+                        errors.append(
+                            f"slot {key}: credits {relative!r}, which is not a "
+                            f"piece contained in this slot — nothing would be "
+                            f"credited on any bay of any job built to this model"
+                        )
+                        continue
+                    # Unresolved: `contained` is empty for EVERY slot, so this
+                    # says nothing about the document. The authored-only checks
+                    # below still run; anything reading `piece` is skipped.
+                    piece = None
+                if target == key:
+                    errors.append(
+                        f"slot {key}: {relative!r} credits its own container. A "
+                        "piece cannot supply the thing it arrived inside — the "
+                        "panel would stop buying the container that brings it"
+                    )
+                    continue
+                if resolved and target not in role_of:
+                    errors.append(
+                        f"slot {key}: {relative!r} credits slot {target}, which "
+                        f"no spec of this model declares, so the credit would "
+                        f"land on nothing on every bay of every job"
+                    )
+                    continue
+                if resolved and target in inside:
+                    # Crediting a piece that itself arrives in a box saves
+                    # NOTHING — a contained member is never bought — and it is
+                    # not harmless: the credit would reduce that member's count,
+                    # so the panel would place fewer of a piece the box still
+                    # contains. Silent, and only ever visible to the fitter
+                    # holding the leftover.
+                    errors.append(
+                        f"slot {key}: {relative!r} credits {target}, which is "
+                        "itself a part contained inside another part. Nothing is "
+                        "bought for it, so there is no purchase to credit — the "
+                        "panel would simply place fewer of a piece that is still "
+                        "in the box"
+                    )
+                    continue
+                if target in drawn:
+                    # A contained piece has an IDENTITY but no PLACE. A frame or
+                    # infill slot's members are drawn at positions and its count
+                    # is what `report/elevation.py` weights every fastener by, so
+                    # crediting one leaves the drawing with no honest answer:
+                    # draw the full count and the panel buys fewer than it shows,
+                    # or draw what it buys and the fence is missing members that
+                    # are physically there. Measured, not argued — a 4-rail slot
+                    # credited 2 drew 3 fasteners instead of 5 and invented two
+                    # `fixings_unplaced`, on a fence that had not changed.
+                    #
+                    # Hardware is the case this feature is for (hinges, latches,
+                    # screws, brackets), and a fixing slot has no drawn extent, so
+                    # the restriction costs it nothing. Lifting it means giving a
+                    # contained piece a position, which is a different feature.
+                    errors.append(
+                        f"slot {key}: {relative!r} credits slot {target}, which is "
+                        "drawn at a position. A contained piece has no place of "
+                        "its own, so the elevation would either draw members the "
+                        "panel does not buy or omit members the fence has. Credit "
+                        "a slot with no drawn extent (a fixing)"
+                    )
+                    continue
+                if target in containers:
+                    errors.append(
+                        f"slot {key}: {relative!r} credits slot {target}, which "
+                        "itself contains a piece that credits something. How many "
+                        "boxes the panel buys would then depend on a credit whose "
+                        "size depends on how many boxes the panel buys — the "
+                        "answer would come out of the order the slots happen to "
+                        "resolve in"
+                    )
+                    continue
+                if resolved and piece is not None and piece.role != role_of[target]:
+                    errors.append(
+                        f"slot {key}: {relative!r} is a {piece.role or '(no role)'} "
+                        f"and credits slot {target}, which is a "
+                        f"{role_of[target] or '(no role)'}. A credit removes a "
+                        "purchase; removing a different kind of part than the one "
+                        "that arrived is a fence one part short with nobody told"
+                    )
+    return errors
+
+
 def validate_model(
     model: FenceModel, catalog: Catalog, library: PartLibrary | None = None
 ) -> list[str]:
@@ -1400,7 +1655,8 @@ def validate_model(
     if model.post is not None:
         errors += _post_slot_errors(model.post, catalog)
         errors += _variant_reach_errors(model)
-    errors += _assembly_step_errors(model)
+    errors += _assembly_step_errors(model, contained_known=library is not None)
+    errors += _containment_errors(model, resolved=library is not None)
 
     for axis in model.option_axes:
         for value in axis.values:
@@ -1439,10 +1695,26 @@ def validate_model(
 
         reqs = spec_requirements(spec)
         seen: set[str] = set()
-        for key, _ in reqs:
+        # Over MEMBERS rather than requirements, so a contained piece's path key
+        # is held to the same uniqueness a slot key always had: `slot_key` is the
+        # identity `demand`, the structure sheet's `(element, slot)` map, the
+        # elevation and the panel canvas all address a part by, and two members
+        # answering to one key is two parts the reader cannot tell apart.
+        for key, _ in spec_members(spec):
             if key in seen:
                 errors.append(f"duplicate slot key {key!r}")
             seen.add(key)
+        for key, _ in reqs:
+            if PATH_SEP in key:
+                # A path key is `<container>/<piece>`, built by `contained_path`.
+                # An AUTHORED key holding the separator could spell a path some
+                # container would also produce, and then one string would address
+                # two different pieces — which is the identity failure this whole
+                # scheme exists to avoid, arriving by the front door.
+                errors.append(
+                    f"slot key {key!r} contains {PATH_SEP!r}, which is reserved "
+                    "for the path of a part contained inside another part"
+                )
         for key, req in reqs:
             skus = [m.sku for m in req.eligibility.members]
             if req.eligibility.predicate is not None:

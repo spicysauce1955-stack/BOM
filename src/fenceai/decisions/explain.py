@@ -225,6 +225,22 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Model {model_ref} resolves no cut length for slot {slot} in {n} "
             "bay(s) of section {run_id}."
         ),
+        # The sentence a smaller purchase is answered with. A credit leaves no
+        # line of its own on the BOM — it makes one shorter — so the arithmetic
+        # is stated in full: what was needed, what came in the box, what is left
+        # to buy. A reader given only the difference cannot check it.
+        "credit_contained": (
+            "Slot {slot} needs {of} {role}; {qty} of them ship inside {contained}, "
+            "so the panel buys {remaining}."
+        ),
+        "contained_credit_unmatched": (
+            "{contained} credits slot {slot}, which model {model_ref} does not "
+            "build in {n} bay(s) of section {run_id}: nothing is credited there."
+        ),
+        "contained_credit_surplus": (
+            "{contained} ships {qty} more than slot {slot} needs in {n} bay(s) of "
+            "section {run_id}: the surplus credits nothing."
+        ),
         # The input FACTS a section's story opens with. They used to fall through
         # to `input_fact`, which prints the raw payload dict — acceptable while
         # they appeared only as an indented `←` ancestor, and not once the
@@ -386,6 +402,18 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "panel_length_unresolved": (
             "דגם {model_ref} אינו מחשב אורך חיתוך עבור החריץ {slot} ב-{n} "
             "מפתחים בקטע {run_id}."
+        ),
+        "credit_contained": (
+            "החריץ {slot} דורש {of} {role}; {qty} מהם מגיעים בתוך {contained}, "
+            "ולכן הפאנל רוכש {remaining}."
+        ),
+        "contained_credit_unmatched": (
+            "{contained} מזכה את החריץ {slot}, שדגם {model_ref} אינו בונה ב-{n} "
+            "מפתחים בקטע {run_id}: לא מזוכה שם דבר."
+        ),
+        "contained_credit_surplus": (
+            "{contained} כולל {qty} יותר מהנדרש בחריץ {slot} ב-{n} מפתחים בקטע "
+            "{run_id}: העודף אינו מזכה דבר."
         ),
         "topology_node": "צומת {node_id} בשרטוט, שבו נפגשים {runs} קטעים.",
         "topology_node_one": "צומת {node_id} בשרטוט, שבו מסתיים קטע אחד.",
@@ -632,6 +660,16 @@ def explain_node(
         case "panel_length_unresolved":
             base = _fmt(t, "panel_length_unresolved", lang, units,
                 model_ref=p.get("model_ref"), slot=p.get("slot"),
+                run_id=p.get("run_id"), n=p.get("n"))
+        case "credit_contained":
+            base = _fmt(t, "credit_contained", lang, units,
+                slot=p.get("slot"), role=p.get("role"), of=p.get("of"),
+                qty=p.get("qty"), contained=p.get("contained"),
+                remaining=p.get("remaining"))
+        case "contained_credit_unmatched" | "contained_credit_surplus":
+            base = _fmt(t, node.action, lang, units,
+                model_ref=p.get("model_ref"), contained=p.get("contained"),
+                slot=p.get("slot"), qty=p.get("qty"),
                 run_id=p.get("run_id"), n=p.get("n"))
         case action if action in _OVERRIDE_ACTIONS:
             base = _fmt(t, "override_applied", lang, units,

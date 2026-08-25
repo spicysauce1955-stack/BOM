@@ -109,6 +109,40 @@ def derive_requirements(
                 span_id=span.id,
             )
         for slot in span.panel.slots:
+            if slot.slot_kind == "contained":
+                # A part inside another part is a MEMBER of the panel, not a
+                # purchase: the thing that was bought is its container, and the
+                # container's line already pays for it. A demand line here would
+                # buy the hinges a second time — which is the mistake the whole
+                # credit rule exists to prevent, arriving from the other side.
+                #
+                # The identity still closes. `Sigma(parts) = BOM` is asserted over
+                # requirement lines and BOM pegs, and this member has neither; what
+                # SUPPLIES it is the BOM line that bought its container, which is
+                # one `contained_in` hop away on the panel. Obligation 9's list —
+                # every member placed or reported `unplaced` — is answered by
+                # `report/assembly.py` over the panel's slots, where this member IS.
+                continue
+            if slot.qty <= 0:
+                # A slot that asks for nothing asks for NOTHING. A zero line
+                # would tell `fulfill()` to buy nothing and then be a requirement
+                # no BOM line pegs to — a hole in `covered == req_ids`, which the
+                # scenario suite asserts as `Sigma(parts) = BOM`. It survived only
+                # because every fixture that had one also bought that SKU for
+                # another slot, so a shared BOM line's pegs happened to cover it.
+                #
+                # THREE ways a slot lands here, not one. Containment made the
+                # third ordinary — every piece arrived inside a container, and
+                # `credited_qty` says how many and from where — but a fitted
+                # pattern that placed no members and a fixing basis that came out
+                # zero reach it too, and those two did produce a zero line before
+                # this. That is a deliberate change and not a side effect: the
+                # line meant nothing in those cases either.
+                #
+                # Nothing is lost by dropping it. The slot is still on the panel
+                # with its count and, where a credit emptied it, its source — and
+                # the `credit_contained` node carries the subtraction.
+                continue
             # No unit here. A slot's cut length says the part is cut TO a length,
             # not that its product is bought BY the metre: an indivisible post
             # carrying attrs.length_mm is explicitly allowed to back a

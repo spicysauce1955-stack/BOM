@@ -257,6 +257,90 @@ Every entity proposed and later retracted was invented while looking at the wron
 | 9 | `Member.continuity` and continuous-member promotion | boundary v0.4 |
 | 10 | Containment → demand, with the kit-credit rule | 5 |
 
+### Item 10, as built (2026-08-25) — and the seam it deliberately did NOT use
+
+§4 named *"inserting **credit kits against assemblies**"* as the first beneficiary of the
+declared phase list, and `fulfillment/phases.py` still says so. **The credit did not land
+there, and the reason is worth recording rather than quietly reversing.**
+
+A phase after `resolve_supply` would credit by looking at the chosen product: this line
+bought an `AssemblyKit`, its `components` name `HINGE-SET`, so knock the panel's
+`HINGE-SET` demand down. That is exactly the phantom saving this item had to refuse. A
+kit's component list is what the BOM note prints; reading it as a claim about a
+particular panel's members credits hinges nobody asked that panel to place, silently,
+and on every job that happens to buy both. It would also have moved the compatibility
+gate on the day it shipped, because `GATE-KIT-1000` already declares a `HINGE-SET`
+component.
+
+So containment is **authored, not inferred**, and it is settled where the panel's member
+list is settled:
+
+* **`Part.contains`** — what ships inside a piece is the part's own fact, so two models
+  naming one gate kit cannot disagree about what is in the box.
+  `resolve_model_parts` copies it onto `PartRequirement.contained`, the same filled-
+  never-authored lifetime `role`, `eligibility` and `Member.width_mm` already have,
+  because `resolve_panel` is pure over `(spec, ctx)` and holds no library.
+* **`PartRequirement.credits`** — what a contained piece SUPPLIES in this panel is the
+  model's fact; a hinge in a box does not know this model calls its hinge slot
+  `gate_hinges`. Keyed by the contained path, so one physical piece cannot be spent
+  against two slots.
+* **The path key `<container>/<piece>`** is an ordinary `slot_key`. It needs no new kind
+  of id and inherits every guarantee that key already had; an authored key containing
+  the separator is refused so a path cannot be forged.
+
+**A credit is a supply route, not a quantity.** The contained slot names what it
+supplies; the demanding slot carries `credited_qty` + `credited_by`; what remains is what
+the panel buys — one positive BOM line, smaller. `credit_contained` carries the whole
+subtraction into the graph, because a saving leaves no line of its own to trace through
+it. Over-crediting is capped at what the slot wanted and the surplus is reported.
+
+**The layers table above is unchanged and this is why `host` is still empty.** A credit
+that depended on WHICH product supplies the container — vendor A's kit ships hinges,
+vendor B's does not — is a `host`-layer question, and it is not expressible today.
+Within the part model it also should not need to be: a part is a specification, and two
+items that cover it are interchangeable, so a kit with hinges and a kit without are two
+parts. That answer holds until a company stocks one part number that ships differently by
+finish, which is the fact that would reopen this.
+
+**Two rules the architecture review forced, and both are about the same thing:
+`qty` on a credited slot means WHAT IS LEFT TO BUY.**
+
+* **Credits settle before contents are expanded.** A credited slot may itself hold
+  contents — a hinge that ships a washer — and those are a multiple of what the panel
+  actually buys. Expanding first read the count the panel *would* have bought: with a
+  kit supplying 2 of 4 hinges, twelve washers for four hinges that hold eight. Nothing
+  downstream could catch it, because a contained member is not a purchase and never
+  reaches the BOM. The multiplication now lives in one function shared by the flatten
+  and the credit sized from it, so the two numbers cannot drift.
+* **A credit may not target a slot that is DRAWN at a position.** `report/elevation.py`
+  weights every fastener by a frame slot's count, so a 4-rail slot credited 2 drew 3
+  fasteners instead of 5 and invented two `fixings_unplaced`, on a fence that had not
+  changed. A contained piece has an identity but no PLACE, so there is no honest answer
+  — draw the full count and the panel buys fewer than it shows, or draw what it buys and
+  the fence is missing members that are physically there. Refused at authoring. Hardware
+  is what this feature is for and a fixing has no drawn extent, so the real case pays
+  nothing. Lifting it means giving a contained piece a position, which is a different
+  feature.
+
+A **credit chain** — crediting a slot that itself contains a credit source — is refused
+for a third reason of the same family: how many boxes the panel buys would depend on a
+credit whose size depends on how many boxes it buys, and one resolution pass would answer
+that by whichever slot happened to resolve first.
+
+**Still open after item 10:** posts, caps and gates. Containment is resolved over the
+PANEL's slots, and a post's cap and a gate kit are elements of the BAY that
+`demand/derive.py` builds from `strategy.posts` / `strategy.gates` with no slot list and
+no path key — the same boundary `report/assembly.py` already records for assembly steps,
+and it closes the same way. `credits` and `contained` on a post or cap requirement are
+REFUSED rather than accepted and ignored, so the gap is visible to an author instead of
+being a field that silently does nothing.
+
+**One authority still unreconciled.** `AssemblyKit.components` on the PRODUCT states the
+same physical fact `Part.contains` states about the part, and nothing cross-checks them.
+This slice is what makes the divergence consequential; the check the argument above
+implies — refuse a container slot whose eligible products disagree with its part — is not
+built.
+
 **Steps 1–4 need nothing from anybody.** Step 1 is first because it is the only item that
 is simultaneously a live defect, a binding-obligation violation, a prerequisite for the
 seams, and an approval item on the other team's desk.

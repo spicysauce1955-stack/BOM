@@ -124,6 +124,12 @@ export function defaultRequirement(role) {
   return {
     part_id: "", role, qty: 1, length_rule: null, overlap_mm: 0,
     option_axis: null, sku_by_option: {}, eligibility: defaultEligibility(),
+    // What ships inside this piece, and what those pieces supply in this panel.
+    // `contained` is FILLED by the backend from the part and is round-tripped
+    // rather than authored here — sending it back empty on a part-named slot is
+    // harmless (resolution overwrites it) and sending it back MISSING is how the
+    // editor silently drops a field on every save.
+    contained: [], credits: {},
   };
 }
 

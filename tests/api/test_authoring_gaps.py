@@ -226,6 +226,14 @@ def test_the_editors_payload_for_a_part_named_slot_validates():
         "option_axis": None,
         "sku_by_option": {},
         "eligibility": {"members": []},
+        # EMPTY beside a `part_id`, and that is exactly the shape the pane sends:
+        # what ships INSIDE a piece is the part's fact and resolution overwrites
+        # whatever arrives here, so `_part_or_authored` refuses a non-empty value
+        # on a part-named slot. `credits` is different and is authored — what a
+        # contained piece supplies in THIS panel is the model's fact, not the
+        # part's — it is simply empty on a slot that contains nothing.
+        "contained": [],
+        "credits": {},
     }
     assert set(payload) == set(PartRequirement.model_fields)
     req = PartRequirement(**payload)    # raises if the editor's shape is refused

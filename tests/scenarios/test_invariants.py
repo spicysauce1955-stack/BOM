@@ -23,17 +23,82 @@ from fenceai.topology.model import (
     Topology,
 )
 from fenceai.fencemodel.demo import demo_models
+from fenceai.fencemodel.model import (
+    AssemblyStep, Distributed, FenceModel, FixingRule, FrameSlot, PanelSpec,
+    PartRequirement,
+)
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.parts.demo import demo_parts
-from fenceai.parts.model import PartLibrary
+from fenceai.parts.model import ContainedPart, Part, PartLibrary, SpecField
 from tests.conftest import add_interval_event, add_point_event, straight_topology
 
-LIBRARY = FenceModelLibrary(models=list(demo_models().values()))
+KIT = FenceModelChoice(model_id="M-KIT")
+# --- the containment shape, so the batteries below can see one ------------------
+#
+# Every invariant in this file — Sigma(parts) = BOM, BOM line -> requirement ->
+# element -> decision, determinism, cut-plan conservation — and the byte-compared
+# compatibility gate beside it ran over a portfolio in which NO model contained
+# anything. So the one shape where "what you buy" and "what you place" stop being
+# the same list was outside the net that exists to catch exactly that class of
+# drift, and the architecture review found two defects in it by hand.
+#
+# `M-KIT` is a bracket-kit line: a kit that ships two hinges, a panel that wants
+# four, and a credit that makes it buy two. Its numbers are arithmetic a reader
+# can check, and the gate now pins them.
+
+def _kit_parts() -> list[Part]:
+    return [
+        Part(id="fix-hinge-set", version=1, type="fixing",
+             name_i18n={"en": "Hinge set", "he": "סט צירים"},
+             spec=[SpecField(key="sku", value=["HINGE-SET"], agree="among")]),
+        Part(id="fix-latch", version=1, type="fixing",
+             name_i18n={"en": "Latch", "he": "בריח"},
+             spec=[SpecField(key="sku", value=["LATCH"], agree="among")]),
+        # The container. What ships inside it is the PART's fact, which is why
+        # nothing here reads `AssemblyKit.components` off the product: a kit's
+        # component list is what the BOM note prints, and reading it as a claim
+        # about this panel's members would credit hinges nobody asked it to place.
+        Part(id="kit-hardware", version=1, type="gate_kit",
+             name_i18n={"en": "Hardware kit", "he": "ערכת פרזול"},
+             spec=[SpecField(key="sku", value=["GATE-KIT-1000"], agree="among")],
+             contains=[
+                 ContainedPart(key="hinge", part_id="fix-hinge-set", qty=2),
+                 ContainedPart(key="latch", part_id="fix-latch", qty=1),
+             ]),
+    ]
+
+
+def _kit_model() -> FenceModel:
+    return FenceModel(
+        id="M-KIT", version=1, name_i18n={"en": "Hardware kit line"},
+        default_spec=PanelSpec(
+            frame=[FrameSlot(
+                key="rail", orientation="horizontal",
+                placement=Distributed(count=2, count_param="rails_per_span"),
+                requirement=PartRequirement(part_id="rail-rail-3000",
+                                            length_rule="centre_to_centre"),
+            )],
+            fixings=[
+                FixingRule(key="kit", basis="per_panel", qty_per_basis=1,
+                           requirement=PartRequirement(part_id="kit-hardware",
+                                                       credits={"hinge": "hinges"})),
+                # four wanted, two in the box: the panel buys two
+                FixingRule(key="hinges", basis="per_panel", qty_per_basis=4,
+                           requirement=PartRequirement(part_id="fix-hinge-set")),
+            ],
+        ),
+        # every member placed or reported, which is obligation 9's own test —
+        # `kit/latch` is deliberately named by no step
+        assembly=[AssemblyStep(key="fit", slots=["rail", "kit", "kit/hinge"])],
+    )
+
+
+LIBRARY = FenceModelLibrary(models=[*demo_models().values(), _kit_model()])
 # The part library those models name. Supplied at every `generate` that supplies a
 # model library, because that is what the API does: a slot names a part, and a run
 # with no library resolves a panel of 0 mm members.
-PARTS = PartLibrary(parts=demo_parts())
+PARTS = PartLibrary(parts=[*demo_parts(), *_kit_parts()])
 SLAT = FenceModelChoice(model_id="M-SLAT")
 VINYL = FenceModelChoice(model_id="M-VINYL")
 
@@ -97,6 +162,8 @@ def _fixtures():
         "slope": (slope, [], None),
         "slat": (slat_plain, [], None, SLAT),
         "vinyl": (vinyl, [], None, VINYL),
+        # containment: a kit shipping two of the four hinges this panel wants
+        "kit": (straight_topology(6000), [], None, KIT),
         "slat_raked": (
             slat_raked,
             [Override(id="ov_rake", run_id="run1",
@@ -256,6 +323,31 @@ def test_knowledge_refs_resolve_to_snapshot(spine):
     for e in result.graph.edges:
         if e.knowledge_ref is not None:
             assert e.knowledge_ref in snapshot, e.knowledge_ref
+
+
+def test_no_panel_slot_asks_for_a_negative_quantity(spine):
+    """A count below zero is not a small number, it is a broken one.
+
+    The only thing in this engine that SUBTRACTS from a resolved quantity is a
+    kit credit, and every way of getting one wrong ends here: crediting against
+    the original requirement instead of what is left, letting two containers each
+    spend the full amount, double-applying one source. All of them are invisible
+    downstream — `demand/derive.py` skips a slot at or below zero, so the panel
+    quietly buys nothing and places pieces nobody ordered, which is the "saving
+    that leaves no mark" this whole feature is built to refuse.
+
+    One assertion over every slot of every bay of every fixture, because the
+    property is cheap to state and the failure is expensive to find.
+    """
+    result, _, _, _, _ = spine
+    for span in result.strategy.spans:
+        if span.panel is None:
+            continue
+        for slot in span.panel.slots:
+            assert slot.qty >= 0, f"{span.id} {slot.slot_key} resolved to {slot.qty}"
+            assert slot.credited_qty >= 0
+            # what a credit moved can never exceed what was asked for
+            assert slot.credited_qty <= slot.qty + slot.credited_qty
 
 
 def test_coverage_and_cap_quantities_plain():

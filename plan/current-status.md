@@ -2595,3 +2595,214 @@ tasks and the smoke suite grew from 183 checks to 187, four of them landing
 specifically inside the slot pane this arc exists to repair.
 
 1432 pytest · 183 golden scenarios · 187/187 smoke · compatibility gate unmoved.
+
+---
+
+## Containment → demand, and the kit credit (2026-08-25) — build order item 10
+
+A part may now declare what ships **inside** it, and the panel places those pieces
+without buying them twice. Contract obligation 9 asks a published panel to place
+"every one of its members … **including parts contained inside other parts**", and
+until this the engine had no way to say a gate kit arrives with its hinges in the
+box, let alone to stop the panel ordering hinges as well.
+
+**Where each half of the fact lives, and why the pair is split.** What ships inside a
+piece is the PART's fact — `Part.contains` — so two models naming one gate kit cannot
+disagree about what is in the box. `resolve_model_parts` copies it onto
+`PartRequirement.contained`, which is filled-never-authored, the same lifetime `role`,
+`eligibility` and `Member.width_mm` already have and for the same reason:
+`resolve_panel` is pure over `(spec, ctx)` and holds no library, so a contents list
+left only on the part would be unreachable at the one moment the member list is built.
+What a contained piece SUPPLIES is the MODEL's fact — `PartRequirement.credits` — because
+a hinge in a box does not know that this model calls its hinge slot `gate_hinges`. It
+is a dict keyed by the contained path, which makes it structurally impossible to spend
+one physical piece against two slots.
+
+**The path key is an ordinary slot key.** `<container>/<piece>`, built in one function,
+composing to any depth (`kit/hinge/washer`). That is deliberate rather than terse: a
+`slot_key` is already the identity `demand`, the structure sheet's `(element, slot)`
+map, the elevation and the panel canvas address a part by, so a contained member
+inherits every guarantee it had — including `validate_model`'s duplicate refusal, now
+run over MEMBERS rather than requirements. An authored key containing the separator is
+refused, so a path can never be forged into a collision.
+
+**A credit is a supply route, not a negative line and not a shrunken number.** A BOM
+line of −2 hinges is a document a purchaser cannot act on, and a count that quietly
+drops is a number nobody can trace back. So the contained slot records which slot it
+supplies, the demanding slot records `credited_qty` + `credited_by`, and what remains
+on it is what the panel buys — one honest positive line, smaller. `credit_contained`
+carries the whole subtraction into the decision graph (what was needed, what came in
+the box, what is left), because a saving leaves no BOM line of its own to trace
+through it and "every BOM line traces through the graph" is only ever true of a line
+that exists.
+
+**Over-crediting is refused three ways, because it is the failure that leaves no
+mark.** `validate_model` refuses at authoring a credit whose target no spec declares,
+whose target is a different ROLE, and whose target is its own container. Per bay, a
+target this variant does not build credits nothing. And what is applied is capped at
+what the slot actually wanted — a kit shipping four hinges into a two-hinge panel
+saves two, never four — with the surplus reported. `contained_credit_unmatched` and
+`contained_credit_surplus` are warnings and not errors on purpose: under-crediting
+costs a customer a spare part, and refusing a buildable fence over a generous kit
+would be the worse trade.
+
+**Two demand rules changed, one of them fixing a latent hole.** A contained member
+emits no requirement line — what supplies it is the BOM line that bought its
+container, one `contained_in` hop away — and a slot credited to zero emits none
+either. The second is not new behaviour dressed up: a zero-quantity line was always a
+requirement no BOM line could peg to, i.e. a hole in `covered == req_ids`, and it
+survived only because every fixture that had one also bought that SKU for another
+slot. `tests/demand/test_derive_from_panel.py` now pins the stronger property with the
+reason written down.
+
+**The seam that was named and deliberately not used.** `fulfillment/phases.py` was
+built with "credit kits against assemblies" as its first beneficiary — a phase after
+`resolve_supply` reading the chosen product's `AssemblyKit.components`. That is
+exactly the phantom saving this item had to refuse: a kit's component list is what the
+BOM note prints, and reading it as a claim about a particular panel's members credits
+hinges nobody asked that panel to place. It would also have moved the compatibility
+gate on day one, because `GATE-KIT-1000` already declares a `HINGE-SET` component. The
+spec §7 records the reversal; the phase list is unchanged and `derive_demand` simply
+receives a panel that already knows what is left to buy.
+
+**Known boundaries, stated rather than discovered later.** Containment resolves over
+the PANEL's slots, so a post's cap and a gate kit — elements of the BAY, built by
+`demand/derive.py` from `strategy.posts` / `strategy.gates` with no slot list and no
+path key — cannot contain anything yet. That is the same boundary
+`report/assembly.py` already records for assembly steps and it closes the same way. A
+credit that depended on WHICH product supplies the container is a `host`-layer
+question and is not expressible; within the part model it should not need to be, since
+a part is a specification and two items covering it are interchangeable.
+
+**Seven mutants, and two of them lived first time.** A contained member reaching demand
+survived the whole suite, because the test asserted on the RESOLVED lines and a
+contained slot carries no eligibility — the mutant put two `no_eligible_item` errors on
+every bay instead of double-buying, and nothing looked. An assembly step being unable
+to name a contained part survived too, because no test proved a valid step VALIDATES.
+Both tests were strengthened until the mutants died; the other five (uncapped credit,
+unmultiplied contained quantity, unrecorded credit source, an emptied slot reported
+`unplaced`, containment never reaching the slot) died on the first try.
+
+**The gate did not move.** No shipped model contains anything, so every fixture's
+requirements and BOM are byte-identical and no golden file was regenerated — the
+`DemandLine` shape is untouched, which is what kept the gate able to say "nothing
+moved" for the change that most needed it to.
+
+1823 pytest (+30) · 203 golden scenarios · compatibility gate unmoved.
+
+### The architecture review, and the two defects it found (same day)
+
+`architecture-critic` returned **RETHINK** on the first cut, and it was right. The
+verdict was narrow and specific — `qty` had been overloaded — and both defects live in
+the gap that overloading opened between *how many pieces are in this panel* and *how
+many are left to buy*.
+
+**Nesting under a credited slot double-counted.** A hinge that ships two washers, in a
+panel wanting four hinges with a kit supplying two, listed eight washers under `hinges`
+plus four under `kit/hinge`: twelve washers for four hinges that hold eight. The
+contents were expanded from the count the panel *would* have bought, because flattening
+ran before crediting. Nothing downstream could have caught it — a contained member is
+not a purchase, so it never reaches the BOM, the cut plan or the parts ledger, which is
+exactly why the invariant battery was silent. Credits now settle first, and the
+multiplication lives in `walk_contained_qty`, shared by the flatten and the credit sized
+from it, so the two numbers cannot drift apart.
+
+**Crediting a slot that is drawn at a position broke the elevation.**
+`_parts_per_rect` weights every fastener by a frame slot's count, so a four-rail slot
+credited two drew three fasteners instead of five and invented two `fixings_unplaced` —
+on a fence that had not changed. There is no honest answer available: draw the full
+count and the panel buys fewer than it shows; draw what it buys and the fence is missing
+members that are physically there. A contained piece has an identity but no PLACE, so
+the target is refused at authoring. Hardware is what this feature is for and a fixing
+has no drawn extent, so the real case pays nothing; a test pins that the allowed case
+leaves the drawing byte-identical.
+
+**Four more, each an accepted-and-ignored or a sentence that was false.** A credit chain
+is refused (the answer would come out of resolution order). `_assembly_step_errors`
+refused a step naming a contained path when no library was supplied — the same document
+valid or invalid depending on the caller, reachable as a `GenerationFailure` — so it and
+the credit checks that read resolved state got the same guard `_containment_errors`
+already had. The `credit_contained` node is per TARGET now: two containers each
+supplying half a slot wrote two nodes, each claiming "needs 4, 2 ship inside X, so the
+panel buys 0", false twice, in direct contradiction of the comment sitting on it.
+`ResolvedPanel.credit_notes` had one reader, so an author aiming a credit at a slot
+their model does not build saw nothing in the editor — `preview_panel` surfaces them
+now, and the two sentences dropped their run-and-section clause so one wording serves
+both callers. A pin on a contained slot got its own `slot_not_purchasable` rather than
+`sku_not_eligible`, whose sentence tells the reader to choose a product that is never
+offered. `credits` and `contained` on a post or cap are refused outright.
+
+**And the battery was pointed at the shape.** Every invariant here — Σ(parts) ≡ BOM,
+the four-hop traceability chain, determinism, cut-plan conservation — plus the
+byte-compared gate ran over a portfolio in which no model contained anything, which is
+why two defects in the one shape that matters were found by a reviewer rather than by a
+red test. `M-KIT` is now a fixture: a kit shipping two of the four hinges its panel
+wants, so each bay buys two. Regenerating rewrote all twelve existing gate files and git
+reported a change to none of them — that self-proving property is what makes ADDING a
+fixture the one safe regeneration, and the module docstring now says so.
+
+Six mutants against the reworked code, all dead: uncapped credit, the old ordering, a
+drawn target allowed, a chain allowed, a credit node for an uncredited slot, and the
+library guard removed.
+
+1840 pytest · 213 golden scenarios · compatibility gate unmoved (one fixture added).
+
+### The test review, and the defect a missing test was hiding
+
+`test-reviewer` returned **GAPS** and named fourteen mutants that survived the suite.
+Its headline was the right one: the single-container credit path was well covered, and
+the two properties the feature exists to protect were each one mutant from silence.
+
+**One of the gaps was hiding a live defect.** Writing the missing two-container test
+failed on its first run for a reason I had not predicted: the `credit_contained` node
+keyed on `credited_qty`, and BOTH ENDS of a credit carry that number — the demanding
+slot counts what it received, the contained piece counts what it gave away. So the
+generator wrote a node for the source as well, with an empty `contained` and a
+subtraction belonging to a different slot: three nodes per bay where there is one
+credit. It keys on `credited_by` now, which only the demanding slot ever has. The
+reviewer had flagged the area as untested; the test found more than the reviewer did.
+
+**The sharpest gap, and why its failure is the worst kind.** Two containers crediting
+one slot had no test at all. Each credit is capped by what REMAINS on the target, not by
+the original requirement — cap against the original and both kits spend the full amount:
+three hinges wanted, four credited, `qty == -1`. A negative count is not a small number,
+it is a broken one, and it is invisible: `demand/derive.py` skips a slot at or below
+zero, so the panel buys nothing and places four. The code was already correct; nothing
+proved it. Now a test pins the arithmetic and both source names, and a scenario-wide
+invariant asserts no slot of any bay of any fixture resolves negative.
+
+**The explanation was rendering unchecked.** The credit sentence asserted only that no
+`{` survived, so every one of its three numbers could be read from the wrong payload
+field and pass — verified by mutation, which produced "Slot hinges needs **None None**"
+in both languages. It now checks the values. And the two containment WARNINGS are graph
+nodes whose templates were rendered by nothing at all: `test_explain_i18n` walks only
+the demo graph, which has no containment, so both were key-paired and dead. Pushed
+through `explain_node` in both languages now.
+
+**Three assertions that read as coverage they did not provide.** The elevation test
+compared two derived lists to each other and passed when both were empty — a mutation
+that stops emitting fixings entirely went unnoticed; it pins the absolute list now. The
+BOM test pinned a ratio (`uncredited == 2 × credited`) that holds if both sides halve.
+The assembly test never named the emptied slot in a step, so only half the filter it was
+written for was exercised. A fourth was renamed to say what it checks.
+
+**And what was implemented but untested:** library immutability under resolution (the
+deep copy that stops resolving one model from editing every other model naming the same
+part, and the object `library_at` hands back for a pinned snapshot), a nested piece as a
+credit SOURCE, the missing-contained-part refusal, a `library_at` round-trip — which is
+what stamping contained parts is actually for — the stored graph's containment payload,
+which could be deleted whole because the gate pins `requirements` and `bom` and the
+graph is byte-compared nowhere, and asymmetric credit numbers so `of`, `qty` and
+`remaining` cannot be read from each other's fields.
+
+**One claim was narrowed rather than defended.** The zero-qty docstring said the fact
+"stays on the panel's own slot and in the decision graph". True for a slot a CREDIT
+emptied; a slot a knowledge param emptied (`rails_per_span=0`) gets no
+`credit_contained` node, and the only remaining evidence is the resolved slot inside the
+stored panel. Said precisely.
+
+**Sixteen mutants, all dead**, re-run against committed code so a stray `git checkout`
+during mutation cannot revert an uncommitted fix — which it did twice in this session
+before the habit stuck.
+
+1866 pytest · 213 golden scenarios · compatibility gate unmoved.

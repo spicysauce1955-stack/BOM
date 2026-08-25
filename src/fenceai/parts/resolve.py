@@ -12,7 +12,7 @@ import hashlib
 
 from fenceai.fencemodel.model import FenceModel, Member, PartRequirement, spec_requirements
 from fenceai.parts.compile import compile_spec
-from fenceai.parts.model import Part, PartLibrary
+from fenceai.parts.model import ContainedPart, Part, PartLibrary
 from fenceai.strategy.model import PartUse
 
 
@@ -78,10 +78,67 @@ def resolve_model_parts(
         # Filled, never authored — the part is the one authority on what a piece is,
         # and `ResolvedSlot.role` / `demand.derive` read it downstream.
         requirement.role = part.type
+        # ... and so is what ships INSIDE it. Copied onto the requirement for the
+        # reason `_apply_dimensions` copies a width: `resolve_panel` is pure over
+        # `(spec, ctx)` and holds no library, so a contents list left only on the
+        # part would be unreachable at the one moment the panel's member list is
+        # built. A deep copy, because the library belongs to the caller.
+        requirement.contained = [c.model_copy(deep=True) for c in part.contains]
+        _resolve_contained(requirement.contained, library, uses,
+                           f"{model.ref} slot {key!r}", (part.id,))
         uses[part.id] = PartUse(part_id=part.id, version=part.version,
                                 content_hash=content_hash(part))
     _apply_dimensions(resolved, library)
     return resolved, sorted(uses.values(), key=lambda u: u.sort_key())
+
+
+def _resolve_contained(
+    contained: list[ContainedPart],
+    library: PartLibrary,
+    uses: dict[str, PartUse],
+    where: str,
+    ancestry: tuple[str, ...],
+) -> None:
+    """Give every contained piece its role and its own contents, from its part.
+
+    The same rule one level up, applied one level down: a piece that names a part
+    takes what it IS from that part, and a piece that names none keeps what it
+    was authored with. Without this a contained hinge would carry `role=""`, and
+    a role is what the credit's agreement check and the whole downstream
+    vocabulary (`demand.role`, the parts drawer, the assembly film's build order)
+    are expressed in.
+
+    Contained parts are STAMPED into the run's part snapshot alongside the slot's
+    own. A run that re-read itself through `library_at` would otherwise pin the
+    kit and lose the hinge, and `resolve_model_parts` would then resolve today's
+    hinge into a run that was priced against last year's.
+
+    `ancestry` closes the one loop this recursion can have: a part whose contents
+    reach itself. It is a library that cannot be built, not a fence, so it is
+    refused by name rather than left to a RecursionError with no part in it.
+    """
+    for piece in contained:
+        if not piece.part_id:
+            _resolve_contained(piece.contains, library, uses, where, ancestry)
+            continue
+        if piece.part_id in ancestry:
+            raise ValueError(
+                f"{where}: part {piece.part_id!r} contains itself through "
+                f"{' -> '.join(ancestry)}, so the panel's member list has no end"
+            )
+        part = library.latest_active(piece.part_id)
+        if part is None:
+            raise ValueError(
+                f"{where}: contained piece {piece.key!r} names part "
+                f"{piece.part_id!r}, which has no active version — the panel "
+                "would place a member nothing says anything about"
+            )
+        piece.role = part.type
+        piece.contains = [c.model_copy(deep=True) for c in part.contains]
+        uses[part.id] = PartUse(part_id=part.id, version=part.version,
+                                content_hash=content_hash(part))
+        _resolve_contained(piece.contains, library, uses, where,
+                           (*ancestry, part.id))
 
 
 def library_at(library: PartLibrary, snapshot: list[PartUse]) -> PartLibrary:
