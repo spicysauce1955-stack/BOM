@@ -31,6 +31,14 @@ REGENERATING: run this module as a script —
 — and read the diff. A change here is a change to what every existing job costs;
 if you cannot explain each line of the diff, the change is wrong. Never
 regenerate to make a red test green.
+
+ADDING a fixture is the one safe kind of regeneration, and it is safe only
+because the rewrite proves itself: every existing file is written again and git
+reports no change to any of them. `kit.json` arrived that way with containment
+(build order item 10) — a kit shipping two of the four hinges its panel wants, so
+each bay buys two. It exists because every fixture here was a model that
+contained nothing, which left the one shape where "what you buy" and "what you
+place" stop being the same list outside the net that catches drift in it.
 """
 
 from __future__ import annotations
