@@ -33,6 +33,7 @@ from fenceai.fencemodel.model import (
     AssemblyStep, Distributed, Eligibility, EligibleItem, FenceModel, FixingRule,
     FrameSlot,
     FromBottom, FromTop, InfillSpec, Member, PanelSpec, PartRequirement, PostSlot,
+    Prerequisite,
 )
 from fenceai.knowledge.ast import And, Cmp, FieldRef, In, Lit, Or
 
@@ -354,7 +355,25 @@ def routed_vinyl_model(
         # curing is an instruction about the job, not about a part.
         assembly=[
             AssemblyStep(
+                key="set_posts", scope="post", bay_parts=["post", "footing"],
+                text_i18n={
+                    "en": "Set every post plumb in its footing, routed faces "
+                          "square to the line.",
+                    "he": "העמידו כל עמוד אנכית ביסוד שלו, כשהפאות המחורצות "
+                          "ניצבות לקו.",
+                }),
+            AssemblyStep(
+                key="cure", kind="installation", scope="site",
+                requires=[Prerequisite(step="set_posts", kind="after")],
+                text_i18n={
+                    "en": "Leave the post footings to cure before loading the "
+                          "panels; a routed post carries the fence from its holes.",
+                    "he": "הניחו ליסודות העמודים להתקשות לפני העמסת הפאנלים; "
+                          "עמוד מחורץ נושא את הגדר מהחורים שלו.",
+                }),
+            AssemblyStep(
                 key="rails", slots=["rail"],
+                requires=[Prerequisite(step="set_posts", kind="after")],
                 text_i18n={
                     "en": "Slide both rails through the routed holes in the posts, "
                           "channel facing in.",
@@ -363,6 +382,15 @@ def routed_vinyl_model(
                 }),
             AssemblyStep(
                 key="boards", slots=["slat"],
+                # TWO different claims, and the reason `requires` has kinds. The
+                # rails one is STRICT: a board dropped in before its top rail is a
+                # board that cannot be dropped in at all. The cure one is a
+                # MINIMUM — the boards must not go in first, but a crew filling
+                # the last bay as the first footings finish is not doing anything
+                # wrong. A prerequisite LIST could only have said "after both",
+                # which is a stronger claim than this guide makes.
+                requires=[Prerequisite(step="rails", kind="after"),
+                          Prerequisite(step="cure", kind="not_before")],
                 text_i18n={
                     "en": "Drop the boards in from above, one at a time, seating "
                           "each into the bottom channel before letting it fall "
@@ -371,12 +399,13 @@ def routed_vinyl_model(
                           "בתעלה התחתונה ורק אז מונח מתחת למסילה העליונה.",
                 }),
             AssemblyStep(
-                key="cure", kind="installation",
+                key="cap_posts", scope="post", bay_parts=["cap"],
+                requires=[Prerequisite(step="boards", kind="after")],
                 text_i18n={
-                    "en": "Leave the post footings to cure before loading the "
-                          "panels; a routed post carries the fence from its holes.",
-                    "he": "הניחו ליסודות העמודים להתקשות לפני העמסת הפאנלים; "
-                          "עמוד מחורץ נושא את הגדר מהחורים שלו.",
+                    "en": "Cap the posts last, once every bay beside them is "
+                          "filled and nothing else has to go down a post.",
+                    "he": "התקינו את הכיפות בסוף, לאחר שכל המפרשים שלצידן מלאים "
+                          "ואין עוד מה להשחיל דרך העמוד.",
                 }),
         ],
         default_spec=PanelSpec(

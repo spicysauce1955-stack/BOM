@@ -673,6 +673,28 @@ def test_every_enum_value_has_a_word_in_both_bundles():
     assert not missing, missing
 
 
+def test_every_step_scope_has_a_word_in_both_bundles():
+    """Contract obligation 12 publishes five scopes and the sheet renders three
+    of them, which is exactly the shape that goes stale: `run` and `site` have no
+    surface today, so a bundle missing their words breaks nothing until phase two
+    builds one and Hebrew starts printing the raw enum.
+
+    Asserted over the LITERAL on `AssemblyStep.scope`, so adding a sixth scope
+    fails here rather than in a screenshot."""
+    from typing import get_args
+
+    from fenceai.fencemodel.model import AssemblyStep
+
+    values = set(get_args(AssemblyStep.model_fields["scope"].annotation))
+    assert len(values) == 5, values
+    en, he = _bundles()
+    missing = sorted(
+        f"{lang}:{v}" for lang, table in (("en", en), ("he", he)) for v in values
+        if f"assembly.step_scope.{v}" not in table
+    )
+    assert not missing, missing
+
+
 def test_frontend_and_backend_enum_lexicons_agree():
     """decisions/explain.py renders Hebrew decision prose; the bundle renders
     Hebrew warnings and labels. The same value must read the same in both."""

@@ -202,10 +202,49 @@ out.sheet_escaped = assemblyPlanHtml({
   steps: [{ key: "k", kind: "assembly", text_i18n: { en: "<b>bold</b> & <img>" },
             parts: [] }],
 });
+// --- step scopes and the partial order -------------------------------------
+// A sheet is for ONE bay, so `run` and `site` steps are carried and not drawn
+// (contract obligation 12's "present-and-unrendered"), and a numbered list that
+// does not say the order was a CHOICE is the flattening obligation 11 forbids.
+const SCOPED = {
+  model_ref: "M@v1", unplaced: [],
+  unplaced_bay: [{ slot_key: "cap", role: "cap", qty: 2, belongs_to: "bay" }],
+  order: { basis: "requires", unique: false, stages: [["stand"], ["frame", "setout"]],
+           conflicts: [], concurrent: [], exclusive: [] },
+  steps: [
+    { key: "stand", kind: "assembly", scope: "post", stage: 0,
+      text_i18n: { en: "Set the posts." },
+      parts: [{ slot_key: "post", role: "post", qty: 2, belongs_to: "bay" }] },
+    { key: "frame", kind: "assembly", scope: "panel", stage: 1,
+      text_i18n: { en: "Fit the rails." },
+      parts: [{ slot_key: "rail", role: "rail", qty: 2, length_mm: 1500 }] },
+    { key: "setout", kind: "installation", scope: "run", stage: 1,
+      text_i18n: { en: "Set the line out from the corner." }, parts: [] },
+    { key: "tidy", kind: "installation", scope: "site", stage: 1,
+      text_i18n: { en: "Clean down." }, parts: [] },
+  ],
+};
+out.scoped = assemblyPlanHtml(SCOPED);
+out.authored = assemblyPlanHtml({ ...SCOPED, unplaced_bay: [],
+  order: { basis: "authored", unique: false, stages: [["stand", "frame"]] } });
+out.only = assemblyPlanHtml({ ...SCOPED, unplaced_bay: [],
+  order: { basis: "requires", unique: true, stages: [["stand"], ["frame"]] } });
+out.cyclic = assemblyPlanHtml({ ...SCOPED, unplaced_bay: [],
+  order: { basis: "requires", unique: false, stages: [["a", "b"]],
+           conflicts: [["a", "b"]], concurrent: [], exclusive: [] } });
+// an older payload has neither `order` nor `scope`: the sheet must still draw
+out.legacy_shape = assemblyPlanHtml(PLAN);
+
 out.keys = {
   unresolved: EN["bom.group_unresolved"], unplaced_prefix: EN["assembly.unplaced"].slice(0, 12),
   no_parts: EN["assembly.no_parts"],
   unassigned: EN["bom.group_unassigned"], from_stock: EN["bom.group_from_stock"],
+  order_authored: EN["assembly.order_authored"], order_choice: EN["assembly.order_choice"],
+  order_only: EN["assembly.order_only"],
+  cycle_prefix: EN["assembly.order_cycle"].slice(0, 20),
+  withheld_prefix: EN["assembly.scope_withheld"].split("{n}")[1].slice(0, 20),
+  bay_prefix: EN["assembly.unplaced_bay"].slice(0, 20),
+  scope_post: EN["assembly.step_scope.post"],
 };
 
 console.log(JSON.stringify(out));
@@ -394,3 +433,69 @@ def test_a_product_name_carries_its_own_direction(rendered):
     UI; the priced table marks the same field `dir="auto"` and the grouped copy
     dropped it."""
     assert 'dir="auto"' in rendered["plain"]
+
+
+# --- step scopes, and an order that is one of several ------------------------
+
+def test_a_run_or_site_step_is_carried_but_not_drawn_on_a_panel_sheet(rendered):
+    """Contract obligation 12: `run` and `site` are present-and-unrendered until
+    phase two. Drawing "set the whole line out" on a sheet for one bay would
+    claim a per-bay instruction that is not one; dropping it silently would make
+    the sheet disagree with the model it was rendered from, so the sheet SAYS how
+    many it withheld."""
+    html = rendered["scoped"]
+    assert 'data-step="frame"' in html and 'data-step="stand"' in html
+    assert 'data-step="setout"' not in html and 'data-step="tidy"' not in html
+    assert rendered["keys"]["withheld_prefix"] in html
+
+
+def test_a_step_that_is_not_about_the_panel_says_which_scope_it_is(rendered):
+    """A post step and a panel step read identically as sentences. The reader is
+    standing at one bay and needs to know which of the two they are looking at."""
+    assert rendered["keys"]["scope_post"] in rendered["scoped"]
+    assert 'data-scope="post"' in rendered["scoped"]
+
+
+def test_the_sheet_says_when_the_order_is_one_of_several(rendered):
+    """The failure obligation 11 names, on screen. A numbered list reads as THE
+    order; after `requires` it is one linearisation of a partial order, and a
+    fitter planning a crew around a sequence the model never claimed is the whole
+    cost of not saying so."""
+    assert rendered["keys"]["order_choice"] in rendered["scoped"]
+    assert 'data-unique="0"' in rendered["scoped"]
+
+
+def test_print_order_is_not_dressed_up_as_a_dependency(rendered):
+    """A model with no `requires` asserts nothing about its order, and the sheet
+    must not imply it did. Three distinct sentences, and this is the one that
+    would be easiest to drop into "one of several"."""
+    assert rendered["keys"]["order_authored"] in rendered["authored"]
+    assert rendered["keys"]["order_choice"] not in rendered["authored"]
+    assert 'data-order="authored"' in rendered["authored"]
+
+
+def test_a_single_valid_order_is_allowed_to_say_it_is_the_only_one(rendered):
+    assert rendered["keys"]["order_only"] in rendered["only"]
+    assert 'data-unique="1"' in rendered["only"]
+
+
+def test_a_circle_of_prerequisites_is_shown_as_a_warning(rendered):
+    """It is refused at authoring, so seeing one means an invalid draft is being
+    previewed — which is exactly the moment the author needs telling."""
+    assert rendered["keys"]["cycle_prefix"] in rendered["cyclic"]
+
+
+def test_a_bay_part_no_step_places_is_called_out_like_a_panel_member(rendered):
+    """Obligation 9's shape, one level out: a model that stands the posts and
+    forgets the caps has an incomplete procedure, and the sheet is where a fitter
+    would otherwise believe the bay finished."""
+    assert rendered["keys"]["bay_prefix"] in rendered["scoped"]
+    assert "cap" in rendered["scoped"]
+
+
+def test_a_payload_without_the_new_fields_still_renders(rendered):
+    """A plan from an older response carries no `order` and no `scope`. The sheet
+    is the whole Panel tab's last section — a throw here takes the parts table
+    and the price with it."""
+    assert 'data-step="frame"' in rendered["legacy_shape"]
+    assert rendered["keys"]["order_authored"] not in rendered["legacy_shape"]

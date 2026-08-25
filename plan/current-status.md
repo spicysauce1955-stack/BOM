@@ -1,5 +1,44 @@
 # Current status
 
+## Build-order item 11 — step scopes, and `requires` as a partial order (2026-08-25)
+
+**1839 pytest (was 1793) · 203 scenario tests.** Contract obligations 11 and 12,
+plus the post/cap/footing gap `report/assembly.py` had recorded since 2026-08-19.
+
+- **`AssemblyStep.scope`** — all five of `panel | bay | post | run | site` from
+  the start. The panel sheet renders three and says how many it withheld; `run`
+  and `site` are present-and-unrendered, which is the contract's own wording and
+  is a promise about a SURFACE, not about the data.
+- **`AssemblyStep.requires`** — typed edges (`after | not_before | before |
+  exclusive_with`), empty where the document merely prints one step after
+  another. `fencemodel/step_order.py` is the single implementation, called by
+  `validate_model` (to refuse a contradictory circle at authoring) and by
+  `report/assembly.py` (for the sequence it returns).
+- **`AssemblyStep.bay_parts`** — `post | cap | footing`. A step can finally name
+  what it sets. `assembly_plan(model, panel, bay=...)` is the different input the
+  old note said it needed.
+
+**What the read model returns for a partial order, and how it admits it.** One
+linearisation, deterministic, ties broken by authored position — plus
+`order.stages` (mutually unordered groups), `order.unique`, and `order.basis`
+(`authored` vs `requires`). Three states, three sentences on the sheet. The
+sequence is a presentation choice and the stage is the fact; a bare sorted list
+would have flattened the partial order again with an engine's authority behind
+it.
+
+**A `not_before` loop is concurrency, not a contradiction.** Only a loop carrying
+a strict edge asserts a step precedes itself. Collapsing the two would have made
+"pour both footings, then move on" unauthorable — the same flattening one level
+down.
+
+**M-VINYL now exercises all of it**: `set_posts` (post-scoped, bay parts), `cure`
+(site-scoped — carried and not drawn), `rails`, `boards` (strict on `rails`,
+`not_before` on `cure`), `cap_posts`. Its returned order is NOT its print order,
+which is the point.
+
+Details, and five things knowingly left, in `plan/open-work.md` §11.
+
+
 ## The frontend catches up: three slices, built in parallel (2026-08-25)
 
 **1780 pytest · 203 scenario tests · 237/237 browser smoke** (was 202). Three

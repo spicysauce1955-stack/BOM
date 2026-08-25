@@ -35,16 +35,71 @@ invariant is that every member is placed by exactly one step or reported
 `unplaced`.
 
 **Knowingly not done**, both recorded in `report/assembly.py`:
-* the assembly FILM still orders itself by its role heuristic. For every demo
-  model the authored order and the heuristic agree, so rewiring adds a second
-  ordering path to a well-tested feature for no observable difference. A model
-  whose order genuinely disagrees is what should motivate it.
-* the placeable vocabulary is the PANEL's slots, so no step can name a post, its
-  cap or its footing — an installation instruction about posts is prose today.
-  Closing it means giving the read model the bay's posts, a different input.
+* ~~the assembly FILM still orders itself by its role heuristic~~ — still true,
+  and now for a sharper reason than "no observable difference": see build-order
+  item 11 below.
+* ~~the placeable vocabulary is the PANEL's slots, so no step can name a post~~ —
+  DONE, build-order item 11. `AssemblyStep.bay_parts` (`post | cap | footing`)
+  and `assembly_plan(..., bay=...)`.
 * `text_i18n` is versioned with the engineering document, so fixing a typo mints
   a new product-line version. The split, if it is worth it: keep `key/kind/slots`
   on the model, move the prose to a separately versioned instruction document.
+
+## ~~11. Step scopes, and `requires` as a partial order~~ — DONE, 2026-08-25
+
+Contract obligations 11 and 12, plus the post/cap/footing gap item 2 recorded.
+`AssemblyStep.scope` (all five: `panel | bay | post | run | site`),
+`AssemblyStep.bay_parts`, `AssemblyStep.requires` as typed EDGES,
+`fencemodel/step_order.py`, `AssemblyPlan.order` / `.unplaced_bay`, and the panel
+sheet's order note. M-VINYL is the document that exercises all of it.
+
+**The decision that needed making: a partial order has no single sequence.** The
+read model returns ONE linearisation — deterministic, tie-broken by authored
+position — and publishes the SHAPE beside it so nothing has to be assumed:
+`order.stages` groups steps that are mutually unordered, `order.unique` says
+whether the sequence returned is the only valid one, and `order.basis`
+distinguishes an order the document ASSERTED from one it merely PRINTED. The
+sheet renders all three cases as three different sentences. Returning a bare
+sorted list would have re-flattened the partial order with an engine's authority
+behind it, which is the failure obligation 11 exists to name.
+
+**Cycles are refused at authoring** (`validate_model`), not discovered at render:
+the author is holding the document and can say which edge was wrong. `not_before`
+loops are NOT refused — "neither starts before the other" is concurrency, and
+refusing it makes a true statement unauthorable. `report/assembly.py` still
+renders a cyclic draft and reports the circle, because a document being typed is
+invalid by definition.
+
+**Knowingly not done, and the reasons are new:**
+* **the assembly film is still on its role heuristic**, and the case for rewiring
+  it got WEAKER rather than stronger. `animate.js` animates a whole RUN — posts
+  along the line, then each bay's members — while an assembly plan is per-panel
+  and its steps now carry scopes (`run`, `site`) the film has no vocabulary for.
+  Feeding one panel's linearisation into a run-wide reveal would need a second
+  ordering concept (how do five bays' `stage 1`s interleave?) that nothing has
+  asked for. The motivating case is unchanged: a model whose authored order and
+  the role heuristic genuinely disagree.
+* **`footing` is nameable and not yet countable.** `bay_parts_from_posts` inverts
+  `ElevationPost`, which is a drawing rectangle carrying no `mounting`, so a step
+  naming `footing` places nothing — honestly, the same way a step naming a slot
+  only a variant has does. The seam is one function wide: a caller holding the
+  run's own `Post` objects (which DO carry `mounting`) builds the row and every
+  reader downstream gets it. That caller does not exist yet because
+  `preview_panel` builds a `Strategy` with no posts at all.
+* **`unplaced_bay` is opt-in**, populated only once a model names a bay part
+  anywhere. Assumption, stated rather than buried: a document that says nothing
+  about the bay is not making an INCOMPLETE claim about it. Reporting every
+  legacy model's posts as unplaced would put a warning on every sheet in the app
+  and bury the case that matters (a model that stands the posts and forgets the
+  caps). `unplaced` itself is untouched and is still obligation 9 exactly.
+* **containment is item 10 and was not built here.** When it lands, a part
+  contained inside another becomes a member like any other and joins `unplaced`
+  by the existing rule — this read model needs no new concept for it, only the
+  panel to carry them.
+* **`exclusive_with` is published, validated and rendered as a note, and nothing
+  BRANCHES on it.** A plan containing two alternatives returns both steps; no
+  surface asks which one this job is doing. Choosing needs a condition to choose
+  by, which is a `Variant`-shaped question and not an ordering one.
 
 ## ~~3. Section-scoped decisions, and commenting on one~~ — DONE, 2026-08-19
 

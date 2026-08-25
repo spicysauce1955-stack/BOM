@@ -24,6 +24,7 @@ from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
 from fenceai.fencemodel.bases import FIXING_BASES
 from fenceai.fencemodel.lengths import LENGTH_RULES
+from fenceai.fencemodel.step_order import step_order
 from fenceai.knowledge.ast import Expr, field_paths
 
 if TYPE_CHECKING:      # `parts.resolve` imports this module; the runtime imports
@@ -488,6 +489,57 @@ class Discrete(BaseModel):
 HeightSupport = Annotated[Union[Continuous, Discrete], Field(discriminator="kind")]
 
 
+# WHERE a step's work happens (contract obligation 12). Five, from the start.
+#
+#   panel — inside one panel: fit a rail, drop a board in
+#   bay   — the panel and the two posts it stands between
+#   post  — one post and what hangs off it: set it, cap it, pour its footing
+#   run   — a whole line of fence: a member threaded through several bays
+#   site  — the job: set out, cure, clean down
+#
+# `run` and `site` are published and NOT rendered on a panel sheet. That is the
+# contract's own phrasing and it is a promise about a SURFACE, not about the
+# data: the fact survives in the payload for phase two.
+StepScope = Literal["panel", "bay", "post", "run", "site"]
+
+# The bay's placeable vocabulary. Closed, and deliberately three words rather
+# than an open key space: these are not this document's slots.
+BayPartKey = Literal["post", "cap", "footing"]
+
+
+class Prerequisite(BaseModel):
+    """One EDGE of the step order, with its kind — never list position.
+
+    Contract obligation 11. List order is a printing decision; a dependency is a
+    claim about the world, and the two are not the same thing. Flattening the
+    second into the first loses the negative and the maximum edges entirely,
+    which is why there are four kinds and not one:
+
+      after           this step follows the named one. The ordinary edge, and a
+                      STRICT one: the named step is finished first.
+      not_before      this step does not START before the named one. A minimum,
+                      not an ordering — the two may be done together, so two
+                      steps each `not_before` the other are CONCURRENT rather
+                      than a contradiction.
+      before          this step precedes the named one. A maximum: the same edge
+                      seen from the other end, which matters because a document
+                      states it from the end it states it from ("bolt the
+                      brackets on before you stand the post") and rewriting it
+                      as the named step's `after` puts words in that step's
+                      mouth.
+      exclusive_with  these two steps are ALTERNATIVES: a build does one or the
+                      other, never both. The negative edge. It constrains no
+                      order at all, which is precisely why a prerequisite LIST
+                      cannot hold it.
+
+    `step` names another step's `key`. Naming a key this model does not have, or
+    naming itself, is refused at authoring — see `_assembly_step_errors`.
+    """
+
+    step: str
+    kind: Literal["after", "not_before", "before", "exclusive_with"] = "after"
+
+
 class AssemblyStep(BaseModel):
     """One thing a person does, in the order they do it.
 
@@ -502,11 +554,18 @@ class AssemblyStep(BaseModel):
     the footings cure overnight" places no part and is exactly the kind of
     instruction the second half of that roadmap line is about.
 
-    The placeable vocabulary is the PANEL's own slots — frame, infill, fixings.
-    A post, its cap and its footing belong to the bay rather than to the panel,
-    so no step can name one today: an installation step about posts is prose,
-    which is a real limitation and not the distinction above doing its job.
-    `report/assembly.py` records what closing it would take.
+    There are TWO placeable vocabularies, because there are two things a step can
+    be about. `slots` names this panel's own members — frame, infill, fixings.
+    `bay_parts` names what stands beside the panel: the post, its cap, its
+    footing. They stay separate rather than sharing one key space because they
+    have different owners: a slot key is this document's, and which post stands
+    at a station is the RUN's answer. Collapsing them would let a model claim
+    authority it does not have, and would make `unplaced` — the panel's own
+    invariant, contract obligation 9 — quietly start reporting the bay.
+
+    A step is still refused for placing NOTHING while calling itself `assembly`;
+    it may now satisfy that by naming a bay part, which is what "set the posts
+    plumb in concrete" always needed and never had.
 
     `text_i18n` follows `name_i18n`'s precedent — expert-authored prose, not a UI
     string, so it is not key-checked against the locale bundles; the surface
@@ -515,7 +574,28 @@ class AssemblyStep(BaseModel):
 
     key: str
     kind: Literal["assembly", "installation"] = "assembly"
+    # WHERE the work happens. All five of the contract's scopes exist from the
+    # start (obligation 12) rather than the two a panel sheet can draw: 44-51% of
+    # steps in real installation guides are neither panel nor bay, and a rail
+    # threaded through an intermediate post belongs to no bay at all. `run` and
+    # `site` are PRESENT-AND-UNRENDERED — published here, carried by the read
+    # model, and skipped by the panel sheet, which is a surface for one bay.
+    # Dropping them at authoring would lose the fact; rendering them on a panel
+    # sheet would claim a per-bay instruction that is not one.
+    scope: StepScope = "panel"
+    # The PANEL's placeables: this model's own slot keys.
     slots: list[str] = []
+    # The BAY's placeables: what stands beside the panel rather than inside it.
+    # A closed vocabulary, not a key, because a bay's posts are settled by the
+    # RUN and never by this document — the model can say "set the posts" without
+    # being able to say WHICH posts, and that is exactly the right amount of
+    # authority for a product line to have over a job.
+    bay_parts: list[BayPartKey] = []
+    # The step order as a PARTIAL order (obligation 11). Empty means this step
+    # asserts no dependency — NOT that it may go anywhere, and not that the step
+    # printed above it comes first. Two guides in the corpus deny their own print
+    # order outright, so an author who means "after the rails" has to say it.
+    requires: list[Prerequisite] = []
     text_i18n: dict[str, str] = {}
 
 
@@ -1181,18 +1261,29 @@ def _assembly_step_errors(model: FenceModel) -> list[str]:
     errors: list[str] = []
     seen_keys: set[str] = set()
     placed_by: dict[str, str] = {}
+    bay_placed_by: dict[str, str] = {}
+    step_keys = {step.key for step in model.assembly}
     for step in model.assembly:
         if step.key in seen_keys:
             errors.append(
                 f"assembly step {step.key}: two steps share this key, so a "
                 f"reference to it names both")
         seen_keys.add(step.key)
-        if step.kind == "assembly" and not step.slots:
+        if step.kind == "assembly" and not step.slots and not step.bay_parts:
             errors.append(
                 f"assembly step {step.key}: an assembly step fits parts and this "
                 f"one names none. An instruction that is only text is a doc, and "
                 f"a fence model is not a document — if it fits nothing, it is an "
                 f"installation step and should say so")
+        if step.scope == "panel" and step.bay_parts:
+            # Not pedantry about a word. A post is not in the panel, so a
+            # panel-scoped step claiming one is a step whose declared scope and
+            # declared placeables disagree — and `scope` is what decides where
+            # the instruction gets rendered.
+            errors.append(
+                f"assembly step {step.key}: it is scoped to the panel and names "
+                f"{', '.join(step.bay_parts)}, which stand outside the panel. "
+                f"Give it scope bay, post, run or site")
         for slot in step.slots:
             if slot not in known:
                 errors.append(
@@ -1206,6 +1297,67 @@ def _assembly_step_errors(model: FenceModel) -> list[str]:
                     f"naming it is a contradiction, not an ordering")
             else:
                 placed_by[slot] = step.key
+        for part in step.bay_parts:
+            if part in bay_placed_by:
+                errors.append(
+                    f"assembly step {step.key}: the bay's {part} is already "
+                    f"placed by step {bay_placed_by[part]}. A part is fitted "
+                    f"once — two steps naming it is a contradiction, not an "
+                    f"ordering")
+            else:
+                bay_placed_by[part] = step.key
+        for req in step.requires:
+            if req.step == step.key:
+                errors.append(
+                    f"assembly step {step.key}: it requires itself, which no "
+                    f"build can satisfy")
+            elif req.step not in step_keys:
+                errors.append(
+                    f"assembly step {step.key}: requires {req.step}, and this "
+                    f"model has no step by that key — the edge would constrain "
+                    f"nothing, which is not what stating it meant")
+    errors += _step_order_errors(model.assembly)
+    return errors
+
+
+def _step_order_errors(steps: list[AssemblyStep]) -> list[str]:
+    """Cycles, refused HERE rather than discovered at render.
+
+    `requires` can express a loop — "rails after boards, boards after rails" —
+    and a loop has no valid sequence at all. The author is the only person who
+    can say which edge was wrong, and they are looking at the document right now;
+    the fitter holding the sheet three weeks later is not. So the refusal belongs
+    at authoring, which is the same call `_post_namespace_errors` makes about the
+    cycle rule it guards, for the same reason.
+
+    A `not_before` loop is NOT refused: two steps each declining to start before
+    the other is the document saying they happen together. Only a loop carrying a
+    strict `after`/`before` edge asserts that a step precedes itself.
+
+    An `exclusive_with` pair that is also ORDERED is refused too. "Do one or the
+    other" and "do this one after that one" cannot both be true of the same two
+    steps, and shipping the pair would leave every reader to guess which half the
+    author meant.
+    """
+    order = step_order(steps)
+    errors = [
+        f"assembly steps {', '.join(group)}: these require each other in a "
+        f"circle, so no build can satisfy them. One of the edges is the wrong "
+        f"way round"
+        for group in order.conflicts
+    ]
+    ordered_pairs = {
+        (a, b)
+        for step in steps for req in step.requires
+        for a, b in ([(req.step, step.key)] if req.kind in ("after", "not_before")
+                     else [(step.key, req.step)] if req.kind == "before" else [])
+    }
+    for a, b in order.exclusive:
+        if (a, b) in ordered_pairs or (b, a) in ordered_pairs:
+            errors.append(
+                f"assembly steps {a}, {b}: they are declared alternatives AND "
+                f"ordered against each other. A build does one of two "
+                f"alternatives, so there is no order between them to state")
     return errors
 
 

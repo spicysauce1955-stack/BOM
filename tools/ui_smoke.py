@@ -1393,29 +1393,64 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
     n: li.length,
     kinds: li.map(x => x.dataset.kind),
     keys: li.map(x => x.dataset.step),
+    scopes: li.map(x => x.dataset.scope),
+    stages: li.map(x => x.dataset.stage),
+    order: host.querySelector('[data-order]')?.dataset.order || '',
+    unique: host.querySelector('[data-unique]')?.dataset.unique || '',
     text: host.textContent,
     unplaced: host.querySelectorAll('.warning').length,
   };
 })()""")
+        # The order the model's own PREREQUISITES imply, not the order it prints
+        # them in (contract obligation 11): `cure` is authored SECOND and is not
+        # here at all, because it is site-scoped. `cap_posts` is last because it
+        # says so, not because it is last in the list.
         check("the panel says how it goes together, in order",
-              steps is not None and steps["keys"] == ["rails", "boards", "cure"]
-              and steps["kinds"] == ["assembly", "assembly", "installation"])
+              steps is not None
+              and steps["keys"] == ["set_posts", "rails", "boards", "cap_posts"]
+              and steps["kinds"] == ["assembly"] * 4)
+        # Obligation 12, on screen. A sheet is for ONE bay: a `site` step is
+        # carried by the payload (asserted below, from the document itself) and
+        # drawn by nothing here, and the sheet SAYS it withheld one rather than
+        # quietly disagreeing with the model it rendered.
+        check("a step about the site is carried and not drawn on a panel sheet",
+              steps["scopes"] == ["post", "panel", "panel", "post"]
+              and "cure" not in steps["keys"])
+        # Obligation 11's real cost, on screen. A numbered list reads as THE
+        # order; this one is a linearisation of a partial order — `cure` and
+        # `rails` both wait only on `set_posts` — and a fitter planning a crew
+        # around a sequence the model never claimed is what saying so prevents.
+        check("the sheet admits the order is one of several",
+              steps["order"] == "requires" and steps["unique"] == "0"
+              and steps["stages"] == ["0", "1", "2", "3"])
         # Asserted POSITIVELY. `unplaced == 0` is the absence of a warning, which
         # is equally absent when the branch that would render it is deleted — a
         # check that passes against the feature removed. What the sheet claims is
         # that its steps fit exactly the panel's parts, so compare the two.
         fitted = c.js("""
 (() => {
-  const steps = [...document.querySelectorAll('#panel-assembly li.step .sku')]
-    .map(x => x.textContent.trim());
-  const rows = [...document.querySelectorAll('#panel-parts tr[data-slot]')]
-    .map(r => r.dataset.slot);
-  return { steps, rows,
-           warned: document.querySelectorAll('#panel-assembly .warning').length };
+  const named = (sel) => [...document.querySelectorAll(sel)].map(x => x.textContent.trim());
+  return {
+    panel: named('#panel-assembly li.step[data-scope="panel"] .sku'),
+    bay: named('#panel-assembly li.step[data-scope="post"] .sku'),
+    rows: [...document.querySelectorAll('#panel-parts tr[data-slot]')]
+      .map(r => r.dataset.slot),
+    warned: document.querySelectorAll('#panel-assembly .warning').length,
+  };
 })()""")
+        # Split by SCOPE, because there are now two vocabularies and one owner
+        # each. The panel-scoped steps must fit exactly the panel's own parts —
+        # unchanged, and still asserted positively, since `warned == 0` is equally
+        # true when the branch that renders the warning is deleted.
         check("the steps fit exactly the parts the panel is made of",
-              sorted(fitted["steps"]) == sorted(fitted["rows"])
-              and len(fitted["steps"]) > 0 and fitted["warned"] == 0)
+              sorted(fitted["panel"]) == sorted(fitted["rows"])
+              and len(fitted["panel"]) > 0 and fitted["warned"] == 0)
+        # And the half that was prose until now: a post and its cap are elements
+        # of the BAY, so they are named by a post-scoped step and appear in no
+        # panel parts row. "Set the posts plumb" is data.
+        check("an instruction about the posts NAMES them instead of being prose",
+              sorted(fitted["bay"]) == ["cap", "post"]
+              and not set(fitted["bay"]) & set(fitted["rows"]))
         # Expert prose, in the reader's language rather than through t() —
         # asserted against the MODEL's own `text_i18n` rather than against a word
         # copied out of it. A single word proves too little and breaks too
@@ -1429,17 +1464,30 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
 (async () => {
   const doc = await (await fetch('/api/fence-models/M-VINYL/1')).json();
   const text = document.getElementById('panel-assembly').textContent;
-  const authored = (doc.assembly || []).map(s => s.text_i18n || {});
+  const all = doc.assembly || [];
+  const drawn = all.filter(s => !['run', 'site'].includes(s.scope || 'panel'));
+  const held = all.filter(s => ['run', 'site'].includes(s.scope || 'panel'));
   return {
-    steps: authored.length,
-    missing: authored.map(x => x.he).filter(s => s && !text.includes(s)),
-    leaked: authored.map(x => x.en).filter(s => s && text.includes(s)),
+    steps: drawn.length,
+    missing: drawn.map(x => (x.text_i18n || {}).he).filter(s => s && !text.includes(s)),
+    leaked: all.map(x => (x.text_i18n || {}).en).filter(s => s && text.includes(s)),
+    // present-and-unrendered, proved BOTH ways: the document carries it and the
+    // sheet does not print it. Either half alone is satisfied by dropping it.
+    held: held.length,
+    held_drawn: held.map(x => (x.text_i18n || {}).he).filter(s => s && text.includes(s)),
   };
 })()""")
         check("every authored instruction is on the sheet, in the reader's language",
-              prose is not None and prose["steps"] == 3
+              prose is not None and prose["steps"] == 4
               and not prose["missing"] and not prose["leaked"],
               prose and f"missing={len(prose['missing'])} leaked={len(prose['leaked'])}")
+        # Obligation 12 as a property of the DOCUMENT and the SHEET together.
+        # `held == 1` alone would pass if the sheet drew it; `held_drawn == []`
+        # alone would pass if the model had lost the step. Both, or neither
+        # proves anything.
+        check("a run- or site-scoped step is present in the model and unrendered here",
+              prose["held"] == 1 and not prose["held_drawn"],
+              prose and f"held={prose['held']} drawn={len(prose['held_drawn'])}")
         c.shot("18c-panel-vinyl.png")
 
         # the panel is priced from the model, not from a fixed shape: M-LEGACY's

@@ -338,6 +338,14 @@ function assemblyHtml() {
 }
 
 
+// The scopes a PANEL sheet can render. `run` and `site` steps are carried by the
+// read model and deliberately not drawn here — contract obligation 12's
+// "present-and-unrendered". Filtering them out is not dropping them: the sheet
+// says how many it withheld, and the payload still has every one. A sheet for
+// one bay that printed "set out the whole run" would be claiming a per-bay
+// instruction that is not one, and phase two is what gives those a surface.
+const SHEET_SCOPES = ["panel", "bay", "post"];
+
 export function assemblyPlanHtml(plan) {
   // `null` is "this line states no order"; a plan always has at least one step,
   // because it is built one-for-one from a non-empty `assembly`. The second half
@@ -346,8 +354,12 @@ export function assemblyPlanHtml(plan) {
   if (!plan) return "";
   const said = (step) => step.text_i18n[currentLocale()]
     || step.text_i18n.en || Object.values(step.text_i18n)[0] || "";
-  const rows = plan.steps.map((step, i) => `
-    <li class="step" data-step="${esc(step.key)}" data-kind="${esc(step.kind)}">
+  const scopeOf = (step) => step.scope || "panel";
+  const shown = plan.steps.filter((step) => SHEET_SCOPES.includes(scopeOf(step)));
+  const withheld = plan.steps.length - shown.length;
+  const rows = shown.map((step) => `
+    <li class="step" data-step="${esc(step.key)}" data-kind="${esc(step.kind)}"
+        data-scope="${esc(scopeOf(step))}" data-stage="${esc(String(step.stage || 0))}">
       <div dir="auto">${esc(said(step))}</div>
       ${step.parts.length
         // `qty` is a COUNT of members — `StepPart` carries no unit, and its
@@ -359,6 +371,8 @@ export function assemblyPlanHtml(plan) {
             esc(p.slot_key)}</span> ×<span class="num">${esc(String(p.qty))}</span>${
             p.length_mm == null ? "" : ` · ${esc(fmtLen(p.length_mm))}`}`).join(" · ")}</div>`
         : `<div class="meta">${esc(t("assembly.no_parts"))}</div>`}
+      ${scopeOf(step) === "panel" ? ""
+        : `<div class="meta step-scope">${esc(t("assembly.step_scope." + scopeOf(step)))}</div>`}
     </li>`).join("");
   // a part no step fits is REPORTED: a sheet that omits it reads as a finished
   // panel to the person holding it
@@ -366,10 +380,52 @@ export function assemblyPlanHtml(plan) {
     ? `<div class="warning">${sentence("assembly.unplaced", {
         slots: plan.unplaced.map((p) => p.slot_key).join(", ") })}</div>`
     : "";
+  // the bay's own invariant, and it is only asserted once the model has started
+  // naming bay parts at all — see `report/assembly.py`
+  const missedBay = (plan.unplaced_bay || []).length
+    ? `<div class="warning">${sentence("assembly.unplaced_bay", {
+        parts: plan.unplaced_bay.map((p) => p.slot_key).join(", ") })}</div>`
+    : "";
+  const held = withheld
+    ? `<div class="meta">${sentence("assembly.scope_withheld", { n: withheld })}</div>`
+    : "";
   return `<div class="panel" id="panel-assembly">
     <h3>${esc(t("assembly.sheet_title"))}</h3>
     <div class="meta">${esc(t("assembly.sheet_hint"))}</div>
-    ${missed}<ol class="steps">${rows}</ol></div>`;
+    ${orderNoteHtml(plan.order)}
+    ${missed}${missedBay}<ol class="steps">${rows}</ol>${held}</div>`;
+}
+
+
+/** What the numbered list does NOT say on its own.
+ *
+ *  A list reads as "the order". After contract obligation 11 it is one
+ *  linearisation of a partial order, and a reader who is not told that will plan
+ *  a crew around a sequence the model never claimed. So the sheet says which of
+ *  three things it is showing: print order that asserts nothing, one valid order
+ *  of several, or the single order the prerequisites allow.
+ *
+ *  Defensive about a missing `order`: a plan rendered from an older payload has
+ *  none, and a sheet that threw would take the whole Panel tab with it. */
+function orderNoteHtml(order) {
+  if (!order || !order.stages) return "";
+  const note = order.basis !== "requires" ? "assembly.order_authored"
+    : order.unique ? "assembly.order_only"
+    : "assembly.order_choice";
+  const keys = (groups) => groups.map((g) => g.join(", ")).join(" · ");
+  // a circle is REFUSED at authoring, so seeing one here means an invalid draft
+  // is being previewed — which is exactly when the reader needs telling
+  const cycles = (order.conflicts || []).length
+    ? `<div class="warning">${sentence("assembly.order_cycle",
+        { steps: keys(order.conflicts) })}</div>` : "";
+  const either = (order.exclusive || []).length
+    ? `<div class="meta">${sentence("assembly.order_exclusive",
+        { steps: keys(order.exclusive) })}</div>` : "";
+  const together = (order.concurrent || []).length
+    ? `<div class="meta">${sentence("assembly.order_concurrent",
+        { steps: keys(order.concurrent) })}</div>` : "";
+  return `${cycles}<div class="meta" data-order="${esc(order.basis || "authored")}"
+    data-unique="${order.unique ? "1" : "0"}">${esc(t(note))}</div>${either}${together}`;
 }
 
 

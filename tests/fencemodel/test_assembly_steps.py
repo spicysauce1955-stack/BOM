@@ -18,7 +18,7 @@ from __future__ import annotations
 from fenceai.catalog.demo import demo_catalog
 from fenceai.fencemodel.model import (
     AssemblyStep, Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot,
-    InfillSpec, Member, PanelSpec, PartRequirement, validate_model,
+    InfillSpec, Member, PanelSpec, PartRequirement, Prerequisite, validate_model,
 )
 
 CATALOG = demo_catalog()
@@ -126,13 +126,120 @@ def test_a_step_may_name_a_slot_that_only_a_VARIANT_has():
     assert validate_model(model, CATALOG) == []
 
 
-def test_a_step_cannot_name_a_POST_yet():
-    """The scope, pinned in code rather than only in prose. The placeable
-    vocabulary is the panel's own slots; a post belongs to the bay. So an
-    instruction about posts is currently prose, which is a genuine limitation of
-    this schema and NOT the assembly/installation distinction working — a test
-    that let it pass silently would let the limitation be forgotten."""
+def test_a_post_is_not_a_SLOT_of_the_panel_even_now_that_a_step_can_name_one():
+    """The two vocabularies stay two. `slots` is this document's own key space
+    and a post has never been in it; naming one there is still a typo, and it
+    still has to be refused, or `unplaced` starts reporting a member the panel
+    does not have. `bay_parts` is the door that opened — see below."""
     model = _model(AssemblyStep(key="stand", slots=["post"]))
-    model.post = None       # even a model that HAS one could not name it
+    model.post = None       # even a model that HAS one cannot name it HERE
     errs = validate_model(model, CATALOG)
     assert any("post" in e for e in errs)
+
+
+def test_a_step_CAN_now_name_the_bays_post_its_cap_and_its_footing():
+    """The gap `report/assembly.py` recorded and this closes: "set the posts
+    plumb in concrete" used to be prose, because the placeable vocabulary was the
+    panel's slots and a post is not one. It is now data — and, because it names
+    parts, an `assembly` step rather than an `installation` one."""
+    model = _model(
+        AssemblyStep(key="stand", scope="post", bay_parts=["post", "footing"]),
+        AssemblyStep(key="cap", scope="post", bay_parts=["cap"]),
+        AssemblyStep(key="frame", slots=["rail"]))
+    assert validate_model(model, CATALOG) == []
+
+
+def test_a_panel_scoped_step_may_not_claim_the_bays_parts():
+    """`scope` decides where an instruction is rendered, so a step scoped to the
+    panel while naming the post outside it is a document disagreeing with
+    itself — and the sheet would print a post instruction as a panel one."""
+    errs = validate_model(_model(
+        AssemblyStep(key="stand", bay_parts=["post"])), CATALOG)
+    assert any("stand" in e and "scope" in e for e in errs)
+
+
+def test_two_steps_cannot_both_place_the_bays_post():
+    """The same rule slots have, one level out. A part is fitted once; two steps
+    naming it is a contradiction rather than an ordering."""
+    errs = validate_model(_model(
+        AssemblyStep(key="a", scope="post", bay_parts=["post"]),
+        AssemblyStep(key="b", scope="post", bay_parts=["post"])), CATALOG)
+    assert any("already placed by step a" in e for e in errs)
+
+
+def test_all_five_scopes_are_authorable_from_the_start():
+    """Contract obligation 12. `run` and `site` are published and rendered by
+    nothing until phase two — dropping them at authoring instead would lose the
+    fact rather than defer its surface, and 44-51% of steps in real installation
+    guides are neither panel nor bay."""
+    for scope in ("panel", "bay", "post", "run", "site"):
+        model = _model(AssemblyStep(
+            key="s", scope=scope, kind="installation",
+            text_i18n={"en": "Set the whole line out from the corner."}))
+        assert validate_model(model, CATALOG) == [], scope
+
+
+def test_a_prerequisite_naming_no_step_is_refused():
+    """The edge would constrain nothing, which is not what stating it meant. Left
+    to the read model it becomes a silently dropped dependency — the author
+    believes they ordered two steps and the sheet disagrees."""
+    errs = validate_model(_model(
+        AssemblyStep(key="a", slots=["rail"]),
+        AssemblyStep(key="b", slots=["slat"],
+                     requires=[Prerequisite(step="ghost")])), CATALOG)
+    assert any("ghost" in e for e in errs)
+
+
+def test_a_step_that_requires_itself_is_refused():
+    errs = validate_model(_model(
+        AssemblyStep(key="a", slots=["rail"],
+                     requires=[Prerequisite(step="a")])), CATALOG)
+    assert any("requires itself" in e for e in errs)
+
+
+def test_a_circle_of_prerequisites_is_refused_AT_AUTHORING():
+    """Where the author is, holding the document, able to say which edge was
+    wrong. Discovering it at render puts the question in front of a fitter three
+    weeks later, who cannot answer it."""
+    errs = validate_model(_model(
+        AssemblyStep(key="a", slots=["rail"],
+                     requires=[Prerequisite(step="b")]),
+        AssemblyStep(key="b", slots=["slat"],
+                     requires=[Prerequisite(step="a")])), CATALOG)
+    assert any("circle" in e for e in errs)
+
+
+def test_two_steps_the_document_says_happen_together_are_NOT_a_circle():
+    """`not_before` both ways is concurrency, not contradiction. Refusing it
+    would make a true statement about a real build unauthorable, which is the
+    flattening obligation 11 names by another name."""
+    model = _model(
+        AssemblyStep(key="a", slots=["rail"],
+                     requires=[Prerequisite(step="b", kind="not_before")]),
+        AssemblyStep(key="b", slots=["slat"],
+                     requires=[Prerequisite(step="a", kind="not_before")]))
+    assert validate_model(model, CATALOG) == []
+
+
+def test_alternatives_that_are_also_ordered_are_refused():
+    """"Do one or the other" and "do this one after that one" cannot both be true
+    of the same pair. Shipping it leaves every reader to guess which half the
+    author meant."""
+    errs = validate_model(_model(
+        AssemblyStep(key="a", slots=["rail"],
+                     requires=[Prerequisite(step="b", kind="exclusive_with"),
+                               Prerequisite(step="b", kind="after")]),
+        AssemblyStep(key="b", slots=["slat"])), CATALOG)
+    assert any("alternatives" in e for e in errs)
+
+
+def test_the_built_in_routed_model_is_valid_with_all_of_this_on_it():
+    """The demo is the only document in the repo that exercises scopes, bay parts
+    and two kinds of prerequisite at once, and it is what the browser suite
+    renders. A schema change that invalidated it would ship a built-in model the
+    app refuses."""
+    from fenceai.fencemodel.demo import M_VINYL
+    from fenceai.parts.demo import demo_parts
+    from fenceai.parts.model import PartLibrary
+
+    assert validate_model(M_VINYL, CATALOG, PartLibrary(parts=demo_parts())) == []

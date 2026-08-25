@@ -47,7 +47,11 @@ from fenceai.fencemodel.resolve import (
     select_variant,
 )
 from fenceai.fulfillment.pipeline import price_strategy
-from fenceai.report.assembly import AssemblyPlan, assembly_plan
+from fenceai.report.assembly import (
+    AssemblyPlan,
+    assembly_plan,
+    bay_parts_from_posts,
+)
 from fenceai.report.elevation import ElevationPost, PanelElevation, panel_elevation
 from fenceai.strategy.model import (
     GenerationResult, PartUse, Span, Strategy, StrategyWarning,
@@ -222,6 +226,13 @@ def preview_panel(
     drawn = panel.model_copy(deep=True)
     for slot in drawn.slots:
         slot.sku = resolved_sku.get(slot.slot_key, "")
+    # Computed once and spent twice, which is the point of hoisting it. The
+    # drawing needs the posts as rectangles; the assembly sheet needs them as
+    # PLACEABLES, so a step can say "set the posts plumb in concrete" and name
+    # what it sets. Two derivations of "which posts flank this bay" is exactly
+    # the drift a single call prevents.
+    posts = _preview_posts(model, post_sku, post_face, clear,
+                           request.height_mm, post_panel, catalog)
     return PanelPreview(
         model_ref=model.ref,
         variant_index=variant_index,
@@ -229,10 +240,7 @@ def preview_panel(
         width_mm=request.width_mm,
         clear_width_mm=clear,
         panel=panel,
-        elevation=panel_elevation(
-            drawn, clear, request.height_mm,
-            posts=_preview_posts(model, post_sku, post_face, clear,
-                                 request.height_mm, post_panel, catalog)),
+        elevation=panel_elevation(drawn, clear, request.height_mm, posts=posts),
         parts=parts,
         unsupplied=[_part(line, None) for line in priced.unresolved],
         warnings=priced.warnings + ([post_note] if post_note is not None else []),
@@ -240,7 +248,7 @@ def preview_panel(
         # resolves again against the SAME (pinned) library — idempotent, and it
         # keeps "which document is validated" one function's business rather than
         # a contract between two.
-        assembly=assembly_plan(model, panel),
+        assembly=assembly_plan(model, panel, bay=bay_parts_from_posts(posts)),
         invalid=validate_model(model, catalog, part_library),
         total_cents=priced.bom.total_cents,
     )

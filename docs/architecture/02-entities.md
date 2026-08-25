@@ -241,8 +241,15 @@ classDiagram
     class AssemblyStep {
         +str key
         +str kind
+        +StepScope scope
         +list~str~ slots
+        +list~BayPartKey~ bay_parts
+        +list~Prerequisite~ requires
         +dict text_i18n
+    }
+    class Prerequisite {
+        +str step
+        +str kind
     }
     class PanelSpec {
         +list~FrameSlot~ frame
@@ -320,6 +327,7 @@ classDiagram
 
     FenceModel *-- PanelSpec
     FenceModel *-- AssemblyStep
+    AssemblyStep *-- Prerequisite
     FenceModel *-- Variant
     Variant *-- PanelSpec
     PanelSpec *-- FrameSlot
@@ -335,6 +343,32 @@ classDiagram
     FenceModel ..> ResolvedPanel : resolve_panel(spec, ctx)
     PartRequirement ..> Part : latest_active(part_id)
 ```
+
+**A step's order is a partial order, not its list position.** `AssemblyStep.requires`
+holds EDGES with a kind — `after | not_before | before | exclusive_with` (contract
+obligation 11) — and is empty where the document merely prints one step after another.
+`after` and `before` are strict; `not_before` is a minimum, so two steps each
+`not_before` the other are CONCURRENT rather than contradictory; `exclusive_with` is the
+negative edge and constrains no order at all. `fencemodel/step_order.py` is the one
+implementation: `validate_model` calls it to refuse a contradictory circle at authoring,
+and `report/assembly.py` calls it for the sequence it returns — an authoring-time opinion
+and a render-time opinion free to disagree is exactly what one function prevents.
+
+Because a partial order has no single sequence, the read model publishes the SHAPE beside
+the sequence (`AssemblyPlan.order`: `basis`, `stages`, `unique`), so a reader can tell
+"one valid order of several" from "the only order" from "print order, which asserts
+nothing".
+
+**Two placeable vocabularies, two owners.** `slots` names this document's own panel
+members. `bay_parts` (`post | cap | footing`) names what stands beside the panel — and
+because which post stands at a station is the RUN's answer, the model names the KIND and
+`report/assembly.py` is handed the instances. `AssemblyPlan.unplaced` stays the PANEL's
+invariant exactly as contract obligation 9 defines it; `unplaced_bay` is the bay's, and is
+asserted only once a model names a bay part at all.
+
+**`scope`** is one of `panel | bay | post | run | site` (obligation 12). All five are
+authorable; the panel sheet renders the first three and leaves `run` and `site`
+present-and-unrendered until phase two.
 
 **A choice is not a model.** `FenceModelChoice` is a reference plus option answers,
 and lives in its own import-free module because `topology` and `project` both need to
