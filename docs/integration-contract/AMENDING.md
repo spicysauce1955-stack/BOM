@@ -113,6 +113,24 @@ than the conclusions every round so far.
 
 ---
 
+## 3a · An amendment filed before ratification
+
+The procedure above assumes a ratified version to amend. An amendment filed against a
+frozen-but-unratified contract — as 001 was, on the cold read before signature — is **cut
+immediately rather than batched.**
+
+Two reasons, and both are specific to that state:
+
+- **There is no in-flight work to protect.** Batching exists so a document does not move
+  under someone building against it. Before ratification, nobody is.
+- **The alternative is worse than it looks.** Ratifying with the amendment "noted as
+  pending" means both sides signing a document they have already agreed is wrong. That is
+  not a documented reservation; it is a known-false promise, and the instruction to file
+  rather than sign exists precisely to prevent it.
+
+The cold read before signature is the last cheap moment to find a defect. Treat anything it
+turns up as forcing a cut.
+
 ## 4 · When to cut a version
 
 **Cut when a batch is ready and neither side is mid-review.** Not on a schedule, not per
