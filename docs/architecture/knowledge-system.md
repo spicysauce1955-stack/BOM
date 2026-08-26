@@ -93,6 +93,42 @@ Anything that varies **along** a run is not a site condition — it is an interv
 payload on the topology, the pattern `ElevationSamplePayload` and
 `PostTiltPayload` already establish. Soil class is the likely first case.
 
+**A rule is not the only thing that asks.** A fence model's `Variant.condition`
+and a slot's `Eligibility.predicate` are AST evaluations outside the knowledge
+evaluator — product structure, not defeasible rules — and they read the same
+`site` namespace, bound into `PanelContext.condition_ctx()`, `match.panel_facts`
+and `match.post_panel_facts`. That was a hole rather than a decision: `site.*`
+was bound into every knowledge context and into no fence-model one, so a variant
+conditioned on `site.hvhz` came back `MissingField`, read as *not applicable*,
+and the bay was built to the **default spec** with nothing said. Of the three
+available behaviours that is the worst — worse than refusing the condition at
+authoring, because the model looks authored and the fence is quietly something
+else. Site conditions exist precisely so that a fence can be conditioned on the
+site, so the answer is to bind it and let the existing silence-breaker speak.
+
+Two consequences follow, and both are load-bearing:
+
+* **The post reads the same site as its bay.** A post is resolved at its own
+  station, where the bay's *width* does not exist — which is why a
+  width-conditioned variant is refused beside a post matched on
+  `panel.rail_positions_mm`. A whole-site fact does not vary between the two bays
+  a post stands between, so there **is** a right answer to give it, and
+  `_PostFacts.at` gives the same one the bay gets. A site-conditioned variant is
+  therefore admissible there, and the two agree by construction.
+* **An unknown dimension is an authoring error.** `site.hvzh` can never be
+  satisfied, so the variant is dead and the slot admits nothing — the same
+  silence, reinstated by a transposition. `validate_model` refuses a `site.` key
+  that is not a `SiteConditions` field, in the same class as a slot naming an
+  option axis the model does not declare. The known set is
+  `project.model.SITE_DIMENSIONS`, derived from the model itself rather than
+  listed twice.
+
+`site_condition_missing` covers both askers, and deliberately as ONE warning: the
+estimator's work item is a list of fields to go and fill, not one item per thing
+that wanted each. A dimension a hard constraint wanted keeps that severity — a
+hard constraint that could not be evaluated is not the same event as a variant
+that did not fire.
+
 ### A conditioned rule outranks an unconditioned one
 
 `specificity()` counts bound scope dimensions **plus the context field paths a

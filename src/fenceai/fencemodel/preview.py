@@ -86,6 +86,13 @@ class PreviewRequest(BaseModel):
     # patches no stored run; making a choice stick is authoring the model or an
     # override anchored to (run_id, station, kind), both of which already exist.
     slot_skus: dict[str, str] = {}
+    # The site the bay is imagined on, for the same reason `params` is here: the
+    # preview cannot resolve it itself (it has no project), and a variant
+    # conditioned on the site picks a DIFFERENT spec without it — so a preview
+    # that defaulted it would draw and price a panel the run does not build.
+    # `bay_preview_plan` reads it back off the run, which is where the generator
+    # recorded it. Empty is a model-scoped preview, which has no site to speak of.
+    site: dict[str, str | int | bool] = {}
 
 
 class PreviewPart(BaseModel):
@@ -195,6 +202,7 @@ def preview_panel(
             params=request.params,
             options=dict(request.options),
             slot_skus=dict(request.slot_skus),
+            site=dict(request.site),
         )
 
     # Provisional: the clear opening is measured TO the post faces, and which
@@ -370,7 +378,7 @@ def _preview_post_face(
     facts = post_panel_facts(
         model_id=model.id, height_mm=request.height_mm, vertical=request.vertical,
         rail_positions_mm=rail_positions_mm(spec, request.height_mm, request.params),
-        kind="line",
+        kind="line", site=request.site,
     )
     matched = match_eligibility(
         model.post.requirement.eligibility, catalog, facts,
@@ -475,6 +483,13 @@ def bay_preview_plan(
                     "screws_per_span": span.screws_count},
             options=_bay_options(result, span),
             slot_skus=dict(ask.slot_skus),
+            # Read back off the RUN, not off today's project: a preview of a
+            # stored bay must reproduce the fence that exists. `run.site_facts`
+            # is the same dict the generator resolved the bay's variant against,
+            # and it is already what the `site_conditions_changed` guard compares
+            # — so a bay whose site has moved is refused before it can be
+            # previewed against the wrong one.
+            site=dict(result.run.site_facts),
         ),
     )
 

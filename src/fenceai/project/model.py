@@ -90,7 +90,24 @@ class SiteConditions(BaseModel):
         aside and saying so.
         """
         return {k: v for k, v in self.model_dump().items()
-                if k != "revision" and v is not None}
+                if k in SITE_DIMENSIONS and v is not None}
+
+
+# Every dimension the `site.*` namespace can carry, derived from the model rather
+# than listed beside it: a second list is how "what may a rule ask about the
+# site" comes to have two answers, and the wrong one of the two is silent — a
+# dimension in the list and not on the model reads as `MissingField` forever, so
+# the rule that asks about it never fires and nothing says why.
+#
+# `revision` is excluded because it is not a fact about the site. It is the
+# bookkeeping that lets a derived view refuse a run generated under different
+# conditions, and a rule conditioned on it would be conditioned on how many
+# times somebody had saved the form.
+#
+# Read by `fencemodel.model` to refuse a variant or a predicate naming a `site.`
+# key that is not one of these. It is imported there DEFERRED and on purpose:
+# `project` depends on `fencemodel`, never the reverse.
+SITE_DIMENSIONS = frozenset(SiteConditions.model_fields) - {"revision"}
 
 
 class Project(BaseModel):

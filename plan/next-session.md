@@ -126,14 +126,21 @@ hypothesis becomes a fact nobody checked.
   registry, with the prose demoted to a fallback the way `message` already is.
   Deliberately NOT invented yet: a code vocabulary the Knowledge team has not agreed to is
   a second vocabulary at the boundary, which is what the freeze exists to stop.
-- **`frost_depth_mm` has no `ge=0` bound** on `SiteConditions`, so the browser is the only
-  thing refusing a negative depth. `PUT /site` accepts `-500` from anything that is not
-  that panel. One-line engine fix.
-- **`site.*` does not reach model variant conditions or eligibility predicates**
-  (`fencemodel/resolve.py`, `match.py`), so a variant conditioned on `site.hvhz` falls
-  through to the default spec silently. Decide it: bind `site` into
-  `PanelContext.condition_ctx()`, or have `validate_model` REFUSE such a condition so it
-  fails at authoring rather than at the fence.
+- ~~**`frost_depth_mm` has no `ge=0` bound**~~ — **DONE 2026-08-26.** Bounded on the
+  engine side. No upper bound: permafrost is metres deep and the figure a jurisdiction
+  publishes is not ours to cap. The sibling audit found no second hole (`revision` is
+  overwritten by the route).
+- ~~**`site.*` does not reach model variant conditions or eligibility predicates**~~ —
+  **DONE 2026-08-26, decided BIND.** Refusing the condition would have left the capability
+  missing while looking principled: site conditions exist so that a fence can be
+  conditioned on the site. `site` is bound into `PanelContext.condition_ctx()`,
+  `match.panel_facts` and `match.post_panel_facts`; `_PostFacts.at` supplies the SAME site
+  at a post's station, so a site-conditioned variant is admissible beside a routed post and
+  the spec the post is matched against is the spec its bay is built to. Where the project
+  did not answer, the existing `site_condition_missing` reports it — one warning covering
+  both askers, with a hard constraint's severity preserved. A `site.` key that is not a
+  `SiteConditions` field is an authoring error, because a typo would reinstate the exact
+  silence the binding removes. **No golden number moved.**
 - **`DEFAULT_RAILS_PER_SPAN` and `DEFAULT_SCREWS_PER_SPAN`** are silent fallbacks of
   exactly the shape `FALLBACK_MAX_SPAN_MM` has, minus the warning. Closing them moves
   golden numbers on runs that are currently green, so it wants its own change.

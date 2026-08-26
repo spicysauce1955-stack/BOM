@@ -6,7 +6,7 @@ from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
 from fenceai.parts.model import PartLibrary
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
-    PartRequirement, validate_model,
+    PartRequirement, Variant, site_condition_paths, validate_model,
 )
 
 
@@ -721,3 +721,78 @@ def test_a_predicate_no_item_in_the_catalog_covers_is_refused_at_authoring():
         _model(PanelSpec(frame=[_predicate_slot(NOTHING_IS_UNOBTAINIUM)])),
         demo_catalog())
     assert any("no item" in e.lower() for e in errs)
+
+
+# --- a condition on the site ---------------------------------------------------
+#
+# `site.*` is bound into the fence model's condition context, so a variant or a
+# predicate may read it. What it may NOT read is a dimension that does not
+# exist: the context never carries the key, `MissingField` reads as *not
+# applicable*, and the variant falls through to the default spec — the exact
+# silence the binding was built to end, reinstated by a typo.
+
+HVHZ = Cmp(cmp="==", left=FieldRef(path="site.hvhz"), right=Lit(value=True))
+HVZH = Cmp(cmp="==", left=FieldRef(path="site.hvzh"), right=Lit(value=True))
+
+
+def _variant_model(condition) -> FenceModel:
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.variants = [Variant(condition=condition,
+                              spec=PanelSpec(frame=[_slot()]))]
+    return model
+
+
+def test_a_variant_conditioned_on_a_real_site_dimension_validates_clean():
+    """The capability, pinned from the authoring side. Refusing this was the
+    alternative to binding, and it would have left the model author with no way
+    to say the one thing site conditions exist for."""
+    assert validate_model(_variant_model(HVHZ), demo_catalog()) == []
+
+
+def test_a_variant_conditioned_on_a_site_dimension_that_does_not_exist_is_refused():
+    """Same class as a slot naming an option axis the model does not declare, and
+    it fails the same way if uncaught: nothing satisfies it ever, so the variant
+    is dead and the fence is built to the default with nobody told.
+
+    The message NAMES the known dimensions, because `hvzh` is a transposition and
+    the repair is a character, not a category.
+    """
+    errs = validate_model(_variant_model(HVZH), demo_catalog())
+    assert len(errs) == 1, errs
+    assert "site.hvzh is not a site condition" in errs[0]
+    assert "site.hvhz" in errs[0]
+
+
+def test_a_predicate_reading_a_site_dimension_that_does_not_exist_is_refused():
+    """The same refusal over an eligibility predicate, which fails one level down
+    but just as quietly: the predicate admits nothing and the slot falls through
+    to the company default."""
+    predicate = And(items=[RAIL_IS_ALUMINIUM, HVZH])
+    errs = validate_model(
+        _model(PanelSpec(frame=[_predicate_slot(predicate)])), demo_catalog())
+    assert any("site.hvzh is not a site condition" in e for e in errs)
+
+
+def test_the_known_dimensions_are_SiteConditions_own_fields():
+    """One definition. A hand-written list here would go stale in the direction
+    that never fires — a dimension the model gains and this set does not is a
+    condition refused at authoring for being real."""
+    from fenceai.project.model import SITE_DIMENSIONS, SiteConditions
+
+    assert SITE_DIMENSIONS == frozenset(SiteConditions.model_fields) - {"revision"}
+    for dim in SITE_DIMENSIONS:
+        reads = Cmp(cmp="==", left=FieldRef(path=f"site.{dim}"), right=Lit(value=1))
+        assert validate_model(_variant_model(reads), demo_catalog()) == [], dim
+
+
+def test_site_condition_paths_reads_the_whole_document():
+    """Both callers depend on this being one walk: `validate_model` refuses an
+    unknown dimension and the generator reports an unanswered one, and a walk
+    that missed the post would refuse in one voice and report in the other."""
+    model = _variant_model(HVHZ)
+    model.default_spec = PanelSpec(frame=[_predicate_slot(
+        And(items=[RAIL_IS_ALUMINIUM,
+                   Cmp(cmp=">=", left=FieldRef(path="site.frost_depth_mm"),
+                       right=Lit(value=1000))]))])
+    assert site_condition_paths(model) == {"hvhz", "frost_depth_mm"}
+

@@ -1340,6 +1340,12 @@ def _post_namespace_errors(
             continue
         if head == "post" and field in POST_PREDICATE_POST_FACTS:
             continue
+        if head == "site":
+            # Not narrowed by the cycle rule and not narrowed by the station: a
+            # whole-site fact is settled before the fence is drawn. An unknown
+            # DIMENSION is still an error, and `_site_dimension_errors` reports
+            # it once for the whole document rather than once per namespace.
+            continue
         if head == "panel":
             errors.append(
                 f"slot {key} ({what}): may not read panel.{field} — the clear "
@@ -1380,6 +1386,19 @@ def _post_namespace_errors(
 _POST_TIME_CONDITION_PATHS = frozenset({"panel.height_mm", "panel.vertical"})
 
 
+def _answerable_at_a_post(path: str) -> bool:
+    """Is this condition path supplied where a POST is resolved?
+
+    The `panel` half is the closed set above. The `site` half is open, and it is
+    open for a reason rather than for convenience: a whole-site fact does not
+    vary between the two bays a post stands between, so `_PostFacts.at` supplies
+    the SAME site namespace the bay does. A site-conditioned variant therefore
+    picks the same spec at the post's station as it does in the bay — which is
+    exactly the agreement the refusal below exists to protect.
+    """
+    return path in _POST_TIME_CONDITION_PATHS or path.startswith("site.")
+
+
 def _variant_reach_errors(model: FenceModel) -> list[str]:
     """A post matched on rail positions must be matched on the RIGHT rails.
 
@@ -1400,13 +1419,16 @@ def _variant_reach_errors(model: FenceModel) -> list[str]:
         return []
     errors: list[str] = []
     for index, variant in enumerate(model.variants):
-        for path in sorted(field_paths(variant.condition) - _POST_TIME_CONDITION_PATHS):
+        unanswerable = {p for p in field_paths(variant.condition)
+                        if not _answerable_at_a_post(p)}
+        for path in sorted(unanswerable):
             errors.append(
                 f"variant {index}: its condition reads {path}, which is not known "
                 f"at a post's own station — and slot {model.post.key} is matched on "
                 f"panel.rail_positions_mm, so the post would be chosen against the "
                 f"DEFAULT spec's rails while the bay is built to this variant's. "
-                f"Readable there: " + ", ".join(sorted(_POST_TIME_CONDITION_PATHS))
+                f"Readable there: "
+                + ", ".join([*sorted(_POST_TIME_CONDITION_PATHS), "site.*"])
             )
     return errors
 
@@ -1771,6 +1793,70 @@ def _containment_errors(model: FenceModel, resolved: bool) -> list[str]:
     return errors
 
 
+def site_condition_paths(model: FenceModel) -> set[str]:
+    """Every `site.<dimension>` this document asks about.
+
+    ONE walk over the whole document — variant conditions and every eligibility
+    predicate, panel slots and the post and its cap alike — because the two
+    callers need the same answer and would otherwise each walk their own half:
+
+      * `validate_model` refuses a dimension that is not a real `SiteConditions`
+        field, the same class of authoring error as a slot naming an option axis
+        the model does not declare.
+      * the generator reports the ones the PROJECT did not answer, as
+        `site_condition_missing`, the code that already exists for exactly that.
+
+    Dimensions and not paths in the return, because both callers reason in
+    dimensions: one compares against the field set, the other against the answers
+    a project gave. A nested `site.a.b` keeps only `a`, which is what the field
+    set can speak about; there is no nesting in `SiteConditions` and a rule that
+    invents one is refused on the head it names.
+    """
+    exprs = [v.condition for v in model.variants]
+    for spec in [model.default_spec, *(v.spec for v in model.variants)]:
+        exprs += [req.eligibility.predicate for _, req in spec_requirements(spec)]
+    if model.post is not None:
+        exprs += [r.eligibility.predicate
+                  for r in (model.post.requirement, model.post.cap) if r is not None]
+    return {
+        path.split(".")[1]
+        for expr in exprs if expr is not None
+        for path in field_paths(expr)
+        if path.startswith("site.") and len(path.split(".")) > 1
+    }
+
+
+def _site_dimension_errors(model: FenceModel) -> list[str]:
+    """A condition on a site dimension that does not exist.
+
+    The same class of error as a slot naming an option axis the model does not
+    declare, and it fails the same way if it is not caught: the context never
+    carries the key, `MissingField` reads as *not applicable*, and the variant
+    falls through to the default spec — or the predicate admits nothing and the
+    slot falls through to the company default. Either way the model looks
+    authored and the fence is built to something else, which is precisely the
+    silence binding `site.*` was meant to end. Letting a typo reinstate it one
+    character at a time would be the whole feature undone.
+
+    Named dimensions, so `hvzh` is answered with `hvhz` rather than with a
+    category. `SITE_DIMENSIONS` is imported DEFERRED: `project` depends on
+    `fencemodel` (`project/model.py` imports `FenceModelChoice`), so a top-level
+    import here would invert that — and one list of the dimensions is the point,
+    since a second copy would go stale silently in the direction that never
+    fires.
+    """
+    from fenceai.project.model import SITE_DIMENSIONS
+
+    unknown = sorted(site_condition_paths(model) - SITE_DIMENSIONS)
+    return [
+        f"site.{dim} is not a site condition — a condition on it can never be "
+        f"satisfied, so the variant or slot reading it falls silently through to "
+        f"the default. Known: "
+        + ", ".join(f"site.{d}" for d in sorted(SITE_DIMENSIONS))
+        for dim in unknown
+    ]
+
+
 def validate_model(
     model: FenceModel, catalog: Catalog, library: PartLibrary | None = None
 ) -> list[str]:
@@ -1812,6 +1898,7 @@ def validate_model(
         errors += _variant_reach_errors(model)
     errors += _assembly_step_errors(model, contained_known=library is not None)
     errors += _warning_errors(model, catalog)
+    errors += _site_dimension_errors(model)
     errors += _containment_errors(model, resolved=library is not None)
 
     for axis in model.option_axes:

@@ -174,9 +174,9 @@ So the slice also adds `site_revision: int` on `GenerationRun`, extends the same
 `site_conditions_changed`.
 
 > **BUILT 2026-08-25**, except one. `SiteConditions` is on `Project`, `site.*` is
-> bound into **every** evaluation context (not only the span one — a site fact
-> that reached the bays and not the posts beside them would be a fence built to
-> two different sites), `site_revision` is stamped on the run and guards
+> bound into every **knowledge** evaluation context (not only the span one — a
+> site fact that reached the bays and not the posts beside them would be a fence
+> built to two different sites), `site_revision` is stamped on the run and guards
 > `/structure` and the section-decisions view with a `409
 > site_conditions_changed`, and the site FACTS are in the run digest, so Exposure
 > B and Exposure C are different runs rather than one run served twice.
@@ -193,6 +193,25 @@ So the slice also adds `site_revision: int` on `GenerationRun`, extends the same
 > through `PUT /api/projects/{id}/site` today, so an estimator cannot enter them
 > from the app. That is a frontend slice, not this one — but the engine reads
 > them, so nothing downstream is blocked on it.
+>
+> **"every evaluation context" was too strong, and was corrected 2026-08-26.**
+> `site.*` was bound into every context the KNOWLEDGE evaluator builds and into no
+> fence-model one, so a `Variant.condition` or an `Eligibility.predicate` reading
+> `site.hvhz` came back `MissingField`, read as *not applicable*, and the bay was
+> built to the default spec — silently. It is bound now:
+> `PanelContext.condition_ctx()`, `match.panel_facts` and
+> `match.post_panel_facts` all carry it, `_PostFacts.at` supplies the SAME site at
+> a post's station so the spec a post is matched against is the spec its bay is
+> built to, and `site_condition_missing` reports a dimension a MODEL asked about
+> and the project did not answer, beside the ones the rules asked about. A `site.`
+> key that is not a `SiteConditions` field is an authoring error
+> (`validate_model`), because a typo would reinstate exactly the silence the
+> binding removes. `docs/architecture/knowledge-system.md` §"The `site.*`
+> namespace" carries the reasoning.
+>
+> This is the shape of error worth naming: the claim was not careless, it was
+> true of the layer the slice was thinking about. Nothing checked it against the
+> other layer that evaluates the same AST, and coherence was not the test.
 
 ---
 

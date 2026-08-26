@@ -19,9 +19,10 @@ from fenceai.fencemodel.model import (
     FrameSlot, OptionValue, PanelSpec, PartRequirement, PolicyContribution, Variant,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
-from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion, SetParam
+from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import (
     ElevationSamplePayload, FenceModelPayload, HeightIntentPayload, TopLinePayload,
@@ -56,13 +57,14 @@ def _model(**kw) -> FenceModel:
                       default_spec=kw.pop("default_spec", _spec(2)), **kw)
 
 
-def _generate(model: FenceModel, topo=None, kb=None, options=None):
+def _generate(model: FenceModel, topo=None, kb=None, options=None, site=None):
     return generate(
         topo if topo is not None else straight_topology(3000),
         kb if kb is not None else demo_knowledge(),
         demo_catalog(),
         models=FenceModelLibrary(models=[model]),
         default_model=FenceModelChoice(model_id=MODEL_ID, options=options or {}),
+        site=site,
     )
 
 
@@ -169,6 +171,141 @@ def test_a_model_without_variants_emits_no_variant_node():
     candidate would be noise in every run that exists today."""
     result = _generate(_model())
     assert not [n for n in result.graph.nodes if n.action == "select_variant"]
+
+
+# --- 1b · variants conditioned on the SITE ------------------------------------
+#
+# `site.*` was bound into every KNOWLEDGE evaluation context and into no fence-
+# model one, so a variant conditioned on the site came back `MissingField`,
+# read as "not applicable", and fell through to the default spec with nothing
+# said. These pin the binding and the two ways it is allowed to be silent.
+
+HVHZ = Cmp(cmp="==", left=FieldRef(path="site.hvhz"), right=Lit(value=True))
+FROST = Cmp(cmp=">=", left=FieldRef(path="site.frost_depth_mm"),
+            right=Lit(value=1000))
+
+
+def test_a_variant_conditioned_on_the_site_selects():
+    """The defect, from the other side. Site conditions exist so that a fence can
+    be conditioned on the site; a hurricane-zone variant that could not be
+    reached made the whole capability decorative."""
+    model = _model(variants=[Variant(condition=HVHZ, spec=_spec(5))])
+    result = _generate(model, site=SiteConditions(hvhz=True))
+    assert result.strategy.spans
+    for span in result.strategy.spans:
+        assert span.panel.variant_index == 0
+        assert _rail_qty(span) == 5
+
+
+def test_the_same_model_on_a_site_that_answered_NO_builds_the_default():
+    """`False` is an ANSWER, and the run must not warn about it: the estimator
+    said this is not a hurricane zone, which is exactly what the condition was
+    asked to distinguish."""
+    model = _model(variants=[Variant(condition=HVHZ, spec=_spec(5))])
+    result = _generate(model, site=SiteConditions(hvhz=False))
+    for span in result.strategy.spans:
+        assert span.panel.variant_index is None
+        assert _rail_qty(span) == 2
+    assert not [w for w in result.strategy.warnings
+                if w.code == "site_condition_missing"]
+
+
+def test_a_site_the_project_never_answered_is_REPORTED_not_silent():
+    """The silent fall-through, named. The variant still does not fire — that is
+    the `MissingField` behaviour the whole design leans on — but the run now says
+    which dimension decided it, through the code that already existed for a
+    knowledge rule in exactly this position.
+
+    Kills: binding `site` into the context and leaving the report reading only
+    `kb.active()`, which would trade a silent wrong panel for a silent right one
+    and leave the estimator no way to learn the fence was decided by a blank
+    field.
+    """
+    model = _model(variants=[Variant(condition=HVHZ, spec=_spec(5))])
+    result = _generate(model, site=None)
+    for span in result.strategy.spans:
+        assert span.panel.variant_index is None       # not applicable, as designed
+    warned = next(w for w in result.strategy.warnings
+                  if w.code == "site_condition_missing")
+    assert warned.params["dimensions"] == "hvhz"
+    assert warned.params["n"] == 1
+    # a variant is product structure, not a limit — so this is a warning and not
+    # the error a missing HARD constraint dimension raises
+    assert warned.severity == "warning"
+
+
+def test_a_dimension_wanted_by_both_a_rule_and_a_variant_is_named_once():
+    """One list of fields to go and fill, which is the whole point of aggregating
+    the warning — and the RULE's severity survives, because a hard constraint
+    that could not be evaluated is not the same event as a variant that did not
+    fire."""
+    kb = demo_knowledge()
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-HVHZ", version=1, type="hard_constraint",
+        title="hurricane zone spans",
+        condition=HVHZ, actions=[SetParam(param="max_span_mm", value=900)]))
+    model = _model(variants=[Variant(condition=HVHZ, spec=_spec(5))])
+
+    result = _generate(model, kb=kb, site=None)
+    warned = [w for w in result.strategy.warnings
+              if w.code == "site_condition_missing"]
+    assert len(warned) == 1
+    assert warned[0].params["dimensions"] == "hvhz"
+    assert warned[0].severity == "error"      # the rule's claim, not the variant's
+
+
+def test_a_variant_on_a_dimension_nobody_asked_about_reports_only_its_own():
+    """Read off the DOCUMENTS this run drew from, so a model that asks about
+    frost depth nags about frost depth and about nothing else."""
+    model = _model(variants=[Variant(condition=FROST, spec=_spec(5))])
+    result = _generate(model, site=SiteConditions(hvhz=True))
+    warned = next(w for w in result.strategy.warnings
+                  if w.code == "site_condition_missing")
+    assert warned.params["dimensions"] == "frost_depth_mm"
+
+
+def test_an_eligibility_predicate_may_read_the_site():
+    """The second half of the binding. "This rail only where it freezes" is an
+    item-against-SITE relation, and without the namespace the predicate came back
+    `MissingField`, `_covers` read that as "has not covered the requirement", and
+    the slot admitted NOTHING — a panel that silently loses a member rather than
+    one that visibly asks for the wrong one."""
+    covered = And(items=[
+        Cmp(cmp="==", left=FieldRef(path="item.sku"), right=Lit(value="RAIL-3000")),
+        HVHZ,
+    ])
+    req = _rail_req()
+    req.eligibility = Eligibility(predicate=covered)
+    model = _model(default_spec=_spec(2, req))
+
+    on_site = _generate(model, site=SiteConditions(hvhz=True))
+    for span in on_site.strategy.spans:
+        assert _rail_members(span) == ["RAIL-3000"]
+
+    # ...and where the site answered NO the predicate is simply not satisfied,
+    # which is a slot with nothing eligible and a run that says so
+    off_site = _generate(model, site=SiteConditions(hvhz=False))
+    for span in off_site.strategy.spans:
+        assert _rail_members(span) == []
+
+
+def test_the_site_reaches_a_post_at_its_own_station_too():
+    """A site fact that reached the bays and not the posts beside them would be a
+    fence built to two different sites — the argument the knowledge binding
+    already makes, and it holds harder here: the spec a post is MATCHED against
+    must be the spec its bay is BUILT to.
+
+    Kills: binding `site` into `PanelContext.condition_ctx` and not into
+    `_PostFacts.at`, which would leave a site-conditioned variant picking the
+    variant's rails in the bay and the DEFAULT spec's rails at the post.
+    """
+    tall = _spec(9)
+    model = _model(variants=[Variant(condition=HVHZ, spec=tall)])
+    result = _generate(model, site=SiteConditions(hvhz=True))
+    node = next(n for n in result.graph.nodes if n.action == "select_variant")
+    assert node.payload["variant_index"] == 0
+    for span in result.strategy.spans:
+        assert _rail_qty(span) == 9
 
 
 # --- 2 · option axes ----------------------------------------------------------

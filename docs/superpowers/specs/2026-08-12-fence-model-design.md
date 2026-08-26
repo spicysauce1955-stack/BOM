@@ -142,6 +142,12 @@ without becoming a scripting language.
 context. "Below 1200 mm, two rails instead of three" is one `Cmp` node, and the winning
 variant becomes a decision node like everything else.
 
+That context carries two namespaces: `panel` (the bay's own facts) and `site` (the
+project's `SiteConditions.facts()`, added 2026-08-26). "In a hurricane zone, five rails"
+is the same one `Cmp` node. A `site.` key that is not a real dimension is refused by
+`validate_model` — the context would never carry it, so the variant would be dead and the
+bay built to the default spec with nobody told, which is the failure the binding closed.
+
 Precedence is **authored order, first satisfied condition wins** — deliberately not
 "specificity". Knowledge specificity is well defined as `len(scope)`
 (`knowledge/model.py:146-147`); a `Variant` has a bare `Expr` and no scope dict, so

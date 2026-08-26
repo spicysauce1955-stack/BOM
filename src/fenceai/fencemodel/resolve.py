@@ -41,12 +41,34 @@ class PanelContext(BaseModel):
     # generated run: a stored fence is built to its model and its overrides, not
     # to whatever a preview was last asked to imagine.
     slot_skus: dict[str, str] = {}
+    # What KIND of site this fence is being built on — `SiteConditions.facts()`,
+    # bound here for the same reason it is bound into every knowledge evaluation
+    # context: site conditions exist precisely so that a fence can be conditioned
+    # on the site, and a variant asking `site.hvhz` on a context that never
+    # carried it came back "not applicable" and fell through to the DEFAULT spec
+    # with nothing said. That is the worst of the three available behaviours —
+    # worse than refusing the condition at authoring, because the model looks
+    # authored and the fence is built to the wrong panel.
+    #
+    # A dict of facts and not a `SiteConditions`: this is the evaluation
+    # namespace, and an UNSET dimension has to be ABSENT rather than None or the
+    # `MissingField` hook that makes a condition not-applicable stops working.
+    # `.facts()` is the one place that omission is decided.
+    #
+    # Empty is "nobody said", which is every preview with no project behind it
+    # and every run generated before this existed — so a model with no site
+    # condition resolves exactly as it did, and the compatibility gate does not
+    # move.
+    site: dict[str, str | int | bool] = {}
 
     def condition_ctx(self) -> dict:
-        return {"panel": {
-            "width_mm": self.centre_width_mm, "height_mm": self.height_mm,
-            "vertical": self.vertical,
-        }}
+        return {
+            "panel": {
+                "width_mm": self.centre_width_mm, "height_mm": self.height_mm,
+                "vertical": self.vertical,
+            },
+            "site": self.site,
+        }
 
 
 def clear_opening_mm(centre_width_mm: Mm, face_start_mm: Mm, face_end_mm: Mm) -> Mm:

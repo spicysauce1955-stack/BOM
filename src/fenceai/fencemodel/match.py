@@ -196,13 +196,23 @@ def panel_facts(ctx: "PanelContext") -> dict:
     entry is settled BEFORE the panel is resolved — which is also the constraint
     that keeps posts resolvable later: a post's opening cannot depend on the
     opening its own face helps define.
+
+    `site` joins on the same terms and satisfies that constraint trivially: a
+    whole-site fact is settled before the fence is drawn, let alone laid out. It
+    is here because "this bracket only where it freezes" is an item-against-SITE
+    relation and there was no way to say it — the predicate came back
+    `MissingField`, `_covers` read that as "has not covered the requirement",
+    and the slot silently admitted nothing.
     """
-    return {"panel": {
-        "height_mm": ctx.height_mm,
-        "centre_width_mm": ctx.centre_width_mm,
-        "clear_width_mm": ctx.clear_width_mm,
-        "vertical": ctx.vertical,
-    }}
+    return {
+        "panel": {
+            "height_mm": ctx.height_mm,
+            "centre_width_mm": ctx.centre_width_mm,
+            "clear_width_mm": ctx.clear_width_mm,
+            "vertical": ctx.vertical,
+        },
+        "site": dict(ctx.site),
+    }
 
 
 def sole_excluding_term(
@@ -238,7 +248,7 @@ def sole_excluding_term(
 
 def post_panel_facts(
     *, model_id: str, height_mm: int, vertical: str, rail_positions_mm: list[int],
-    kind: str,
+    kind: str, site: dict | None = None,
 ) -> dict:
     """What a POST's predicate may know: the bay it stands beside, and WHERE IT
     STANDS.
@@ -272,6 +282,14 @@ def post_panel_facts(
     already reaches the BOM on its own path (`_resolve_mounting` buys the plate),
     so nothing is inexpressible without it. If a line ever does need it, resolve
     it ONCE at the call sites and pass it in — do not resolve it twice.
+
+    `site` is the third namespace, and the cycle rule does not narrow it at all:
+    a whole-site fact is settled before the fence is drawn, so it cannot depend
+    on the post it helps choose. `None` is a caller with no site — every preview,
+    and every run generated before site conditions existed — and it supplies an
+    EMPTY namespace rather than no namespace, so the two cases stay one shape.
+    What makes an unanswered dimension not-applicable is that dimension's
+    ABSENCE from the dict (`SiteConditions.facts`), never the dict's own.
     """
     return {
         "panel": {
@@ -281,6 +299,7 @@ def post_panel_facts(
             "rail_positions_mm": rail_positions_mm,
         },
         "post": {"kind": kind},
+        "site": dict(site or {}),
     }
 
 
