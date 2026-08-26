@@ -22,6 +22,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fenceai.catalog.model import Catalog
 from fenceai.core.units import Mm
+from fenceai.core.warnings import (
+    ANNEXE_SCOPES, DocumentWarning, warning_errors,
+)
 from fenceai.fencemodel.bases import FIXING_BASES
 from fenceai.fencemodel.lengths import CONTINUITY_JOINS, LENGTH_RULES
 from fenceai.fencemodel.step_order import step_order
@@ -706,6 +709,19 @@ class FenceModel(BaseModel):
     # is: the assembly film then falls back to its role-based build order, which
     # is what every model shipped before this had.
     assembly: list[AssemblyStep] = []
+    # What this document WARNS, in the publisher's own words (contract obligation
+    # 10). Beside `assembly` rather than inside it because 68% of the corpus's
+    # warnings are about the whole document and only 19.9% sit inside a step that
+    # does something — a list hanging off `AssemblyStep` could hold one warning
+    # in five and would misattribute the rest. Where each one renders is
+    # `attaches_to`'s answer and `report/annexe.py`'s to give; a `document`,
+    # `warranty` or `maintenance` warning renders ONCE, in the plan's annexe,
+    # and never on a line.
+    #
+    # Not `StrategyWarning`: that type is a closed `code` whose sentence we owe
+    # in both locale bundles, and this one is somebody else's sentence carried
+    # verbatim. `core/warnings.py` holds the split and the reason.
+    warnings: list[DocumentWarning] = []
 
     @property
     def ref(self) -> str:
@@ -1494,6 +1510,48 @@ def _assembly_step_errors(model: FenceModel, contained_known: bool) -> list[str]
     return errors
 
 
+def _warning_errors(model: FenceModel, catalog: Catalog) -> list[str]:
+    """A quoted warning that cannot be placed, refused while the author holds it.
+
+    The type's own rules — text, language, params-without-a-code, an annexe kind
+    naming a line — are `core.warnings.warning_errors`, shared with the snapshot
+    door because they are properties of the type and not of the door it came in
+    by. What is added here is the half only this document can answer: whether the
+    thing it points at exists.
+
+    **Why a broken ref is refused here rather than reported at render.** The
+    alternative was live for a while and is worse: `report/annexe.py` counts a
+    warning whose target is not in the plan as `not_in_plan` and says nothing,
+    because a warning about a sku this fence does not buy genuinely belongs to
+    another job. That is the right rule for a plan, and it makes a MISTYPED step
+    key indistinguishable from another document's warning — silently, on every
+    job built to this model. The author is the one person who can tell the
+    difference, and they are holding the document.
+    """
+    errors = warning_errors(model.warnings, where=f"model {model.id}")
+    step_keys = {step.key for step in model.assembly}
+    for i, w in enumerate(model.warnings):
+        label = f"model {model.id} warning {i}"
+        kind, ref = w.attaches_to.kind, w.attaches_to.ref
+        if kind in ANNEXE_SCOPES or not ref:
+            continue
+        if kind == "step" and ref not in step_keys:
+            errors.append(
+                f"{label}: attaches to step {ref!r} and this model has no step "
+                f"by that key — the warning would be carried on every job and "
+                f"rendered on none")
+        elif kind == "product" and ref not in catalog.products:
+            errors.append(
+                f"{label}: attaches to product {ref!r}, which is not in the "
+                f"catalog. A warning about a sku nothing can buy reaches no line")
+        elif kind == "model" and ref not in (model.ref, model.id):
+            errors.append(
+                f"{label}: attaches to model {ref!r} and this is {model.ref}. A "
+                f"document warns about itself; warning about another line is a "
+                f"claim this document has no standing to make")
+    return errors
+
+
 def _step_order_errors(steps: list[AssemblyStep]) -> list[str]:
     """Cycles, refused HERE rather than discovered at render.
 
@@ -1753,6 +1811,7 @@ def validate_model(
         errors += _post_slot_errors(model.post, catalog)
         errors += _variant_reach_errors(model)
     errors += _assembly_step_errors(model, contained_known=library is not None)
+    errors += _warning_errors(model, catalog)
     errors += _containment_errors(model, resolved=library is not None)
 
     for axis in model.option_axes:

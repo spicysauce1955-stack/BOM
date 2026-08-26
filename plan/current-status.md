@@ -1,5 +1,135 @@
 # Current status
 
+## Item 8 — the warning model, and the annexe (2026-08-26)
+
+**2056 pytest · 268 scenario tests · 248/248 browser smoke · contract hashes OK**
+(was 1981 · 259 · 241/241). The last substantial build-order item this repo can
+verify end to end. Contract obligation 10 and §3.3.5; items 6 and 7 remain off
+the table until the Knowledge Platform publishes something.
+
+**The census is the design.** 1,038 warning instances across the corpus resolve
+to 226 distinct warnings, and only **19.9% sit inside a step that does
+something** — about 68% are document-scoped (the front safety box, "BEFORE YOU
+BEGIN", a freeze-thaw footnote at the foot of fourteen pages), 9.4% product- or
+certification-scoped, 2.7% warranty-scoped. v0.1's "a warning is attached to its
+step" therefore publishes one warning in five and misattributes the rest. So
+`attaches_to` is not metadata: it decides whether a reader meets a sentence once,
+in the annexe, or eighty-three times on eighty-three lines.
+
+- **`core/warnings.py` — `DocumentWarning`, and the SPLIT.** Two registries with
+  opposite rules, now named in CLAUDE.md. A platform warning is a closed `code`
+  whose sentence we owe in both bundles; a quoted warning is `text_raw` + `lang`
+  carried verbatim, `severity_lexeme` unnormalised (`CAUTION` and `WARNING` carry
+  different legal weight), the publisher's own `code` carried and never rendered,
+  and no locale entry at all. The old undivided rule failed exactly where it was
+  most confidently applied: a `text` fallback is BY DEFINITION the case with no
+  code, so "every code in both bundles" could never say anything about it.
+- **`cites` is OPTIONAL, against this repo's own spec, and the departure is the
+  finding.** `docs/superpowers/specs/2026-08-23-bom-engine-design.md` declared it
+  required. It cannot be: §1.1 makes `SourceRef.id` opaque and forbids building
+  one, so a curator authoring a warning in the model editor has no way to mint a
+  citation and the Discovery surface that would hand them a real one is designed
+  and unimplemented. Requiring it would have been satisfied by fabricating ids.
+  An unattributed warning renders AS unattributed, and the count of them is
+  evidence to send back.
+- **`report/annexe.py` — one placement, one invariant.** `Σ instances +
+  not_in_plan ≡ the warnings handed in`, deliberately the same shape as
+  `Σ(parts) ≡ BOM` and `unplaced`. Every surface reads its bucket out of ONE
+  answer, and `place_for_plan` reads the vocabularies off the documents so a
+  route cannot pass `skus` and forget `steps` — which would turn every step
+  warning into "belongs to another job", obligation 10's misattribution arrived
+  at from the other direction.
+- **`not_in_plan` is quiet, `unplaceable` is not.** A warning about a sku this
+  fence does not buy belongs to another job; printing it would put a stranger's
+  safety notice on this plan. A warning attached to a published `procedure` —
+  §1.2's step sequences that own no panel, of which this engine models none — is
+  reported, because `not_in_plan` would have said "not yours" when the truth is
+  "yours, and we have nowhere to put it".
+- **Three surfaces, one renderer.** `js/doc-warnings.js` is the mirror of
+  `warnings.js` and the only module allowed to read `text_raw`, enforced by the
+  locale-bundle guard. The setting-out sheet draws the annexe LAST (customer sheet
+  included — the consumables filter exists because a customer is not told a screw
+  count, and a warranty condition is not a screw count); the BOM tab draws the
+  product notices on the line group, which is already pooled per sku so "once"
+  needs no deduplication; the Panel tab draws the step and procedure warnings and
+  PREVIEWS the annexe, which is what the frontend design asked for — an author who
+  writes a document-scoped warning can see it will land once at the back of the
+  plan rather than fourteen times at a fitter.
+- **`Snapshot.warnings` is typed and consumed**, so `warnings` left `unconsumed()`
+  the only honest way an entry can: it has somewhere to go. A published warning
+  missing `text_raw`, `lang` or `attaches_to` now fails at the DOOR; one that
+  contradicts its own schema (params with no code, a document scope naming a line)
+  is carried and reported in `Ingested.warning_defects` — not as a `Gap`, because
+  a gap closes by somebody adding knowledge and this closes by an edit at the
+  sender.
+- **The conforming fixture now has eight warnings and each earns its place**:
+  three identical footnotes (so the collapse is observable), `CAUTION` beside
+  `WARNING`, a publisher's own code, one with no citation at all, and one attached
+  to a procedure we do not model. A fixture containing only what we can already
+  draw tests nothing about what arrives.
+
+**Refused at authoring, not discovered at render.** A warning naming a step this
+model has not got, a sku the catalog has not got, or another product line is a
+`validate_model` error. At render time a target that is not in the plan is
+indistinguishable from another document's warning — correctly, because most are —
+which makes a mistyped step key silent on every job built to the model. The author
+is the only person who can tell those two apart.
+
+**S19 is the scenario, and its first draft was wrong in a useful way.** It
+asserted three 2000 mm bays; M-VINYL lays 6000 mm out as four 1500 mm bays,
+because its rails are routed through the post and its span limit is its own (S16).
+The doc was corrected rather than the number. S19 also pins the property that
+makes this safe to ship: **carrying a warning moves no cost, no line and no
+decision** — same BOM total, same requirement lines, same graph as the identical
+run built to a document stripped of its warnings.
+
+**The browser suite earned its keep four times over, and not one of the findings
+is about the annexe itself:**
+
+1. **A quoted warning shipped as `class="warning quoted"`**, and a smoke check
+   counting `#tab-panel .warning` to prove a channelled panel reports NO GAP
+   promptly failed — it was counting a manufacturer's pool-barrier notice as a
+   hole in this engine's own answer. Now `.doc-warning`, with its own CSS. Two
+   kinds of thing, two selectors; sharing one is how the distinction gets lost in
+   every future count. The deliberate exception: a warning this engine cannot
+   PLACE is our defect, so the annexe's unplaceable note stays a `.warning` and
+   should be counted.
+2. **A warning on a WITHHELD step rendered nowhere.** M-VINYL's `cure` step is
+   site-scoped, so the panel sheet draws no step for it (obligation 12's
+   present-and-unrendered) — and the document's most safety-relevant sentence,
+   "do not load a panel onto a footing that has not cured", silently had nowhere
+   to go on the surface a fitter reads. Withholding a run-scoped INSTRUCTION from
+   a panel sheet is right; withholding its warning to keep the surface tidy is
+   the opposite trade. It now renders with the withheld note, labelled as
+   belonging to a step this sheet does not draw.
+3. **Two tabs emitted the same element id.** `annexeHtml` hardcoded
+   `id="panel-annexe"`, and the Panel tab and the setting-out sheet are in the DOM
+   at the same time — so `getElementById` returned whichever came first and the
+   panel sheet's own check was reading the structure sheet's annexe. The caller
+   names the subtree it owns now, which is CLAUDE.md's rule and was the thing
+   this violated. Only the browser has both surfaces at once, which is why
+   nothing else could have found it.
+4. **The API tests were reading a stale document from the ambient
+   `fenceai.db`.** `seed_fence_models` never overwrites — correctly, so an
+   expert's edits survive a reopen — so a store seeded before M-LEGACY carried
+   warnings keeps a document with none, and every assertion passed or failed on
+   the age of a file. Exactly the `test_s17_1b` trap the last handoff recorded.
+   `tests/api/test_quoted_warnings_routes.py` pins its own database.
+
+And one the screenshots caught rather than a check: the annexe read "**WARNING**
+WARNING: This fence is not a pool barrier", because the publisher leads its own
+sentence with its own word and the badge repeated it. Suppressing the BADGE is
+not editing the quotation — the text goes out untouched either way. The reverse
+would have been: trimming the word out of the sentence so the badge looked tidy
+is exactly the tidying this whole module exists to refuse.
+
+Still open, and deliberately: nothing wires an ingested snapshot into a run, so a
+PUBLISHED warning still reaches no surface — the same seam item A left, and the
+authored path is what renders today. `procedures` is a parameter with no caller,
+and the model EDITOR has no form for authoring a warning yet (the backend accepts
+them and the preview shows where they land).
+
+
 ## Items 9, 10 and 11 — three agents, merged (2026-08-25)
 
 **1981 pytest · 259 scenario tests · 241/241 browser smoke · contract hashes OK.**

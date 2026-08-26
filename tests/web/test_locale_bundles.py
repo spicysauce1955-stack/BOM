@@ -3,6 +3,19 @@
 The frontend localizes warnings/critiques by `code` via `t("warning."+code, params)`.
 That contract is pure JSON — testable without a browser: both bundles must have the
 same key set, and every code the backend can emit must have an entry in both.
+
+**The registry is SPLIT, and this file guards both halves** (build-order item 8,
+contract obligation 10). The rule above applies to PLATFORM codes — engine
+warnings, gap codes, refusals: we wrote the code, so we owe the sentence in both
+languages. A warning QUOTED from a document is the other half: `text_raw` +
+`lang`, carried verbatim, exempt by design and never key-checked. Zero of the
+corpus's 81,794 elements are Hebrew, and translating a manufacturer's liability
+sentence to satisfy a key-set test would be manufacturing a claim they never
+made.
+
+Note where the old undivided rule failed: a `message`/`text` fallback is BY
+DEFINITION the case with no code, so "every code in both bundles" could never say
+anything about it. The tests at the end of this file are the ones that can.
 """
 
 from __future__ import annotations
@@ -930,3 +943,70 @@ def test_gap_warning_placeholders_match_the_params_a_real_run_emits():
             # the backend (CLAUDE.md: locale strings use `{…_mm}` + `{u}`)
             missing = placeholders - params - {"u"}
             assert not missing, f"{lang} warning.{code} interpolates {missing}, never sent"
+
+
+# --- the other half of the split: text we did not write ----------------------
+#
+# A quoted warning has no code to look up, so none of the tests above can say
+# anything about it. These four can, and each is one way the split could quietly
+# collapse back into "everything goes through t()".
+
+def test_only_one_module_renders_a_quoted_warning():
+    """The mirror of `test_only_one_module_localizes_a_warning_by_code`, and for
+    the same reason: a second renderer is how one surface comes to translate,
+    normalise or summarise a manufacturer's sentence while another prints it
+    intact. `text_raw` is read in exactly one place."""
+    js_dir = STATIC / "js"
+    renderers = [
+        p.name for p in [*js_dir.glob("*.js"), STATIC / "app.js"]
+        if "text_raw" in p.read_text()
+    ]
+    assert renderers == ["doc-warnings.js"], renderers
+
+
+def _code_only(path: Path) -> str:
+    """The module with its full-line `//` comments removed.
+
+    The greps below look for a call that must not exist, and the module they
+    inspect EXPLAINS at length why it must not exist — so the first version of
+    these tests failed on the prose that documents the rule. Comments are not
+    code, and a test that cannot tell them apart makes the honest thing to do
+    (writing down why) the thing that breaks the build."""
+    import re
+    return re.sub(r"^\s*//.*$", "", path.read_text(), flags=re.M)
+
+
+def test_the_quoted_renderer_never_localizes_the_text_it_carries():
+    """It may localize its own furniture — the annexe's title, the "quoted from"
+    label — and it must not put the quoted text through anything. A
+    `t("warning." + code)` in this module would be the split collapsing: the
+    publisher's optional code is not in our registry, so the lookup would miss
+    and fall back, and the fallback path is exactly where the old rule was blind.
+    """
+    src = _code_only(STATIC / "js" / "doc-warnings.js")
+    assert "localizedByCode" not in src
+    assert '"warning."' not in src and "`warning.${" not in src
+    # ...and the text is emitted directly, escaped and never interpolated
+    assert "esc(w.text_raw" in src
+
+
+def test_a_publishers_own_code_is_not_in_our_bundles():
+    """Inverted on purpose. `not_pool_rated` is a code the fixture's publisher
+    sent; a sentence for it in our bundles would mean this side had decided what
+    their code says. 142 of the corpus's 226 distinct warnings appear exactly
+    once, so a code registry for them would be a vocabulary of one-offs — and
+    `text_raw` is what renders anyway."""
+    en, he = _bundles()
+    assert "warning.not_pool_rated" not in en
+    assert "warning.not_pool_rated" not in he
+
+
+def test_the_quoted_surface_carries_the_direction_and_not_the_language():
+    """A quoted English sentence in a Hebrew-first RTL page needs `lang` and
+    `dir` on the element holding it, or its terminal punctuation walks to the
+    wrong end of the line. The DIRECTION is inferred from `lang`; the words never
+    are, and there is no translate affordance to offer."""
+    src = _code_only(STATIC / "js" / "doc-warnings.js")
+    assert "dir=" in src and "lang=" in src
+    # no translate affordance: not a button, not a title, not a locale key
+    assert "translate" not in src.lower()

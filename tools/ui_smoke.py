@@ -411,6 +411,59 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
     n + s.setting_out.length + s.bays.length + s.gates.length, 0);
 })()""")
         check("every element in the document has a row", rows == expected_rows)
+        # --- the ANNEXE, on the sheet that goes to site (item 8, §3.3.5) ------
+        # The obligation names its own failure: a document-scoped warning shown
+        # on every line is noise that trains a reader to ignore warnings. So the
+        # check is a COUNT, not a presence — the sentence is in the annexe, and
+        # it is in the whole sheet exactly once.
+        annexe = c.js("""
+(async () => {
+  const runs = await (await fetch(
+    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const doc = await (await fetch(`/api/runs/${runs[runs.length - 1].id}/structure`)).json();
+  const placed = (doc.quoted_warnings || {}).placements || [];
+  const box = placed.find(p => p.where === 'annexe');
+  const host = document.getElementById('structure-annexe');
+  const sheet = document.getElementById('structure-body').textContent;
+  const sentence = box ? box.warning.text_raw : '';
+  return {
+    host: !!host,
+    entries: host ? host.querySelectorAll('.doc-warning').length : -1,
+    // the sentence appears in the sheet ONCE, and it is inside the annexe
+    occurrences: sentence ? sheet.split(sentence).length - 1 : -1,
+    in_annexe: host && sentence ? host.textContent.includes(sentence) : false,
+    // an English quotation on a Hebrew sheet keeps its own direction
+    dir: host ? host.querySelector('.doc-warning')?.getAttribute('dir') : '',
+    lang: host ? host.querySelector('.doc-warning')?.getAttribute('lang') : '',
+    // ...and the panel's own furniture is in the reader's language
+    title: host ? (host.querySelector('h3')?.textContent || '') : '',
+    // this legacy document was never traced to a source, and says so
+    unattributed: host ? host.textContent.includes('סימוכין') : false,
+    // the product notice is NOT here: it belongs on the BOM line group
+    product_here: host && placed.some(
+      p => p.where === 'product' && host.textContent.includes(p.warning.text_raw)),
+  };
+})()""")
+        check("a document-scoped warning is in the annexe and appears once",
+              annexe is not None and annexe["host"] and annexe["entries"] == 1
+              and annexe["occurrences"] == 1 and annexe["in_annexe"]
+              and not annexe["product_here"],
+              annexe and f"entries={annexe['entries']} n={annexe['occurrences']}")
+        # The split, in one place: the quotation keeps the language it was
+        # published in and the panel around it follows the reader's. Zero of the
+        # corpus's elements are Hebrew, so translating a manufacturer's liability
+        # sentence would be publishing a claim they never made.
+        check("the quotation keeps its own language and the annexe keeps the reader's",
+              annexe["dir"] == "ltr" and annexe["lang"] == "en"
+              and "נספח" in annexe["title"] and annexe["unattributed"],
+              annexe and f"dir={annexe['dir']} title={annexe['title']!r}")
+        # scrolled to, because the annexe is the LAST panel on the sheet and a
+        # screenshot of the top of the page named after it documents nothing
+        c.js("""document.getElementById('structure-annexe')
+  ?.scrollIntoView({block: 'center'}); 'ok'""")
+        time.sleep(0.4)
+        c.shot("11d-structure-annexe.png")
+        c.js("window.scrollTo(0, 0); 'ok'")
         # the stations must be the ones the API reports, in order
         stations = c.js("""
 [...document.querySelectorAll('#structure-body table')][0]
@@ -533,6 +586,20 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("the customer sheet names materials but not screw counts",
               "POST-S" in (customer or "") and "SCREW-S10" not in (customer or "")
               and "CONC-25" not in (customer or ""))
+        # ...and the annexe is on the CUSTOMER sheet too. The consumables filter
+        # exists because a customer is not told a screw count, and a warranty or
+        # pool-barrier condition is not a screw count. Contract obligation 10.
+        annexe_customer = c.js("""
+(() => {
+  const host = document.getElementById('structure-annexe');
+  if (!host) return null;
+  return {entries: host.querySelectorAll('.doc-warning').length,
+          text: host.textContent};
+})()""")
+        check("the annexe reaches the customer sheet as well as the installer's",
+              annexe_customer is not None and annexe_customer["entries"] == 1
+              and "not a pool barrier" in annexe_customer["text"],
+              annexe_customer and annexe_customer["entries"])
         c.shot("12-structure-customer.png")
         c.js("""
 {
@@ -1106,6 +1173,43 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
       .map(h => h.textContent).find(s => /₪/.test(s)) || '',
   };
 })()""")
+        # --- and what the DOCUMENT says about a line (item 8, §3.3.5) ---------
+        # "On the BOM lines using it, once per line group." A `Bom.line` IS the
+        # line group — already pooled per sku across the whole run — which is why
+        # this is the surface the contract names for a product-scoped warning.
+        # The count is the check: the same notice under three bays' worth of rail
+        # rows would be the noise the annexe exists to keep off a plan.
+        product_note = c.js("""
+(async () => {
+  const runs = await (await fetch(
+    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const doc = await (await fetch(`/api/runs/${runs[runs.length - 1].id}/bom`)).json();
+  const placed = (doc.quoted_warnings || {}).placements || [];
+  const note = placed.find(p => p.where === 'product');
+  const body = document.getElementById('bom-body');
+  const rows = [...body.querySelectorAll('tr.doc-warning-row')];
+  const sentence = note ? note.warning.text_raw : '';
+  return {
+    sku: note ? note.ref : '',
+    rows: rows.length,
+    occurrences: sentence ? body.textContent.split(sentence).length - 1 : -1,
+    // it sits under the row for its own sku and not under another
+    after: rows.length === 1
+      ? (rows[0].previousElementSibling?.textContent || '').includes(note.ref)
+      : false,
+    // the ANNEXE is not duplicated here: it belongs to the plan, and the same
+    // notice on two screens is how a reader learns to skip both
+    annexe_here: !!body.querySelector('.panel.annexe'),
+    annexe_exists: placed.some(p => p.where === 'annexe'),
+  };
+})()""")
+        check("a product warning is on its BOM line, once, and the annexe is not",
+              product_note is not None and product_note["rows"] == 1
+              and product_note["occurrences"] == 1 and product_note["after"]
+              and product_note["annexe_exists"]
+              and not product_note["annexe_here"],
+              product_note and f"rows={product_note['rows']} "
+                               f"n={product_note['occurrences']}")
         # --- the BOM, grouped by what caused it -------------------------------
         # `Bom.lines` are flat and sorted by sku, which answers "what do I
         # order" and none of "what does this section need", "what is in this
@@ -1488,6 +1592,78 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         check("a run- or site-scoped step is present in the model and unrendered here",
               prose["held"] == 1 and not prose["held_drawn"],
               prose and f"held={prose['held']} drawn={len(prose['held_drawn'])}")
+        # --- and what its DOCUMENT warns, each where §3.3.5 says --------------
+        # Only 19.9% of a real guide's warnings are about a step, so the property
+        # is a placement rather than a presence: M-VINYL's four warnings must
+        # land in four different places off one payload, and the browser is where
+        # all four surfaces exist at once.
+        quoted = c.js("""
+(async () => {
+  const doc = await (await fetch('/api/fence-models/M-VINYL/1')).json();
+  const ws = doc.warnings || [];
+  const of = (k) => ws.find(w => (w.attaches_to || {}).kind === k) || null;
+  const steps = [...document.querySelectorAll('#panel-assembly li.step')];
+  const annexe = document.getElementById('panel-annexe');
+  const parts = document.getElementById('panel-parts');
+  const box = of('document'), cure = of('step'), line = of('product');
+  const stepText = steps.map(li => li.textContent).join(' ');
+  const cureLi = steps.find(li => li.dataset.step === 'cure');
+  return {
+    authored: ws.length,
+    // the safety box previews into the annexe and onto no step
+    in_annexe: !!annexe && box ? annexe.textContent.includes(box.text_raw) : false,
+    box_on_a_step: box ? stepText.includes(box.text_raw) : true,
+    // `cure` is SITE-scoped, so this sheet draws no step for it (obligation
+    // 12's present-and-unrendered) — and its warning must still reach the
+    // reader, labelled as belonging to a step the sheet does not draw. It is
+    // the most safety-relevant sentence in the document; withholding it to keep
+    // a surface tidy is the one trade this must not make.
+    cure_step_drawn: !!cureLi,
+    cure_on_a_step: cure ? steps.some(
+      li => li.textContent.includes(cure.text_raw)) : true,
+    cure_shown: cure ? document.getElementById('panel-assembly')
+      .textContent.includes(cure.text_raw) : false,
+    // the product notice is on the parts row for its own slot's sku
+    on_line: parts && line ? [...parts.querySelectorAll('tr.doc-warning-row')]
+      .filter(tr => tr.textContent.includes(line.text_raw)).length : -1,
+    // the publisher's own words, unmapped: CAUTION beside WARNING. `.lexeme`,
+    // not `.sku` — the attribution line under each quotation is a `.sku` too
+    lexemes: [...document.querySelectorAll('#panel-preview .doc-warning .lexeme')]
+      .map(x => x.textContent),
+    // an English quotation on a Hebrew page keeps its own direction
+    dirs: [...document.querySelectorAll('#panel-preview .doc-warning')]
+      .map(x => x.getAttribute('dir')),
+    // ...and the author is told this text is quoted and not translated
+    quoted_note: !!annexe && annexe.textContent.includes('מצוטט'),
+  };
+})()""")
+        check("each quoted warning previews where it will actually render",
+              quoted is not None and quoted["authored"] == 4
+              and quoted["in_annexe"] and not quoted["box_on_a_step"]
+              and quoted["on_line"] == 1,
+              quoted)
+        # Found by this suite: `cure` is site-scoped, so the panel sheet draws no
+        # step for it and the warning hanging off it rendered NOWHERE — silently,
+        # on the surface a fitter reads. Both halves, or neither proves anything:
+        # the step is genuinely not drawn AND its warning is on the sheet anyway.
+        check("a warning on a step this sheet withholds is still shown, and labelled",
+              not quoted["cure_step_drawn"] and not quoted["cure_on_a_step"]
+              and quoted["cure_shown"],
+              quoted and f"drawn={quoted['cure_step_drawn']} "
+                         f"shown={quoted['cure_shown']}")
+        # The registry split, visible: the words are the publisher's and the
+        # frame around them is the reader's. A `CAUTION` mapped onto this
+        # engine's severity enum would be indistinguishable here from a
+        # `WARNING`, and the two carry different legal weight.
+        # M-VINYL's four sentences: two lead with the publisher's own word, so
+        # their badge is suppressed as a duplicate ("WARNING WARNING: ..." is what
+        # the first screenshot showed), and two do not, so it is printed. Both
+        # branches in one document, which is why the assertion names the set.
+        check("the publisher's own words survive and the page does not offer to translate",
+              set(quoted["lexemes"]) == {"NOTICE", "IMPORTANT"}
+              and set(quoted["dirs"]) == {"ltr"} and quoted["quoted_note"],
+              quoted and f"lexemes={quoted['lexemes']} dirs={quoted['dirs']}")
+        c.shot("18d-panel-annexe.png")
         c.shot("18c-panel-vinyl.png")
 
         # the panel is priced from the model, not from a fixed shape: M-LEGACY's

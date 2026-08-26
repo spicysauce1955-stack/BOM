@@ -64,10 +64,17 @@ def test_the_contracts_whole_payload_parses(snapshot):
 
 
 def test_what_arrives_and_is_not_consumed_is_counted_not_hidden(snapshot):
-    """A snapshot carrying 40 warnings into an engine with no warning consumer is
-    a fact the operator should see — and, while the other team is designing, the
-    most useful thing we can tell them about their own payload."""
-    assert ingest(snapshot).unconsumed == {"warnings": 1, "source_docs": 2}
+    """A snapshot carrying 40 parts into an engine with no part consumer is a fact
+    the operator should see — and, while the other team is designing, the most
+    useful thing we can tell them about their own payload.
+
+    `warnings` used to be on this list and is not any more, which is the only
+    honest way for an entry to leave it: build-order item 8 gave them somewhere
+    to go (`report/annexe.py`), so they are consumed rather than counted. The
+    assertion is kept EXACT rather than narrowed to the remaining key, because a
+    member silently rejoining this list is exactly the regression it watches
+    for."""
+    assert ingest(snapshot).unconsumed == {"source_docs": 2}
 
 
 def test_a_declared_id_can_be_checked_against_its_own_members(snapshot):
@@ -208,3 +215,73 @@ def test_a_scope_we_cannot_aim_is_refused_not_widened():
     assert versions == [], "a table we cannot aim must not apply everywhere"
     assert [g.code for g in gaps] == ["parameter_scope_unmappable"]
     assert gaps[0].closes_by == "planning"
+
+
+# -- warnings: typed at the door, and placed rather than counted ---------------
+
+def test_the_fixtures_warnings_parse_as_the_contracts_own_type(snapshot):
+    """They used to arrive as `Any` and be counted as unconsumed. Build-order
+    item 8 gave them somewhere to go, so they are parsed — and a `text_raw`,
+    `lang` or `attaches_to` missing from a published warning now fails HERE,
+    loudly at the door, rather than at the reader it was written for."""
+    assert len(snapshot.warnings) == 8
+    assert {w.attaches_to.kind for w in snapshot.warnings} == {
+        "document", "step", "product", "maintenance", "warranty", "procedure"}
+
+
+def test_a_published_warnings_severity_word_is_not_normalised(snapshot):
+    """CAUTION beside WARNING, in one document, arriving intact. The fixture
+    carries both precisely because an engine that mapped either onto its own
+    severity enum would make this assertion pass while destroying the
+    distinction."""
+    assert {w.severity_lexeme for w in snapshot.warnings} >= {"CAUTION", "WARNING"}
+
+
+def test_ingest_carries_every_warning_through_and_vouches_for_none(snapshot):
+    """`Ingested.warnings` is the list `report/annexe.py` places. NOT merged into
+    `knowledge`: nothing selects between two warnings and nothing defeats one, so
+    a `KnowledgeVersion` would put them in front of the evaluator, which is the
+    one place they have no business being."""
+    out = ingest(snapshot, as_of="2026-08-25")
+    assert len(out.warnings) == len(snapshot.warnings)
+    assert out.warning_defects == []
+    assert not any(v.object_id.startswith("W-") for v in out.knowledge.versions)
+
+
+def test_a_published_warning_that_contradicts_its_own_schema_is_reported(snapshot):
+    """A document-scoped warning that also names a line. Deliberately NOT a gap:
+    a gap is a hole in what we were told and closes by somebody adding knowledge,
+    while this is a payload contradicting its own schema and closes by an edit at
+    the sender. Different remedy, different audience."""
+    bad = snapshot.model_copy(deep=True)
+    bad.warnings[0].attaches_to.ref = "some-line"
+    out = ingest(bad, as_of="2026-08-25")
+    assert len(out.warning_defects) == 1
+    assert "renders once in the annexe" in out.warning_defects[0]
+    # ...and it is still CARRIED. A malformed warning is not a warning to drop.
+    assert len(out.warnings) == len(bad.warnings)
+
+
+def test_the_fixtures_warnings_place_where_the_contract_says(snapshot):
+    """The fixture exists to be placed, not only parsed — that is what makes it
+    evidence rather than an example. Three identical footnotes collapse to one
+    entry, the procedure-scoped one is reported unplaceable because this engine
+    models no procedures, and nothing is lost."""
+    from fenceai.report.annexe import place_warnings
+
+    placement = place_warnings(
+        ingest(snapshot).warnings,
+        steps=["FIXTURE-step-set-posts"], skus=["FIXTURE-SKU-PANEL-1"])
+    assert placement.carried() == len(snapshot.warnings)
+    footnote = [p for p in placement.at("annexe") if p.instances > 1]
+    assert len(footnote) == 1 and footnote[0].instances == 3
+    assert len(placement.at("unplaceable")) == 1
+    assert placement.not_in_plan == 0
+
+
+def test_a_published_warning_may_arrive_with_no_citation(snapshot):
+    """One of the fixture's eight has no `cites`, and the count of these is the
+    most useful thing this side can send back while the other team designs:
+    §1.1 makes `SourceRef.id` opaque and unbuildable, so nobody without the
+    Discovery surface can mint one."""
+    assert sum(1 for w in snapshot.warnings if w.cites is None) == 1

@@ -345,6 +345,73 @@ post centrelines, each end seats half a face deep into the hole it was punched
 for"*: one bay long, with two rails meeting inside each intermediate post. The
 hole passes through the post; the rail does not.
 
+### S19 — A footnote at the foot of fourteen pages, in the annexe once
+Boundary contract obligation 10 and §3.3.5: *every warning declares what it
+attaches to, and its text is primary* — and it is rendered **where its
+`attaches_to.kind` says**, which for `document`, `warranty` and `maintenance` is
+once in the plan's annexe and never on a line.
+
+The obligation exists because v0.1's rule was falsified by a census of all 81,794
+elements: only **19.9%** of 1,038 warning instances sit inside a step that does
+something, while about **68%** are document-scoped — the front safety box,
+"BEFORE YOU BEGIN", a freeze-thaw footnote printed at the foot of fourteen pages.
+Enforced literally, "a warning lives on its step" publishes one warning in five
+and misattributes the rest.
+
+6000 mm straight run on soil, height intent 1800, built to **M-VINYL** — the
+shared demo model and the shared demo catalog, because this scenario adds no
+product and moves no price. M-VINYL's document carries four quoted warnings, one
+per rendering:
+
+| `attaches_to` | the sentence, in short | renders |
+|---|---|---|
+| `document` | CAUTION, footings below the frost line | the annexe |
+| `step` → `cure` | WARNING, do not load an uncured footing | on that step |
+| `product` → `SLAT-V-150` | not rated as a pool barrier | that BOM line |
+| `warranty` | void on substituted components | the annexe |
+
+Expect:
+
+1. **Four bays, and the safety box once.** The run lays out as four 1500 mm bays
+   — M-VINYL's own maximum span, as S16 records, and not the 2000 mm the straight
+   demo run gets from `K-MAXSPAN`; the annexe carries exactly two entries, and
+   neither appears against any bay, post or BOM line. A freeze-thaw footnote
+   printed against four bays is already noise; against a forty-bay job it is what
+   teaches a reader to skip warnings.
+2. **83 printings, one entry, and the count published.** The same sentence
+   repeated — the corpus's own number — collapses to one annexe entry carrying
+   `instances`, so "shown once" is a decision the reader can see rather than
+   something that looks like all there was. Two documents quoting the same
+   sentence stay two entries, because which document said it is half of what a
+   reader needs in order to check it.
+3. **Nothing is dropped:** `Σ instances + not_in_plan ≡ the warnings carried`,
+   the same shape as `Σ(parts) ≡ BOM` and `unplaced`. A warning about another
+   document's sku is counted and not printed — a stranger's safety notice does
+   not belong on this plan — and a warning attached to a `procedure` this engine
+   does not model is reported as unplaceable rather than filed away as somebody
+   else's.
+4. **The text is never localized and never translated.** `text_raw` + `lang` are
+   carried verbatim through the annexe, the step and the BOM line; the
+   publisher's `severity_lexeme` (`CAUTION` beside `WARNING`) is not mapped onto
+   this engine's `info | warning | error`, because the two words carry different
+   legal weight. A publisher's optional `code` is carried and never becomes the
+   sentence — it gets no entry in either locale bundle, which is the registry
+   split obligation 10 forces (`core/warnings.py`).
+5. **An unattributed warning says so.** §1.1 makes `SourceRef.id` opaque and
+   forbids building one, so a curator authoring a warning here cannot mint a
+   citation and one of M-VINYL's four has none. It renders as unattributed: a
+   sentence nobody can trace must not look like one an engineer confirmed against
+   a drawing.
+6. **No cost, no line and no decision moves.** The BOM, the requirement lines and
+   the decision graph are byte-identical to the same run before the document
+   carried any warnings. A warning is a note on an answer, not an input to one.
+
+Authoring refusals (`validate_model`): a warning on a step this model has not
+got, about a sku the catalog has not got, or about another product line —
+because at render time a target that is not in the plan is indistinguishable from
+another document's warning, and the author is the only person who can tell those
+apart.
+
 ## Invariants checked across all scenarios
 
 - span width ≤ applicable hard maximum (unless authorized exception exists — none in demo KB)

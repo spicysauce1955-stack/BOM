@@ -15,9 +15,10 @@ any of it into a fact.
 
 **Only the parts this engine can act on are modelled.** `parameters` becomes
 knowledge through `parameters.expand`; `gaps` are carried through as the
-contract's own `Gap`. The rest — `parts`, `models`, `procedures`, `warnings`,
-`combinations`, `rules` — are accepted, counted and NOT parsed into private
-types. A field parsed into a shape we invented is a shape nobody agreed to, and
+contract's own `Gap`; `warnings` are the contract's own `DocumentWarning`, placed
+by `report/annexe.py` (obligation 10 and §3.3.5). The rest — `parts`, `models`,
+`procedures`, `combinations`, `rules` — are accepted, counted and NOT parsed into
+private types. A field parsed into a shape we invented is a shape nobody agreed to, and
 this repo has already made that mistake once, under the contract's own type name.
 They arrive as opaque payloads and are reported as unconsumed, which is an honest
 statement of what this engine does with them today.
@@ -32,6 +33,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from fenceai.core.gaps import Gap
+from fenceai.core.warnings import DocumentWarning, warning_errors
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.knowledge.parameters import ParameterTable, expand
 
@@ -40,8 +42,8 @@ Regime = Literal["us_astm", "cn_gb"]
 
 # What this engine consumes today. Everything else in the payload is carried,
 # counted and left alone — see the module docstring.
-CONSUMED = ("parameters", "gaps")
-CARRIED = ("part_types", "parts", "models", "procedures", "warnings",
+CONSUMED = ("parameters", "gaps", "warnings")
+CARRIED = ("part_types", "parts", "models", "procedures",
            "combinations", "source_docs", "rules")
 
 
@@ -58,6 +60,14 @@ class Snapshot(BaseModel):
 
     parameters: list[ParameterTable] = []
     gaps: list[Gap] = []
+    # Verbatim, with what each attaches to. Typed rather than carried because
+    # placing them is a surface obligation this side owns (§3.3.5): a
+    # document-scoped warning goes once into the plan's annexe and never onto a
+    # line. A missing `text_raw`, `lang` or `attaches_to` fails to parse HERE,
+    # loudly at the door — obligation 3's discipline one type down: a warning
+    # accepted without its text is a warning nothing can render, discovered by
+    # the reader it was written for.
+    warnings: list[DocumentWarning] = []
 
     # Accepted and NOT parsed. `Any` is the honest type for a payload this engine
     # does not act on: a private model here would be a shape nobody agreed to,
@@ -66,7 +76,6 @@ class Snapshot(BaseModel):
     parts: list[Any] = []
     models: list[Any] = []
     procedures: list[Any] = []
-    warnings: list[Any] = []
     combinations: list[Any] = []
     source_docs: list[Any] = []
     rules: list[Any] = []
@@ -74,10 +83,13 @@ class Snapshot(BaseModel):
     def unconsumed(self) -> dict[str, int]:
         """What arrived that this engine does nothing with, by count.
 
-        Reported rather than hidden. A snapshot carrying 40 warnings into an
-        engine with no warning consumer is a fact the operator should be able to
-        see — and, while the other team is designing, it is the most useful thing
-        we can tell them about their own payload.
+        Reported rather than hidden. A snapshot carrying 40 parts into an engine
+        with no part consumer is a fact the operator should be able to see — and,
+        while the other team is designing, it is the most useful thing we can
+        tell them about their own payload.
+
+        `warnings` left this list when `report/annexe.py` gave them somewhere to
+        go, which is the only honest way for an entry to leave it.
         """
         return {name: len(getattr(self, name))
                 for name in CARRIED if getattr(self, name)}
@@ -98,6 +110,19 @@ class Ingested(BaseModel):
 
     knowledge: KnowledgeBase
     gaps: list[Gap] = []
+    # Verbatim, in the order they were published, for `report/annexe.py` to
+    # place. NOT merged into `knowledge`: a warning is not a rule — nothing
+    # selects between two of them, nothing defeats one, and giving them a
+    # `KnowledgeVersion` would put them in front of the evaluator, which is the
+    # one place they have no business being.
+    warnings: list[DocumentWarning] = []
+    # Published warnings this side can carry but not vouch for: params with no
+    # code, a document-scoped warning that names a line. English strings, exactly
+    # as `validate_model` returns for a curated document, and deliberately NOT
+    # gaps — a gap is a hole in what we were told and closes by somebody adding
+    # knowledge, while this is a payload that contradicts its own schema and
+    # closes by an edit at the sender. Different remedy, different audience.
+    warning_defects: list[str] = []
     discovered: int = 0
     unconsumed: dict[str, int] = {}
     snapshot_id: str = ""
@@ -125,6 +150,8 @@ def ingest(snapshot: Snapshot, *, as_of: str = "") -> Ingested:
         discovered.extend(gaps)
     return Ingested(
         knowledge=KnowledgeBase(versions=versions),
+        warnings=list(snapshot.warnings),
+        warning_defects=warning_errors(snapshot.warnings, where="published"),
         # published first: they are what the other side chose to tell us, and a
         # reader scanning the list should meet those before our findings about
         # their data

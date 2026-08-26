@@ -47,6 +47,22 @@ svg#canvas { width: 100%; height: 500px; background: #fff; border: 1px solid #d4
 #warnings { margin-top: 6px; }
 .warning { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 5px 10px; margin: 3px 0; font-size: 13px; }
 .warning.error { background: #fee2e2; border-color: #dc2626; }
+/* A warning QUOTED from a document, not one this engine emitted. Its own class
+   rather than a modifier on `.warning`, because a selector shared with the
+   platform warning is how a count of THIS engine's gaps came to include a
+   manufacturer's notice (see js/doc-warnings.js). Deliberately quieter than the
+   amber platform warning and marked with a rule down the leading edge: a fitter
+   has to be able to tell "the manufacturer says" from "this system found".
+   Logical properties only, so the rule stays on the reading edge both ways. */
+.doc-warning { background: #f8fafc; border: 1px solid #94a3b8; border-radius: 6px;
+  border-inline-start: 3px solid #64748b; padding: 5px 10px; margin: 3px 0;
+  font-size: 13px; }
+.doc-warning .lexeme { font-weight: 600; }
+.doc-warnings { margin: 4px 0; }
+/* The full-width row a quoted warning occupies under the BOM line or parts row
+   it is about. No cell borders: it is an annotation ON the line above, and a
+   bordered cell reads as another line item. */
+tr.doc-warning-row > td { border: 0; padding-block: 2px; }
 
 /* Gaps: what the run knows it does not know (js/gaps.js).
    Grouped by WHO can close it, so the two groups have to look like two groups

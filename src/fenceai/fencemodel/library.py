@@ -67,6 +67,22 @@ class FenceModelLibrary(BaseModel):
                 return m
         return None
 
+    def by_ref(self, model_ref: str) -> FenceModel | None:
+        """`"M-VINYL@v1"` -> the document, or `None` for a ref nothing answers.
+
+        Here rather than at each caller because a ref is this library's format:
+        `FenceModel.ref` writes it and three read models now parse it, and a
+        second `rpartition("@v")` somewhere else is how one of them comes to
+        disagree about what a malformed ref means. `None` rather than a raise —
+        a caller re-reading a stored run wants a refusal with its own code
+        (`run_predates_fence_model`), and a caller collecting a plan's documents
+        wants to skip the one it cannot find.
+        """
+        model_id, _, version = model_ref.rpartition("@v")
+        if not model_id or not version.isdigit():
+            return None
+        return self.get(model_id, int(version))
+
     def resolve(self, model_id: str, version_pin: int | None) -> FenceModel | None:
         """A pin outranks status: a run that stamped M-SLAT@v2 must regenerate to
         the same panel after v2 is retired, or retiring a version would rewrite

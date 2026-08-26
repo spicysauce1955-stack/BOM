@@ -60,6 +60,7 @@ from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.project.model import Annotation, Project, SiteConditions
+from fenceai.report.annexe import WarningPlacement, place_for_plan
 from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
@@ -237,6 +238,35 @@ def _priced(result, preset: str) -> tuple[Catalog, Inventory, PricedRun]:
     except ValueError as e:
         raise HTTPException(400, str(e))
     return catalog, inventory, priced
+
+
+def _quoted_warnings(result, priced: PricedRun) -> WarningPlacement:
+    """Every quoted warning of every document this run is built to, placed.
+
+    One helper, two callers (/bom and /structure), for the reason `_priced` and
+    `_supply_run_for` are one each: two collections of "which documents is this
+    fence built to" is how the annexe on the setting-out sheet and the notices on
+    the BOM would come to disagree about what the manufacturer said.
+
+    The documents come off the RUN — every bay's `panel.model_ref` — and not off
+    the project. A project that has since been pointed at another product line
+    must not put that line's warranty notice on a plan built to the old one; the
+    run stamped its refs precisely so a reader can go back to the document it was
+    built from. A ref the library can no longer answer is SKIPPED rather than
+    refused: this is a warning surface, and losing the annexe is not a reason to
+    take a working BOM away from somebody.
+    """
+    library = state.store.fence_model_library()
+    refs, models = [], []
+    for span in result.strategy.spans:
+        ref = span.panel.model_ref if span.panel else ""
+        if not ref or ref in refs:
+            continue
+        model = library.by_ref(ref)
+        if model is not None:
+            refs.append(ref)
+            models.append(model)
+    return place_for_plan(models, skus=[line.sku for line in priced.requirements])
 
 
 def _supply_run_for(result, preset: str, priced: PricedRun,
@@ -470,6 +500,11 @@ def get_bom(run_id: str):
     return {"requirements": priced.requirements, "unresolved": priced.unresolved,
             "bom": priced.bom, "inventory_hash": supply.inventory_hash,
             "supply": supply,
+            # What the documents warn, placed. This view renders the `product`
+            # and `model` buckets — "on the BOM lines using it, once per line
+            # group" (§3.3.5) — and carries the rest so the tab can say how many
+            # are in the annexe instead of dropping them at the edge of a screen.
+            "quoted_warnings": _quoted_warnings(result, priced),
             "grouped": group_bom(result.strategy, priced.requirements, priced.bom,
                                  priced.decisions, priced.unresolved)}
 
@@ -536,6 +571,10 @@ def get_structure(run_id: str):
     # build_structure() itself stays a pure function of its inputs.
     report.warnings = priced.warnings
     report.unresolved = priced.unresolved
+    # The annexe: stamped here rather than computed in `build_structure`, which is
+    # handed the topology, the strategy and the numbers and deliberately not the
+    # library the fence models live in.
+    report.quoted_warnings = _quoted_warnings(result, priced)
     return report
 
 

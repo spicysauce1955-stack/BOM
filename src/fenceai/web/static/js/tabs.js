@@ -13,6 +13,9 @@ import {
 } from "./units.js";
 import { loadStructure, sectionOf, tagOf } from "./structure-data.js";
 import { gapsPanelHtml } from "./gaps.js";
+import {
+  bucket as quotedBucket, quotedGroupHtml,
+} from "./doc-warnings.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
 export function initTabs() {
@@ -238,7 +241,12 @@ async function renderBom() {
     // above it too: it says what that table was priced AGAINST, and a total read
     // without its yard is a number two people can disagree about for ever
     + supplyProvenanceHtml(data.supply)
-    + bomHtml(data.bom, products, { unresolved: data.unresolved });
+    // What the DOCUMENTS say about the products on that table. This is the
+    // "once per line group" surface §3.3.5 names, and it is the only bucket this
+    // tab draws: the annexe belongs to the PLAN and renders on the structure
+    // sheet, and printing it here as well would be the same notice twice.
+    + bomHtml(data.bom, products, { unresolved: data.unresolved,
+                                    quoted: data.quoted_warnings });
   const quoteForm = document.getElementById("quote-label-form");
   const quoteInput = document.getElementById("quote-label-input");
   const saveQuote = async () => {
@@ -441,13 +449,38 @@ export function groupedBomHtml(grouped, products) {
  *
  *  Optional, because a saved quote is rendered through here too and carries no
  *  unresolved list: a quote cannot be saved while a part has no supplier, so
- *  there is nothing to say about one. */
-function bomHtml(bom, products, { unresolved = [] } = {}) {
+ *  there is nothing to say about one.
+ *
+ *  `quoted` is optional for a sharper reason, and the quote path deliberately
+ *  passes none. A `Quote` is an immutable commercial document: annotating a
+ *  historical one with what its manufacturer's document says TODAY would print
+ *  text on a page nobody accepted. The live BOM gets the notices; the frozen
+ *  document keeps what was frozen. */
+function bomHtml(bom, products, { unresolved = [], quoted = null } = {}) {
+  // Once per line group, and a BOM line IS the line group: `Bom.lines` are
+  // already pooled per sku across the whole run, so there is nothing left to
+  // deduplicate here — which is exactly why this is the surface the contract
+  // names for a product-scoped warning.
+  const seenSku = new Set();
+  const quotedRow = (sku) => {
+    // ...and `seenSku` is what "once" means even if two lines ever share a sku:
+    // `Bom.lines` are pooled per sku today, so this set is empty insurance — and
+    // it is the same insurance `panel.js` needs for real, where two SLOTS are
+    // routinely supplied by one product.
+    if (!sku || seenSku.has(sku)) return "";
+    seenSku.add(sku);
+    const list = quotedBucket(quoted, "product", sku);
+    return list.length
+      ? `<tr class="doc-warning-row"><td colspan="7">${
+          quotedGroupHtml(list, "annexe.on_product")}</td></tr>`
+      : "";
+  };
   const short = (unresolved || []).length;
   let html = `<div class="panel${short ? " incomplete" : ""}">
   <h3>${t("bom.title")} — ${t("bom.total")} ${esc(money(bom.total_cents))}
   ${short ? `<span class="tag low">${esc(t(short === 1 ? "bom.total_excludes_one"
       : "bom.total_excludes", { n: short }))}</span>` : ""}</h3>
+  ${quotedGroupHtml(quotedBucket(quoted, "model"), "annexe.on_model")}
   <table><tr><th>${t("bom.sku")}</th><th>${t("bom.purchase")}</th><th>${t("bom.engineering")}</th>
   <th>${t("bom.overage")}</th><th>${tu("bom.unit_price")}</th><th>${tu("bom.line_total")}</th><th>${t("bom.notes")}</th></tr>`;
   for (const l of bom.lines) {
@@ -459,7 +492,7 @@ function bomHtml(bom, products, { unresolved = [] } = {}) {
       <td class="num">${l.overage_qty || ""}</td>
       <td class="num">${esc(money(l.unit_price_cents))}</td>
       <td class="num">${esc(money(l.total_cents))}</td>
-      <td>${esc((l.notes || []).join("; "))}</td></tr>`;
+      <td>${esc((l.notes || []).join("; "))}</td></tr>` + quotedRow(l.sku);
   }
   // A row with no sku, no unit price and no total — because that is precisely
   // what is known about it. `roleWord` rather than the raw enum: `role` is a

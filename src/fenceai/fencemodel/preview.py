@@ -47,6 +47,7 @@ from fenceai.fencemodel.resolve import (
     select_variant,
 )
 from fenceai.fulfillment.pipeline import price_strategy
+from fenceai.report.annexe import WarningPlacement, place_for_plan
 from fenceai.report.assembly import (
     AssemblyPlan,
     assembly_plan,
@@ -133,6 +134,22 @@ class PanelPreview(BaseModel):
     # states no order", which the assembly film needs to tell from "it takes no
     # steps" so it knows whether to fall back to its role-based build order.
     assembly: AssemblyPlan | None = None
+    # What the DOCUMENT warns, and where each of those warnings renders
+    # (obligation 10, §3.3.5). A sibling of `assembly` rather than a field inside
+    # it: only a fifth of a real guide's warnings are about a step, so a list
+    # hanging off the plan would have nowhere to put the other four fifths.
+    #
+    # Beside `warnings` above, never merged into it. That list is `code + params`
+    # this engine emitted and owes a sentence for in both bundles; this one is
+    # somebody else's text carried verbatim and never translated. One list would
+    # need a discriminator every reader had to get right — see `core/warnings.py`.
+    #
+    # The preview computes it because the preview is where an AUTHOR sees where
+    # their warning will land — including the annexe, which is the whole reason
+    # the frontend design asks for it here: a document-scoped warning previews
+    # into the annexe rather than onto every line, so a curator can see that it
+    # is not going to shout at a fitter fourteen times.
+    quoted_warnings: WarningPlacement = WarningPlacement()
     total_cents: int = 0
 
 
@@ -250,6 +267,12 @@ def preview_panel(
         # keeps "which document is validated" one function's business rather than
         # a contract between two.
         assembly=assembly_plan(model, panel, bay=bay_parts_from_posts(posts)),
+        # The skus this PANEL buys, which is the vocabulary a product-scoped
+        # warning is placed against here. `priced.requirements` are the lines
+        # fulfillment resolved a moment ago, so the placement is over what this
+        # panel is actually made of rather than over the whole catalog.
+        quoted_warnings=place_for_plan(
+            [model], skus=[line.sku for line in priced.requirements]),
         invalid=validate_model(model, catalog, part_library),
         total_cents=priced.bom.total_cents,
     )

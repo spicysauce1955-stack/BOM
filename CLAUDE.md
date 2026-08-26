@@ -48,9 +48,18 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
   pure function of `(topology, strategy, requirements, bom)` whose parts come from
   INVERTING pegs — it must never recompute a quantity, and it refuses to lay a run out
   over a topology it was not generated from (409 `topology_changed`).
-- User-visible warnings/critiques carry `code + params` (English `message` is fallback only);
-  a new code needs `warning.<code>`/`critique.<code>` entries in BOTH locale bundles —
-  `tests/web/test_locale_bundles.py` enforces this.
+- **The warning registry is SPLIT, and the halves have opposite rules.**
+  *PLATFORM* warnings/critiques — anything this engine emits — carry `code + params`
+  (English `message` is fallback only), and a new code needs
+  `warning.<code>`/`critique.<code>` entries in BOTH locale bundles.
+  A warning **quoted from a document** (`core/warnings.py` `DocumentWarning`, contract
+  obligation 10) is the opposite: `text_raw` + `lang` carried verbatim, the publisher's
+  `severity_lexeme` unnormalised, any `code` of theirs carried and never rendered, and NO
+  locale entry — translating a manufacturer's liability sentence and publishing it as
+  theirs manufactures a claim. `tests/web/test_locale_bundles.py` enforces both halves.
+  Where each quoted warning renders is `report/annexe.py`'s single answer (§3.3.5):
+  `document`/`warranty`/`maintenance` go once into the plan's **annexe** and never onto a
+  line, and `js/doc-warnings.js` is the one module allowed to read `text_raw`.
 
 ## Durable principles — frontend (`src/fenceai/web/static/`)
 

@@ -68,7 +68,7 @@ not as settled.
 | ~~9~~ | ~~`stock_length` consumed; continuity **derived** against resolved spacing~~ | — | **done** — `strategy/continuity.py`, S18, gate unmoved |
 | **10** | Containment → demand: flatten `ContainedSlot` into the panel's slot list under a path key, and the kit-credit rule, which has no home in a demand line today | nothing | yes |
 | **11** | `report/assembly.py` — bay and post scopes, `requires` edges as a partial order | 10 | yes |
-| **8** | Warning model — `attaches_to`, the platform/source registry split, and the **annexe** | partly boundary | annexe yes, the rest no |
+| ~~8~~ | ~~Warning model — `attaches_to`, the registry split, the **annexe**~~ | — | **done** 2026-08-26 — `core/warnings.py`, `report/annexe.py`, S19 |
 | ~~6~~ | ~~Source policy~~ | **the other team** | **no — do not start** |
 | ~~7~~ | ~~`Provenance` on `SpecField`, the `source_docs` join~~ | **the other team** | **no — do not start** |
 

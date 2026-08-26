@@ -397,6 +397,17 @@ art with different legal weight in North American product literature. `params`
 stays optional because they pay off only when one warning recurs with *different*
 values, which is true of **3 of the 226**.
 
+> **Corrected when this was built (2026-08-26, build-order item 8): `cites` is
+> OPTIONAL on this side, not required.** Contract §1.1 makes `SourceRef.id` opaque
+> to Planning — *"do not parse it, do not build one"* — and the Discovery surface
+> that resolves one (`GET /source-refs/{id}`) is designed and unimplemented. So a
+> curator authoring a warning in the model editor has no way to mint a citation,
+> and requiring the field would have been satisfied by fabricating ids, which is
+> precisely how a hypothesis becomes a fact nobody checked. The implementation
+> renders an unattributed warning AS unattributed and counts them, because that
+> count is the useful thing to send back to a team still designing this door. See
+> `core/warnings.py`.
+
 **This splits our own warning registry, and changes a rule in CLAUDE.md.**
 Platform codes — engine warnings, gap codes, the `SOURCE_*` set — stay closed and
 still require entries in both locale bundles, enforced by
@@ -407,7 +418,9 @@ test would be manufacturing a claim. Note the old rule failed precisely where it
 was needed — a `text` fallback is by definition the case with no code, so it can
 never satisfy "every code in both bundles".
 
-**Where each kind renders**, which is what makes `attaches_to` usable:
+**Where each kind renders**, which is what makes `attaches_to` usable — one
+function, `report/annexe.py`, and every surface reads its own bucket out of the
+one answer it returns:
 
 | `attaches_to.kind` | Rendered |
 |---|---|

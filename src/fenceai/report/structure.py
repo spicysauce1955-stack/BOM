@@ -25,6 +25,7 @@ from fenceai.core.units import Mm
 from fenceai.demand.derive import DemandLine
 from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.fulfill import Bom
+from fenceai.report.annexe import WarningPlacement
 from fenceai.report.elevation import PanelElevation, panel_elevation
 from fenceai.strategy.model import Strategy, StrategyWarning
 from fenceai.topology.model import Topology
@@ -225,6 +226,17 @@ class StructureReport(BaseModel):
     # that never got a product, and the type is what stops it reaching
     # fulfill()
     unresolved: list[DemandLine] = []
+    # What the DOCUMENTS this fence is built to WARN, each placed where it
+    # renders (`report/annexe.py`). Stamped by the caller like the two above and
+    # for the same reason, plus one of its own: it needs the fence MODELS, and
+    # this function is deliberately handed the topology, the strategy and the
+    # numbers rather than the library the models live in.
+    #
+    # This sheet renders the ANNEXE — the `document`, `warranty` and
+    # `maintenance` warnings, once each, never on a line. The other buckets come
+    # with it unrendered and counted, so the sheet can say how many warnings are
+    # shown on the panel sheet instead of losing them at the edge of a surface.
+    quoted_warnings: WarningPlacement = WarningPlacement()
 
 
 # --- parts, by inverting the pegs -------------------------------------------

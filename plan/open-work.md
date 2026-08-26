@@ -185,6 +185,37 @@ calls supply.
 
 ---
 
+## ~~8. The warning model, `attaches_to`, and the annexe~~ — DONE, 2026-08-26
+
+Contract obligation 10 and §3.3.5. `core/warnings.py` (`DocumentWarning`,
+`WarningTarget`, the shared `warning_errors`), `report/annexe.py`
+(`place_warnings` / `place_for_plan`, one placement and the `Σ instances +
+not_in_plan` invariant), `js/doc-warnings.js`, `FenceModel.warnings`,
+`Snapshot.warnings` typed and consumed, S19, and the registry split written into
+CLAUDE.md. Details in `plan/current-status.md`.
+
+**Knowingly not done, with the reasons:**
+* **A published warning still reaches no surface.** Nothing wires an ingested
+  snapshot into a run — the seam item A left — so the authored path
+  (`FenceModel.warnings`, the model editor) is what renders today. The placement
+  read model is indifferent to which door a warning came in by, which is the
+  whole reason it takes a list rather than a run.
+* **`procedures` is a parameter with no caller.** §1.2 publishes `Procedure` as a
+  step sequence that owns no panel; this engine models none, so a
+  procedure-scoped warning naming one is reported `unplaceable`. The seam is one
+  argument wide and named.
+* **The model EDITOR cannot author a warning yet.** The backend accepts them,
+  `validate_model` refuses a broken one, and the raw-JSON editor can write one —
+  but there is no form. The frontend design asks for `text_raw` + `lang` +
+  `attaches_to` + the publisher's severity word with no translate affordance, and
+  the preview surface it needs (the annexe preview on the Panel tab) is the half
+  that landed.
+* **`instances` is counted per placement, not per plan.** A footnote quoted by two
+  models that cite different source docs is two annexe entries with `instances=1`
+  each, which is right; if a third document ever quotes it with no citation at
+  all, that is a third entry. No corpus evidence says a reader wants those
+  merged, and merging them would have to drop the attribution to do it.
+
 ## The merge review, 2026-08-20 — found, and NOT fixed
 
 Three reviewers over the branch before it merged (architecture, tests, frontend

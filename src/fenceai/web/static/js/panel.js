@@ -28,6 +28,7 @@ import { on, reloadProject, state } from "./state.js";
 import {
   fmt, fmtLen, inputStep, money, roleWord, sentence, toDisplayValue, toMm, tu,
 } from "./units.js";
+import { annexeHtml, bucket, quotedGroupHtml } from "./doc-warnings.js";
 import { warningRowHtml } from "./warnings.js";
 
 // The bay a preview is imagined into. Millimetres at rest, exactly like storage
@@ -281,11 +282,26 @@ function applySlotSelection() {
 
 function partsHtml() {
   const p = preview;
+  // What the DOCUMENT says about the line itself, once per line group
+  // (§3.3.5). `seenSku` is what "once" means here: two slots supplied by one
+  // product are one line group, and a notice repeated per slot is the noise the
+  // annexe exists to keep off a plan.
+  const quoted = preview?.quoted_warnings;
+  const seenSku = new Set();
+  const productRow = (sku) => {
+    const list = sku && !seenSku.has(sku) ? bucket(quoted, "product", sku) : [];
+    if (sku) seenSku.add(sku);
+    return list.length
+      ? `<tr class="doc-warning-row"><td colspan="7">${
+          quotedGroupHtml(list, "annexe.on_product")}</td></tr>`
+      : "";
+  };
   let html = `<div class="panel" id="panel-parts">
     <h3>${esc(t("panel.parts_title"))} — <bdi class="sku">${esc(p.model_ref)}</bdi></h3>
     <div class="meta">${sentence("panel.bay_line",
       { width_mm: p.width_mm, height_mm: p.height_mm })}</div>
     <div class="meta">${esc(t("panel.not_a_quote"))}</div>
+    ${quotedGroupHtml(bucket(quoted, "model", p.model_ref), "annexe.on_model")}
     <table><tr><th>${esc(t("panel.slot"))}</th><th>${esc(t("panel.role"))}</th>
       <th>${esc(t("panel.qty"))}</th><th>${esc(tu("panel.length"))}</th>
       <th>${esc(t("panel.item"))}</th><th>${esc(t("panel.unit_price"))}</th>
@@ -300,7 +316,8 @@ function partsHtml() {
         ? `<br><span class="meta">${sentence("panel.of_n_eligible",
             { n: part.eligible_skus.length })}</span>` : ""}</td>
       <td class="num">${esc(money(part.unit_price_cents))}</td>
-      <td class="num">${esc(money(part.total_cents))}</td></tr>`;
+      <td class="num">${esc(money(part.total_cents))}</td></tr>`
+      + productRow(part.sku);
   }
   html += `</table>
     <div id="panel-total">${sentence("panel.total", { total: money(p.total_cents) })}</div>`;
@@ -334,7 +351,21 @@ function unsuppliedHtml() {
  *  wrote, so it falls back across the languages they did write rather than
  *  through `t()`. Escaped like every other human sentence in the app. */
 function assemblyHtml() {
-  return assemblyPlanHtml(preview?.assembly);
+  // The placement is a SIBLING of the plan in the preview payload, not a field
+  // inside it: only a fifth of a real guide's warnings are about a step, so
+  // `report/annexe.py` places all of them once for this panel and this sheet
+  // reads the two buckets it can draw. The annexe preview below the steps is
+  // what the frontend design asked this surface for — an author who writes a
+  // document-scoped warning can see that it is going to appear once, at the back
+  // of the plan, rather than fourteen times at a fitter.
+  return assemblyPlanHtml(preview?.assembly, preview?.quoted_warnings)
+    // `drawn`: this tab renders the step, procedure, product and model buckets
+    // itself — on the steps above and on the parts table — so the annexe must
+    // not offer to send the reader to a BOM line this screen has not got.
+    + annexeHtml(preview?.quoted_warnings, {
+      id: "panel-annexe",
+      drawn: ["step", "procedure", "product", "model"],
+    });
 }
 
 
@@ -346,7 +377,7 @@ function assemblyHtml() {
 // instruction that is not one, and phase two is what gives those a surface.
 const SHEET_SCOPES = ["panel", "bay", "post"];
 
-export function assemblyPlanHtml(plan) {
+export function assemblyPlanHtml(plan, quoted = null) {
   // `null` is "this line states no order"; a plan always has at least one step,
   // because it is built one-for-one from a non-empty `assembly`. The second half
   // of the old guard was dead and collapsed the two states the tri-state exists
@@ -373,6 +404,7 @@ export function assemblyPlanHtml(plan) {
         : `<div class="meta">${esc(t("assembly.no_parts"))}</div>`}
       ${scopeOf(step) === "panel" ? ""
         : `<div class="meta step-scope">${esc(t("assembly.step_scope." + scopeOf(step)))}</div>`}
+      ${quotedGroupHtml(bucket(quoted, "step", step.key), "annexe.on_step")}
     </li>`).join("");
   // a part no step fits is REPORTED: a sheet that omits it reads as a finished
   // panel to the person holding it
@@ -386,13 +418,30 @@ export function assemblyPlanHtml(plan) {
     ? `<div class="warning">${sentence("assembly.unplaced_bay", {
         parts: plan.unplaced_bay.map((p) => p.slot_key).join(", ") })}</div>`
     : "";
+  // A withheld step's WARNING is not withheld with it, and the browser suite is
+  // what found that it was. `cure` is site-scoped, so M-VINYL's most safety-
+  // relevant sentence — "do not load a panel onto a footing that has not cured"
+  // — rendered nowhere on the sheet a fitter reads, silently, because the step it
+  // hangs off is present-and-unrendered here.
+  //
+  // Withholding a run-scoped INSTRUCTION from a panel sheet is right: it would
+  // claim a per-bay instruction that is not one. Withholding the warning to keep
+  // the surface tidy is the opposite trade, so it is shown with the withheld
+  // note and labelled as belonging to a step this sheet does not draw. That also
+  // keeps the annexe's own accounting honest: this tab really does render every
+  // `step` warning, which is what lets it pass `drawn: ["step", ...]`.
+  const shownKeys = new Set(shown.map((step) => step.key));
+  const heldWarnings = bucket(quoted, "step")
+    .filter((p) => !shownKeys.has(p.ref));
   const held = withheld
     ? `<div class="meta">${sentence("assembly.scope_withheld", { n: withheld })}</div>`
+      + quotedGroupHtml(heldWarnings, "annexe.on_withheld_step")
     : "";
   return `<div class="panel" id="panel-assembly">
     <h3>${esc(t("assembly.sheet_title"))}</h3>
     <div class="meta">${esc(t("assembly.sheet_hint"))}</div>
     ${orderNoteHtml(plan.order)}
+    ${quotedGroupHtml(bucket(quoted, "procedure"), "annexe.on_procedure")}
     ${missed}${missedBay}<ol class="steps">${rows}</ol>${held}</div>`;
 }
 

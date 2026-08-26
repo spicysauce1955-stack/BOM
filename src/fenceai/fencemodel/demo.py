@@ -29,6 +29,8 @@ to come back the same panel.
 
 from __future__ import annotations
 
+from fenceai.core.gaps import SourceRef
+from fenceai.core.warnings import DocumentWarning, WarningTarget
 from fenceai.fencemodel.model import (
     AssemblyStep, Distributed, Eligibility, EligibleItem, FenceModel, FixingRule,
     FrameSlot,
@@ -49,6 +51,29 @@ def legacy_model(rail_sku: str = "RAIL-3000", screw_sku: str = "SCREW-S10") -> F
     return FenceModel(
         id="M-LEGACY", version=1,
         name_i18n={"en": "Legacy panel", "he": "פאנל מורשת"},
+        # Two warnings, and they are here rather than only on M-VINYL for one
+        # reason: this is the document nearly every run in the repo is built to,
+        # so it is the only one that puts an ANNEXE on a plan that goes to site
+        # and a product notice on a BOM line a buyer reads. A surface nothing
+        # reaches is a surface nobody notices is wrong.
+        #
+        # Both are UNATTRIBUTED, and that is the honest state of a legacy
+        # document: nobody traced it, and §1.1 forbids this side from minting a
+        # `SourceRef` to pretend otherwise. M-VINYL carries the cited case.
+        warnings=[
+            DocumentWarning(
+                text_raw="WARNING: This fence is not a pool barrier and must "
+                         "not be relied on as one.",
+                lang="en", severity_lexeme="WARNING",
+                attaches_to=WarningTarget(kind="document"),
+            ),
+            DocumentWarning(
+                text_raw="Pre-drill this rail before screwing it to the post "
+                         "face; driving cold splits the end.",
+                lang="en", severity_lexeme="NOTICE",
+                attaches_to=WarningTarget(kind="product", ref=rail_sku),
+            ),
+        ],
         default_spec=PanelSpec(
             frame=[FrameSlot(
                 key="rail", orientation="horizontal",
@@ -407,6 +432,65 @@ def routed_vinyl_model(
                     "he": "התקינו את הכיפות בסוף, לאחר שכל המפרשים שלצידן מלאים "
                           "ואין עוד מה להשחיל דרך העמוד.",
                 }),
+        ],
+        # What the guide WARNS, in the words the guide uses (obligation 10).
+        # M-VINYL carries these for the same reason it carries all five step
+        # scopes: it is the document that exercises the feature, and a surface
+        # nothing reaches is a surface nobody notices is wrong.
+        #
+        # Four kinds on purpose, because they render in four different places:
+        # the safety box goes in the ANNEXE (once, never on a line), the cure
+        # note goes on its STEP, the pool notice goes on the BOM line for the
+        # sku it is about, and the warranty note goes in the annexe beside the
+        # safety box. That is the whole of §3.3.5 in one document.
+        #
+        # `lang="en"` on every one of them, in a Hebrew-first product, and that
+        # is not an omission: zero of the corpus's 81,794 elements are Hebrew,
+        # a quoted warning renders verbatim in the language it was written in,
+        # and offering to translate a manufacturer's liability sentence would be
+        # publishing a claim they never made. The surface marks it as quoted and
+        # sets the direction from `lang`.
+        warnings=[
+            DocumentWarning(
+                text_raw="CAUTION: In freeze-thaw regions, set every post "
+                         "footing below the local frost line. A footing poured "
+                         "above the frost line will heave, and a routed fence "
+                         "moves with its posts.",
+                lang="en", severity_lexeme="CAUTION",
+                attaches_to=WarningTarget(kind="document"),
+                # An obviously-demo citation, in a file of obviously-demo data.
+                # A real one can only come from the Discovery surface: §1.1 makes
+                # `SourceRef.id` opaque and forbids building one, which is
+                # exactly why `cites` is optional on this side.
+                cites=SourceRef(id="DEMO-src-vinyl-1",
+                                belongs_to="sha256:DEMO-vinyl-install-guide"),
+            ),
+            DocumentWarning(
+                text_raw="WARNING: Do not load a panel onto a post whose footing "
+                         "has not cured. A routed post carries the fence from "
+                         "its holes, and one pulled out of plumb early cannot be "
+                         "brought back.",
+                lang="en", severity_lexeme="WARNING",
+                attaches_to=WarningTarget(kind="step", ref="cure"),
+                cites=SourceRef(id="DEMO-src-vinyl-2",
+                                belongs_to="sha256:DEMO-vinyl-install-guide"),
+            ),
+            DocumentWarning(
+                # UNATTRIBUTED, deliberately: the second rendering a surface has
+                # to get right. A warning nobody can trace is still worth
+                # carrying and must not look like one that can be checked.
+                text_raw="This section is not rated for pool-barrier use.",
+                lang="en", severity_lexeme="NOTICE",
+                attaches_to=WarningTarget(kind="product", ref="SLAT-V-150"),
+            ),
+            DocumentWarning(
+                text_raw="Warranty is void where components from another "
+                         "manufacturer are substituted into this assembly.",
+                lang="en", severity_lexeme="IMPORTANT",
+                attaches_to=WarningTarget(kind="warranty"),
+                cites=SourceRef(id="DEMO-src-vinyl-3",
+                                belongs_to="sha256:DEMO-vinyl-warranty"),
+            ),
         ],
         default_spec=PanelSpec(
             frame=[FrameSlot(

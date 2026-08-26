@@ -19,6 +19,7 @@ import {
   CONSUMABLE_ROLES, getReport, loadStructure, refusalKey, staleCode,
 } from "./structure-data.js";
 import { enumWord, fmt, fmtLen, tu, unitLabel } from "./units.js";
+import { annexeHtml } from "./doc-warnings.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
 let detail = "installer";
@@ -82,7 +83,17 @@ function render() {
     + `<div class="panel" id="structure-elevation"></div>`
     + report.sections
       .map((s) => (detail === "customer" ? customerSection(s) : installerSection(s)))
-      .join("");
+      .join("")
+    // The ANNEXE, and it is last because that is what an annexe is. The
+    // document-, warranty- and maintenance-scoped warnings of every product line
+    // this fence is built to, once each, and never on a bay row above — a
+    // freeze-thaw footnote printed against all 40 bays is noise that teaches the
+    // reader holding this sheet to skip warnings.
+    //
+    // Shown on the CUSTOMER sheet too. It is the one warning surface that rule
+    // does not narrow: the consumables filter exists because a customer is not
+    // told a screw count, and a warranty condition is not a screw count.
+    + annexeHtml(report.quoted_warnings, { id: "structure-annexe" });
   renderBayElevation();
   for (const row of body.querySelectorAll("[data-element]")) {
     row.addEventListener("click", () => {
