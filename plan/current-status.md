@@ -1,5 +1,74 @@
 # Current status
 
+## Item 8 reviewed — both reviewers, and what they cost (2026-08-26)
+
+**2072 pytest · 268 scenario tests · contract hashes OK** (was 2056 · 268).
+Verdicts: architecture **SOUND-WITH-FIXES**, tests **GAPS** (56 mutants, 41
+killed, 15 surviving). Full dispositions:
+`docs/reviews/item-8-warning-model-2026-08-26.md`.
+
+**Neither reviewer found anything wrong with the annexe, the placement table or
+the type.** Every finding was one layer out — a count that published a claim, a
+bucket a surface forgot to account for, a sheet that cited a page it does not
+contain, and guards that could not fail. That is obligation 10's own failure mode
+arriving from four directions nobody had looked in.
+
+The five that mattered:
+
+- **`instances` published a claim no document made.** Two in-house documents
+  saying one sentence collapse to one entry — correctly, a reader wants it once —
+  and the locale string rendered that as *"the document prints this 2 times"*. The
+  fix was the SENTENCE, not the collapse: keying on the document would have broken
+  the shared-footnote property that has its own test. My own disposition note in
+  `open-work.md` had claimed the opposite behaviour and is now struck as wrong.
+- **The printed plan cited pages the printout does not contain.** `style.css`
+  prints the canvas and structure tabs only, so *"shown on the panel sheet"* on a
+  setting-out sheet meant M-VINYL's "do not load an uncured footing" reached site
+  nowhere. `annexeHtml` gained `inline`, and the sheet that goes to site now
+  carries every warning, each labelled with what it attaches to.
+- **A step key is model-local, and was placed against a document-blind union.**
+  Both reviewers found this from opposite ends. `rails`, `cure` and `frame` are
+  generic, so a two-product-line plan put manufacturer A's warning on
+  manufacturer B's step — obligation 10's misattribution by a third route, latent
+  only because the one surface drawing that bucket previews a single model.
+  `PlacedWarning.owner`, per-document vocabularies, and the model-local buckets
+  keyed by `(owner, ref)` while the annexe still ignores the owner.
+- **A `procedure` warning could render nowhere while the backend reported it
+  placed.** No `procedure` term in the frontend's accounting, and no procedure
+  head at all for a document with no assembly steps — which M-LEGACY is. A "before
+  you begin" warning is not part of a build order, and now survives the absence of
+  one.
+- **A document that could not be read back was skipped in silence.** Skipping is
+  the right trade and the review said so; skipping quietly means a plan built to a
+  document carrying a safety notice prints with no annexe and no reason.
+  `documents_unreadable` is counted and said out loud.
+
+**Fifteen surviving mutants, and the three load-bearing ones were about tests that
+could not fail.** S19's "moves no cost, no line, no decision" — the property that
+makes this safe to ship — compared node *kinds* while four leaks into payloads,
+edges and `confidence` survived; it now compares whole objects, which
+determinism made available all along. Every frontend call site had zero pytest
+coverage in a repo that already node-tests functions of that shape, and the
+mutant emptying the withheld-step list put a browser-found defect straight back;
+`bomHtml` is now exported like its two siblings and eleven node tests cover the
+wiring. And the "never localizes" grep was satisfiable *while the renderer
+localized*, because no fixture used a code the bundles actually have — the new one
+uses `sliver_span`, which is ours, and asserts the publisher's words win.
+
+**The ambient-database trap is closed suite-wide**, not in one file's fixture:
+`tests/api/conftest.py` pins a per-test store `autouse`. The API tests also got
+twice as fast, which is the measurement that says the isolation is real — they had
+been opening 141 MB of accumulated development state, and `seed_fence_models`
+never overwrites, so four assertions about a warning on M-LEGACY had been passing
+or failing on the age of a file.
+
+Deferred with reasons, not forgotten: a read model pins a document by ref rather
+than by `content_hash` (both `annexe` and `assembly` do, so it is one item for
+both); `warning_defects` is a genuine third string category, now named in
+CLAUDE.md, with codes waiting until `ingest` has a route; and whether the
+Knowledge Platform de-duplicates warnings before publishing is a question to send
+rather than a fact to build on.
+
 ## Item 8 — the warning model, and the annexe (2026-08-26)
 
 **2056 pytest · 268 scenario tests · 248/248 browser smoke · contract hashes OK**

@@ -955,11 +955,23 @@ def test_only_one_module_renders_a_quoted_warning():
     """The mirror of `test_only_one_module_localizes_a_warning_by_code`, and for
     the same reason: a second renderer is how one surface comes to translate,
     normalise or summarise a manufacturer's sentence while another prints it
-    intact. `text_raw` is read in exactly one place."""
+    intact. `text_raw` is read in exactly one place.
+
+    **A DESIGN-INTENT guard, not coverage**, and recorded as such the way this
+    repo records the distinction elsewhere: it constrains source text. The test
+    review evaded it in one line — `(p.warning || {})["text" + "_raw"]` in
+    another module is a second renderer this cannot see, and it would ship
+    unescaped. Do not count it as protection against a second renderer; count it
+    as the statement that there must not be one.
+
+    It reads through `_code_only` like its three neighbours. It did not, and that
+    contradicted the helper's own stated reason for existing: any comment in
+    `panel.js` explaining the `text_raw` rule failed the build, which makes
+    writing down why the thing to avoid."""
     js_dir = STATIC / "js"
     renderers = [
         p.name for p in [*js_dir.glob("*.js"), STATIC / "app.js"]
-        if "text_raw" in p.read_text()
+        if "text_raw" in _code_only(p)
     ]
     assert renderers == ["doc-warnings.js"], renderers
 
@@ -991,22 +1003,40 @@ def test_the_quoted_renderer_never_localizes_the_text_it_carries():
 
 
 def test_a_publishers_own_code_is_not_in_our_bundles():
-    """Inverted on purpose. `not_pool_rated` is a code the fixture's publisher
-    sent; a sentence for it in our bundles would mean this side had decided what
-    their code says. 142 of the corpus's 226 distinct warnings appear exactly
-    once, so a code registry for them would be a vocabulary of one-offs — and
-    `text_raw` is what renders anyway."""
+    """Inverted on purpose. A code the fixture's publisher sent, given a sentence
+    in our bundles, would mean this side had decided what their code says. 142 of
+    the corpus's 226 distinct warnings appear exactly once, so a code registry for
+    them would be a vocabulary of one-offs — and `text_raw` is what renders
+    anyway.
+
+    Read off the FIXTURE rather than hardcoded: the first version pinned
+    `not_pool_rated`, which was coincidentally complete because the fixture
+    carried exactly one code, and a second publisher code added to it would have
+    been unguarded."""
     en, he = _bundles()
-    assert "warning.not_pool_rated" not in en
-    assert "warning.not_pool_rated" not in he
+    fixture = json.loads((Path(__file__).resolve().parents[2] / "docs"
+                          / "integration-contract" / "fixtures"
+                          / "snapshot-example.json").read_text())
+    codes = {w["code"] for w in fixture["warnings"] if w.get("code")}
+    assert codes, "the fixture carries no publisher code — this test sees nothing"
+    for code in codes:
+        assert f"warning.{code}" not in en, code
+        assert f"warning.{code}" not in he, code
 
 
-def test_the_quoted_surface_carries_the_direction_and_not_the_language():
-    """A quoted English sentence in a Hebrew-first RTL page needs `lang` and
-    `dir` on the element holding it, or its terminal punctuation walks to the
-    wrong end of the line. The DIRECTION is inferred from `lang`; the words never
-    are, and there is no translate affordance to offer."""
+def test_the_quoted_surface_never_offers_to_translate():
+    """A DESIGN-INTENT guard, and narrowed to the half that can only be stated as
+    one: there is no translate affordance — not a button, not a title, not a
+    locale key. Translating a manufacturer's liability sentence and publishing it
+    as theirs manufactures a claim they never made, so the absence is the
+    feature.
+
+    The `"dir=" in src` half was dropped. It proved nothing about the direction
+    being DERIVED from the quoted `lang`, which is the actual property, and that
+    property has a real behavioural test — `tests/web/test_doc_warnings_module.py
+    ::test_the_direction_follows_the_quoted_language_not_the_page`, which fails
+    when `dirOf` is stubbed to a constant. A vocabulary check beside a
+    behavioural one can only produce false confidence or a false failure on a
+    comment containing the word."""
     src = _code_only(STATIC / "js" / "doc-warnings.js")
-    assert "dir=" in src and "lang=" in src
-    # no translate affordance: not a button, not a title, not a locale key
     assert "translate" not in src.lower()

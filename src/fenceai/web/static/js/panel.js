@@ -358,12 +358,26 @@ function assemblyHtml() {
   // what the frontend design asked this surface for — an author who writes a
   // document-scoped warning can see that it is going to appear once, at the back
   // of the plan, rather than fourteen times at a fitter.
-  return assemblyPlanHtml(preview?.assembly, preview?.quoted_warnings)
+  const quoted = preview?.quoted_warnings;
+  // A procedure-scoped warning is NOT part of a build order — "read this before
+  // you begin" is true of a document with no steps at all — and
+  // `assemblyPlanHtml` returns "" for a model that states no order. M-LEGACY
+  // states none, so its procedure warning rendered nowhere while the backend
+  // reported it placed and the annexe (told this tab drew it) said nothing.
+  // Found by the architecture review; the head of the procedure survives the
+  // absence of the procedure's steps.
+  const head = preview?.assembly
+    ? ""
+    : quotedGroupHtml(bucket(quoted, "procedure"), "annexe.on_procedure");
+  return head + assemblyPlanHtml(preview?.assembly, preview?.quoted_warnings)
     // `drawn`: this tab renders the step, procedure, product and model buckets
     // itself — on the steps above and on the parts table — so the annexe must
     // not offer to send the reader to a BOM line this screen has not got.
-    + annexeHtml(preview?.quoted_warnings, {
+    + annexeHtml(quoted, {
       id: "panel-annexe",
+      // `step` is claimed only because `assemblyPlanHtml` renders a withheld
+      // step's warning with the withheld note, so every step warning really is
+      // on this screen. `procedure` is claimed because of `head` above.
       drawn: ["step", "procedure", "product", "model"],
     });
 }

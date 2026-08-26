@@ -93,7 +93,14 @@ function render() {
     // Shown on the CUSTOMER sheet too. It is the one warning surface that rule
     // does not narrow: the consumables filter exists because a customer is not
     // told a screw count, and a warranty condition is not a screw count.
-    + annexeHtml(report.quoted_warnings, { id: "structure-annexe" });
+    // `inline`: this sheet is the one that gets PRINTED (style.css emits only the
+    // canvas and structure tabs), so it carries the step, procedure and product
+    // warnings itself rather than citing a panel sheet and a BOM tab the
+    // printout does not contain. Each is labelled with what it attaches to.
+    + annexeHtml(report.quoted_warnings, {
+      id: "structure-annexe",
+      inline: ["step", "procedure", "product", "model"],
+    });
   renderBayElevation();
   for (const row of body.querySelectorAll("[data-element]")) {
     row.addEventListener("click", () => {

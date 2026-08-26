@@ -187,14 +187,24 @@ def test_carrying_a_warning_moves_no_cost_no_line_and_no_decision(knowledge, cat
 
     a = price_strategy(with_warnings.strategy, catalog, None)
     b = price_strategy(without.strategy, catalog, None)
-    assert a.bom.total_cents == b.bom.total_cents
-    assert [(line.sku, line.engineering_qty) for line in a.requirements] \
-        == [(line.sku, line.engineering_qty) for line in b.requirements]
-    assert [n.kind for n in with_warnings.graph.nodes] \
-        == [n.kind for n in without.graph.nodes]
+    # Compared WHOLE, not projected. The first version of this test compared
+    # `[n.kind for n in graph.nodes]` and `(sku, engineering_qty)` per line, and
+    # the test review showed four plausible "helpfully record what the document
+    # warns" leaks surviving it: a `document_warns` payload key, a suffixed
+    # `model_ref`, an extra `assumption_of` edge, and `confidence="inferred"`.
+    # Every one of those changes the explanation of every run built to the
+    # document while the projection stays identical — and the scenario doc says
+    # byte-identical, which is the claim that deserves the strong comparison.
+    #
+    # `generate()` is pure and deterministic (ADR-0004), so a full dump is
+    # available and stable; there is no reason to compare less.
+    assert a.bom.model_dump() == b.bom.model_dump()
+    assert [line.model_dump() for line in a.requirements] \
+        == [line.model_dump() for line in b.requirements]
+    assert with_warnings.graph.model_dump() == without.graph.model_dump()
     # ...and the warnings are not smuggled in as engine warnings either
-    assert [w.code for w in with_warnings.strategy.warnings] \
-        == [w.code for w in without.strategy.warnings]
+    assert [w.model_dump() for w in with_warnings.strategy.warnings] \
+        == [w.model_dump() for w in without.strategy.warnings]
 
 
 def test_a_warning_pointing_at_nothing_is_refused_while_the_author_can_fix_it(catalog):

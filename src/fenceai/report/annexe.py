@@ -28,6 +28,18 @@ rail. Collapsing happens by `DocumentWarning.identity()`, so the same sentence
 cited to two different documents stays two entries: which document said it is
 half of what a reader needs to go and check it.
 
+**What `instances` counts, said carefully, because the first version of it lied.**
+It counts identical warnings among the ones THIS PLAN carries — not printings in a
+document. The two are the same number when one publisher repeats itself and
+different when two of a company's own product lines each say a thing once: §1.1
+forbids this side from minting a `SourceRef`, so every authored warning is
+uncited, `identity()` maps an absent citation to the empty one, and two
+in-house documents saying the same sentence therefore collapse — correctly, since
+a reader wants it once — with `instances=2`. The locale string used to render that
+as "the document prints this 2 times", which no document did. It now says what
+the number is: how many times this appears across the documents this fence is
+built to.
+
 **The invariant, and it is deliberately the same shape as the two beside it.**
 `report/assembly.py` says every member is placed by exactly one step or reported
 `unplaced`; `report/structure.py` says `Σ(parts) ≡ BOM`. Here:
@@ -80,12 +92,31 @@ class PlacedWarning(BaseModel):
     which is the point of the annexe. `instances` is how many identical warnings
     collapsed into this one entry: 1 almost everywhere, 83 for a footnote at the
     foot of fourteen pages, and never 0.
+
+    `instances` counts identical warnings across the documents THIS PLAN carries,
+    which is not the same claim as "printed N times in one document" — see the
+    module docstring.
+
+    `owner` is the document the sentence came OUT of, and it is here because a
+    step key is model-local. Both reviewers of this slice found the same hole
+    from opposite ends: `rails`, `cure` and `frame` are generic keys, so a plan
+    built to two product lines placed manufacturer A's warning on ref `rails`
+    and any surface drawing step warnings would show it on manufacturer B's
+    `rails` step. That is obligation 10's misattribution reached by a third
+    route, and it was latent only because the one surface drawing that bucket
+    previews a single model — a fact about today's UI, not about the model.
+
+    So a model-local bucket is keyed by `(owner, ref)` and a global one by `ref`
+    alone. `product` and `model` refs are global identifiers and need no owner to
+    disambiguate; the annexe deliberately ignores it, so one footnote two
+    documents quote from the same source doc is still one entry.
     """
 
     warning: DocumentWarning
     where: Bucket
     ref: str = ""
     instances: int = 1
+    owner: str = ""
 
 
 class WarningPlacement(BaseModel):
@@ -102,6 +133,16 @@ class WarningPlacement(BaseModel):
     # docstring. A surface may say "4 warnings belong to other documents"; it
     # must not print a stranger's safety notice on this plan.
     not_in_plan: int = 0
+    # Documents this plan was built to that could not be READ back, so whatever
+    # they warn is not in the list above. Not a placement and not a gap in the
+    # document — a hole in what this plan can say about itself.
+    #
+    # The caller counts them (`api/app.py::_quoted_warnings`), because only the
+    # caller knows which library it asked. Carried here rather than dropped for
+    # the reason the module docstring gives for `unplaceable`: an annexe that
+    # renders nothing because a document went missing is indistinguishable, to
+    # the person holding the sheet, from a document that warns nothing.
+    documents_unreadable: int = 0
 
     def at(self, where: Bucket, ref: str | None = None) -> list[PlacedWarning]:
         """The bucket a surface renders, optionally narrowed to one target.
@@ -130,6 +171,7 @@ def place_warnings(
     skus: Iterable[str] = (),
     model_refs: Iterable[str] = (),
     procedures: Iterable[str] = (),
+    owner: str = "",
 ) -> WarningPlacement:
     """`(the warnings, and what this plan actually holds)` -> where each one goes.
 
@@ -151,15 +193,44 @@ def place_warnings(
     no panel; when this engine models one, a `procedure`-scoped warning stops
     being unplaceable here and nothing else changes.
     """
-    step_keys = set(steps)
-    sku_set = set(skus)
-    model_set = set(model_refs)
-    procedure_set = set(procedures)
-
     placements: list[PlacedWarning] = []
     # first-seen wins, so authored order survives: a front safety box is printed
     # first because it is read first, and sorting the annexe would lose that.
     index: dict[tuple, int] = {}
+    not_in_plan = _place_into(
+        placements, index, warnings, owner=owner, steps=steps, skus=skus,
+        model_refs=model_refs, procedures=procedures)
+    return WarningPlacement(placements=placements, not_in_plan=not_in_plan)
+
+
+def _place_into(
+    placements: list[PlacedWarning],
+    index: dict[tuple, int],
+    warnings: Iterable[DocumentWarning],
+    *,
+    owner: str,
+    steps: Iterable[str],
+    skus: Iterable[str],
+    model_refs: Iterable[str],
+    procedures: Iterable[str],
+) -> int:
+    """One document's worth of warnings, appended to a placement being built.
+
+    Split out of `place_warnings` so `place_for_plan` can walk several documents
+    into ONE list with ONE dedup index: the step vocabulary has to be checked per
+    document (a step key is model-local) while the annexe has to collapse across
+    documents (a footnote two product lines quote from one source doc is one
+    entry). Doing it as a merge of separate placements would lose the second;
+    doing it as one pooled vocabulary lost the first, which is what both reviews
+    found.
+
+    Returns the number of warnings that belong to another job. Mutates its first
+    two arguments, which is the whole reason it is private.
+    """
+    step_keys = set(steps)
+    sku_set = set(skus)
+    model_set = set(model_refs)
+    procedure_set = set(procedures)
     not_in_plan = 0
 
     for warning in warnings:
@@ -183,33 +254,53 @@ def place_warnings(
                 continue
             where, ref = "model", target.ref
         else:  # procedure
-            if not target.ref or target.ref in model_set:
+            if not target.ref:
                 # "the procedure of the document this warning came with" — the
                 # head of its own assembly sheet, which is a surface we have.
-                where, ref = "procedure", target.ref
+                # An authored warning can take no other form: `validate_model`
+                # refuses a named procedure, because the ids are the platform's.
+                where, ref = "procedure", ""
             elif target.ref in procedure_set:
                 where, ref = "procedure", target.ref
             else:
+                # A `target.ref in model_set` branch used to live here, reading a
+                # model ref as its own procedure's id. Removed: a model ref is
+                # never a procedure id, so it could not have fired on real data,
+                # and it made an empty ref look like one case of two.
                 # A published `Procedure` that owns no panel. We hold none, so
                 # this is reported rather than filed under somebody else's job:
                 # `not_in_plan` would say "not yours", and the truth is "yours,
                 # and this engine has nowhere to put it".
                 where, ref = "unplaceable", target.ref
 
-        # The target KIND is part of the key, not only the bucket. All three
-        # annexe kinds land in one bucket, so keying on the bucket alone would
-        # collapse a warranty condition and a maintenance note that happen to
-        # read the same into one entry — and a reader would lose which of the two
-        # they were being told. `identity()` deliberately excludes the target
-        # (see its docstring), so the target is added here, whole.
-        key = (where, ref, target.kind, *warning.identity())
+        # Three things beyond the text make two warnings different warnings, and
+        # each is here because collapsing on less loses something a reader needs:
+        #
+        # `ref` — one sentence attached to two steps is two placements. Drop it
+        #   and the second step silently loses its warning while the invariant
+        #   still balances, because the loss becomes an `instances` count. That
+        #   is the module's own "carried and never rendered" failure arriving
+        #   through the collapse instead of through the target.
+        # `target.kind` — all three annexe kinds share one bucket, so a warranty
+        #   condition and a maintenance note that happen to read the same would
+        #   otherwise merge, and a reader would lose which of the two they were
+        #   being told.
+        # `owner`, for the model-local buckets only — see `PlacedWarning.owner`.
+        #   The annexe, and a global sku or model ref, must NOT carry it, or one
+        #   footnote quoted by two product lines becomes two entries.
+        #
+        # `identity()` deliberately excludes the target (see its docstring), so
+        # the target is added here, whole.
+        scope = owner if where in ("step", "procedure") else ""
+        key = (where, ref, scope, target.kind, *warning.identity())
         if key in index:
             placements[index[key]].instances += 1
             continue
         index[key] = len(placements)
-        placements.append(PlacedWarning(warning=warning, where=where, ref=ref))
+        placements.append(PlacedWarning(warning=warning, where=where, ref=ref,
+                                        owner=owner))
 
-    return WarningPlacement(placements=placements, not_in_plan=not_in_plan)
+    return not_in_plan
 
 
 def place_for_plan(
@@ -232,9 +323,27 @@ def place_for_plan(
     never a document's.
     """
     models = list(models)
-    return place_warnings(
-        [w for model in models for w in model.warnings],
-        steps=[step.key for model in models for step in model.assembly],
-        skus=skus,
-        model_refs=[model.ref for model in models],
-    )
+    skus = list(skus)
+    refs = [model.ref for model in models]
+    placements: list[PlacedWarning] = []
+    index: dict[tuple, int] = {}
+    not_in_plan = 0
+    # PER DOCUMENT, because a step key is model-local — `rails` and `cure` are
+    # generic, and pooling the vocabularies put one manufacturer's warning on
+    # another's step. `model_refs` stays the whole plan's: a document may only
+    # warn about ITSELF (`validate_model` enforces that), and passing one ref at
+    # a time would say nothing different while making the argument look local.
+    #
+    # One `index` across the loop, so the annexe still collapses across
+    # documents: two product lines quoting one source doc's footnote is one
+    # entry, and that property has a test.
+    for model in models:
+        not_in_plan += _place_into(
+            placements, index, model.warnings,
+            owner=model.ref,
+            steps=[step.key for step in model.assembly],
+            skus=skus,
+            model_refs=refs,
+            procedures=(),
+        )
+    return WarningPlacement(placements=placements, not_in_plan=not_in_plan)

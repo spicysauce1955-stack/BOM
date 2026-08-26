@@ -112,10 +112,19 @@ def test_a_warning_on_a_procedure_we_do_not_model_is_reported_not_filed_away():
 def test_a_procedure_warning_with_no_ref_belongs_to_its_own_document():
     """"The procedure of the document this warning came with" — the head of its
     own assembly sheet, which is a surface we have. An empty ref is the common
-    case in a guide that contains exactly one procedure."""
+    case in a guide that contains exactly one procedure, and on the authored path
+    it is the ONLY legitimate form: a curator cannot mint a procedure id, so
+    `validate_model` refuses a named one.
+
+    A model ref used to be read here as its own procedure's id. That branch is
+    gone: a model ref is never a procedure id, so it could not have fired on real
+    data, and it made an empty ref look like one case of two. A named ref this
+    engine holds no procedure for is `unplaceable`, which is the honest answer
+    and the one the architecture review asked for."""
     assert place_warnings([_w("procedure")]).at("procedure")
-    assert place_warnings(
-        [_w("procedure", "M-VINYL@v1")], model_refs=["M-VINYL@v1"]).at("procedure")
+    stray = place_warnings([_w("procedure", "M-VINYL@v1")],
+                           model_refs=["M-VINYL@v1"])
+    assert [p.where for p in stray.placements] == ["unplaceable"]
 
 
 def test_the_procedures_seam_turns_an_unplaceable_warning_into_a_placed_one():
@@ -182,3 +191,108 @@ def test_a_warranty_note_and_a_maintenance_note_are_never_one_entry():
     placement = place_warnings([_w("warranty", text=text),
                                 _w("maintenance", text=text)])
     assert len(placement.at("annexe")) == 2
+
+
+def test_one_sentence_on_two_steps_stays_two_warnings():
+    """The mutation the test review found: drop `ref` from the collapse key and
+    the whole suite stayed green while the second step silently lost its warning
+    — and the invariant still balanced, because the loss became an `instances`
+    count. That is this module's own "carried and never rendered" failure
+    arriving through the collapse instead of through the target.
+
+    `ref` was the one component of the key with no test. `kind` has one above,
+    and `identity()` has one; this is the third."""
+    same = "WARNING: mind your hands."
+    placement = place_warnings(
+        [_w("step", "rails", text=same), _w("step", "boards", text=same)],
+        steps=["rails", "boards"])
+    assert [(p.ref, p.instances) for p in placement.at("step")] == [
+        ("rails", 1), ("boards", 1)]
+
+    # ...and the same for a sku, because a notice about two products is two
+    # notices however identically they read
+    placement = place_warnings(
+        [_w("product", "RAIL-3000", text=same), _w("product", "SLAT-100", text=same)],
+        skus=["RAIL-3000", "SLAT-100"])
+    assert [(p.ref, p.instances) for p in placement.at("product")] == [
+        ("RAIL-3000", 1), ("SLAT-100", 1)]
+
+
+def test_a_step_key_is_local_to_the_document_that_named_it():
+    """Both reviewers found this from opposite ends. `rails`, `cure` and `frame`
+    are generic keys, so pooling the step vocabularies across a two-product-line
+    plan placed manufacturer A's warning on manufacturer B's `cure` step — which
+    is obligation 10's misattribution reached by a third route.
+
+    A step ref only THIS document has is placed; one only the other document has
+    belongs to another job. `validate_model` cannot catch it (it is per-document,
+    correctly), so the read model has to."""
+    a = routed_vinyl_model().model_copy(deep=True, update={
+        "id": "M-A", "assembly": [], "warnings": [_w("step", "cure")]})
+    b = routed_vinyl_model().model_copy(deep=True, update={
+        "id": "M-B", "warnings": []})
+    assert b.assembly and any(s.key == "cure" for s in b.assembly)
+
+    placement = place_for_plan([a, b])
+    assert placement.at("step") == []
+    assert placement.not_in_plan == 1
+    assert placement.carried() == 1
+
+
+def test_a_placement_says_which_document_each_sentence_came_out_of():
+    """`owner`, and the reason it is not cosmetic: without it two documents'
+    warnings on the same generic step key are indistinguishable downstream, so a
+    surface drawing step warnings has no way to draw them under the right
+    document."""
+    a = routed_vinyl_model().model_copy(deep=True, update={
+        "id": "M-A", "warnings": [_w("step", "cure", text="A says wait")]})
+    b = routed_vinyl_model().model_copy(deep=True, update={
+        "id": "M-B", "warnings": [_w("step", "cure", text="B says wait")]})
+    owners = {(p.owner, p.warning.text_raw) for p in place_for_plan([a, b]).at("step")}
+    assert owners == {("M-A@v1", "A says wait"), ("M-B@v1", "B says wait")}
+
+    # ...and the annexe still ignores the owner, so one footnote two product
+    # lines quote from one source doc is ONE entry
+    shared = _w("document", text="CAUTION: not a pool barrier.",
+                cites=SourceRef(id="s1", belongs_to="doc-a"))
+    c = a.model_copy(deep=True, update={"id": "M-C", "warnings": [shared]})
+    d = b.model_copy(deep=True, update={"id": "M-D", "warnings": [shared]})
+    entries = place_for_plan([c, d]).at("annexe")
+    assert len(entries) == 1 and entries[0].instances == 2
+
+
+def test_place_for_plan_forgets_no_vocabulary_including_the_ones_it_has_no_test_for():
+    """`model_refs=[]` survived the whole suite, because the fixture that pins
+    "you cannot forget a vocabulary" only exercised the vocabularies M-VINYL
+    happens to use. Under that mutant a model-scoped warning became
+    `not_in_plan` — "belongs to another job" — in the function whose docstring
+    exists to prevent exactly that."""
+    model = routed_vinyl_model()
+    model = model.model_copy(deep=True, update={"warnings": [
+        *model.warnings,
+        _w("model", model.ref, text="This line is discontinued."),
+        _w("procedure", text="Read the whole guide before you start."),
+    ]})
+    placement = place_for_plan(model.warnings and [model], skus=["SLAT-V-150"])
+    assert placement.not_in_plan == 0
+    assert placement.carried() == len(model.warnings)
+    assert [p.ref for p in placement.at("model")] == [model.ref]
+    assert placement.at("procedure")
+
+
+def test_a_carried_but_defective_warning_is_still_placed_in_the_annexe():
+    """`ingest` deliberately CARRIES a warning that contradicts its own schema —
+    a document-scoped one that names a line — and reports the defect rather than
+    dropping it. So this input is reachable in production, and the mutant that
+    let an annexe entry keep that `ref` survived everything.
+
+    An annexe entry has no ref by definition. The defective twin must land beside
+    its clean one and collapse with it, not open a second entry keyed on a line
+    the annexe does not have."""
+    clean = _w("document", text="CAUTION: mind the frost line.")
+    defective = clean.model_copy(deep=True)
+    defective.attaches_to.ref = "SOME-LINE"
+
+    entries = place_warnings([clean, defective]).at("annexe")
+    assert len(entries) == 1
+    assert entries[0].ref == "" and entries[0].instances == 2

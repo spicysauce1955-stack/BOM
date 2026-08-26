@@ -71,12 +71,19 @@ class FenceModelLibrary(BaseModel):
         """`"M-VINYL@v1"` -> the document, or `None` for a ref nothing answers.
 
         Here rather than at each caller because a ref is this library's format:
-        `FenceModel.ref` writes it and three read models now parse it, and a
-        second `rpartition("@v")` somewhere else is how one of them comes to
-        disagree about what a malformed ref means. `None` rather than a raise —
-        a caller re-reading a stored run wants a refusal with its own code
-        (`run_predates_fence_model`), and a caller collecting a plan's documents
-        wants to skip the one it cannot find.
+        `FenceModel.ref` writes it and the read models parse it. `None` rather
+        than a raise, because a caller collecting a plan's documents wants to skip
+        the one it cannot find.
+
+        **There is one other reader and it is not going away.**
+        `fencemodel/preview.py::_ref_parts` parses the same shape and RAISES
+        `ReadRefused(code="run_predates_fence_model")`, because it is re-reading a
+        stored run and owes the reader a coded refusal rather than a `None` that
+        turns into an empty page. The first version of this docstring claimed to
+        be the single parser and the architecture review caught it. Two readers,
+        two return contracts, one format — and if a third appears, that is when
+        the format is worth extracting rather than the callers being made to
+        share a signature neither wants.
         """
         model_id, _, version = model_ref.rpartition("@v")
         if not model_id or not version.isdigit():

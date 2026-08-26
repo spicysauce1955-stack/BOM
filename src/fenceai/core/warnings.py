@@ -78,10 +78,14 @@ class WarningTarget(BaseModel):
     skip warnings.
 
     An empty `ref` on `procedure` means "the procedure of the document this
-    warning came with" — the head of its own assembly sheet. A ref naming a
-    procedure this engine does not hold is reported as unplaceable rather than
-    dropped: contract §1.2 publishes `procedures` as step sequences that own no
-    panel, and this engine models none of them yet.
+    warning came with" — the head of its own assembly sheet. That is a local
+    convention for the AUTHORED path and not §1.2's, which publishes procedures
+    as first-class entities with their own ids and says nothing about an empty
+    ref; it is defensible because a curator has no procedure id to name, and it
+    is written down here so the next reader does not mistake it for the
+    contract's. A PUBLISHED ref naming a procedure this engine does not hold is
+    reported as unplaceable rather than dropped, because this engine models none
+    of them yet.
     """
 
     kind: WarningScope

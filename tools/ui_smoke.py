@@ -454,7 +454,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # corpus's elements are Hebrew, so translating a manufacturer's liability
         # sentence would be publishing a claim they never made.
         check("the quotation keeps its own language and the annexe keeps the reader's",
-              annexe["dir"] == "ltr" and annexe["lang"] == "en"
+              annexe is not None and annexe["dir"] == "ltr"
+              and annexe["lang"] == "en"
               and "נספח" in annexe["title"] and annexe["unattributed"],
               annexe and f"dir={annexe['dir']} title={annexe['title']!r}")
         # scrolled to, because the annexe is the LAST panel on the sheet and a

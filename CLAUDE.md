@@ -60,6 +60,10 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
   Where each quoted warning renders is `report/annexe.py`'s single answer (§3.3.5):
   `document`/`warranty`/`maintenance` go once into the plan's **annexe** and never onto a
   line, and `js/doc-warnings.js` is the one module allowed to read `text_raw`.
+  There is a THIRD category and it is neither: **authoring text** — `validate_model`'s
+  English errors and `Ingested.warning_defects` — which is our finding about a document
+  somebody is holding, rendered escaped and LTR for the person who can fix it. It carries
+  no code and is not quoted; do not route it through either registry.
 
 ## Durable principles — frontend (`src/fenceai/web/static/`)
 

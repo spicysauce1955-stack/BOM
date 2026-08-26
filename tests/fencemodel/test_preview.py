@@ -550,3 +550,38 @@ def test_pinning_a_product_the_part_does_not_admit_is_refused():
         preview(multi_candidate_model(), height_mm=1800, width_mm=2500,
                 slot_skus={"rail": "RAIL-3000"})
     assert e.value.code == "sku_not_eligible"
+
+
+def test_the_preview_tells_the_author_where_each_quoted_warning_will_land():
+    """`PanelPreview.quoted_warnings`, and it was reachable only through the
+    browser: a mutant replacing it with an empty `WarningPlacement()` survived
+    the whole pytest suite, and the model editor is the one surface whose entire
+    purpose is showing an author what their document will do.
+
+    The frontend design asks for exactly this — *"a document-scoped warning
+    previews into the plan's annexe, not onto every line, so the author can see
+    where it will land"* — so the preview has to carry the placement, not just
+    the panel.
+    """
+    out = preview(M_VINYL, height_mm=1800, width_mm=1500)
+    placed = out.quoted_warnings
+
+    assert placed.carried() == len(M_VINYL.warnings)
+    assert placed.not_in_plan == 0
+    # the four kinds M-VINYL exercises, each in the bucket §3.3.5 names
+    assert {p.where for p in placed.placements} == {"annexe", "step", "product"}
+    assert [p.ref for p in placed.at("step")] == ["cure"]
+    # and the product notice is placed against a sku THIS panel buys, which is
+    # the vocabulary only the preview can supply
+    bought = {part.sku for part in out.parts}
+    assert {p.ref for p in placed.at("product")} <= bought
+
+
+def test_a_preview_of_a_document_that_warns_nothing_carries_an_empty_placement():
+    """The tri-state matters here as much as it does for `assembly`: an empty
+    placement is "this document warns nothing", and the surface must be able to
+    tell that from "the preview did not compute one"."""
+    silent = M_SLAT.model_copy(deep=True, update={"warnings": []})
+    out = preview(silent, height_mm=1800, width_mm=2000)
+    assert out.quoted_warnings.placements == []
+    assert out.quoted_warnings.carried() == 0

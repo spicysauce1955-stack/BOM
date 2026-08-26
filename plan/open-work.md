@@ -210,11 +210,27 @@ CLAUDE.md. Details in `plan/current-status.md`.
   `attaches_to` + the publisher's severity word with no translate affordance, and
   the preview surface it needs (the annexe preview on the Panel tab) is the half
   that landed.
-* **`instances` is counted per placement, not per plan.** A footnote quoted by two
-  models that cite different source docs is two annexe entries with `instances=1`
-  each, which is right; if a third document ever quotes it with no citation at
-  all, that is a third entry. No corpus evidence says a reader wants those
-  merged, and merging them would have to drop the attribution to do it.
+* ~~**`instances` is counted per placement, not per plan.**~~ **This note was
+  WRONG as written**, and the architecture review proved it with the repo's own
+  data: two documents quoting one sentence with no citation collapse into a single
+  entry with `instances=2`, because `identity()` maps an absent `cites` to the
+  empty one and §1.1 means every authored warning is uncited. The collapse is
+  right — a reader wants the sentence once — and it was the LOCALE STRING that
+  lied, claiming "the document prints this N times". Fixed at the sentence; see
+  `docs/reviews/item-8-warning-model-2026-08-26.md` A1.
+* **A read model pins a document by REF, not by content.** `report/annexe.py` (via
+  the routes) and `report/assembly.py` both resolve `(id, version)` and ignore the
+  `content_hash` a run also stamps, so editing a DRAFT in place changes what a
+  stored run says the manufacturer warned — and what it says the fitter must do —
+  with no `model_changed`. One item covering both read models, deliberately: fixing
+  one alone would leave two views disagreeing about how strictly a document is
+  pinned. Legal text raises the stakes over build steps, which is why it is
+  written down rather than left to the next reader to notice.
+* **Does the Knowledge Platform de-duplicate warnings before publishing?**
+  Obligation 10 reports 226 distinct warnings from 1,038 instances, which reads as
+  though it does. If so, `instances` is always 1 on the published path and the
+  collapse is exercised only by our own fixture. §1.2 does not pin it. A question
+  to send, not a fact to build on.
 
 ## The merge review, 2026-08-20 — found, and NOT fixed
 

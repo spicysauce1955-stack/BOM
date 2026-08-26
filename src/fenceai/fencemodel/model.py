@@ -1544,6 +1544,18 @@ def _warning_errors(model: FenceModel, catalog: Catalog) -> list[str]:
             errors.append(
                 f"{label}: attaches to product {ref!r}, which is not in the "
                 f"catalog. A warning about a sku nothing can buy reaches no line")
+        elif kind == "procedure":
+            # A curator cannot mint a procedure id — §1.2's procedures are the
+            # platform's, with ids only it issues — so a non-empty ref here is a
+            # typo, and at render time a typo becomes `unplaceable`, which the
+            # surface prints as "this system does not model that procedure". The
+            # author's mistake reported as our shortcoming is the exact inversion
+            # this function exists to prevent. An empty ref is this document's
+            # own procedure and is the only form it can legitimately take.
+            errors.append(
+                f"{label}: attaches to procedure {ref!r}, and a procedure id is "
+                f"the platform's to issue. Leave the ref empty to warn about "
+                f"this document's own procedure")
         elif kind == "model" and ref not in (model.ref, model.id):
             errors.append(
                 f"{label}: attaches to model {ref!r} and this is {model.ref}. A "

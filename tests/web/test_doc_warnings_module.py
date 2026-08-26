@@ -41,8 +41,15 @@ globalThis.fetch = async (url) => ({
 });
 
 import { setLocale } from "./js/i18n.js";
+import { setUnits } from "./js/units.js";
 import { annexeHtml, bucket, quotedGroupHtml, quotedWarningHtml }
   from "./js/doc-warnings.js";
+// The CALL SITES, not only the renderer. Every one of these was reachable only
+// through the browser, and the test review proved it: a mutant emptying the
+// withheld-step list, one dropping the per-sku dedup and one making the BOM's
+// warning row return "" all survived the entire pytest suite.
+import { assemblyPlanHtml } from "./js/panel.js";
+import { bomHtml } from "./js/tabs.js";
 
 const EN = JSON.parse(readFileSync("./i18n/en.json", "utf8"));
 const HE = JSON.parse(readFileSync("./i18n/he.json", "utf8"));
@@ -91,6 +98,15 @@ out.once = quotedWarningHtml(placed(W(), "annexe", "", 1));
 out.with_code = quotedWarningHtml(placed(W({
   code: "not_pool_rated", params: { standard: "IRC AG105.2" },
   text_raw: "Not rated as a pool barrier." }), "annexe"));
+// ...and the case where localizing is OBSERVABLE: a publisher's code that
+// collides with one of OUR platform codes. `not_pool_rated` is correctly absent
+// from both bundles, so a renderer that looked the code up would fall back to
+// the text and hide the mutation. This one has a sentence in en.json, so a
+// lookup would print OUR words over THEIRS.
+out.colliding_code = quotedWarningHtml(placed(W({
+  code: "sliver_span",
+  text_raw: "Trim the last board to suit; do not stretch the spacing." }),
+  "annexe"));
 
 out.empty_group = quotedGroupHtml([], "annexe.on_step");
 out.step_group = quotedGroupHtml(
@@ -106,6 +122,11 @@ const PLACEMENT = {
     placed(W({ attaches_to: { kind: "step", ref: "cure" } }), "step", "cure"),
     placed(W({ attaches_to: { kind: "product", ref: "SLAT-V-150" } }),
            "product", "SLAT-V-150"),
+    // a `model`-bucket entry, because without one the mutant that drops the
+    // `model` term from the annexe's own accounting survived: the fixture simply
+    // never had anything in that bucket to lose
+    placed(W({ attaches_to: { kind: "model", ref: "M-VINYL@v1" },
+               text_raw: "This line is discontinued." }), "model", "M-VINYL@v1"),
     placed(W({ attaches_to: { kind: "procedure", ref: "PROC-1" } }),
            "unplaceable", "PROC-1"),
   ],
@@ -129,6 +150,75 @@ out.buckets = {
   none: bucket(null, "annexe").length,
 };
 
+// --- the call sites ---------------------------------------------------------
+// A plan whose `cure` step is SITE-scoped, so the panel sheet withholds the step
+// (obligation 12) and must still show the warning hanging off it.
+const STEP_PLAN = {
+  model_ref: "M-X@v1",
+  steps: [
+    { key: "rails", kind: "assembly", scope: "panel", stage: 0,
+      text_i18n: { en: "Slide the rails through." }, parts: [] },
+    { key: "cure", kind: "installation", scope: "site", stage: 1,
+      text_i18n: { en: "Let the footings cure." }, parts: [] },
+  ],
+  order: { stages: [["rails"], ["cure"]], unique: true, basis: "requires",
+           cycle: [], exclusive: [], concurrent: [] },
+  unplaced: [], unplaced_bay: [],
+};
+const STEP_PLACEMENT = {
+  placements: [
+    placed(W({ text_raw: "WARNING: do not load an uncured footing.",
+               attaches_to: { kind: "step", ref: "cure" } }), "step", "cure"),
+    placed(W({ text_raw: "Slide, do not force.",
+               attaches_to: { kind: "step", ref: "rails" } }), "step", "rails"),
+    placed(W({ text_raw: "Read the whole guide first.",
+               attaches_to: { kind: "procedure", ref: "" } }), "procedure"),
+  ],
+  not_in_plan: 0,
+};
+out.sheet = assemblyPlanHtml(STEP_PLAN, STEP_PLACEMENT);
+out.sheet_no_quoted = assemblyPlanHtml(STEP_PLAN, null);
+
+// The BOM: one product notice, on the line for its own sku, once — even when two
+// lines somehow share a sku.
+const BOM = {
+  total_cents: 1000,
+  lines: [
+    { sku: "RAIL-3000", purchase_qty: 4, purchase_unit: "bar", engineering_qty: 4,
+      engineering_unit: "each", overage_qty: 0, unit_price_cents: 100,
+      total_cents: 400, notes: [] },
+    { sku: "RAIL-3000", purchase_qty: 1, purchase_unit: "bar", engineering_qty: 1,
+      engineering_unit: "each", overage_qty: 0, unit_price_cents: 100,
+      total_cents: 100, notes: [] },
+    { sku: "SLAT-100", purchase_qty: 9, purchase_unit: "each", engineering_qty: 9,
+      engineering_unit: "each", overage_qty: 0, unit_price_cents: 50,
+      total_cents: 450, notes: [] },
+  ],
+  cut_plans: {},
+};
+const BOM_PLACEMENT = {
+  placements: [
+    placed(W({ text_raw: "Pre-drill before screwing.",
+               attaches_to: { kind: "product", ref: "RAIL-3000" } }),
+           "product", "RAIL-3000"),
+    placed(W({ text_raw: "This line is discontinued.",
+               attaches_to: { kind: "model", ref: "M-X@v1" } }), "model", "M-X@v1"),
+    placed(W(), "annexe", "", 3),
+  ],
+  not_in_plan: 0,
+};
+setUnits("mm");
+out.bom = bomHtml(BOM, [], { quoted: BOM_PLACEMENT });
+out.bom_frozen = bomHtml(BOM, [], {});   // the quote path passes no placement
+
+// The annexe as the PRINTED sheet asks for it: the other buckets drawn here,
+// because the printout contains neither the panel sheet nor the BOM tab.
+out.annexe_inline = annexeHtml(BOM_PLACEMENT,
+  { id: "structure-annexe", inline: ["step", "procedure", "product", "model"] });
+out.annexe_unreadable = annexeHtml(
+  { placements: [], not_in_plan: 0, documents_unreadable: 2 });
+out.annexe_procedure_note = annexeHtml(STEP_PLACEMENT);
+
 await setLocale("he");
 out.he_furniture = annexeHtml(PLACEMENT);
 out.he_quote_of_english = quotedWarningHtml(placed(W(), "annexe"));
@@ -142,10 +232,17 @@ out.keys = {
   empty: EN["annexe.empty"],
   he_title: HE["annexe.title"],
   he_quoted: HE["annexe.quoted"],
+  our_sentence_for_a_colliding_code: EN["warning.sliver_span"],
   elsewhere_steps_1: EN["annexe.elsewhere_steps"].replace("{n}", "1"),
   elsewhere_lines_1: EN["annexe.elsewhere_lines"].replace("{n}", "1"),
   other_documents_4: EN["annexe.other_documents"].replace("{n}", "4"),
+  elsewhere_lines_2: EN["annexe.elsewhere_lines"].replace("{n}", "2"),
   unplaceable_1: EN["annexe.unplaceable"].replace("{n}", "1"),
+  on_withheld: EN["annexe.on_withheld_step"],
+  on_procedure: EN["annexe.on_procedure"],
+  on_target: EN["annexe.on_target"].split("{ref}")[0],
+  elsewhere_procedure_1: EN["annexe.elsewhere_procedure"].replace("{n}", "1"),
+  unreadable_2: EN["annexe.documents_unreadable"].replace("{n}", "2"),
 };
 
 console.log(JSON.stringify(out));
@@ -259,7 +356,10 @@ def test_the_annexe_accounts_for_every_warning_it_is_not_showing(rendered):
     """A sheet that showed two notices while silently holding six more would be
     worse than one that showed none, because a reader would believe they had seen
     the warnings."""
-    for key in ("elsewhere_steps_1", "elsewhere_lines_1", "other_documents_4"):
+    # `elsewhere_lines` counts the product AND model buckets together — one of
+    # each here, so 2. The fixture had no `model` entry until the test review
+    # showed a mutant dropping that term surviving for want of anything to lose.
+    for key in ("elsewhere_steps_1", "elsewhere_lines_2", "other_documents_4"):
         assert rendered["keys"][key] in rendered["annexe"], key
 
 
@@ -354,3 +454,142 @@ def test_a_word_the_quotation_already_leads_with_is_not_printed_twice(rendered):
     assert "WARNING: This fence is not a pool barrier." in rendered["leading"]
     assert rendered["leading"].count("WARNING") == 1
     assert "lexeme" not in rendered["leading"]
+
+
+# --- the call sites, which were browser-only ---------------------------------
+
+def test_a_warning_on_a_withheld_step_reaches_the_sheet(rendered):
+    """The browser found this defect and the browser was then its only guard: a
+    mutant emptying `heldWarnings` survived the whole pytest suite and put the
+    defect straight back. `cure` is site-scoped, so obligation 12 withholds the
+    STEP from a panel sheet — and the warning hanging off it is the document's
+    most safety-relevant sentence, so it is shown with the withheld note instead.
+
+    Both halves asserted: the step is genuinely not drawn, and its warning is on
+    the sheet anyway."""
+    sheet = rendered["sheet"]
+    assert 'data-step="cure"' not in sheet          # the step is withheld
+    assert "Let the footings cure." not in sheet
+    assert "WARNING: do not load an uncured footing." in sheet
+    assert rendered["keys"]["on_withheld"] in sheet
+
+
+def test_a_step_warning_lands_on_its_own_step_and_no_other(rendered):
+    """The drawn half of the same wiring. `rails` is a panel step, so its warning
+    is inside its own `<li>` — not in the withheld group with `cure`'s."""
+    sheet = rendered["sheet"]
+    li = sheet[sheet.index('data-step="rails"'):]
+    li = li[:li.index("</li>")]
+    assert "Slide, do not force." in li
+    assert "WARNING: do not load an uncured footing." not in li
+
+
+def test_the_procedure_head_is_above_the_steps(rendered):
+    """A "read the whole guide first" warning is about the procedure, not about
+    any step in it, so it renders at the head — above the numbered list."""
+    sheet = rendered["sheet"]
+    assert "Read the whole guide first." in sheet
+    assert sheet.index("Read the whole guide first.") < sheet.index("<ol")
+    assert rendered["keys"]["on_procedure"] in sheet
+
+
+def test_a_sheet_handed_no_placement_still_renders(rendered):
+    """Every quoted-warning call site has to tolerate a payload from before the
+    field existed — a stored run re-read, a saved quote — so `null` is a
+    supported argument and not a crash."""
+    assert 'data-step="rails"' in rendered["sheet_no_quoted"]
+    assert "doc-warning" not in rendered["sheet_no_quoted"]
+
+
+def test_the_bom_carries_a_product_notice_once_per_line_group(rendered):
+    """"Once per line group" (§3.3.5). The fixture gives two lines the same sku —
+    which `Bom.lines` should never do, and which is exactly why the dedup is
+    there — and the notice appears once. A mutant dropping `seenSku` survived the
+    whole suite."""
+    bom = rendered["bom"]
+    assert bom.count("Pre-drill before screwing.") == 1
+    assert bom.count('class="doc-warning-row"') == 1
+
+
+def test_the_bom_notice_sits_under_the_line_it_is_about(rendered):
+    """Not merely present: on the right row. A notice about RAIL-3000 under the
+    SLAT-100 line is worse than no notice."""
+    bom = rendered["bom"]
+    row = bom.index('class="doc-warning-row"')
+    assert bom.rindex("RAIL-3000", 0, row) > bom.rfind("SLAT-100", 0, row)
+
+
+def test_a_model_scoped_notice_is_drawn_once_above_the_table(rendered):
+    """`model` is the whole product line, so it is one notice for the bill and not
+    one per row. Its own label, because "this product" and "this product line"
+    are different claims."""
+    bom = rendered["bom"]
+    assert bom.count("This line is discontinued.") == 1
+    assert bom.index("This line is discontinued.") < bom.index("<table")
+
+
+def test_the_bom_does_not_carry_the_annexe(rendered):
+    """The annexe belongs to the PLAN and renders on the setting-out sheet.
+    Printing it here as well is the same notice twice, which is how a reader
+    learns to skip both."""
+    assert "panel annexe" not in rendered["bom"]
+
+
+def test_a_frozen_quote_carries_no_live_notices(rendered):
+    """`bomHtml` renders saved quotes too, and the quote path deliberately passes
+    no placement: a `Quote` is an immutable commercial document, and annotating a
+    historical one with what its manufacturer says TODAY prints text on a page
+    nobody accepted. Untested anywhere before — a regression here was silent."""
+    assert "doc-warning" not in rendered["bom_frozen"]
+    assert "Pre-drill before screwing." not in rendered["bom_frozen"]
+
+
+# --- the printed plan --------------------------------------------------------
+
+def test_the_printed_annexe_carries_the_warnings_the_printout_cannot_cite(rendered):
+    """The print stylesheet emits only the canvas and structure tabs, so a
+    setting-out sheet that said "shown on the panel sheet" was citing a page the
+    printout does not contain — and a "do not load an uncured footing" warning
+    reached site nowhere. `inline` draws them here instead, each labelled with
+    what it attaches to."""
+    out = rendered["annexe_inline"]
+    assert "Pre-drill before screwing." in out          # a product notice...
+    assert rendered["keys"]["on_target"] in out         # ...labelled with its sku
+    assert "RAIL-3000" in out
+    # ...and no note sending the reader to a surface the printout has not got
+    assert rendered["keys"]["elsewhere_lines_1"] not in out
+
+
+def test_a_procedure_warning_is_accounted_for_when_it_is_not_drawn(rendered):
+    """`procedure` had no term in the annexe's accounting at all, which is how a
+    procedure-scoped warning on a document with no assembly steps came to render
+    nowhere while the backend reported it placed and the invariant balanced."""
+    assert rendered["keys"]["elsewhere_procedure_1"] in rendered["annexe_procedure_note"]
+
+
+def test_a_document_that_could_not_be_read_is_said_out_loud(rendered):
+    """Skipping an unreadable document is the right trade — a missing annexe is
+    not a reason to take a working BOM away — but skipping in SILENCE means a
+    plan built to a document carrying a safety notice prints with no annexe and
+    no reason. It reads as a warning because it is ours, not the document's."""
+    out = rendered["annexe_unreadable"]
+    assert rendered["keys"]["unreadable_2"] in out
+    assert '<div class="warning">' in out
+
+
+def test_a_publishers_code_that_collides_with_ours_still_renders_their_words(rendered):
+    """The case that makes "never localizes" testable rather than merely grepped.
+
+    The source-text guard in `test_locale_bundles.py` was evaded in one line by
+    the test review, and the reason it could not be caught behaviourally is that
+    no fixture used a code with an entry in a bundle — `not_pool_rated` is
+    correctly absent, so a renderer that looked it up would fall back to the text
+    and hide the mutation.
+
+    `sliver_span` IS one of our platform codes with a sentence in both bundles. A
+    publisher sending it means what the publisher means, and their text is what
+    renders. Ours must not appear."""
+    out = rendered["colliding_code"]
+    assert "Trim the last board to suit; do not stretch the spacing." in out
+    assert rendered["keys"]["our_sentence_for_a_colliding_code"] not in out
+    assert "sliver_span" not in out

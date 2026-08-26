@@ -70,9 +70,20 @@ function attribution(cites) {
   if (!cites || !cites.id)
     return `<div class="meta">${esc(t("annexe.unattributed"))}</div>`;
   const ref = cites.belongs_to ? `${cites.id} · ${cites.belongs_to}` : cites.id;
-  return `<div class="meta">`
-    + esc(t("annexe.source")).replace("{ref}", `<bdi class="sku">${esc(ref)}</bdi>`)
-    + `</div>`;
+  return `<div class="meta">${fill(t("annexe.source"), "ref",
+    `<bdi class="sku">${esc(ref)}</bdi>`)}</div>`;
+}
+
+// Put an already-escaped fragment into a placeholder in a localized string.
+//
+// A FUNCTION replacement, not a string one, and that is the whole reason this
+// helper exists: `String.replace(x, str)` treats `$&`, `$'` and friends in the
+// REPLACEMENT as patterns, and a `SourceRef.id` is opaque publisher text that may
+// contain them (§1.1 — do not parse it, do not assume its shape). The output
+// garbled rather than escaped wrongly, but a citation a reader cannot read is a
+// citation they cannot check.
+function fill(template, name, html) {
+  return esc(template).replace(`{${name}}`, () => html);
 }
 
 // One placed warning: the text, whose it is, and how many times the document
@@ -88,7 +99,7 @@ export function quotedWarningHtml(placed) {
     + `<div class="meta">${esc(t("annexe.quoted"))}</div>`
     + attribution(w.cites)
     + (n > 1
-      ? `<div class="meta">${esc(t("annexe.instances")).replace("{n}", esc(String(n)))}</div>`
+      ? `<div class="meta">${fill(t("annexe.instances"), "n", esc(String(n)))}</div>`
       : "")
     + `</div>`;
 }
@@ -119,42 +130,74 @@ export function bucket(placement, where, ref = null) {
 // what is NOT here. The counts matter as much as the entries — a sheet that
 // showed three notices while silently holding four more would be worse than one
 // that showed none, because a reader would believe they had seen the warnings.
-export function annexeHtml(placement, { title = true, drawn = [], id = "" } = {}) {
+export function annexeHtml(
+  placement, { title = true, drawn = [], inline = [], id = "" } = {},
+) {
   const entries = bucket(placement, "annexe");
   // "N more warnings are shown on the panel sheet" is only true where the reader
   // can actually get to that sheet. `drawn` is the caller saying which buckets it
   // renders ITSELF, so the note is replaced by the thing it was pointing at
   // rather than sending a reader to a surface this screen does not have.
+  //
+  // `inline` is the sharper version of the same problem, and the architecture
+  // review found it: the print stylesheet emits only the canvas and structure
+  // tabs, so the PRINTED plan contains neither the panel sheet nor the BOM tab —
+  // and the setting-out sheet was telling the reader that a "do not load an
+  // uncured footing" warning was on one of them. A sheet that goes to site
+  // carries every warning or says so; it does not cite an absent page. So the
+  // print surface asks for those buckets to be drawn HERE, labelled with what
+  // they attach to.
+  const shown = [...drawn, ...inline];
   const elsewhere = (where) =>
-    (drawn.includes(where) ? 0 : bucket(placement, where).length);
+    (shown.includes(where) ? 0 : bucket(placement, where).length);
   const steps = elsewhere("step");
   const lines = elsewhere("product") + elsewhere("model");
+  // `procedure` had no term here at all, which is how a procedure-scoped warning
+  // on a document with no assembly steps came to render nowhere while the
+  // backend reported it placed and the invariant balanced.
+  const procedures = elsewhere("procedure");
   const stranded = bucket(placement, "unplaceable").length;
   const other = placement?.not_in_plan || 0;
-  if (!entries.length && !steps && !lines && !stranded && !other) return "";
+  const unreadable = placement?.documents_unreadable || 0;
+
+  const attached = inline.flatMap((where) => bucket(placement, where));
+  if (!entries.length && !attached.length && !steps && !lines && !procedures
+      && !stranded && !other && !unreadable) return "";
 
   const note = (key, n) => (n
-    ? `<div class="meta">${esc(t(key)).replace("{n}", esc(String(n)))}</div>` : "");
-  // `id` comes from the CALLER, and it has to. Both the Panel tab and the
-  // structure sheet render an annexe, and they are in the DOM at the same time:
-  // hardcoding one id here gave two elements the same one, so
-  // `getElementById` returned whichever came first and the panel sheet's own
-  // check read the setting-out sheet's annexe instead. Each module owns its own
-  // subtree (CLAUDE.md), and that includes naming it.
+    ? `<div class="meta">${fill(t(key), "n", esc(String(n)))}</div>` : "");
+  // An inline entry says what it is attached to, because on this sheet it is no
+  // longer sitting on the thing it is about.
+  const attachedHtml = attached.map((p) => {
+    const label = p.ref
+      ? `<div class="meta">${fill(t("annexe.on_target"), "ref",
+          `<bdi class="sku">${esc(p.ref)}</bdi>`)}</div>`
+      : `<div class="meta">${esc(t("annexe.on_procedure"))}</div>`;
+    return `<div class="doc-warnings">${label}${quotedWarningHtml(p)}</div>`;
+  }).join("");
+
   return `<div class="panel annexe"${id ? ` id="${esc(id)}"` : ""}>`
     + (title ? `<h3>${esc(t("annexe.title"))}</h3>` : "")
     + `<div class="meta">${esc(t("annexe.hint"))}</div>`
     + (entries.length
       ? entries.map(quotedWarningHtml).join("")
       : `<div class="meta">${esc(t("annexe.empty"))}</div>`)
+    + attachedHtml
     + note("annexe.elsewhere_steps", steps)
+    + note("annexe.elsewhere_procedure", procedures)
     + note("annexe.elsewhere_lines", lines)
     + note("annexe.other_documents", other)
-    // Not a `meta` line: a warning with nowhere to go is a gap in this engine,
-    // not a note about the document. It reads as a warning because it is one.
+    // Not `meta` lines: a warning with nowhere to go, and a document that cannot
+    // be read back, are gaps in THIS engine rather than notes about a document.
+    // They read as warnings because they are ours.
     + (stranded
       ? `<div class="warning">`
-        + esc(t("annexe.unplaceable")).replace("{n}", esc(String(stranded)))
+        + fill(t("annexe.unplaceable"), "n", esc(String(stranded)))
+        + `</div>`
+      : "")
+    + (unreadable
+      ? `<div class="warning">`
+        + fill(t("annexe.documents_unreadable"), "n", esc(String(unreadable)))
         + `</div>`
       : "")
     + `</div>`;

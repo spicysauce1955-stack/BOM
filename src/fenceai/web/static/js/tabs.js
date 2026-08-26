@@ -455,8 +455,14 @@ export function groupedBomHtml(grouped, products) {
  *  passes none. A `Quote` is an immutable commercial document: annotating a
  *  historical one with what its manufacturer's document says TODAY would print
  *  text on a page nobody accepted. The live BOM gets the notices; the frozen
- *  document keeps what was frozen. */
-function bomHtml(bom, products, { unresolved = [], quoted = null } = {}) {
+ *  document keeps what was frozen.
+ *
+ *  Exported for the same reason `groupedBomHtml` and `assemblyPlanHtml` are: it
+ *  is a pure function of its arguments and node can test it. The test review
+ *  found every quoted-warning call site on this tab reachable only through the
+ *  browser — a mutant that made `quotedRow` return "" removed every product
+ *  notice from the BOM and the whole pytest suite stayed green. */
+export function bomHtml(bom, products, { unresolved = [], quoted = null } = {}) {
   // Once per line group, and a BOM line IS the line group: `Bom.lines` are
   // already pooled per sku across the whole run, so there is nothing left to
   // deduplicate here — which is exactly why this is the surface the contract

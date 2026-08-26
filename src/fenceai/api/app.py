@@ -250,23 +250,41 @@ def _quoted_warnings(result, priced: PricedRun) -> WarningPlacement:
 
     The documents come off the RUN — every bay's `panel.model_ref` — and not off
     the project. A project that has since been pointed at another product line
-    must not put that line's warranty notice on a plan built to the old one; the
-    run stamped its refs precisely so a reader can go back to the document it was
-    built from. A ref the library can no longer answer is SKIPPED rather than
+    must not put that line's warranty notice on a plan built to the old one.
+
+    That is a claim about the REF and not about the bytes, and the difference is
+    recorded rather than glossed: a run also stamps a `content_hash`, because a
+    draft's content moves under a fixed `(id, version)`, and this resolves by ref
+    alone. So editing a draft in place changes what a stored run says the
+    manufacturer warned, with no `model_changed`. `report/assembly.py` compares
+    refs only for the same reason and would need the same fix, so it is one item
+    covering both read models in `plan/open-work.md` rather than a divergence
+    introduced here. A ref the library can no longer answer is SKIPPED rather than
     refused: this is a warning surface, and losing the annexe is not a reason to
     take a working BOM away from somebody.
     """
     library = state.store.fence_model_library()
-    refs, models = [], []
+    refs, models, unreadable = [], [], 0
     for span in result.strategy.spans:
         ref = span.panel.model_ref if span.panel else ""
         if not ref or ref in refs:
             continue
+        refs.append(ref)
         model = library.by_ref(ref)
-        if model is not None:
-            refs.append(ref)
-            models.append(model)
-    return place_for_plan(models, skus=[line.sku for line in priced.requirements])
+        if model is None:
+            # COUNTED, not swallowed. The architecture review's finding, and it
+            # is right: skipping is the correct trade — a missing annexe is not a
+            # reason to take a working BOM away from somebody — but skipping in
+            # SILENCE means a plan built to a document that carries a safety
+            # notice can print with no annexe and nothing saying why. The path is
+            # reachable: a run may pin a draft version that was later discarded.
+            unreadable += 1
+            continue
+        models.append(model)
+    placement = place_for_plan(models,
+                               skus=[line.sku for line in priced.requirements])
+    placement.documents_unreadable = unreadable
+    return placement
 
 
 def _supply_run_for(result, preset: str, priced: PricedRun,
