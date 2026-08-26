@@ -13,15 +13,18 @@ from __future__ import annotations
 import pytest
 
 from fenceai.catalog.demo import demo_catalog
+from fenceai.decisions.explain import explain_node
+from fenceai.demand.derive import derive_requirements
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.model import (
     Axis, Continuous, Discrete, Distributed, Eligibility, EligibleItem, FenceModel,
     FrameSlot, OptionValue, PanelSpec, PartRequirement, PolicyContribution, Variant,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
-from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeVersion, SetParam
+from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import (
     ElevationSamplePayload, FenceModelPayload, HeightIntentPayload, TopLinePayload,
@@ -56,13 +59,14 @@ def _model(**kw) -> FenceModel:
                       default_spec=kw.pop("default_spec", _spec(2)), **kw)
 
 
-def _generate(model: FenceModel, topo=None, kb=None, options=None):
+def _generate(model: FenceModel, topo=None, kb=None, options=None, site=None):
     return generate(
         topo if topo is not None else straight_topology(3000),
         kb if kb is not None else demo_knowledge(),
         demo_catalog(),
         models=FenceModelLibrary(models=[model]),
         default_model=FenceModelChoice(model_id=MODEL_ID, options=options or {}),
+        site=site,
     )
 
 
@@ -169,6 +173,218 @@ def test_a_model_without_variants_emits_no_variant_node():
     candidate would be noise in every run that exists today."""
     result = _generate(_model())
     assert not [n for n in result.graph.nodes if n.action == "select_variant"]
+
+
+# --- 1b · variants conditioned on the SITE ------------------------------------
+#
+# `site.*` was bound into every KNOWLEDGE evaluation context and into no fence-
+# model one, so a variant conditioned on the site came back `MissingField`,
+# read as "not applicable", and fell through to the default spec with nothing
+# said. These pin the binding and the two ways it is allowed to be silent.
+
+HVHZ = Cmp(cmp="==", left=FieldRef(path="site.hvhz"), right=Lit(value=True))
+FROST = Cmp(cmp=">=", left=FieldRef(path="site.frost_depth_mm"),
+            right=Lit(value=1000))
+
+
+def test_a_variant_conditioned_on_the_site_selects():
+    """The defect, from the other side. Site conditions exist so that a fence can
+    be conditioned on the site; a hurricane-zone variant that could not be
+    reached made the whole capability decorative."""
+    model = _model(variants=[Variant(condition=HVHZ, spec=_spec(5))])
+    result = _generate(model, site=SiteConditions(hvhz=True))
+    assert result.strategy.spans
+    for span in result.strategy.spans:
+        assert span.panel.variant_index == 0
+        assert _rail_qty(span) == 5
+
+
+def test_the_same_model_on_a_site_that_answered_NO_builds_the_default():
+    """`False` is an ANSWER, and the run must not warn about it: the estimator
+    said this is not a hurricane zone, which is exactly what the condition was
+    asked to distinguish."""
+    model = _model(variants=[Variant(condition=HVHZ, spec=_spec(5))])
+    result = _generate(model, site=SiteConditions(hvhz=False))
+    assert result.strategy.spans, "fixture built no bays"
+    for span in result.strategy.spans:
+        assert span.panel.variant_index is None
+        assert _rail_qty(span) == 2
+    assert not [w for w in result.strategy.warnings
+                if w.code == "site_condition_missing"]
+
+
+def test_a_site_the_project_never_answered_is_REPORTED_not_silent():
+    """The silent fall-through, named. The variant still does not fire — that is
+    the `MissingField` behaviour the whole design leans on — but the run now says
+    which dimension decided it, through the code that already existed for a
+    knowledge rule in exactly this position.
+
+    Kills: binding `site` into the context and leaving the report reading only
+    `kb.active()`, which would trade a silent wrong panel for a silent right one
+    and leave the estimator no way to learn the fence was decided by a blank
+    field.
+    """
+    model = _model(variants=[Variant(condition=HVHZ, spec=_spec(5))])
+    result = _generate(model, site=None)
+    assert result.strategy.spans, "fixture built no bays"
+    for span in result.strategy.spans:
+        assert span.panel.variant_index is None       # not applicable, as designed
+    warned = next(w for w in result.strategy.warnings
+                  if w.code == "site_condition_missing")
+    assert warned.params["dimensions"] == "hvhz"
+    assert warned.params["n"] == 1
+    # a variant is product structure, not a limit — so this is a warning and not
+    # the error a missing HARD constraint dimension raises
+    assert warned.severity == "warning"
+    # ...and it is anchored in the graph, because the graph is the explanation
+    # (foundation §15): a warning with no node is a claim nothing traces to.
+    node = next(n for n in result.graph.nodes
+                if n.action == "site_condition_missing")
+    assert node.kind == "gap"
+    assert warned.decision_ref == node.id
+
+
+def test_a_rule_and_a_variant_wanting_DIFFERENT_dimensions_aggregate_into_one():
+    """One warning, both dimensions, and the RULE's severity kept.
+
+    The dimensions differ deliberately. When a rule and a variant want the SAME
+    one, every assertion here is already true before the model side exists — so
+    that version of the test passed at base and could not tell aggregation from
+    its absence. Splitting them is what makes each half observable:
+
+      * `frost_depth_mm` is in the list ONLY because the model asked;
+      * `hvhz` is there because the rule did, and it is a hard constraint, so
+        the whole warning is an `error` — a hard constraint that could not be
+        evaluated is not the same event as a variant that did not fire, and the
+        model's want must not dilute it.
+
+    Kills: dropping the `model_wanted` merge in `_report_missing_site_conditions`
+    (loses `frost_depth_mm`), and letting the model's want overwrite the rule's
+    type with `setdefault` -> plain assignment (downgrades `error` to `warning`).
+    """
+    kb = demo_knowledge()
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-HVHZ", version=1, type="hard_constraint",
+        title="hurricane zone spans",
+        condition=HVHZ, actions=[SetParam(param="max_span_mm", value=900)]))
+    model = _model(variants=[Variant(condition=FROST, spec=_spec(5))])
+
+    result = _generate(model, kb=kb, site=None)
+    warned = [w for w in result.strategy.warnings
+              if w.code == "site_condition_missing"]
+    assert len(warned) == 1, "two askers must not mean two work items"
+    assert warned[0].params["dimensions"] == "frost_depth_mm, hvhz"
+    assert warned[0].params["n"] == 2
+    assert warned[0].severity == "error"      # the rule's claim, not the variant's
+
+
+def test_a_variant_alone_does_not_promote_the_warning_to_an_error():
+    """The other side of that severity rule: with no hard constraint involved, a
+    variant that did not fire is a warning. A variant is product structure, so
+    its condition losing is a different panel and not a violated limit."""
+    model = _model(variants=[Variant(condition=FROST, spec=_spec(5))])
+    result = _generate(model, site=None)
+    warned = next(w for w in result.strategy.warnings
+                  if w.code == "site_condition_missing")
+    assert warned.severity == "warning"
+
+
+def test_a_variant_on_a_dimension_nobody_asked_about_reports_only_its_own():
+    """Read off the DOCUMENTS this run drew from, so a model that asks about
+    frost depth nags about frost depth and about nothing else."""
+    model = _model(variants=[Variant(condition=FROST, spec=_spec(5))])
+    result = _generate(model, site=SiteConditions(hvhz=True))
+    warned = next(w for w in result.strategy.warnings
+                  if w.code == "site_condition_missing")
+    assert warned.params["dimensions"] == "frost_depth_mm"
+
+
+def test_an_eligibility_predicate_may_read_the_site():
+    """The second half of the binding. "This rail only where it freezes" is an
+    item-against-SITE relation, and without the namespace the predicate came back
+    `MissingField`, `_covers` read that as "has not covered the requirement", and
+    the slot admitted NOTHING — a panel that silently loses a member rather than
+    one that visibly asks for the wrong one.
+    """
+    covered = And(items=[
+        Cmp(cmp="==", left=FieldRef(path="item.sku"), right=Lit(value="RAIL-3000")),
+        HVHZ,
+    ])
+    req = _rail_req()
+    req.eligibility = Eligibility(predicate=covered)
+    model = _model(default_spec=_spec(2, req))
+
+    on_site = _generate(model, site=SiteConditions(hvhz=True))
+    assert on_site.strategy.spans, "fixture built no bays"
+    for span in on_site.strategy.spans:
+        assert _rail_members(span) == ["RAIL-3000"]
+
+    # ...and where the site answered NO the predicate is simply not satisfied,
+    # so the slot has nothing eligible.
+    off_site = _generate(model, site=SiteConditions(hvhz=False))
+    assert off_site.strategy.spans, "fixture built no bays"
+    for span in off_site.strategy.spans:
+        assert _rail_members(span) == []
+
+
+def test_where_an_unsatisfied_predicate_IS_reported_and_where_it_is_not():
+    """Written because the test above once claimed "a run that says so" and the
+    run said nothing: `result.strategy.warnings` is EMPTY for a bay whose rail
+    slot admitted no product.
+
+    That is not a defect this slice introduced — it is where the reporting for an
+    unsatisfiable predicate has always lived — but the boundary is worth pinning
+    rather than mis-stating, because the two silences look identical from the
+    strategy and are not the same thing:
+
+      * the SITE never answered -> `site_condition_missing` on the strategy, and
+        that is the silence this whole slice exists to break;
+      * the site answered NO -> nothing on the strategy, and `no_eligible_item`
+        at the SUPPLY stage, per bay, where a slot's emptiness is priced.
+
+    Kills: a future "tidy-up" that reports the second case on the strategy too,
+    which would nag on every correctly-not-applicable bay of every job.
+    """
+    covered = And(items=[
+        Cmp(cmp="==", left=FieldRef(path="item.sku"), right=Lit(value="RAIL-3000")),
+        HVHZ,
+    ])
+    req = _rail_req()
+    req.eligibility = Eligibility(predicate=covered)
+    model = _model(default_spec=_spec(2, req))
+
+    answered_no = _generate(model, site=SiteConditions(hvhz=False))
+    assert [w.code for w in answered_no.strategy.warnings] == []
+    # ...and the emptiness surfaces where emptiness is priced
+    lines = derive_requirements(answered_no.strategy, demo_catalog(),
+                               policy=answered_no.run.demand_skus)
+    rails = [line for line in lines if line.role == "rail"]
+    assert rails, "the requirement is still derived for the slot"
+    assert all(not line.eligibility.members for line in rails)
+
+    # the site NEVER answered: same empty slot, and the run names the field
+    never_answered = _generate(model, site=None)
+    assert [w.code for w in never_answered.strategy.warnings] == [
+        "site_condition_missing"]
+
+
+def test_the_site_reaches_a_post_at_its_own_station_too():
+    """A site fact that reached the bays and not the posts beside them would be a
+    fence built to two different sites — the argument the knowledge binding
+    already makes, and it holds harder here: the spec a post is MATCHED against
+    must be the spec its bay is BUILT to.
+
+    Kills: binding `site` into `PanelContext.condition_ctx` and not into
+    `_PostFacts.at`, which would leave a site-conditioned variant picking the
+    variant's rails in the bay and the DEFAULT spec's rails at the post.
+    """
+    tall = _spec(9)
+    model = _model(variants=[Variant(condition=HVHZ, spec=tall)])
+    result = _generate(model, site=SiteConditions(hvhz=True))
+    node = next(n for n in result.graph.nodes if n.action == "select_variant")
+    assert node.payload["variant_index"] == 0
+    for span in result.strategy.spans:
+        assert _rail_qty(span) == 9
 
 
 # --- 2 · option axes ----------------------------------------------------------
@@ -576,3 +792,57 @@ def test_a_bay_that_measures_cleanly_files_no_such_warning():
              if s.slot_key == "slat"]
     assert slats and all(s.length_mm and s.length_mm > 0 for s in slats)
     assert not _warnings(result, "panel_length_unresolved")
+
+
+def test_the_gap_node_records_WHICH_asker_was_silenced():
+    """The graph is the explanation, and "a rule did not fire" and "a bay was
+    built to the default spec" are different diagnoses with the same repair. A
+    reader cannot recover which from a list of dimensions, so the node carries it.
+
+    Kills: dropping `asked_by`, which leaves the aggregated warning unable to say
+    whether a knowledge rule, a fence model, or both were silenced — the shape of
+    under-explanation the split warning was supposed to avoid.
+    """
+    kb = demo_knowledge()
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-HVHZ", version=1, type="company_rule", authority=1,
+        title="hurricane zone spans",
+        condition=HVHZ, actions=[SetParam(param="max_span_mm", value=900)]))
+
+    only_model = _generate(_model(variants=[Variant(condition=FROST, spec=_spec(5))]),
+                           site=None)
+    only_rule = _generate(_model(), kb=kb, site=None)
+    both = _generate(_model(variants=[Variant(condition=FROST, spec=_spec(5))]),
+                     kb=kb, site=None)
+
+    def asked_by(result):
+        node = next(n for n in result.graph.nodes
+                    if n.action == "site_condition_missing")
+        warned = next(w for w in result.strategy.warnings
+                      if w.code == "site_condition_missing")
+        # the node and the warning must agree — they are one fact rendered twice
+        assert node.payload["asked_by"] == warned.params["asked_by"]
+        return warned.params["asked_by"]
+
+    assert asked_by(only_model) == "model"
+    assert asked_by(only_rule) == "rule"
+    assert asked_by(both) == "both"
+
+
+def test_the_sentence_no_longer_claims_only_rules_were_silenced():
+    """It said "rules needing them did not apply" in both bundles. For a
+    model-only want that is false — no rule wanted the dimension and no rule
+    failed to apply — and the en/he parity check cannot see a sentence that is
+    wrong in both languages."""
+    result = _generate(_model(variants=[Variant(condition=FROST, spec=_spec(5))]),
+                       site=None)
+    warned = next(w for w in result.strategy.warnings
+                  if w.code == "site_condition_missing")
+    assert warned.params["asked_by"] == "model"
+    for lang in ("en", "he"):
+        node = next(n for n in result.graph.nodes
+                    if n.action == "site_condition_missing")
+        sentence = explain_node(result.graph, node, lang=lang)
+        assert sentence
+        assert "rules needing them did not apply" not in sentence
+

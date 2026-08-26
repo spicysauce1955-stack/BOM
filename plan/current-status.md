@@ -517,10 +517,147 @@ the Knowledge team has not agreed to is a second vocabulary at the boundary.
   right for an error message and wrong for a select. `declared()` now answers the
   second question, and the editorial order the editor has always shown is pinned.
 
-**Still owed:** `Gap.would_close` wants a code registry (above); `frost_depth_mm`
-has no `ge=0` bound on the model, so the browser is the only thing refusing a
-negative depth; and nothing calls `ParameterTable.expand()` from a route, so item
-5 is still reachable only from tests.
+**Still owed:** `Gap.would_close` wants a code registry (above); and nothing
+calls `ParameterTable.expand()` from a route, so item 5 is still reachable only
+from tests. (`frost_depth_mm` was bounded on 2026-08-26; see below.)
+
+## The site reaches the fence model, and a negative frost depth does not (2026-08-26)
+
+Two of the four items under *Still owed, and small*. **2069 pytest · 268 scenario
+gate · no golden file moved.**
+
+**`frost_depth_mm` now carries `ge=0`.** The browser panel's `min="0"` was the
+only thing refusing a negative depth, so `PUT /api/projects/{id}/site` accepted
+`-500` from anything that was not that panel. The hole is not cosmetic: a
+negative depth satisfies every `<=` a footing rule tests and defeats every `>=`,
+silently, on the dimension that decides how deep a post is set. No upper bound —
+permafrost is metres deep and the figure a jurisdiction publishes is not ours to
+cap; an invented ceiling would refuse a real site, which is the worse failure.
+The sibling audit found no second hole: `revision` is the only other integer and
+the route overwrites whatever a client sends.
+
+**`site.*` now reaches the fence model, and the decision was BIND.** It had been
+bound into every context the KNOWLEDGE evaluator builds and into no fence-model
+one, so a `Variant.condition` or an `Eligibility.predicate` reading `site.hvhz`
+came back `MissingField`, read as *not applicable*, and the bay was built to the
+DEFAULT spec with nothing said. Refusing such a condition at authoring was the
+alternative and it was the wrong one: site conditions exist precisely so that a
+fence can be conditioned on the site (build-order item 2), so refusing it leaves
+the capability missing while looking principled.
+
+Three things had to be true together, and the second is the one that would have
+been missed:
+
+1. `PanelContext.condition_ctx()`, `match.panel_facts` and
+   `match.post_panel_facts` all carry `site`. `.facts()` decides omission in one
+   place, so an unanswered dimension is ABSENT rather than `None` and the
+   `MissingField` not-applicable hook keeps working.
+2. `_PostFacts.at` supplies the **same** site at a post's own station — both to
+   `choose_variant_by` and to the post's predicate. Without that, a
+   site-conditioned variant would pick the variant's rails in the bay and the
+   DEFAULT spec's rails at the post: the exact divergence
+   `_variant_reach_errors` refuses for `panel.width_mm`. Unlike a width there IS
+   a right answer, because a whole-site fact does not vary between the two bays a
+   post stands between — so `site.*` joins `_POST_TIME_CONDITION_PATHS` rather
+   than being refused beside a routed post.
+3. `validate_model` refuses a `site.` key that is not a `SiteConditions` field.
+   `site.hvzh` can never be satisfied, so the variant is dead and the slot admits
+   nothing — the same silence, reinstated by a transposition. `SITE_DIMENSIONS`
+   is derived from the model rather than listed twice, because the stale
+   direction of a second list never fires.
+
+**No new warning code.** `site_condition_missing` already existed for a knowledge
+rule in exactly this position, and a model's question fails identically, so it
+feeds the same aggregated warning — one list of fields for the estimator to fill,
+not one item per thing that wanted each. A dimension a hard constraint wanted
+keeps that severity; a variant's want is `company_rule`-weight, because a variant
+losing is a different panel and not a violated limit. The model side is read off
+the documents the run actually drew from, RESOLVED, since a slot's predicate
+arrives from the part it names — an unresolved document would report clean on
+precisely the models most likely to carry a site condition.
+
+The bay preview threads `run.site_facts` for the same reason it already threads
+the resolved params: a preview that defaulted the site would draw and price a
+panel the run does not build.
+
+**Knowingly left:** the panel editor's condition dropdown (`CONDITION_FIELDS` in
+`condition-sentence.js`) is unchanged. `writeSentence` coerces its literal to an
+int, so `site.hvhz` and `site.exposure_category` are not authorable through it
+and adding them would produce `site.hvhz == 0` — accepted, meaningless, the one
+outcome that comment already warns against. Site conditions still have no UI at
+all (recorded as deliberate in the engine spec), so this is one frontend slice
+rather than a hole here.
+
+The same slice owns the second half: a MODEL-scoped preview (the panel editor)
+sends no site, so it previews a site-conditioned model at its default spec. A
+BAY preview is correct already — `bay_preview_plan` fills `site` from
+`run.site_facts`, and that is now pinned by re-resolving a stored bay and
+demanding the panel come back field-for-field. Closing the editor half means a
+site input in the editor, which is the frontend slice above, not a second
+mechanism.
+
+### What the two reviewers found, and what it cost (2026-08-26)
+
+`architecture-critic` returned SOUND-WITH-FIXES and `test-reviewer` returned
+GAPS. They converged, independently, on the same hole — and it was the one thing
+the commit message called load-bearing.
+
+**The post-agreement claim was asserted in three docstrings and zero
+assertions.** `test_the_site_reaches_a_post_at_its_own_station_too` named the
+mutation it killed and killed neither: its model had `post=None`, so
+`_PostFacts.at` was never reached, and both direct mutations passed the entire
+suite. That is the same failure this slice was written to fix, one level up —
+prose asserting a property is not the property. The real test is now in
+`tests/strategy/test_model_owned_posts.py`: a routed post, a variant that moves
+the rails it must be routed for, and an assertion on the post SKU. Rails at
+150/1650 by default, 200/1600 in a hurricane zone; unbind the site at the post's
+station and the bay builds one panel while the post is ordered for the other.
+Every rail 50 mm from its hole, and both documents internally consistent.
+
+**The preview boundary re-opened the hole Item A had just closed.** `site` on
+`PreviewRequest` was typed as a bare dict, and that is a ROUTE body: it accepted
+`{"hvzh": True}`, `{"exposure_category": "Z"}` and the exact `-500` frost depth,
+then fed them into variant selection. Now typed `SiteConditions`, so one type
+carries `extra="forbid"`, `ge=0` and `.facts()` — a boundary hardened in one
+place is not hardened.
+
+**The fence-model side had dropped a distinction the knowledge side raises a
+build error to keep.** `post_panel_facts(site=None)` collapsed *nobody answered
+this dimension* into *nobody bound this namespace*, which is precisely what
+`_assert_namespaces_bound` exists to separate. `site` is now a required keyword,
+and `choose_variant_by` raises the same `GenerationFailure` in the same words —
+without it, this defect is re-openable at any future call site, silently.
+
+**Two justifications in the code were factually inverted.** `_model_site_dimensions`
+resolved each document because "a part author might write a site condition": they
+cannot — `parts/compile.py` emits `item.<key>` and nothing else — and the
+resolution had a reporting path writing into `_post_model`'s memo, whose own
+comment justifies sharing by "nothing on this path writes to it". And the
+`SITE_DIMENSIONS` import carried a comment claiming `project` depends on
+`fencemodel` and never the reverse, while making that false lazily. Both are
+gone: the walk reads the authored document, and `project/site.py` is a leaf
+module on `fencemodel/selection.py`'s own precedent.
+
+**The release gate had never generated a fence with a variant in it.** No demo
+model declares one, so `select_variant` appeared in no scenario and no gate run
+— unbinding `site` from the condition context moved nothing the gate watched.
+`site_variant` is now a fixture in the invariant battery and the compatibility
+gate, with a companion coverage assertion. Adding it rewrote all 14 existing gate
+files and git reported no change to any of them, which is the only proof that
+matters here.
+
+Three smaller ones closed too: a name check let `site.exposure_category == "Z"`
+and `site.hvhz.enabled` through (both dead conditions, both now refused); the
+gap node carries `asked_by` because "a rule did not fire" and "a bay was built to
+the default spec" are different diagnoses with the same repair; and the rendered
+sentence — in both locale bundles, where the parity check cannot see a wording
+that is wrong in both — said *"rules needing them did not apply"* for a want no
+rule had.
+
+**Still open, knowingly.** A model used only at a NODE post never reaches
+`models_used`, so its site wants go unreported. That is a pre-existing blind spot
+`model_snapshot` shares (node posts are generated before `models_used` exists),
+and closing it is that blind spot's fix, not this one's.
 
 ## The gaps the engine produces now have a reader (2026-08-25)
 

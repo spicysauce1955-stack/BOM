@@ -369,7 +369,7 @@
   "warning.uncovered_rails_per_span": "No rule states how many rails a bay of {model_ref} gets in section {run_id}; {n} bay(s) built with {value} rails each — confirm before ordering",
   "warning.uncovered_screws_per_span": "No rule states how many screws a bay of {model_ref} gets in section {run_id}; {n} bay(s) built with {value} screws each — confirm before ordering",
   "warning.no_default_post": "No rule names a default ground-post product; {n} post(s) have no product and are unfilled in the bill of materials",
-  "warning.site_condition_missing": "{n} site condition(s) that decide rules are not set ({dimensions}) — rules needing them did not apply",
+  "warning.site_condition_missing": "{n} site condition(s) that decide how this fence is built are not set ({dimensions}) — the rules and fence-model options that depend on them did not apply",
   "warning.uncovered_parameter_point": "{parameter} has no published value for {point} — confirm before ordering",
   "warning.parameter_authority_lapsed": "The {authority} row for {parameter} was valid until {valid_until}, before this run's date {as_of}",
   "warning.parameter_value_nonconforming": "A published {parameter} row does not match the table's declared type ({value_type}) and was not used",

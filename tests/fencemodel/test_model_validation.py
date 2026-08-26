@@ -6,7 +6,7 @@ from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
 from fenceai.parts.model import PartLibrary
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
-    PartRequirement, validate_model,
+    PartRequirement, PostSlot, Variant, site_condition_paths, validate_model,
 )
 
 
@@ -721,3 +721,155 @@ def test_a_predicate_no_item_in_the_catalog_covers_is_refused_at_authoring():
         _model(PanelSpec(frame=[_predicate_slot(NOTHING_IS_UNOBTAINIUM)])),
         demo_catalog())
     assert any("no item" in e.lower() for e in errs)
+
+
+# --- a condition on the site ---------------------------------------------------
+#
+# `site.*` is bound into the fence model's condition context, so a variant or a
+# predicate may read it. What it may NOT read is a dimension that does not
+# exist: the context never carries the key, `MissingField` reads as *not
+# applicable*, and the variant falls through to the default spec — the exact
+# silence the binding was built to end, reinstated by a typo.
+
+HVHZ = Cmp(cmp="==", left=FieldRef(path="site.hvhz"), right=Lit(value=True))
+HVZH = Cmp(cmp="==", left=FieldRef(path="site.hvzh"), right=Lit(value=True))
+
+
+def _variant_model(condition) -> FenceModel:
+    model = _model(PanelSpec(frame=[_slot()]))
+    model.variants = [Variant(condition=condition,
+                              spec=PanelSpec(frame=[_slot()]))]
+    return model
+
+
+def test_a_variant_conditioned_on_a_real_site_dimension_validates_clean():
+    """The capability, pinned from the authoring side. Refusing this was the
+    alternative to binding, and it would have left the model author with no way
+    to say the one thing site conditions exist for."""
+    assert validate_model(_variant_model(HVHZ), demo_catalog()) == []
+
+
+def test_a_variant_conditioned_on_a_site_dimension_that_does_not_exist_is_refused():
+    """Same class as a slot naming an option axis the model does not declare, and
+    it fails the same way if uncaught: nothing satisfies it ever, so the variant
+    is dead and the fence is built to the default with nobody told.
+
+    The message NAMES the known dimensions, because `hvzh` is a transposition and
+    the repair is a character, not a category.
+    """
+    errs = validate_model(_variant_model(HVZH), demo_catalog())
+    assert len(errs) == 1, errs
+    assert "site.hvzh is not a site condition" in errs[0]
+    assert "site.hvhz" in errs[0]
+
+
+def test_a_predicate_reading_a_site_dimension_that_does_not_exist_is_refused():
+    """The same refusal over an eligibility predicate, which fails one level down
+    but just as quietly: the predicate admits nothing and the slot falls through
+    to the company default."""
+    predicate = And(items=[RAIL_IS_ALUMINIUM, HVZH])
+    errs = validate_model(
+        _model(PanelSpec(frame=[_predicate_slot(predicate)])), demo_catalog())
+    assert any("site.hvzh is not a site condition" in e for e in errs)
+
+
+def test_the_known_dimensions_are_SiteConditions_own_fields():
+    """One definition. A hand-written list here would go stale in the direction
+    that never fires — a dimension the model gains and this set does not is a
+    condition refused at authoring for being real."""
+    from fenceai.project.model import SITE_DIMENSIONS, SiteConditions
+
+    assert SITE_DIMENSIONS == frozenset(SiteConditions.model_fields) - {"revision"}
+    # A legal value PER dimension, because a closed dimension refuses one outside
+    # its domain (`_site_domain_errors`) — which is the next test down. Comparing
+    # every dimension to the same `1` would test the domain check here by
+    # accident and hide whichever of the two actually failed.
+    legal = {"exposure_category": "C", "hvhz": True, "frost_depth_mm": 900,
+             "jurisdiction": "Miami-Dade", "code_edition": "ASCE 7-16"}
+    assert set(legal) == set(SITE_DIMENSIONS), "a dimension has no legal value here"
+    for dim, value in sorted(legal.items()):
+        reads = Cmp(cmp="==", left=FieldRef(path=f"site.{dim}"),
+                    right=Lit(value=value))
+        assert validate_model(_variant_model(reads), demo_catalog()) == [], dim
+
+
+def test_a_closed_dimension_refuses_a_value_it_can_never_hold():
+    """The refusal a NAME check alone lets past, and the likeliest of the three
+    to be typed by somebody who knows the field exists: `exposure_category` is
+    `Literal["B","C","D"]`, so `== "Z"` is supplied, evaluated, and never true.
+
+    Dead exactly like an unknown dimension is dead — the variant falls through to
+    the default spec, the model looks authored — but the name is spelled right,
+    so nothing else in the stack ever objects.
+    """
+    dead = Cmp(cmp="==", left=FieldRef(path="site.exposure_category"),
+               right=Lit(value="Z"))
+    errs = validate_model(_variant_model(dead), demo_catalog())
+    assert len(errs) == 1, errs
+    assert "site.exposure_category cannot be 'Z'" in errs[0]
+    assert "'B', 'C', 'D'" in errs[0]
+
+
+def test_an_open_dimension_is_not_second_guessed():
+    """`jurisdiction` is free text and a frost depth is a number: "can never be
+    true" is not decidable for either, so neither is refused. A validator that
+    guessed here would refuse real sites."""
+    for path, value in (("site.jurisdiction", "Nowhere County"),
+                        ("site.frost_depth_mm", 999999)):
+        reads = Cmp(cmp="==", left=FieldRef(path=path), right=Lit(value=value))
+        assert validate_model(_variant_model(reads), demo_catalog()) == [], path
+
+
+def test_a_nested_site_path_is_refused():
+    """A dimension is a scalar. `lookup` raises `MissingField` on the second hop,
+    so `site.hvhz.enabled` is the same silent fall-through by a third route —
+    and the head is spelled correctly, so the dimension check passes it."""
+    nested = Cmp(cmp="==", left=FieldRef(path="site.hvhz.enabled"),
+                 right=Lit(value=True))
+    errs = validate_model(_variant_model(nested), demo_catalog())
+    assert len(errs) == 1, errs
+    assert "site.hvhz is a single value, not a record" in errs[0]
+    assert "'enabled'" in errs[0]
+
+
+def test_a_dead_value_buried_in_a_conjunction_is_still_found():
+    """The walk is structural (`ast.walk`), so a term inside an `And` is read.
+    A predicate is where this matters most: the dead conjunct makes the whole
+    predicate unsatisfiable while every other term looks fine."""
+    buried = And(items=[
+        RAIL_IS_ALUMINIUM,
+        Cmp(cmp="==", left=FieldRef(path="site.exposure_category"),
+            right=Lit(value="Q")),
+    ])
+    errs = validate_model(
+        _model(PanelSpec(frame=[_predicate_slot(buried)])), demo_catalog())
+    assert any("site.exposure_category cannot be 'Q'" in e for e in errs), errs
+
+
+def test_site_condition_paths_reads_the_whole_document():
+    """Both callers depend on this being one walk: `validate_model` refuses an
+    unknown dimension and the generator reports an unanswered one, and a walk
+    that missed the post would refuse in one voice and report in the other."""
+    model = _variant_model(HVHZ)
+    model.default_spec = PanelSpec(frame=[_predicate_slot(
+        And(items=[RAIL_IS_ALUMINIUM,
+                   Cmp(cmp=">=", left=FieldRef(path="site.frost_depth_mm"),
+                       right=Lit(value=1000))]))])
+    # ...and the POST and its CAP, which the docstring claims and nothing pinned:
+    # dropping either from the walk left the suite green.
+    model.post = PostSlot(
+        key="post",
+        requirement=PartRequirement(
+            role="post",
+            eligibility=Eligibility(predicate=Cmp(
+                cmp="==", left=FieldRef(path="site.exposure_category"),
+                right=Lit(value="D")))),
+        cap=PartRequirement(
+            role="cap",
+            eligibility=Eligibility(predicate=Cmp(
+                cmp="==", left=FieldRef(path="site.jurisdiction"),
+                right=Lit(value="Miami-Dade")))),
+    )
+    assert site_condition_paths(model) == {
+        "hvhz", "frost_depth_mm", "exposure_category", "jurisdiction"}
+

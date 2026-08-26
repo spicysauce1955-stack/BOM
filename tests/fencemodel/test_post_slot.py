@@ -20,6 +20,7 @@ from fenceai.fencemodel.model import (
     Variant, validate_model,
 )
 from fenceai.knowledge.ast import And, Cmp, FieldRef, Lit
+from fenceai.project.model import SITE_DIMENSIONS
 
 POST_ITEMS = Eligibility(members=[EligibleItem(sku="POST-S")])
 CAP_ITEMS = Eligibility(members=[EligibleItem(sku="POST-CAP")])
@@ -90,16 +91,53 @@ def test_the_readable_set_is_exactly_what_the_generator_supplies():
     makes a predicate match NOTHING, and the post falls through to the company
     default with nobody told.
 
-    Both namespaces, because both are declared: `panel` narrowed by the cycle
-    rule, and `post` — where this one stands.
+    All three namespaces, because all three are declared: `panel` narrowed by the
+    cycle rule, `post` — where this one stands — and `site`, which the cycle rule
+    does not narrow at all.
+
+    `site` is pinned DIFFERENTLY on purpose, and the difference is the whole
+    design of the namespace. `panel` and `post` are closed sets and every member
+    is always supplied. A site dimension is supplied only when the PROJECT
+    answered it, because that absence is what makes a condition on it *not
+    applicable* instead of false — so the assertion is containment, and equality
+    would be pinning the fixture's site rather than the contract. What the author
+    may READ is `SITE_DIMENSIONS`; what a given run SUPPLIES is whatever was
+    entered, and `site_condition_missing` reports the difference.
     """
     supplied = post_panel_facts(
         model_id="M", height_mm=1800, vertical="level", rail_positions_mm=[0, 1800],
-        kind="line",
+        kind="line", site={"hvhz": True},
     )
-    assert set(supplied) == {"panel", "post"}
+    assert set(supplied) == {"panel", "post", "site"}
     assert set(supplied["panel"]) == POST_PREDICATE_PANEL_FACTS
     assert set(supplied["post"]) == POST_PREDICATE_POST_FACTS
+    # What the author may READ is the whole vocabulary...
+    assert set(supplied["site"]) <= SITE_DIMENSIONS
+    # ...and what THIS call supplies is exactly what it was handed, unfiltered.
+    # Containment alone let a namespace lose a dimension on the way through and
+    # still pass, which is the one failure a post's site namespace can have.
+    assert supplied["site"] == {"hvhz": True}
+
+    # A caller with no site passes `{}` and SAYS so — there is no default to
+    # forget, because an unbound namespace and an unanswered dimension need
+    # opposite treatments (`resolve._assert_site_bound`).
+    no_site = post_panel_facts(
+        model_id="M", height_mm=1800, vertical="level", rail_positions_mm=[0, 1800],
+        kind="line", site={},
+    )
+    assert no_site["site"] == {}
+
+
+def test_the_site_namespace_cannot_be_forgotten_by_a_new_call_site():
+    """`site` is a required keyword, so the mistake is a TypeError at the call
+    site rather than a fence quietly built to the default spec.
+
+    This is the guard that keeps the whole slice from being re-openable: the
+    silent version of this failure is what `site.*` was bound to fix."""
+    import pytest as _pytest
+    with _pytest.raises(TypeError):
+        post_panel_facts(model_id="M", height_mm=1800, vertical="level",
+                         rail_positions_mm=[0, 1800], kind="line")
 
 
 def test_a_post_predicate_may_read_where_it_stands():
@@ -264,6 +302,68 @@ def test_a_height_conditioned_variant_is_fine_beside_a_routed_post():
     model.variants = [_variant(Cmp(cmp=">", left=FieldRef(path="panel.height_mm"),
                                    right=Lit(value=2000)))]
     assert validate_model(model, demo_catalog()) == []
+
+
+def test_a_site_conditioned_variant_is_fine_beside_a_routed_post():
+    """The site IS known at a post's station, and unlike a width there is a right
+    answer to give: a whole-site fact does not vary between the two bays a post
+    stands between, so `_PostFacts.at` supplies the SAME site the bay does and
+    both pick the same variant.
+
+    Kills: adding `site` to the condition context without teaching
+    `_variant_reach_errors` that it is answerable there, which would refuse a
+    site-conditioned variant on every routed model — the feature declared and
+    then withheld from the product line most likely to want it.
+    """
+    model = _model(_routed_post())
+    model.variants = [_variant(Cmp(cmp="==", left=FieldRef(path="site.hvhz"),
+                                   right=Lit(value=True)))]
+    assert validate_model(model, demo_catalog()) == []
+
+
+def test_a_post_predicate_may_read_the_site():
+    """A post is a product too, and "galvanised posts in a hurricane zone" is an
+    item-against-SITE relation. The cycle rule does not narrow it: a whole-site
+    fact is settled before the fence is drawn, so it cannot depend on the post it
+    helps choose."""
+    reads = Cmp(cmp="==", left=FieldRef(path="site.hvhz"), right=Lit(value=True))
+    errs = validate_model(_model(_post(requirement=PartRequirement(
+        role="post", eligibility=Eligibility(predicate=reads)))), demo_catalog())
+    assert errs == [], f"site.hvhz was refused: {errs}"
+
+
+def test_a_post_predicate_reading_a_site_dimension_that_does_not_exist_is_refused():
+    """The namespace being open is not the dimension being open. An unknown
+    dimension matches nothing, forever, and the post falls silently through to
+    the company default — which is what `_post_namespace_errors` exists to stop
+    for every other namespace."""
+    reads = Cmp(cmp="==", left=FieldRef(path="site.hvzh"), right=Lit(value=True))
+    errs = validate_model(_model(_post(requirement=PartRequirement(
+        role="post", eligibility=Eligibility(predicate=reads)))), demo_catalog())
+    assert any("site.hvzh is not a site condition" in e for e in errs)
+
+
+def test_a_width_conditioned_variant_is_refused_beside_a_routed_CAP_too():
+    """A cap's predicate is evaluated against the same post-time facts, so a cap
+    matched on `panel.rail_positions_mm` takes the identical divergence — and got
+    no refusal at all, because the check read only the post's own predicate.
+
+    Same defect, same sentence, one slot along."""
+    routed_cap = _post(
+        requirement=PartRequirement(
+            role="post",
+            eligibility=Eligibility(members=[EligibleItem(sku="POST-S-HD")])),
+        cap=PartRequirement(
+            role="cap",
+            eligibility=Eligibility(predicate=Cmp(
+                cmp="==", left=FieldRef(path="item.routed_at_mm"),
+                right=FieldRef(path="panel.rail_positions_mm")))),
+    )
+    model = _model(routed_cap)
+    model.variants = [_variant(Cmp(cmp=">", left=FieldRef(path="panel.width_mm"),
+                                   right=Lit(value=2000)))]
+    errs = validate_model(model, demo_catalog())
+    assert any("panel.width_mm" in e and "(cap)" in e for e in errs), errs
 
 
 def test_a_width_conditioned_variant_is_fine_when_no_post_reads_the_rails():

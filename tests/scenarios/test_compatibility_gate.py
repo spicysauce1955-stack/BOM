@@ -110,6 +110,47 @@ def test_the_gate_covers_a_raked_span():
         assert rail.length_mm == span.slope_len_mm > span.width_mm
 
 
+def test_the_gate_covers_a_site_conditioned_variant():
+    """The same argument again, for the newest decision path.
+
+    No demo model declares a `Variant`, so `select_variant` appeared in no gate
+    run and in no scenario — which meant unbinding `site` from the fence model's
+    condition context moved **nothing any golden file was watching**. Binding it
+    is what makes a site-conditioned panel possible at all, so the gate has to
+    contain one or the whole feature sits outside the net.
+
+    Asserts the fixture is genuinely exercising the path, not merely present:
+    the variant must be SELECTED, and its panel must differ from the default
+    spec's — otherwise the pin would hold with the site unbound.
+    """
+    from tests.scenarios.test_invariants import site_variant_library
+
+    topo, overrides, _, choice, site, _catalog, library = _fixtures()["site_variant"]
+    result = generate(topo, EXPOSURE_KB, demo_catalog(), overrides=overrides,
+                      models=library, parts=PARTS, default_model=choice, site=site)
+    spans = result.strategy.spans
+    assert spans
+    assert all(s.panel.variant_index == 0 for s in spans), "the variant never won"
+
+    # ...and the same fence with the site UNSET builds a different panel, which
+    # is what makes the golden file above a pin on the binding rather than on the
+    # default spec.
+    default = generate(topo, EXPOSURE_KB, demo_catalog(), overrides=overrides,
+                       models=library, parts=PARTS, default_model=choice, site=None)
+    assert all(s.panel.variant_index is None for s in default.strategy.spans)
+    infill_of = lambda r: [
+        s.qty for span in r.strategy.spans for s in span.panel.slots
+        if s.role == "infill"
+    ]
+    assert infill_of(result) != infill_of(default), (
+        "the variant's panel is indistinguishable from the default's, so the "
+        "gate file would hold with `site` unbound"
+    )
+    # the run says the site was never answered, on the run that was not told
+    assert any(w.code == "site_condition_missing"
+               for w in default.strategy.warnings)
+
+
 def test_the_gate_covers_a_fitted_infill_panel():
     """The same argument as the raked span, for the feature this phase is about.
     Every other fixture is M-LEGACY — two rails and eight screws — so a change to

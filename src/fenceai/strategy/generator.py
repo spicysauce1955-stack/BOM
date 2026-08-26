@@ -29,7 +29,9 @@ from fenceai.fencemodel.match import (
     chosen_post_facts, item_value, match_eligibility, match_spec, panel_facts,
     post_panel_facts, sole_excluding_term, stock_length_mm,
 )
-from fenceai.fencemodel.model import FenceModel, unknown_skus, validate_model
+from fenceai.fencemodel.model import (
+    FenceModel, site_condition_paths, unknown_skus, validate_model,
+)
 from fenceai.fencemodel.resolve import (
     PanelContext, ResolvedPanel, choose_variant, choose_variant_by, clear_opening_mm,
     height_supported, rail_positions_mm, resolve_panel,
@@ -245,6 +247,7 @@ def generate(
     _report_unfilled_posts(strategy, builder)
     _report_missing_site_conditions(
         knowledge, site_facts, scope, {u.model_id for u in models_used},
+        _model_site_dimensions(models, models_used),
         strategy, builder,
     )
     # Every conflict the run produced, surfaced together. Three sites used to do
@@ -646,13 +649,21 @@ class _PostFacts:
         # is why `validate_model` refuses that variant on a model whose post is
         # matched on `rail_positions_mm` — the alternative is a post chosen
         # against rails the fence does not build.
+        # `site` on BOTH sides of this, and it has to be the same dict: the spec
+        # a post is matched against must be the spec its bay is built to, and a
+        # site-conditioned variant that resolved here without the site would pick
+        # the default while the bay picked the variant — the exact divergence
+        # `_variant_reach_errors` refuses for `panel.width_mm`. A whole-site fact
+        # does not vary between the two bays a post stands between, so unlike a
+        # width there is a right answer to give it.
         spec = choose_variant_by(
-            model, {"panel": {"height_mm": height, "vertical": vertical}}
+            model,
+            {"panel": {"height_mm": height, "vertical": vertical}, "site": self.site},
         ).spec
         return post_panel_facts(
             model_id=model.id, height_mm=height, vertical=vertical,
             rail_positions_mm=rail_positions_mm(spec, height, self.count_params(model)),
-            kind=kind,
+            kind=kind, site=self.site,
         )
 
     def count_params(self, model: FenceModel) -> dict[str, int]:
@@ -2401,10 +2412,17 @@ def _generate_run(
                 params={"rails_per_span": rails_per_span,
                         "screws_per_span": screws_per_span},
                 options=sm.options,
+                # The same facts every knowledge context on this run already
+                # carries. Per BAY only because the context is: the site does not
+                # vary along a run — anything that does is an interval payload on
+                # the topology, not a site condition.
+                site=site,
             )
             # per BAY, not per segment: a variant condition reads the panel's own
             # height and vertical mode, and a level top over a slope gives every
-            # bay of one segment a different height (S06)
+            # bay of one segment a different height (S06). The SITE half is
+            # constant across the run and is here for the context's sake, not
+            # because it varies.
             variant = choose_variant(model, panel_ctx)
             # A spec-declared slot becomes concrete members HERE, so what the run
             # stores is the candidate set it may choose among — the same shape an
@@ -3052,11 +3070,57 @@ def _could_apply(v: KnowledgeVersion, scope: dict[str, str], series_used: set[st
     return True
 
 
+def _model_site_dimensions(
+    library: FenceModelLibrary, used: list[ModelUse],
+) -> set[str]:
+    """Which site dimensions the fence MODELS of this run asked about.
+
+    A rule in the knowledge base is no longer the only thing that can be
+    conditioned on the site: a variant condition and an eligibility predicate can
+    be too, and they fail identically when the project is silent — `MissingField`,
+    not applicable, the default spec or the company default, nothing said. So they
+    feed the SAME warning rather than a second one that would have to be
+    explained, ranked and localised beside it.
+
+    Read off the AUTHORED documents the run drew from, not the part-resolved ones,
+    and the difference provably cannot matter: a resolved slot's predicate is
+    `compile_spec(part)`, and `parts/compile.py` emits `item.<key>` for every
+    `SpecField` and nothing else — while `_part_or_authored` refuses a `part_id`
+    beside an authored predicate, so resolution never overwrites one either.
+    `site_condition_paths(resolved) == site_condition_paths(authored)`, always.
+
+    This first resolved them, on the stated grounds that a part author might write
+    a site condition. They cannot. Resolution cost a deep copy and a recompile per
+    model and — worse — had a REPORTING path writing into `_post_model`'s memo
+    after every post was resolved, a memo whose own comment justifies being shared
+    by "nothing on this path writes to it". Reading the authored document removes
+    the coupling and the false claim together.
+
+    A model the library cannot answer for is skipped rather than guessed at:
+    `legacy_model()` is synthesised per run and is in no library, and it declares
+    no variants and no predicates, so it has nothing to ask about the site.
+    """
+    dims: set[str] = set()
+    for use in sorted(used, key=lambda u: u.sort_key()):
+        model = library.get(use.model_id, use.version)
+        if model is not None:
+            dims |= site_condition_paths(model)
+    return dims
+
+
 def _report_missing_site_conditions(
     kb: KnowledgeBase, site_facts: dict, scope: dict[str, str],
-    series_used: set[str], strategy: Strategy, builder: GraphBuilder,
+    series_used: set[str], model_wanted: set[str],
+    strategy: Strategy, builder: GraphBuilder,
 ) -> None:
-    """Rules that asked about this site, and a site that did not answer.
+    """Everything that asked about this site, and a site that did not answer.
+
+    Two askers, one warning. `kb` covers the knowledge rules; `model_wanted`
+    covers the fence models' own `Variant.condition`s and `Eligibility.
+    predicate`s (`_model_site_dimensions`). They are aggregated rather than
+    reported separately because the estimator's work item is identical either
+    way — go and fill in this field — and splitting it would put two items in
+    front of a person who has one thing to do.
 
     Silence is the failure mode here. A rule conditioned on an unset dimension is
     NOT APPLICABLE — correctly, and that is the behaviour the whole design leans
@@ -3065,9 +3129,10 @@ def _report_missing_site_conditions(
     was never entered. The plan looks complete and is answering a question nobody
     asked.
 
-    Read off the RULES rather than off a list of dimensions, so it reports what
-    this snapshot actually wanted: a knowledge base that never mentions exposure
-    does not nag about exposure, and the day one starts publishing exposure rows
+    Read off the RULES and the MODELS rather than off a list of dimensions, so it
+    reports what this run actually wanted: a knowledge base that never mentions
+    exposure does not nag about exposure, and the day one starts publishing
+    exposure rows — or a model author writes their first hurricane-zone variant —
     the warning appears without a code change.
 
     **Not a `Gap`.** A gap declares `closes_by: knowledge | planning`, and this is
@@ -3089,20 +3154,45 @@ def _report_missing_site_conditions(
             dim = path.split(".", 1)[1]
             if wanted.get(dim) != "hard_constraint":
                 wanted[dim] = v.type
-    missing = sorted(set(wanted) - set(site_facts))
+    # WHO asked, kept BESIDE what they are, because they are two facts: the
+    # sentence needs the first and the severity needs the second.
+    #
+    # `wanted` holds `KnowledgeVersion.type` and must keep holding only that. The
+    # first version of this wrote the string `"fence_model"` into it — a phantom
+    # member of a closed knowledge vocabulary, inert only because a single `==
+    # "hard_constraint"` was its one reader, which is exactly how two taxonomies
+    # get conflated the day somebody maps the value to a severity.
+    #
+    # A model's want never affects severity: a variant is product structure, so
+    # its condition losing is a different panel and not a violated limit. A hard
+    # constraint keeps the `error` it earned even when a model asks about the same
+    # dimension.
+    askers: dict[str, set[str]] = {d: {"rule"} for d in wanted}
+    for dim in sorted(model_wanted):
+        askers.setdefault(dim, set()).add("model")
+    missing = sorted((set(wanted) | set(model_wanted)) - set(site_facts))
     if not missing:
         return
     # A HARD constraint that could not be evaluated is not the same event as a
     # preference that did not fire. "Hard constraint is not preference" is a
     # foundation rule, and it should reach the report rather than stopping at
     # the resolver.
-    hard = any(wanted[d] == "hard_constraint" for d in missing)
+    hard = any(wanted.get(d) == "hard_constraint" for d in missing)
+    # `rule` | `model` | `both`, over the dimensions actually MISSING. On the
+    # graph as well as in the params, because the graph is the explanation and a
+    # reader asking what a blank field silenced cannot recover it from a list of
+    # dimensions — the two askers fail in different places, and the repair is the
+    # same but the diagnosis is not: a rule that never fired, or a bay built to
+    # the default spec.
+    kinds = {k for d in missing for k in askers.get(d, ())}
+    asked_by = "both" if len(kinds) > 1 else next(iter(kinds), "rule")
     params: dict[str, str | int] = {
-        "dimensions": ", ".join(missing), "n": len(missing),
+        "dimensions": ", ".join(missing), "n": len(missing), "asked_by": asked_by,
     }
     message = (
-        f"{len(missing)} site condition(s) decide rules in this snapshot and are "
-        f"not set: {', '.join(missing)}. Rules needing them did not apply."
+        f"{len(missing)} site condition(s) decide how this fence is built and are "
+        f"not set: {', '.join(missing)}. The rules and fence-model options that "
+        f"depend on them did not apply."
     )
     node = builder.add(
         "gap", "site_condition_missing",

@@ -40,6 +40,7 @@ from fenceai.fencemodel.match import (
     chosen_post_facts, match_eligibility, match_spec, panel_facts, post_panel_facts,
 )
 from fenceai.fencemodel.model import FenceModel, validate_model
+from fenceai.project.site import SiteConditions
 from fenceai.parts.model import PartLibrary
 from fenceai.parts.resolve import library_at, resolve_model_parts
 from fenceai.fencemodel.resolve import (
@@ -86,6 +87,22 @@ class PreviewRequest(BaseModel):
     # patches no stored run; making a choice stick is authoring the model or an
     # override anchored to (run_id, station, kind), both of which already exist.
     slot_skus: dict[str, str] = {}
+    # The site the bay is imagined on, for the same reason `params` is here: the
+    # preview cannot resolve it itself (it has no project), and a variant
+    # conditioned on the site picks a DIFFERENT spec without it — so a preview
+    # that defaulted it would draw and price a panel the run does not build.
+    # `bay_preview_plan` reads it back off the run, which is where the generator
+    # recorded it. Unset is a model-scoped preview, which has no site to speak of.
+    #
+    # `SiteConditions` and NOT a bare dict, which is what this was first written
+    # as and was wrong for the reason the field it mirrors was just fixed for: a
+    # dict accepts `{"hvzh": True}` and `{"frost_depth_mm": -500}`, and this is a
+    # ROUTE body (`/api/fence-models/{id}/{v}/preview`). It would have re-opened
+    # the negative frost depth one route lower than the boundary that refuses it,
+    # and drawn a panel chosen under a site no project could hold. `extra=forbid`
+    # and `ge=0` come along with the type; `.facts()` below keeps omission in the
+    # one place that decides it.
+    site: SiteConditions = SiteConditions()
 
 
 class PreviewPart(BaseModel):
@@ -195,6 +212,11 @@ def preview_panel(
             params=request.params,
             options=dict(request.options),
             slot_skus=dict(request.slot_skus),
+            # `.facts()`, never `model_dump()`: an unanswered dimension has to be
+            # ABSENT from the namespace or the `MissingField` hook that makes a
+            # condition not-applicable stops working, and a `None` would compare
+            # as a value. One place decides that, and this is not it.
+            site=request.site.facts(),
         )
 
     # Provisional: the clear opening is measured TO the post faces, and which
@@ -370,7 +392,7 @@ def _preview_post_face(
     facts = post_panel_facts(
         model_id=model.id, height_mm=request.height_mm, vertical=request.vertical,
         rail_positions_mm=rail_positions_mm(spec, request.height_mm, request.params),
-        kind="line",
+        kind="line", site=request.site.facts(),
     )
     matched = match_eligibility(
         model.post.requirement.eligibility, catalog, facts,
@@ -475,6 +497,18 @@ def bay_preview_plan(
                     "screws_per_span": span.screws_count},
             options=_bay_options(result, span),
             slot_skus=dict(ask.slot_skus),
+            # Read back off the RUN, not off today's project: a preview of a
+            # stored bay must reproduce the fence that exists. `run.site_facts`
+            # is the same dict the generator resolved the bay's variant against,
+            # and it is already what the `site_conditions_changed` guard compares
+            # — so a bay whose site has moved is refused before it can be
+            # previewed against the wrong one.
+            #
+            # Reconstructed THROUGH `SiteConditions`, so a stored run whose facts
+            # predate a dimension — or were written by an older engine — is held
+            # to the same domain as a project is. `facts()` omits what is unset,
+            # so this round-trips exactly what the run recorded.
+            site=SiteConditions(**result.run.site_facts),
         ),
     )
 

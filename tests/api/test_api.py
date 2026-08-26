@@ -1010,6 +1010,25 @@ def test_an_unknown_exposure_category_is_refused_at_the_boundary(client):
     assert client.get(f"/api/projects/{pid}").json()["site"]["revision"] == 0
 
 
+def test_a_negative_frost_depth_is_refused_at_the_boundary(client):
+    """The browser panel was the only thing refusing this.
+
+    A frost line above the ground is not a thing, and the hole was not merely
+    untidy: a negative depth satisfies every `<=` a footing rule tests and
+    defeats every `>=`, so the run comes back looking measured. The panel's
+    `min="0"` protects the panel; the route is what anything else talks to.
+    """
+    pid = make_project(client, name="site-frost")
+    assert client.put(f"/api/projects/{pid}/site",
+                      json={"frost_depth_mm": -500}).status_code == 422
+    assert client.get(f"/api/projects/{pid}").json()["site"]["revision"] == 0
+    # 0 is a real answer — "we asked, and there is no frost line here" — and is
+    # a different claim from the unset default, so the bound is `ge` not `gt`.
+    assert client.put(f"/api/projects/{pid}/site",
+                      json={"frost_depth_mm": 0}).status_code == 200
+    assert client.get(f"/api/projects/{pid}").json()["site"]["frost_depth_mm"] == 0
+
+
 def test_a_quote_refuses_a_site_that_moved(client):
     """A working view stays permissive; an immutable commercial document does
     not. A quote priced under Exposure B while the project says C is signed and
