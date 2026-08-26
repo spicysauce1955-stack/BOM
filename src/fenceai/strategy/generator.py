@@ -3031,11 +3031,19 @@ def _model_site_dimensions(
     explained, ranked and localised beside it.
 
     Read off the documents the run actually drew from (`models_used`), and read
-    off them RESOLVED, because a slot's predicate arrives from the part it names:
-    an unresolved document would miss every site condition a part author wrote and
-    report clean on precisely the models most likely to carry one. `_post_model`
-    is the run's own resolution memo, so a model already resolved for its posts is
-    not resolved again.
+    off them RESOLVED — because that is the document `validate_model` refuses an
+    unknown dimension on (`_validate_resolved_model` passes the library, and
+    `validate_model` resolves before it reads). The two callers of
+    `site_condition_paths` have to be looking at the same document or one would
+    refuse a dimension the other never reported, and vice versa.
+
+    It makes no difference to the ANSWER today, and saying so is the honest
+    version: `parts.compile.compile_field` builds `item.<key>` and nothing else,
+    so a compiled part spec cannot mention the site. The reason to resolve is
+    agreement with the validator, not a site condition hiding in a part.
+
+    `_post_model` is the run's own resolution memo, so a model already resolved
+    for its posts is not resolved a second time.
 
     A model the library cannot answer for is skipped rather than guessed at:
     `legacy_model()` is synthesised per run and is in no library, it declares no

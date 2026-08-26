@@ -519,6 +519,12 @@ outcome that comment already warns against. Site conditions still have no UI at
 all (recorded as deliberate in the engine spec), so this is one frontend slice
 rather than a hole here.
 
+The same slice owns the second half: a MODEL-scoped preview (the panel editor)
+sends no site, so it previews a site-conditioned model at its default spec. A
+BAY preview is correct already — `bay_preview_plan` fills `site` from
+`run.site_facts`. Closing the editor half means a site input in the editor, which
+is the frontend slice above, not a second mechanism.
+
 ## The gaps the engine produces now have a reader (2026-08-25)
 
 Frontend build-order step 8, the gap half. **1762 pytest · 217/217 smoke.**

@@ -232,6 +232,12 @@ def test_a_site_the_project_never_answered_is_REPORTED_not_silent():
     # a variant is product structure, not a limit — so this is a warning and not
     # the error a missing HARD constraint dimension raises
     assert warned.severity == "warning"
+    # ...and it is anchored in the graph, because the graph is the explanation
+    # (foundation §15): a warning with no node is a claim nothing traces to.
+    node = next(n for n in result.graph.nodes
+                if n.action == "site_condition_missing")
+    assert node.kind == "gap"
+    assert warned.decision_ref == node.id
 
 
 def test_a_dimension_wanted_by_both_a_rule_and_a_variant_is_named_once():
