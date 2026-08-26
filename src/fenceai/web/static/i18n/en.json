@@ -363,6 +363,8 @@
   "warning.no_gate_kit": "No catalog product fits the {opening_width_mm} {u} opening of {element} — this gate cannot be priced",
   "warning.height_not_supported": "Fence model {model_ref} is not made in {n} of the panel heights in section {run_id} (from {min_mm} {u} to {max_mm} {u}) — change the height or choose another model",
   "warning.uncovered_max_span": "No rule states the maximum span for {model_ref} in section {run_id}; {n} bay(s) laid out to {value_mm} {u} — confirm before ordering",
+  "warning.uncovered_rails_per_span": "No rule states how many rails a bay of {model_ref} gets in section {run_id}; {n} bay(s) built with {value} rails each — confirm before ordering",
+  "warning.uncovered_screws_per_span": "No rule states how many screws a bay of {model_ref} gets in section {run_id}; {n} bay(s) built with {value} screws each — confirm before ordering",
   "warning.no_default_post": "No rule names a default ground-post product; {n} post(s) have no product and are unfilled in the bill of materials",
   "warning.site_condition_missing": "{n} site condition(s) that decide rules are not set ({dimensions}) — rules needing them did not apply",
   "warning.uncovered_parameter_point": "{parameter} has no published value for {point} — confirm before ordering",

@@ -20,7 +20,9 @@ from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.evaluator import resolve_param
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
-from fenceai.strategy.generator import FALLBACK_MAX_SPAN_MM, generate
+from fenceai.strategy.generator import (
+    DEFAULT_RAILS_PER_SPAN, DEFAULT_SCREWS_PER_SPAN, FALLBACK_MAX_SPAN_MM, generate,
+)
 from tests.conftest import straight_topology
 
 
@@ -204,6 +206,216 @@ def test_an_unfilled_post_survives_the_WHOLE_spine():
     assert all(line.sku for line in bom.lines)
 
 
+# -- unstated per-span COUNTS (generator.py, the _resolve_quantity sites) -------
+#
+# The same shape as the max-span site and, until this change, missing the same
+# thing: `DEFAULT_RAILS_PER_SPAN = 2` and `DEFAULT_SCREWS_PER_SPAN = 8` answered
+# a question nobody had answered and said nothing about it.
+
+def test_the_count_defaults_keep_their_values():
+    """The decision this change did NOT make, pinned so it cannot drift.
+
+    Closing the hole means REPORTING the number, never changing it: every fence
+    this engine has quoted was built with 2 rails and 8 screws a bay, and moving
+    either would silently reprice every job that relied on the default. The
+    literals, so a change is a decision rather than a diff nobody reads."""
+    assert DEFAULT_RAILS_PER_SPAN == 2
+    assert DEFAULT_SCREWS_PER_SPAN == 8
+
+    # ...and the demo base states exactly these, so retiring its rows changes
+    # what the run SAYS and not what it builds. If these ever disagree, the
+    # cost-invariance test below is testing nothing.
+    stated = {a.param: a.value for v in demo_knowledge().versions for a in v.actions
+              if a.kind == "set_param" and a.param.endswith("_per_span")}
+    assert stated == {"rails_per_span": DEFAULT_RAILS_PER_SPAN,
+                      "screws_per_span": DEFAULT_SCREWS_PER_SPAN}
+
+
+@pytest.mark.parametrize(("dropped", "code", "param", "value"), [
+    ("K-RAILS", "uncovered_rails_per_span", "rails_per_span", DEFAULT_RAILS_PER_SPAN),
+    ("K-SCREWS", "uncovered_screws_per_span", "screws_per_span", DEFAULT_SCREWS_PER_SPAN),
+])
+def test_an_unstated_count_is_a_named_gap_not_a_silent_default(dropped, code, param, value):
+    kb = _without(demo_knowledge(), dropped)
+    result = generate(straight_topology(6000), kb, demo_catalog())
+
+    gaps = [g for g in result.strategy.gaps if g.code == code]
+    assert len(gaps) == 1
+    gap = gaps[0]
+    assert gap.kind == "uncovered_condition"
+    assert gap.subject.kind == "param" and gap.subject.ref == param
+    assert gap.closes_by == "knowledge" and gap.severity == "warns_line"
+    # BINDING (§1.2.1): a work item names the row AND the coordinate it is
+    # missing on, so a curator reads what to author. `param in would_close`
+    # alone is satisfied by "rails_per_span is missing", the sentence the
+    # contract calls useless.
+    assert param in gap.would_close
+    assert "M-LEGACY@v1" in gap.would_close
+    # ...and never a run id: §3.1.13 bans a published condition naming a run
+    assert "run1" not in gap.would_close
+
+    # `value`, NOT `value_mm`. A count is not a length, and `unitParams`
+    # converts every `*_mm` key to the reader's display unit — the suffix would
+    # render "0.2 cm rails" to anyone whose preference is centimetres.
+    assert gap.params["value"] == value
+    assert not [k for k in gap.params if k.endswith("_mm")]
+
+
+@pytest.mark.parametrize(("dropped", "code"), [
+    ("K-RAILS", "uncovered_rails_per_span"),
+    ("K-SCREWS", "uncovered_screws_per_span"),
+])
+def test_a_forty_bay_fence_files_ONE_warning_and_names_every_bay(dropped, code):
+    """The aggregation, and the reason this was its own change.
+
+    Both counts resolve PER SEGMENT (two call sites: `segment_model` and the
+    post facts beside it), so the naive conversion emits one warning per bay —
+    forty identical sentences naming no bay between them, which is verbatim the
+    failure `warnings.js` records for element refs. One per section and model
+    line, because the row that would close it is one row.
+
+    An `any`-shaped assertion passes the regression that files forty, which is
+    the stated anti-goal, so this counts.
+    """
+    kb = _without(demo_knowledge(), dropped)
+    result = generate(straight_topology(75000), kb, demo_catalog())
+    assert len(result.strategy.spans) >= 40, "or this proves nothing"
+
+    warned = [w for w in result.strategy.warnings if w.code == code]
+    assert len(warned) == 1
+    assert warned[0].severity == "warning"
+    # ONE warning, and "which bays" still has an answer: every one of them
+    assert set(warned[0].element_refs) == {s.id for s in result.strategy.spans}
+    assert warned[0].params["n"] == len(result.strategy.spans)
+    # ...and one gap, not forty
+    assert len([g for g in result.strategy.gaps if g.code == code]) == 1
+
+
+@pytest.mark.parametrize("dropped", ["K-RAILS", "K-SCREWS"])
+def test_an_unstated_count_is_traceable_in_the_decision_graph(dropped):
+    """A bay's rail count has to walk back to "nobody stated this".
+
+    Without the gap node in the quantity node's INPUTS the trail dead-ends at a
+    `resolve_span_quantities` node with an empty `governed_by` — a number on the
+    drawing with nothing behind it, which is the state this change removes.
+    """
+    kb = _without(demo_knowledge(), dropped)
+    result = generate(straight_topology(6000), kb, demo_catalog())
+
+    nodes = [n for n in result.graph.nodes
+             if n.kind == "gap" and n.action == "uncovered_quantity"]
+    assert len(nodes) == 1
+    assert nodes[0].confidence == "uncertain"
+    # nothing governs it, read off the IN-edges (`GraphBuilder._edge` writes
+    # governed_by FROM the knowledge node, so out-edges are vacuously empty)
+    in_edges = result.graph.in_edges(nodes[0].id)
+    assert not [e for e in in_edges if e.type == "governed_by"]
+    assert {e.type for e in in_edges} == {"input_from"}
+
+    # the warning points AT it, and the quantity node hangs OFF it
+    warned = next(w for w in result.strategy.warnings
+                  if w.code.startswith("uncovered_") and w.code.endswith("_per_span"))
+    assert warned.decision_ref == nodes[0].id
+    quantity = [n for n in result.graph.nodes if n.action == "resolve_span_quantities"]
+    assert quantity
+    assert all(nodes[0].id in {e.from_id for e in result.graph.in_edges(q.id)}
+               for q in quantity)
+
+
+def test_reporting_the_count_moved_no_quantity_and_no_price():
+    """The claim the commit makes, made executable.
+
+    The whole point of keeping 2 and 8 is that a run whose knowledge stopped
+    stating them builds and costs EXACTLY what it built and cost before. Compared
+    against the run that DOES state them rather than against a remembered number,
+    because a fixture of expected totals is a comparison of the code with itself.
+    """
+    from fenceai.demand.derive import derive_requirements
+    from fenceai.fulfillment.fulfill import fulfill
+    from fenceai.fulfillment.supply import resolve_supply
+
+    catalog, topo = demo_catalog(), straight_topology(20000)
+
+    def priced_bom(kb):
+        result = generate(topo, kb, catalog)
+        supply = resolve_supply(derive_requirements(result.strategy, catalog), catalog, None)
+        return result, fulfill(supply.requirements, catalog, None)
+
+    stated, stated_bom = priced_bom(demo_knowledge())
+    assumed, assumed_bom = priced_bom(_without(demo_knowledge(), "K-RAILS", "K-SCREWS"))
+
+    assert ([s.rail_count for s in assumed.strategy.spans]
+            == [s.rail_count for s in stated.strategy.spans])
+    assert ([s.screws_count for s in assumed.strategy.spans]
+            == [s.screws_count for s in stated.strategy.spans])
+    assert assumed_bom.total_cents == stated_bom.total_cents
+    assert ([(line.sku, line.purchase_qty, line.engineering_qty, line.total_cents)
+             for line in assumed_bom.lines]
+            == [(line.sku, line.purchase_qty, line.engineering_qty, line.total_cents)
+                for line in stated_bom.lines])
+
+    # ...and the ONLY difference is what the run says about itself
+    assert {g.code for g in assumed.strategy.gaps} == {
+        "uncovered_rails_per_span", "uncovered_screws_per_span"}
+    assert stated.strategy.gaps == []
+
+
+def test_two_models_on_one_section_file_one_gap_each():
+    """The case the per-MODEL half of the aggregation exists for.
+
+    A section can be built to two model lines (a `fence_model` interval event),
+    and these params resolve under the segment's model scope — so a
+    `rails_per_span` row authored for one line closes nothing for the other. Two
+    work items, each naming its own bays, and NOT one gap that would send a
+    curator to author half a fix.
+
+    The mirror of `_report_uncovered_max_span`'s "two segments of one run can
+    name the same model" note, from the other side: same model twice is one gap,
+    different models is two.
+    """
+    from fenceai.fencemodel.demo import demo_models
+    from fenceai.fencemodel.library import FenceModelLibrary
+    from fenceai.topology.model import FenceModelPayload
+    from tests.conftest import add_interval_event
+
+    models = demo_models()
+    library = FenceModelLibrary(models=[models["M-LEGACY"], models["M-SLAT"]])
+    topo = straight_topology(12000)
+    add_interval_event(topo, "run1", "mA", 0, 6000,
+                       FenceModelPayload(model_id="M-LEGACY"))
+    add_interval_event(topo, "run1", "mB", 6000, 12000,
+                       FenceModelPayload(model_id="M-SLAT"))
+
+    kb = _without(demo_knowledge(), "K-RAILS")
+    result = generate(topo, kb, demo_catalog(), models=library)
+
+    gaps = [g for g in result.strategy.gaps if g.code == "uncovered_rails_per_span"]
+    assert len(gaps) == 2, [g.id for g in gaps]
+    # one work item per product LINE, each naming its own line and nobody else's
+    assert {g.would_close for g in gaps} == {
+        "a rails_per_span row for series M-LEGACY@v1",
+        "a rails_per_span row for series M-SLAT@v1",
+    }
+    assert len({g.id for g in gaps}) == 2  # and two ids, not one overwritten
+
+    warned = [w for w in result.strategy.warnings
+              if w.code == "uncovered_rails_per_span"]
+    assert len(warned) == 2
+    # every bay is accounted for exactly once: the two element_ref sets partition
+    # the section, so neither warning claims bays the other model built
+    refs = [set(w.element_refs) for w in warned]
+    assert not refs[0] & refs[1]
+    assert refs[0] | refs[1] == {s.id for s in result.strategy.spans}
+
+
+def test_a_stated_count_produces_no_gap_and_no_node():
+    """The regression guard: the demo base states both, so nothing changes."""
+    result = generate(straight_topology(6000), demo_knowledge(), demo_catalog())
+    assert result.strategy.gaps == []
+    assert not [n for n in result.graph.nodes if n.action == "uncovered_quantity"]
+    assert not [w for w in result.strategy.warnings if w.code.endswith("_per_span")]
+
+
 # -- what still refuses ---------------------------------------------------------
 
 def test_an_unknown_model_pin_still_refuses():
@@ -260,7 +472,8 @@ def test_origin_defaults_to_authored():
 
 # -- both gaps render, in both languages ---------------------------------------
 
-@pytest.mark.parametrize("dropped", ["K-MAXSPAN", "K-POST-DEFAULT"])
+@pytest.mark.parametrize("dropped",
+                         ["K-MAXSPAN", "K-POST-DEFAULT", "K-RAILS", "K-SCREWS"])
 @pytest.mark.parametrize("lang", ["en", "he"])
 def test_a_gap_node_renders_in_both_languages(dropped, lang):
     """A gap the reader cannot read is a gap that was not reported. Same rule as
@@ -313,9 +526,10 @@ def test_an_empty_knowledge_base_still_plans_every_shape():
     for length in (1200, 6000, 20000):
         result = generate(straight_topology(length), empty, catalog)
         assert result.strategy.spans
-        # exactly the two holes, named — not a silent plan
+        # exactly the four holes, named — not a silent plan
         assert {g.code for g in result.strategy.gaps} == {
-            "uncovered_max_span", "no_default_post"}
+            "uncovered_max_span", "no_default_post",
+            "uncovered_rails_per_span", "uncovered_screws_per_span"}
 
 
 def test_gaps_are_deterministic():

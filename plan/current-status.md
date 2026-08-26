@@ -782,10 +782,20 @@ fence that must not be built (a violated `hard_constraint`) or an instruction th
 cannot be followed (a model id that does not exist). That is the property §3.2.4
 actually asks for, and it is stronger than "the two declared defects are fixed".
 
-**Recorded, not fixed.** `DEFAULT_RAILS_PER_SPAN` and `DEFAULT_SCREWS_PER_SPAN` have
-been silent fallbacks for unstated quantities since long before this audit — the same
-shape as the max-span fallback, minus the warning. Left alone because closing them
-moves golden numbers on runs that are currently green.
+**Recorded, then fixed (2026-08-26).** `DEFAULT_RAILS_PER_SPAN` and
+`DEFAULT_SCREWS_PER_SPAN` had been silent fallbacks for unstated quantities since long
+before this audit — the same shape as the max-span fallback, minus the warning. They
+now carry it: `uncovered_rails_per_span` / `uncovered_screws_per_span` as a `Gap`, a
+`StrategyWarning` in both bundles, and a `gap`/`uncovered_quantity` node with en/he
+templates. **The values did not move** (2 rails, 8 screws); reporting a default and
+changing one are different changes, and only the first is safe on jobs already quoted.
+Aggregated per section AND per model line, never per bay — the parameters resolve
+under the segment's model scope, so a 40-bay fence is one work item with all 40 bays
+in `element_refs`. The feared cost did not materialise: no green run moved (the demo
+base states both counts), the scenario gate held at 268, and a twenty-case before/after
+BOM diff moved zero cost and zero quantity. `_resolve_quantity` now returns
+`(value, refs, assumed)`, which leaves the same seam open for the three callers that
+still discard it (`base_top_step_boundary_mm`, `max_panel_step_mm`, `post_embed_mm`).
 
 **One open question, deliberately not settled:** `no_item_covers_part_spec` is the
 taxonomy's `unsatisfiable_requirement` almost word for word, and converting the post

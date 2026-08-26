@@ -147,6 +147,14 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "No rule states '{param}' for section {run_id}; laid out to a "
             "fallback of {value_mm} {u}, which nothing in the knowledge governs."
         ),
+        # The same sentence for a COUNT, and it is a separate template for one
+        # reason: `{value}`, never `{value_mm}`. Only a `*_mm` key converts to
+        # the reader's display unit, so borrowing the line above would explain
+        # two rails as "a fallback of 0.2 cm".
+        "uncovered_quantity": (
+            "No rule states '{param}' for {model_ref} in section {run_id}; built "
+            "to a default of {value}, which nothing in the knowledge governs."
+        ),
         "missing_default": (
             "No rule names a default product for role '{role}'; {n} element(s) "
             "stand with no product."
@@ -355,6 +363,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "uncovered_param": (
             "אין כלל הקובע '{param}' עבור הקטע {run_id}; התכנון בוצע לפי ברירת "
             "מחדל של {value_mm} {u}, שאינה נשענת על אף ידע."
+        ),
+        "uncovered_quantity": (
+            "אין כלל הקובע '{param}' עבור {model_ref} בקטע {run_id}; הבנייה בוצעה "
+            "לפי ברירת מחדל של {value}, שאינה נשענת על אף ידע."
         ),
         "missing_default": (
             "אין כלל הקובע מוצר ברירת מחדל לתפקיד '{role}'; {n} רכיבים עומדים "
@@ -656,6 +668,10 @@ def explain_node(
                 # reader's display unit, and today's only uncovered param IS a
                 # length (`resolve_max_span` says it the same way)
                 param=p.get("param"), run_id=p.get("run_id"), value_mm=p.get("value"))
+        case "uncovered_quantity":
+            base = _fmt(t, "uncovered_quantity", lang, units,
+                param=p.get("param"), run_id=p.get("run_id"),
+                model_ref=p.get("model_ref"), value=p.get("value"))
         case "missing_default":
             base = _fmt(t, "missing_default", lang, units,
                 role=p.get("role"), n=p.get("n"))

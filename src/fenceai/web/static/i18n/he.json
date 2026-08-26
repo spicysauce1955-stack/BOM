@@ -363,6 +363,8 @@
   "warning.no_gate_kit": "אין בקטלוג מוצר שמתאים לפתח של {opening_width_mm} {u} ב-{element} — לא ניתן לתמחר שער זה",
   "warning.height_not_supported": "דגם הגדר {model_ref} אינו מיוצר ב-{n} מגובהי הפאנל בקטע {run_id} (מ-{min_mm} {u} עד {max_mm} {u}) — שנו את הגובה או בחרו דגם אחר",
   "warning.uncovered_max_span": "אין כלל הקובע מפתח מרבי עבור {model_ref} בקטע {run_id}; {n} מפתחים תוכננו לפי {value_mm} {u} — אשרו לפני הזמנה",
+  "warning.uncovered_rails_per_span": "אין כלל הקובע כמה קורות מקבל מפתח של {model_ref} בקטע {run_id}; {n} מפתחים נבנו עם {value} קורות כל אחד — אשרו לפני הזמנה",
+  "warning.uncovered_screws_per_span": "אין כלל הקובע כמה ברגים מקבל מפתח של {model_ref} בקטע {run_id}; {n} מפתחים נבנו עם {value} ברגים כל אחד — אשרו לפני הזמנה",
   "warning.no_default_post": "אין כלל הקובע מוצר ברירת מחדל לעמוד קרקע; ל-{n} עמודים אין מוצר והם חסרים בכתב הכמויות",
   "warning.site_condition_missing": "{n} תנאי אתר שקובעים כללים אינם מוגדרים ({dimensions}) — כללים הזקוקים להם לא הופעלו",
   "warning.uncovered_parameter_point": "ל-{parameter} אין ערך שפורסם עבור {point} — אשרו לפני הזמנה",
