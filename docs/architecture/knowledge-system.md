@@ -106,7 +106,7 @@ authoring, because the model looks authored and the fence is quietly something
 else. Site conditions exist precisely so that a fence can be conditioned on the
 site, so the answer is to bind it and let the existing silence-breaker speak.
 
-Two consequences follow, and both are load-bearing:
+Four consequences follow, and each is load-bearing:
 
 * **The post reads the same site as its bay.** A post is resolved at its own
   station, where the bay's *width* does not exist — which is why a
@@ -115,19 +115,40 @@ Two consequences follow, and both are load-bearing:
   a post stands between, so there **is** a right answer to give it, and
   `_PostFacts.at` gives the same one the bay gets. A site-conditioned variant is
   therefore admissible there, and the two agree by construction.
-* **An unknown dimension is an authoring error.** `site.hvzh` can never be
-  satisfied, so the variant is dead and the slot admits nothing — the same
-  silence, reinstated by a transposition. `validate_model` refuses a `site.` key
-  that is not a `SiteConditions` field, in the same class as a slot naming an
-  option axis the model does not declare. The known set is
-  `project.model.SITE_DIMENSIONS`, derived from the model itself rather than
-  listed twice.
+* **A condition that can never be true is an authoring error, and there are
+  three ways to write one.** `site.hvzh` names a dimension nothing supplies;
+  `site.hvhz.enabled` reaches inside a scalar; `site.exposure_category == "Z"`
+  names a value a closed domain cannot hold. All three are dead on arrival and
+  all three fail the way that hides — not applicable, so the variant falls
+  through to the default spec and the slot to the company default, with the
+  model still looking authored. `validate_model` refuses all three, in the same
+  class as a slot naming an option axis the model does not declare. The
+  vocabulary and the domains are read off `SiteConditions` itself
+  (`project/site.py`, a leaf module holding nothing else) rather than listed
+  twice — a second list goes stale in the direction that never fires.
+
+* **An UNBOUND namespace is not an unanswered dimension.** `choose_variant_by`
+  raises when a variant reads `site.*` and the caller bound no `site` key at all,
+  which is the check `_assert_namespaces_bound` already makes on the knowledge
+  evaluator, in the same words. `SiteConditions.facts()` returns `{}` and never
+  absence, so the two separate cleanly. Without it this defect is re-openable at
+  every future call site and re-opens silently; `match.post_panel_facts` takes
+  `site` as a REQUIRED keyword for the same reason — a caller with no site passes
+  `{}` and says so.
 
 `site_condition_missing` covers both askers, and deliberately as ONE warning: the
 estimator's work item is a list of fields to go and fill, not one item per thing
 that wanted each. A dimension a hard constraint wanted keeps that severity — a
 hard constraint that could not be evaluated is not the same event as a variant
-that did not fire.
+that did not fire, and a model's want never dilutes it.
+
+The node and the params carry `asked_by` (`rule` | `model` | `both`), because one
+sentence for two events is not the same thing as one work item for two askers: a
+rule that never fired and a bay built to the default spec have the same repair
+and different diagnoses, and a reader cannot recover which from a list of
+dimensions. The rendered sentence used to end *"rules needing them did not
+apply"*, which was simply false for a model-only want — and false in both locale
+bundles, where the en/he parity check cannot see it.
 
 ### A conditioned rule outranks an unconditioned one
 

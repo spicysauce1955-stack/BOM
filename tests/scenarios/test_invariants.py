@@ -22,10 +22,10 @@ from fenceai.topology.model import (
     Run,
     Topology,
 )
-from fenceai.fencemodel.demo import demo_models
+from fenceai.fencemodel.demo import M_SLAT, demo_models
 from fenceai.fencemodel.model import (
     AssemblyStep, Distributed, FenceModel, FixingRule, FrameSlot, PanelSpec,
-    PartRequirement,
+    PartRequirement, Variant,
 )
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.selection import FenceModelChoice
@@ -208,9 +208,43 @@ def _fixtures():
         # never seen.
         "site_exposure_c": (straight_topology(6000), [], None, SLAT,
                             SiteConditions(exposure_category="C")),
+        # A fence whose PANEL — not its span limit — came from the site. The
+        # fixture above conditions a knowledge RULE on the site; this one
+        # conditions a fence model's own `Variant`, which is a different decision
+        # path entirely: `select_variant`, the post matched at its own station
+        # against the variant's rails, and the panel the run stores.
+        #
+        # Nothing in this battery had ever walked it. No demo model declares a
+        # variant at all, so `select_variant` appeared in no scenario and no gate
+        # run — which meant unbinding `site` from the condition context moved
+        # nothing the release gate watches.
+        "site_variant": (straight_topology(6000), [], None, SLAT,
+                         SiteConditions(hvhz=True), None, site_variant_library()),
         "through_rail": (through_rail, [], None, white_choice(), None,
                          catalog_with_two_colours(), board_library()),
     }
+
+
+def site_variant_library() -> FenceModelLibrary:
+    """M-SLAT with one variant, conditioned on the site.
+
+    Built from M-SLAT's own spec with a WIDER slat gap, so the variant's panel
+    differs in slat count, slat positions, screw count and therefore in the BOM —
+    while every slot key stays the one the model already declares, so nothing
+    else about the document changes and the fixture tests the variant rather than
+    a second model.
+    """
+    model = M_SLAT.model_copy(deep=True)
+    wide = M_SLAT.default_spec.model_copy(deep=True)
+    wide.infill.pattern[0].gap_after_mm = 60
+    model.variants = [Variant(
+        condition=Cmp(cmp="==", left=FieldRef(path="site.hvhz"),
+                      right=Lit(value=True)),
+        spec=wide,
+    )]
+    return FenceModelLibrary(models=[
+        *(m for m in LIBRARY.models if m.id != model.id), model,
+    ])
 
 
 # The demo base plus one exposure-conditioned maximum. Separate from

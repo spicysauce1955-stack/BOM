@@ -16,12 +16,13 @@ from fenceai.demand.derive import derive_requirements
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, EligibleItem, FenceModel, FrameSlot, PanelSpec,
-    PartRequirement, PostSlot,
+    PartRequirement, PostSlot, Variant,
 )
 from fenceai.fencemodel.selection import FenceModelChoice
-from fenceai.knowledge.ast import Cmp, FieldRef
+from fenceai.knowledge.ast import Cmp, FieldRef, Lit
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
+from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
 from fenceai.strategy.overrides import ForcePostSku, Override
 from tests.conftest import straight_topology
@@ -51,12 +52,13 @@ def _model(post_sku="POST-S-HD", cap_sku="POST-CAP") -> FenceModel:
 
 
 def _run(model=None, topo=None, catalog=None, knowledge=None, policy=None,
-         overrides=None):
+         overrides=None, site=None):
     return generate(
         topo or straight_topology(3000), knowledge or demo_knowledge(),
         catalog or demo_catalog(), policy=policy, overrides=overrides,
         models=FenceModelLibrary(models=[model or _model()]),
         default_model=FenceModelChoice(model_id=MODEL_ID),
+        site=site,
     )
 
 
@@ -279,3 +281,74 @@ def test_the_post_is_recorded_on_the_run_like_any_other_choice():
     did not record would let that product be repriced with nobody refused."""
     result = _run()
     assert "POST-S-HD" in result.run.catalog_skus
+
+
+# --- and the site, which a post's own station must answer the same way ---------
+
+def _site_variant_model() -> FenceModel:
+    """A routed post, and a variant that moves the rails it must be routed for.
+
+    The two specs differ ONLY in their insets, so the bay's rail positions are
+    150/1650 by default and 200/1600 in a hurricane zone. That is the whole
+    fixture: the post is chosen by `panel.rail_positions_mm`, so which spec the
+    post's station resolves decides which post is BUYABLE — not merely preferred.
+    """
+    model = _routed_model(insets=150)
+    variant_spec = PanelSpec(frame=[FrameSlot(
+        key="rail", orientation="horizontal",
+        placement=Distributed(count=2, count_param="rails_per_span",
+                              bottom_inset_mm=200, top_inset_mm=200),
+        requirement=PartRequirement(
+            role="rail", qty=1, length_rule="centre_to_centre",
+            eligibility=Eligibility(members=[EligibleItem(sku="RAIL-3000")])),
+    )])
+    model.variants = [Variant(
+        condition=Cmp(cmp="==", left=FieldRef(path="site.hvhz"),
+                      right=Lit(value=True)),
+        spec=variant_spec,
+    )]
+    return model
+
+
+def _both_routings() -> Catalog:
+    return _routed_catalog(("POST-V-150", [150, 1650]), ("POST-V-200", [200, 1600]))
+
+
+def test_a_site_conditioned_variant_moves_the_post_at_its_own_station():
+    """The claim the whole site binding rests on, and the one a narrower fix
+    would have shipped broken: **the post reads the same site as its bay.**
+
+    A post is resolved at its OWN station, and the spec it is matched against
+    comes from `choose_variant_by` there. Bind `site` into
+    `PanelContext.condition_ctx` alone and the bay builds the variant's panel —
+    rails at 200/1600 — while the post's station still resolves the DEFAULT spec
+    and orders the post routed at 150/1650. Every rail is 50 mm from its hole.
+    That fence cannot be assembled, and nothing in the run says so: both
+    documents look internally consistent.
+
+    Kills BOTH halves independently, which is why it asserts the post sku rather
+    than the rail count:
+      * `_PostFacts.at` -> `choose_variant_by(..., {"site": {}})`
+      * `_PostFacts.at` -> `post_panel_facts(..., site={})`
+    """
+    on = _run(_site_variant_model(), catalog=_both_routings(),
+              site=SiteConditions(hvhz=True))
+    assert on.strategy.spans, "fixture built no bays"
+    assert on.strategy.posts, "fixture placed no posts"
+    # the bay is built to the variant...
+    assert all(sp.panel.variant_index == 0 for sp in on.strategy.spans)
+    # ...and the post is routed for the variant's rails, not the default's
+    assert {p.sku for p in on.strategy.posts} == {"POST-V-200"}
+
+
+def test_the_same_model_on_a_site_that_answered_NO_orders_the_default_post():
+    """The other arm, so the test above is an answer and not a coincidence: the
+    same model and the same catalog, one site fact apart, order a differently
+    routed post."""
+    off = _run(_site_variant_model(), catalog=_both_routings(),
+               site=SiteConditions(hvhz=False))
+    assert off.strategy.spans, "fixture built no bays"
+    assert off.strategy.posts, "fixture placed no posts"
+    assert all(sp.panel.variant_index is None for sp in off.strategy.spans)
+    assert {p.sku for p in off.strategy.posts} == {"POST-V-150"}
+

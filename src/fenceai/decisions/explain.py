@@ -152,8 +152,9 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "stand with no product."
         ),
         "site_condition_missing": (
-            "{n} site condition(s) that decide rules here are not set "
-            "({dimensions}); rules needing them did not apply."
+            "{n} site condition(s) that decide how this fence is built are not "
+            "set ({dimensions}); the rules and fence-model options that depend "
+            "on them did not apply."
         ),
         "node_surface_disagreement": (
             "Runs meeting at node {node_id} disagree on base surface ({surfaces}); "
@@ -361,8 +362,8 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "ללא מוצר."
         ),
         "site_condition_missing": (
-            "{n} תנאי אתר שקובעים כאן כללים אינם מוגדרים ({dimensions}); "
-            "כללים הזקוקים להם לא הופעלו."
+            "{n} תנאי אתר שקובעים כיצד נבנית הגדר אינם מוגדרים ({dimensions}); "
+            "הכללים ואפשרויות דגם הגדר התלויים בהם לא הופעלו."
         ),
         "node_surface_disagreement": (
             "קטעים שנפגשים בצומת {node_id} חלוקים לגבי משטח הבסיס ({surfaces}); "

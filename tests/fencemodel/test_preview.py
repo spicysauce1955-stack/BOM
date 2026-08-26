@@ -9,6 +9,7 @@ The last test in this file is the one that keeps that true.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.core.errors import RequestRefused
@@ -297,6 +298,72 @@ def test_a_stored_bays_plan_re_resolves_the_panel_that_run_stored():
                           part_library=PARTS,
                           part_snapshot=result.run.part_snapshot)
     assert shown.panel == span.panel
+
+
+def test_a_stored_bays_plan_carries_the_SITE_the_run_was_generated_under():
+    """The same property again, for the newest `PanelContext` input.
+
+    A variant conditioned on the site picks a different spec, so a plan that did
+    not carry `site` would re-resolve the DEFAULT panel and the drawer would draw
+    and price a bay the run does not contain. The assertion is the same strongest
+    one the test above makes — the re-resolved panel must equal the stored one,
+    field for field — which is why this needs no knowledge of what differs.
+
+    Kills: `bay_preview_plan` dropping `site=SiteConditions(**run.site_facts)`,
+    and `preview_panel` dropping `site=request.site.facts()` into the context.
+    """
+    from fenceai.fencemodel.preview import bay_preview_plan
+    from fenceai.fencemodel.model import Variant
+    from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+    from fenceai.project.site import SiteConditions
+
+    # the variant's spec differs from the default in a way the panel records:
+    # four slats' worth of extra frame, so `shown.panel == span.panel` can only
+    # hold if BOTH sides chose the same spec
+    hurricane = M_SLAT.model_copy(deep=True)
+    hurricane.variants = [Variant(
+        condition=Cmp(cmp="==", left=FieldRef(path="site.hvhz"),
+                      right=Lit(value=True)),
+        spec=M_LEGACY.default_spec.model_copy(deep=True),
+    )]
+
+    result = generate(
+        straight_topology(1700), demo_knowledge(), demo_catalog(),
+        models=FenceModelLibrary(models=[hurricane]), parts=PARTS,
+        default_model=FenceModelChoice(model_id=hurricane.id),
+        site=SiteConditions(hvhz=True),
+    )
+    span = result.strategy.spans[0]
+    assert span.panel.variant_index == 0, "fixture did not exercise the variant"
+
+    plan = bay_preview_plan(result, span.id)
+    assert plan.request.site.facts() == {"hvhz": True}
+    shown = preview_panel(hurricane, plan.request, demo_catalog(),
+                          preset=result.run.objective_preset,
+                          part_library=PARTS,
+                          part_snapshot=result.run.part_snapshot)
+    assert shown.panel == span.panel
+
+
+def test_a_preview_request_holds_the_site_to_the_same_boundary_a_project_is():
+    """This is a ROUTE body. It was first written as a bare dict, which accepted
+    `{"hvzh": True}`, `{"exposure_category": "Z"}` and the very `-500` frost
+    depth the project boundary had just been fixed to refuse — and then fed it
+    into variant selection and eligibility, drawing a panel chosen under a site
+    no project could hold.
+
+    One type, one set of rules, one place omission is decided.
+    """
+    from fenceai.project.site import SiteConditions
+
+    for bad in ({"hvzh": True}, {"exposure_category": "Z"},
+                {"frost_depth_mm": -500}):
+        with pytest.raises(ValidationError):
+            PreviewRequest(site=bad)
+
+    assert PreviewRequest().site.facts() == {}
+    assert PreviewRequest(site={"hvhz": False}).site.facts() == {"hvhz": False}
+    assert isinstance(PreviewRequest().site, SiteConditions)
 
 
 def test_a_bay_of_another_run_is_not_a_bay_of_this_one():

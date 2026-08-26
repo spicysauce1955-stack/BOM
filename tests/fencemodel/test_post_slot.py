@@ -111,15 +111,33 @@ def test_the_readable_set_is_exactly_what_the_generator_supplies():
     assert set(supplied) == {"panel", "post", "site"}
     assert set(supplied["panel"]) == POST_PREDICATE_PANEL_FACTS
     assert set(supplied["post"]) == POST_PREDICATE_POST_FACTS
+    # What the author may READ is the whole vocabulary...
     assert set(supplied["site"]) <= SITE_DIMENSIONS
+    # ...and what THIS call supplies is exactly what it was handed, unfiltered.
+    # Containment alone let a namespace lose a dimension on the way through and
+    # still pass, which is the one failure a post's site namespace can have.
+    assert supplied["site"] == {"hvhz": True}
 
-    # A caller with no site supplies the namespace EMPTY rather than not at all,
-    # so a predicate reading it sees one shape in both cases.
+    # A caller with no site passes `{}` and SAYS so — there is no default to
+    # forget, because an unbound namespace and an unanswered dimension need
+    # opposite treatments (`resolve._assert_site_bound`).
     no_site = post_panel_facts(
         model_id="M", height_mm=1800, vertical="level", rail_positions_mm=[0, 1800],
-        kind="line",
+        kind="line", site={},
     )
     assert no_site["site"] == {}
+
+
+def test_the_site_namespace_cannot_be_forgotten_by_a_new_call_site():
+    """`site` is a required keyword, so the mistake is a TypeError at the call
+    site rather than a fence quietly built to the default spec.
+
+    This is the guard that keeps the whole slice from being re-openable: the
+    silent version of this failure is what `site.*` was bound to fix."""
+    import pytest as _pytest
+    with _pytest.raises(TypeError):
+        post_panel_facts(model_id="M", height_mm=1800, vertical="level",
+                         rail_positions_mm=[0, 1800], kind="line")
 
 
 def test_a_post_predicate_may_read_where_it_stands():
@@ -323,6 +341,29 @@ def test_a_post_predicate_reading_a_site_dimension_that_does_not_exist_is_refuse
     errs = validate_model(_model(_post(requirement=PartRequirement(
         role="post", eligibility=Eligibility(predicate=reads)))), demo_catalog())
     assert any("site.hvzh is not a site condition" in e for e in errs)
+
+
+def test_a_width_conditioned_variant_is_refused_beside_a_routed_CAP_too():
+    """A cap's predicate is evaluated against the same post-time facts, so a cap
+    matched on `panel.rail_positions_mm` takes the identical divergence — and got
+    no refusal at all, because the check read only the post's own predicate.
+
+    Same defect, same sentence, one slot along."""
+    routed_cap = _post(
+        requirement=PartRequirement(
+            role="post",
+            eligibility=Eligibility(members=[EligibleItem(sku="POST-S-HD")])),
+        cap=PartRequirement(
+            role="cap",
+            eligibility=Eligibility(predicate=Cmp(
+                cmp="==", left=FieldRef(path="item.routed_at_mm"),
+                right=FieldRef(path="panel.rail_positions_mm")))),
+    )
+    model = _model(routed_cap)
+    model.variants = [_variant(Cmp(cmp=">", left=FieldRef(path="panel.width_mm"),
+                                   right=Lit(value=2000)))]
+    errs = validate_model(model, demo_catalog())
+    assert any("panel.width_mm" in e and "(cap)" in e for e in errs), errs
 
 
 def test_a_width_conditioned_variant_is_fine_when_no_post_reads_the_rails():

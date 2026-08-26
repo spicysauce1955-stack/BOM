@@ -247,7 +247,7 @@ def generate(
     _report_unfilled_posts(strategy, builder)
     _report_missing_site_conditions(
         knowledge, site_facts, scope, {u.model_id for u in models_used},
-        _model_site_dimensions(models, models_used, parts, resolved_posts),
+        _model_site_dimensions(models, models_used),
         strategy, builder,
     )
     # Every conflict the run produced, surfaced together. Three sites used to do
@@ -3018,8 +3018,7 @@ def _could_apply(v: KnowledgeVersion, scope: dict[str, str], series_used: set[st
 
 
 def _model_site_dimensions(
-    library: FenceModelLibrary, used: list[ModelUse], parts: PartLibrary | None,
-    resolved_posts: dict,
+    library: FenceModelLibrary, used: list[ModelUse],
 ) -> set[str]:
     """Which site dimensions the fence MODELS of this run asked about.
 
@@ -3030,31 +3029,29 @@ def _model_site_dimensions(
     feed the SAME warning rather than a second one that would have to be
     explained, ranked and localised beside it.
 
-    Read off the documents the run actually drew from (`models_used`), and read
-    off them RESOLVED — because that is the document `validate_model` refuses an
-    unknown dimension on (`_validate_resolved_model` passes the library, and
-    `validate_model` resolves before it reads). The two callers of
-    `site_condition_paths` have to be looking at the same document or one would
-    refuse a dimension the other never reported, and vice versa.
+    Read off the AUTHORED documents the run drew from, not the part-resolved ones,
+    and the difference provably cannot matter: a resolved slot's predicate is
+    `compile_spec(part)`, and `parts/compile.py` emits `item.<key>` for every
+    `SpecField` and nothing else — while `_part_or_authored` refuses a `part_id`
+    beside an authored predicate, so resolution never overwrites one either.
+    `site_condition_paths(resolved) == site_condition_paths(authored)`, always.
 
-    It makes no difference to the ANSWER today, and saying so is the honest
-    version: `parts.compile.compile_field` builds `item.<key>` and nothing else,
-    so a compiled part spec cannot mention the site. The reason to resolve is
-    agreement with the validator, not a site condition hiding in a part.
-
-    `_post_model` is the run's own resolution memo, so a model already resolved
-    for its posts is not resolved a second time.
+    This first resolved them, on the stated grounds that a part author might write
+    a site condition. They cannot. Resolution cost a deep copy and a recompile per
+    model and — worse — had a REPORTING path writing into `_post_model`'s memo
+    after every post was resolved, a memo whose own comment justifies being shared
+    by "nothing on this path writes to it". Reading the authored document removes
+    the coupling and the false claim together.
 
     A model the library cannot answer for is skipped rather than guessed at:
-    `legacy_model()` is synthesised per run and is in no library, it declares no
-    variants and no predicates, and there is nothing about the site for it to ask.
+    `legacy_model()` is synthesised per run and is in no library, and it declares
+    no variants and no predicates, so it has nothing to ask about the site.
     """
     dims: set[str] = set()
     for use in sorted(used, key=lambda u: u.sort_key()):
         model = library.get(use.model_id, use.version)
-        if model is None:
-            continue
-        dims |= site_condition_paths(_post_model(model, parts, resolved_posts))
+        if model is not None:
+            dims |= site_condition_paths(model)
     return dims
 
 
@@ -3104,27 +3101,45 @@ def _report_missing_site_conditions(
             dim = path.split(".", 1)[1]
             if wanted.get(dim) != "hard_constraint":
                 wanted[dim] = v.type
-    # A fence model's question is a `company_rule`-weight want, never a hard
-    # constraint: a variant is product structure and its condition losing is a
-    # different panel, not a violated limit. It never OVERWRITES what a rule
-    # already wanted for the same dimension, so a hard constraint keeps the
-    # severity it earned.
+    # WHO asked, kept BESIDE what they are, because they are two facts: the
+    # sentence needs the first and the severity needs the second.
+    #
+    # `wanted` holds `KnowledgeVersion.type` and must keep holding only that. The
+    # first version of this wrote the string `"fence_model"` into it — a phantom
+    # member of a closed knowledge vocabulary, inert only because a single `==
+    # "hard_constraint"` was its one reader, which is exactly how two taxonomies
+    # get conflated the day somebody maps the value to a severity.
+    #
+    # A model's want never affects severity: a variant is product structure, so
+    # its condition losing is a different panel and not a violated limit. A hard
+    # constraint keeps the `error` it earned even when a model asks about the same
+    # dimension.
+    askers: dict[str, set[str]] = {d: {"rule"} for d in wanted}
     for dim in sorted(model_wanted):
-        wanted.setdefault(dim, "fence_model")
-    missing = sorted(set(wanted) - set(site_facts))
+        askers.setdefault(dim, set()).add("model")
+    missing = sorted((set(wanted) | set(model_wanted)) - set(site_facts))
     if not missing:
         return
     # A HARD constraint that could not be evaluated is not the same event as a
     # preference that did not fire. "Hard constraint is not preference" is a
     # foundation rule, and it should reach the report rather than stopping at
     # the resolver.
-    hard = any(wanted[d] == "hard_constraint" for d in missing)
+    hard = any(wanted.get(d) == "hard_constraint" for d in missing)
+    # `rule` | `model` | `both`, over the dimensions actually MISSING. On the
+    # graph as well as in the params, because the graph is the explanation and a
+    # reader asking what a blank field silenced cannot recover it from a list of
+    # dimensions — the two askers fail in different places, and the repair is the
+    # same but the diagnosis is not: a rule that never fired, or a bay built to
+    # the default spec.
+    kinds = {k for d in missing for k in askers.get(d, ())}
+    asked_by = "both" if len(kinds) > 1 else next(iter(kinds), "rule")
     params: dict[str, str | int] = {
-        "dimensions": ", ".join(missing), "n": len(missing),
+        "dimensions": ", ".join(missing), "n": len(missing), "asked_by": asked_by,
     }
     message = (
-        f"{len(missing)} site condition(s) decide rules in this snapshot and are "
-        f"not set: {', '.join(missing)}. Rules needing them did not apply."
+        f"{len(missing)} site condition(s) decide how this fence is built and are "
+        f"not set: {', '.join(missing)}. The rules and fence-model options that "
+        f"depend on them did not apply."
     )
     node = builder.add(
         "gap", "site_condition_missing",

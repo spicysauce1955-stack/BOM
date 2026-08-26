@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from fenceai.core.errors import RequestRefused
+from fenceai.core.errors import GenerationFailure, RequestRefused
 from fenceai.core.units import Mm
 from fenceai.fencemodel.bases import FIXING_BASES, PanelCounts
 from fenceai.fencemodel.lengths import LENGTH_RULES
@@ -20,7 +20,7 @@ from fenceai.fencemodel.model import (
     Distributed, Eligibility, FenceModel, Fraction, FromBottom, FromTop,
     HeightSupport, Member, PanelSpec, PartRequirement, spec_requirements,
 )
-from fenceai.knowledge.ast import MissingField, evaluate_expr
+from fenceai.knowledge.ast import MissingField, evaluate_expr, field_paths
 from fenceai.parts.model import PATH_SEP, contained_path, walk_contained_qty
 
 
@@ -67,7 +67,13 @@ class PanelContext(BaseModel):
                 "width_mm": self.centre_width_mm, "height_mm": self.height_mm,
                 "vertical": self.vertical,
             },
-            "site": self.site,
+            # A COPY, like `match.panel_facts` and `match.post_panel_facts`
+            # make. `FnCall` handlers are handed the whole ctx (`ast.py`
+            # `register_function`), so a namespace passed by reference is a rule
+            # with a route to the run's own site facts. Read-only today, and one
+            # aliasing rule across the three is cheaper than finding out later
+            # which one was the exception.
+            "site": dict(self.site),
         }
 
 
@@ -289,6 +295,46 @@ class VariantChoice(BaseModel):
     not_reached: list[int] = []   # authored after the winner, never evaluated
 
 
+def _assert_site_bound(model: FenceModel, cond_ctx: dict) -> None:
+    """A context that cannot answer a site question is a BUG, not a "no".
+
+    The same check `knowledge/evaluator.py::_assert_namespaces_bound` makes, in
+    the same words and for the same reason, on the other evaluator of the same
+    AST. `MissingField` means *nobody answered that dimension* and the right
+    response is "not applicable" — that is the hook this whole design leans on.
+    It cannot distinguish that from *the caller never bound the namespace*, and
+    the two need opposite treatments: the first is a fact about the project, the
+    second is a fact about our code.
+
+    `SiteConditions.facts()` returns `{}` and never absence, so `"site" in
+    cond_ctx` separates them cleanly. Without this, the defect this binding just
+    closed is re-openable at every future call site — a new preview, an impact
+    case, a re-resolution — and it re-opens SILENTLY: every site-conditioned
+    variant reads as not-applicable, the bay is built to the default spec, and
+    the document still looks authored.
+
+    Raising rather than warning, and a `GenerationFailure` rather than a
+    `RequestRefused`: no project data and no request can cause this, only a call
+    site we wrote. So it is a build error in the same sense a disagreeing tie
+    between two authored rules is, and it carries no `code`/`params` because no
+    user can act on it.
+    """
+    if "site" in cond_ctx:
+        return
+    for index, variant in enumerate(model.variants):
+        wants = sorted(p for p in field_paths(variant.condition)
+                       if p == "site" or p.startswith("site."))
+        if wants:
+            raise GenerationFailure(
+                f"{model.ref} variant {index} conditions on 'site.*' "
+                f"({', '.join(wants)}) but the evaluation context has no 'site' "
+                f"namespace — the caller did not bind it. Every site condition "
+                f"would read as not-applicable and this bay would be built to "
+                f"the default spec. Bind `SiteConditions.facts()`; an empty dict "
+                f"is the right value when a project has answered nothing."
+            )
+
+
 def choose_variant(model: FenceModel, ctx: PanelContext) -> VariantChoice:
     """Which variant this BAY is built to. See `choose_variant_by` for the rule."""
     return choose_variant_by(model, ctx.condition_ctx())
@@ -312,6 +358,7 @@ def choose_variant_by(model: FenceModel, cond_ctx: dict) -> VariantChoice:
     `validate_model` refuses the one combination where that would silently give a
     post the wrong panel's rails.
     """
+    _assert_site_bound(model, cond_ctx)
     failed: list[int] = []
     for index, variant in enumerate(model.variants):
         try:

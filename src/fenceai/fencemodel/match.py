@@ -248,7 +248,7 @@ def sole_excluding_term(
 
 def post_panel_facts(
     *, model_id: str, height_mm: int, vertical: str, rail_positions_mm: list[int],
-    kind: str, site: dict | None = None,
+    kind: str, site: dict,
 ) -> dict:
     """What a POST's predicate may know: the bay it stands beside, and WHERE IT
     STANDS.
@@ -285,11 +285,18 @@ def post_panel_facts(
 
     `site` is the third namespace, and the cycle rule does not narrow it at all:
     a whole-site fact is settled before the fence is drawn, so it cannot depend
-    on the post it helps choose. `None` is a caller with no site — every preview,
-    and every run generated before site conditions existed — and it supplies an
-    EMPTY namespace rather than no namespace, so the two cases stay one shape.
-    What makes an unanswered dimension not-applicable is that dimension's
-    ABSENCE from the dict (`SiteConditions.facts`), never the dict's own.
+    on the post it helps choose.
+
+    REQUIRED, with no default, and that is the point rather than an oversight. A
+    caller with no site passes `{}` and SAYS so; a caller that forgot cannot
+    compile. Defaulting it to `None` collapsed *nobody answered this dimension*
+    into *nobody bound this namespace* — the two cases
+    `knowledge/evaluator.py::_assert_namespaces_bound` exists to keep apart — and
+    collapsing them here would leave the defect this binding closed re-openable
+    at any new call site, silently, because an unbound namespace reads as
+    not-applicable and the slot falls through to the company default. What makes
+    an unanswered dimension not-applicable is that dimension's ABSENCE from the
+    dict (`SiteConditions.facts`), never the dict's own.
     """
     return {
         "panel": {
@@ -299,7 +306,7 @@ def post_panel_facts(
             "rail_positions_mm": rail_positions_mm,
         },
         "post": {"kind": kind},
-        "site": dict(site or {}),
+        "site": dict(site),
     }
 
 

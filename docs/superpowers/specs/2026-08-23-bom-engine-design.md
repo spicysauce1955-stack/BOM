@@ -212,6 +212,15 @@ So the slice also adds `site_revision: int` on `GenerationRun`, extends the same
 > This is the shape of error worth naming: the claim was not careless, it was
 > true of the layer the slice was thinking about. Nothing checked it against the
 > other layer that evaluates the same AST, and coherence was not the test.
+>
+> **And it happened again inside the fix, which is the part worth recording.**
+> The first cut of the binding asserted in three docstrings that a post reads the
+> same site as its bay, and shipped no test that reached `_PostFacts.at` at all —
+> both reviewers found the same hole independently, and two direct mutations
+> passed the whole suite. It also typed the preview's new `site` field as a bare
+> dict, which accepted the very `-500` frost depth the same session had just
+> bounded, one route lower. Prose asserting a property is not the property; a
+> boundary hardened in one place is not hardened.
 
 ---
 

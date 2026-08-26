@@ -96,6 +96,34 @@ def lookup(ctx: dict[str, Any], path: str) -> Any:
     return cur
 
 
+def walk(expr: Expr):
+    """Every node of this expression, parents before children.
+
+    Beside `field_paths` and matching it branch for branch, for its reason: a new
+    node type that this does not walk silently NARROWS every caller's check
+    rather than breaking it, so the two must be read together and changed
+    together.
+
+    `Expr` is an `Annotated[Union[...]]` discriminated union and not a class, so
+    `isinstance` cannot be used to find sub-expressions — a structural match is
+    the only honest way to do this, and doing it once here keeps a second,
+    quietly divergent walker from appearing in a validator.
+    """
+    yield expr
+    match expr:
+        case Cmp():
+            yield from walk(expr.left)
+            yield from walk(expr.right)
+        case And() | Or():
+            for item in expr.items:
+                yield from walk(item)
+        case Not() | In() | Between():
+            yield from walk(expr.item)
+        case FnCall():
+            for arg in expr.args:
+                yield from walk(arg)
+
+
 def field_paths(expr: Expr) -> set[str]:
     """Every context path this expression reads.
 
