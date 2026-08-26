@@ -90,10 +90,20 @@ Nothing conditional works until a project can say what kind of site it is.
 class SiteConditions(BaseModel):
     exposure_category: Literal["B", "C", "D"] | None = None
     hvhz: bool | None = None
-    frost_depth_mm: Mm | None = None
+    frost_depth_mm: Mm | None = Field(default=None, ge=0)
     jurisdiction: str | None = None      # audit N20
     code_edition: str | None = None      # audit N21
 ```
+
+`frost_depth_mm` is the only numeric dimension here and the only one that needed
+a bound. `ge=0` because a frost line above the ground is not a thing, and the
+hole was not cosmetic: a negative depth satisfies every `<=` a footing rule
+tests and defeats every `>=`, so the run comes back looking measured. The browser
+panel's `min="0"` was the only thing refusing it, which protects the panel and
+nothing else that talks to the route. **No upper bound** — permafrost is metres
+deep and the figure a jurisdiction publishes is not ours to cap. `revision` is
+the other integer and needs none: the route overwrites whatever a client sends
+(`site.revision = project.site.revision + 1`), so a negative one cannot land.
 
 On `Project`, because these are whole-site facts. **Anything that varies along
 the run belongs in the topology instead**, as an interval payload — the pattern

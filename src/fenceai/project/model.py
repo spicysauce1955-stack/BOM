@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from typing import Literal
 
@@ -61,7 +61,18 @@ class SiteConditions(BaseModel):
 
     exposure_category: Literal["B", "C", "D"] | None = None
     hvhz: bool | None = None                # high-velocity hurricane zone
-    frost_depth_mm: Mm | None = None
+    # `ge=0` because a frost line ABOVE the ground is not a thing — and the
+    # browser panel was the only thing that said so, so `PUT /api/projects/{id}/
+    # site` accepted -500 from anything that was not that panel. A negative depth
+    # is not merely odd: it satisfies every `<=` a footing rule tests and defeats
+    # every `>=`, silently, on the one dimension that decides how deep a post is
+    # set. The same argument as the field-name typo above, one field lower down.
+    #
+    # NO upper bound, deliberately. Permafrost is metres deep and the figure a
+    # jurisdiction publishes is not ours to cap; an invented ceiling would refuse
+    # a real site at the boundary, which is a worse failure than the one this
+    # closes. The bound is the one the arithmetic actually requires.
+    frost_depth_mm: Mm | None = Field(default=None, ge=0)
     jurisdiction: str | None = None
     code_edition: str | None = None
     # Bumped by the route on every write, exactly as `Topology.revision` is, and
