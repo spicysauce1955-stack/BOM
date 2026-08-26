@@ -507,15 +507,30 @@ def _resolve_demand_skus(
 
 def _resolve_quantity(
     kb: KnowledgeBase, ctx: dict, param: str, default: int, sink: ConflictSink,
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], bool]:
+    """(value, governing refs, whether the DEFAULT answered).
+
+    The third element is the whole reason this returns a triple. A count nobody
+    stated came back indistinguishable from a count somebody authored — exactly
+    the shape `FALLBACK_MAX_SPAN_MM` had before it was reported, minus the
+    report — so no caller could say where its number came from. Returned rather
+    than reported here, for the same reason the max-span gap is: this site knows
+    the parameter and the fallback, and only the caller knows the bays it cost.
+
+    Three of the five callers discard it today (`base_top_step_boundary_mm`,
+    `max_panel_step_mm`, `post_embed_mm`). That is a named seam rather than an
+    oversight: each is the same silent fallback, and closing one is now a
+    caller-side change with no signature to negotiate.
+    """
     res = resolve_param(kb, ctx, param)
     sink.extend(res.conflicts)
     if res.winner:
         return (
             next(a.value for a in res.winner.actions if a.kind == "set_param"),
             [res.winner.version.ref],
+            False,
         )
-    return default, []
+    return default, [], True
 
 
 def _matched_force_overrides(
@@ -1381,6 +1396,12 @@ class _SegmentModel:
     # warning that called the second one "a fallback" would be telling the reader
     # we guessed a number the manufacturer stated.
     max_span_basis: Literal["rule", "fallback", "manufactured_width"] = "rule"
+    # The per-span COUNTS nobody stated: `param -> the gap node that says so`.
+    # Keyed by the parameter because the param name IS the field name above, so
+    # the reporter reads the value with `getattr` and cannot drift from it. Same
+    # shape and same reason as `max_span_assumed`: discovered where the parameter
+    # resolves, reported where the bays it produced are known.
+    assumed_counts: dict[str, str] = dataclass_field(default_factory=dict)
 
 
 LEGACY_MODEL_ID = "M-LEGACY"
@@ -1726,10 +1747,36 @@ def _generate_run(
         )
         sink.extend(res.conflicts)
 
-        rails, rails_refs = _resolve_quantity(
+        rails, rails_refs, rails_assumed = _resolve_quantity(
             seg_kb, seg_ctx, "rails_per_span", DEFAULT_RAILS_PER_SPAN, sink)
-        screws, screws_refs = _resolve_quantity(
+        screws, screws_refs, screws_assumed = _resolve_quantity(
             seg_kb, seg_ctx, "screws_per_span", DEFAULT_SCREWS_PER_SPAN, sink)
+        # A count nobody stated now gets the same three-way report an uncovered
+        # span basis does: a `gap` node HERE instead of a governed quantity, one
+        # warning per section naming every bay built to it, and a `Gap` on the
+        # run (`_report_uncovered_quantities`).
+        #
+        # The VALUES do not move. 2 rails and 8 screws are what every fence this
+        # engine has ever quoted was built with, and changing them would silently
+        # reprice every job that relied on the default — a different and much
+        # larger change. The defect being closed is narrower and worse: the
+        # engine answered a question nobody had answered, and said nothing.
+        assumed_counts: dict[str, str] = {}
+        for count_param, count_value, count_assumed in (
+            ("rails_per_span", rails, rails_assumed),
+            ("screws_per_span", screws, screws_assumed),
+        ):
+            if not count_assumed:
+                continue
+            assumed_counts[count_param] = builder.add(
+                "gap", "uncovered_quantity",
+                payload={"run_id": run.id, "param": count_param,
+                         "value": count_value, "model_ref": model.ref},
+                inputs=[run_fact.id, select_node.id],
+                # nothing governs an assumed value, and that IS the explanation
+                governed_by=[],
+                confidence="uncertain",
+            ).id
 
         sm = _SegmentModel(
             model=model,
@@ -1749,6 +1796,7 @@ def _generate_run(
             rails_per_span=rails,
             screws_per_span=screws,
             quantity_refs=rails_refs + screws_refs,
+            assumed_counts=assumed_counts,
             exact_span=exact_span, exact_span_ref=exact_span_ref,
         )
         resolved[key] = sm
@@ -1858,7 +1906,7 @@ def _generate_run(
     transitions = base_transition_stations(topo, run)
     # base-top STEPS >= threshold force a structural boundary; the threshold is
     # knowledge, not code (K-STEP-POST) — sections-model addendum
-    step_threshold, step_refs = _resolve_quantity(
+    step_threshold, step_refs, _step_assumed = _resolve_quantity(
         kb, ctx, "base_top_step_boundary_mm", 100, sink
     )
     base_steps = base_top_step_stations(topo, run, step_threshold)
@@ -1869,7 +1917,8 @@ def _generate_run(
         step_info.setdefault(station, (delta, None, "ground_step"))
     step_stations = set(step_info)
     # buildability ceiling: a single step a fence can absorb (rule-editable)
-    max_step, max_step_refs = _resolve_quantity(kb, ctx, "max_panel_step_mm", 600, sink)
+    max_step, max_step_refs, _max_step_assumed = _resolve_quantity(
+        kb, ctx, "max_panel_step_mm", 600, sink)
     # optional plumb-consequence rules: only checked when a rule exists
     gap_res = resolve_param(kb, ctx, "max_panel_gap_mm")
     sink.extend(gap_res.conflicts)
@@ -2252,7 +2301,10 @@ def _generate_run(
             payload={"rails_per_span": sm.rails_per_span,
                      "screws_per_span": sm.screws_per_span},
             scope_refs=segment_span_ids,
-            inputs=[run_fact.id, sm.select_node_id],
+            # the gap nodes join the INPUTS, so a bay's rail count is walkable
+            # back to "nobody stated this" rather than dead-ending at a quantity
+            # node with an empty `governed_by` and nothing to explain it
+            inputs=[run_fact.id, sm.select_node_id, *sm.assumed_counts.values()],
             governed_by=sm.quantity_refs,
         )
         # Interior line posts, created BEFORE the bays they bound: a bay's
@@ -2558,6 +2610,7 @@ def _generate_run(
     _derive_continuity(builder, strategy, run, length, catalog, span_nodes)
 
     _report_uncovered_max_span(run, strategy, resolved, spans_by_model)
+    _report_uncovered_quantities(run, strategy, resolved, spans_by_model)
 
     _check_panel_safety(kb, run, scope, site, sink, strategy, builder, resolved, spans_by_model,
                         {s.id: s for s in strategy.spans}, ctx["run"])
@@ -3183,6 +3236,92 @@ def _report_uncovered_max_span(
         ))
 
 
+# The per-span COUNT parameters that report a gap when nobody stated them, and
+# the warning code each one gets.
+#
+# Two codes rather than one code interpolating `{param}`, following
+# `no_item_covers_part_spec` / `no_item_covers_post_spec`: the sentence on the
+# drawing has to name the thing a curator must go author, and a single code would
+# put the raw key `rails_per_span` in the middle of a Hebrew sentence. The
+# decision-graph node keeps ONE action (`uncovered_quantity`) with the key quoted
+# in it, exactly as `uncovered_param` already does — the trail is where an
+# identifier belongs and the drawing is not.
+UNCOVERED_COUNT_CODES = {
+    "rails_per_span": "uncovered_rails_per_span",
+    "screws_per_span": "uncovered_screws_per_span",
+}
+
+
+def _report_uncovered_quantities(
+    run: Run,
+    strategy: Strategy,
+    resolved: dict,
+    spans_by_model: dict,
+) -> None:
+    """One gap and one warning per section, model line and count parameter.
+
+    PER SECTION AND MODEL — not per bay, and not per run. The aggregation is the
+    reason this is its own change and not a line added to the constants.
+
+    Not per bay: these params resolve under the SEGMENT's model scope
+    (`_segment_view` binds `series: model.id`), so the row that would close the
+    hole is one row per product line. A 40-bay fence built to one model is one
+    work item, and forty identical warnings naming no bay between them is
+    verbatim the failure `warnings.js` records for element refs. The bays are
+    still named — `element_refs` carries every one, `params["n"]` their count —
+    so "which ones" keeps an answer that a per-run summary would throw away.
+
+    Not per run either, for the reason `_report_uncovered_max_span` gives at
+    length: two models can meet on one section, and a row that closes the hole
+    for one closes nothing for the other.
+
+    `value`, never `value_mm`. A count is not a length: `unitParams` converts
+    every `*_mm` key to the reader's display unit, so the suffix would render
+    "0.2 cm rails" to anyone whose display preference is centimetres.
+    """
+    by_key: dict[tuple[str, str], list[str]] = {}
+    for key, span_ids in spans_by_model.items():
+        sm = resolved[key]
+        for param in sm.assumed_counts:
+            by_key.setdefault((param, sm.model.ref), []).extend(span_ids)
+
+    for (param, model_ref), span_ids in sorted(by_key.items()):
+        sm = next(resolved[k] for k in spans_by_model
+                  if resolved[k].model.ref == model_ref
+                  and param in resolved[k].assumed_counts)
+        affected = sorted(span_ids)
+        # the param name is the field name on `_SegmentModel`, so the number
+        # reported is the number the bays were built with by construction
+        value = getattr(sm, param)
+        params: dict[str, str | int] = {
+            "element": run.id, "run_id": run.id, "model_ref": model_ref,
+            "param": param, "value": value, "n": len(affected),
+        }
+        message = (
+            f"No rule states {param} for {model_ref} in section {run.id}; "
+            f"{len(affected)} bay(s) built to a default of {value}."
+        )
+        strategy.warnings.append(StrategyWarning(
+            code=UNCOVERED_COUNT_CODES[param], severity="warning", message=message,
+            element_refs=affected, decision_ref=sm.assumed_counts[param],
+            params=params,
+        ))
+        strategy.gaps.append(Gap(
+            # the REF, not the bare model id: two versions of one line are two
+            # refs and would collide on an id keyed to the id
+            id=f"gap:{run.id}:{model_ref}:{param}",
+            kind="uncovered_condition",
+            subject=GapSubject(kind="param", ref=param),
+            code=UNCOVERED_COUNT_CODES[param], params=params, message=message,
+            # Condition-space coordinates and deliberately NOT the run id:
+            # §3.1.13 bans a published condition naming a specific run, so a
+            # sentence asking for one asks for a row the contract forbids them to
+            # author. The section stays in `message`, which is ours to read.
+            would_close=f"a {param} row for series {model_ref}",
+            closes_by="knowledge", severity="warns_line",
+        ))
+
+
 def _check_panel_safety(
     kb: KnowledgeBase,
     run: Run,
@@ -3301,7 +3440,7 @@ def _check_post_lengths(
     Also the one place `post_embed_mm` becomes a fact about a post: it is recorded
     on every post here, so the elevation draws the footing the length check paid
     for and the two cannot drift apart."""
-    embed, embed_refs = _resolve_quantity(
+    embed, embed_refs, _embed_assumed = _resolve_quantity(
         kb, {"scope": bind_scope(scope), "site": site}, "post_embed_mm", 600, sink
     )
     # The embedment gets a node of its own, the same shape `resolve_span_quantities`

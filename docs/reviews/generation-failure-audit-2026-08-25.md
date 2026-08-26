@@ -81,12 +81,22 @@ trade here, and they should be re-checked if any stops being true:
 2. **It errs toward standing up.** A fallback that guessed *wider* could plan a fence
    that falls down; a tighter-than-necessary bay is a fence that stands.
 3. **The precedent was already set, less honestly.** `DEFAULT_RAILS_PER_SPAN = 2` and
-   `DEFAULT_SCREWS_PER_SPAN = 8` have been silent fallbacks for unstated quantities
-   since before this audit. The max-span fallback is the first one that says so.
+   `DEFAULT_SCREWS_PER_SPAN = 8` had been silent fallbacks for unstated quantities
+   since before this audit. The max-span fallback was the first one that said so.
 
-Point 3 is a finding in its own right and is **not** fixed here: those two constants
-should file gaps too. It was left out because it is not item 1 and would move golden
-numbers on runs that are currently green, which deserves its own change.
+**Point 3 is closed, 2026-08-26, and closed the way the trade above argues for:** the
+two counts keep their VALUES and gain the report. `uncovered_rails_per_span` and
+`uncovered_screws_per_span` are gaps, warnings and `gap`/`uncovered_quantity` graph
+nodes; 2 and 8 are unchanged, because moving either would silently reprice every job
+that ever relied on the default — a different and much larger change than the defect,
+which was that the engine answered a question nobody had answered.
+
+The expected cost was "golden numbers on runs that are currently green". Measured, it
+was **none**: the demo knowledge states both counts, so no green run produces either
+gap, and the scenario gate did not move (268 before, 268 after). A before/after diff
+over twenty BOMs — five knowledge bases against four fence lengths, comparing purchase
+and engineering quantities, overage, unit prices and totals — moved zero cost and zero
+quantity. `test_reporting_the_count_moved_no_quantity_and_no_price` keeps that.
 
 ---
 

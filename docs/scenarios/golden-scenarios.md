@@ -448,6 +448,25 @@ bill of materials.
   (`Strategy.gaps`). **`POST /gaps` (§3.2.6) is not built** — the gaps are
   produced, stored and readable on the run, and the route that reports them back
   to the Knowledge Platform is a named seam, not a shipped feature.
+- **The never-block gaps, in full.** Four today, and the list is the point — a
+  silent default that is not on it is a defect, not a design:
+  `uncovered_max_span` (nobody stated the span basis for a product line),
+  `uncovered_rails_per_span` and `uncovered_screws_per_span` (nobody stated the
+  per-bay counts), `no_default_post` (nobody named the ground-post product).
+- **Reporting a default never MOVES it.** The three uncovered parameters keep the
+  numbers they always had — 1800 mm, 2 rails, 8 screws — because changing one
+  would silently reprice every job that ever relied on it, which is a different
+  and much larger change. The defect closed is narrower: the engine answered a
+  question nobody had answered and said nothing. A run whose knowledge stops
+  stating `rails_per_span` still builds two rails a bay, at the same cost, and
+  now carries the gap, the warning and the graph node that say where the number
+  came from (`test_reporting_the_count_moved_no_quantity_and_no_price`).
+- **Aggregated per section and per model line, never per bay.** These parameters
+  resolve under the segment's model scope, so the row that would close the hole
+  is one row: a 40-bay fence is ONE work item with all 40 bays named in
+  `element_refs` and their count in `params["n"]`. Forty identical warnings
+  naming no bay between them is the failure mode this rule exists to avoid, and
+  a per-run summary that dropped the bay list is the other one.
 - **A hard tie fails only between two `authored` rules.** One touching a published
   row is a `Conflict`: a warned line and a review task.
 - **What still refuses is unchanged**: a violated `hard_constraint`, and input that

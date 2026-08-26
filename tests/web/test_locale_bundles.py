@@ -54,6 +54,12 @@ WARNING_CODES = [
     # produces a plan with the hole named, and the hole is named HERE.
     "uncovered_max_span",
     "no_default_post",
+    # ...and the two per-span COUNTS that were the same silent fallback minus
+    # the report. One code each rather than one parameterised code, so the
+    # sentence names the row a curator has to author; both keep the VALUES they
+    # always had (2 rails, 8 screws) and only now say where they came from.
+    "uncovered_rails_per_span",
+    "uncovered_screws_per_span",
     # A rule in this snapshot asks about the site and the site did not answer.
     # A warning and NOT a gap: `closes_by` is knowledge|planning and this is
     # neither — it is a field on the project for a person here to fill in.
@@ -239,11 +245,21 @@ def test_backend_code_list_is_current():
     # `model_changed` and this guard could not see it, which is the same blind
     # spot the route files had before `api/app.py` was added to the list.
     scanned += sorted((src / "report").glob("*.py"))
+    # A code TABLE — `NAME_CODES = {subject: "the_code"}` — writes its codes in
+    # neither form below: they are dict VALUES, so a scan for `code="x"` sees
+    # nothing and the guard goes blind exactly the way it did for continuity's
+    # variable `code=note.code`. Closed by SHAPE rather than by adding one more
+    # file to the list, because the next table will be in a file already on it.
+    # The value side only: the keys are what the code is ABOUT (a parameter name,
+    # a role), and they have no bundle entry to owe.
+    table = re.compile(r"^[A-Z][A-Z0-9_]*CODES\b[^=]*=\s*\{(.*?)^\}", re.M | re.S)
     emitted: set[str] = set()
     for path in scanned:
         text = path.read_text()
         emitted |= set(re.findall(r'code="([a-z_]+)"', text))
         emitted |= set(re.findall(r'"code":\s*"([a-z_]+)"', text))
+        for body in table.findall(text):
+            emitted |= set(re.findall(r':\s*"([a-z_]+)"', body))
     emitted.discard("generic")  # CritiqueNote default, never emitted explicitly
     known = set(WARNING_CODES) | set(CRITIQUE_CODES) | set(REFUSAL_CODES)
     assert emitted == known, {"unlisted": sorted(emitted - known),

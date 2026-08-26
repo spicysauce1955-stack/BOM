@@ -134,9 +134,12 @@ hypothesis becomes a fact nobody checked.
   through to the default spec silently. Decide it: bind `site` into
   `PanelContext.condition_ctx()`, or have `validate_model` REFUSE such a condition so it
   fails at authoring rather than at the fence.
-- **`DEFAULT_RAILS_PER_SPAN` and `DEFAULT_SCREWS_PER_SPAN`** are silent fallbacks of
-  exactly the shape `FALLBACK_MAX_SPAN_MM` has, minus the warning. Closing them moves
-  golden numbers on runs that are currently green, so it wants its own change.
+- ~~**`DEFAULT_RAILS_PER_SPAN` and `DEFAULT_SCREWS_PER_SPAN`** are silent fallbacks of
+  exactly the shape `FALLBACK_MAX_SPAN_MM` has, minus the warning.~~ **Done
+  2026-08-26**: values kept (2 and 8), report added — `uncovered_rails_per_span` /
+  `uncovered_screws_per_span`, one gap + one warning per section and model line. The
+  golden numbers it was expected to move moved none: the demo base states both counts,
+  so no green run emits either gap, and the scenario gate held at 268.
 
 ---
 
