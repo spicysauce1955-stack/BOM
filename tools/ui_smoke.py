@@ -426,29 +426,48 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
   const host = document.getElementById('structure-annexe');
   const sheet = document.getElementById('structure-body').textContent;
   const sentence = box ? box.warning.text_raw : '';
+  const note = placed.find(p => p.where === 'product');
+  // An INLINED entry is wrapped in `.doc-warnings` and labelled with what it
+  // attaches to; a job-wide one sits directly in the panel. Counting all
+  // `.doc-warning` together is what made the first version of this check stale
+  // the moment the sheet started carrying the other buckets.
+  const loose = host ? [...host.querySelectorAll('.doc-warning')]
+    .filter(d => !d.closest('.doc-warnings')) : [];
   return {
     host: !!host,
-    entries: host ? host.querySelectorAll('.doc-warning').length : -1,
+    annexe_entries: loose.length,
     // the sentence appears in the sheet ONCE, and it is inside the annexe
     occurrences: sentence ? sheet.split(sentence).length - 1 : -1,
     in_annexe: host && sentence ? host.textContent.includes(sentence) : false,
     // an English quotation on a Hebrew sheet keeps its own direction
-    dir: host ? host.querySelector('.doc-warning')?.getAttribute('dir') : '',
-    lang: host ? host.querySelector('.doc-warning')?.getAttribute('lang') : '',
+    dir: loose.length ? loose[0].getAttribute('dir') : '',
+    lang: loose.length ? loose[0].getAttribute('lang') : '',
     // ...and the panel's own furniture is in the reader's language
     title: host ? (host.querySelector('h3')?.textContent || '') : '',
     // this legacy document was never traced to a source, and says so
     unattributed: host ? host.textContent.includes('סימוכין') : false,
-    // the product notice is NOT here: it belongs on the BOM line group
-    product_here: host && placed.some(
-      p => p.where === 'product' && host.textContent.includes(p.warning.text_raw)),
+    // The product notice IS here, and labelled — because the print stylesheet
+    // emits only the canvas and structure tabs, so a sheet that cited the BOM
+    // tab would be sending a reader to a page the printout does not contain.
+    product_inline: !!(note && host && [...host.querySelectorAll('.doc-warnings')]
+      .some(g => g.textContent.includes(note.warning.text_raw))),
+    product_occurrences: note ? sheet.split(note.warning.text_raw).length - 1 : -1,
   };
 })()""")
         check("a document-scoped warning is in the annexe and appears once",
-              annexe is not None and annexe["host"] and annexe["entries"] == 1
-              and annexe["occurrences"] == 1 and annexe["in_annexe"]
-              and not annexe["product_here"],
-              annexe and f"entries={annexe['entries']} n={annexe['occurrences']}")
+              annexe is not None and annexe["host"]
+              and annexe["annexe_entries"] == 1
+              and annexe["occurrences"] == 1 and annexe["in_annexe"],
+              annexe and f"entries={annexe['annexe_entries']} "
+                         f"n={annexe['occurrences']}")
+        # The printed plan carries every warning or says so. It used to cite a
+        # panel sheet and a BOM tab that the printout does not contain, which put
+        # "do not load an uncured footing" on no page that reaches site.
+        check("the sheet that goes to site carries the line notices too, labelled",
+              annexe is not None and annexe["product_inline"]
+              and annexe["product_occurrences"] == 1,
+              annexe and f"inline={annexe['product_inline']} "
+                         f"n={annexe['product_occurrences']}")
         # The split, in one place: the quotation keeps the language it was
         # published in and the panel around it follows the reader's. Zero of the
         # corpus's elements are Hebrew, so translating a manufacturer's liability
@@ -594,13 +613,14 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 (() => {
   const host = document.getElementById('structure-annexe');
   if (!host) return null;
-  return {entries: host.querySelectorAll('.doc-warning').length,
+  return {job_wide: [...host.querySelectorAll('.doc-warning')]
+            .filter(d => !d.closest('.doc-warnings')).length,
           text: host.textContent};
 })()""")
         check("the annexe reaches the customer sheet as well as the installer's",
-              annexe_customer is not None and annexe_customer["entries"] == 1
+              annexe_customer is not None and annexe_customer["job_wide"] == 1
               and "not a pool barrier" in annexe_customer["text"],
-              annexe_customer and annexe_customer["entries"])
+              annexe_customer and annexe_customer["job_wide"])
         c.shot("12-structure-customer.png")
         c.js("""
 {
