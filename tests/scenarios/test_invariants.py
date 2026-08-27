@@ -485,7 +485,7 @@ def test_missing_hard_knowledge_is_a_gap_not_a_generation_failure():
     assert all(g.closes_by == "knowledge" for g in result.strategy.gaps)
     # each gap is visible on the drawing too, never only in a report
     codes = {w.code for w in result.strategy.warnings}
-    assert {g.code for g in result.strategy.gaps} <= codes
+    assert {g.because.code for g in result.strategy.gaps} <= codes
 
 
 @pytest.mark.parametrize("name", sorted(_fixtures()))

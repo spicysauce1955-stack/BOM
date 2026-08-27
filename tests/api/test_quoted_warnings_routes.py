@@ -120,4 +120,4 @@ def test_a_publishers_words_arrive_unedited_over_the_wire(client):
         assert "severity" not in warning
         # this legacy document was never traced to a source, and says so rather
         # than carrying an id somebody minted to fill the field
-        assert warning["cites"] is None
+        assert warning["cites"] == []

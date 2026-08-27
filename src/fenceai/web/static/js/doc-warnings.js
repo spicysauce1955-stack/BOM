@@ -67,11 +67,14 @@ function lexeme(word, text) {
 // contract's own rule for the Frontend is that a source reference proves where
 // the system looked, and its absence has to be as visible as its presence.
 function attribution(cites) {
-  if (!cites || !cites.id)
+  const refs = (cites || []).filter((c) => c && c.id);
+  if (!refs.length)
     return `<div class="meta">${esc(t("annexe.unattributed"))}</div>`;
-  const ref = cites.belongs_to ? `${cites.id} · ${cites.belongs_to}` : cites.id;
-  return `<div class="meta">${fill(t("annexe.source"), "ref",
-    `<bdi class="sku">${esc(ref)}</bdi>`)}</div>`;
+  const shown = refs
+    .map((c) => (c.belongs_to ? `${c.id} · ${c.belongs_to}` : c.id))
+    .map((ref) => `<bdi class="sku">${esc(ref)}</bdi>`)
+    .join(", ");
+  return `<div class="meta">${fill(t("annexe.source"), "ref", shown)}</div>`;
 }
 
 // Put an already-escaped fragment into a placeholder in a localized string.

@@ -11,13 +11,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fenceai.core.gaps import Gap, GapSubject, SourceRef
+from fenceai.core.gaps import Because, Gap, GapSubject, SourceRef
 
 
 def _gap(**kw):
     base = dict(id="g1", kind="uncovered_condition",
-                subject=GapSubject(kind="param", ref="footing_depth_mm"),
-                code="c", would_close="a footing row for exposure C at 6 ft")
+                subject=GapSubject(kind="param", id="footing_depth_mm"),
+                because=Because(code="c"),
+                would_close="a footing row for exposure C at 6 ft")
     return Gap(**{**base, **kw})
 
 
@@ -34,13 +35,16 @@ def test_a_published_gap_parses_from_the_wire():
     will first be handed real data."""
     gap = Gap.model_validate({
         "id": "kp-gap-9", "kind": "unquantified",
-        "subject": {"kind": "entity", "ref": "part:rail-16ft"},
-        "code": "stated_in_prose", "params": {"doc": "BUF-2019"},
+        "subject": {"kind": "entity", "id": "part:rail-16ft", "tenant": "acme"},
+        "because": {"code": "stated_in_prose", "params": {"doc": "BUF-2019"}},
         "cites": [{"id": "src-4", "belongs_to": "sha256:def"}],
         "would_close": "a number for the rail's maximum unsupported span",
         "closes_by": "knowledge", "severity": "warns_line",
     })
     assert gap.cites[0].belongs_to == "sha256:def"
+    assert (gap.subject.id, gap.subject.tenant) == ("part:rail-16ft", "acme")
+    assert (gap.because.code, gap.because.params) == (
+        "stated_in_prose", {"doc": "BUF-2019"})
 
 
 @pytest.mark.parametrize("kind", ["unmodellable_entity", "unmapped_part_kind"])
@@ -82,7 +86,21 @@ def test_would_close_is_required():
     """BINDING: a gap that only says something is missing sends a curator hunting."""
     with pytest.raises(ValidationError):
         Gap(id="g", kind="missing_value",
-            subject=GapSubject(kind="param", ref="x"), code="c")
+            subject=GapSubject(kind="param", id="x"), because=Because(code="c"))
+
+
+def test_because_is_required_and_so_is_its_own_code():
+    """`because` is a `Gap`'s ONLY rendering mechanism — there is no `text_raw` the
+    way a `DocumentWarning` has, and no `message` fallback the way a
+    `StrategyWarning` has. Every other test in this module builds `because`
+    explicitly, but none pins that it cannot be skipped or given a default —
+    a future "helpful" `Because(code="") ` default would sail through the whole
+    suite silently."""
+    with pytest.raises(ValidationError):
+        Gap(id="g", kind="missing_value", subject=GapSubject(kind="param", id="x"),
+            would_close="a value for x")
+    with pytest.raises(ValidationError):
+        Because()
 
 
 # -- the `origin` seam ---------------------------------------------------------

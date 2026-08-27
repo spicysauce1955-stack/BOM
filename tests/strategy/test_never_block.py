@@ -74,7 +74,7 @@ def test_uncovered_max_span_names_the_gap():
     assert len(gaps) == 1
     gap = gaps[0]
     assert gap.subject.kind == "param"
-    assert gap.subject.ref == "max_span_mm"
+    assert gap.subject.id == "max_span_mm"
     assert gap.closes_by == "knowledge"
     assert gap.severity == "warns_line"
     # BINDING: a gap that only says something is missing sends a curator hunting.
@@ -144,7 +144,7 @@ def test_missing_default_post_produces_a_plan_with_an_unfilled_post():
     # that files one per post, which is the stated anti-goal.
     gaps = _gaps(result, "missing_value")
     assert len(gaps) == 1
-    assert gaps[0].subject.ref == "post_ground"
+    assert gaps[0].subject.id == "post_ground"
     assert gaps[0].subject.kind == "slot"  # a role, not a parameter key
     assert gaps[0].closes_by == "knowledge"
 
@@ -239,11 +239,11 @@ def test_an_unstated_count_is_a_named_gap_not_a_silent_default(dropped, code, pa
     kb = _without(demo_knowledge(), dropped)
     result = generate(straight_topology(6000), kb, demo_catalog())
 
-    gaps = [g for g in result.strategy.gaps if g.code == code]
+    gaps = [g for g in result.strategy.gaps if g.because.code == code]
     assert len(gaps) == 1
     gap = gaps[0]
     assert gap.kind == "uncovered_condition"
-    assert gap.subject.kind == "param" and gap.subject.ref == param
+    assert gap.subject.kind == "param" and gap.subject.id == param
     assert gap.closes_by == "knowledge" and gap.severity == "warns_line"
     # BINDING (§1.2.1): a work item names the row AND the coordinate it is
     # missing on, so a curator reads what to author. `param in would_close`
@@ -257,8 +257,8 @@ def test_an_unstated_count_is_a_named_gap_not_a_silent_default(dropped, code, pa
     # `value`, NOT `value_mm`. A count is not a length, and `unitParams`
     # converts every `*_mm` key to the reader's display unit — the suffix would
     # render "0.2 cm rails" to anyone whose preference is centimetres.
-    assert gap.params["value"] == value
-    assert not [k for k in gap.params if k.endswith("_mm")]
+    assert gap.because.params["value"] == value
+    assert not [k for k in gap.because.params if k.endswith("_mm")]
 
 
 @pytest.mark.parametrize(("dropped", "code"), [
@@ -288,7 +288,7 @@ def test_a_forty_bay_fence_files_ONE_warning_and_names_every_bay(dropped, code):
     assert set(warned[0].element_refs) == {s.id for s in result.strategy.spans}
     assert warned[0].params["n"] == len(result.strategy.spans)
     # ...and one gap, not forty
-    assert len([g for g in result.strategy.gaps if g.code == code]) == 1
+    assert len([g for g in result.strategy.gaps if g.because.code == code]) == 1
 
 
 @pytest.mark.parametrize("dropped", ["K-RAILS", "K-SCREWS"])
@@ -355,7 +355,7 @@ def test_reporting_the_count_moved_no_quantity_and_no_price():
                 for line in stated_bom.lines])
 
     # ...and the ONLY difference is what the run says about itself
-    assert {g.code for g in assumed.strategy.gaps} == {
+    assert {g.because.code for g in assumed.strategy.gaps} == {
         "uncovered_rails_per_span", "uncovered_screws_per_span"}
     assert stated.strategy.gaps == []
 
@@ -389,7 +389,7 @@ def test_two_models_on_one_section_file_one_gap_each():
     kb = _without(demo_knowledge(), "K-RAILS")
     result = generate(topo, kb, demo_catalog(), models=library)
 
-    gaps = [g for g in result.strategy.gaps if g.code == "uncovered_rails_per_span"]
+    gaps = [g for g in result.strategy.gaps if g.because.code == "uncovered_rails_per_span"]
     assert len(gaps) == 2, [g.id for g in gaps]
     # one work item per product LINE, each naming its own line and nobody else's
     assert {g.would_close for g in gaps} == {
@@ -527,7 +527,7 @@ def test_an_empty_knowledge_base_still_plans_every_shape():
         result = generate(straight_topology(length), empty, catalog)
         assert result.strategy.spans
         # exactly the four holes, named — not a silent plan
-        assert {g.code for g in result.strategy.gaps} == {
+        assert {g.because.code for g in result.strategy.gaps} == {
             "uncovered_max_span", "no_default_post",
             "uncovered_rails_per_span", "uncovered_screws_per_span"}
 
@@ -634,7 +634,7 @@ def test_a_manufactured_width_beats_an_invented_maximum():
     # the gap still stands — no rule covers the parameter — but it must not call
     # the manufacturer's own number a fallback
     gap = _gaps(result, "uncovered_condition")[0]
-    assert gap.params["basis"] == "manufactured_width"
+    assert gap.because.params["basis"] == "manufactured_width"
 
 
 # -- a Conflict cannot be silently dropped -------------------------------------

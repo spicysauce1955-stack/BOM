@@ -63,8 +63,8 @@ def test_the_same_sentence_from_two_documents_stays_two_entries():
     """Identity includes the citation. Collapsing on text alone would have shown
     one entry for two manufacturers' notices and sent a reader checking the
     wrong document."""
-    a = _w("document", cites=SourceRef(id="s1", belongs_to="doc-a"))
-    b = _w("document", cites=SourceRef(id="s2", belongs_to="doc-b"))
+    a = _w("document", cites=[SourceRef(id="s1", belongs_to="doc-a")])
+    b = _w("document", cites=[SourceRef(id="s2", belongs_to="doc-b")])
     assert len(place_warnings([a, b]).at("annexe")) == 2
 
 
@@ -166,7 +166,7 @@ def test_a_plan_built_to_two_documents_shares_one_annexe():
     belongs to both. One placement over both documents, so a footnote they share
     — same sentence, same citation — is one entry and not two."""
     shared = _w("document", text="CAUTION: this assembly is not a pool barrier.",
-                cites=SourceRef(id="s1", belongs_to="doc-a"))
+                cites=[SourceRef(id="s1", belongs_to="doc-a")])
     a = routed_vinyl_model()
     b = a.model_copy(deep=True, update={"id": "M-OTHER"})
     a.warnings = [shared]
@@ -254,7 +254,7 @@ def test_a_placement_says_which_document_each_sentence_came_out_of():
     # ...and the annexe still ignores the owner, so one footnote two product
     # lines quote from one source doc is ONE entry
     shared = _w("document", text="CAUTION: not a pool barrier.",
-                cites=SourceRef(id="s1", belongs_to="doc-a"))
+                cites=[SourceRef(id="s1", belongs_to="doc-a")])
     c = a.model_copy(deep=True, update={"id": "M-C", "warnings": [shared]})
     d = b.model_copy(deep=True, update={"id": "M-D", "warnings": [shared]})
     entries = place_for_plan([c, d]).at("annexe")

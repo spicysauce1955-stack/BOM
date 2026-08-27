@@ -462,8 +462,8 @@ def routed_vinyl_model(
                 # A real one can only come from the Discovery surface: §1.1 makes
                 # `SourceRef.id` opaque and forbids building one, which is
                 # exactly why `cites` is optional on this side.
-                cites=SourceRef(id="DEMO-src-vinyl-1",
-                                belongs_to="sha256:DEMO-vinyl-install-guide"),
+                cites=[SourceRef(id="DEMO-src-vinyl-1",
+                                 belongs_to="sha256:DEMO-vinyl-install-guide")],
             ),
             DocumentWarning(
                 text_raw="WARNING: Do not load a panel onto a post whose footing "
@@ -472,8 +472,8 @@ def routed_vinyl_model(
                          "brought back.",
                 lang="en", severity_lexeme="WARNING",
                 attaches_to=WarningTarget(kind="step", ref="cure"),
-                cites=SourceRef(id="DEMO-src-vinyl-2",
-                                belongs_to="sha256:DEMO-vinyl-install-guide"),
+                cites=[SourceRef(id="DEMO-src-vinyl-2",
+                                 belongs_to="sha256:DEMO-vinyl-install-guide")],
             ),
             DocumentWarning(
                 # UNATTRIBUTED, deliberately: the second rendering a surface has
@@ -488,8 +488,8 @@ def routed_vinyl_model(
                          "manufacturer are substituted into this assembly.",
                 lang="en", severity_lexeme="IMPORTANT",
                 attaches_to=WarningTarget(kind="warranty"),
-                cites=SourceRef(id="DEMO-src-vinyl-3",
-                                belongs_to="sha256:DEMO-vinyl-warranty"),
+                cites=[SourceRef(id="DEMO-src-vinyl-3",
+                                 belongs_to="sha256:DEMO-vinyl-warranty")],
             ),
         ],
         default_spec=PanelSpec(

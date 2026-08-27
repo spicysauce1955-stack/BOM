@@ -25,7 +25,7 @@ from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.evaluator import resolve_param, resolve_token
 from fenceai.knowledge.model import KnowledgeBase
 from fenceai.knowledge.parameters import (
-    ParameterRow, ParameterTable, Provenance, Quantity, expand, to_mm,
+    ParameterRow, ParameterTable, Provenance, Quantity, Token, expand, to_mm,
 )
 from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
@@ -104,6 +104,26 @@ def test_a_published_table_parses_from_the_contracts_own_shape():
     assert row.value.value_raw == ['47"']
     assert row.provenance.cites[0].belongs_to == "sha256:abc"
     assert table.uncovered == [{"exposure_category": "D", "hvhz": True}]
+
+
+def test_a_tokens_own_lexeme_parses_and_survives_the_round_trip():
+    """`Token` is not a bare string — it carries `value_raw`, the sentence the
+    document actually used, the same reason `Quantity` carries its own. Losing it
+    would reintroduce the loss N3 was accepted to prevent, this time for tokens."""
+    table = ParameterTable.model_validate({
+        "parameter": "slope_method", "value_type": "token(stepped_only|racked)",
+        "rows": [{"value": {
+            "key": "stepped_only",
+            "value_raw": ["They should be only installed using the slope method"],
+        }}],
+    })
+    row = table.rows[0]
+    assert row.value.key == "stepped_only"
+    assert row.value.value_raw == [
+        "They should be only installed using the slope method"]
+    # ...and the same object, unchanged, after a JSON round trip
+    reloaded = ParameterTable.model_validate_json(table.model_dump_json())
+    assert reloaded.rows[0].value == row.value
 
 
 def test_admitted_by_is_not_a_field_on_provenance():
@@ -196,7 +216,7 @@ def test_a_token_valued_parameter_lands_as_a_token():
         value_type="token(stepped_only|racked)",
         condition_scope={"exposure_category": "site"},
         rows=[ParameterRow(conditions={"exposure_category": "C"},
-                           value="stepped_only")],
+                           value=Token(key="stepped_only"))],
     )
     versions, gaps = expand(table)
     assert not gaps
@@ -209,12 +229,35 @@ def test_a_token_valued_parameter_lands_as_a_token():
 def test_a_token_outside_the_declared_set_is_a_gap_not_a_coercion():
     table = ParameterTable(
         parameter="slope_method", value_type="token(stepped_only|racked)",
-        rows=[ParameterRow(value="whatever_the_fitter_thinks")],
+        rows=[ParameterRow(value=Token(key="whatever_the_fitter_thinks"))],
     )
     versions, gaps = expand(table)
     assert not versions
-    assert [g.code for g in gaps] == ["parameter_value_nonconforming"]
+    assert [g.because.code for g in gaps] == ["parameter_value_nonconforming"]
     assert gaps[0].kind == "disputed" and gaps[0].on == "value"
+
+
+def test_a_token_row_on_a_quantity_table_is_a_gap_not_a_crash():
+    """`value_type` is declared ONCE, on the table. A row shaped for the OTHER
+    half of the union — a `Token` where the table declared `quantity(mm)` — is
+    the table contradicting itself, exactly like an out-of-set token, and must
+    not raise."""
+    table = _span_table(rows=[ParameterRow(value=Token(key="stepped_only"))])
+    versions, gaps = expand(table)
+    assert not versions
+    assert [g.because.code for g in gaps] == ["parameter_value_nonconforming"]
+
+
+def test_a_quantity_row_on_a_token_table_is_a_gap_not_a_crash():
+    """The mirror case: a table declared `token(...)` receiving a `Quantity`
+    row."""
+    table = ParameterTable(
+        parameter="slope_method", value_type="token(stepped_only|racked)",
+        rows=[ParameterRow(value=Quantity(amount_milli=1200000, unit="mm"))],
+    )
+    versions, gaps = expand(table)
+    assert not versions
+    assert [g.because.code for g in gaps] == ["parameter_value_nonconforming"]
 
 
 def test_a_length_resolver_never_receives_a_word():
@@ -222,7 +265,7 @@ def test_a_length_resolver_never_receives_a_word():
     `value`: a resolver asking for a length must not typecheck against a word."""
     table = ParameterTable(
         parameter="slope_method", value_type="token(racked)",
-        rows=[ParameterRow(value="racked")],
+        rows=[ParameterRow(value=Token(key="racked"))],
     )
     kb = KnowledgeBase(versions=expand(table)[0])
     assert resolve_param(kb, {"scope": {}}, "slope_method").winner is None
@@ -234,8 +277,32 @@ def test_uncovered_points_become_gaps_never_silence():
     """§1.3 BINDING: points no row covers are listed, never silently omitted."""
     table = _span_table(uncovered=[{"exposure_category": "D"}])
     _, gaps = expand(table)
-    assert [g.code for g in gaps] == ["uncovered_parameter_point"]
-    assert gaps[0].subject.ref == "max_span_mm"
+    assert [g.because.code for g in gaps] == ["uncovered_parameter_point"]
+    assert gaps[0].subject.id == "max_span_mm"
+
+
+def test_every_gap_a_table_produces_names_the_tenant_it_expanded_under():
+    """`GapSubject.tenant` is the field the Knowledge team's review added to match
+    `EntityRef`. `expand()` accepts a `tenant` and it must reach every gap kind
+    this module builds, not just be threaded in and dropped."""
+    uncovered = expand(_span_table(uncovered=[{"exposure_category": "D"}]),
+                       tenant="acme")[1]
+    assert uncovered[0].subject.tenant == "acme"
+
+    lapsed = expand(_span_table(rows=[ParameterRow(
+        conditions={"exposure_category": "C"},
+        value=Quantity(amount_milli=1200000, unit="mm"),
+        valid_until="2025-01-01")]), as_of="2026-01-01", tenant="acme")[1]
+    assert lapsed[0].subject.tenant == "acme"
+
+    nonconforming = expand(ParameterTable(
+        parameter="slope_method", value_type="token(stepped_only|racked)",
+        rows=[ParameterRow(value=Token(key="nope"))]), tenant="acme")[1]
+    assert nonconforming[0].subject.tenant == "acme"
+
+    unmappable = expand(_span_table(scope={"kind": "orchard_row", "id": "X"}),
+                        tenant="acme")[1]
+    assert unmappable[0].subject.tenant == "acme"
 
 
 def test_domain_basis_changes_what_an_uncovered_point_MEANS():
@@ -263,8 +330,8 @@ def test_a_lapsed_row_is_marked_against_as_of_and_still_expanded():
 
     versions, gaps = expand(table, as_of="2026-08-25")
     assert len(versions) == 1, "the row still applies; it is not a hole"
-    assert [g.code for g in gaps] == ["parameter_authority_lapsed"]
-    assert gaps[0].params["as_of"] == "2026-08-25"
+    assert [g.because.code for g in gaps] == ["parameter_authority_lapsed"]
+    assert gaps[0].because.params["as_of"] == "2026-08-25"
 
     # ...and against an as_of BEFORE it lapsed, nothing is reported
     assert not expand(table, as_of="2024-06-01")[1]

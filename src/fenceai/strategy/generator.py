@@ -20,7 +20,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from fenceai.catalog.model import CATALOG_SCHEMA_VERSION, Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
-from fenceai.core.gaps import Gap, GapSubject
+from fenceai.core.gaps import Because, Gap, GapSubject
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
@@ -3246,8 +3246,8 @@ def _report_unfilled_posts(strategy: Strategy, builder: GraphBuilder) -> None:
         # a ROLE, so `slot` ("nothing can fill this") rather than `param`
         # ("no value for this key") — the first queue that groups by subject
         # kind would otherwise file it with the parameter gaps
-        subject=GapSubject(kind="slot", ref="post_ground"),
-        code="no_default_post", params=params, message=message,
+        subject=GapSubject(kind="slot", id="post_ground"),
+        because=Because(code="no_default_post", params=params),
         would_close="a default_component rule naming the ground-post product for role post_ground",
         closes_by="knowledge", severity="warns_line",
     ))
@@ -3310,8 +3310,8 @@ def _report_uncovered_max_span(
             # id keyed on the bare model id would collide between them
             id=f"gap:{run.id}:{model_ref}:max_span_mm",
             kind="uncovered_condition",
-            subject=GapSubject(kind="param", ref="max_span_mm"),
-            code="uncovered_max_span", params=params, message=message,
+            subject=GapSubject(kind="param", id="max_span_mm"),
+            because=Because(code="uncovered_max_span", params=params),
             # Condition-space coordinates, and deliberately NOT the run id. The
             # BINDING example in §1.2.1 is "a footing row for exposure C,
             # non-HVHZ, at 6 ft" — a parameter plus the DIMENSIONS it is missing
@@ -3401,8 +3401,8 @@ def _report_uncovered_quantities(
             # refs and would collide on an id keyed to the id
             id=f"gap:{run.id}:{model_ref}:{param}",
             kind="uncovered_condition",
-            subject=GapSubject(kind="param", ref=param),
-            code=UNCOVERED_COUNT_CODES[param], params=params, message=message,
+            subject=GapSubject(kind="param", id=param),
+            because=Because(code=UNCOVERED_COUNT_CODES[param], params=params),
             # Condition-space coordinates and deliberately NOT the run id:
             # §3.1.13 bans a published condition naming a specific run, so a
             # sentence asking for one asks for a row the contract forbids them to
@@ -3728,10 +3728,10 @@ def _surface_conflicts(conflicts, builder: GraphBuilder, strategy: Strategy) -> 
         strategy.gaps.append(Gap(
             id=f"gap:disputed:{c.param_or_action}:" + ",".join(sorted(c.contenders)),
             kind="disputed", on="value",
-            subject=GapSubject(kind="param", ref=c.param_or_action),
-            code="knowledge_conflict",
-            params={"slot": c.param_or_action, "contenders": ", ".join(c.contenders)},
-            message=c.message,
+            subject=GapSubject(kind="param", id=c.param_or_action),
+            because=Because(
+                code="knowledge_conflict",
+                params={"slot": c.param_or_action, "contenders": ", ".join(c.contenders)}),
             would_close=(
                 f"a decision on which of {', '.join(sorted(c.contenders))} states "
                 f"{c.param_or_action}, or conditions that separate them"

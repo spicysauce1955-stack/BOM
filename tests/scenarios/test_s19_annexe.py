@@ -110,9 +110,9 @@ def test_eighty_three_printings_collapse_to_one_entry_that_counts_them(catalog):
         text_raw="CAUTION: set footings below the local frost line.",
         lang="en", severity_lexeme="CAUTION",
         attaches_to=WarningTarget(kind="document"),
-        cites=SourceRef(id="DEMO-src-vinyl-1", belongs_to="sha256:doc-a"))
+        cites=[SourceRef(id="DEMO-src-vinyl-1", belongs_to="sha256:doc-a")])
     elsewhere = footnote.model_copy(
-        update={"cites": SourceRef(id="OTHER-src-1", belongs_to="sha256:doc-b")})
+        update={"cites": [SourceRef(id="OTHER-src-1", belongs_to="sha256:doc-b")]})
 
     one_doc = place_warnings([footnote] * 83)
     assert len(one_doc.at("annexe")) == 1
@@ -167,11 +167,11 @@ def test_a_warning_nobody_can_trace_is_marked_and_not_hidden(placement):
     M-VINYL's four has none, and it must reach the surface AS unattributed: a
     sentence nobody can trace must not look like one an engineer confirmed
     against a drawing."""
-    cited = [p for p in placement.placements if p.warning.cites is not None]
-    uncited = [p for p in placement.placements if p.warning.cites is None]
+    cited = [p for p in placement.placements if p.warning.cites]
+    uncited = [p for p in placement.placements if not p.warning.cites]
     assert len(uncited) == 1 and cited
     assert uncited[0].warning.text_raw.startswith("This section is not rated")
-    assert all(p.warning.cites.id.startswith("DEMO-src-") for p in cited)
+    assert all(c.id.startswith("DEMO-src-") for p in cited for c in p.warning.cites)
 
 
 def test_carrying_a_warning_moves_no_cost_no_line_and_no_decision(knowledge, catalog):

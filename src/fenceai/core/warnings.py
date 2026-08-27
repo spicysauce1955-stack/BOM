@@ -122,13 +122,29 @@ class DocumentWarning(BaseModel):
     count of them is evidence for the team still designing the door they come in
     by. Requiring the field would have been enforced by fabricating ids, which is
     how a hypothesis becomes a fact nobody checked.
+
+    `cites` is a LIST, not the single optional ref this side first modelled it
+    as: a warning printed on fourteen pages of two documents genuinely cites
+    several, and 76 of 282 of the Knowledge team's published warnings do. Their
+    review of the conforming fixture is what caught the singular field here.
+
+    `lang_basis` says how `lang` was arrived at — `measured` if a person or a
+    verified process confirmed it, `assumed` otherwise. Every warning either side
+    holds today is `assumed`: nothing in this engine's own text is script-detected
+    or reviewed for language, so a reader trusting `lang` alone would be trusting
+    an assertion nobody verified.
+
+    `severity_lexeme` is `None` where the publisher gave no lexeme at all, kept
+    distinct from `""`: absent-and-unknown is a different fact from
+    present-and-empty, and the Knowledge team's corpus carries both.
     """
 
     text_raw: str
     lang: str
+    lang_basis: Literal["measured", "assumed"] = "assumed"
     attaches_to: WarningTarget
-    cites: SourceRef | None = None
-    severity_lexeme: str = ""
+    cites: list[SourceRef] = []
+    severity_lexeme: str | None = None
     code: str | None = None
     params: dict[str, str | int] = {}
 
@@ -146,9 +162,8 @@ class DocumentWarning(BaseModel):
         from is the half a reader needs in order to go and check it.
         """
         return (self.text_raw, self.lang,
-                self.cites.id if self.cites else "",
-                self.cites.belongs_to if self.cites else "",
-                self.severity_lexeme, self.code or "")
+                tuple((c.id, c.belongs_to) for c in self.cites),
+                self.severity_lexeme or "", self.code or "")
 
 
 def warning_errors(warnings: list[DocumentWarning], *, where: str) -> list[str]:

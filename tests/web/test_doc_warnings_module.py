@@ -91,7 +91,7 @@ out.leading = quotedWarningHtml(placed(W({
   severity_lexeme: "WARNING",
   text_raw: "WARNING: This fence is not a pool barrier." }), "annexe"));
 out.cited = quotedWarningHtml(placed(W({
-  cites: { id: "SRC-7", belongs_to: "sha256:doc-a" } }), "annexe"));
+  cites: [{ id: "SRC-7", belongs_to: "sha256:doc-a" }] }), "annexe"));
 out.repeated = quotedWarningHtml(placed(W(), "annexe", "", 83));
 out.once = quotedWarningHtml(placed(W(), "annexe", "", 1));
 // a publisher's own code rides along and never becomes the sentence

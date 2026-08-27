@@ -421,7 +421,7 @@ def test_retiring_the_only_max_span_rule_answers_a_warned_plan_not_a_422(client)
 
     warning = next(w for w in strategy["warnings"] if w["code"] == "uncovered_max_span")
     assert warning["params"]["value_mm"] == FALLBACK_MAX_SPAN_MM
-    gap = next(g for g in strategy["gaps"] if g["subject"]["ref"] == "max_span_mm")
+    gap = next(g for g in strategy["gaps"] if g["subject"]["id"] == "max_span_mm")
     assert gap["kind"] == "uncovered_condition"
     assert gap["closes_by"] == "knowledge"
     assert gap["would_close"]

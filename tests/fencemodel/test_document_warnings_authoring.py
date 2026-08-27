@@ -111,5 +111,5 @@ def test_the_demo_document_that_exercises_all_of_it_is_valid():
         "document", "step", "product", "warranty"}
     # ...and one of them is deliberately unattributed, which is the second
     # rendering the surfaces have to get right
-    assert any(w.cites is None for w in model.warnings)
-    assert any(w.cites is not None for w in model.warnings)
+    assert any(not w.cites for w in model.warnings)
+    assert any(w.cites for w in model.warnings)

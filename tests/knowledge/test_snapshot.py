@@ -60,7 +60,7 @@ def test_the_contracts_whole_payload_parses(snapshot):
     assert snapshot.regime == "us_astm"
     assert snapshot.contract_version == "1.1.0"
     assert len(snapshot.parameters) == 2
-    assert len(snapshot.gaps) == 2
+    assert len(snapshot.gaps) == 3
 
 
 def test_what_arrives_and_is_not_consumed_is_counted_not_hidden(snapshot):
@@ -74,7 +74,7 @@ def test_what_arrives_and_is_not_consumed_is_counted_not_hidden(snapshot):
     assertion is kept EXACT rather than narrowed to the remaining key, because a
     member silently rejoining this list is exactly the regression it watches
     for."""
-    assert ingest(snapshot).unconsumed == {"source_docs": 2}
+    assert ingest(snapshot).unconsumed == {"source_docs": 3}
 
 
 def test_a_declared_id_can_be_checked_against_its_own_members(snapshot):
@@ -98,39 +98,57 @@ def test_published_and_discovered_gaps_are_one_list_but_counted_apart(snapshot):
     """They are the same type by contract. But "your table declares a hole" and
     "your table contradicts itself" are different messages to send back."""
     out = ingest(snapshot, as_of="2026-08-25")
-    assert len(out.gaps) == 5
+    assert len(out.gaps) == 6
     assert out.discovered == 3
     # the platform's own gaps come FIRST — what it chose to tell us, before our
     # findings about its data
-    assert [g.code for g in out.gaps[:2]] == [
-        "gate_not_modelled", "readers_disagreed_on_bracket"]
+    assert [g.because.code for g in out.gaps[:3]] == [
+        "gate_not_modelled", "readers_disagreed_on_bracket",
+        "parameter_condition_excluded"]
 
 
 def test_the_lapsed_row_is_found_against_the_pinned_as_of(snapshot):
     """The fixture carries an NOA that expired in 2025 on purpose."""
     lapsed = [g for g in ingest(snapshot, as_of="2026-08-25").gaps
-              if g.code == "parameter_authority_lapsed"]
+              if g.because.code == "parameter_authority_lapsed"]
     assert len(lapsed) == 1
-    assert lapsed[0].params["authority"] == "NOA 19-0101.01"
+    assert lapsed[0].because.params["authority"] == "NOA 19-0101.01"
     # ...and against an as_of before it expired, it is not a finding
     assert not [g for g in ingest(snapshot, as_of="2024-06-01").gaps
-                if g.code == "parameter_authority_lapsed"]
+                if g.because.code == "parameter_authority_lapsed"]
 
 
 def test_no_as_of_makes_no_expiry_judgement(snapshot):
     """Generation is pure; a clock here would make one project against one
     snapshot warn differently on different days."""
     assert not [g for g in ingest(snapshot).gaps
-                if g.code == "parameter_authority_lapsed"]
+                if g.because.code == "parameter_authority_lapsed"]
 
 
 def test_the_uncovered_points_the_table_declares_are_reported(snapshot):
     """§1.3 BINDING: points no row covers are listed, never silently omitted. The
     fixture declares exposure D in both HVHZ states."""
-    points = {g.params["point"] for g in ingest(snapshot).gaps
-              if g.code == "uncovered_parameter_point"}
+    points = {g.because.params["point"] for g in ingest(snapshot).gaps
+              if g.because.code == "uncovered_parameter_point"}
     assert points == {"exposure_category=D, hvhz=False",
                       "exposure_category=D, hvhz=True"}
+
+
+def test_an_excluded_point_is_published_directly_not_synthesised_as_uncovered(snapshot):
+    """`(exposure_category=B, hvhz=true)` is not in `uncovered` at all — the
+    source affirmatively excludes it (both non-HVHZ rows are bracketed
+    `NON HVHZ`), which is a fact only the publisher knows and therefore its gap
+    to raise directly, not this loader's to synthesise from a bare domain point.
+    Settled with the Knowledge team rather than a new `GapKind` — no new `Gap`
+    kind, no new field on `ParameterTable.uncovered`; just a specific
+    `because.code` on a gap they publish like any other."""
+    excluded = [g for g in ingest(snapshot).gaps
+                if g.because.code == "parameter_condition_excluded"]
+    assert len(excluded) == 1
+    assert excluded[0].because.params["point"] == "exposure_category=B, hvhz=True"
+    assert excluded[0].subject.id == "max_span_mm"
+    # published, not discovered — this engine did not derive it
+    assert excluded[0] in snapshot.gaps
 
 
 def test_a_published_gate_gap_keeps_closes_by_planning(snapshot):
@@ -213,7 +231,7 @@ def test_a_scope_we_cannot_aim_is_refused_not_widened():
     versions, gaps = expand(table)
 
     assert versions == [], "a table we cannot aim must not apply everywhere"
-    assert [g.code for g in gaps] == ["parameter_scope_unmappable"]
+    assert [g.because.code for g in gaps] == ["parameter_scope_unmappable"]
     assert gaps[0].closes_by == "planning"
 
 
@@ -224,9 +242,9 @@ def test_the_fixtures_warnings_parse_as_the_contracts_own_type(snapshot):
     item 8 gave them somewhere to go, so they are parsed — and a `text_raw`,
     `lang` or `attaches_to` missing from a published warning now fails HERE,
     loudly at the door, rather than at the reader it was written for."""
-    assert len(snapshot.warnings) == 8
+    assert len(snapshot.warnings) == 9
     assert {w.attaches_to.kind for w in snapshot.warnings} == {
-        "document", "step", "product", "maintenance", "warranty", "procedure"}
+        "document", "step", "product", "model", "maintenance", "warranty", "procedure"}
 
 
 def test_a_published_warnings_severity_word_is_not_normalised(snapshot):
@@ -271,7 +289,8 @@ def test_the_fixtures_warnings_place_where_the_contract_says(snapshot):
 
     placement = place_warnings(
         ingest(snapshot).warnings,
-        steps=["FIXTURE-step-set-posts"], skus=["FIXTURE-SKU-PANEL-1"])
+        steps=["FIXTURE-step-set-posts"], skus=["FIXTURE-SKU-PANEL-1"],
+        model_refs=["M-VINYL"])
     assert placement.carried() == len(snapshot.warnings)
     footnote = [p for p in placement.at("annexe") if p.instances > 1]
     assert len(footnote) == 1 and footnote[0].instances == 3
@@ -280,8 +299,8 @@ def test_the_fixtures_warnings_place_where_the_contract_says(snapshot):
 
 
 def test_a_published_warning_may_arrive_with_no_citation(snapshot):
-    """One of the fixture's eight has no `cites`, and the count of these is the
+    """One of the fixture's nine has no `cites`, and the count of these is the
     most useful thing this side can send back while the other team designs:
     §1.1 makes `SourceRef.id` opaque and unbuildable, so nobody without the
     Discovery surface can mint one."""
-    assert sum(1 for w in snapshot.warnings if w.cites is None) == 1
+    assert sum(1 for w in snapshot.warnings if not w.cites) == 1

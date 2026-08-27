@@ -42,7 +42,7 @@ def test_a_warning_with_no_citation_is_legal_and_says_so():
     has no way to mint a citation and the Discovery surface that would hand them
     a real one is unimplemented. Requiring the field would be enforced by
     fabricating ids."""
-    assert _w().cites is None
+    assert _w().cites == []
     assert warning_errors([_w()], where="model M-X") == []
 
 
@@ -104,10 +104,23 @@ def test_two_documents_saying_the_same_sentence_are_two_warnings():
     collapses 83 printings of ONE document's footnote and keeps two documents'
     identical sentences apart. Which document said it is half of what a reader
     needs in order to go and check it."""
-    a = _w(cites=SourceRef(id="s1", belongs_to="hash-a"))
-    b = _w(cites=SourceRef(id="s2", belongs_to="hash-b"))
+    a = _w(cites=[SourceRef(id="s1", belongs_to="hash-a")])
+    b = _w(cites=[SourceRef(id="s2", belongs_to="hash-b")])
     assert a.identity() != b.identity()
-    assert a.identity() == _w(cites=SourceRef(id="s1", belongs_to="hash-a")).identity()
+    assert a.identity() == _w(cites=[SourceRef(id="s1", belongs_to="hash-a")]).identity()
+
+
+def test_a_warning_can_cite_more_than_one_source():
+    """`cites` is a LIST because a sentence printed on fourteen pages of two
+    documents genuinely cites several — 76 of 282 of the Knowledge team's
+    published warnings do. A warning with two citations must carry both, not
+    silently keep the first."""
+    w = _w(cites=[SourceRef(id="s1", belongs_to="hash-a"),
+                  SourceRef(id="s2", belongs_to="hash-b")])
+    assert [c.belongs_to for c in w.cites] == ["hash-a", "hash-b"]
+    # ...and identity folds the WHOLE list in, so a warning citing {s1, s2} is not
+    # the same warning as one citing {s1} alone
+    assert w.identity() != _w(cites=[SourceRef(id="s1", belongs_to="hash-a")]).identity()
 
 
 def test_identity_separates_the_publishers_own_severity_word():

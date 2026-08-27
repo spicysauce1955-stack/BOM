@@ -30,7 +30,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from fenceai.core.gaps import Gap, GapSubject, SourceRef
+from fenceai.core.gaps import Because, Gap, GapSubject, SourceRef
 from fenceai.knowledge.ast import And, Cmp, Expr, FieldRef, Lit
 from fenceai.knowledge.model import KnowledgeVersion, SetParam, SetToken
 
@@ -68,6 +68,21 @@ class Quantity(BaseModel):
     value_raw: list[str] = []
 
 
+class Token(BaseModel):
+    """§1.3. A token carries its lexeme too — it is not a bare string.
+
+    Publishing `"stepped_only"` alone loses the sentence the document actually
+    used (*"They should be only installed using the slope method"*), which is
+    what a curator needs beside the code. Leaving it bare would have
+    reintroduced, through this loader, the exact loss the contract's `value_raw`
+    was accepted to prevent for `Quantity` — the Knowledge team's review of the
+    conforming fixture is what caught this side publishing it bare.
+    """
+
+    key: str
+    value_raw: list[str] = []
+
+
 class Provenance(BaseModel):
     """§1.1. `admitted_by` is deliberately NOT here — it is an output of a RUN
     (§1.4), so a field for it on published data would be a place to record an
@@ -87,7 +102,7 @@ class ParameterRow(BaseModel):
     # in the class §1.4 admits are exactly this shape, and publishing them into a
     # declared domain would assert brackets the source never stated.
     condition_basis: Literal["stated", "assumed"] = "stated"
-    value: Quantity | str
+    value: Quantity | Token
     provenance: Provenance = Provenance()
     valid_from: str | None = None
     valid_until: str | None = None
@@ -219,6 +234,12 @@ def expand(
     precedes it is EXPANDED anyway and marked — never dropped: dropping it would
     turn a lapsed authority into a coverage hole, and those are different facts
     with different fixes.
+
+    `tenant` names every `GapSubject` this table's gaps carry — the field the
+    Knowledge team's review of the conforming fixture added, matching `EntityRef`.
+    It was accepted here and threaded to `snapshot.py`'s call site with nothing
+    ever reading it from `snapshot.tenant` down to the gaps themselves; a
+    test-review of that same change is what caught the wiring stopping short.
     """
     versions: list[KnowledgeVersion] = []
     gaps: list[Gap] = []
@@ -228,12 +249,12 @@ def expand(
     if unmappable is not None:
         # Nothing is expanded. A table we cannot aim is not a table we may apply
         # everywhere, and this closes by a schema change HERE, not by a curator.
-        return [], [_unmappable_scope_gap(table, unmappable)]
+        return [], [_unmappable_scope_gap(table, unmappable, tenant)]
 
     for index, row in enumerate(table.rows):
         action = _action_for(table, row, tokens)
         if action is None:
-            gaps.append(_bad_value_gap(table, row, index))
+            gaps.append(_bad_value_gap(table, row, index, tenant))
             continue
         versions.append(KnowledgeVersion.from_published(
             object_id=f"{table.parameter}#{index}",
@@ -249,9 +270,9 @@ def expand(
             attributed_to="knowledge_platform",
         ))
         if row.valid_until and as_of and row.valid_until < as_of:
-            gaps.append(_lapsed_gap(table, row, index, as_of))
+            gaps.append(_lapsed_gap(table, row, index, as_of, tenant))
 
-    gaps.extend(_uncovered_gaps(table))
+    gaps.extend(_uncovered_gaps(table, tenant))
     return versions, gaps
 
 
@@ -262,9 +283,9 @@ def _action_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | Non
     the table contradicting itself — a gap, not something to coerce.
     """
     if tokens is not None:
-        if not isinstance(row.value, str) or row.value not in tokens:
+        if not isinstance(row.value, Token) or row.value.key not in tokens:
             return None
-        return SetToken(param=table.parameter, value=row.value)
+        return SetToken(param=table.parameter, value=row.value.key)
     if not isinstance(row.value, Quantity) or table.quantity_unit() != "mm":
         return None
     try:
@@ -274,10 +295,10 @@ def _action_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | Non
 
 
 def _display(value) -> str:
-    return value if isinstance(value, str) else f"{value.amount_milli / 1000:g} {value.unit}"
+    return value.key if isinstance(value, Token) else f"{value.amount_milli / 1000:g} {value.unit}"
 
 
-def _uncovered_gaps(table: ParameterTable) -> list[Gap]:
+def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
     """`uncovered` points, as gaps — never silently omitted (§1.3 BINDING).
 
     `domain_basis` decides what the point MEANS, which is the reason the contract
@@ -292,11 +313,10 @@ def _uncovered_gaps(table: ParameterTable) -> list[Gap]:
         out.append(Gap(
             id=f"gap:uncovered:{table.parameter}:{where}",
             kind="uncovered_condition",
-            subject=GapSubject(kind="param", ref=table.parameter),
-            code="uncovered_parameter_point",
-            params={"parameter": table.parameter, "point": where,
-                    "domain_basis": table.domain_basis},
-            message=f"{table.parameter} has no row for {where}.",
+            subject=GapSubject(kind="param", id=table.parameter, tenant=tenant),
+            because=Because(code="uncovered_parameter_point",
+                             params={"parameter": table.parameter, "point": where,
+                                     "domain_basis": table.domain_basis}),
             would_close=(
                 f"a {table.parameter} row for {where}" if measured else
                 f"a re-read of the source's own table extent for {table.parameter}, "
@@ -307,30 +327,30 @@ def _uncovered_gaps(table: ParameterTable) -> list[Gap]:
     return out
 
 
-def _lapsed_gap(table: ParameterTable, row: ParameterRow, index: int, as_of: str) -> Gap:
+def _lapsed_gap(
+    table: ParameterTable, row: ParameterRow, index: int, as_of: str, tenant: str,
+) -> Gap:
     return Gap(
         id=f"gap:lapsed:{table.parameter}#{index}",
         kind="uncovered_condition",
-        subject=GapSubject(kind="param", ref=table.parameter),
-        code="parameter_authority_lapsed",
-        params={"parameter": table.parameter, "valid_until": row.valid_until or "",
-                "as_of": as_of, "authority": row.authority},
-        message=(f"{table.parameter} row {index} was valid until {row.valid_until}, "
-                 f"before this run's as_of {as_of}."),
+        subject=GapSubject(kind="param", id=table.parameter, tenant=tenant),
+        because=Because(code="parameter_authority_lapsed",
+                         params={"parameter": table.parameter,
+                                 "valid_until": row.valid_until or "",
+                                 "as_of": as_of, "authority": row.authority}),
         would_close=f"a reissue of {row.authority or 'the authority'} covering {as_of}",
         closes_by="knowledge", severity="warns_line",
     )
 
 
-def _unmappable_scope_gap(table: ParameterTable, kind: str) -> Gap:
+def _unmappable_scope_gap(table: ParameterTable, kind: str, tenant: str) -> Gap:
     return Gap(
         id=f"gap:unmappable_scope:{table.parameter}:{kind}",
         kind="unmodellable_entity",
-        subject=GapSubject(kind="entity", ref=f"{kind}:{table.scope.get('id', '')}"),
-        code="parameter_scope_unmappable",
-        params={"parameter": table.parameter, "entity_kind": kind},
-        message=(f"{table.parameter} is scoped to a {kind}, which this engine has no "
-                 "dimension for; the table was not applied."),
+        subject=GapSubject(kind="entity", id=f"{kind}:{table.scope.get('id', '')}",
+                            tenant=tenant),
+        because=Because(code="parameter_scope_unmappable",
+                         params={"parameter": table.parameter, "entity_kind": kind}),
         would_close=(f"an evaluator dimension for a {kind} in the Planning repo, so a "
                      f"table scoped to one can be aimed at it"),
         # BINDING (§1.2.1): `unmodellable_entity` closes by a schema change HERE.
@@ -339,16 +359,16 @@ def _unmappable_scope_gap(table: ParameterTable, kind: str) -> Gap:
     )
 
 
-def _bad_value_gap(table: ParameterTable, row: ParameterRow, index: int) -> Gap:
+def _bad_value_gap(
+    table: ParameterTable, row: ParameterRow, index: int, tenant: str,
+) -> Gap:
     return Gap(
         id=f"gap:nonconforming:{table.parameter}#{index}",
         kind="disputed", on="value",
-        subject=GapSubject(kind="param", ref=table.parameter),
-        code="parameter_value_nonconforming",
-        params={"parameter": table.parameter, "value_type": table.value_type,
-                "row": index},
-        message=(f"{table.parameter} row {index} does not conform to the table's "
-                 f"declared value_type {table.value_type}."),
+        subject=GapSubject(kind="param", id=table.parameter, tenant=tenant),
+        because=Because(code="parameter_value_nonconforming",
+                         params={"parameter": table.parameter,
+                                 "value_type": table.value_type, "row": index}),
         would_close=(f"a {table.parameter} row {index} whose value conforms to "
                      f"{table.value_type}, or a value_type that admits it"),
         closes_by="knowledge", severity="warns_line",

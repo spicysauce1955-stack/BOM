@@ -159,6 +159,21 @@ REFUSAL_CODES = [
     "no_item_covers_part_spec",
 ]
 
+# Rendered as `warning.<code>`, same as `WARNING_CODES` — but this engine never
+# constructs these itself, so the source scan in `test_backend_code_list_is_current`
+# will never find them, and they are deliberately kept out of that scan's `known`
+# set. The Knowledge Platform may raise them directly as a published `Gap.because.code`
+# (contract §2: "Platform warning & gap codes — whoever raises it; both locale
+# bundles required"), and this side owes the sentence regardless of which side wrote
+# the code.
+PUBLISHED_GAP_CODES = [
+    # A domain point the source AFFIRMATIVELY excludes (an authority's own
+    # applicability bracket), distinct from `uncovered_parameter_point`'s "no row
+    # covers this". Agreed with the Knowledge team rather than a new `GapKind` —
+    # `conversation.md` T2/T4, `CANDIDATES.md` C4 (struck).
+    "parameter_condition_excluded",
+]
+
 
 def _bundles():
     en = json.loads((STATIC / "i18n" / "en.json").read_text())
@@ -201,6 +216,14 @@ def test_every_backend_code_has_locale_entries():
         assert f"warning.{code}" in en and f"warning.{code}" in he, code
     for code in CRITIQUE_CODES:
         assert f"critique.{code}" in en and f"critique.{code}" in he, code
+
+
+def test_every_published_gap_code_has_locale_entries():
+    """The other half of `test_every_backend_code_has_locale_entries`, for codes
+    this engine renders but never emits."""
+    en, he = _bundles()
+    for code in PUBLISHED_GAP_CODES:
+        assert f"warning.{code}" in en and f"warning.{code}" in he, code
 
 
 def test_backend_code_list_is_current():

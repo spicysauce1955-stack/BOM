@@ -52,10 +52,17 @@ class GapSubject(BaseModel):
     A discriminated ref rather than three types, because every consumer wants the
     same two things (which kind, which name) and a union of three one-field models
     buys a queue nothing but three code paths.
+
+    `tenant` was missing until the Knowledge team's review of
+    `docs/integration-contract/fixtures/snapshot-example.json` named it: their own
+    subject is a bare element-id string today and they are moving to this shape,
+    which is the confirmation that `id` + `tenant` — not `ref` alone — is what
+    `EntityRef` actually means here.
     """
 
     kind: Literal["entity", "slot", "param"]
-    ref: str
+    id: str
+    tenant: str = ""
 
 
 class SourceRef(BaseModel):
@@ -87,6 +94,17 @@ class SourceRef(BaseModel):
     belongs_to: str = ""  # content_hash -> SourceDoc; "" only where none was given
 
 
+class Because(BaseModel):
+    """§1.2.1: `because { code, params }` — the ONLY rendering mechanism a `Gap`
+    has. A `Gap` carries no `text_raw` the way a quoted `DocumentWarning` does, so
+    a free-text `message` beside `because` would compete with it and, per the
+    contract's own argument for warnings turned the other way round, become what
+    implementations actually display while the locale path rots."""
+
+    code: str
+    params: dict[str, str | int] = {}
+
+
 class Gap(BaseModel):
     id: str
     kind: GapKind
@@ -100,11 +118,7 @@ class Gap(BaseModel):
     # disagreed" and discards the half that says where to look.
     on: Literal["value", "conditions"] | None = None
     subject: GapSubject
-    # `code` + `params` render in both locales; `message` is an English fallback
-    # only, exactly as StrategyWarning carries them.
-    code: str
-    params: dict[str, str | int] = {}
-    message: str = ""
+    because: Because
     cites: list[SourceRef] = []
     would_close: str
     closes_by: Literal["knowledge", "planning"] = "knowledge"

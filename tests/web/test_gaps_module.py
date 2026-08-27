@@ -62,11 +62,12 @@ const KINDS = [
 // (strategy/generator.py `_report_uncovered_max_span`).
 const gap = (over) => ({
   id: "gap:run1:M-LEGACY@v1:max_span_mm", kind: "uncovered_condition",
-  subject: { kind: "param", ref: "max_span_mm" },
-  code: "uncovered_max_span",
-  params: { element: "run1", run_id: "run1", model_ref: "M-LEGACY@v1",
-            param: "max_span_mm", value_mm: 1800, n: 3, basis: "fallback" },
-  message: "english fallback",
+  subject: { kind: "param", id: "max_span_mm" },
+  because: {
+    code: "uncovered_max_span",
+    params: { element: "run1", run_id: "run1", model_ref: "M-LEGACY@v1",
+              param: "max_span_mm", value_mm: 1800, n: 3, basis: "fallback" },
+  },
   cites: [], would_close: "a max_span_mm row for series M-LEGACY@v1",
   closes_by: "knowledge", severity: "warns_line", ...over });
 
@@ -78,8 +79,8 @@ const gap = (over) => ({
 // produces one to check the grouping against.
 const curator = gap({
   kind: "unmodellable_entity", closes_by: "planning", severity: "informational",
-  code: "unmodellable_gate", subject: { kind: "entity", ref: "gate@run1:2000-3000" },
-  params: { element: "gate@run1:2000-3000" },
+  because: { code: "unmodellable_gate", params: { element: "gate@run1:2000-3000" } },
+  subject: { kind: "entity", id: "gate@run1:2000-3000" },
   cites: [{ id: "sr_91", belongs_to: "sha256:deadbeef" }],
   would_close: "A GateModel with <script>alert(1)</script> handedness & swing.",
 });
@@ -217,20 +218,32 @@ def test_an_entity_subject_is_isolated_as_an_identifier(panels):
     assert '<bdi class="sku">max_span_mm</bdi>' in he
 
 
-def test_the_sentence_comes_from_the_bundle_not_from_the_english_message(panels):
-    """`message` is a diagnostic fallback. A gap whose code has a locale entry
-    must never render it — the same rule every warning follows, through the same
-    localizer (`warnings.js::localizedByCode`), which is why there is exactly one
-    of those and this module imports it rather than growing a second.
+def test_the_sentence_comes_from_the_bundle_and_a_code_with_no_entry_shows_itself(panels):
+    """A `Gap` carries no `message` — §1.2.1 gives it `because{code,params}` and
+    nothing else, deliberately: a free-text fallback beside `because` is exactly
+    what would become the rendered sentence in practice and let the locale
+    entries rot, which is the contract's own argument for why a `Gap` (unlike a
+    `StrategyWarning`) has no English side-channel at all.
 
-    The fixture's `message` is the string "english fallback", so a regression
-    here is visible rather than plausible-looking."""
-    knowledge_group = panels["he"][:panels["he"].index('data-closes-by="planning"')]
-    assert "english fallback" not in knowledge_group
+    So a code WITH a bundle entry renders that entry, and a code the bundles do
+    NOT carry — the normal case for a kind arriving from the platform under a
+    code this repo has never seen — falls back to the raw code string itself,
+    through the same localizer every warning uses (`warnings.js::localizedByCode`,
+    the one place this repo does that fallback)."""
     assert "אין כלל הקובע מפתח מרבי" in panels["he"]
     assert "No rule states the maximum span" in panels["en"]
-    # ...and a code the bundles do NOT carry falls back to the English message
-    # rather than to a raw `warning.unmodellable_gate` on screen. Six of the
-    # eight kinds can arrive from the platform under codes this repo has never
-    # seen, so the fallback is the normal path for them, not a bug.
-    assert "english fallback" in panels["he"]
+    planning_group = panels["he"][panels["he"].index('data-closes-by="planning"'):]
+    assert "unmodellable_gate" in planning_group
+
+
+def test_a_code_with_no_bundle_entry_is_marked_english_and_left_to_right(panels):
+    """The fallback in the test above is not a sentence a Hebrew reader can read
+    as their own app's voice — it is the raw machine code, and a page that showed
+    it unmarked in an RTL flow would present untranslated snake_case as if it were
+    a localized sentence. `unmodellable_gate` has no bundle entry on either side;
+    `uncovered_max_span` does, on both."""
+    he = panels["he"]
+    localized = he[:he.index('data-closes-by="planning"')]
+    unlocalized = he[he.index('data-closes-by="planning"'):]
+    assert '<div class="gap-what" lang="en" dir="ltr">' not in localized
+    assert '<div class="gap-what" lang="en" dir="ltr">' in unlocalized

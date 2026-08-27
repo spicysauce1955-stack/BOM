@@ -57,8 +57,8 @@ const CLOSERS = ["knowledge", "planning"];
  *  identifiers, so they get `.sku` (which forces LTR) and `<bdi>`.
  */
 function subjectHtml(subject) {
-  if (!subject || !subject.ref) return "";
-  const shown = subject.kind === "entity" ? (tagOf(subject.ref) || subject.ref) : subject.ref;
+  if (!subject || !subject.id) return "";
+  const shown = subject.kind === "entity" ? (tagOf(subject.id) || subject.id) : subject.id;
   return `<div class="gap-subject meta">${esc(t("gaps.subject." + subject.kind))} `
     + `<bdi class="sku">${esc(shown)}</bdi></div>`;
 }
@@ -90,21 +90,27 @@ export function gapRowHtml(gap) {
   const severity = gap.severity === "warns_line" ? "warns_line" : "informational";
   // the same sentence the paired StrategyWarning renders, from the same code and
   // the same params — one localizer, so a gap and its warning cannot drift
-  const sentence = localizedByCode("warning", gap.code, gap.params, gap.message);
+  const sentence = localizedByCode("warning", gap.because.code, gap.because.params);
+  // A `Gap` has no `message` — `because` is its only rendering mechanism (§1.2.1) —
+  // so a code neither bundle carries falls back to the bare code itself, not to an
+  // English sentence. That is expected for a kind arriving under a code this repo
+  // has never seen, and it must be MARKED as such rather than presented as a
+  // localized sentence it is not: `t()` returning its own key is exactly that case.
+  const localized = t("warning." + gap.because.code) !== "warning." + gap.because.code;
   const kindWord = t("gaps.kind." + gap.kind);
   // `on` belongs to `disputed` alone: WHICH of the two readings disagree. On any
   // other kind the field is absent, and printing a blank there would suggest the
   // gap is making a claim it is not.
   const on = gap.on ? ` <span class="tag">${esc(t("gaps.on." + gap.on))}</span>` : "";
-  return `<div class="gap ${esc(severity)}" data-gap-code="${esc(gap.code)}"
+  return `<div class="gap ${esc(severity)}" data-gap-code="${esc(gap.because.code)}"
        data-gap-kind="${esc(gap.kind)}" data-severity="${esc(severity)}"
        data-closes-by="${esc(gap.closes_by)}">
     <div class="gap-head">
       <span class="tag ${esc(severity)}">${esc(t("gaps.severity." + severity))}</span>
       <span class="gap-kind">${esc(kindWord === "gaps.kind." + gap.kind ? gap.kind : kindWord)}</span>${on}
-      <span class="sku">${esc(gap.code)}</span>
+      <span class="sku">${esc(gap.because.code)}</span>
     </div>
-    <div class="gap-what">${sentence}</div>
+    <div class="gap-what"${localized ? "" : ' lang="en" dir="ltr"'}>${sentence}</div>
     ${subjectHtml(gap.subject)}
     <div class="gap-close">
       <span class="gap-close-label">${esc(t("gaps.would_close"))}</span>

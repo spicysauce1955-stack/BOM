@@ -1,5 +1,95 @@
 # Current status
 
+## The Knowledge team's first fixture review, a bug it found in this repo, and a five-turn negotiation (2026-08-27)
+
+**2141 pytest · 280 scenario tests · contract hashes OK** (was 2132). One
+session, no worktrees: the fixture review cascaded into a real fix, not just a
+JSON edit, so it stayed sequential rather than parallel.
+
+**The Knowledge team's `knowledge-asks.md` v0.2 reviewed
+`docs/integration-contract/fixtures/snapshot-example.json`** against their
+closed vocabularies and publish gate — eleven defects, all mechanical (wrong
+`source_class`/`task` spellings, `cites` as a singular object instead of a
+list, a bare-string `Token`, `gaps[]` flat instead of nested under `because`,
+missing `lang_basis`, a dangling citation, and so on).
+
+**Fixing the fixture correctly required more than editing JSON.** This repo's
+own `Gap`, `GapSubject` and `DocumentWarning` types were already
+non-conformant with the frozen contract, independent of anything the review
+found — `Gap` carried flat `code`/`params`/`message` where the contract has
+always specified `because{code,params}` with no `message` field, and
+`GapSubject` carried a bare `ref` where `EntityRef` is `{kind, id, tenant}`.
+Reshaped both types and `DocumentWarning.cites` (→ `list[SourceRef]`) plus
+added `Token{key, value_raw}` to `ParameterTable`'s row values; updated every
+construction site (`knowledge/parameters.py`, `strategy/generator.py`,
+`fencemodel/demo.py`, `web/static/js/gaps.js`, `web/static/js/doc-warnings.js`)
+and every dependent test. `architecture-critic` (SOUND, one minor finding —
+fixed: an unlocalized gap code now renders marked `lang="en" dir="ltr"` rather
+than looking like a translated sentence) and `test-reviewer` (GAPS — a
+`tenant` parameter was threaded through `expand()` but never actually read by
+any `GapSubject` it built; `cites` as a list was untested past one element;
+fixed both, plus a `because`-required test and a `Token`/`Quantity`
+cross-type test) both ran before this was called done.
+
+**Then a five-turn negotiation with the Knowledge team, in `conversation.md`
+(fence-rag)**, over two proposals this session first floated in
+`planning-asks.md` §9 and logged as candidate amendments C4/C5:
+
+- **C4 (a ninth `GapKind` for "checked and refused" vs. "may not cover") —
+  conceded and struck.** Knowledge showed `kind: uncovered_condition` +
+  `domain_basis: measured` already carries that fact; the missing piece was
+  only *why*, and a new `because.code` — a free registry addition — carries
+  it for a fraction of the cost a new enum member would (checked against our
+  own `GapKind`: a closed 8-member `Literal`, three changes for a new kind vs.
+  one for a new code). Implemented: `parameter_condition_excluded` is in both
+  locale bundles, guarded by a new `PUBLISHED_GAP_CODES` list in
+  `test_locale_bundles.py` (codes this engine renders but never itself
+  constructs — the existing source-scan guard would never find them). The
+  fixture's `(exposure_category=B, hvhz=true)` case moved out of `uncovered`
+  entirely into a directly-published `Gap` (`FIXTURE-gap-excluded-1`) — only
+  the publisher knows *why* a point is excluded.
+- **C5 (our own preference on how to model a paired footing-depth/max-span
+  value) — flipped.** Knowledge measured our proposed fix (an extra domain
+  dimension) and found it manufactures 8 of 18 cross-product artifacts,
+  several actively misleading. The sharper argument: footing depth is a
+  design CHOICE, the same category as picking between two admissible SKUs —
+  not a site fact `domain` is meant to bind at run time. Checked our own
+  `strategy/generator.py:975-976`, which already ranks admissible candidates
+  by declared priority — real precedent, not just agreement. C5 now prefers
+  a paired/compound `value_type`; still the one live amendment candidate
+  left standing of the original five, and still ours to co-author.
+- **C1 closed as answered** (no amendment; Knowledge owes a written
+  `curation_level` mapping). **Declined** binding `material` as a run-time
+  condition dimension — checked our own code first
+  (`fulfillment/supply_run.py` already has a comment predating this exchange:
+  `material` is a catalog product attribute, not a site condition) and found
+  a second, run-time `material` would put two competing ideas under one name.
+  **Agreed** the 1″ rail-end gap and the stagger rule are one cut-plan
+  constraint with two rows (a cited value, an authored default), which is
+  their design to build, not ours.
+
+**Reviewed our own backlog against all of this and found it does not move
+anything.** `plan/next-session.md`'s items 6/7 (source policy enforcement,
+`Provenance` wiring) were already parked pending the Knowledge team having
+real curated data, not pending any question this negotiation could answer —
+nothing in five turns changed that. The one remaining small item,
+`Gap.would_close`'s lack of a coded vocabulary, was decided closed rather
+than built: Knowledge hit the identical field on their own side (their
+`would_close` template-constant problem, `conversation.md` T6) and fixed it
+by writing more specific free text, not by building a shared code system —
+evidence for the free-text design, not a case for building one here.
+
+**Two operational notes, since this is the first session working across both
+repos' shared thread file:** the Knowledge side's own agent commits
+`conversation.md`/`CANDIDATES.md` on their end as it goes — a
+`git status --short` in `fence-rag` came back clean after edits landed
+because their session had already committed them; nothing to reconcile, just
+worth knowing before assuming an edit is unsaved. And the collaboration only
+covers API/integration matters — three separate "your move" items in
+Knowledge's T6 (an internal detector-firing choice, a locale-bundle
+housekeeping call, a `params` shape decision) were all theirs alone to
+decide and never blocked anything on this side.
+
 ## Four agents, two reviews, and a merge that cost one conflict (2026-08-26)
 
 **2132 pytest · 280 scenario tests · contract hashes OK** (was 2056 · 268 at
