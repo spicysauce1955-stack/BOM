@@ -28,7 +28,9 @@ import { on, reloadProject, state } from "./state.js";
 import {
   fmt, fmtLen, inputStep, money, roleWord, sentence, toDisplayValue, toMm, tu,
 } from "./units.js";
-import { annexeHtml, bucket, quotedGroupHtml } from "./doc-warnings.js";
+import {
+  annexeHtml, bucket, productWarningRowHtml, quotedGroupHtml,
+} from "./doc-warnings.js";
 import { warningRowHtml } from "./warnings.js";
 
 // The bay a preview is imagined into. Millimetres at rest, exactly like storage
@@ -288,14 +290,6 @@ function partsHtml() {
   // annexe exists to keep off a plan.
   const quoted = preview?.quoted_warnings;
   const seenSku = new Set();
-  const productRow = (sku) => {
-    const list = sku && !seenSku.has(sku) ? bucket(quoted, "product", sku) : [];
-    if (sku) seenSku.add(sku);
-    return list.length
-      ? `<tr class="doc-warning-row"><td colspan="7">${
-          quotedGroupHtml(list, "annexe.on_product")}</td></tr>`
-      : "";
-  };
   let html = `<div class="panel" id="panel-parts">
     <h3>${esc(t("panel.parts_title"))} — <bdi class="sku">${esc(p.model_ref)}</bdi></h3>
     <div class="meta">${sentence("panel.bay_line",
@@ -317,7 +311,7 @@ function partsHtml() {
             { n: part.eligible_skus.length })}</span>` : ""}</td>
       <td class="num">${esc(money(part.unit_price_cents))}</td>
       <td class="num">${esc(money(part.total_cents))}</td></tr>`
-      + productRow(part.sku);
+      + productWarningRowHtml(quoted, part.sku, seenSku);
   }
   html += `</table>
     <div id="panel-total">${sentence("panel.total", { total: money(p.total_cents) })}</div>`;

@@ -14,7 +14,7 @@ import {
 import { loadStructure, sectionOf, tagOf } from "./structure-data.js";
 import { gapsPanelHtml } from "./gaps.js";
 import {
-  bucket as quotedBucket, quotedGroupHtml,
+  modelWarningsHtml, productWarningRowHtml,
 } from "./doc-warnings.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
@@ -468,25 +468,12 @@ export function bomHtml(bom, products, { unresolved = [], quoted = null } = {}) 
   // deduplicate here — which is exactly why this is the surface the contract
   // names for a product-scoped warning.
   const seenSku = new Set();
-  const quotedRow = (sku) => {
-    // ...and `seenSku` is what "once" means even if two lines ever share a sku:
-    // `Bom.lines` are pooled per sku today, so this set is empty insurance — and
-    // it is the same insurance `panel.js` needs for real, where two SLOTS are
-    // routinely supplied by one product.
-    if (!sku || seenSku.has(sku)) return "";
-    seenSku.add(sku);
-    const list = quotedBucket(quoted, "product", sku);
-    return list.length
-      ? `<tr class="doc-warning-row"><td colspan="7">${
-          quotedGroupHtml(list, "annexe.on_product")}</td></tr>`
-      : "";
-  };
   const short = (unresolved || []).length;
   let html = `<div class="panel${short ? " incomplete" : ""}">
   <h3>${t("bom.title")} — ${t("bom.total")} ${esc(money(bom.total_cents))}
   ${short ? `<span class="tag low">${esc(t(short === 1 ? "bom.total_excludes_one"
       : "bom.total_excludes", { n: short }))}</span>` : ""}</h3>
-  ${quotedGroupHtml(quotedBucket(quoted, "model"), "annexe.on_model")}
+  ${modelWarningsHtml(quoted)}
   <table><tr><th>${t("bom.sku")}</th><th>${t("bom.purchase")}</th><th>${t("bom.engineering")}</th>
   <th>${t("bom.overage")}</th><th>${tu("bom.unit_price")}</th><th>${tu("bom.line_total")}</th><th>${t("bom.notes")}</th></tr>`;
   for (const l of bom.lines) {
@@ -498,7 +485,8 @@ export function bomHtml(bom, products, { unresolved = [], quoted = null } = {}) 
       <td class="num">${l.overage_qty || ""}</td>
       <td class="num">${esc(money(l.unit_price_cents))}</td>
       <td class="num">${esc(money(l.total_cents))}</td>
-      <td>${esc((l.notes || []).join("; "))}</td></tr>` + quotedRow(l.sku);
+      <td>${esc((l.notes || []).join("; "))}</td></tr>`
+      + productWarningRowHtml(quoted, l.sku, seenSku);
   }
   // A row with no sku, no unit price and no total — because that is precisely
   // what is known about it. `roleWord` rather than the raw enum: `role` is a

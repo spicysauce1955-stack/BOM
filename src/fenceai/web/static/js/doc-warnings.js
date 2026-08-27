@@ -70,23 +70,31 @@ function attribution(cites) {
   const refs = (cites || []).filter((c) => c && c.id);
   if (!refs.length)
     return `<div class="meta">${esc(t("annexe.unattributed"))}</div>`;
+  // `belongs_to` first: §1.1 says `id` is opaque to this side in every respect
+  // except `belongs_to`, so `belongs_to` is the field that means anything to a
+  // reader and `id` rides along as the opaque thing to quote back — the same
+  // rule `gaps.js`'s `citesHtml` follows.
   const shown = refs
-    .map((c) => (c.belongs_to ? `${c.id} · ${c.belongs_to}` : c.id))
+    .map((c) => (c.belongs_to ? `${c.belongs_to} · ${c.id}` : c.id))
     .map((ref) => `<bdi class="sku">${esc(ref)}</bdi>`)
     .join(", ");
   return `<div class="meta">${fill(t("annexe.source"), "ref", shown)}</div>`;
 }
 
-// Put an already-escaped fragment into a placeholder in a localized string.
+// Put already-escaped fragments into placeholders in a localized string, one
+// (name, html) pair at a time.
 //
-// A FUNCTION replacement, not a string one, and that is the whole reason this
+// FUNCTION replacements, not string ones, and that is the whole reason this
 // helper exists: `String.replace(x, str)` treats `$&`, `$'` and friends in the
 // REPLACEMENT as patterns, and a `SourceRef.id` is opaque publisher text that may
 // contain them (§1.1 — do not parse it, do not assume its shape). The output
 // garbled rather than escaped wrongly, but a citation a reader cannot read is a
 // citation they cannot check.
-function fill(template, name, html) {
-  return esc(template).replace(`{${name}}`, () => html);
+function fill(template, ...pairs) {
+  let out = esc(template);
+  for (let i = 0; i < pairs.length; i += 2)
+    out = out.replace(`{${pairs[i]}}`, () => pairs[i + 1]);
+  return out;
 }
 
 // One placed warning: the text, whose it is, and how many times the document
@@ -127,6 +135,39 @@ export function quotedGroupHtml(placedList, labelKey) {
 export function bucket(placement, where, ref = null) {
   return (placement?.placements || []).filter(
     (p) => p.where === where && (ref === null || p.ref === ref));
+}
+
+// One row for whatever a document says about a line's product, once per line
+// group. Shared by the BOM tab and the panel preview: the test review found
+// the two had drifted into near-identical closures, one of them reachable only
+// through the browser smoke suite, which is how a mutant that broke it stayed
+// green. `seenSku` is the caller's — two callers must not share a set, and one
+// call site (the panel) needs it for real, where two slots are routinely
+// supplied by one product.
+export function productWarningRowHtml(placement, sku, seenSku) {
+  if (!sku || seenSku.has(sku)) return "";
+  seenSku.add(sku);
+  const list = bucket(placement, "product", sku);
+  return list.length
+    ? `<tr class="doc-warning-row"><td colspan="7">${
+        quotedGroupHtml(list, "annexe.on_product")}</td></tr>`
+    : "";
+}
+
+// Every model-scoped warning, grouped and labelled by which model it is about.
+// A run can carry more than one product line (a two-section run, a boundary
+// post between them), and putting both under one unlabeled "this product line"
+// header is the misattribution obligation 10 exists to prevent, arrived at from
+// a surface that reads several models at once instead of one.
+export function modelWarningsHtml(placement) {
+  const entries = bucket(placement, "model");
+  const refs = [...new Set(entries.map((p) => p.ref))];
+  return refs.map((ref) => {
+    const label = `<div class="meta">${fill(t("annexe.on_target"), "ref",
+      `<bdi class="sku">${esc(ref)}</bdi>`)}</div>`;
+    const group = entries.filter((p) => p.ref === ref).map(quotedWarningHtml).join("");
+    return `<div class="doc-warnings">${label}${group}</div>`;
+  }).join("");
 }
 
 // The annexe itself: every job-wide warning, once each, plus an honest account of
@@ -170,12 +211,22 @@ export function annexeHtml(
   const note = (key, n) => (n
     ? `<div class="meta">${fill(t(key), "n", esc(String(n)))}</div>` : "");
   // An inline entry says what it is attached to, because on this sheet it is no
-  // longer sitting on the thing it is about.
+  // longer sitting on the thing it is about. `owner` disambiguates a run built
+  // to more than one document: `rails`, `cure` and `frame` are generic step
+  // keys (see `PlacedWarning.owner`), so two manufacturers' warnings on their
+  // own `rails` step would otherwise render as identical, unlabeled blocks.
   const attachedHtml = attached.map((p) => {
-    const label = p.ref
-      ? `<div class="meta">${fill(t("annexe.on_target"), "ref",
-          `<bdi class="sku">${esc(p.ref)}</bdi>`)}</div>`
-      : `<div class="meta">${esc(t("annexe.on_procedure"))}</div>`;
+    const label = p.owner
+      ? (p.ref
+          ? `<div class="meta">${fill(t("annexe.on_target_of_model"),
+              "ref", `<bdi class="sku">${esc(p.ref)}</bdi>`,
+              "model", `<bdi class="sku">${esc(p.owner)}</bdi>`)}</div>`
+          : `<div class="meta">${fill(t("annexe.on_procedure_of_model"),
+              "model", `<bdi class="sku">${esc(p.owner)}</bdi>`)}</div>`)
+      : (p.ref
+          ? `<div class="meta">${fill(t("annexe.on_target"), "ref",
+              `<bdi class="sku">${esc(p.ref)}</bdi>`)}</div>`
+          : `<div class="meta">${esc(t("annexe.on_procedure"))}</div>`);
     return `<div class="doc-warnings">${label}${quotedWarningHtml(p)}</div>`;
   }).join("");
 

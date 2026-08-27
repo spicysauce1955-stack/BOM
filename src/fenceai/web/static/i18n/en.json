@@ -256,6 +256,8 @@
   "annexe.elsewhere_procedure": "{n} more warnings are about the procedure as a whole and are shown at its head.",
   "annexe.documents_unreadable": "{n} of the documents this fence was built to could not be read back, so whatever they warn is not here.",
   "annexe.on_target": "The document warns, about {ref}:",
+  "annexe.on_target_of_model": "The document warns, about {ref}, on {model}:",
+  "annexe.on_procedure_of_model": "The document warns, before you begin, on {model}:",
   "annexe.other_documents": "{n} warnings belong to documents this fence is not built to, and are not shown.",
   "annexe.unplaceable": "{n} warnings attach to a procedure this system does not model, so there is nowhere to show them. Reported rather than dropped.",
   "bom.cut_plan": "Cut plan",

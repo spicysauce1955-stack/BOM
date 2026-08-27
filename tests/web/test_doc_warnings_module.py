@@ -42,8 +42,10 @@ globalThis.fetch = async (url) => ({
 
 import { setLocale } from "./js/i18n.js";
 import { setUnits } from "./js/units.js";
-import { annexeHtml, bucket, quotedGroupHtml, quotedWarningHtml }
-  from "./js/doc-warnings.js";
+import {
+  annexeHtml, bucket, modelWarningsHtml, productWarningRowHtml,
+  quotedGroupHtml, quotedWarningHtml,
+} from "./js/doc-warnings.js";
 // The CALL SITES, not only the renderer. Every one of these was reachable only
 // through the browser, and the test review proved it: a mutant emptying the
 // withheld-step list, one dropping the per-sku dedup and one making the BOM's
@@ -219,6 +221,54 @@ out.annexe_unreadable = annexeHtml(
   { placements: [], not_in_plan: 0, documents_unreadable: 2 });
 out.annexe_procedure_note = annexeHtml(STEP_PLACEMENT);
 
+// A run built to two product lines — the misattribution obligation 10 exists to
+// prevent, reached from a surface (the BOM) that reads several models at once
+// instead of one.
+const TWO_MODEL_PLACEMENT = {
+  placements: [
+    placed(W({ text_raw: "M-X is discontinued.",
+               attaches_to: { kind: "model", ref: "M-X@v1" } }), "model", "M-X@v1"),
+    placed(W({ text_raw: "M-Y needs a licensed installer.",
+               attaches_to: { kind: "model", ref: "M-Y@v1" } }), "model", "M-Y@v1"),
+  ],
+  not_in_plan: 0,
+};
+out.multi_model = modelWarningsHtml(TWO_MODEL_PLACEMENT);
+out.no_model_warnings = modelWarningsHtml({ placements: [], not_in_plan: 0 });
+
+// Two manufacturers whose OWN step vocabularies both happen to use the generic
+// key `rails` — `PlacedWarning.owner` is what a model-local bucket disambiguates
+// by, and `annexeHtml`'s `inline` rendering is the one caller that pools the
+// bucket across owners.
+const OWNED_STEP_PLACEMENT = {
+  placements: [
+    { ...placed(W({ text_raw: "Manufacturer A: torque rail bolts to spec." }),
+                "step", "rails"), owner: "M-A@v1" },
+    { ...placed(W({ text_raw: "Manufacturer B: do not over-torque the rail." }),
+                "step", "rails"), owner: "M-B@v1" },
+    { ...placed(W({ text_raw: "Manufacturer A: read the whole guide first." }),
+                "procedure", ""), owner: "M-A@v1" },
+  ],
+  not_in_plan: 0,
+};
+out.owned_steps = annexeHtml(OWNED_STEP_PLACEMENT, { inline: ["step", "procedure"] });
+
+// The extracted row helper, exercised directly rather than only through
+// `bomHtml`/`partsHtml` — the panel's copy of this logic was reachable only
+// through the browser before the two call sites were unified onto it.
+const PRODUCT_PLACEMENT = {
+  placements: [
+    placed(W({ text_raw: "Pre-drill before screwing." }), "product", "RAIL-3000"),
+  ],
+  not_in_plan: 0,
+};
+{
+  const seen = new Set();
+  out.product_row_first = productWarningRowHtml(PRODUCT_PLACEMENT, "RAIL-3000", seen);
+  out.product_row_repeat = productWarningRowHtml(PRODUCT_PLACEMENT, "RAIL-3000", seen);
+  out.product_row_empty_sku = productWarningRowHtml(PRODUCT_PLACEMENT, "", new Set());
+}
+
 await setLocale("he");
 out.he_furniture = annexeHtml(PLACEMENT);
 out.he_quote_of_english = quotedWarningHtml(placed(W(), "annexe"));
@@ -241,6 +291,8 @@ out.keys = {
   on_withheld: EN["annexe.on_withheld_step"],
   on_procedure: EN["annexe.on_procedure"],
   on_target: EN["annexe.on_target"].split("{ref}")[0],
+  on_target_of_model: EN["annexe.on_target_of_model"].split("{ref}")[0],
+  on_procedure_of_model: EN["annexe.on_procedure_of_model"].split("{model}")[0],
   elsewhere_procedure_1: EN["annexe.elsewhere_procedure"].replace("{n}", "1"),
   unreadable_2: EN["annexe.documents_unreadable"].replace("{n}", "2"),
 };
@@ -330,6 +382,15 @@ def test_an_unattributed_warning_does_not_look_like_a_checkable_one(rendered):
     assert rendered["keys"]["unattributed"] in rendered["plain"]
     assert rendered["keys"]["unattributed"] not in rendered["cited"]
     assert "SRC-7" in rendered["cited"] and "sha256:doc-a" in rendered["cited"]
+
+
+def test_belongs_to_leads_the_citation_and_id_rides_along(rendered):
+    """§1.1: `id` is opaque to this side in every respect except `belongs_to`.
+    `belongs_to` is the only field meaningful to a curator holding the same
+    snapshot, so it has to be what a reader sees first — `gaps.js`'s
+    `citesHtml` already gets this right; this module inverted it."""
+    cited = rendered["cited"]
+    assert cited.index("sha256:doc-a") < cited.index("SRC-7")
 
 
 # --- the collapse ------------------------------------------------------------
@@ -542,6 +603,65 @@ def test_a_frozen_quote_carries_no_live_notices(rendered):
     nobody accepted. Untested anywhere before — a regression here was silent."""
     assert "doc-warning" not in rendered["bom_frozen"]
     assert "Pre-drill before screwing." not in rendered["bom_frozen"]
+
+
+# --- a run built to more than one product line --------------------------------
+
+def test_each_models_warning_is_labelled_with_its_own_ref(rendered):
+    """A run with two product lines must not put both models' warnings under one
+    unlabeled "this product line" header — a reader could not tell which model a
+    sentence was warning about. Each group is labelled with its own model ref."""
+    out = rendered["multi_model"]
+    assert "M-X is discontinued." in out and "M-Y needs a licensed installer." in out
+    assert "M-X@v1" in out and "M-Y@v1" in out
+    # each sentence sits under its OWN ref, not the other's
+    x_at = out.index("M-X is discontinued.")
+    y_at = out.index("M-Y needs a licensed installer.")
+    assert out.rindex("M-X@v1", 0, x_at) > out.rfind("M-Y@v1", 0, x_at)
+    assert out.rindex("M-Y@v1", 0, y_at) > out.rfind("M-X@v1", 0, y_at)
+
+
+def test_no_model_warnings_renders_nothing(rendered):
+    assert rendered["no_model_warnings"] == ""
+
+
+def test_two_manufacturers_own_step_warnings_do_not_collapse_into_one_block(rendered):
+    """`rails` is a generic step key two documents can both use for their own
+    vocabulary. Without `owner` in the label, the printed sheet showed two
+    identical, unlabeled "the document warns, about rails" blocks and a reader
+    could not tell them apart. `owner` is what disambiguates a model-local
+    bucket (`PlacedWarning.owner`)."""
+    out = rendered["owned_steps"]
+    assert "Manufacturer A: torque rail bolts to spec." in out
+    assert "Manufacturer B: do not over-torque the rail." in out
+    assert "M-A@v1" in out and "M-B@v1" in out
+    a_at = out.index("Manufacturer A: torque rail bolts to spec.")
+    b_at = out.index("Manufacturer B: do not over-torque the rail.")
+    assert out.rindex("M-A@v1", 0, a_at) > out.rfind("M-B@v1", 0, a_at)
+    assert out.rindex("M-B@v1", 0, b_at) > out.rfind("M-A@v1", 0, b_at)
+
+
+def test_an_owned_procedure_warning_is_labelled_by_its_model_too(rendered):
+    """The same collision is possible on an empty-ref procedure entry (`ref=""`
+    is "the procedure of the document itself"), not only on a named step."""
+    out = rendered["owned_steps"]
+    assert "Manufacturer A: read the whole guide first." in out
+    assert rendered["keys"]["on_procedure_of_model"] in out
+
+
+# --- the shared per-line-group row helper --------------------------------------
+
+def test_the_shared_row_helper_dedups_by_sku_across_calls(rendered):
+    """`productWarningRowHtml` takes the caller's `Set`, not its own — the panel
+    preview needs this for real (two slots supplied by one product), and the BOM
+    tab keeps it as insurance. A second call for the same sku with the same set
+    renders nothing."""
+    assert "Pre-drill before screwing." in rendered["product_row_first"]
+    assert rendered["product_row_repeat"] == ""
+
+
+def test_the_shared_row_helper_ignores_an_empty_sku(rendered):
+    assert rendered["product_row_empty_sku"] == ""
 
 
 # --- the printed plan --------------------------------------------------------
