@@ -1,5 +1,45 @@
 # Current status
 
+## The evidence viewer's first slice, fixture-backed (2026-08-28)
+
+Frontend design (`docs/superpowers/specs/2026-08-23-frontend-design.md` §3),
+build-order item 1 — the one item the design doc says "needs nobody": the
+`fence-rag` fixture already existed, so nothing here waited on the other
+team.
+
+Resolves a `SourceRef` into a page crop, quoted text and an honest
+provenance label. The real Knowledge Platform Discovery API doesn't exist —
+`fence-rag` is still in design — so this runs against a vendored, obviously-
+labelled copy of their `source-ref-examples.json` (byte-identical, verified
+by diff against the read-only original). New:
+`knowledge/discovery_stub.py` (modelled on `ai/stub.py`'s stand-in-adapter
+pattern), `POST /api/source-refs:batch` (one batched call, never N — the
+design doc's own requirement), `web/static/js/evidence.js` (deep-linkable
+via `#evidence=<id>`, all three degrade cases — no crop, no quote, no
+document at all — rendered as first-class states, never errors). Citations
+in `gaps.js` / `doc-warnings.js` are now clickable instead of inert text.
+
+Two parallel worktree agents built this and the `site.*` condition slice
+above; both went through `architecture-critic` + `test-reviewer` before
+merge. This slice's test-reviewer pass found real, mutation-confirmed gaps —
+including a live XSS regression path in `gaps.js`'s new citation markup that
+no existing test would have caught — all closed in the same branch before
+merge (see `018377f`). Both branches merged clean (`git merge --no-ff`, one
+trivial auto-merge in shared `i18n`/`ui_smoke.py` files, no conflicts).
+
+**2192 pytest · 280 scenario tests · contract hashes OK · 262/262 browser
+smoke**, all re-verified on `main` after both merges, not just on the
+feature branches. Pushed as `be90a51`.
+
+Still open from the design doc's build order: item 2 (provenance affordance
+in decision inspection — the citations are clickable now, but nothing else
+in that surface was touched), items 3/5/6/7/8 (each blocked as recorded
+there — 3 on engine item 5/A, 5 and 7 on the Knowledge Platform's Discovery
+API and cell-bbox field, 6 and 8 on a containment/assembly-step authoring UI
+that does not exist yet and is a genuinely large slice on its own). Impact
+preview (item 4) turned out to already be done, under `learning/impact.py` /
+`js/impact.js` — three existing call sites, not built this session.
+
 ## The model editor's condition picker learns `site.*` (2026-08-28)
 
 Closes the trap `plan/current-status.md` recorded on 2026-08-26: the panel
