@@ -30,7 +30,8 @@ EXPR = TypeAdapter(Expr)
 
 SCRIPT = """
 import {
-  CONDITION_CMPS, CONDITION_FIELDS, readSentence, writeSentence,
+  cmpsFor, CONDITION_CMPS, CONDITION_ENUM_OPTIONS, CONDITION_FIELDS, fieldType,
+  readSentence, SITE_CONDITION_FIELDS, writeSentence,
 } from "./js/condition-sentence.js";
 
 const HEIGHT_AT_LEAST_1800 = {
@@ -39,9 +40,32 @@ const HEIGHT_AT_LEAST_1800 = {
   right: {op: "lit", value: 1800},
 };
 
+const HVHZ_TRUE = {
+  op: "cmp", cmp: "==",
+  left: {op: "field", path: "site.hvhz"},
+  right: {op: "lit", value: true},
+};
+
+const EXPOSURE_IS_C = {
+  op: "cmp", cmp: "==",
+  left: {op: "field", path: "site.exposure_category"},
+  right: {op: "lit", value: "C"},
+};
+
 console.log(JSON.stringify({
   fields: CONDITION_FIELDS,
+  site_fields: SITE_CONDITION_FIELDS,
+  enum_options: CONDITION_ENUM_OPTIONS,
   cmps: CONDITION_CMPS,
+  number_cmps: cmpsFor("panel.height_mm"),
+  bool_cmps: cmpsFor("site.hvhz"),
+  enum_cmps: cmpsFor("site.exposure_category"),
+  field_types: {
+    height: fieldType("panel.height_mm"),
+    width: fieldType("panel.width_mm"),
+    hvhz: fieldType("site.hvhz"),
+    exposure: fieldType("site.exposure_category"),
+  },
   read: readSentence(HEIGHT_AT_LEAST_1800),
   round_trip: writeSentence(readSentence(HEIGHT_AT_LEAST_1800)),
   // the shapes the sentence cannot say: an `and`, a field-to-field comparison,
@@ -60,6 +84,17 @@ console.log(JSON.stringify({
   blank_value: writeSentence({path: "panel.height_mm", cmp: ">=", value: ""}),
   // ... nor may an unknown comparison silently become one that is not asked for
   unknown_cmp: writeSentence({path: "panel.height_mm", cmp: "~=", value: 10}),
+  // the numeric path, pinned exactly, so a boolean/enum change cannot regress it
+  numeric_pin: writeSentence({path: "panel.height_mm", cmp: ">=", value: "1800"}),
+  // a boolean field: read, round-trip, and a written `false` (not falsy zero)
+  read_hvhz: readSentence(HVHZ_TRUE),
+  round_trip_hvhz: writeSentence(readSentence(HVHZ_TRUE)),
+  written_hvhz_false: writeSentence({path: "site.hvhz", cmp: "==", value: false}),
+  // an unknown comparison on a boolean falls back to equality, not `>=`
+  unknown_cmp_hvhz: writeSentence({path: "site.hvhz", cmp: ">=", value: true}),
+  // an enum field: read and round-trip
+  read_exposure: readSentence(EXPOSURE_IS_C),
+  round_trip_exposure: writeSentence(readSentence(EXPOSURE_IS_C)),
 }));
 """
 
@@ -176,3 +211,112 @@ def test_the_comparisons_offered_are_the_ones_the_evaluator_honours(s):
                                      "left": {"op": "field", "path": "panel.height_mm"},
                                      "right": {"op": "lit", "value": 1800}})
         assert evaluate_expr(expr, {"panel": {"height_mm": 1800}}) in (True, False)
+
+
+# --- site.* : a bool and an enum, added beside the bay's numeric fields -----
+
+
+def test_the_site_fields_are_a_bool_and_an_enum_not_numbers(s):
+    assert s["site_fields"] == ["site.hvhz", "site.exposure_category"]
+    assert s["field_types"] == {
+        "height": "number", "width": "number",
+        "hvhz": "boolean", "exposure": "enum",
+    }
+
+
+def test_the_site_fields_are_facts_a_bay_actually_carries(s):
+    """The same guarantee `test_the_offered_fields_are_facts_a_bay_actually_carries`
+    makes for the numeric fields, one level down: a path nothing supplies is a
+    variant that never fires."""
+    from fenceai.project.site import SITE_DIMENSIONS
+
+    for path in s["site_fields"]:
+        head, _, tail = path.partition(".")
+        assert head == "site", path
+        assert tail in SITE_DIMENSIONS, path
+
+
+def test_the_enum_options_are_the_schemas_own_tokens(s):
+    """`SiteConditions.exposure_category` exactly — the closed vocabulary this
+    sentence offers must not silently narrow (or widen past) the schema's own,
+    the same trap `test_the_comparisons_offered_are_exactly_the_schemas_own`
+    documents for the comparisons."""
+    from typing import Literal, get_args, get_origin
+
+    from fenceai.project.site import SiteConditions
+
+    annotation = SiteConditions.model_fields["exposure_category"].annotation
+    literal = next(a for a in get_args(annotation) if get_origin(a) is Literal)
+    assert set(s["enum_options"]["site.exposure_category"]) == set(get_args(literal))
+
+
+def test_a_boolean_or_an_enum_field_offers_only_equality(s):
+    """`site.hvhz >= true` validates and means nothing — the same trap a blank
+    numeric value falls into, one type over."""
+    assert s["bool_cmps"] == ["==", "!="]
+    assert s["enum_cmps"] == ["==", "!="]
+
+
+def test_a_numeric_field_keeps_every_comparison(s):
+    assert s["number_cmps"] == s["cmps"]
+
+
+def test_a_boolean_condition_reads_as_an_actual_bool(s):
+    read = s["read_hvhz"]
+    assert read == {"path": "site.hvhz", "cmp": "==", "value": True}
+    assert read["value"] is True  # not 1 — JSON keeps bool and int distinct
+
+
+def test_a_boolean_condition_round_trips_to_the_same_ast(s):
+    assert s["round_trip_hvhz"] == {
+        "op": "cmp", "cmp": "==",
+        "left": {"op": "field", "path": "site.hvhz"},
+        "right": {"op": "lit", "value": True},
+    }
+    assert s["round_trip_hvhz"]["right"]["value"] is True
+
+
+def test_writing_false_stays_false_not_a_falsy_zero(s):
+    written = s["written_hvhz_false"]
+    assert written["right"] == {"op": "lit", "value": False}
+    assert written["right"]["value"] is False
+
+
+def test_an_unknown_comparison_on_a_boolean_falls_back_to_equality(s):
+    assert s["unknown_cmp_hvhz"]["cmp"] == "=="
+
+
+def test_an_enum_condition_reads_and_round_trips_as_the_same_token(s):
+    read = s["read_exposure"]
+    assert read == {"path": "site.exposure_category", "cmp": "==", "value": "C"}
+    assert isinstance(read["value"], str)
+    assert s["round_trip_exposure"] == {
+        "op": "cmp", "cmp": "==",
+        "left": {"op": "field", "path": "site.exposure_category"},
+        "right": {"op": "lit", "value": "C"},
+    }
+
+
+def test_boolean_and_enum_conditions_are_expressions_the_backend_accepts(s):
+    """What the round trip alone does not claim: pydantic has to take it, and
+    the evaluator has to answer it — against the real `site.*` namespace
+    `SiteConditions.facts()` builds, not a fixture dict."""
+    hvhz_expr = EXPR.validate_python(s["round_trip_hvhz"])
+    assert evaluate_expr(hvhz_expr, {"site": {"hvhz": True}}) is True
+    assert evaluate_expr(hvhz_expr, {"site": {"hvhz": False}}) is False
+
+    exposure_expr = EXPR.validate_python(s["round_trip_exposure"])
+    assert evaluate_expr(exposure_expr, {"site": {"exposure_category": "C"}}) is True
+    assert evaluate_expr(exposure_expr, {"site": {"exposure_category": "B"}}) is False
+
+
+def test_the_numeric_path_is_unchanged(s):
+    """Pinned exactly, so a boolean/enum change to `writeSentence` cannot
+    regress the one path every shipped model and fixture actually uses."""
+    assert s["numeric_pin"] == {
+        "op": "cmp", "cmp": ">=",
+        "left": {"op": "field", "path": "panel.height_mm"},
+        "right": {"op": "lit", "value": 1800},
+    }
+    assert s["numeric_pin"]["right"]["value"] == 1800
+    assert not isinstance(s["numeric_pin"]["right"]["value"], bool)
