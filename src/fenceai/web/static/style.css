@@ -701,3 +701,49 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 #site-conditions .builder-field input { inline-size: 55%; }
 #site-conditions input.invalid { border-color: #dc2626; background: #fef2f2; }
 #site-conditions .site-error { color: #b91c1c; }
+
+/* Citations, made clickable (js/evidence.js). A link, not a button: the
+   affordance is "open the evidence", not "submit an action", so no border and
+   no background — just the same LTR/isolated treatment `.sku` already gives
+   every id, plus the pointer and underline that say it can be clicked. */
+button.evidence-link { border: none; background: none; padding: 0; margin: 0;
+  font: inherit; color: #2563eb; text-decoration: underline; cursor: pointer; }
+button.evidence-link:hover { filter: none; color: #1d4ed8; }
+
+/* The viewer itself: a fixed overlay above everything, including the popover
+   (Task 8, z-index 40) — a citation can be opened from inside a popover's own
+   content. Logical properties throughout; this chrome mirrors normally in
+   RTL, unlike the crop and quoted text inside it, which stay LTR by their own
+   `dir` attributes (js/evidence.js). */
+#evidence-viewer:empty { display: none; }
+.evidence-overlay { position: fixed; inset: 0; z-index: 60;
+  background: rgba(29, 39, 51, 0.45);
+  display: flex; align-items: center; justify-content: center; padding: 16px; }
+.evidence-panel { max-inline-size: 640px; max-block-size: 85vh; overflow-y: auto;
+  inline-size: 100%; box-shadow: 0 10px 40px rgba(29, 39, 51, 0.35); }
+.evidence-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; }
+.evidence-head h3 { margin: 0; }
+.evidence-close { font-size: 13px; }
+.evidence-link-line { word-break: break-all; }
+.evidence-body { display: flex; flex-direction: column; gap: 10px; margin-block-start: 8px; }
+.evidence-provenance .tag { font-size: 11px; }
+.evidence-state-extracted { background: #e2e8f0; color: #475569; }
+.evidence-state-checked { background: #dbeafe; color: #1d4ed8; }
+.evidence-state-verified { background: #dcfce7; color: #166534; }
+.evidence-state-derived { background: #f3e8ff; color: #6b21a8; }
+.evidence-status-active { background: #dcfce7; color: #166534; }
+.evidence-status-superseded { background: #fee2e2; color: #991b1b; }
+.evidence-status-unknown { background: #e2e8f0; color: #475569; }
+/* The crop placeholder: real metadata (dimensions, dpi) around an honest
+   admission that this build does not serve the pixels yet — never a broken
+   <img> guessing at a Discovery URL this backend cannot resolve. */
+.evidence-crop-placeholder { border: 1px dashed #b9c2cd; border-radius: 8px;
+  padding: 18px; text-align: center; background: #f8fafc; }
+.evidence-crop-box { block-size: 90px; border: 1px dashed #cbd5e1; border-radius: 6px;
+  margin-block-end: 8px; background: repeating-linear-gradient(45deg, #eef2f6,
+  #eef2f6 8px, #f8fafc 8px, #f8fafc 16px); }
+.evidence-quote { background: #f8fafc; border-inline-start: 3px solid #64748b;
+  border-radius: 6px; padding: 6px 10px; }
+.evidence-reading-value { display: flex; align-items: baseline; gap: 8px; }
+.evidence-doc-title { font-weight: 600; }

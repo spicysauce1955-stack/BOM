@@ -74,9 +74,16 @@ function attribution(cites) {
   // except `belongs_to`, so `belongs_to` is the field that means anything to a
   // reader and `id` rides along as the opaque thing to quote back — the same
   // rule `gaps.js`'s `citesHtml` follows.
+  //
+  // Each citation is a `.evidence-link` button carrying the opaque id and
+  // `belongs_to` as data attributes — the shared contract `js/evidence.js`
+  // interprets to open the evidence viewer (its module header explains why
+  // this is not a cross-module DOM reach). Still a pure HTML string: no
+  // listener is wired here.
   const shown = refs
-    .map((c) => (c.belongs_to ? `${c.belongs_to} · ${c.id}` : c.id))
-    .map((ref) => `<bdi class="sku">${esc(ref)}</bdi>`)
+    .map((c) => `<button type="button" class="evidence-link sku" `
+      + `data-evidence-id="${esc(c.id)}" data-belongs-to="${esc(c.belongs_to || "")}">`
+      + `<bdi>${esc(c.belongs_to ? `${c.belongs_to} · ${c.id}` : c.id)}</bdi></button>`)
     .join(", ");
   return `<div class="meta">${fill(t("annexe.source"), "ref", shown)}</div>`;
 }

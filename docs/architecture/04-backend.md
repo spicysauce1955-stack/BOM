@@ -43,7 +43,7 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ## The API surface
 
-53 routes. Grouped by what they are for rather than by path:
+54 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
@@ -61,6 +61,7 @@ domain testable without a database and what keeps `generate()` reproducible.
 | Annotations | `POST /projects/{id}/annotations[/{id}/interpret]`, `POST /projects/{id}/intents/{id}/confirm` | Verbatim in, proposals out |
 | Overrides | `POST /projects/{id}/overrides`, `DELETE .../{override_id}` | Anchored to `(run, station, kind)` |
 | Catalog & inventory | `GET /catalog`, `PUT /catalog/products`, `GET/PUT /projects/{id}/inventory` | |
+| Evidence | `POST /source-refs:batch` | Fixture-backed (`knowledge/discovery_stub.py`): resolves a `SourceRef.id` (core/gaps.py) against a vendored copy of fence-rag's design fixture, not a live Discovery API — see specs/2026-08-23-frontend-design.md §3. Batched from the first commit so a queue resolving many citations issues one call, not N |
 | Ops | `GET /api/health`, `GET /api/audit` | |
 
 Two routes exist that look redundant and are not: `POST /fence-models/preview` takes

@@ -48,6 +48,7 @@ from fenceai.fulfillment.supply_run import (
     SUPPLY_BEHAVIOR_VERSION, SupplyRun, inventory_hash, supply_id,
 )
 from fenceai.knowledge.demo import demo_knowledge
+from fenceai.knowledge.discovery_stub import SourceRefResolved, resolve_batch
 from fenceai.knowledge.model import KnowledgeVersion
 from fenceai.learning.impact import (
     ImpactCase,
@@ -1405,6 +1406,42 @@ def put_inventory(project_id: str, inventory: Inventory) -> Inventory:
 @app.get("/api/audit")
 def audit(limit: int = 100):
     return state.store.audit_entries(limit)
+
+
+# -- evidence viewer (Knowledge Discovery, fixture-backed) -----------------------
+
+class SourceRefBatchRequest(BaseModel):
+    ids: list[str]
+
+
+class SourceRefBatchResponse(BaseModel):
+    resolved: list[SourceRefResolved]
+    # ids the fixture does not carry — never a per-id 404, since a queue
+    # resolving fifty citations cannot afford one miss to fail the other 49.
+    not_found: list[str] = []
+
+
+@app.post("/api/source-refs:batch")
+def resolve_source_refs(body: SourceRefBatchRequest) -> SourceRefBatchResponse:
+    """Batch-resolve opaque `SourceRef.id` strings (core/gaps.py) into evidence
+    a person can look at: a page crop, the quoted text beside it, and an
+    honest provenance label.
+
+    FIXTURE-BACKED, not a live call to fence-rag's Knowledge Platform: their
+    Discovery API is design-only today (frontend design §3), so this resolves
+    against a vendored copy of their own example fixture
+    (`fenceai/knowledge/fixtures/source-ref-examples.json`, seven records
+    built from real rows in their store). The request/response shape mirrors
+    what a real Discovery API implementation could satisfy later — batched,
+    because "ask for the batch call now, not later" (frontend design §3) — so
+    the frontend does not have to change when fence-rag's endpoint ships.
+
+    An id outside the seven-record fixture is not an error; it comes back in
+    `not_found` rather than failing the whole batch, exactly the shape a
+    review queue resolving many citations at once needs.
+    """
+    resolved, not_found = resolve_batch(body.ids)
+    return SourceRefBatchResponse(resolved=resolved, not_found=not_found)
 
 
 if WEB_DIR.is_dir():

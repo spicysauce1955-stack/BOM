@@ -1,0 +1,589 @@
+{
+  "_fixture": {
+    "purpose": "Seven GET /source-refs/{id} responses the Planning frontend can build against before the endpoint exists. Renders correctly for all seven and it renders the corpus.",
+    "status": "Design fixture. The endpoint is NOT implemented. Shapes are proposed; see ../source-refs-design.md.",
+    "generated_from": "workspace/indexes/evidence.db, extraction run of 2026-08-20, queried 2026-08-24",
+    "real_values": "document ids, version SHA-256s, page numbers, bboxes, pixel dimensions, asset SHA-256s, OCR confidences, quotes, reader names and cell readings are ALL taken from real rows in this store. Nothing in those fields is invented.",
+    "invented_values": [
+      "source_ref_id — the id scheme is proposed, not implemented, so these are illustrative digests",
+      "retain_until — no retention policy is agreed yet",
+      "image.crop.sha256 — no crop has been cut by the proposed poppler transform yet; page-image and region-image SHA-256s ARE real",
+      "image.crop.url / image.page.url — route shapes are proposed",
+      "record 4's cell_bbox_px — see the note on that record; the reading is real, the pixel box does not exist yet"
+    ],
+    "coverage": {
+      "1": "element_quote, PDF text layer, bbox present, NO pre-cut crop — the majority case (73,894 of 81,794 elements)",
+      "2": "element_quote, OCR'd table, low confidence, mojibake source document, pre-cut crop exists",
+      "3": "page, scanned NOA drawing sheet, table_not_reconstructed, no quote at all — where the structural numbers live",
+      "4": "visual_reading, a named agent reader's cell reading with row/col labels",
+      "5": "element_quote on a SUPERSEDED document whose filename says 'current'",
+      "6": "element_quote on a CAD PNG at 72 dpi where page units are pixels, at 14% OCR confidence",
+      "7": "derived — a hand-researched data/structural/*.json assertion. No document, no page, no image."
+    },
+    "contract_version": "0.1.0"
+  },
+
+  "source_refs": [
+    {
+      "source_ref_id": "sref_00000000000000000000000000000001",
+      "kind": "element_quote",
+      "contract_version": "0.1.0",
+      "retain_until": "2031-08-24",
+
+      "document": {
+        "document_id": "doc-24d0ddcfce69",
+        "title": "Vinyl Fence Installation Guideline (CertainTeed doc code 40-40-70743)",
+        "manufacturer": "CertainTeed",
+        "product_family": "General Bufftech fence and gate installation, incl. Florida HVHZ line post stiffener detail",
+        "doc_type": "installation_manual",
+        "corpus_track": "us",
+        "structural": false,
+        "source_path": "manuals/certainteed-bufftech/bufftech-installation-guide-40-40-70743.pdf",
+        "version": {
+          "version_id": "doc-24d0ddcfce69@00c965f58d30",
+          "sha256": "00c965f58d3030b7e7c8a6c8c0b7e99f1579c5599dc476c8f6a62dd88c6cdd58",
+          "file_size_bytes": 1411863,
+          "page_count": 44
+        },
+        "status": {
+          "version_status": "unknown",
+          "version_status_basis": "no explicit version marker in curated metadata",
+          "issue_date": null,
+          "expiration_date": null,
+          "superseded_by": [],
+          "same_content_as": []
+        }
+      },
+
+      "locus": {
+        "page_no": 5,
+        "page_width_pt": 612.0,
+        "page_height_pt": 792.0,
+        "bbox_pt": [117.69, 271.47, 266.99, 294.03],
+        "bbox_space": "poppler_display_top_left",
+        "rotation_already_applied": true
+      },
+
+      "text": {
+        "quote": "Note: Determine total pounds of concrete required based on\nnumber of posts required. Divide by 60 or 80 lb. bag.\nFigures based on 4x4 hole=10\", 5x5 hole=12\", both 30\" deep.",
+        "quote_is_verbatim_substring_of": "elements.text",
+        "text_source": "pdf_text_layer",
+        "ocr_confidence": null,
+        "element_id": "element-da08178108-0022",
+        "element_type": "paragraph",
+        "heading_path": ["General Information", "Concrete Requirements"]
+      },
+
+      "image": {
+        "status": "available",
+        "crop": {
+          "url": "/source-refs/sref_00000000000000000000000000000001/image",
+          "width_px": 423,
+          "height_px": 70,
+          "dpi": 200,
+          "bbox_px": [322, 750, 745, 820],
+          "pad_px": 4,
+          "sha256": "<computed at render time; no crop exists for this element today>"
+        },
+        "page": {
+          "url": "/source-refs/sref_00000000000000000000000000000001/page-image",
+          "width_px": 1700,
+          "height_px": 2200,
+          "dpi": 200,
+          "sha256": "aaec30d65cf63c9c498c30684f82a050c307d83ed65ec34c559cb2b89f26df18"
+        },
+        "tool_fingerprint": "poppler-<version>;png"
+      },
+
+      "warnings": [
+        { "code": "SOURCE_VERSION_STATUS_UNKNOWN", "params": {} }
+      ],
+
+      "_note": "The majority case. A clean text-layer paragraph with a bbox and no pre-cut crop — the crop must be rendered on demand. docs/curation/02-curation-schema.md §2.11 verified that a crop of this page's paragraph bbox renders exactly the three lines containing 30\" deep, which is what confirmed the origin and scale. Note also the substance: this is an installation manual stating a footing depth, and under the shipped source policy an installation manual is not an admissible source for a structural parameter. The source ref resolves regardless; admissibility is decided at resolution, not here."
+    },
+
+    {
+      "source_ref_id": "sref_00000000000000000000000000000002",
+      "kind": "element_quote",
+      "contract_version": "0.1.0",
+      "retain_until": "2031-08-24",
+
+      "document": {
+        "document_id": "doc-d70644123b57",
+        "title": "CertainTeed Bufftech Vinyl Fence Products Catalog (2014 edition)",
+        "manufacturer": "CertainTeed",
+        "product_family": null,
+        "doc_type": "cut_sheet",
+        "corpus_track": "us",
+        "structural": false,
+        "source_path": "manuals/certainteed-bufftech/bufftech-catalog-2014.pdf",
+        "version": {
+          "version_id": "doc-d70644123b57@4febd3af8b66",
+          "sha256": "4febd3af8b6667e02c65dd97037a36d574b10dedb3db0d4697cddc0a00fccbed",
+          "file_size_bytes": 3931036,
+          "page_count": 30
+        },
+        "status": {
+          "version_status": "unknown",
+          "version_status_basis": "no explicit version marker in curated metadata",
+          "issue_date": null,
+          "expiration_date": null,
+          "superseded_by": [],
+          "same_content_as": []
+        }
+      },
+
+      "locus": {
+        "page_no": 28,
+        "page_width_pt": 612.0,
+        "page_height_pt": 792.0,
+        "bbox_pt": [42.0, 96.96, 564.96, 747.84],
+        "bbox_space": "poppler_display_top_left",
+        "rotation_already_applied": true
+      },
+
+      "text": {
+        "quote": "Manchester | 1-9/16 96 | (Bottom) | Bottom | White, | Almond\nRacks up | 10 degrees 3' and | 4' high, 5 degrees | and 6' high",
+        "quote_is_verbatim_substring_of": "elements.ocr_text",
+        "text_source": "ocr",
+        "ocr_confidence": 76.52,
+        "element_id": "element-0d0c63f057-0005",
+        "element_type": "table",
+        "heading_path": ["T HE B UFFTECH A DVANTAGE", "LAWN AND GARDEN", "Picket | Width Reinforcement"]
+      },
+
+      "image": {
+        "status": "available",
+        "crop": {
+          "url": "/source-refs/sref_00000000000000000000000000000002/image",
+          "width_px": 1461,
+          "height_px": 1816,
+          "dpi": 200,
+          "bbox_px": [112, 265, 1573, 2081],
+          "pad_px": 4,
+          "sha256": "<computed at render time>"
+        },
+        "page": {
+          "url": "/source-refs/sref_00000000000000000000000000000002/page-image",
+          "width_px": 1700,
+          "height_px": 2200,
+          "dpi": 200,
+          "sha256": "7e77d2a5e3b86a676408ec71e1bc55523146097b4c821b09629cde6d53522158"
+        },
+        "tool_fingerprint": "poppler-<version>;png"
+      },
+
+      "warnings": [
+        { "code": "SOURCE_TEXT_FROM_OCR", "params": { "confidence": 76.52 } },
+        { "code": "SOURCE_TEXT_LAYER_MOJIBAKE", "params": { "pages_affected": 8 } },
+        { "code": "SOURCE_VERSION_STATUS_UNKNOWN", "params": {} }
+      ],
+
+      "_note": "The garbled-table case, and the one the interface most needs to render honestly. The quote is OCR at 76.52% from a document whose own text layer decodes to mojibake and is re-OCR'd per page. The pixel box [112,265,1573,2081] is what the normative transform in §4.1 of the design produces, and it reproduces the existing 1461x1816 region image exactly — one case, not a proof. This element is also the only place in the corpus that states racking degrees, and it is a marketing catalog."
+    },
+
+    {
+      "source_ref_id": "sref_00000000000000000000000000000003",
+      "kind": "page",
+      "contract_version": "0.1.0",
+      "retain_until": "2031-08-24",
+
+      "document": {
+        "document_id": "doc-c267c4cd071f",
+        "title": "Miami-Dade NOA 24-0117.05 - Extruded PVC Vinyl Fencing (Columbia, Imperial, Chesterfield, Breezewood, Brookline models)",
+        "manufacturer": "Barrette Outdoor Living, Inc.",
+        "product_family": null,
+        "doc_type": "engineering_approval",
+        "corpus_track": "us",
+        "structural": true,
+        "source_path": "manuals/barrette-outdoor-living/structural/noa-24-0117.05-vinyl-fencing.pdf",
+        "version": {
+          "version_id": "doc-c267c4cd071f@2f446717ee75",
+          "sha256": "2f446717ee750908059bed45ce06552636671944ca8c1cbbe922092e8d769c3c",
+          "file_size_bytes": 10376565,
+          "page_count": 17
+        },
+        "status": {
+          "version_status": "unknown",
+          "version_status_basis": "reset before re-deriving; no explicit version marker in curated metadata",
+          "issue_date": "04/24/2025",
+          "expiration_date": "03/13/2029",
+          "superseded_by": [],
+          "same_content_as": []
+        }
+      },
+
+      "locus": {
+        "page_no": 7,
+        "page_width_pt": 1224.0,
+        "page_height_pt": 792.0,
+        "bbox_pt": null,
+        "bbox_space": "poppler_display_top_left",
+        "rotation_already_applied": true
+      },
+
+      "text": {
+        "quote": null,
+        "quote_absent_reason": "no cell grid could be recovered from OCR on this page; the page image is the only faithful representation",
+        "quote_is_verbatim_substring_of": null,
+        "text_source": "ocr",
+        "ocr_confidence": 83.45,
+        "element_id": null,
+        "element_type": null,
+        "heading_path": []
+      },
+
+      "image": {
+        "status": "available",
+        "crop": null,
+        "page": {
+          "url": "/source-refs/sref_00000000000000000000000000000003/page-image",
+          "width_px": 3400,
+          "height_px": 2200,
+          "dpi": 200,
+          "sha256": "2ea74b80811dbabf4007ad47bf4987639a0282679ac2d8381da9017741353df3"
+        },
+        "tool_fingerprint": "poppler-<version>;png"
+      },
+
+      "warnings": [
+        { "code": "SOURCE_TABLE_NOT_RECONSTRUCTED", "params": {} },
+        { "code": "SOURCE_TEXT_FROM_OCR", "params": { "confidence": 83.45 } },
+        { "code": "SOURCE_VERSION_STATUS_UNKNOWN", "params": {} }
+      ],
+
+      "_note": "The case the frontend is most likely to get wrong, and the one that matters most: this is a PE-sealed approval drawing sheet, landscape 1224x792 pt, with no quote and no bbox. There is nothing to highlight. The whole page IS the evidence. A component that assumes text.quote is non-null, or that assumes portrait pages, breaks here. 73 pages in this corpus are in this state and they are where the footing depths and maximum post spacings live."
+    },
+
+    {
+      "source_ref_id": "sref_00000000000000000000000000000004",
+      "kind": "visual_reading",
+      "contract_version": "0.1.0",
+      "retain_until": "2031-08-24",
+
+      "document": {
+        "document_id": "doc-c267c4cd071f",
+        "title": "Miami-Dade NOA 24-0117.05 - Extruded PVC Vinyl Fencing (Columbia, Imperial, Chesterfield, Breezewood, Brookline models)",
+        "manufacturer": "Barrette Outdoor Living, Inc.",
+        "product_family": null,
+        "doc_type": "engineering_approval",
+        "corpus_track": "us",
+        "structural": true,
+        "source_path": "manuals/barrette-outdoor-living/structural/noa-24-0117.05-vinyl-fencing.pdf",
+        "version": {
+          "version_id": "doc-c267c4cd071f@2f446717ee75",
+          "sha256": "2f446717ee750908059bed45ce06552636671944ca8c1cbbe922092e8d769c3c",
+          "file_size_bytes": 10376565,
+          "page_count": 17
+        },
+        "status": {
+          "version_status": "unknown",
+          "version_status_basis": "reset before re-deriving; no explicit version marker in curated metadata",
+          "issue_date": "04/24/2025",
+          "expiration_date": "03/13/2029",
+          "superseded_by": [],
+          "same_content_as": []
+        }
+      },
+
+      "locus": {
+        "page_no": 17,
+        "page_width_pt": 1224.0,
+        "page_height_pt": 792.0,
+        "bbox_pt": null,
+        "bbox_space": "poppler_display_top_left",
+        "rotation_already_applied": true
+      },
+
+      "text": {
+        "quote": null,
+        "quote_absent_reason": "visual reading — there is no element and no text layer on this page to quote from",
+        "quote_is_verbatim_substring_of": null,
+        "text_source": null,
+        "ocr_confidence": null,
+        "element_id": null,
+        "element_type": null,
+        "heading_path": []
+      },
+
+      "reading": {
+        "reader": "calibration-A",
+        "reader_kind": "agent",
+        "table_kind": "wind_exposure_footing",
+        "row_index": 0,
+        "col_index": 2,
+        "row_label": "B",
+        "col_label": "MAX. POST SPACING",
+        "value_raw": "97\"",
+        "illegible": false,
+        "reading_confidence": "high",
+        "cell_bbox_px": null,
+        "cell_bbox_absent_reason": "the current reader records row and column labels but not a cell box in crop pixels; see the note",
+        "reader_notes": "Table has a bracket to the right of the rows grouping: rows 1-2 (B 30\"/97\", B 24\"/66\") bracketed as 'NON HVHZ'; rows 3-4 (C 36\"/88\", C 30\"/68\") bracketed as 'HVHZ AND NON HVHZ'; rows 5-6 (D 36\"/75\", D 30\"/56\") bracketed as 'HVHZ AND NON HVHZ'. Caption below table: 'HVHZ: MIAMI-DADE AND BROWARD COUNTIES / WIND EXPOSURES AS DEFINED IN THE ASCE 7-10'."
+      },
+
+      "image": {
+        "status": "available",
+        "crop": {
+          "url": "/source-refs/sref_00000000000000000000000000000004/image",
+          "width_px": 3400,
+          "height_px": 2200,
+          "dpi": 200,
+          "bbox_px": null,
+          "pad_px": 0,
+          "sha256": "e6801ab1c7bea036e4491992caf48c91affe9515f6fab2233dadde54bfa67359"
+        },
+        "page": {
+          "url": "/source-refs/sref_00000000000000000000000000000004/page-image",
+          "width_px": 3400,
+          "height_px": 2200,
+          "dpi": 200,
+          "sha256": "<page image asset>"
+        },
+        "tool_fingerprint": "poppler-<version>;png"
+      },
+
+      "warnings": [
+        { "code": "SOURCE_TABLE_NOT_RECONSTRUCTED", "params": {} },
+        { "code": "SOURCE_READING_NOT_HUMAN_REVIEWED", "params": { "reader_kind": "agent", "review_status": "cross_family_verified" } },
+        { "code": "SOURCE_CELL_BOX_MISSING", "params": {} }
+      ],
+
+      "_note": "Real reading, real crop hash, real reader. Two findings the frontend and the review queue both need to know: (1) the reading has NO cell box in crop pixels, because the readers that produced the 1,225 rows in table_read_candidates record row and column labels only. So a reviewer can be shown the crop but not the cell inside it, which is exactly what docs/curation §2.5.3 requires and does not yet exist. Producing that box is the first concrete gap this design surfaces in our own store. (2) reader_kind is 'agent' for all 1,225 rows — there is not one human reading in this corpus, and the review_status 'cross_family_verified' means two agents agreed, not that a person looked."
+    },
+
+    {
+      "source_ref_id": "sref_00000000000000000000000000000005",
+      "kind": "element_quote",
+      "contract_version": "0.1.0",
+      "retain_until": "2031-08-24",
+
+      "document": {
+        "document_id": "doc-3c8ab51045c7",
+        "title": "Miami-Dade NOA 23-0314.05 — CertainTeed Extruded PVC Vinyl Fencing (Columbia, Imperial, Chesterfield, Breezewood, Brookline) — current, includes PE-sealed structural drawing set Drawing 20-178 and Brookline 2-sheet set",
+        "manufacturer": "CertainTeed",
+        "product_family": null,
+        "doc_type": "hvhz_noa",
+        "corpus_track": "us",
+        "structural": true,
+        "source_path": "manuals/certainteed-bufftech/structural/NOA-23-0314.05-CertainTeed-Chesterfield-Columbia-Imperial-Breezewood-Brookline-current-2023-2029.pdf",
+        "version": {
+          "version_id": "doc-3c8ab51045c7@0f983c0c29b5",
+          "sha256": "0f983c0c29b5027e2407375845adf9dcb9ce4ecf9d51a1c0c777e87b50a0f248",
+          "file_size_bytes": 11954220,
+          "page_count": 17
+        },
+        "status": {
+          "version_status": "superseded",
+          "version_status_basis": "named as a previous approval by a later NOA",
+          "issue_date": "05/04/2023",
+          "expiration_date": "03/13/2029",
+          "superseded_by": [
+            { "document_id": "doc-c267c4cd071f", "basis": "named as previous approval by NOA 24-0117.05", "confidence": 0.9 },
+            { "document_id": "doc-bcb0feba5856", "basis": "named as previous approval by NOA 24-0117.05", "confidence": 0.9 },
+            { "document_id": "doc-ba7f4214e3a9", "basis": "named as previous approval by NOA 24-0117.05", "confidence": 0.9 },
+            { "document_id": "doc-9b9c8c07f948", "basis": "named as previous approval by NOA 24-0117.05", "confidence": 0.9 }
+          ],
+          "same_content_as": []
+        }
+      },
+
+      "locus": {
+        "page_no": 6,
+        "page_width_pt": 612.0,
+        "page_height_pt": 792.0,
+        "bbox_pt": null,
+        "bbox_space": "poppler_display_top_left",
+        "rotation_already_applied": true
+      },
+
+      "text": {
+        "quote": null,
+        "quote_absent_reason": "illustrative record — this entry exists to exercise the superseded-document rendering, and no specific element on this page is being cited",
+        "quote_is_verbatim_substring_of": null,
+        "text_source": "ocr",
+        "ocr_confidence": 87.93,
+        "element_id": null,
+        "element_type": null,
+        "heading_path": []
+      },
+
+      "image": {
+        "status": "available",
+        "crop": null,
+        "page": {
+          "url": "/source-refs/sref_00000000000000000000000000000005/page-image",
+          "width_px": 1700,
+          "height_px": 2200,
+          "dpi": 200,
+          "sha256": "2a94b731002eb8277378e44259c5f4de282a1e946e7dd8b9412470c1adfd399f"
+        },
+        "tool_fingerprint": "poppler-<version>;png"
+      },
+
+      "warnings": [
+        { "code": "SOURCE_DOCUMENT_SUPERSEDED", "params": { "superseded_by_count": 4, "expiration_date": "03/13/2029" } },
+        { "code": "SOURCE_TEXT_FROM_OCR", "params": { "confidence": 87.93 } }
+      ],
+
+      "_note": "The trap. The filename contains the word 'current' and the document is superseded — on the strong basis that a later NOA names it as a previous approval. It also still carries an expiration date of 2029, three years away, so 'not expired' and 'not current' are both true at once. This is the shape of the failure recorded in rationale.md §1: a promoted structural value backed by a superseded approval. Any interface that shows expiration_date without version_status_basis reproduces it."
+    },
+
+    {
+      "source_ref_id": "sref_00000000000000000000000000000006",
+      "kind": "element_quote",
+      "contract_version": "0.1.0",
+      "retain_until": "2031-08-24",
+
+      "document": {
+        "document_id": "doc-a738f09853b7",
+        "title": "augusta 8x6 privacy",
+        "manufacturer": "Weatherables",
+        "product_family": null,
+        "doc_type": "cad_detail",
+        "corpus_track": "us",
+        "structural": true,
+        "source_path": "manuals/weatherables/structural/weatherables-cad-augusta-8x6-privacy.png",
+        "version": {
+          "version_id": "doc-a738f09853b7@88612b32b98d",
+          "sha256": "88612b32b98d57e504ddaa3fa53873712ad490d471e2d1da8311893a148d022d",
+          "file_size_bytes": 15035,
+          "page_count": 1
+        },
+        "status": {
+          "version_status": "unknown",
+          "version_status_basis": "no explicit version marker in curated metadata",
+          "issue_date": null,
+          "expiration_date": null,
+          "superseded_by": [],
+          "same_content_as": []
+        }
+      },
+
+      "locus": {
+        "page_no": 1,
+        "page_width_pt": 592.0,
+        "page_height_pt": 569.0,
+        "page_units": "pixels",
+        "bbox_pt": [252.0, 62.0, 346.0, 91.0],
+        "bbox_space": "poppler_display_top_left",
+        "rotation_already_applied": true
+      },
+
+      "text": {
+        "quote": "5'x 5.5\" x 71.5\"",
+        "quote_is_verbatim_substring_of": "elements.ocr_text",
+        "text_source": "image_ocr",
+        "ocr_confidence": 14.0,
+        "element_id": "element-1b110be294-0001",
+        "element_type": "drawing_label",
+        "heading_path": []
+      },
+
+      "image": {
+        "status": "available",
+        "crop": {
+          "url": "/source-refs/sref_00000000000000000000000000000006/image",
+          "width_px": 102,
+          "height_px": 37,
+          "dpi": 72,
+          "bbox_px": [248, 58, 350, 95],
+          "pad_px": 4,
+          "sha256": "<computed at render time>"
+        },
+        "page": {
+          "url": "/source-refs/sref_00000000000000000000000000000006/page-image",
+          "width_px": 592,
+          "height_px": 569,
+          "dpi": 72,
+          "sha256": "beea475680590dc0caf36f8564320baf040244fab7d8c196a617d4fafc22713f"
+        },
+        "tool_fingerprint": "png-passthrough"
+      },
+
+      "warnings": [
+        { "code": "SOURCE_TEXT_FROM_OCR", "params": { "confidence": 14.0 } },
+        { "code": "SOURCE_OCR_LOW_CONFIDENCE", "params": { "page_mean_confidence": 32.19 } },
+        { "code": "SOURCE_VERSION_STATUS_UNKNOWN", "params": {} }
+      ],
+
+      "_note": "The 72-dpi case. Six documents in the corpus are CAD PNGs with no PDF at all, so there is nothing to render — the page image IS the source file, passed through. pages.width/height are PIXELS here, not points, and the arithmetic only works because 72/72 = 1; an implementation that hardcodes 200 dpi produces a crop 2.8x too large and off the page. Note also the honesty: the quoted dimension string is at 14% OCR confidence on a page averaging 32%. It is exactly the kind of value a person must look at rather than trust, which is what this endpoint is for."
+    },
+
+    {
+      "source_ref_id": "sref_00000000000000000000000000000007",
+      "kind": "derived",
+      "contract_version": "0.1.0",
+      "retain_until": "2031-08-24",
+
+      "document": null,
+
+      "derived_from": {
+        "origin": "curated_dataset",
+        "dataset_path": "data/structural/barrette-outdoor-living-structural.json",
+        "json_pointer": "/structural_reinforcement_supplement/simtek_molded_fence_post_and_bracket_system_per_NOA_24-0117.06/posts/0/steel_stiffener",
+        "value_raw": "1-1/2\" x 1-1/2\" x 0.065\", 16-gauge steel tube",
+        "dataset_note": "hand-researched JSON, regenerated into master-dataset.json by scripts/build_master.py; not a documents row"
+      },
+
+      "locus": null,
+
+      "text": {
+        "quote": null,
+        "quote_absent_reason": "derived evidence — the assertion is in a curated dataset, not in a document. There is no page and no pixels.",
+        "quote_is_verbatim_substring_of": null,
+        "text_source": null,
+        "ocr_confidence": null,
+        "element_id": null,
+        "element_type": null,
+        "heading_path": []
+      },
+
+      "image": {
+        "status": "not_applicable",
+        "reason": "derived evidence has no source page",
+        "crop": null,
+        "page": null,
+        "tool_fingerprint": null
+      },
+
+      "warnings": [
+        { "code": "SOURCE_NO_IMAGE_AVAILABLE", "params": { "reason": "derived" } },
+        { "code": "SOURCE_DERIVED_NOT_ACCEPTABLE", "params": { "detail": "derived evidence can never reach curation level 2" } }
+      ],
+
+      "_note": "A large share of the richest material in this repo — post reinforcement specs, gate hardware load ratings, racking capacities, profile dimensions — lives in hand-researched data/structural/*.json rather than in any extractable document region. It is real knowledge and it is addressable, and it has no picture. The interface must render this record as an honest 'no image, and here is why' rather than a broken thumbnail or a 404. docs/curation/02-curation-schema.md §2.5.3 rules that derived evidence can never be accepted; this record is what that rule looks like at the boundary."
+    }
+  ],
+
+  "error_shapes": {
+    "_note": "Failures are typed and carry the same envelope. A missing picture is never a 404 on the source ref itself.",
+    "source_not_fetched": {
+      "source_ref_id": "sref_…",
+      "kind": "page",
+      "image": {
+        "status": "source_not_fetched",
+        "reason": "the corpus subset holding this document is not present locally",
+        "subset": "structural",
+        "remedy": "python3 -m fence_evidence.cli fetch --subset structural",
+        "crop": null,
+        "page": null
+      },
+      "_note": "workspace/derived/ is a regenerable cache, not hosted content. A deployment that fetched only one subset has text evidence and no picture outside it. That is a real reduction in what the system promises and the interface must say so, not show a spinner."
+    },
+    "unknown_id": {
+      "status": 404,
+      "body": { "error": "source_ref_not_found", "source_ref_id": "sref_…" },
+      "_note": "Also returned when the id exists but belongs to another tenant. A 403 would confirm existence."
+    },
+    "render_failed": {
+      "image": {
+        "status": "failed",
+        "reason": "poppler returned a non-zero exit rendering page 7 of doc-…",
+        "crop": null,
+        "page": null
+      },
+      "_note": "Crop failure raises and is reported. It never silently returns the whole page instead, which would show the reviewer the wrong rectangle while looking correct."
+    }
+  }
+}
