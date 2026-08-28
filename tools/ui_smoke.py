@@ -3515,6 +3515,165 @@ fetch('/api/fence-models').then(r => r.json())
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.5)
 
+        # --- variant conditions: site.* becomes authorable, not just JSON ------
+        #
+        # The backend has matched and evaluated `site.hvhz` /
+        # `site.exposure_category` variant conditions since 2026-08-26; only the
+        # picker offered them. `writeSentence`'s blind `Number()` coercion meant
+        # adding the two fields without fixing it would have let a curator
+        # silently author `site.hvhz == 0` — valid, and meaning nothing. This
+        # checks the actual widgets render (a checkbox, a token select — not a
+        # number input left standing in for them), that what gets typed survives
+        # a save and reads back as the same TYPE (a JSON bool, not 0/1; a JSON
+        # string, not a coerced number), and that switching between the two
+        # NUMERIC fields keeps whatever was already typed — only a field's TYPE
+        # changing may reset the value.
+        c.js("document.querySelector('#tabs button[data-tab=\"models\"]').click(); 'ok'")
+        time.sleep(1.0)
+        c.click(*c.element_center("#btn-model-new"))
+        time.sleep(4.0)
+        c.click(*c.element_center('#model-gallery [data-template="blank"]'))
+        time.sleep(1.2)
+        c.js("""
+{
+  const id = document.querySelector('#model-head [data-f="id"]');
+  id.value = 'M-COND'; id.dispatchEvent(new Event('input'));
+  const name = document.querySelector('#model-head [data-f="name"]');
+  name.value = 'תנאי וריאנט'; name.dispatchEvent(new Event('input'));
+}
+'ok'""")
+        time.sleep(0.6)
+        # the only button in the spec picker before a variant exists — no
+        # "remove" button has appeared yet to disambiguate against
+        c.js("""
+document.querySelector('#model-spec-picker button:not(.remove-row)').click();
+'ok'""")
+        time.sleep(0.6)
+        fresh = c.js("""
+(() => {
+  const val = document.querySelector('#model-spec-picker [data-f="condition_value"]');
+  const fld = document.querySelector('#model-spec-picker [data-f="condition_field"]');
+  return {tag: val.tagName, type: val.type || null, value: val.value, field: fld.value};
+})()""")
+        check("a fresh variant starts as the numeric panel.height_mm >= 1800 sentence",
+              fresh == {"tag": "INPUT", "type": "number", "value": "1800",
+                        "field": "panel.height_mm"}, fresh)
+
+        def stored_condition():
+            return c.js("""
+(async () => {
+  const listing = await (await fetch('/api/fence-models')).json();
+  const row = listing.find((m) => m.id === 'M-COND');
+  const model = await (await fetch(`/api/fence-models/M-COND/${row.draft_version}`)).json();
+  return model.variants[0].condition;
+})()""")
+
+        # --- numeric -> numeric: the typed value must survive the switch -------
+        c.js("""
+{
+  const val = document.querySelector('#model-spec-picker [data-f="condition_value"]');
+  val.value = '2100'; val.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        c.js("""
+{
+  const fld = document.querySelector('#model-spec-picker [data-f="condition_field"]');
+  fld.value = 'panel.width_mm'; fld.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.4)
+        after_numeric_switch = c.js("""
+(() => {
+  const val = document.querySelector('#model-spec-picker [data-f="condition_value"]');
+  return {type: val.type, value: val.value};
+})()""")
+        check("switching panel.height_mm to panel.width_mm keeps the typed value",
+              after_numeric_switch == {"type": "number", "value": "2100"},
+              after_numeric_switch)
+        c.click(*c.element_center("#btn-model-save"))
+        time.sleep(1.5)
+        persisted_numeric = stored_condition()
+        check("the numeric switch round-trips through a save: width_mm >= 2100",
+              persisted_numeric == {
+                  "op": "cmp", "cmp": ">=",
+                  "left": {"op": "field", "path": "panel.width_mm"},
+                  "right": {"op": "lit", "value": 2100},
+              }, persisted_numeric)
+
+        # --- numeric -> boolean: a TYPE change, so the widget itself swaps to a
+        # checkbox and the value resets to a sensible default -------------------
+        c.js("""
+{
+  const fld = document.querySelector('#model-spec-picker [data-f="condition_field"]');
+  fld.value = 'site.hvhz'; fld.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.4)
+        hvhz_widget = c.js("""
+(() => {
+  const val = document.querySelector('#model-spec-picker [data-f="condition_value"]');
+  const cmp = document.querySelector('#model-spec-picker [data-f="condition_cmp"]');
+  return {tag: val.tagName, type: val.type, checked: val.checked,
+          cmps: [...cmp.options].map((o) => o.value)};
+})()""")
+        check("switching to site.hvhz renders a checkbox, unchecked, equality-only",
+              hvhz_widget == {"tag": "INPUT", "type": "checkbox", "checked": False,
+                               "cmps": ["==", "!="]}, hvhz_widget)
+        c.js("""
+{
+  const val = document.querySelector('#model-spec-picker [data-f="condition_value"]');
+  val.checked = true; val.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        c.click(*c.element_center("#btn-model-save"))
+        time.sleep(1.5)
+        persisted_hvhz = stored_condition()
+        check("a checked HVHZ box round-trips as an actual JSON boolean, not 0/1",
+              persisted_hvhz == {
+                  "op": "cmp", "cmp": "==",
+                  "left": {"op": "field", "path": "site.hvhz"},
+                  "right": {"op": "lit", "value": True},
+              } and persisted_hvhz["right"]["value"] is True, persisted_hvhz)
+
+        # --- boolean -> enum: another TYPE change, another widget swap ---------
+        c.js("""
+{
+  const fld = document.querySelector('#model-spec-picker [data-f="condition_field"]');
+  fld.value = 'site.exposure_category'; fld.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        time.sleep(0.4)
+        exposure_widget = c.js("""
+(() => {
+  const val = document.querySelector('#model-spec-picker [data-f="condition_value"]');
+  const cmp = document.querySelector('#model-spec-picker [data-f="condition_cmp"]');
+  return {tag: val.tagName, options: [...val.options].map((o) => o.value),
+          value: val.value, cmps: [...cmp.options].map((o) => o.value)};
+})()""")
+        check("switching to site.exposure_category renders a B/C/D token select",
+              exposure_widget == {"tag": "SELECT", "options": ["B", "C", "D"],
+                                   "value": "B", "cmps": ["==", "!="]}, exposure_widget)
+        c.js("""
+{
+  const val = document.querySelector('#model-spec-picker [data-f="condition_value"]');
+  val.value = 'C'; val.dispatchEvent(new Event('change'));
+}
+'ok'""")
+        c.click(*c.element_center("#btn-model-save"))
+        time.sleep(1.5)
+        persisted_exposure = stored_condition()
+        check("a chosen exposure category round-trips as the same string token",
+              persisted_exposure == {
+                  "op": "cmp", "cmp": "==",
+                  "left": {"op": "field", "path": "site.exposure_category"},
+                  "right": {"op": "lit", "value": "C"},
+              }, persisted_exposure)
+        c.shot("25b-model-variant-conditions.png")
+        c.click(*c.element_center("#btn-model-close"))
+        time.sleep(0.8)
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.5)
+
         # --- site conditions: the panel that makes a conditional rule reachable
         #
         # Until this panel existed, `PUT /projects/{id}/site` was the only way in,

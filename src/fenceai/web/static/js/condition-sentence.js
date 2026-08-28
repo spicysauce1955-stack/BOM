@@ -77,16 +77,22 @@ export function readSentence(expr) {
  * actual JSON boolean and an enum field an actual string token, for exactly
  * the same reason one level up: `site.hvhz == 0` also validates and also
  * means nothing, because `Number(value)` on a checkbox's "on"/"" is not the
- * bool the evaluator compares `site.hvhz` against. */
+ * bool the evaluator compares `site.hvhz` against.
+ *
+ * `value` arrives as whatever the caller's own control already produces —
+ * `valueInput.checked` (a real bool) for a boolean field, a `<select>`'s
+ * `.value` (already a string) for an enum one — so this does not re-coerce
+ * either: a fallback for a shape no reachable caller sends is untested by
+ * construction and reads as more defensive than it is. */
 export function writeSentence({ path, cmp, value }) {
   const cmps = cmpsFor(path);
   const okCmp = cmps.includes(cmp) ? cmp : cmps[0];
   const kind = fieldType(path);
   let lit;
   if (kind === "boolean") {
-    lit = value === true || value === "true";
+    lit = value === true;
   } else if (kind === "enum") {
-    lit = String(value);
+    lit = value;
   } else {
     const n = Number(value);
     lit = Number.isFinite(n) ? Math.round(n) : 0;

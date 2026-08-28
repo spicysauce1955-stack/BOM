@@ -95,6 +95,10 @@ console.log(JSON.stringify({
   // an enum field: read and round-trip
   read_exposure: readSentence(EXPOSURE_IS_C),
   round_trip_exposure: writeSentence(readSentence(EXPOSURE_IS_C)),
+  // ... and the same fallback, one field over: an ordering comparator on an
+  // enum is exactly as meaningless as one on a boolean
+  unknown_cmp_exposure: writeSentence(
+    {path: "site.exposure_category", cmp: "<=", value: "C"}),
 }));
 """
 
@@ -284,6 +288,10 @@ def test_writing_false_stays_false_not_a_falsy_zero(s):
 
 def test_an_unknown_comparison_on_a_boolean_falls_back_to_equality(s):
     assert s["unknown_cmp_hvhz"]["cmp"] == "=="
+
+
+def test_an_unknown_comparison_on_an_enum_falls_back_to_equality(s):
+    assert s["unknown_cmp_exposure"]["cmp"] == "=="
 
 
 def test_an_enum_condition_reads_and_round_trips_as_the_same_token(s):

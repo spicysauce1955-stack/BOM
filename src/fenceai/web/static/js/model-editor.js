@@ -733,19 +733,24 @@ function conditionSentence(variant) {
     fieldSel.appendChild(option(path, t(`model.condition.field.${path}`), said.path === path));
   if (!CONDITION_FIELD_CHOICES.includes(said.path))
     fieldSel.appendChild(option(said.path, said.path, true));
-  // Switching field can switch TYPE (a number to a checkbox to a select), so
-  // this rebuilds the whole row rather than patching it in place — the same
-  // reason `gapControl`'s overlap checkbox rerenders its own label. The new
-  // field's own default is written rather than reusing the old literal: an
-  // old numeric value carried onto `site.hvhz` would still coerce through
-  // `writeSentence`, but as `Boolean(37)` — true, and not because anyone said
-  // HVHZ applies.
+  // Switching field can switch TYPE (a number to a checkbox to a select), and
+  // ONLY then does this rebuild the row — the same reason `gapControl`'s
+  // overlap checkbox rerenders its own label. Switching among fields of the
+  // SAME type (today, only panel.height_mm <-> panel.width_mm) must NOT reset
+  // what the curator already typed: `write()` still reads the mounted
+  // `valueInput`/`cmpSel`, unchanged, so a height typed as 2100 survives a
+  // switch to width exactly as it did before this module knew about `site.*`.
+  // A type change writes the new field's OWN default rather than reusing the
+  // old literal: an old numeric value carried onto `site.hvhz` would still
+  // coerce through `writeSentence`, but as `Boolean(37)` — true, and not
+  // because anyone said HVHZ applies.
   fieldSel.addEventListener("change", () => {
     const nextKind = fieldType(fieldSel.value);
+    if (nextKind === kind) { write(); return; }
     const nextCmps = cmpsFor(fieldSel.value);
     variant.condition = writeSentence({
       path: fieldSel.value,
-      cmp: nextCmps.includes(said.cmp) ? said.cmp : nextCmps[0],
+      cmp: nextCmps.includes(cmpSel.value) ? cmpSel.value : nextCmps[0],
       value: nextKind === "boolean" ? false
            : nextKind === "enum" ? (CONDITION_ENUM_OPTIONS[fieldSel.value]?.[0] ?? "")
            : 0,
