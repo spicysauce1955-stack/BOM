@@ -74,9 +74,11 @@ import {
 } from "./js/evidence.js";
 
 const REF_1 = "sref_00000000000000000000000000000001";  // element_quote, no pre-cut crop
+const REF_2 = "sref_00000000000000000000000000000002";  // element_quote, OCR'd table, mojibake doc
 const REF_3 = "sref_00000000000000000000000000000003";  // page, no quote at all
 const REF_4 = "sref_00000000000000000000000000000004";  // visual_reading, agent reader
 const REF_5 = "sref_00000000000000000000000000000005";  // element_quote, superseded doc
+const REF_6 = "sref_00000000000000000000000000000006";  // element_quote, 72dpi CAD PNG
 const REF_7 = "sref_00000000000000000000000000000007";  // derived, no document, no image
 
 const out = {};
@@ -113,9 +115,11 @@ out.third_fetched = third;
 
 // --- the seven fixture records, rendered for real ---
 out.record_1 = recordHtml(BY_ID[REF_1]);
+out.record_2 = recordHtml(BY_ID[REF_2]);
 out.record_3 = recordHtml(BY_ID[REF_3]);
 out.record_4 = recordHtml(BY_ID[REF_4]);
 out.record_5 = recordHtml(BY_ID[REF_5]);
+out.record_6 = recordHtml(BY_ID[REF_6]);
 out.record_7 = recordHtml(BY_ID[REF_7]);
 out.all_kinds = FIXTURE.source_refs.map((r) => recordHtml(r)).join("\\n");
 
@@ -219,6 +223,56 @@ def test_the_visual_reading_shows_the_reader_and_the_missing_cell_box(rendered):
     assert '97&quot;' in html or '97"' in html
     assert "no cell box" in html.lower() or "cell" in html.lower()
     assert "row and column labels but not a cell box" in html
+
+
+def test_the_mojibake_ocr_table_shows_its_real_confidence_and_the_mojibake_warning(rendered):
+    """Record #2: an OCR'd table at 76.52% confidence from a document whose own
+    text layer decodes to mojibake and is re-OCR'd per page — "the case the
+    interface most needs to render honestly" per the fixture's own note."""
+    html = rendered["record_2"]
+    # the real OCR confidence value, not a rounded or invented one
+    assert "76.52" in html
+    assert "ocr" in html
+    # SOURCE_TEXT_FROM_OCR{confidence} and SOURCE_TEXT_LAYER_MOJIBAKE{pages_affected}
+    assert "OCR" in html and "76.52" in html
+    assert "mojibake" in html.lower() and "8" in html
+    # the real crop dimensions the fixture carries for this record
+    assert "1461" in html and "1816" in html
+
+
+def test_the_superseded_document_never_shows_expiration_without_its_basis(rendered):
+    """Record #5, "the trap": a document named 'current' in its own filename,
+    superseded on the strength of a LATER NOA naming it — and it still carries
+    an expiration date three years out, so 'not expired' and 'not current' are
+    both true at once. The fixture's own rationale: "Any interface that shows
+    expiration_date without version_status_basis reproduces it." So both, or
+    neither, must be asserted — either alone passes against the exact defect
+    this record exists to catch."""
+    html = rendered["record_5"]
+    assert "evidence-status-superseded" in html
+    assert "named as a previous approval by a later NOA" in html
+    assert "03/13/2029" in html
+    # the superseded-by count is real (4 later approvals name it), not omitted
+    assert "4" in html
+    assert "SOURCE_DOCUMENT_SUPERSEDED" not in html   # the CODE never renders...
+    assert "superseded" in html.lower()               # ...but its sentence does
+
+
+def test_the_72dpi_cad_record_shows_its_own_dpi_not_the_200dpi_baseline(rendered):
+    """Record #6: six documents in the corpus are CAD PNGs with no PDF at all,
+    where `page.width/height` are PIXELS rather than points and the arithmetic
+    only works because 72/72 == 1 (source-refs-design.md §4.1's dpi trap — "an
+    implementation that hardcodes 200 dpi produces a crop 2.8x too large and
+    off the page"). The real crop is 102×37px at 72dpi, nothing like the
+    200dpi majority case, and the 14% OCR confidence is the point of the
+    record: "exactly the kind of value a person must look at rather than
+    trust"."""
+    html = rendered["record_6"]
+    assert "72dpi" in html
+    assert "200dpi" not in html
+    assert "102" in html and "37" in html   # the real crop pixel dimensions
+    assert "14" in html                      # the real (low) OCR confidence
+    assert "5'x 5.5" in html or "5&#39;x 5.5" in html   # the quoted dimension string
 
 
 def test_the_derived_record_has_no_document_and_no_image_and_is_valid(rendered):

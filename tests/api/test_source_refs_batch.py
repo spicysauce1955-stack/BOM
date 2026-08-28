@@ -122,3 +122,19 @@ def test_an_id_the_fixture_does_not_carry_is_reported_not_failed(client):
 def test_an_empty_batch_is_a_valid_empty_result(client):
     body = client.post("/api/source-refs:batch", json={"ids": []}).json()
     assert body == {"resolved": [], "not_found": []}
+
+
+def test_a_malformed_batch_request_is_refused_not_500d(client):
+    """`SourceRefBatchRequest.ids` is `list[str]` — a request that does not
+    even have the right SHAPE (never mind unknown ids, which is the honest,
+    non-error case above) must be a 422 from FastAPI/Pydantic's own
+    validation, not a 500 from something downstream assuming a list."""
+    not_a_list = client.post("/api/source-refs:batch", json={"ids": "not-a-list"})
+    assert not_a_list.status_code == 422
+
+    missing_field = client.post("/api/source-refs:batch", json={})
+    assert missing_field.status_code == 422
+
+    wrong_element_type = client.post(
+        "/api/source-refs:batch", json={"ids": [1, 2, 3]})
+    assert wrong_element_type.status_code == 422

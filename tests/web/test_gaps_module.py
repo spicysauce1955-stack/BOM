@@ -85,9 +85,19 @@ const curator = gap({
   would_close: "A GateModel with <script>alert(1)</script> handedness & swing.",
 });
 
+// A citation whose `id`/`belongs_to` are themselves XSS-shaped — `SourceRef`
+// fields arrive from the Knowledge Platform and are untrusted data by
+// contract, and `citesHtml` puts them inside an HTML-attribute context
+// (`data-evidence-id="..."`) as well as text content, which is a second place
+// for an unescaped quote or angle bracket to break out.
+const hostileCites = gap({
+  cites: [{ id: '"><script>alert(2)</script>', belongs_to: 'sha256:"><img src=x onerror=alert(3)>' }],
+});
+
 const out = {};
 await setLocale("he");
 out.he = gapsPanelHtml([gap({}), curator]);
+out.he_hostile_cites = gapRowHtml(hostileCites);
 out.he_empty_silent = gapsPanelHtml([]);
 out.he_empty_stated = gapsPanelHtml([], { empty: true });
 out.he_kinds = KINDS.map((k) => gapRowHtml(gap({
@@ -216,6 +226,44 @@ def test_an_entity_subject_is_isolated_as_an_identifier(panels):
     he = panels["he"]
     assert '<bdi class="sku">gate@run1:2000-3000</bdi>' in he
     assert '<bdi class="sku">max_span_mm</bdi>' in he
+
+
+def test_a_citation_carries_the_evidence_link_contract_js_evidence_js_depends_on(panels):
+    """`js/evidence.js`'s click delegation (module header, "DOM ownership")
+    listens for `.evidence-link[data-evidence-id]` anywhere in the document —
+    a shared, documented attribute contract, not a reach into `gaps.js`'s own
+    DOM. If `citesHtml` stops emitting it, every citation in the gaps panel
+    goes back to being inert text and no click anywhere opens the viewer,
+    silently — nothing else in this suite would catch that."""
+    he = panels["he"]
+    assert 'class="evidence-link sku"' in he
+    assert 'data-evidence-id="sr_91"' in he
+    assert 'data-belongs-to="sha256:deadbeef"' in he
+    # the visible text still leads with `belongs_to`, same as `attribution()`
+    # in doc-warnings.js — `gaps.js`'s own rule, unchanged by the click markup
+    assert "<bdi>sha256:deadbeef</bdi>" in he
+
+
+def test_a_citation_with_xss_shaped_id_and_belongs_to_is_escaped_everywhere_it_lands(panels):
+    """`SourceRef.id`/`belongs_to` are untrusted Knowledge Platform data
+    (CLAUDE.md), and the click markup puts them in TWO places at once: an HTML
+    ATTRIBUTE (`data-evidence-id="..."`) and element text. A regression here
+    is a live XSS hole reachable by any citation on the gaps panel — mirrors
+    `test_curator_text_reaching_innerhtml_goes_through_esc`'s rigor (raw-tag
+    absence AND escaped-entity presence), applied to `cites` instead of
+    `would_close`."""
+    html = panels["he_hostile_cites"]
+    # neither the id nor belongs_to ever appear as live markup
+    assert "<script>" not in html
+    assert "<img src=x" not in html
+    # the attribute itself cannot be broken out of by a literal `">`
+    assert '"><script>' not in html
+    assert '"><img' not in html
+    # ...and the escaped forms are present, in the attribute and in the text
+    assert "data-evidence-id=\"&quot;&gt;&lt;script&gt;alert(2)&lt;/script&gt;\"" in html
+    assert "data-belongs-to=\"sha256:&quot;&gt;&lt;img src=x onerror=alert(3)&gt;\"" in html
+    assert "&lt;script&gt;alert(2)&lt;/script&gt;" in html
+    assert "&lt;img src=x onerror=alert(3)&gt;" in html
 
 
 def test_the_sentence_comes_from_the_bundle_and_a_code_with_no_entry_shows_itself(panels):

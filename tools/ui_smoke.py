@@ -1687,6 +1687,56 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         c.shot("18d-panel-annexe.png")
         c.shot("18c-panel-vinyl.png")
 
+        # --- evidence viewer (frontend design §3): a citation becomes clickable ---
+        # `#panel-annexe` just proved it carries the document-scoped CAUTION
+        # `quoted` above — the same one M-VINYL authors with a real citation
+        # (`DEMO-src-vinyl-1`, fencemodel/demo.py). `gaps.js`/`doc-warnings.js`
+        # render every citation as `.evidence-link`; this is the click that
+        # `js/evidence.js` promises to turn into an open viewer.
+        evidence_link = c.js("""
+document.querySelector('#panel-annexe .evidence-link')?.dataset.evidenceId || null""")
+        check("the annexe's cited warning renders as a clickable evidence link",
+              evidence_link == "DEMO-src-vinyl-1", evidence_link)
+        c.click(*c.element_center("#panel-annexe .evidence-link"))
+        opened = wait_for(c, """
+(() => {
+  const overlay = document.querySelector('#evidence-viewer .evidence-overlay');
+  if (!overlay) return null;
+  return {
+    hash: location.hash,
+    id_shown: overlay.querySelector('.evidence-head + .meta bdi.sku')?.textContent || '',
+  };
+})()""")
+        check("clicking a citation opens the viewer for the id that was clicked, "
+              "and the deep-link hash follows it",
+              opened is not None and opened["hash"] == "#evidence=DEMO-src-vinyl-1"
+              and opened["id_shown"] == "DEMO-src-vinyl-1", opened)
+        # `DEMO-src-vinyl-1` is a demo-only id, deliberately not one of the seven
+        # fence-rag records the fixture-backed resolver knows — the honest "not
+        # found" state IS the correct answer here, and its appearance proves the
+        # click, the batch POST and the re-render all actually completed rather
+        # than the panel sitting frozen on "Resolving…" forever. Hebrew is the
+        # default locale and the toggle to English does not happen until much
+        # later in this run, so the check reads the bundle's OWN Hebrew
+        # `evidence.not_found` sentence rather than the English one — the
+        # English-locale version of this same claim is asserted at the very
+        # end of the suite, against the deep-linked record.
+        not_found = wait_for(c, """
+(document.querySelector('#evidence-viewer .evidence-overlay')?.textContent || '')
+  .includes('לא ניתן היה לפענח')""")
+        check("an id outside the fixture renders the honest 'not found' state, "
+              "not a blank or frozen panel", bool(not_found))
+        c.shot("18e-evidence-viewer-open.png")
+        # closing it clears both the panel and the deep-link hash together
+        c.click(*c.element_center("#evidence-viewer .evidence-close"))
+        time.sleep(0.3)
+        closed = c.js("""({
+  empty: document.getElementById('evidence-viewer').innerHTML === '',
+  hash: location.hash,
+})""")
+        check("closing the evidence viewer clears the panel and the hash",
+              closed["empty"] and closed["hash"] == "", closed)
+
         # the panel is priced from the model, not from a fixed shape: M-LEGACY's
         # two-slot panel and M-SLAT's three-slot one must not render the same.
         # The bay goes back to the tab's own defaults with it: the display-unit
@@ -4032,6 +4082,47 @@ document.querySelector('#gaps .panel.gaps')
               and set(en_drawn["dims"]) == {"2500 mm", "1800 mm", "20 mm", "120 mm"}
               and "20 gaps" in en_drawn["gaps"])
         c.shot("05b-panel-elevation-en.png")
+
+        # --- evidence viewer: the deep link round-trips through a real reload --
+        # Earlier, clicking a citation proved the open/close wiring and the
+        # honest "not found" degrade for an id outside the fixture. This is the
+        # other half frontend design §3 asks for — "deep-linkable, so a
+        # citation is shareable" — and it has to be proved against an actual
+        # navigation, not `location.hash =` from within the running page: a
+        # page loaded FRESH with `#evidence=<id>` in the URL must open the
+        # viewer on its own, before any click, with the real resolved content
+        # a person who was sent the link would need to see. Last in the run on
+        # purpose: nothing after this depends on the project/tab state a full
+        # reload discards.
+        c.cmd("Page.navigate", url=(
+            f"http://localhost:{PORT}/#evidence="
+            "sref_00000000000000000000000000000001"))
+        time.sleep(3)
+        c.js("window.confirm = () => true; window.alert = () => {}; undefined")
+        deep = wait_for(c, """
+(() => document.querySelector('#evidence-viewer .evidence-body') ? true : false)()""",
+                         timeout=10)
+        check("a URL carrying #evidence=<id> opens the viewer on load, unclicked",
+              bool(deep))
+        deep_content = c.js("""
+(() => {
+  const overlay = document.querySelector('#evidence-viewer .evidence-overlay');
+  return {
+    hash: location.hash,
+    text: overlay ? overlay.textContent : '',
+  };
+})()""")
+        # real content from the real vendored fixture record — not a blank
+        # shell, not the "not found" degrade the demo id produced above
+        check("the deep-linked record shows its real document, quote and "
+              "provenance state",
+              deep_content["hash"] == "#evidence=sref_00000000000000000000000000000001"
+              and "CertainTeed" in deep_content["text"]
+              and "30" in deep_content["text"]
+              and "extracted" in deep_content["text"].lower()
+              and "could not be resolved" not in deep_content["text"],
+              deep_content and deep_content["text"][:200])
+        c.shot("21-evidence-deep-link.png")
 
         check("no uncaught page errors", not c.page_errors)
         if c.page_errors:
