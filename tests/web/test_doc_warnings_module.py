@@ -388,9 +388,16 @@ def test_belongs_to_leads_the_citation_and_id_rides_along(rendered):
     """§1.1: `id` is opaque to this side in every respect except `belongs_to`.
     `belongs_to` is the only field meaningful to a curator holding the same
     snapshot, so it has to be what a reader sees first — `gaps.js`'s
-    `citesHtml` already gets this right; this module inverted it."""
+    `citesHtml` already gets this right; this module inverted it.
+
+    The citation is now a clickable `.evidence-link` (js/evidence.js) carrying
+    `id` in a `data-evidence-id` attribute ahead of the visible text for
+    markup reasons, so the ordering claim is checked on what a READER sees —
+    the `<bdi>` content — not on raw substring position in the whole tag."""
     cited = rendered["cited"]
-    assert cited.index("sha256:doc-a") < cited.index("SRC-7")
+    assert 'data-evidence-id="SRC-7"' in cited
+    assert 'data-belongs-to="sha256:doc-a"' in cited
+    assert "<bdi>sha256:doc-a · SRC-7</bdi>" in cited
 
 
 # --- the collapse ------------------------------------------------------------

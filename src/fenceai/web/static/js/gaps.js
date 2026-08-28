@@ -74,12 +74,20 @@ function subjectHtml(subject) {
  *  A run-produced gap usually cites nothing — the evidence for "no row covers
  *  this" is the absence itself — so the empty case is the normal one and must
  *  not render an empty "Evidence:" label.
+ *
+ *  Each citation is now a `.evidence-link` button carrying the opaque id and
+ *  `belongs_to` as data attributes — the shared, documented contract
+ *  `js/evidence.js` alone interprets (its module header explains why this is
+ *  not a cross-module DOM reach). This module still returns a pure HTML
+ *  string and wires no listener itself.
  */
 function citesHtml(cites) {
   const refs = (cites || []).filter((c) => c && (c.belongs_to || c.id));
   if (!refs.length) return "";
   return `<div class="gap-cites meta">${esc(t("gaps.cites"))} `
-    + refs.map((c) => `<bdi class="sku">${esc(c.belongs_to || c.id)}</bdi>`).join(", ")
+    + refs.map((c) => `<button type="button" class="evidence-link sku" `
+        + `data-evidence-id="${esc(c.id)}" data-belongs-to="${esc(c.belongs_to || "")}">`
+        + `<bdi>${esc(c.belongs_to || c.id)}</bdi></button>`).join(", ")
     + `</div>`;
 }
 

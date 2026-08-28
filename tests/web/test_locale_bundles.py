@@ -289,6 +289,54 @@ def test_backend_code_list_is_current():
                               "listed_but_gone": sorted(known - emitted)}
 
 
+# The evidence viewer's own half of the split (js/evidence.js `warningsHtml`,
+# fenceai/knowledge/discovery_stub.py): a `SourceWarning.code + params` the
+# Knowledge/Discovery side authors is a PARAMETERISED SENTENCE this repo
+# translates — source-refs-design.md §3.2 is explicit these are "parameterised
+# sentences we author, not text lifted from a document, so translating them is
+# tractable", unlike a `DocumentWarning`'s verbatim quote (which this file
+# deliberately never key-checks, per the module docstring). Rendered as
+# `sourcewarning.<code>`, its own prefix rather than `warning.<code>`, because
+# these codes are authored on the OTHER side of the boundary and are not
+# `StrategyWarning`/`CritiqueNote` codes this engine emits — conflating the two
+# namespaces would let a Discovery code collide with one of ours silently.
+SOURCE_WARNING_CODES = [
+    "SOURCE_VERSION_STATUS_UNKNOWN",
+    "SOURCE_TEXT_FROM_OCR",
+    "SOURCE_TEXT_LAYER_MOJIBAKE",
+    "SOURCE_TABLE_NOT_RECONSTRUCTED",
+    "SOURCE_READING_NOT_HUMAN_REVIEWED",
+    "SOURCE_CELL_BOX_MISSING",
+    "SOURCE_DOCUMENT_SUPERSEDED",
+    "SOURCE_OCR_LOW_CONFIDENCE",
+    "SOURCE_NO_IMAGE_AVAILABLE",
+    "SOURCE_DERIVED_NOT_ACCEPTABLE",
+]
+
+
+def test_every_source_warning_code_has_locale_entries():
+    en, he = _bundles()
+    for code in SOURCE_WARNING_CODES:
+        assert f"sourcewarning.{code}" in en and f"sourcewarning.{code}" in he, code
+
+
+def test_source_warning_code_list_is_current():
+    """The fixture-side twin of `test_backend_code_list_is_current` above: these
+    codes are not emitted by any Python source this repo controls (they arrive
+    verbatim from the vendored fixture, `discovery_stub.py`'s whole point), so
+    the thing to scan for drift is the fixture itself. A future 8th record
+    carrying a code missing from `SOURCE_WARNING_CODES` fails here instead of
+    silently falling back to raw English on screen."""
+    fixture_path = (STATIC.parent.parent / "knowledge" / "fixtures"
+                     / "source-ref-examples.json")
+    fixture = json.loads(fixture_path.read_text())
+    emitted = {w["code"] for rec in fixture["source_refs"]
+               for w in rec.get("warnings", [])}
+    known = set(SOURCE_WARNING_CODES)
+    assert emitted == known, {"unlisted": sorted(emitted - known),
+                              "listed_but_gone": sorted(known - emitted)}
+
+
 UNIT_LITERAL_ALLOWED = {
     "units.mm", "units.cm", "units.toggle_title",  # the unit vocabulary itself
     # these two document the typed-length suffixes ("250cm") — not rendered values

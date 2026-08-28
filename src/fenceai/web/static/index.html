@@ -296,6 +296,14 @@
     </section>
   </main>
 
+  <!-- ============ evidence viewer ============
+       Owned entirely by js/evidence.js (frontend design §3). Sits outside
+       every tab section because a citation can appear on any of them — gaps
+       in the canvas tab, quoted document warnings on the structure/panel/BOM
+       tabs — and the viewer must open over whichever one is active. Empty
+       when closed; js/evidence.js is the only module that writes here. -->
+  <div id="evidence-viewer"></div>
+
   <script type="module" src="app.js"></script>
 </body>
 </html>
