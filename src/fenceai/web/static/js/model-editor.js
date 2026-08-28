@@ -32,7 +32,8 @@ import {
   option, updateAdvancedUi,
 } from "./builder-ui.js";
 import {
-  CONDITION_CMPS, CONDITION_FIELDS, readSentence, writeSentence,
+  cmpsFor, CONDITION_ENUM_OPTIONS, CONDITION_FIELDS, fieldType, readSentence,
+  SITE_CONDITION_FIELDS, writeSentence,
 } from "./condition-sentence.js";
 import { renderElevation } from "./elevation.js";
 import { loadModelListing, refreshModelListing } from "./fence-models.js";
@@ -692,6 +693,12 @@ function renderSpecPicker() {
   }
 }
 
+// Every field the sentence can offer, in picker order: the bay's own numeric
+// facts first, then the site's — two different vocabularies, kept as two
+// exports on the module that owns them (`condition-sentence.js`) and joined
+// only here, where the picker is built.
+const CONDITION_FIELD_CHOICES = [...CONDITION_FIELDS, ...SITE_CONDITION_FIELDS];
+
 /** "Applies when panel height is at least 1800 mm" — three controls over the
  *  same `Expr` the JSON box below holds.
  *
@@ -705,39 +712,78 @@ function conditionSentence(variant) {
     wrap.appendChild(el("span", { class: "meta", text: t("model.condition_only_json") }));
     return wrap;
   }
-  const isLength = said.path.endsWith("_mm");
+  const kind = fieldType(said.path);
+  const isLength = kind === "number" && said.path.endsWith("_mm");
   const write = () => {
     variant.condition = writeSentence({
       path: fieldSel.value, cmp: cmpSel.value,
-      // a length crosses the display-unit boundary here, like every other
-      // length field — a height typed as 180 in cm is 1800 mm in the condition
-      value: isLength ? (toMm(valueInput.value) ?? 0)
+      value: kind === "boolean" ? valueInput.checked
+           : kind === "enum" ? valueInput.value
+           // a length crosses the display-unit boundary here, like every
+           // other length field — a height typed as 180 in cm is 1800 mm in
+           // the condition
+           : isLength ? (toMm(valueInput.value) ?? 0)
                       : Math.round(valueInput.valueAsNumber || 0),
     });
     touch();
   };
   wrap.appendChild(el("span", { class: "meta", text: t("model.condition_applies_when") }));
   const fieldSel = el("select", { "data-f": "condition_field" });
-  for (const path of CONDITION_FIELDS)
+  for (const path of CONDITION_FIELD_CHOICES)
     fieldSel.appendChild(option(path, t(`model.condition.field.${path}`), said.path === path));
-  if (!CONDITION_FIELDS.includes(said.path))
+  if (!CONDITION_FIELD_CHOICES.includes(said.path))
     fieldSel.appendChild(option(said.path, said.path, true));
-  fieldSel.addEventListener("change", write);
+  // Switching field can switch TYPE (a number to a checkbox to a select), and
+  // ONLY then does this rebuild the row — the same reason `gapControl`'s
+  // overlap checkbox rerenders its own label. Switching among fields of the
+  // SAME type (today, only panel.height_mm <-> panel.width_mm) must NOT reset
+  // what the curator already typed: `write()` still reads the mounted
+  // `valueInput`/`cmpSel`, unchanged, so a height typed as 2100 survives a
+  // switch to width exactly as it did before this module knew about `site.*`.
+  // A type change writes the new field's OWN default rather than reusing the
+  // old literal: an old numeric value carried onto `site.hvhz` would still
+  // coerce through `writeSentence`, but as `Boolean(37)` — true, and not
+  // because anyone said HVHZ applies.
+  fieldSel.addEventListener("change", () => {
+    const nextKind = fieldType(fieldSel.value);
+    if (nextKind === kind) { write(); return; }
+    const nextCmps = cmpsFor(fieldSel.value);
+    variant.condition = writeSentence({
+      path: fieldSel.value,
+      cmp: nextCmps.includes(cmpSel.value) ? cmpSel.value : nextCmps[0],
+      value: nextKind === "boolean" ? false
+           : nextKind === "enum" ? (CONDITION_ENUM_OPTIONS[fieldSel.value]?.[0] ?? "")
+           : 0,
+    });
+    touch({ rerender: true });
+  });
   wrap.appendChild(fieldSel);
 
   const cmpSel = el("select", { "data-f": "condition_cmp" });
-  for (const cmp of CONDITION_CMPS)
+  for (const cmp of cmpsFor(said.path))
     cmpSel.appendChild(option(cmp, t(`model.condition.cmp.${cmp}`), said.cmp === cmp));
   cmpSel.addEventListener("change", write);
   wrap.appendChild(cmpSel);
 
-  const valueInput = el("input", {
-    type: "number", "data-f": "condition_value", step: isLength ? inputStep() : "1",
-    value: String(isLength ? toDisplayValue(said.value) : said.value),
-  });
+  let valueInput;
+  if (kind === "boolean") {
+    valueInput = el("input", { type: "checkbox", "data-f": "condition_value" });
+    valueInput.checked = said.value === true;
+  } else if (kind === "enum") {
+    valueInput = el("select", { "data-f": "condition_value" });
+    for (const token of CONDITION_ENUM_OPTIONS[said.path] ?? [])
+      valueInput.appendChild(option(token, t(`site.exposure.${token}`), said.value === token));
+  } else {
+    valueInput = el("input", {
+      type: "number", "data-f": "condition_value", step: isLength ? inputStep() : "1",
+      value: String(isLength ? toDisplayValue(said.value) : said.value),
+    });
+  }
   valueInput.addEventListener("change", write);
-  wrap.appendChild(isLength ? field("model.condition_value_mm", valueInput)
-                            : field("model.condition_value", valueInput));
+  wrap.appendChild(
+    kind === "boolean" ? field("model.condition_value", valueInput)
+    : isLength ? field("model.condition_value_mm", valueInput)
+    : field("model.condition_value", valueInput));
   return wrap;
 }
 

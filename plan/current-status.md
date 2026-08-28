@@ -1,5 +1,37 @@
 # Current status
 
+## The model editor's condition picker learns `site.*` (2026-08-28)
+
+Closes the trap `plan/current-status.md` recorded on 2026-08-26: the panel
+editor's condition dropdown was left unchanged because `writeSentence`
+coerced every literal through `Number()`, so adding `site.hvhz` /
+`site.exposure_category` to the picker without fixing it first would have
+let a curator author `site.hvhz == 0` — valid, and meaning nothing. Backend
+support (matcher, evaluator, `validate_model`'s refusal of an unknown
+`site.` key) landed 2026-08-26 and was not touched here.
+
+`condition-sentence.js` now carries per-field type info (`fieldType`,
+`cmpsFor`, `SITE_CONDITION_FIELDS`, `CONDITION_ENUM_OPTIONS`) rather than one
+flat field list; `writeSentence` writes an actual JSON boolean for `hvhz` and
+an actual string token for `exposure_category`, and restricts both to
+`==`/`!=`. `CONDITION_FIELDS` itself stays exactly the two numeric `panel.*`
+facts — the export a backend test pins against `PanelContext.condition_ctx()`
+— so `site.*` is additive, not a widened meaning of an existing name.
+`model-editor.js`'s variant-condition row swaps in a checkbox or a token
+`<select>` for the value input depending on the chosen field's type.
+
+**An adversarial review (architecture-critic + test-reviewer) caught two real
+gaps before this shipped**, both fixed in the same slice: the field-switch
+handler was resetting the typed value on every switch, including
+numeric-to-numeric (panel.height_mm <-> panel.width_mm) — fixed to reset only
+on an actual TYPE change; and the new DOM logic (checkbox/select rendering,
+the reset-vs-carry distinction) had zero coverage, closed with a
+`tools/ui_smoke.py` scenario (Models tab, model `M-COND`) that drives the
+real widgets end to end and confirms a save round-trips a bool/string rather
+than the `0`/`1` `Number()` would have produced.
+
+2161 pytest · `tests/web` 404 · `test_locale_bundles.py` 39, all green.
+
 ## The Knowledge team's first fixture review, a bug it found in this repo, and a five-turn negotiation (2026-08-27)
 
 **2141 pytest · 280 scenario tests · contract hashes OK** (was 2132). One
