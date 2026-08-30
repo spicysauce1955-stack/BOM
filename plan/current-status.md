@@ -1,5 +1,56 @@
 # Current status
 
+## All three amendments dispositioned; the cut is confirmed and waiting on two lines (2026-08-30)
+
+The Knowledge team dispositioned all three in the files, and **accepted every
+one**:
+
+| | | |
+|---|---|---|
+| **002** | typed `Date` | **ACCEPT, as proposed.** They took the `null`-`iso` rule as written — *"the part we did not originate and would have gotten wrong if left to guess at alone"* |
+| **003** | `admitted_by` at `contract.md:250` | **ACCEPT, as proposed.** Zero cost, zero disagreement |
+| **004** | `Gap.subject` ref types | **ACCEPT-MODIFIED.** `ParamRef`, `TenantId` and the `EntityRef.kind` delegation ratify now; **`SlotRef` deferred** to its first real worked example, on our own framing |
+
+They also closed C1 as answered rather than filed, marked **C8 and C12 RESOLVED
+with no schema change** on our `fit.py` / `exclusive_with` citations, and
+recorded our `JointKind` citation against C7/C9/C10. Their own words on C12:
+*"we had both tools already quoted in our own materials and didn't recognize the
+shape."*
+
+**They stopped short of executing step 5 and asked us to confirm** — *"it's the
+one action neither team gets to undo by filing a correction."* Right call, and
+T19 confirms the batch is ready. **Two things must land before the commit runs,
+and neither is ours to decide alone:**
+
+1. **The `SlotRef` deferral leaves a hole in the union.** §1.2.1 still reads
+   `EntityRef | SlotRef | ParamRef`, so deferring `SlotRef` ratifies **a
+   known-undefined type inside a BINDING union** — 004's own defect, at
+   one-third scale, one turn after both sides agreed it is a defect. Proposed
+   one line and no shape: `SlotRef` marked **`RESERVED`**, deliberately
+   undefined and unemittable until an amendment defines it. **Deliberately did
+   NOT propose narrowing the union** to `EntityRef | ParamRef` — that is a
+   §1.2.1 change nobody dispositioned, and making it as a side effect of
+   executing a cut is exactly the failure `AMENDING.md` §5 names.
+2. **`AMENDING.md:4` still says `FROZEN at v1.0`.** The contract has been v1.1
+   since 2026-08-25 — the procedure document has been a version behind the thing
+   it governs for five days, in both repos. It sits **inside the hash manifest by
+   design** (*"a procedure that protects a frozen document while being itself
+   unprotected can have its protection edited away silently"*), so it cannot be
+   quietly corrected. Proposed fixing it to v1.2 in the same commit as a factual
+   correction carrying no rule change; we will not touch it if they object.
+
+On one line back for each, step 5 runs in both repos: apply 002 + 003 +
+004-as-modified, bump to **v1.2**, `sha256sum contract.md AMENDING.md >
+contract.sha256`, one commit naming all three, then verify the other copy's
+digest. **002 and 004 both need the `3ae88642` re-cut — one re-cut after the
+version lands, not two.**
+
+Their two open items, both deferred on purpose and named rather than dropped:
+C5's wording (theirs to write) and T14's double-publish ask, which they are
+taking together since both touch `parameters.py`'s gap generation. Neither
+blocks us — our `expand()` already derives the 16 from `uncovered` alone, so the
+duplicate is queue noise, not a wrong number in a run.
+
 ## Three amendments filed, and their seven findings answered (2026-08-30, same session)
 
 **Still no code changed. Contract and `AMENDING.md` untouched; hashes verified
