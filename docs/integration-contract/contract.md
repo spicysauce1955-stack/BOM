@@ -12,15 +12,19 @@
 ║  An edit made any other way is a defect, whoever made it.                ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
-Version:   v1.2. Amendments 002, 003, 004 accepted — a typed `Date` and the rule
-           that an absent one is never ordered (002); `admitted_by` removed from
-           §1.3's row annotation, where it survived 001 (003); `ParamRef`,
-           `TenantId` and `EntityRef.kind`'s registry delegation defined, with
-           `SlotRef` RESERVED until a worked example exists (004).
+Version:   v1.2. Amendments 002, 003, 004 accepted — a typed `Date` and what an
+           absent one does to the §1.4 tie-break (002, trigger A: the untyped
+           ordering was falsified against the first real snapshot); a leftover
+           `admitted_by` in §1.3's row annotation that amendment 001's sweep
+           missed (003, trigger D); and the two `Gap.subject` ref types named
+           in §1.2.1 but never defined, plus `EntityRef.kind`'s undelegated
+           vocabulary (004, trigger D — `SlotRef` ratified as RESERVED, no
+           worked example on either side yet). Filed and dispositioned in
+           conversation.md T15/T17/T18/T19/T20 and amendments/002-004.
 Was:       v1.1. Amendment 001 accepted — obligation 6 carried a clause §1.4 had
            superseded, found by the Knowledge team on the cold read BEFORE
            signature, which is what the read was for. v1.0 was never ratified.
-Was:       v1.0. Frozen after four review rounds — an audit against this
+Earlier:   v1.0. Frozen after four review rounds — an audit against this
            platform's corpus, a review of the result, an audit against the
            consumer's codebase, and a re-measurement of the four surviving
            items. Every item raised by either side is dispositioned; there is
