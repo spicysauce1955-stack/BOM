@@ -1,5 +1,70 @@
 # Current status
 
+## Contract v1.2 cut — our half of step 5 is done (2026-08-30)
+
+**`2bcfaff`. Amendments 002 + 003 + 004-as-modified applied,
+`AMENDING.md` header corrected, both files re-hashed, `sha256sum -c` passing,
+`tests/knowledge` 77 passed. No code changed — a contract is a document.**
+
+```
+cb4fca4449b63e5bda9106947dfd00b28a5cb19167efd68bb66913b49c622f30  contract.md
+de166e3bd0cedf2dcad0279decddd1874259aeec4e700fe171d50464c4b809c9  AMENDING.md
+```
+
+What is now in the contract that was not:
+
+- **§1.1 `Date { iso: str | null, value_raw: [str] }`** plus the BINDING
+  paragraph requiring it on `SourceDoc.issue_date`, `.expiration_date` and
+  `ParameterTable.rows[].valid_from` / `.valid_until`, and the rule that **a
+  `null` `iso` is never ordered and never treated as earliest or latest**.
+- **§1.4's tie-break** now reads *"then later `issue_date` **where both carry
+  one** (§1.1 `Date`)"*.
+- **§1.3's row annotation** reads `class, level, status, cites` — `admitted_by`
+  gone from the last place it survived amendment 001.
+- **§1.1 `ParamRef`** (`{ parameter, scope: EntityRef, point }`, reusing
+  `uncovered`'s existing point shape), **`TenantId` (`str | null`)**, and
+  **`EntityRef.kind` delegated to the registries by name** — so adding a kind is
+  never an amendment and never waits for us.
+- **`SlotRef` marked `RESERVED`**, deliberately undefined and unemittable. Their
+  T20 accepted the line by pointing at the contract's own precedent: §2.1's
+  `PartType` registry already reserves `site_material` for the same reason,
+  *"the id is held so it cannot be reused."*
+
+### The remaining step, and it is theirs
+
+They run their half **independently** in `fence-rag`, from the same accepted
+text, and we compare digests. We offered to execute both halves; **they declined
+and were right** — `AMENDING.md` §1's *"each team can work with the other
+unreachable, and the hash is what makes the two provably the same"* is exactly
+the property one side producing both copies destroys. As of this commit their
+copy is still v1.1 and self-consistent.
+
+**T21 names the limit of that check, because it will otherwise read as a false
+alarm.** The amendments specify the *substance* exactly and specify **nothing**
+about where each new line sits in §1.1, how the header records a bump, or
+whether a "What moved in v1.2" paragraph gets written and in whose words. So all
+seven discretionary choices are listed exhaustively in T21 §3, with a standing
+commitment: **their prose verbatim for the header and changelog** (nothing to be
+right about, everything to be identical about), **explicit reconciliation for
+placements** inside the accepted substance. We deliberately wrote no "What moved
+in v1.2" paragraph despite every prior version having one.
+
+**If the digests differ, read the diff before reading it as divergence.** A
+mismatch in the type block or a BINDING paragraph is the mechanism working; a
+mismatch in header prose is two people writing prose.
+
+### What this unblocks
+
+`3ae88642` gets **one** re-cut (002 and 004 both need it, so one, not two), after
+which full `Snapshot` ingestion stops being blocked on `Gap.subject` — it has
+been since the first real snapshot. Their two deferred items ride together: C5's
+wording and T14's double-publish ask, both touching `parameters.py`'s gap
+generation.
+
+**Next on our side: item 6's `expand()` wiring**, unchanged and unblocked
+throughout — `admit()`/`resolve()` never needed a date for rank, `curation_level`
+or the `source_class` fallback.
+
 ## All three amendments dispositioned; the cut is confirmed and waiting on two lines (2026-08-30)
 
 The Knowledge team dispositioned all three in the files, and **accepted every
