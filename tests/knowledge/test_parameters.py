@@ -345,3 +345,60 @@ def test_no_as_of_means_no_expiry_judgement_rather_than_todays_date():
         value=Quantity(amount_milli=1200000, unit="mm"),
         valid_until="1999-01-01")])
     assert not expand(table)[1]
+
+
+def test_a_non_iso_valid_until_is_not_compared_as_a_lexeme():
+    """The first real snapshot (`3ae88642…`, 2026-08-30) publishes `valid_until`
+    as `MM/DD/YYYY` — `"04/04/2028"`. Compared as a string against an ISO
+    `as_of`, `"04/04/2028" < "2026-08-30"` is TRUE, so a row valid four more
+    years reported LAPSED. AMENDING.md candidate C6 is this exact defect at the
+    contract's own date comparator (§1.4); guessing a parse here before it lands
+    would invent the same comparator unilaterally. So: no judgement, not a wrong
+    one, when the source date is not already ISO."""
+    table = _span_table(rows=[ParameterRow(
+        conditions={"exposure_category": "C"},
+        value=Quantity(amount_milli=1200000, unit="mm"),
+        valid_until="04/04/2028", authority="NOA-123")])
+    versions, gaps = expand(table, as_of="2026-08-30")
+    assert len(versions) == 1
+    assert not gaps, "a date this side cannot parse must not be judged lapsed"
+
+    # ...and the ISO case a day either side of `as_of` still works exactly as before
+    assert expand(_span_table(rows=[ParameterRow(
+        conditions={"exposure_category": "C"},
+        value=Quantity(amount_milli=1200000, unit="mm"),
+        valid_until="2026-08-29")]), as_of="2026-08-30")[1]
+    assert not expand(_span_table(rows=[ParameterRow(
+        conditions={"exposure_category": "C"},
+        value=Quantity(amount_milli=1200000, unit="mm"),
+        valid_until="2026-08-31")]), as_of="2026-08-30")[1]
+
+
+# -- the first real publish (`3ae88642…`, 2026-08-30) exercised two more gaps ---
+
+def test_scope_tenant_published_as_null_is_accepted_and_unused():
+    """A published `EntityRef` states `tenant: null` for "no tenant" rather than
+    omitting the key — the first real snapshot does this on every table. Only
+    `kind`/`id` are ever read from `scope`, so `None` must parse rather than
+    fail the whole table at the door."""
+    table = ParameterTable.model_validate({
+        "parameter": "footing_depth_mm",
+        "scope": {"kind": "fence_model", "id": "mfr/example", "tenant": None},
+        "value_type": "quantity(mm)",
+        "rows": [{"value": {"amount_milli": 762000, "unit": "mm"}}],
+    })
+    versions, gaps = expand(table)
+    assert len(versions) == 1
+    assert not gaps
+
+
+def test_fence_model_is_a_recognised_entity_kind():
+    """`product_line`/`model` were guesses made before either side had a real
+    table to check them against. The first real snapshot's `scope.kind` is
+    `fence_model` — a registry addition alongside the other two, not a
+    replacement, since nothing says the next publisher will not use one of
+    those instead."""
+    table = _span_table(scope={"kind": "fence_model", "id": "mfr/example"})
+    versions, gaps = expand(table)
+    assert not gaps, "a recognised kind must not report as unmappable"
+    assert versions[0].scope == {"series": "mfr/example"}

@@ -26,6 +26,7 @@ on `post.role`, expanded now and selected when a post exists.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel
@@ -33,6 +34,10 @@ from pydantic import BaseModel
 from fenceai.core.gaps import Because, Gap, GapSubject, SourceRef
 from fenceai.knowledge.ast import And, Cmp, Expr, FieldRef, Lit
 from fenceai.knowledge.model import KnowledgeVersion, SetParam, SetToken
+
+# See the lapsed-check guard in `expand()`: a lexicographic compare is only
+# meaningful when both sides are already `YYYY-MM-DD`.
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # §1.1. `mm` is the only unit this engine stores at rest, so it is the only one
 # the loader can land today — the rest are accepted, declared, and refused with a
@@ -116,7 +121,11 @@ class ParameterTable(BaseModel):
     """§1.3, field for field."""
 
     parameter: str
-    scope: dict[str, str] = {}          # EntityRef — which product or assembly
+    # `str | None` because a published `EntityRef` states `tenant: null` for "no
+    # tenant" rather than omitting the key or sending `""` — only `kind`/`id` are
+    # ever read here (`tenant` has nowhere to go until obligation 7 lands on this
+    # side), so a `None` value is accepted and simply unused rather than refused.
+    scope: dict[str, str | None] = {}   # EntityRef — which product or assembly
     task: str = ""                      # TaskCode — what this parameter decides
     hit_policy: Literal["unique", "priority", "collect_min", "collect_max"] = "unique"
     # `value_type` sits on the TABLE, not the row, so one column cannot hold both
@@ -175,6 +184,12 @@ def to_mm(q: Quantity) -> int:
 _ENTITY_DIMENSION = {
     "product_line": "series",
     "model": "series",
+    # The kind their real first publish actually uses (`3ae88642…`, 2026-08-30) —
+    # `product_line`/`model` were guesses made before either side had a real
+    # table to check them against. A registry addition, not a rename: kept
+    # alongside the other two rather than replacing them, since nothing says a
+    # future publisher will not use one of those instead.
+    "fence_model": "series",
 }
 
 
@@ -269,7 +284,20 @@ def expand(
             title=f"{table.parameter} = {_display(row.value)}",
             attributed_to="knowledge_platform",
         ))
-        if row.valid_until and as_of and row.valid_until < as_of:
+        # `<` is a STRING compare, correct only for ISO-8601 (`YYYY-MM-DD`) on
+        # both sides. The first real snapshot publishes `valid_until` as
+        # `MM/DD/YYYY` (`"04/04/2028"`) — undetected until real data arrived,
+        # because every prior caller was a test already writing ISO. Compared
+        # lexicographically against an ISO `as_of`, `"04/04/2028" < "2026-08-30"`
+        # is TRUE, so a row valid until 2028 was reported LAPSED four years early.
+        # `AMENDING.md` candidate C6 is this exact defect at the contract's own
+        # date comparator (§1.4); until it lands a `Date` type, guessing a parse
+        # here would be inventing the same comparator unilaterally. So: compare
+        # only when both sides already look like ISO dates, and otherwise skip
+        # the check rather than assert a lapse this side cannot actually read.
+        if (row.valid_until and as_of
+                and _ISO_DATE.match(row.valid_until) and _ISO_DATE.match(as_of)
+                and row.valid_until < as_of):
             gaps.append(_lapsed_gap(table, row, index, as_of, tenant))
 
     gaps.extend(_uncovered_gaps(table, tenant))
