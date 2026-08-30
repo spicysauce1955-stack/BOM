@@ -1,5 +1,47 @@
 # Current status
 
+## First real curation-level-2 data; three of our own bugs found against it; item 6's mechanism built (2026-08-30)
+
+**2206 pytest · contract hashes OK.** The Knowledge team published real
+`ParameterTable` data for the first time (`conversation.md` T12,
+`3ae88642…json`) — four tables, `curation_level: 2`, real citations. Loaded
+it through our own `parameters.py` parser and `expand()` directly rather than
+trusting their summary, and found three defects of our own, all latent
+because every prior caller was a test already writing the shapes we expected:
+`scope.tenant: null` rejected outright (widened `scope` to
+`dict[str, str | None]`), `scope.kind: "fence_model"` unrecognised by
+`_ENTITY_DIMENSION` (added it — every row was expanding to nothing before
+this), and `valid_until` in `MM/DD/YYYY` compared lexicographically against
+an ISO `as_of` reporting a row valid until 2028 as **lapsed** — the live
+version of their candidate amendment C6, not a hypothetical. Fixed by
+guarding the comparison to ISO-looking dates on both sides rather than
+guessing a parse (`82d47f2`).
+
+**Then built `knowledge/source_policy.py`** — item 6's mechanism, contract
+§1.4: `SourcePolicy`, the shipped default table verbatim, `admit()`/
+`resolve()` with the rank → curation_level → source_class tie-break the
+BINDING clause specifies. Deliberately does NOT implement the `issue_date`
+step — no `Date` type exists in the contract yet, and inventing a comparator
+now would be the same overreach `conversation.md` T13 asked the other team to
+avoid. Verified against the real snapshot's own provenance: admits at rank 1
+for `structural_parameter`, matching the shipped table with no adjustment on
+either side (`69b014f`). **Not yet wired into `expand()`/generator.py** —
+recording `admitted_by` on a run and rendering it in the decision graph is
+the next concrete step; see `plan/next-session.md`'s build-order table.
+
+**Two defects reported back**, neither blocking (`conversation.md` T14):
+`Gap.subject` is still a bare string across all 81 gaps in the real
+snapshot, not the structured shape contract §1.2.1 requires — blocks full
+`Snapshot` ingestion, though `ParameterTable` alone parses fine, which is why
+item 6 was built against the tables directly. And the snapshot's 16
+`condition_point_uncovered` gaps duplicate `table.uncovered` point for
+point — our own `expand()` independently derives the same 16 from
+`uncovered` alone, so ingesting today would double-count every one.
+
+Item 7 (`Provenance` on `SpecField`, the `source_docs` join) is equally
+unblocked — real `source_docs` and resolving citations now exist — and has
+not been started.
+
 ## The evidence viewer's first slice, fixture-backed (2026-08-28)
 
 Frontend design (`docs/superpowers/specs/2026-08-23-frontend-design.md` §3),

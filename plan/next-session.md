@@ -6,15 +6,72 @@ Rewritten: same day, when the Knowledge team's state changed the plan.
 Rewritten again: 2026-08-27 — the Knowledge team reviewed item A's fixture,
           which cascaded into a real fix and a five-turn negotiation. See the
           two sections right under this box, newest first.
+Rewritten again: 2026-08-30 — the Knowledge team published real
+          curation-level-2 ParameterTable data for the first time
+          (conversation.md T12). Item 6 is unblocked and its mechanism is
+          built; item 7 is unblocked and not yet started. See "2026-08-30 —
+          real data landed" below.
 Read:     this first, then plan/current-status.md (newest entry first).
-State:    THE BACKLOG IS CLEAR. Items 1-11 done and pushed. Items 6-7 remain
-          OFF the table, not pending any question — pending the Knowledge
-          team having real curated data to build against, which no amount of
-          talking here changes. Nothing else is outstanding on either side.
-          Next session starts from a genuinely empty queue, not a stale one:
-          confirm this box is still true before trusting it, the way every
-          "State:" line in this repo asks to be read.
+State:    Items 1-11 done and pushed. Item 6's mechanism (SourcePolicy,
+          admit()/resolve()) is built and tested against real published
+          provenance — NOT YET wired into expand()/generator.py; that
+          integration (recording admitted_by on a run, rendering it in the
+          decision graph, warning below min_curation) is the next concrete
+          step. Item 7 (Provenance on SpecField, the source_docs join) has
+          everything it needs (real source_docs, real resolving citations)
+          and has not been started. Full end-to-end real-snapshot ingestion
+          is separately blocked on a Knowledge-side defect (Gap.subject not
+          yet structured) — reported as conversation.md T14, does not block
+          6 or 7 since both build against ParameterTable directly.
 ```
+
+## 2026-08-30 — real curation-level-2 data landed; items 6 and 7 unblocked
+
+The Knowledge team published `3ae88642…json` (`conversation.md` T12): four
+real `ParameterTable`s (`footing_depth_mm`, `footing_diameter_mm`, two
+manufacturer scopes each), `curation_level: 2`, real citations. First real
+data either side has ever built against.
+
+**Loaded it through our own parser and `expand()` directly, not through their
+summary.** Found and fixed three defects in `knowledge/parameters.py`, all
+latent until now because every prior caller was a test writing the shapes we
+expected:
+
+- `ParameterTable.scope: dict[str, str]` rejected the real `EntityRef`'s
+  `tenant: null` outright. Widened to `dict[str, str | None]` — `tenant` was
+  never read here anyway.
+- `_ENTITY_DIMENSION` had no entry for `kind: "fence_model"` — the real
+  publish's actual scope kind, versus the `product_line`/`model` guesses made
+  before either side had data to check them against. Every row in all four
+  tables was expanding to zero applicable knowledge before this.
+- `valid_until: "04/04/2028"` (their `MM/DD/YYYY`) compared lexicographically
+  against an ISO `as_of` reported a row valid four more years as **LAPSED**.
+  The live version of their candidate amendment C6 (no `Date` type in the
+  contract), confirmed in our own code rather than theoretical. Guarded the
+  comparison to ISO-looking dates on both sides rather than guessing a parse.
+
+2195 pytest after the fixes (`82d47f2`).
+
+**Then built item 6's mechanism** — `knowledge/source_policy.py`:
+`SourcePolicy`, the shipped default table verbatim from contract §1.4,
+`admit()`/`resolve()` with the rank → curation_level → source_class tie-break
+the BINDING clause specifies (issue_date deliberately skipped — no `Date`
+type exists, matching the restraint asked of the other team in
+`conversation.md` T13). The shipped default table itself contains two rank
+ties (`component_dimension`, `installation_step`), exercised directly by
+tests. Verified against the real snapshot's own provenance: admits at rank 1
+for `structural_parameter`, matching the shipped table without adjustment.
+2206 pytest (`69b014f`). **Not wired into `expand()`/generator.py** — see the
+build-order table's item 6 row for exactly what's left.
+
+**Two defects reported back** (`conversation.md` T14, not blocking either
+item): `Gap.subject` is still a bare string across all 81 gaps in the real
+snapshot, not the structured shape contract §1.2.1 requires — blocks full
+`Snapshot` ingestion (item A's ingestion path), though `ParameterTable` alone
+parses fine. And the snapshot's 16 `condition_point_uncovered` gaps duplicate
+`table.uncovered` point for point — our own `expand()` independently derives
+the same 16 from `uncovered` alone, so ingesting today double-counts every
+one.
 
 ## 2026-08-27 — the Knowledge team's first fixture review landed, and it found a bug in this repo too
 
@@ -176,8 +233,8 @@ not as settled.
 | **10** | Containment → demand: flatten `ContainedSlot` into the panel's slot list under a path key, and the kit-credit rule, which has no home in a demand line today | nothing | yes |
 | **11** | `report/assembly.py` — bay and post scopes, `requires` edges as a partial order | 10 | yes |
 | ~~8~~ | ~~Warning model — `attaches_to`, the registry split, the **annexe**~~ | — | **done** 2026-08-26 — `core/warnings.py`, `report/annexe.py`, S19 |
-| ~~6~~ | ~~Source policy~~ | **the other team** | **no — do not start** |
-| ~~7~~ | ~~`Provenance` on `SpecField`, the `source_docs` join~~ | **the other team** | **no — do not start** |
+| **6** | Source policy — mechanism built (`knowledge/source_policy.py`), **not wired** into `expand()`/generator: `admitted_by` on a real run, decision-graph rendering, below-`min_curation` warning | nothing | yes |
+| **7** | `Provenance` on `SpecField`, the `source_docs` join | nothing | yes |
 
 **9, 10 and 11 are genuinely parallel** — different modules, different read models — which
 items 6-11 never were as a chain. They are the right shape for concurrent agents.
