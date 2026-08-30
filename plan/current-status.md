@@ -1,5 +1,99 @@
 # Current status
 
+## Three amendments filed, and their seven findings answered (2026-08-30, same session)
+
+**Still no code changed. Contract and `AMENDING.md` untouched; hashes verified
+before and after every write.** A ratification session is being convened on the
+Knowledge side, so this was the moment to file everything we need.
+
+**003 — `admitted_by` survived amendment 001, in a third place.** `contract.md:250`,
+the `ParameterTable.rows[]` annotation, still lists it on a published `Provenance`
+nine lines after §1.1 says it is not there. 001's disposition named the cause
+(*"we rewrote the BINDING block and never checked whether any obligation restated
+the old rule"*) and the follow-up sweep covered **obligations**, not type
+annotations inside §1–2. Zero cost both sides; four words. We swept the other five
+occurrences and they are correct — stated in the file so the disposition need not
+repeat it.
+
+**004 — the three ref types `Gap.subject` unions are undefined or undelegated.**
+A full type sweep of `contract.md`: `SlotRef`, `ParamRef` and `TenantId` are named
+and defined nowhere, in the contract *or* in `knowledge-datamodel.md` — and two of
+them sit inside a BINDING type. `EntityRef.kind` has no vocabulary and, unlike
+`TaskCode`/`SourceClass`/`RoleCode` at `:320`, no registry delegation; that
+asymmetry is what makes it a defect rather than an omission.
+
+The measured cost is the good part: their 81 gaps carry **three** ad-hoc subject
+encodings (61 `element-…`, 4 `doc-…`, 16 `param:<parameter>@<kind>/<id>#<point>`),
+and `core/gaps.py:49-65` collapsed all three refs into one `GapSubject` on our
+side. Sharpest instance — `parameters.py::_uncovered_gaps` joins the condition
+point as `"k=v, k=v"` while they render `"exposure D, fence height 49\" to 76\",
+HVHZ"` **from the same dict**. Two teams flattened one structured value into two
+different strings in the same release, because the type that would have held it
+was never written. `ParamRef.point` is proposed as the shape
+`ParameterTable.uncovered` entries already have, so it costs them a decomposition
+and no new curation.
+
+**We retracted a T14 ask in the process.** T14 told them to fix `Gap.subject` to
+"the structured shape" — two of the three shapes do not exist to fix it to. That
+was not fair as written and 004 replaces it.
+
+**C1 answered rather than filed.** Their provisional `curation_level` reading
+(0 = uncited, 1 = machine + resolvable `SourceRef`, 2 = a person compared it to
+the image) is adopted as written, with one addition that makes it stronger than
+C1 claims for itself: §1.2.1's closure rule is already BINDING that every
+`SourceRef.belongs_to` resolves inside the same snapshot, so **level 1 is
+machine-checkable** — a snapshot publishing level 1 on a dangling cite is
+refusable by rule. That turns a definition into an invariant. Live for us wherever
+`min_curation` is 0 (`component_dimension`, `installation_step`,
+`product_description`), where 0-vs-1 decides real §1.4 ties.
+
+**Checked and deliberately NOT filed:** item 7. Obligation 6 as amended binds
+per-value provenance (*"a rail length has the same admissibility problem as a
+footing depth"*), and `contract.md:127` gives `Part` only *"spec fields +
+contributing_sources"* with §1.2 calling the latter a roll-up — so we went looking
+for a hole. There isn't one: `knowledge-datamodel.md` §3.1 carries
+`spec [SpecField + Provenance]` and `contract.md:150` explicitly defers full
+shapes there. **Item 7 is supported.** Recorded because a sweep that only reports
+finds is not a sweep.
+
+### Their T16 arrived mid-session, and three of its seven close with no schema change
+
+They committed a turn while we were writing one; both were numbered T16, theirs
+keeps the number and ours became **T17**. Seven `PanelSpec`/`AssemblyStep`
+findings, none of them contract matters. What our own code answered:
+
+- **Their finding 3 / C8** (`FrameSlot` vs `Member` for a monolithic panel; they
+  asked whether a repeat count of one resolves cleanly through our fitter).
+  **It does not.** `fencemodel/fit.py` is a *repeating*-pattern fitter —
+  `_count_members` returns `floor(usable / (width + gap))` copies — so a
+  one-`Member` pattern gives one piece only by coincidence of width, and silently
+  gives **2** on a wider bay. Their `FrameSlot` judgment was right. We sharpened
+  their proposed rule from *"pattern count 1"* to **positioned rather than
+  distributed**: `justification`, `excess`, `gap_after_mm` and `edge_margin_mm`
+  are all distribution concepts that mean nothing for one solid piece.
+- **Their finding 6a / C12** (one step cannot hold two alternative methods).
+  `Prerequisite.kind` has carried **`exclusive_with`** since obligation 11 — two
+  methods are two steps and one negative edge. `model.py:1617` already refuses an
+  `exclusive_with` pair that is also ordered.
+- **Their finding 6b** (a 72-hour cure has no dependency target). It is an
+  `installation` step — the `AssemblyStep` docstring's own worked example is *"let
+  the footings cure overnight"* — and the waiting step carries `not_before`
+  against it. Making the *duration* machine-readable is a separate, real gap.
+- **Their finding 5 / C11** needs an `applies_when` field **and** a finish/colour
+  condition dimension; our fact context (`resolve.py:64`) carries only
+  `panel.width_mm`, `panel.height_mm`, `panel.vertical`, `site.hvhz`,
+  `site.exposure_category`. The dimension is a **registry addition** and does not
+  wait for the batch.
+- **Their findings 1, 2, 4 confirmed with the identical hole on our side:**
+  `model.py:78` `JointKind` is the same five values, single-valued on **both**
+  `FrameSlot` (`:375`) and `Member` (`:422`). No workaround offered because we
+  have none.
+- **Their finding 7 confirmed, half unanswerable:** whether per-bay-instance
+  ordering wants an edge cannot be answered honestly until `report/assembly.py`
+  instantiates steps per bay — build-order item 11, not built.
+
+**Next:** item 6's `expand()` wiring, unchanged and unblocked by any of this.
+
 ## Amendment 002 filed — the first one we have filed, and the first since ratification (2026-08-30)
 
 **No code changed. Contract and `AMENDING.md` untouched, both copies verified
