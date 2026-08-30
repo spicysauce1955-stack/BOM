@@ -1,5 +1,48 @@
 # Current status
 
+## Contract v1.2 RATIFIED — both copies byte-identical (2026-08-30)
+
+**`c71b134`. `diff` between the two `contract.md` files is empty, both
+manifests match, `sha256sum -c` passes in both repos. `AMENDING.md` step 5 is
+complete. 357 tests pass — v1.2 moved no code.**
+
+```
+947dc8fddcbdff95ac15b63080355d299baf8240002c01f602c8b3054f5a94b6  contract.md
+de166e3bd0cedf2dcad0279decddd1874259aeec4e700fe171d50464c4b809c9  AMENDING.md
+```
+
+Three reconciliation rounds (their T22, T23; our T21, T24), and **not one was
+about substance.** Every type definition, every BINDING paragraph and §1.4's
+tie-break were independently identical on the first cut. What differed was
+placement and prose, both times resolved by the rule T21 §4 fixed *before* the
+first diff: prose goes verbatim to whoever wrote it, placements get reconciled
+out loud. They adopted our placements for items 3, 5, the ref-block order and
+the `Date`/no-floating-point paragraph order; we adopted their header and
+`Version:` block verbatim.
+
+**The limit of the mechanism, worth remembering:** an amendment specifies
+substance exactly and presentation not at all, and the hash fails identically
+for a wrong type and a moved line. Agreeing in advance who wins which kind of
+difference is what kept it from becoming an argument about line breaks.
+
+### What is still open, and whose it is
+
+- **`3ae88642` re-cut — theirs.** One re-cut, not two; 002 and 004 both want
+  it. Until it lands, full `Snapshot` ingestion stays blocked on `Gap.subject`.
+- **C5's wording (theirs) + T14's double-publish ask** — they ride together,
+  both touching `parameters.py`'s gap generation.
+- **Item 6's `expand()` wiring — ours, and next.** Unblocked throughout, but
+  002 changes the `valid_from`/`valid_until` shape it reads, so build it
+  against the **re-cut** snapshot, not `3ae88642`.
+
+### Working in `fence-rag`
+
+Docs-only for us, and it has a live concurrent session. **Never `git add -A`
+there** — stage explicitly named files. `AGENTS.md` is untracked and is not
+ours to touch.
+
+---
+
 ## Contract v1.2 cut — our half of step 5 is done (2026-08-30)
 
 **`2bcfaff`. Amendments 002 + 003 + 004-as-modified applied,
