@@ -1,7 +1,7 @@
 # Amending the contract
 
 ```text
-Governs:  contract.md, which is FROZEN at v1.0.
+Governs:  contract.md, which is FROZEN at v1.2.
 Holds in: both repositories. Byte-identical copies, verified by hash.
 Rule:     the contract is never edited. An amendment produces a NEW version.
 ```
