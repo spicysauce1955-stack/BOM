@@ -1,5 +1,77 @@
 # Current status
 
+## Amendment 002 filed — the first one we have filed, and the first since ratification (2026-08-30)
+
+**No code changed. Contract and `AMENDING.md` untouched, both copies verified
+identical and hash-clean in both repos.**
+
+Checked the amendment track before doing more engine work. **No filed amendment
+was ever waiting on us**: `001` is accepted, applied and cut as v1.1, and their
+`amendments/` dir is otherwise empty, which its README says is the correct
+state. What exists is a waiting room — `CANDIDATES.md`, C1–C14, C4 struck,
+**none filed and none governing anything**. C7–C14 were new since our last
+checkpoint and are all `Joint`/`AssemblyStep`/`Warning` shapes, unbuilt on both
+sides, nothing for us.
+
+**But C6's batching condition had expired, and we are the reason.** Its own
+entry reads *"Blocking? No. Planning consumes no snapshot yet. Batches — but it
+stops batching the day they do."* We consumed `3ae88642` on 2026-08-30, and the
+lexicographic compare C6 predicted did what C6 said: a row valid until 2028
+reported LAPSED against a 2026 `as_of`. Filed as
+`fence-rag/docs/integration/amendments/002-typed-date-and-absent-date-ordering.md`,
+trigger **A** (falsification, someone building against it now) with **B**
+alongside — `AMENDING.md` §4 forces a cut on either, so it does not batch. The
+disposition may downgrade it to D, in which case it batches with C1/C5; the
+evidence is the same either way and we said so in the file.
+
+**The larger half of the defect C6 had not reached**, and the reason the
+amendment is worth more than a format fix: `[measured]` **72 of 75** published
+`source_docs` carry no `issue_date` at all. Typing the date fixes the format and
+still leaves §1.4's tie-break with no rule for a **missing operand** — and
+absent is the default path, not an edge case. Two implementations can honour the
+clause as written and disagree (absent-as-earliest / as-latest / skip), which is
+exactly the divergence §1.4's own BINDING rationale exists to prevent. So 002
+proposes `Date { iso: str | null, value_raw: [str] }` **and** the rule that a
+`null` `iso` is never ordered and never treated as earliest or latest. The type
+itself is *their* proposed fix from C6, not a counter-design.
+
+**Where this bit us, recorded so the cost is legible.** `82d47f2`'s guard
+compares dates only when both sides already look ISO — correct, and it means
+**obligation 16's lapse check executes on 0 of the 8 rows in `3ae88642` that
+carry a `valid_until`**. It runs today in exactly one place: our own conforming
+fixture, whose dates are ISO because we wrote them that way. A binding rule that
+passes only against data its implementer authored is not a rule anyone has
+tested. `source_policy.py`'s `resolve()` likewise skips the `issue_date` step
+and falls through to lexicographic `source_class` — documented in-source,
+retired to third place if 002 lands.
+
+**One thing deliberately NOT filed as an amendment** (reported in `conversation.md`
+T15 instead, because it is a data question): `1c487c731b56` declares
+`superseded_by: f650c3f14efe`, but the two are published under *different*
+`scope.id`s — CertainTeed vs Barrette, with `also_filed_as` naming Freedom
+Outdoor Living as a third. One approval lineage, three manufacturer names, two
+scope ids. Consequence on our side: **scope selects before policy does.** A
+project on the CertainTeed model resolves against the superseded approval's
+table and never sees the replacement — not because the policy admitted it, but
+because the replacement is scoped elsewhere and is not a candidate at all.
+`version_status` as a policy axis cannot reach it. All 16 values happen to agree
+today, so nothing is currently wrong; the mechanism is the report.
+
+**Item 6 is unblocked by all of this and is the next build.** `admit()`/
+`resolve()` need no date for rank, `curation_level` or the `source_class`
+fallback, and the shipped default admits `3ae88642`'s `sealed_approval` rows at
+rank 1 with no adjustment on either side. Wiring into `expand()` will move one
+golden number, intentionally: the conforming fixture's `max_span_mm` is a
+`manufacturer_installation_instruction` at `curation_level: 1` against a
+`structural_parameter` task whose shipped `min_curation` is 2 — so those rows
+become inadmissible, emit the below-`min_curation` gap item 6 asks for, and fall
+through to `FALLBACK_MAX_SPAN_MM` plus a warning.
+
+**Note for whoever picks this up:** the Knowledge team had a live session in
+`fence-rag` while this was filed — `docs/state-and-gaps.md` carried 47
+uncommitted insertions that are not ours. Our commit (`b8ad157`) stages only the
+three files it names. Do not `git add -A` in that repo.
+
 ## First real curation-level-2 data; three of our own bugs found against it; item 6's mechanism built (2026-08-30)
 
 **2206 pytest · contract hashes OK.** The Knowledge team published real
