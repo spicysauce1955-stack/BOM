@@ -28,6 +28,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from fenceai.core.dates import Date, all_orderable, latest
+
 # §1.4: "TaskCode, SourceClass and RoleCode are closed vocabularies in the
 # registries" — Knowledge adds entries, the operator configures rows against
 # them. These four and eight are what the shipped default table names; a task
@@ -67,7 +69,16 @@ class Candidate(BaseModel):
     `label` is the caller's own identifier for the thing this candidate came
     from (an authority hash, a row index) — carried through so a caller can
     say which citation won without this module inventing an identity scheme
-    for what is, to it, an opaque competitor.
+    for what is, to it, an opaque competitor. It is also the final tie-break
+    in `resolve()`, which is the second half of the same purpose: an opaque
+    identifier the caller already has is the only thing left to order by once
+    every criterion the contract names has tied.
+
+    `issue_date` is §1.4's third criterion, and it defaults to `None` because
+    absent is the normal case — 72 of the 75 source documents in the first
+    published snapshot carry no `issue_date`. A caller that has one passes it;
+    every caller that does not keeps working unchanged, and gets the same
+    resolution it got before this field existed.
     """
 
     source_class: SourceClass
@@ -75,17 +86,26 @@ class Candidate(BaseModel):
     curation_level: int
     role: str | None = None
     label: str = ""
+    issue_date: Date | None = None
 
 
 class AdmittedBy(BaseModel):
     """§1.4: deliberately not a field on `Provenance` — this is a RUN's answer,
-    computed here, never read off published data."""
+    computed here, never read off published data.
+
+    It carries every input the tie-break actually reads — rank, curation
+    level, `issue_date`, `label` — because the point of recording the answer
+    on the run is that a decision graph can render WHY this source won, and a
+    rendering that cannot see the date the comparison turned on (or that the
+    date was absent, so the step was skipped) is back to asserting a result.
+    """
 
     rank: int
     source_class: SourceClass
     curation_level: int
     version_status: VersionStatus
     label: str = ""
+    issue_date: Date | None = None
 
 
 class Resolution(BaseModel):
@@ -225,6 +245,7 @@ def admit(
         rank=row.rank, source_class=candidate.source_class,
         curation_level=candidate.curation_level,
         version_status=candidate.version_status, label=candidate.label,
+        issue_date=candidate.issue_date,
     )
 
 
@@ -233,16 +254,55 @@ def resolve(
 ) -> Resolution:
     """Every admissible candidate, then the one that wins.
 
-    Lower `rank` wins (§1.4). A rank tie breaks by higher `curation_level`,
-    then — per the BINDING clause — by later `issue_date`. That third step is
-    not built: this platform has no `Date` type yet (candidate amendment C6,
-    logged 2026-08-30) and neither side has agreed one, and Planning has no
-    `issue_date` field to compare even if it did. Writing a parser for it here
-    would be inventing the same comparator §1.4 asks an operator's edit to
-    resolve, unilaterally and untested against a real date. So a tie that
-    survives `curation_level` breaks on the fourth criterion, lexicographic
-    `source_class`, which needs no date at all — deterministic either way,
-    and honest about which step is missing rather than guessing at it.
+    The chain, in order:
+
+    1. lower `rank` (§1.4);
+    2. higher `curation_level`;
+    3. later `issue_date` — **only when every candidate still tied carries an
+       `iso`**, otherwise skipped entirely (see below);
+    4. lexicographic `source_class`;
+    5. lexicographic `label` — a local determinism guarantee, NOT a
+       contract criterion (see below).
+
+    **Step 3, and why it is all-or-skip.** §1.4 words the criterion "later
+    `issue_date` where both carry one". Read pairwise, as literally worded,
+    the relation is intransitive and therefore not an ordering at all. The
+    counterexample is three candidates tied on rank and curation:
+    `A(industry_standard, iso null)`, `B(sealed_approval, 2024-01-01)`,
+    `C(company_authored, 2020-01-01)`. A beats B (no shared date, so
+    lexicographic), B beats C (both dated, later wins), C beats A (no shared
+    date, so lexicographic) — a 3-cycle, in which no candidate is the winner
+    and the "answer" is whichever comparison order the implementation happened
+    to use. Nor can a sort key rescue it: a key-based implementation must put
+    an undated candidate *somewhere*, and every position on the date axis is
+    either "earliest" or "latest" — both forbidden by §1.1's BINDING null rule
+    ("a null `iso` is never ordered, and never treated as earliest or
+    latest"). All-or-skip is the only reading that is a total order AND never
+    positions a null date, so it is the reading implemented here: when the
+    whole tied set is dated, the latest wins; when any member is undated, the
+    date step does not happen and resolution moves to `source_class`.
+
+    That is a READING of a BINDING clause, not a rewrite of it — the contract
+    still governs. It is filed as amendment 005 (trigger B, unimplementable);
+    if 005 is ratified with different wording, this step changes with it.
+
+    **Step 5, and why `label` is in the key at all.** Steps 1–4 are not a
+    total order: two candidates can share a rank, a curation level, a date
+    (or a shared absence of one) and a `source_class`. That is not
+    hypothetical — the first published snapshot's two competing footing
+    authorities are both `sealed_approval`, both curation 2, both rank 1, one
+    `superseded` and undated and one `unknown` dated 2025-04-24. With `min()`
+    over a non-total key, the winner was whichever of them the caller listed
+    first: reordering the input changed the answer, one ordering silently
+    preferred the superseded document (the exact outcome §1.4's BINDING clause
+    exists to prevent), and two implementations of this contract would stamp
+    different `admitted_by` and hash differently. `label` is the caller's own
+    opaque identifier, already carried for citation, so appending it makes the
+    key total without inventing an identity scheme. It is a local determinism
+    guarantee only: it can never fire until every criterion the contract names
+    has tied, and it must never be read as the contract expressing a
+    preference between two otherwise-equal sources. It does not say which
+    source is better. It says the same one wins every time.
     """
     admitted = [ab for c in candidates
                 if (ab := admit(policy, task, c)) is not None]
@@ -254,5 +314,17 @@ def resolve(
     if len(tied) > 1:
         best_level = max(ab.curation_level for ab in tied)
         tied = [ab for ab in tied if ab.curation_level == best_level]
-    winner = min(tied, key=lambda ab: ab.source_class)
+    if len(tied) > 1:
+        dates = [ab.issue_date for ab in tied]
+        # `all_orderable` is the all-or-skip test itself: False the moment one
+        # candidate is undated, and the whole step is then skipped rather than
+        # applied to the dated subset — comparing only the dated members would
+        # reintroduce exactly the pairwise reading that does not order.
+        if all_orderable(dates):
+            newest = latest([d for d in dates if d is not None])
+            if newest is not None:
+                tied = [ab for ab in tied
+                        if ab.issue_date is not None
+                        and ab.issue_date.iso == newest.iso]
+    winner = min(tied, key=lambda ab: (ab.source_class, ab.label))
     return Resolution(admitted=admitted, winner=winner)

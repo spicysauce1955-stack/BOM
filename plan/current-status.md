@@ -1,5 +1,85 @@
 # Current status
 
+## v1.2 adapted, and the audit found more than v1.2 asked for (2026-08-30)
+
+**2238 tests pass · contract hashes OK · architecture fitness 9/9.** The `Date`
+work v1.2 obliged is real but was the *smallest* thing wrong. Full impact report:
+`docs/reviews/2026-08-30-v1.2-contract-impact.md`.
+
+### Measured against the real snapshot, before and after
+
+| | Before | After |
+|---|---|---|
+| Loading `3ae88642` | **113 validation errors** | one sentence naming amendment 002 |
+| Distinct `KnowledgeVersion` identities from 16 rows | **8** | 16 |
+| Gaps for its 16 uncovered points | **32** | 16 |
+| Its warnings our validator called malformed | **276 of 289** | 0 |
+| `SourceRef.belongs_to` closure | unchecked | checked — 543 refs, 0 dangling |
+
+### The four defects only real data could have shown
+
+- **`object_id` omitted the table's scope.** They publish `footing_depth_mm`
+  twice under different `scope.id`s, citing different approvals — one superseded
+  by the other. 16 rows collapsed to 8 refs, so the decision graph could not say
+  which manufacturer's approval a value came from, `snapshot_set()` was not
+  injective, and one override would have defeated both rows. **All 16 values
+  agree today, which is exactly why nothing failed.**
+- **We double-counted their holes.** They publish 16 `condition_point_uncovered`
+  gaps and carry the same 16 points in `table.uncovered`, from which `expand()`
+  derived its own. `GapSubject.key()` — parameter + scope + point — is the
+  identity that dedupes them, and **that identity is what v1.2's `ParamRef` is
+  for.** It is the dedup key, not decoration.
+- **`warning_errors` manufactured 276 false defects.** The rule (annexe-scoped
+  warnings may not carry a `ref`) was ours, lived in a docstring we wrote, and
+  passed only against the fixture we authored — the same failure mode this file
+  already names for the ISO lapse check, one module over.
+- **`valid_from` was declared and read nowhere.** A row not yet in force was
+  applied silently: the lapsed check's twin, failing in the more dangerous
+  direction, since a lapse at least produces a warned line.
+
+### Two defects in v1.2 itself — filed, not coded around
+
+- **Amendment 005 (trigger B):** §1.4's tie-break is intransitive. *"Where both
+  carry one"* is pairwise, and pairwise predicates that are not total preorders
+  cannot be sort keys — A beats B, B beats C, C beats A, executed over all six
+  permutations. No key can rescue it: every position for a null is "earliest" or
+  "latest", both forbidden by §1.1. It is also incomplete, and their two sealed
+  approvals reach the end of the chain. We built the all-or-skip reading and
+  said so in the docstring rather than shipping a cycle.
+- **§1.1's `SlotRef` parenthetical was false, and it was ours.**
+  *"Zero Planning-emitted gaps are slot-shaped"* — `generator.py` had emitted one
+  since before ratification. Now conformant (`ref_kind: "role"`, an open-registry
+  value) and `"slot"` is gone from the type so the model enforces the
+  reservation. No contract change requested; reported in T25 because the
+  reservation rested on an unchecked claim and a worked example does exist.
+
+### Also now enforced, all of it previously accepted-and-dropped
+
+§1.2.1's closure rule · §3.2 obligation 3's version gate (our promise, unkept) ·
+§1.3's `unique` overlap check · `hit_policy` (three of four values silently
+returned a different number from the one declared) · `TenantId` null ·
+gap quarantine, so one malformed gap no longer costs the whole snapshot.
+
+`snapshot_id_for` is renamed `fixture_digest`: it hashed `parameters` alone and
+would have read every conforming snapshot as drift. How they canonicalise is a
+registry-level question, asked in T25 §6.
+
+### Next
+
+**Item 6's `expand()` wiring is still the next build, and is now gated on 005**
+— wiring an admissibility decision onto an ordering known to be non-deterministic
+would record `admitted_by` on runs and make it look decided. `source_policy.py`
+implements the proposed chain today.
+
+One finding is **report-only and unfixed**: the real rows compile to
+`bay.fence_height == '49" to 76"'`, and nothing in this engine binds
+`bay.fence_height`. The bracket's numeric bounds exist only inside the label
+string, and reading them out would manufacture a fact. A bracket is a `Quantity`
+range, not a token — a missing concept at the boundary, not a wiring task. Item
+6 will otherwise land 16 rules that resolve to nothing.
+
+---
+
 ## Contract v1.2 RATIFIED — both copies byte-identical (2026-08-30)
 
 **`c71b134`. `diff` between the two `contract.md` files is empty, both

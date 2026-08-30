@@ -12,6 +12,7 @@ from fenceai.core.gaps import SourceRef
 from fenceai.core.warnings import (
     ANNEXE_SCOPES, DocumentWarning, WarningTarget, warning_errors,
 )
+from fenceai.report.annexe import place_warnings
 
 
 def _w(**kw) -> DocumentWarning:
@@ -73,26 +74,83 @@ def test_text_and_lang_are_both_required_in_substance_not_only_in_shape():
     assert warning_errors([_w(lang=" ")], where="w")
 
 
-def test_an_annexe_scoped_warning_may_not_name_a_line():
-    """The failure obligation 10 exists to prevent, arrived at from the other
-    side. A document-scoped warning that names a line is claiming a scope it has
-    not got, and the reader who gets a freeze-thaw footnote on all forty bays is
-    the reader who learns to skip warnings."""
+def test_an_annexe_scoped_warning_naming_its_own_document_is_not_a_defect():
+    """The regression for the rule that flagged 276 of the first real snapshot's
+    289 warnings.
+
+    This checker used to refuse ANY annexe-scoped warning carrying a ref, on the
+    reasoning that a document-scoped sentence "belongs to the whole job" so a ref
+    could only be it naming a line. The first real published snapshot
+    (`3ae88642…`) is 274 `document`-scoped and 2 `warranty`-scoped warnings that
+    all carry one, and in every one of the 276 the ref is that document's own
+    `content_hash` — all 276 resolve to an entry in the snapshot's `source_docs`.
+    It is what lets the annexe group 274 quoted sentences by the guide they came
+    from, which is half of what a reader needs to go and check one.
+
+    The old rule survived only because the sole data it had ever met was a
+    fixture this side authored with empty refs — the failure mode
+    `plan/current-status.md` already names: a rule that passes only against data
+    its implementer authored is not a rule anyone has tested."""
+    for kind in sorted(ANNEXE_SCOPES):
+        w = _w(attaches_to=WarningTarget(kind=kind, ref="hash-of-the-guide"))
+        assert warning_errors([w], where="published",
+                              known_docs={"hash-of-the-guide"}) == [], kind
+
+
+def test_an_annexe_scoped_ref_that_names_no_document_in_hand_is_reported():
+    """What is left of the scope rule once it is narrowed to something checkable.
+
+    An annexe-scoped ref names the DOCUMENT the sentence was quoted from. A ref
+    that resolves to none of the documents that came with it is the same class of
+    defect `validate_model` already refuses one function over — a step warning
+    naming a step this model has not got — and it is a defect for the same
+    reason: the annexe would carry the sentence and be unable to say who said
+    it."""
     for kind in sorted(ANNEXE_SCOPES):
         errors = warning_errors(
-            [_w(attaches_to=WarningTarget(kind=kind, ref="rails"))], where="w")
+            [_w(attaches_to=WarningTarget(kind=kind, ref="rails"))],
+            where="published", known_docs={"hash-of-the-guide"})
         assert len(errors) == 1, kind
-        assert "renders once in the annexe" in errors[0]
+        assert "not one of the documents that came with it" in errors[0]
+
+
+def test_an_annexe_scoped_ref_is_not_judged_by_a_caller_who_cannot_resolve_it():
+    """Silence is the honest answer for a caller holding no document list.
+
+    A curator authoring a warning in the model editor has no `source_docs` to
+    check against, and a caller with no way to resolve a ref has no standing to
+    call it dangling. The old rule's mistake was giving a verdict anyway — with
+    no documents in hand it read every ref as "naming a line". So with no
+    `known_docs` the ref is not judged at all, and the other checks still run."""
+    w = _w(attaches_to=WarningTarget(kind="document", ref="hash-of-the-guide"))
+    assert warning_errors([w], where="model M-X") == []
+    # ...not judged is not "not checked": the rest of the type's rules still hold
+    assert warning_errors([_w(attaches_to=WarningTarget(
+        kind="document", ref="hash-of-the-guide"), params={"n": 3})],
+        where="model M-X")
+    # ...and "I cannot resolve refs" is not "there are no documents". A sender
+    # that ships annexe warnings with an empty `source_docs` has refs that really
+    # do dangle, and the empty set says so — the absent/blank distinction this
+    # module already keeps for `severity_lexeme`.
+    assert len(warning_errors([w], where="published", known_docs=set())) == 1
 
 
 def test_a_line_scoped_warning_must_name_the_line():
     """The same rule from the other end: without a ref there is no step, sku or
     model to put it on, so it would be carried and rendered nowhere. `procedure`
     is the one exception and has its own meaning for an empty ref — the procedure
-    of the document it came with."""
+    of the document it came with.
+
+    Unchanged by the narrowing of the annexe-ref rule, and asserted both with and
+    without `known_docs` because a document list says nothing about a step key: a
+    fix that made the missing-ref check conditional on it too would have traded
+    one over-broad rule for one that goes quiet."""
     for kind in ("step", "product", "model"):
         errors = warning_errors(
             [_w(attaches_to=WarningTarget(kind=kind))], where="w")
+        assert len(warning_errors(
+            [_w(attaches_to=WarningTarget(kind=kind))], where="w",
+            known_docs={"hash-of-the-guide"})) == 1, kind
         assert len(errors) == 1, kind
         assert "names none" in errors[0]
     assert warning_errors(
@@ -129,6 +187,43 @@ def test_identity_separates_the_publishers_own_severity_word():
     dropped the more serious."""
     assert _w(severity_lexeme="CAUTION").identity() \
         != _w(severity_lexeme="DANGER").identity()
+
+
+def test_a_document_ref_changes_where_the_warning_is_checked_not_where_it_renders():
+    """§3.3.5, held steady across the narrowing. The rule that made annexe refs
+    illegal was also, accidentally, the reason no annexe-scoped warning ever
+    reached `place_warnings` carrying one. Legalising the ref puts a shape
+    through that function it had never been given, so the contract's own sentence
+    — "for `document`, `warranty` and `maintenance`, once in the plan's annexe
+    and never on a line" — is asserted against exactly that shape.
+
+    The ref is what the sentence was quoted FROM, never what it renders on: the
+    step key `rails` here is a real step of the plan, and a document-scoped
+    warning naming it must still land in the annexe and nowhere near it."""
+    warnings = [_w(attaches_to=WarningTarget(kind=kind, ref="rails"))
+                for kind in sorted(ANNEXE_SCOPES)]
+    placement = place_warnings(warnings, steps=["rails"], skus=["P-1"])
+
+    assert {p.where for p in placement.placements} == {"annexe"}
+    assert all(p.ref == "" for p in placement.placements)
+    assert placement.not_in_plan == 0
+    # three kinds, three entries, each once — the annexe keeps them apart (a
+    # warranty condition and a maintenance note that read alike are two facts)
+    assert len(placement.placements) == 3
+    assert [p.instances for p in placement.placements] == [1, 1, 1]
+
+
+def test_one_footnote_quoted_off_one_document_collapses_however_often_it_is_sent():
+    """The freeze-thaw footnote is printed at the foot of fourteen pages and
+    resolves to 83 instances of one sentence; the annexe holds it once. Now that
+    the ref is carried, it must not become an 84th thing that distinguishes two
+    printings of the same sentence — `_place_into` drops it for annexe kinds
+    precisely so this collapse survives."""
+    w = _w(attaches_to=WarningTarget(kind="document", ref="hash-of-the-guide"))
+    placement = place_warnings([w] * 83, steps=["rails"])
+    assert len(placement.placements) == 1
+    assert placement.placements[0].instances == 83
+    assert placement.carried() == 83
 
 
 def test_every_error_names_where_it_came_from():

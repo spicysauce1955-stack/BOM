@@ -12,10 +12,11 @@ verdicts these tests hold in place.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.core.errors import GenerationFailure
-from fenceai.core.gaps import Gap
+from fenceai.core.gaps import Gap, GapSubject
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.evaluator import resolve_param
@@ -145,7 +146,10 @@ def test_missing_default_post_produces_a_plan_with_an_unfilled_post():
     gaps = _gaps(result, "missing_value")
     assert len(gaps) == 1
     assert gaps[0].subject.id == "post_ground"
-    assert gaps[0].subject.kind == "slot"  # a role, not a parameter key
+    # a role, not a parameter key — and the role is carried in `ref_kind`, which
+    # is where that distinction lives now that `slot` is reserved (see below)
+    assert gaps[0].subject.kind == "entity"
+    assert gaps[0].subject.ref_kind == "role"
     assert gaps[0].closes_by == "knowledge"
 
     warned = [w for w in result.strategy.warnings if w.code == "no_default_post"]
@@ -156,6 +160,52 @@ def test_missing_default_post_produces_a_plan_with_an_unfilled_post():
     assert set(warned[0].element_refs) == {p.id for p in result.strategy.posts}
     # and the warning's decision_ref actually resolves, to the gap node
     assert result.graph.node(warned[0].decision_ref).kind == "gap"
+
+
+def test_the_unstated_default_names_its_role_as_an_entity_not_as_a_reserved_slot():
+    """§1.1 reserves `SlotRef`; this gap used to be the one producer emitting one.
+
+    The contract's survey of slot-shaped gaps said there were none on either side
+    and was wrong about this repo, so the property is worth holding down rather
+    than assuming: the subject is the ROLE addressed as an entity, and the fact
+    that it is a role — the thing a queue groups by, and the reason this is not
+    filed with the parameter gaps — rides in `ref_kind`, the open registry field,
+    where adding a value is never an amendment.
+    """
+    kb = _without(demo_knowledge(), "K-POST-DEFAULT")
+    result = generate(straight_topology(6000), kb, demo_catalog())
+
+    gap = _gaps(result, "missing_value")[0]
+    assert gap.subject.kind == "entity"
+    assert gap.subject.ref_kind == "role"
+    assert gap.subject.id == "post_ground"
+    # the whole subject, so a role smuggled in as a parameter scope also fails
+    assert gap.subject.scope is None
+    assert gap.subject.point is None
+    # and it is addressable: two gaps about this hole are recognisably one hole
+    assert gap.subject.key() == "entity:role/post_ground@~null"
+
+    # ...and NO gap this generation produces is shaped any other way. The
+    # per-gap assertion above passes a regression that adds a second producer.
+    assert {g.subject.kind for g in result.strategy.gaps} <= {"entity", "param"}
+
+
+def test_a_slot_shaped_subject_is_refused_by_the_type_itself():
+    """The reservation is enforced where it cannot be forgotten.
+
+    Trusting every call site is what produced the violation in the first place:
+    the subject was authored slot-shaped for a defensible reason and nothing in
+    the system disagreed. `GapSubject.kind` is the closed half of §1.1's ref
+    union, so a producer that reaches for `slot` again fails at construction —
+    before a run can carry an unratified shape across the boundary.
+    """
+    with pytest.raises(ValidationError):
+        GapSubject(kind="slot", id="post_ground")
+
+    # the two admissible arms still construct, so this is a reservation and not
+    # a type that refuses everything
+    assert GapSubject(kind="entity", id="post_ground", ref_kind="role").ref_kind == "role"
+    assert GapSubject(kind="param", id="max_span_mm").kind == "param"
 
 
 def test_missing_default_post_reaches_demand_as_an_unresolved_line():

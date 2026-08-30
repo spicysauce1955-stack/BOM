@@ -85,6 +85,45 @@ const curator = gap({
   would_close: "A GateModel with <script>alert(1)</script> handedness & swing.",
 });
 
+// v1.2's `ParamRef`: the SAME parameter under two different scopes. The first
+// real published snapshot does exactly this with `footing_depth_mm`, which is
+// the entire argument for the field — a subject naming only the parameter names
+// two different holes at once, and a curator closing "the footing_depth_mm gap"
+// closes whichever one they happened to be looking at.
+//
+// `point` carries the three shapes a real cell has: an enum token, a BOOLEAN
+// (`hvhz`), and a string straight out of a published table, inch marks and all.
+const scoped = (scopeId) => gap({
+  id: "gap:footing:" + scopeId,
+  subject: {
+    kind: "param", id: "footing_depth_mm", tenant: "t1",
+    scope: { kind: "fence_model", id: scopeId },
+    point: { exposure_category: "D", hvhz: true, panel_height: '49" to 76"' },
+  },
+});
+
+// `EntityRef.kind` is an OPEN registry (v1.2 §1.1): the other team adds a value
+// and there is no release on this side. Nothing here may key a locale bundle on
+// it. This is a kind this repo has never seen and never will.
+const unknownRefKind = gap({
+  kind: "unmodellable_entity", closes_by: "planning", severity: "informational",
+  because: { code: "parameter_scope_unmappable", params: { parameter: "footing_depth_mm" } },
+  subject: { kind: "entity", id: "shade_sail:SS-3", ref_kind: "shade_sail_assembly" },
+  would_close: "an evaluator dimension for a shade_sail_assembly",
+});
+
+// A scope id and a condition point whose DIMENSION NAME and VALUE are both
+// XSS-shaped. Both come from a published document by way of the Knowledge
+// Platform — untrusted data by contract — and `point` is the newest place in
+// this module where such a string reaches `innerHTML`.
+const hostilePoint = gap({
+  subject: {
+    kind: "param", id: "footing_depth_mm",
+    scope: { kind: "fence_model", id: '"><img src=x onerror=alert(5)>' },
+    point: { "<b>dim</b>": '"><script>alert(6)</script>' },
+  },
+});
+
 // A citation whose `id`/`belongs_to` are themselves XSS-shaped — `SourceRef`
 // fields arrive from the Knowledge Platform and are untrusted data by
 // contract, and `citesHtml` puts them inside an HTML-attribute context
@@ -108,11 +147,17 @@ out.he_kinds = KINDS.map((k) => gapRowHtml(gap({
   on: k === "disputed" ? "conditions" : null,
 }))).join("\\n");
 out.he_only_planning = gapsPanelHtml([curator]);
+out.he_scoped_a = gapRowHtml(scoped("FM-500"));
+out.he_scoped_b = gapRowHtml(scoped("FM-900"));
+out.he_unknown_ref_kind = gapRowHtml(unknownRefKind);
+out.he_hostile_point = gapRowHtml(hostilePoint);
 out.counts = warnsLineCount([gap({}), curator]);
 
 await setLocale("en");
 out.en = gapsPanelHtml([gap({}), curator]);
 out.en_kinds = KINDS.map((k) => gapRowHtml(gap({ kind: k }))).join("\\n");
+out.en_scoped_a = gapRowHtml(scoped("FM-500"));
+out.en_unknown_ref_kind = gapRowHtml(unknownRefKind);
 
 console.log(JSON.stringify(out));
 """
@@ -226,6 +271,80 @@ def test_an_entity_subject_is_isolated_as_an_identifier(panels):
     he = panels["he"]
     assert '<bdi class="sku">gate@run1:2000-3000</bdi>' in he
     assert '<bdi class="sku">max_span_mm</bdi>' in he
+
+
+def test_two_gaps_about_one_parameter_under_different_scopes_are_distinguishable(panels):
+    """THE regression v1.2's `ParamRef.scope` exists for. The first real
+    published snapshot carries `footing_depth_mm` under two different scopes; a
+    subject that prints only the parameter renders those two holes as the same
+    row, and a curator who closes "the footing_depth_mm gap" closes one of them
+    at random. Distinguishable ON SCREEN, not merely in `GapSubject.key()`."""
+    a, b = panels["he_scoped_a"], panels["he_scoped_b"]
+    assert a != b
+    assert '<bdi class="sku">fence_model/FM-500</bdi>' in a
+    assert '<bdi class="sku">fence_model/FM-900</bdi>' in b
+    assert "FM-900" not in a and "FM-500" not in b
+    # ...and the scope is LABELLED in the reader's language, in both
+    assert '<span class="gap-scope">של <bdi class="sku">fence_model/FM-500</bdi></span>' in a
+    assert '<span class="gap-scope">of <bdi class="sku">fence_model/FM-500</bdi></span>' \
+        in panels["en_scoped_a"]
+
+
+def test_a_condition_point_renders_from_its_parts_and_never_as_an_object(panels):
+    """`ParamRef.point` is a mapping so the renderer can build the phrase from
+    its parts — the contract's own reason for the shape. Two failures are
+    possible and both are silent: interpolating the mapping (`[object Object]`
+    on screen, in both languages), or interpolating a pre-joined English
+    fragment into a Hebrew sentence. So each dimension is a WORD and each value
+    is formatted by its type — `hvhz: true` reads `כן`, because `true` is
+    neither Hebrew nor English."""
+    he, en = panels["he_scoped_a"], panels["en_scoped_a"]
+    for html in (he, en):
+        assert "[object Object]" not in html
+    # the dimensions this app has words for, in the reader's language
+    assert "קטגוריית חשיפה" in he
+    assert "אזור רוחות הוריקן (HVHZ)" in he
+    assert "Exposure category" in en
+    assert "High-velocity hurricane zone (HVHZ)" in en
+    # the boolean is a word, not a JS literal
+    assert '<span class="gap-point-value">כן</span>' in he
+    assert '<span class="gap-point-value">yes</span>' in en
+    assert ">true<" not in he and ">true<" not in en
+    # a dimension no bundle names falls back to the raw name AS a raw name —
+    # an identifier, isolated — never to the literal locale key
+    assert '<bdi class="sku">panel_height</bdi>' in he
+    assert "site.panel_height" not in he and "site.panel_height" not in en
+    # a value quoted out of a published table keeps its inch marks, escaped and
+    # LTR-isolated so they do not reorder the Hebrew around them
+    assert '<bdi class="sku">49&quot; to 76&quot;</bdi>' in he
+
+
+def test_an_open_registry_ref_kind_is_data_and_never_a_locale_key(panels):
+    """`EntityRef.kind` is an OPEN registry: the Knowledge Platform adds an entry
+    without an amendment and without a release here. `t("gaps.subject." + ref_kind)`
+    would therefore put the literal string `gaps.subject.shade_sail_assembly` on
+    screen the day they do, in both languages, with nothing red anywhere — which
+    is exactly the failure `subject.kind` (CLOSED, key-checked from the Python
+    Literal) exists separately to prevent."""
+    for html in (panels["he_unknown_ref_kind"], panels["en_unknown_ref_kind"]):
+        assert "gaps.subject." not in html, html[:400]
+        # carried as data, isolated as the identifier it is
+        assert '<bdi class="sku">shade_sail_assembly</bdi>' in html
+        assert 'data-ref-kind="shade_sail_assembly"' in html
+
+
+def test_a_scope_and_point_reaching_innerhtml_go_through_esc(panels):
+    """A scope id and a condition point's dimension names and values are
+    published-document text arriving through the Knowledge Platform — untrusted
+    by contract, and `point` is the newest place in this module where such a
+    string reaches `innerHTML`."""
+    html = panels["he_hostile_point"]
+    assert "<script>alert(6)" not in html
+    assert "<img src=x" not in html
+    assert '"><script>' not in html and '"><img' not in html
+    assert "&lt;script&gt;alert(6)&lt;/script&gt;" in html
+    assert "&lt;b&gt;dim&lt;/b&gt;" in html
+    assert "&lt;img src=x onerror=alert(5)&gt;" in html
 
 
 def test_a_citation_carries_the_evidence_link_contract_js_evidence_js_depends_on(panels):

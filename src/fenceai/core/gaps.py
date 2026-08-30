@@ -46,23 +46,85 @@ GapKind = Literal[
 PLANNING_CLOSES: frozenset[str] = frozenset({"unmodellable_entity", "unmapped_part_kind"})
 
 
+class EntityRef(BaseModel):
+    """§1.1: `EntityRef { kind, id, tenant }` — a thing in the world.
+
+    `kind` is a **str, not a Literal**, and that is v1.2 being obeyed rather than
+    laxity: *"`EntityRef.kind` is a closed vocabulary in the registries, on the
+    same terms as `TaskCode`, `SourceClass` and `RoleCode`: adding an entry is
+    never a breaking change and never an amendment."* A Literal here would make
+    every registry addition a code change on this side and a release the other
+    team has to wait for — which is the property registry delegation exists to
+    prevent.
+
+    It is therefore NOT the same vocabulary as `GapSubject.kind`, and the two must
+    not share a field. `GapSubject.kind` is a closed, locale-keyed discriminator
+    over the contract's ref union; this is an open registry of entity kinds. They
+    were one field until v1.2 gave us the language to separate them.
+    """
+
+    kind: str = ""
+    id: str
+    # §1.1: `TenantId  str | null    null = tenant-agnostic, i.e. Knowledge-global`.
+    # `None` and `""` are different facts and both occur, so the type carries both.
+    tenant: str | None = None
+
+
 class GapSubject(BaseModel):
     """WHAT is missing, addressably — the contract's `EntityRef | SlotRef | ParamRef`.
 
-    A discriminated ref rather than three types, because every consumer wants the
-    same two things (which kind, which name) and a union of three one-field models
-    buys a queue nothing but three code paths.
+    A discriminated envelope rather than a bare union, because every consumer wants
+    the same two things first (which kind, which name) and a three-arm union buys a
+    curator queue nothing but three code paths. The structure the union carries is
+    kept in full underneath.
 
-    `tenant` was missing until the Knowledge team's review of
-    `docs/integration-contract/fixtures/snapshot-example.json` named it: their own
-    subject is a bare element-id string today and they are moving to this shape,
-    which is the confirmation that `id` + `tenant` — not `ref` alone — is what
-    `EntityRef` actually means here.
+    **`slot` is gone, and its absence is the type doing its job.** v1.2 §1.1 marks
+    `SlotRef` RESERVED — *"No producer may emit a slot-shaped `Gap.subject` until
+    an amendment defines it"* — so the reservation is enforced here rather than
+    trusted to every call site. This repo emitted one (`strategy/generator.py`,
+    `gap:post_ground`) at the moment of ratification, which is the argument for
+    enforcing it in the type: the contract's own survey said we did not.
+
+    **`scope` and `point` are v1.2's `ParamRef`.** A `param` subject naming only
+    `max_span_mm` is not addressable: the first real snapshot publishes the SAME
+    parameter twice under different `scope.id`s, so a subject without its scope
+    names two different holes at once. `point` is structured for the same reason it
+    is structured in the contract — a pre-rendered `"exposure_category=D, hvhz=True"`
+    cannot be localised, and Hebrew is not a language this system renders English
+    fragments into.
     """
 
-    kind: Literal["entity", "slot", "param"]
+    # The closed, locale-keyed discriminator over the contract's ref union. Every
+    # value here needs `gaps.subject.<value>` in BOTH bundles
+    # (`tests/web/test_locale_bundles.py` derives the key set from this Literal).
+    kind: Literal["entity", "param"]
     id: str
-    tenant: str = ""
+    tenant: str | None = None
+    # `EntityRef.kind` when this subject IS an entity — the open registry value,
+    # carried as data and never used to build a locale key.
+    ref_kind: str = ""
+    # `ParamRef.scope` — which product or assembly the parameter belongs to.
+    scope: EntityRef | None = None
+    # `ParamRef.point` — the cell inside the table, or None for the whole table.
+    point: dict[str, str | int | bool] | None = None
+
+    def key(self) -> str:
+        """A stable identity for this subject, scope and point included.
+
+        This is what makes two gaps about the same hole recognisable as the same
+        hole — which is not a nicety: the first real snapshot publishes 16
+        `uncovered_condition` gaps and `expand()` independently derives the same
+        16 from `table.uncovered`, so without an identity the ingest reports 32
+        holes where there are 16. It is also what a derived gap id is built from,
+        after the scope-less version collided 16 rows into 8 ids.
+        """
+        tenant = self.tenant if self.tenant is not None else "~null"
+        if self.kind == "entity":
+            return f"entity:{self.ref_kind}/{self.id}@{tenant}"
+        scope = f"{self.scope.kind}/{self.scope.id}" if self.scope else "~unscoped"
+        point = (";".join(f"{k}={self.point[k]!r}" for k in sorted(self.point))
+                 if self.point else "~whole-table")
+        return f"param:{self.id}@{scope}#{point}@{tenant}"
 
 
 class SourceRef(BaseModel):
@@ -94,15 +156,31 @@ class SourceRef(BaseModel):
     belongs_to: str = ""  # content_hash -> SourceDoc; "" only where none was given
 
 
+# A `because` param value. `bool` is listed BEFORE `int` deliberately: a domain
+# point's `hvhz: true` is a boolean, and under a `str | int` annotation pydantic
+# admits it through the `int` arm and stores `1` — after which the sentence renders
+# "hvhz=1" in both languages and the type has silently lost a fact it was handed.
+# The nested dict is the contract's own `point` shape (§1.1 `ParamRef.point`), which
+# the first real snapshot publishes on all 16 of its uncovered-condition gaps.
+ParamValue = str | bool | int | dict[str, str | bool | int]
+
+
 class Because(BaseModel):
     """§1.2.1: `because { code, params }` — the ONLY rendering mechanism a `Gap`
     has. A `Gap` carries no `text_raw` the way a quoted `DocumentWarning` does, so
     a free-text `message` beside `because` would compete with it and, per the
     contract's own argument for warnings turned the other way round, become what
-    implementations actually display while the locale path rots."""
+    implementations actually display while the locale path rots.
+
+    §1.2.1 places no ceiling on what a param VALUE is, and the first real snapshot
+    proves why: a condition point is structurally a mapping, and flattening it to a
+    string at the boundary is the same loss `Quantity.value_raw` exists to prevent
+    one type over. A renderer that meets a mapping formats it from its parts; it
+    must never be handed a pre-joined English fragment to interpolate.
+    """
 
     code: str
-    params: dict[str, str | int] = {}
+    params: dict[str, ParamValue] = {}
 
 
 class Gap(BaseModel):

@@ -26,18 +26,24 @@ on `post.role`, expanded now and selected when a post exists.
 
 from __future__ import annotations
 
-import re
 from typing import Literal
 
 from pydantic import BaseModel
 
-from fenceai.core.gaps import Because, Gap, GapSubject, SourceRef
+from fenceai.core.dates import Date, is_iso_date, precedes
+from fenceai.core.gaps import Because, EntityRef, Gap, GapSubject, SourceRef
 from fenceai.knowledge.ast import And, Cmp, Expr, FieldRef, Lit
 from fenceai.knowledge.model import KnowledgeVersion, SetParam, SetToken
 
-# See the lapsed-check guard in `expand()`: a lexicographic compare is only
-# meaningful when both sides are already `YYYY-MM-DD`.
-_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# The hit policies this engine can actually honour. `unique` is a CLAIM about the
+# condition space ("these rows are disjoint") which `_overlap_gaps` checks and the
+# evaluator reports as a `Conflict` when it is false — so consuming it changes no
+# arithmetic. The other three change WHICH number comes out: `collect_min` over
+# rows of 1000 and 2000 must yield 1000, and expanding them into ordinary rules
+# yields whichever fires first. A table whose policy we cannot honour is refused
+# with a gap, on exactly the argument `_scope_for` already makes about a scope we
+# cannot aim: producing a confident wrong number is worse than producing none.
+SUPPORTED_HIT_POLICIES = frozenset({"unique"})
 
 # §1.1. `mm` is the only unit this engine stores at rest, so it is the only one
 # the loader can land today — the rest are accepted, declared, and refused with a
@@ -109,8 +115,15 @@ class ParameterRow(BaseModel):
     condition_basis: Literal["stated", "assumed"] = "stated"
     value: Quantity | Token
     provenance: Provenance = Provenance()
-    valid_from: str | None = None
-    valid_until: str | None = None
+    # §1.1 `Date`, BINDING since v1.2 (amendment 002). These were `str | None`,
+    # which is how a `MM/DD/YYYY` lexeme came to be compared against an ISO
+    # `as_of` and reported a row valid until 2028 as lapsed in 2026. The type now
+    # separates the two facts the string conflated: `iso` is a date this side may
+    # order, `value_raw` is what the document actually said. A source date that
+    # cannot be normalised without guessing arrives as `iso: null` beside its own
+    # lexeme — and is then never ordered, rather than being ordered wrongly.
+    valid_from: Date | None = None
+    valid_until: Date | None = None
     authority: str = ""
 
     def is_fallback(self) -> bool:
@@ -163,7 +176,11 @@ def to_mm(q: Quantity) -> int:
     extra footing and an extra pour on a 9.8 m run.
 
     `round()` is banker's rounding in Python and would send 2500 thousandths to 2
-    rather than 3, so the half-up form is written out.
+    rather than 3, so the rounding is written out. It is half-away-from-ZERO, not
+    half-up: `-2500` gives `-3`, where half-up gives `-2`. That is the right
+    behaviour — the magnitude rounds the same in both directions and neither
+    direction ever floors — and the word is corrected here because the two differ
+    only on negatives, which is precisely where nobody looks.
     """
     if q.unit != "mm":
         raise ValueError(f"{q.unit} is not a length this engine stores; expected mm")
@@ -191,6 +208,54 @@ _ENTITY_DIMENSION = {
     # future publisher will not use one of those instead.
     "fence_model": "series",
 }
+
+
+def _scope_ref(table: ParameterTable) -> EntityRef | None:
+    """The table's `scope` as the contract's own `EntityRef`, unmapped.
+
+    Distinct from `_scope_for` below, which converts it into evaluator DIMENSIONS.
+    This one keeps it as published, because it is the half a `ParamRef` needs: a
+    gap must say which product's table has the hole, and the dimension mapping
+    (`fence_model` -> `series`) is a fact about our evaluator, not about the hole.
+    """
+    if not table.scope:
+        return None
+    return EntityRef(
+        kind=str(table.scope.get("kind") or ""),
+        id=str(table.scope.get("id") or ""),
+        tenant=table.scope.get("tenant"),
+    )
+
+
+def _param_subject(
+    table: ParameterTable, tenant: str | None,
+    point: dict[str, str | int | bool] | None = None,
+) -> GapSubject:
+    """A `ParamRef` subject (§1.1, v1.2): the parameter, its scope, and the cell.
+
+    The scope is not decoration. The first real snapshot publishes
+    `footing_depth_mm` TWICE — once scoped to Barrette, once to CertainTeed, each
+    citing a different approval and one superseded by the other. A subject naming
+    only `footing_depth_mm` names both holes at once, which is how 16 derived gaps
+    collapsed into 8 ids and half a curator's queue disappeared.
+    """
+    return GapSubject(kind="param", id=table.parameter, tenant=tenant,
+                      scope=_scope_ref(table), point=point)
+
+
+def _object_id(table: ParameterTable, index: int) -> str:
+    """A row's stable identity — parameter, SCOPE, and row index.
+
+    The scope was missing, and it is load-bearing in a way a gap id is not: the
+    decision graph cites `version.ref`, `KnowledgeBase.snapshot_set()` stamps a
+    run's knowledge identity from it, and `overrides_objects` targets it. Two rows
+    sharing `footing_depth_mm#0@v1` mean an explanation that cannot say which
+    manufacturer's approval it used, a snapshot hash that cannot tell "Barrette
+    and CertainTeed" from "Barrette twice", and one override defeating both.
+    """
+    ref = _scope_ref(table)
+    scope = f"@{ref.kind}/{ref.id}" if ref and ref.id else ""
+    return f"{table.parameter}{scope}#{index}"
 
 
 def _scope_for(table: ParameterTable) -> tuple[dict[str, str], str | None]:
@@ -235,7 +300,7 @@ def _path(table: ParameterTable, key: str) -> str:
 
 
 def expand(
-    table: ParameterTable, *, as_of: str = "", tenant: str = "",
+    table: ParameterTable, *, as_of: str = "", tenant: str | None = None,
 ) -> tuple[list[KnowledgeVersion], list[Gap]]:
     """One published table -> ordinary knowledge, plus the gaps it declares.
 
@@ -260,11 +325,26 @@ def expand(
     gaps: list[Gap] = []
     tokens = table.token_values()
 
+    # An `as_of` this side cannot read is OUR bug, not a publisher's, so it is
+    # refused rather than quietly downgraded to "no judgement" — a typo'd pin
+    # would otherwise silence every expiry check in the run without a sound.
+    if as_of and not is_iso_date(as_of):
+        raise ValueError(
+            f"as_of={as_of!r} is not an ISO-8601 YYYY-MM-DD date. It is this "
+            f"engine's own pinned run date, not published data"
+        )
+    as_of_date = Date(iso=as_of) if as_of else None
+
     scope, unmappable = _scope_for(table)
     if unmappable is not None:
         # Nothing is expanded. A table we cannot aim is not a table we may apply
         # everywhere, and this closes by a schema change HERE, not by a curator.
         return [], [_unmappable_scope_gap(table, unmappable, tenant)]
+
+    if table.hit_policy not in SUPPORTED_HIT_POLICIES:
+        # Same argument, one field over: expanding these rows would produce a
+        # number, and the number would be wrong.
+        return [], [_unsupported_hit_policy_gap(table, tenant)]
 
     for index, row in enumerate(table.rows):
         action = _action_for(table, row, tokens)
@@ -272,7 +352,7 @@ def expand(
             gaps.append(_bad_value_gap(table, row, index, tenant))
             continue
         versions.append(KnowledgeVersion.from_published(
-            object_id=f"{table.parameter}#{index}",
+            object_id=_object_id(table, index),
             version=1,
             # A published row is a fact about the world, not a company rule —
             # `fact` is the tier the demo base already gives measured inputs, and
@@ -284,22 +364,24 @@ def expand(
             title=f"{table.parameter} = {_display(row.value)}",
             attributed_to="knowledge_platform",
         ))
-        # `<` is a STRING compare, correct only for ISO-8601 (`YYYY-MM-DD`) on
-        # both sides. The first real snapshot publishes `valid_until` as
-        # `MM/DD/YYYY` (`"04/04/2028"`) — undetected until real data arrived,
-        # because every prior caller was a test already writing ISO. Compared
-        # lexicographically against an ISO `as_of`, `"04/04/2028" < "2026-08-30"`
-        # is TRUE, so a row valid until 2028 was reported LAPSED four years early.
-        # `AMENDING.md` candidate C6 is this exact defect at the contract's own
-        # date comparator (§1.4); until it lands a `Date` type, guessing a parse
-        # here would be inventing the same comparator unilaterally. So: compare
-        # only when both sides already look like ISO dates, and otherwise skip
-        # the check rather than assert a lapse this side cannot actually read.
-        if (row.valid_until and as_of
-                and _ISO_DATE.match(row.valid_until) and _ISO_DATE.match(as_of)
-                and row.valid_until < as_of):
+        # Both ends of the validity window, judged through §1.1's `Date` rule:
+        # `precedes` returns None when either side carries no `iso`, and None is
+        # NOT "no" — it means the question has no answer, so no gap is reported
+        # rather than a wrong one. That is the null rule doing its job: an
+        # undated authority is never treated as earliest or latest, so it is
+        # never silently declared lapsed and never silently declared current.
+        if precedes(row.valid_until, as_of_date) is True:
             gaps.append(_lapsed_gap(table, row, index, as_of, tenant))
+        # The lapsed check's twin, and it was never written. A row whose
+        # authority does not take effect until after this run's pinned date was
+        # expanded silently and applied with no marker — the same defect as a
+        # lapsed row, failing in the more dangerous direction: a lapsed row at
+        # least produces a warned line, while a not-yet-in-force row produces a
+        # confident wrong answer. Marked, never dropped, for the same reason.
+        if precedes(as_of_date, row.valid_from) is True:
+            gaps.append(_not_yet_in_force_gap(table, row, index, as_of, tenant))
 
+    gaps.extend(_overlap_gaps(table, tenant))
     gaps.extend(_uncovered_gaps(table, tenant))
     return versions, gaps
 
@@ -323,7 +405,25 @@ def _action_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | Non
 
 
 def _display(value) -> str:
-    return value.key if isinstance(value, Token) else f"{value.amount_milli / 1000:g} {value.unit}"
+    """A row's value as a title.
+
+    `value_raw` first, because §1.1 says the source's own lexeme exists to be
+    shown beside the number — a title reading `34"` is what a curator matches
+    against the page, where `863.6 mm` is this engine's arithmetic.
+
+    The fallback no longer goes through `%g`, which is six SIGNIFICANT digits and
+    therefore misstates exactly the values worth checking: `1234567` thousandths
+    rendered as `1234.57 mm` (wrong by 0.43 mm) and `1000000000` as `1e+06 mm`.
+    Integer division by the unit's own scale keeps the number the publisher sent.
+    """
+    if isinstance(value, Token):
+        return value.value_raw[0] if value.value_raw else value.key
+    if value.value_raw:
+        return value.value_raw[0]
+    whole, rem = divmod(abs(value.amount_milli), 1000)
+    sign = "-" if value.amount_milli < 0 else ""
+    fraction = f".{rem:03d}".rstrip("0") if rem else ""
+    return f"{sign}{whole}{fraction} {value.unit}"
 
 
 def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
@@ -336,14 +436,24 @@ def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
     """
     out = []
     for point in table.uncovered:
-        where = ", ".join(f"{k}={v}" for k, v in sorted(point.items()))
+        where = _point_label(point)
         measured = table.domain_basis == "measured"
+        subject = _param_subject(table, tenant, point=point)
         out.append(Gap(
-            id=f"gap:uncovered:{table.parameter}:{where}",
+            # Derived from the SUBJECT, so the id carries everything that
+            # distinguishes one hole from another — scope included. Built from
+            # `{parameter}:{point}` alone, the two published `footing_depth_mm`
+            # tables produced byte-identical ids for different manufacturers'
+            # holes, and 16 gaps arrived as 8.
+            id=f"gap:uncovered:{subject.key()}",
             kind="uncovered_condition",
-            subject=GapSubject(kind="param", id=table.parameter, tenant=tenant),
+            subject=subject,
+            # `point` is the contract's own mapping, carried structured. It used
+            # to be pre-joined into `"exposure_category=D, hvhz=True"` and
+            # interpolated into a Hebrew sentence, which is English leaking
+            # through a locale template with Python's `True` inside it.
             because=Because(code="uncovered_parameter_point",
-                             params={"parameter": table.parameter, "point": where,
+                             params={"parameter": table.parameter, "point": point,
                                      "domain_basis": table.domain_basis}),
             would_close=(
                 f"a {table.parameter} row for {where}" if measured else
@@ -355,28 +465,142 @@ def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
     return out
 
 
+def _point_label(point: dict[str, str | int | bool]) -> str:
+    """A point rendered for a `would_close` SENTENCE — and nowhere else.
+
+    §1.2.1 makes `would_close` a str ("one sentence: what would resolve this"), so
+    a rendered form is what belongs there. It must not be reused as a `because`
+    param: those render through a locale template in two languages, and this is
+    English.
+    """
+    return ", ".join(f"{k}={v}" for k, v in sorted(point.items()))
+
+
 def _lapsed_gap(
-    table: ParameterTable, row: ParameterRow, index: int, as_of: str, tenant: str,
+    table: ParameterTable, row: ParameterRow, index: int, as_of: str,
+    tenant: str | None,
 ) -> Gap:
     return Gap(
-        id=f"gap:lapsed:{table.parameter}#{index}",
+        id=f"gap:lapsed:{_object_id(table, index)}",
         kind="uncovered_condition",
-        subject=GapSubject(kind="param", id=table.parameter, tenant=tenant),
+        subject=_param_subject(table, tenant),
         because=Because(code="parameter_authority_lapsed",
                          params={"parameter": table.parameter,
-                                 "valid_until": row.valid_until or "",
+                                 # The lexeme, not the ISO form: this sentence is
+                                 # read beside the document, and the document says
+                                 # what it says.
+                                 "valid_until": _date_label(row.valid_until),
                                  "as_of": as_of, "authority": row.authority}),
         would_close=f"a reissue of {row.authority or 'the authority'} covering {as_of}",
         closes_by="knowledge", severity="warns_line",
     )
 
 
-def _unmappable_scope_gap(table: ParameterTable, kind: str, tenant: str) -> Gap:
+def _not_yet_in_force_gap(
+    table: ParameterTable, row: ParameterRow, index: int, as_of: str,
+    tenant: str | None,
+) -> Gap:
+    return Gap(
+        id=f"gap:not_yet_in_force:{_object_id(table, index)}",
+        kind="uncovered_condition",
+        subject=_param_subject(table, tenant),
+        because=Because(code="parameter_not_yet_in_force",
+                         params={"parameter": table.parameter,
+                                 "valid_from": _date_label(row.valid_from),
+                                 "as_of": as_of, "authority": row.authority}),
+        would_close=(f"an authority for {table.parameter} already in force at "
+                     f"{as_of}, or a run pinned on or after "
+                     f"{_date_label(row.valid_from)}"),
+        closes_by="knowledge", severity="warns_line",
+    )
+
+
+def _date_label(d: Date | None) -> str:
+    """What the document said, falling back to the normalised form.
+
+    `value_raw` first is the same order of preference §1.1 gives `Quantity`: the
+    source's own stamp is what a curator matches against the page in front of
+    them, and `iso` is what this engine ordered by.
+    """
+    if d is None:
+        return ""
+    return d.raw() or (d.iso or "")
+
+
+def _unsupported_hit_policy_gap(table: ParameterTable, tenant: str | None) -> Gap:
+    """A `hit_policy` this engine cannot honour — refused, never approximated.
+
+    `hit_policy` was accepted and then dropped on the floor: every row became an
+    ordinary rule and evaluator precedence picked a winner, so a `collect_min`
+    table of 1000 and 2000 resolved to whichever fired first. Three of the
+    contract's four policies silently produced a different number from the one
+    the publisher declared. Closing by a schema change HERE is what it is.
+    """
+    return Gap(
+        id=f"gap:hit_policy:{table.parameter}:{table.hit_policy}",
+        kind="unmodellable_entity",
+        subject=_param_subject(table, tenant),
+        because=Because(code="parameter_hit_policy_unsupported",
+                         params={"parameter": table.parameter,
+                                 "hit_policy": table.hit_policy}),
+        would_close=(f"a {table.hit_policy} resolver in the Planning repo, so a "
+                     f"table declaring it returns the value it declares"),
+        closes_by="planning", severity="warns_line",
+    )
+
+
+def _overlap_gaps(table: ParameterTable, tenant: str | None) -> list[Gap]:
+    """§1.3 BINDING: under `unique`, no two rows may match the same domain point.
+
+    *"`unique` means 'I claim these conditions are disjoint,' and the check will
+    tell you when that is false."* That check is the one mechanical property
+    `hit_policy` was added to buy, and it did not exist — the contradiction
+    surfaced only at run time, as a `Conflict` on a warned line, attributed to
+    this engine rather than to the table that declared something untrue.
+
+    A FALLBACK row (`stated` with no conditions) is excluded, which is what
+    `is_fallback()` was written for and never called for: such a row asserts
+    nothing about the points it lands on, so it cannot contradict one that does.
+    """
+    if table.hit_policy != "unique":
+        return []
+    out: list[Gap] = []
+    rows = [(i, r) for i, r in enumerate(table.rows) if not r.is_fallback()]
+    for a, (i, left) in enumerate(rows):
+        for j, right in rows[a + 1:]:
+            shared = set(left.conditions) & set(right.conditions)
+            # Two rows overlap when they agree everywhere they both speak: any
+            # point satisfying the union of their conditions matches both. Rows
+            # that share NO key overlap too — each is silent where the other
+            # speaks — which is why an empty `shared` is not an early exit.
+            if any(left.conditions[k] != right.conditions[k] for k in shared):
+                continue
+            point = {**left.conditions, **right.conditions}
+            subject = _param_subject(table, tenant, point=point)
+            out.append(Gap(
+                id=f"gap:overlap:{_object_id(table, i)}:{j}",
+                kind="disputed", on="conditions",
+                subject=subject,
+                because=Because(code="parameter_rows_overlap",
+                                 params={"parameter": table.parameter,
+                                         "row": i, "other_row": j,
+                                         "point": point}),
+                would_close=(f"disjoint conditions on rows {i} and {j} of "
+                             f"{table.parameter}, or a hit_policy that admits "
+                             f"more than one match"),
+                closes_by="knowledge", severity="warns_line",
+            ))
+    return out
+
+
+def _unmappable_scope_gap(
+    table: ParameterTable, kind: str, tenant: str | None,
+) -> Gap:
     return Gap(
         id=f"gap:unmappable_scope:{table.parameter}:{kind}",
         kind="unmodellable_entity",
-        subject=GapSubject(kind="entity", id=f"{kind}:{table.scope.get('id', '')}",
-                            tenant=tenant),
+        subject=GapSubject(kind="entity", ref_kind=kind,
+                            id=str(table.scope.get("id") or ""), tenant=tenant),
         because=Because(code="parameter_scope_unmappable",
                          params={"parameter": table.parameter, "entity_kind": kind}),
         would_close=(f"an evaluator dimension for a {kind} in the Planning repo, so a "
@@ -388,12 +612,12 @@ def _unmappable_scope_gap(table: ParameterTable, kind: str, tenant: str) -> Gap:
 
 
 def _bad_value_gap(
-    table: ParameterTable, row: ParameterRow, index: int, tenant: str,
+    table: ParameterTable, row: ParameterRow, index: int, tenant: str | None,
 ) -> Gap:
     return Gap(
-        id=f"gap:nonconforming:{table.parameter}#{index}",
+        id=f"gap:nonconforming:{_object_id(table, index)}",
         kind="disputed", on="value",
-        subject=GapSubject(kind="param", id=table.parameter, tenant=tenant),
+        subject=_param_subject(table, tenant),
         because=Because(code="parameter_value_nonconforming",
                          params={"parameter": table.parameter,
                                  "value_type": table.value_type, "row": index}),

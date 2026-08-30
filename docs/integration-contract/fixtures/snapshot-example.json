@@ -2,82 +2,204 @@
   "snapshot_id": "FIXTURE-not-a-real-snapshot",
   "tenant": "not-a-real-tenant",
   "spine_version": "0.1.0",
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "policy_version": "0.0.0",
   "retain_until": "2030-01-01",
   "regime": "us_astm",
-
   "parameters": [
     {
       "parameter": "max_span_mm",
-      "scope": {"kind": "model", "id": "M-VINYL", "tenant": "not-a-real-tenant"},
+      "scope": {
+        "kind": "model",
+        "id": "M-VINYL",
+        "tenant": "not-a-real-tenant"
+      },
       "task": "structural_parameter",
       "hit_policy": "unique",
       "value_type": "quantity(mm)",
-      "domain": {"exposure_category": ["B", "C", "D"], "hvhz": [true, false]},
+      "domain": {
+        "exposure_category": [
+          "B",
+          "C",
+          "D"
+        ],
+        "hvhz": [
+          true,
+          false
+        ]
+      },
       "domain_basis": "measured",
-      "condition_scope": {"exposure_category": "site", "hvhz": "site"},
+      "condition_scope": {
+        "exposure_category": "site",
+        "hvhz": "site"
+      },
       "rows": [
         {
-          "conditions": {"exposure_category": "B", "hvhz": false},
+          "conditions": {
+            "exposure_category": "B",
+            "hvhz": false
+          },
           "condition_basis": "stated",
-          "value": {"amount_milli": 1828800, "unit": "mm", "value_raw": ["72\""]},
+          "value": {
+            "amount_milli": 1828800,
+            "unit": "mm",
+            "value_raw": [
+              "72\""
+            ]
+          },
           "provenance": {
-            "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}],
-            "source_class": "manufacturer_installation_instruction", "curation_level": 1,
+            "cites": [
+              {
+                "id": "FIXTURE-src-1",
+                "belongs_to": "sha256:fixture-doc-a"
+              }
+            ],
+            "source_class": "manufacturer_installation_instruction",
+            "curation_level": 1,
             "version_status": "active"
           },
-          "valid_from": "2024-01-01", "valid_until": "2030-01-01",
+          "valid_from": {
+            "iso": "2024-01-01",
+            "value_raw": [
+              "01/01/2024"
+            ]
+          },
+          "valid_until": {
+            "iso": null,
+            "value_raw": [
+              "05/04/2023"
+            ]
+          },
           "authority": "ASCE 7-16"
         },
         {
-          "conditions": {"exposure_category": "C", "hvhz": false},
+          "conditions": {
+            "exposure_category": "C",
+            "hvhz": false
+          },
           "condition_basis": "stated",
-          "value": {"amount_milli": 1219200, "unit": "mm", "value_raw": ["48\""]},
+          "value": {
+            "amount_milli": 1219200,
+            "unit": "mm",
+            "value_raw": [
+              "48\""
+            ]
+          },
           "provenance": {
-            "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}],
-            "source_class": "manufacturer_installation_instruction", "curation_level": 1,
+            "cites": [
+              {
+                "id": "FIXTURE-src-1",
+                "belongs_to": "sha256:fixture-doc-a"
+              }
+            ],
+            "source_class": "manufacturer_installation_instruction",
+            "curation_level": 1,
             "version_status": "active"
           },
-          "valid_from": "2024-01-01", "valid_until": "2030-01-01",
+          "valid_from": {
+            "iso": "2024-01-01",
+            "value_raw": [
+              "01/01/2024"
+            ]
+          },
+          "valid_until": {
+            "iso": "2030-01-01",
+            "value_raw": [
+              "01/01/2030"
+            ]
+          },
           "authority": "ASCE 7-16"
         },
         {
-          "conditions": {"exposure_category": "C", "hvhz": true},
+          "conditions": {
+            "exposure_category": "C",
+            "hvhz": true
+          },
           "condition_basis": "stated",
-          "value": {"amount_milli": 914400, "unit": "mm", "value_raw": ["36\""]},
+          "value": {
+            "amount_milli": 914400,
+            "unit": "mm",
+            "value_raw": [
+              "36\""
+            ]
+          },
           "provenance": {
-            "cites": [{"id": "FIXTURE-src-2", "belongs_to": "sha256:fixture-doc-b"}],
-            "source_class": "sealed_approval", "curation_level": 1,
+            "cites": [
+              {
+                "id": "FIXTURE-src-2",
+                "belongs_to": "sha256:fixture-doc-b"
+              }
+            ],
+            "source_class": "sealed_approval",
+            "curation_level": 1,
             "version_status": "superseded"
           },
-          "valid_from": "2019-01-01",
-          "valid_until": "2025-01-01",
+          "valid_from": {
+            "iso": "2019-01-01",
+            "value_raw": [
+              "01/01/2019"
+            ]
+          },
+          "valid_until": {
+            "iso": "2025-01-01",
+            "value_raw": [
+              "01/01/2025"
+            ]
+          },
           "authority": "NOA 19-0101.01"
         }
       ],
       "uncovered": [
-        {"exposure_category": "D", "hvhz": false},
-        {"exposure_category": "D", "hvhz": true}
+        {
+          "exposure_category": "D",
+          "hvhz": false
+        },
+        {
+          "exposure_category": "D",
+          "hvhz": true
+        }
       ]
     },
     {
       "parameter": "slope_method",
-      "scope": {"kind": "model", "id": "M-VINYL", "tenant": "not-a-real-tenant"},
+      "scope": {
+        "kind": "model",
+        "id": "M-VINYL",
+        "tenant": "not-a-real-tenant"
+      },
       "task": "installation_step",
       "hit_policy": "unique",
       "value_type": "token(stepped_only|racked|either)",
-      "domain": {"exposure_category": ["B", "C", "D"]},
+      "domain": {
+        "exposure_category": [
+          "B",
+          "C",
+          "D"
+        ]
+      },
       "domain_basis": "declared",
-      "condition_scope": {"exposure_category": "site"},
+      "condition_scope": {
+        "exposure_category": "site"
+      },
       "rows": [
         {
           "conditions": {},
           "condition_basis": "stated",
-          "value": {"key": "stepped_only", "value_raw": ["They should be only installed using the slope method"]},
+          "value": {
+            "key": "stepped_only",
+            "value_raw": [
+              "They should be only installed using the slope method"
+            ]
+          },
           "provenance": {
-            "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}],
-            "source_class": "manufacturer_installation_instruction", "curation_level": 1,
+            "cites": [
+              {
+                "id": "FIXTURE-src-1",
+                "belongs_to": "sha256:fixture-doc-a"
+              }
+            ],
+            "source_class": "manufacturer_installation_instruction",
+            "curation_level": 1,
             "version_status": "active"
           },
           "authority": "Bufftech installation guide"
@@ -86,14 +208,28 @@
       "uncovered": []
     }
   ],
-
   "gaps": [
     {
       "id": "FIXTURE-gap-gate-1",
       "kind": "unmodellable_entity",
-      "subject": {"kind": "entity", "id": "product:vinyl-gate-48", "tenant": "not-a-real-tenant"},
-      "because": {"code": "gate_not_modelled", "params": {"product": "vinyl-gate-48"}},
-      "cites": [{"id": "FIXTURE-src-3", "belongs_to": "sha256:fixture-doc-c"}],
+      "subject": {
+        "kind": "entity",
+        "id": "product:vinyl-gate-48",
+        "tenant": "not-a-real-tenant",
+        "ref_kind": "product"
+      },
+      "because": {
+        "code": "gate_not_modelled",
+        "params": {
+          "product": "vinyl-gate-48"
+        }
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-3",
+          "belongs_to": "sha256:fixture-doc-c"
+        }
+      ],
       "would_close": "a gate type in the Planning schema carrying handedness, swing direction, fixed leaf and latch height",
       "closes_by": "planning",
       "severity": "warns_line"
@@ -102,9 +238,28 @@
       "id": "FIXTURE-gap-rack-1",
       "kind": "disputed",
       "on": "conditions",
-      "subject": {"kind": "param", "id": "max_rack", "tenant": "not-a-real-tenant"},
-      "because": {"code": "readers_disagreed_on_bracket", "params": {"parameter": "max_rack"}},
-      "cites": [{"id": "FIXTURE-src-2", "belongs_to": "sha256:fixture-doc-b"}],
+      "subject": {
+        "kind": "param",
+        "id": "max_rack",
+        "tenant": "not-a-real-tenant",
+        "scope": {
+          "kind": "fence_model",
+          "id": "FIXTURE-M-VINYL",
+          "tenant": null
+        }
+      },
+      "because": {
+        "code": "readers_disagreed_on_bracket",
+        "params": {
+          "parameter": "max_rack"
+        }
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-2",
+          "belongs_to": "sha256:fixture-doc-b"
+        }
+      ],
       "would_close": "a statement from the manufacturer of which fence heights the 4 inch rack limit covers",
       "closes_by": "knowledge",
       "severity": "informational"
@@ -112,65 +267,222 @@
     {
       "id": "FIXTURE-gap-excluded-1",
       "kind": "uncovered_condition",
-      "subject": {"kind": "param", "id": "max_span_mm", "tenant": "not-a-real-tenant"},
-      "because": {"code": "parameter_condition_excluded",
-                  "params": {"parameter": "max_span_mm",
-                             "point": "exposure_category=B, hvhz=True"}},
-      "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}],
+      "subject": {
+        "kind": "param",
+        "id": "max_span_mm",
+        "tenant": "not-a-real-tenant",
+        "scope": {
+          "kind": "fence_model",
+          "id": "FIXTURE-M-VINYL",
+          "tenant": null
+        },
+        "point": {
+          "exposure_category": "B",
+          "hvhz": true
+        }
+      },
+      "because": {
+        "code": "parameter_condition_excluded",
+        "params": {
+          "parameter": "max_span_mm",
+          "point": {
+            "exposure_category": "B",
+            "hvhz": true
+          }
+        }
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-1",
+          "belongs_to": "sha256:fixture-doc-a"
+        }
+      ],
       "would_close": "a Bufftech HVHZ approval at exposure B, or confirmation from the FBC that exposure B is not permitted in the HVHZ",
       "closes_by": "knowledge",
       "severity": "warns_line"
     }
   ],
-
-  "part_types": [], "parts": [], "models": [], "procedures": [],
-  "combinations": [], "rules": [],
-
+  "part_types": [],
+  "parts": [],
+  "models": [],
+  "procedures": [],
+  "combinations": [],
+  "rules": [],
   "warnings": [
-    {"text_raw": "CAUTION: In freeze-thaw regions, set post footings below the local frost line. A footing poured above the frost line will heave, and the fence will move with it.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": "CAUTION",
-     "attaches_to": {"kind": "document"},
-     "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}]},
-    {"text_raw": "CAUTION: In freeze-thaw regions, set post footings below the local frost line. A footing poured above the frost line will heave, and the fence will move with it.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": "CAUTION",
-     "attaches_to": {"kind": "document"},
-     "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}]},
-    {"text_raw": "CAUTION: In freeze-thaw regions, set post footings below the local frost line. A footing poured above the frost line will heave, and the fence will move with it.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": "CAUTION",
-     "attaches_to": {"kind": "document"},
-     "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}]},
-    {"text_raw": "WARNING: Do not stand a routed post on a footing that has not cured. A post loaded early carries the fence out of plumb and cannot be brought back.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": "WARNING",
-     "attaches_to": {"kind": "step", "ref": "FIXTURE-step-set-posts"},
-     "cites": [{"id": "FIXTURE-src-2", "belongs_to": "sha256:fixture-doc-a"}]},
-    {"text_raw": "This section is not rated for pool-barrier use in any jurisdiction adopting IRC AG105.2.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": "NOTICE",
-     "code": "not_pool_rated", "params": {"standard": "IRC AG105.2"},
-     "attaches_to": {"kind": "product", "ref": "FIXTURE-SKU-PANEL-1"},
-     "cites": [{"id": "FIXTURE-src-2", "belongs_to": "sha256:fixture-doc-a"}]},
-    {"text_raw": "This model has been certified under a different structural test than the panel it ships with; confirm the two share a wind rating before substituting.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": "IMPORTANT",
-     "attaches_to": {"kind": "model", "ref": "M-VINYL"},
-     "cites": [{"id": "FIXTURE-src-1", "belongs_to": "sha256:fixture-doc-a"}]},
-    {"text_raw": "Maintain 100 mm of clearance between the bottom rail and finished grade so that the panel can be cleaned.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": null,
-     "attaches_to": {"kind": "maintenance"}},
-    {"text_raw": "Warranty is void where components from another manufacturer are substituted into this assembly.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": "IMPORTANT",
-     "attaches_to": {"kind": "warranty"},
-     "cites": [{"id": "FIXTURE-src-4", "belongs_to": "sha256:fixture-doc-b"}]},
-    {"text_raw": "Read the whole gate-hanging procedure before cutting anything; the sequence differs for a self-closing leaf.",
-     "lang": "en", "lang_basis": "assumed", "severity_lexeme": "IMPORTANT",
-     "attaches_to": {"kind": "procedure", "ref": "FIXTURE-procedure-gate-1"},
-     "cites": [{"id": "FIXTURE-src-5", "belongs_to": "sha256:fixture-doc-a"}]}
+    {
+      "text_raw": "CAUTION: In freeze-thaw regions, set post footings below the local frost line. A footing poured above the frost line will heave, and the fence will move with it.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": "CAUTION",
+      "attaches_to": {
+        "kind": "document"
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-1",
+          "belongs_to": "sha256:fixture-doc-a"
+        }
+      ]
+    },
+    {
+      "text_raw": "CAUTION: In freeze-thaw regions, set post footings below the local frost line. A footing poured above the frost line will heave, and the fence will move with it.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": "CAUTION",
+      "attaches_to": {
+        "kind": "document"
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-1",
+          "belongs_to": "sha256:fixture-doc-a"
+        }
+      ]
+    },
+    {
+      "text_raw": "CAUTION: In freeze-thaw regions, set post footings below the local frost line. A footing poured above the frost line will heave, and the fence will move with it.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": "CAUTION",
+      "attaches_to": {
+        "kind": "document"
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-1",
+          "belongs_to": "sha256:fixture-doc-a"
+        }
+      ]
+    },
+    {
+      "text_raw": "WARNING: Do not stand a routed post on a footing that has not cured. A post loaded early carries the fence out of plumb and cannot be brought back.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": "WARNING",
+      "attaches_to": {
+        "kind": "step",
+        "ref": "FIXTURE-step-set-posts"
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-2",
+          "belongs_to": "sha256:fixture-doc-a"
+        }
+      ]
+    },
+    {
+      "text_raw": "This section is not rated for pool-barrier use in any jurisdiction adopting IRC AG105.2.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": "NOTICE",
+      "code": "not_pool_rated",
+      "params": {
+        "standard": "IRC AG105.2"
+      },
+      "attaches_to": {
+        "kind": "product",
+        "ref": "FIXTURE-SKU-PANEL-1"
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-2",
+          "belongs_to": "sha256:fixture-doc-a"
+        }
+      ]
+    },
+    {
+      "text_raw": "This model has been certified under a different structural test than the panel it ships with; confirm the two share a wind rating before substituting.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": "IMPORTANT",
+      "attaches_to": {
+        "kind": "model",
+        "ref": "M-VINYL"
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-1",
+          "belongs_to": "sha256:fixture-doc-a"
+        }
+      ]
+    },
+    {
+      "text_raw": "Maintain 100 mm of clearance between the bottom rail and finished grade so that the panel can be cleaned.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": null,
+      "attaches_to": {
+        "kind": "maintenance"
+      }
+    },
+    {
+      "text_raw": "Warranty is void where components from another manufacturer are substituted into this assembly.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": "IMPORTANT",
+      "attaches_to": {
+        "kind": "warranty"
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-4",
+          "belongs_to": "sha256:fixture-doc-b"
+        }
+      ]
+    },
+    {
+      "text_raw": "Read the whole gate-hanging procedure before cutting anything; the sequence differs for a self-closing leaf.",
+      "lang": "en",
+      "lang_basis": "assumed",
+      "severity_lexeme": "IMPORTANT",
+      "attaches_to": {
+        "kind": "procedure",
+        "ref": "FIXTURE-procedure-gate-1"
+      },
+      "cites": [
+        {
+          "id": "FIXTURE-src-5",
+          "belongs_to": "sha256:fixture-doc-a"
+        }
+      ]
+    }
   ],
   "source_docs": [
-    {"content_hash": "sha256:fixture-doc-a", "source_class": "manufacturer_installation_instruction",
-     "version_status": "active", "issue_date": "2024-01-01"},
-    {"content_hash": "sha256:fixture-doc-b", "source_class": "sealed_approval",
-     "version_status": "superseded", "issue_date": "2019-01-01",
-     "superseded_by": ["sha256:fixture-doc-a"]},
-    {"content_hash": "sha256:fixture-doc-c", "source_class": "spec_sheet",
-     "version_status": "unknown", "issue_date": "2022-06-01"}
+    {
+      "content_hash": "sha256:fixture-doc-a",
+      "source_class": "manufacturer_installation_instruction",
+      "version_status": "active",
+      "issue_date": {
+        "iso": "2024-01-01",
+        "value_raw": [
+          "01/01/2024"
+        ]
+      }
+    },
+    {
+      "content_hash": "sha256:fixture-doc-b",
+      "source_class": "sealed_approval",
+      "version_status": "superseded",
+      "issue_date": {
+        "iso": "2019-01-01",
+        "value_raw": [
+          "01/01/2019"
+        ]
+      },
+      "superseded_by": [
+        "sha256:fixture-doc-a"
+      ]
+    },
+    {
+      "content_hash": "sha256:fixture-doc-c",
+      "source_class": "spec_sheet",
+      "version_status": "unknown",
+      "issue_date": {
+        "iso": "2022-06-01",
+        "value_raw": [
+          "06/01/2022"
+        ]
+      }
+    }
   ]
 }

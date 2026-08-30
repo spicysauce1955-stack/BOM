@@ -46,6 +46,7 @@ a curator types it.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Literal
 
 from pydantic import BaseModel
@@ -71,11 +72,23 @@ ANNEXE_SCOPES: frozenset[str] = frozenset({"document", "warranty", "maintenance"
 class WarningTarget(BaseModel):
     """What this warning attaches to: a kind, and a reference where one applies.
 
-    `ref` names a step key, a procedure, a sku or a model ref. It is EMPTY for
-    the annexe kinds, and that emptiness is checked rather than tolerated: a
-    document-scoped warning that names a line is claiming a scope it does not
-    have, and the reader who gets it on every line is the reader who learns to
-    skip warnings.
+    `ref` names the object the kind is about — a step key, a procedure, a sku, a
+    model ref, and for the ANNEXE kinds **the document itself**: a `content_hash`
+    into the snapshot's `source_docs`.
+
+    This docstring used to say `ref` "is EMPTY for the annexe kinds", and the
+    first real published snapshot falsified it in the most emphatic way
+    available: 276 of its 289 warnings are annexe-scoped with a ref (274
+    `document`, 2 `warranty`), and every one of those refs is the content hash of
+    the source doc the sentence was quoted from — all 276 resolve. That is not a
+    warning claiming a line. It is the only thing that lets an annexe group 274
+    quoted sentences by the guide they came from, which is half of what a reader
+    needs in order to go and check one.
+
+    The scope rule the old claim was reaching for is real and survives, narrowed
+    to what it can actually justify: an annexe-scoped ref must name a DOCUMENT.
+    Naming something that is not one of the documents in hand is the defect —
+    see `warning_errors`.
 
     An empty `ref` on `procedure` means "the procedure of the document this
     warning came with" — the head of its own assembly sheet. That is a local
@@ -166,7 +179,12 @@ class DocumentWarning(BaseModel):
                 self.severity_lexeme or "", self.code or "")
 
 
-def warning_errors(warnings: list[DocumentWarning], *, where: str) -> list[str]:
+def warning_errors(
+    warnings: list[DocumentWarning],
+    *,
+    where: str,
+    known_docs: Collection[str] | None = None,
+) -> list[str]:
     """Every reason a quoted warning cannot be carried, as English for the author.
 
     Shared by `validate_model` (a curated document) and by snapshot ingestion (a
@@ -178,7 +196,42 @@ def warning_errors(warnings: list[DocumentWarning], *, where: str) -> list[str]:
     These are authoring errors and carry no `code + params` themselves —
     `validate_model`'s own convention, and doubly right here: the reader of this
     string is the person holding the document.
+
+    **`known_docs`, and why the annexe-ref rule now needs it.** This function
+    used to refuse ANY annexe-scoped warning that carried a ref, on the reasoning
+    that such a warning "belongs to the whole job" so a ref could only be it
+    naming a line. That reasoning was wrong about what the ref names, and it
+    passed for as long as it did because the only data it had ever been run
+    against was `fixtures/snapshot-example.json` — a fixture this side authored,
+    with empty refs. The first real published snapshot flagged 276 of its 289
+    warnings; in all 276 the ref is the source doc's own `content_hash` and it
+    resolves (543 `SourceRef.belongs_to` across that payload, 0 dangling). A rule
+    that fails on 95% of the first real input is not catching a defect.
+
+    Contract §3.3.5 is the only binding text here and it constrains WHERE such a
+    warning renders — "once in the plan's annexe and never on a line" — not
+    whether a ref may be present. `report/annexe.py` satisfies §3.3.5 on its own
+    by discarding the ref when it buckets an annexe kind, so nothing downstream
+    ever depended on the emptiness. The rule was ours, and its cited basis was a
+    docstring.
+
+    What is left is the narrowest thing that is still checkable: an annexe-scoped
+    ref names a DOCUMENT, so pass the content hashes in hand and a ref that
+    resolves to none of them is reported — the same class of defect as a step
+    warning naming a step this model has not got, which `validate_model` already
+    refuses one function over. Pass nothing and NOTHING is checked, deliberately:
+    a curator authoring in the model editor holds no `source_docs` list, and a
+    caller with no way to resolve a ref has no standing to call it dangling.
+    Silence there is the honest answer, and it is the answer the old rule refused
+    to give.
+
+    `None` and an EMPTY collection are therefore different arguments, the same
+    distinction `severity_lexeme` keeps between absent and blank: `None` is "I
+    cannot resolve refs", and `set()` is "I can, and there are no documents" —
+    a snapshot that ships annexe warnings with no `source_docs` to hang them on,
+    where every ref really does dangle.
     """
+    resolvable = known_docs if known_docs is None else frozenset(known_docs)
     errors: list[str] = []
     for i, w in enumerate(warnings):
         label = f"{where} warning {i}"
@@ -195,12 +248,15 @@ def warning_errors(warnings: list[DocumentWarning], *, where: str) -> list[str]:
                 f"{label}: params with no code. `params` are values for a code's "
                 f"sentence, and the text of a quoted warning is never "
                 f"interpolated — it is quoted")
-        if w.attaches_to.kind in ANNEXE_SCOPES and w.attaches_to.ref:
+        if w.attaches_to.kind in ANNEXE_SCOPES and w.attaches_to.ref \
+                and resolvable is not None \
+                and w.attaches_to.ref not in resolvable:
             errors.append(
                 f"{label}: attaches to the {w.attaches_to.kind} and names "
-                f"{w.attaches_to.ref!r}. A {w.attaches_to.kind}-scoped warning "
-                f"belongs to the whole job and renders once in the annexe; "
-                f"naming a line claims a scope it has not got")
+                f"{w.attaches_to.ref!r}, which is not one of the documents that "
+                f"came with it. An annexe-scoped ref names the document the "
+                f"sentence was quoted from, so one that resolves to nothing "
+                f"leaves the annexe unable to say who said it")
         if w.attaches_to.kind not in ANNEXE_SCOPES \
                 and w.attaches_to.kind != "procedure" and not w.attaches_to.ref:
             errors.append(

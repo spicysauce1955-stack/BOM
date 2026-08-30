@@ -3243,10 +3243,15 @@ def _report_unfilled_posts(strategy: Strategy, builder: GraphBuilder) -> None:
     strategy.gaps.append(Gap(
         id="gap:post_ground",
         kind="missing_value",
-        # a ROLE, so `slot` ("nothing can fill this") rather than `param`
-        # ("no value for this key") — the first queue that groups by subject
-        # kind would otherwise file it with the parameter gaps
-        subject=GapSubject(kind="slot", id="post_ground"),
+        # The subject is the ROLE, as an entity. It reads slot-shaped — nothing
+        # can fill it, rather than no value for a key — but §1.1 keeps `SlotRef`
+        # RESERVED and forbids emitting one until an amendment says what it is,
+        # and a role is a thing in this domain regardless (§1.1 types `PostRole`
+        # outright), so `entity` loses no meaning. The distinction the queue needs
+        # in order not to file this with the parameter gaps now lives in
+        # `ref_kind`: `entity`/`param` is a closed locale-keyed discriminator,
+        # `role` is a registry entry, and naming one is never an amendment.
+        subject=GapSubject(kind="entity", ref_kind="role", id="post_ground"),
         because=Because(code="no_default_post", params=params),
         would_close="a default_component rule naming the ground-post product for role post_ground",
         closes_by="knowledge", severity="warns_line",

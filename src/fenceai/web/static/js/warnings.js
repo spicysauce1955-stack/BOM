@@ -28,8 +28,38 @@ export function localizedByCode(prefix, code, params, fallback) {
   if (template === key) return esc(fallback ?? code);
   let s = esc(template);
   for (const [k, v] of Object.entries(unitParams(params || {})))
-    s = s.replaceAll(`{${k}}`, `<bdi>${esc(String(v))}</bdi>`);
+    s = s.replaceAll(`{${k}}`, `<bdi>${esc(paramText(v))}</bdi>`);
   return s;
+}
+
+// A param value as text. Contract §1.2.1 puts no ceiling on what a `because`
+// param IS, and v1.2's `ParamRef.point` is a MAPPING — `{exposure_category: "D",
+// hvhz: true}` — which the first real snapshot sends on all 16 of its
+// uncovered-condition gaps. Through a bare `String(v)` that renders
+// `[object Object]` in both languages, which is the silent version of the
+// failure the flattened-English-string it replaced was the loud version of.
+//
+// A boolean is rendered as a word rather than as `true`: `true` is not a value a
+// reader of either language recognises, and Hebrew has no reason to display an
+// English literal.
+function paramText(v) {
+  if (typeof v === "boolean") return t(v ? "common.yes" : "common.no");
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    // sorted, matching the backend's own `GapSubject.key()` ordering, so the
+    // same point reads the same way everywhere it appears
+    return Object.keys(v).sort()
+      .map((k) => `${dimensionText(k)} = ${paramText(v[k])}`).join(", ");
+  }
+  return String(v);
+}
+
+// A condition dimension's own word, where one exists. Dimension names are an
+// OPEN registry, so a miss returns the raw name rather than a locale key: the
+// day the other side registers a dimension we have no word for, it must read as
+// its own name and not as `site.frost_line`.
+function dimensionText(name) {
+  const word = t(`site.${name}`);
+  return word === `site.${name}` ? name : word;
 }
 
 // An element id is the backend's only handle on "which bay" — it derives no

@@ -19,8 +19,10 @@ exists to avoid.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from fenceai.catalog.demo import demo_catalog
+from fenceai.core.dates import Date
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.evaluator import resolve_param, resolve_token
 from fenceai.knowledge.model import KnowledgeBase
@@ -95,7 +97,11 @@ def test_a_published_table_parses_from_the_contracts_own_shape():
                 "source_class": "manufacturer", "curation_level": 2,
                 "version_status": "active",
             },
-            "valid_from": "2024-01-01", "valid_until": "2027-01-01",
+            # §1.1 `Date`, BINDING since v1.2: the normalised form and the
+            # source's own stamp travel together, for the reason
+            # `Quantity.value_raw` already exists.
+            "valid_from": {"iso": "2024-01-01", "value_raw": ["01/01/2024"]},
+            "valid_until": {"iso": "2027-01-01", "value_raw": ["01/01/2027"]},
             "authority": "ASCE 7-16",
         }],
         "uncovered": [{"exposure_category": "D", "hvhz": True}],
@@ -104,6 +110,8 @@ def test_a_published_table_parses_from_the_contracts_own_shape():
     assert row.value.value_raw == ['47"']
     assert row.provenance.cites[0].belongs_to == "sha256:abc"
     assert table.uncovered == [{"exposure_category": "D", "hvhz": True}]
+    assert (row.valid_from.iso, row.valid_from.value_raw) == \
+        ("2024-01-01", ["01/01/2024"])
 
 
 def test_a_tokens_own_lexeme_parses_and_survives_the_round_trip():
@@ -292,7 +300,7 @@ def test_every_gap_a_table_produces_names_the_tenant_it_expanded_under():
     lapsed = expand(_span_table(rows=[ParameterRow(
         conditions={"exposure_category": "C"},
         value=Quantity(amount_milli=1200000, unit="mm"),
-        valid_until="2025-01-01")]), as_of="2026-01-01", tenant="acme")[1]
+        valid_until=Date(iso="2025-01-01"))]), as_of="2026-01-01", tenant="acme")[1]
     assert lapsed[0].subject.tenant == "acme"
 
     nonconforming = expand(ParameterTable(
@@ -326,7 +334,7 @@ def test_a_lapsed_row_is_marked_against_as_of_and_still_expanded():
     table = _span_table(rows=[ParameterRow(
         conditions={"exposure_category": "C"},
         value=Quantity(amount_milli=1200000, unit="mm"),
-        valid_until="2025-01-01", authority="ASCE 7-10")])
+        valid_until=Date(iso="2025-01-01"), authority="ASCE 7-10")])
 
     versions, gaps = expand(table, as_of="2026-08-25")
     assert len(versions) == 1, "the row still applies; it is not a hole"
@@ -343,35 +351,95 @@ def test_no_as_of_means_no_expiry_judgement_rather_than_todays_date():
     table = _span_table(rows=[ParameterRow(
         conditions={"exposure_category": "C"},
         value=Quantity(amount_milli=1200000, unit="mm"),
-        valid_until="1999-01-01")])
+        valid_until=Date(iso="1999-01-01"))])
     assert not expand(table)[1]
 
 
-def test_a_non_iso_valid_until_is_not_compared_as_a_lexeme():
-    """The first real snapshot (`3ae88642…`, 2026-08-30) publishes `valid_until`
-    as `MM/DD/YYYY` — `"04/04/2028"`. Compared as a string against an ISO
+def test_an_unnormalisable_valid_until_is_never_ordered():
+    """§1.1 BINDING (v1.2): **a `null` `iso` is never ordered, and never treated
+    as earliest or latest.**
+
+    The first real snapshot (`3ae88642…`, 2026-08-30) published `valid_until` as
+    `MM/DD/YYYY` — `"04/04/2028"`. As a bare string compared against an ISO
     `as_of`, `"04/04/2028" < "2026-08-30"` is TRUE, so a row valid four more
-    years reported LAPSED. AMENDING.md candidate C6 is this exact defect at the
-    contract's own date comparator (§1.4); guessing a parse here before it lands
-    would invent the same comparator unilaterally. So: no judgement, not a wrong
-    one, when the source date is not already ISO."""
+    years was reported LAPSED. Amendment 002 is that defect, and the `Date` type
+    is its fix: the lexeme now arrives beside `iso: null` instead of pretending
+    to be one, and a rule reaching for it finds nothing to order.
+
+    The important half is the SECOND assertion. "Not lapsed" alone would also
+    pass if null sorted as the latest possible date; the row must be absent from
+    the judgement in both directions, not merely absolved in one."""
+    unreadable = Date(iso=None, value_raw=["04/04/2028"])
     table = _span_table(rows=[ParameterRow(
         conditions={"exposure_category": "C"},
         value=Quantity(amount_milli=1200000, unit="mm"),
-        valid_until="04/04/2028", authority="NOA-123")])
+        valid_until=unreadable, authority="NOA-123")])
     versions, gaps = expand(table, as_of="2026-08-30")
     assert len(versions) == 1
-    assert not gaps, "a date this side cannot parse must not be judged lapsed"
+    assert not gaps, "a date this side cannot read must not be judged lapsed"
+
+    # ...and it is not being treated as the LATEST date either: the same null in
+    # `valid_from` must not make the row not-yet-in-force.
+    assert not expand(_span_table(rows=[ParameterRow(
+        conditions={"exposure_category": "C"},
+        value=Quantity(amount_milli=1200000, unit="mm"),
+        valid_from=unreadable)]), as_of="2026-08-30")[1]
+
+    # The lexeme survives verbatim, which is the whole point of carrying it: a
+    # curator reads what the document said and resolves it by hand.
+    assert table.rows[0].valid_until.value_raw == ["04/04/2028"]
 
     # ...and the ISO case a day either side of `as_of` still works exactly as before
     assert expand(_span_table(rows=[ParameterRow(
         conditions={"exposure_category": "C"},
         value=Quantity(amount_milli=1200000, unit="mm"),
-        valid_until="2026-08-29")]), as_of="2026-08-30")[1]
+        valid_until=Date(iso="2026-08-29"))]), as_of="2026-08-30")[1]
     assert not expand(_span_table(rows=[ParameterRow(
         conditions={"exposure_category": "C"},
         value=Quantity(amount_milli=1200000, unit="mm"),
-        valid_until="2026-08-31")]), as_of="2026-08-30")[1]
+        valid_until=Date(iso="2026-08-31"))]), as_of="2026-08-30")[1]
+
+
+def test_a_date_that_only_looks_like_one_is_refused_at_the_door():
+    """The guard this replaces was a SHAPE regex, and a shape regex says yes to
+    `2025-13-45` — which then compares lexicographically against a real date
+    perfectly happily and reports a row lapsed on the strength of a month that
+    does not exist. `iso` means an ISO-8601 calendar date or it means nothing."""
+    with pytest.raises(ValidationError):
+        Date(iso="2025-13-45")
+    with pytest.raises(ValidationError):
+        Date(iso="04/04/2028")   # a lexeme belongs in `value_raw`, not in `iso`
+
+
+def test_a_row_not_yet_in_force_is_marked_rather_than_applied_silently():
+    """The lapsed check's twin, and it did not exist: `valid_from` was declared
+    on the row and read NOWHERE in `src/`, so a row whose authority takes effect
+    in 2030 was expanded and applied against a 2026 run with no marker at all.
+
+    It fails in the more dangerous direction than a lapse does. A lapsed row
+    still produces a warned line a reader can see; a not-yet-in-force row
+    produced a confident answer with nothing to see. Marked, never dropped —
+    the same discipline, because dropping it would turn an authority that is not
+    yet in force into a coverage hole, and those are different facts."""
+    table = _span_table(rows=[ParameterRow(
+        conditions={"exposure_category": "C"},
+        value=Quantity(amount_milli=1200000, unit="mm"),
+        valid_from=Date(iso="2030-01-01"), authority="ASCE 7-28")])
+
+    versions, gaps = expand(table, as_of="2026-08-30")
+    assert len(versions) == 1, "the row is not a hole; it is not yet in force"
+    assert [g.because.code for g in gaps] == ["parameter_not_yet_in_force"]
+
+    # ...and once the run's pinned date reaches it, nothing is reported
+    assert not expand(table, as_of="2030-06-01")[1]
+
+
+def test_an_as_of_this_engine_cannot_read_is_refused_not_downgraded():
+    """`as_of` is OUR pinned run date, not published data. A typo'd one silently
+    downgraded to "no judgement" would switch off every expiry check in the run
+    without a sound, which is a worse failure than the one it would prevent."""
+    with pytest.raises(ValueError):
+        expand(_span_table(), as_of="30/08/2026")
 
 
 # -- the first real publish (`3ae88642…`, 2026-08-30) exercised two more gaps ---
@@ -402,3 +470,122 @@ def test_fence_model_is_a_recognised_entity_kind():
     versions, gaps = expand(table)
     assert not gaps, "a recognised kind must not report as unmappable"
     assert versions[0].scope == {"series": "mfr/example"}
+
+
+# -- identity: a row's ref must name which table it came out of ----------------
+
+def test_the_same_parameter_under_two_scopes_expands_to_two_identities():
+    """The defect this pins was found in the first real snapshot and nowhere
+    else: it publishes `footing_depth_mm` TWICE, once scoped to Barrette and once
+    to CertainTeed, citing different approvals — one `superseded_by` the other.
+
+    `object_id` was `f"{parameter}#{index}"`, so 16 published rows resolved to 8
+    identities. That is not a cosmetic collision. The decision graph cites
+    `version.ref`, so an explanation could not say which manufacturer's approval
+    it used; `snapshot_set()` stamps a run's knowledge identity from the same
+    pair, so a run could not tell "Barrette and CertainTeed" from "Barrette
+    twice"; and one `overrides_objects` entry would have defeated both rows.
+
+    All 16 values happened to agree, which is exactly why nothing failed."""
+    barrette = _span_table(scope={"kind": "fence_model", "id": "mfr/barrette"})
+    certainteed = _span_table(scope={"kind": "fence_model", "id": "mfr/certainteed"})
+
+    refs = {(v.object_id, v.version)
+            for t in (barrette, certainteed) for v in expand(t)[0]}
+    assert len(refs) == 4, "two rows from each of two tables are four identities"
+    assert all("mfr/" in object_id for object_id, _ in refs)
+
+
+def test_two_scopes_declaring_the_same_hole_are_two_gaps_not_one():
+    """The same collision one type over. Two tables for one parameter, each
+    declaring the same uncovered point, are two holes for a curator to close —
+    one per product — and a gap id built from `{parameter}:{point}` alone made
+    the second vanish behind the first, silently halving the queue."""
+    point = [{"exposure_category": "D"}]
+    a = expand(_span_table(scope={"kind": "fence_model", "id": "mfr/a"},
+                           uncovered=point))[1]
+    b = expand(_span_table(scope={"kind": "fence_model", "id": "mfr/b"},
+                           uncovered=point))[1]
+    assert a[0].id != b[0].id
+    assert a[0].subject.key() != b[0].subject.key()
+
+
+def test_an_uncovered_point_travels_structured_never_pre_rendered():
+    """§1.1 `ParamRef.point` is a mapping, and it stays one. It used to be joined
+    into `"exposure_category=D, hvhz=True"` and handed to a locale template as a
+    param — English dimension names and Python's `True`, interpolated verbatim
+    into the Hebrew sentence. A renderer formats a mapping from its parts; it
+    must never be given a pre-joined fragment in one language."""
+    gap = expand(_span_table(uncovered=[{"exposure_category": "D", "hvhz": True}]))[1][0]
+    assert gap.because.params["point"] == {"exposure_category": "D", "hvhz": True}
+    assert gap.subject.point == {"exposure_category": "D", "hvhz": True}
+    # a bool must survive as a bool — under a `str | int` annotation pydantic
+    # admits it through the int arm and the sentence renders "hvhz=1"
+    assert gap.subject.point["hvhz"] is True
+
+
+# -- the two contract fields that were parsed and then dropped -----------------
+
+def test_a_hit_policy_this_engine_cannot_honour_is_refused_not_approximated():
+    """§1.3 declares four policies and this engine implements one. The other
+    three were accepted and ignored: every row became an ordinary rule and
+    evaluator precedence picked a winner, so a `collect_min` table of 1000 and
+    2000 returned whichever fired first rather than 1000.
+
+    Refusing is the same call `_scope_for` already makes about a scope we cannot
+    aim — a confident wrong number is worse than an honest absent one — and it
+    closes by a schema change HERE, so the gap is `closes_by="planning"`."""
+    versions, gaps = expand(_span_table(hit_policy="collect_min"))
+    assert not versions, "a policy we cannot honour must not silently expand"
+    assert [g.because.code for g in gaps] == ["parameter_hit_policy_unsupported"]
+    assert gaps[0].closes_by == "planning"
+
+    # `unique` is the one this engine can honour, and it still expands
+    assert expand(_span_table(hit_policy="unique"))[0]
+
+
+def test_overlapping_rows_under_unique_are_reported_against_the_table():
+    """§1.3 BINDING: under `unique` no two rows may match the same domain point,
+    and *"the check will tell you when that is false."* It did not exist. The
+    contradiction surfaced only at run time as a `Conflict` on a warned line —
+    attributed to this engine, rather than to the table that declared something
+    untrue about itself."""
+    table = _span_table(rows=[
+        ParameterRow(conditions={"exposure_category": "C"},
+                     value=Quantity(amount_milli=1200000, unit="mm")),
+        ParameterRow(conditions={"exposure_category": "C"},
+                     value=Quantity(amount_milli=2000000, unit="mm")),
+    ])
+    gaps = expand(table)[1]
+    assert [g.because.code for g in gaps] == ["parameter_rows_overlap"]
+    assert gaps[0].kind == "disputed" and gaps[0].on == "conditions"
+
+
+def test_a_fallback_row_cannot_contradict_a_row_that_states_conditions():
+    """`is_fallback()` existed to be excluded from this check and the check was
+    never written, so the method had no caller in `src/` at all. A `stated` row
+    with no conditions asserts nothing about the points it lands on — 66% of the
+    structural facts in the class §1.4 admits are that shape — so it overlaps
+    nothing by definition."""
+    table = _span_table(rows=[
+        ParameterRow(conditions={"exposure_category": "C"},
+                     value=Quantity(amount_milli=1200000, unit="mm")),
+        ParameterRow(conditions={}, condition_basis="stated",
+                     value=Quantity(amount_milli=2000000, unit="mm")),
+    ])
+    assert not expand(table)[1]
+
+
+def test_a_published_value_is_titled_by_its_own_lexeme():
+    """`%g` is six SIGNIFICANT digits, so it misstated exactly the values worth
+    checking — `1234567` thousandths rendered as `1234.57 mm`, wrong by 0.43 mm,
+    and `1000000000` as `1e+06 mm`. And §1.1 says the source's own lexeme exists
+    to be shown: `34"` is what a curator matches against the page."""
+    lexeme = expand(_span_table(rows=[ParameterRow(
+        value=Quantity(amount_milli=863600, unit="mm", value_raw=['34"']))]))[0]
+    assert '34"' in lexeme[0].title
+
+    bare = expand(_span_table(rows=[ParameterRow(
+        value=Quantity(amount_milli=1234567, unit="mm"))]))[0]
+    assert "1234.567 mm" in bare[0].title
+    assert "e+" not in bare[0].title

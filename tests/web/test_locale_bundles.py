@@ -77,6 +77,18 @@ WARNING_CODES = [
     # by a schema change HERE, not by a curator — the fixture found it, because a
     # table built in a unit test carries no scope at all.
     "parameter_scope_unmappable",
+    # Contract v1.2. The lapsed check's twin — `valid_from` was declared on the
+    # row and read nowhere, so a row not yet in force was applied silently.
+    "parameter_not_yet_in_force",
+    # §1.3 BINDING: under `unique`, no two rows may match the same point, and
+    # "the check will tell you when that is false". It did not exist, so the
+    # contradiction surfaced at run time as a `Conflict` attributed to us rather
+    # than to the table that declared something untrue about itself.
+    "parameter_rows_overlap",
+    # Three of the contract's four hit policies change WHICH number comes out,
+    # and all three were accepted and dropped. Refused now, with a gap that
+    # closes by a resolver in this repo.
+    "parameter_hit_policy_unsupported",
     "panel_length_unresolved",
     # Containment. Both say a credit did NOT happen — a credit that lands
     # cleanly is a smaller purchase and needs no warning — and both exist

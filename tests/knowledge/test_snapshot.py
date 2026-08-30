@@ -25,7 +25,10 @@ import pytest
 from fenceai.catalog.demo import demo_catalog
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.model import KnowledgeBase
-from fenceai.knowledge.snapshot import Snapshot, ingest, snapshot_id_for
+from fenceai.knowledge.parameters import expand
+from fenceai.knowledge.snapshot import (
+    Snapshot, SnapshotRefused, fixture_digest, ingest, load,
+)
 from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
 from tests.conftest import straight_topology
@@ -58,7 +61,7 @@ def test_the_contracts_whole_payload_parses(snapshot):
     left alone — a private model for them would be a shape nobody agreed to, and
     it would look like support."""
     assert snapshot.regime == "us_astm"
-    assert snapshot.contract_version == "1.1.0"
+    assert snapshot.contract_version == "1.2.0"
     assert len(snapshot.parameters) == 2
     assert len(snapshot.gaps) == 3
 
@@ -73,16 +76,31 @@ def test_what_arrives_and_is_not_consumed_is_counted_not_hidden(snapshot):
     to go (`report/annexe.py`), so they are consumed rather than counted. The
     assertion is kept EXACT rather than narrowed to the remaining key, because a
     member silently rejoining this list is exactly the regression it watches
-    for."""
-    assert ingest(snapshot).unconsumed == {"source_docs": 3}
+    for.
+
+    `source_docs` left it the same way, and the word it was filed under had been
+    actively misleading: it is not an unimplemented feature but the join target
+    of every `SourceRef.belongs_to` in the payload and the only carrier of
+    `issue_date`, `version_status` and `superseded_by`. Reporting 75 of them as
+    "unconsumed" told the other team we had no use for the join their whole
+    provenance model hangs off."""
+    assert ingest(snapshot).unconsumed == {}
+    assert len(snapshot.source_docs) == 3
 
 
-def test_a_declared_id_can_be_checked_against_its_own_members(snapshot):
-    """The one property of a snapshot this side can verify without trusting the
-    sender. The fixture's id is deliberately NOT a real hash, so this asserts the
-    computation exists and is stable rather than that the fixture passes it."""
-    assert snapshot_id_for(snapshot) == snapshot_id_for(snapshot)
-    assert len(snapshot_id_for(snapshot)) == 64
+def test_the_fixture_digest_is_stable_and_is_not_the_contracts_snapshot_id(snapshot):
+    """This used to be called `snapshot_id_for` and to claim it was "the one
+    property of a snapshot this side can verify without trusting the sender".
+
+    It is not, and the claim was the dangerous part. §1.2 defines `snapshot_id`
+    as a sha256 over the canonical member list and §1.4 adds `policy_version` to
+    it; this hashes `parameters` alone. Against the first real snapshot it
+    returns `0bd95701…` where the payload declares `3ae88642…` — so anything
+    gating on it would have read a conforming snapshot as drift. Renamed to what
+    it does: catch a fixture that moved under a test."""
+    assert fixture_digest(snapshot) == fixture_digest(snapshot)
+    assert len(fixture_digest(snapshot)) == 64
+    assert fixture_digest(snapshot) != snapshot.snapshot_id
 
 
 # -- ingestion -----------------------------------------------------------------
@@ -128,10 +146,15 @@ def test_no_as_of_makes_no_expiry_judgement(snapshot):
 def test_the_uncovered_points_the_table_declares_are_reported(snapshot):
     """§1.3 BINDING: points no row covers are listed, never silently omitted. The
     fixture declares exposure D in both HVHZ states."""
-    points = {g.because.params["point"] for g in ingest(snapshot).gaps
-              if g.because.code == "uncovered_parameter_point"}
-    assert points == {"exposure_category=D, hvhz=False",
-                      "exposure_category=D, hvhz=True"}
+    points = [g.because.params["point"] for g in ingest(snapshot).gaps
+              if g.because.code == "uncovered_parameter_point"]
+    # structured (§1.1 `ParamRef.point`), not a pre-joined English fragment —
+    # `hvhz` is a bool and stays one, where the old string carried Python's
+    # `True` into a Hebrew sentence
+    assert sorted(points, key=lambda p: str(p["hvhz"])) == [
+        {"exposure_category": "D", "hvhz": False},
+        {"exposure_category": "D", "hvhz": True},
+    ]
 
 
 def test_an_excluded_point_is_published_directly_not_synthesised_as_uncovered(snapshot):
@@ -145,7 +168,8 @@ def test_an_excluded_point_is_published_directly_not_synthesised_as_uncovered(sn
     excluded = [g for g in ingest(snapshot).gaps
                 if g.because.code == "parameter_condition_excluded"]
     assert len(excluded) == 1
-    assert excluded[0].because.params["point"] == "exposure_category=B, hvhz=True"
+    assert excluded[0].because.params["point"] == {
+        "exposure_category": "B", "hvhz": True}
     assert excluded[0].subject.id == "max_span_mm"
     # published, not discovered — this engine did not derive it
     assert excluded[0] in snapshot.gaps
@@ -267,17 +291,35 @@ def test_ingest_carries_every_warning_through_and_vouches_for_none(snapshot):
 
 
 def test_a_published_warning_that_contradicts_its_own_schema_is_reported(snapshot):
-    """A document-scoped warning that also names a line. Deliberately NOT a gap:
-    a gap is a hole in what we were told and closes by somebody adding knowledge,
-    while this is a payload contradicting its own schema and closes by an edit at
-    the sender. Different remedy, different audience."""
+    """A document-scoped warning whose ref names no document that came with the
+    payload. Deliberately NOT a gap: a gap is a hole in what we were told and
+    closes by somebody adding knowledge, while this is a payload contradicting
+    its own schema and closes by an edit at the sender.
+
+    The rule this exercises was narrowed after the first real snapshot falsified
+    the old one. It used to be "an annexe-scoped warning may not name anything at
+    all", which flagged **276 of 289** real warnings — every one of which named
+    its own document's `content_hash`, which is the only thing that lets an
+    annexe say which guide a sentence came from. What survives is the half that
+    can be checked: an annexe-scoped ref names a document, and one resolving to
+    nothing in hand is the defect."""
     bad = snapshot.model_copy(deep=True)
     bad.warnings[0].attaches_to.ref = "some-line"
     out = ingest(bad, as_of="2026-08-25")
     assert len(out.warning_defects) == 1
-    assert "renders once in the annexe" in out.warning_defects[0]
+    assert "not one of the documents" in out.warning_defects[0]
     # ...and it is still CARRIED. A malformed warning is not a warning to drop.
     assert len(out.warnings) == len(bad.warnings)
+
+
+def test_an_annexe_warning_naming_its_own_document_is_carried_without_complaint(snapshot):
+    """The regression for the 276-of-289 flood. The publisher sets
+    `attaches_to = {kind: "document", ref: <its own content_hash>}`, and that ref
+    resolves through the same `source_docs` join §1.2.1's closure rule uses."""
+    good = snapshot.model_copy(deep=True)
+    good.warnings[0].attaches_to.kind = "document"
+    good.warnings[0].attaches_to.ref = good.source_docs[0].content_hash
+    assert ingest(good, as_of="2026-08-25").warning_defects == []
 
 
 def test_the_fixtures_warnings_place_where_the_contract_says(snapshot):
@@ -304,3 +346,117 @@ def test_a_published_warning_may_arrive_with_no_citation(snapshot):
     §1.1 makes `SourceRef.id` opaque and unbuildable, so nobody without the
     Discovery surface can mint one."""
     assert sum(1 for w in snapshot.warnings if not w.cites) == 1
+
+
+# -- the door: version gate, closure, quarantine (v1.2) ------------------------
+
+def test_a_snapshot_from_an_unknown_major_is_refused_at_the_door():
+    """§3.2 obligation 3 is OUR promise, not theirs: *"refuse a snapshot built
+    against an unknown major — loudly, at load, not silently at generate."*
+
+    It was never kept. `contract_version` was parsed and read nowhere, so a
+    payload declaring `9.9.9` loaded without a word and the mismatch surfaced
+    later as a heap of unlabelled type errors about whichever field happened to
+    have moved. A minor difference still loads, by the contract's own registry
+    rule that additions are never breaking."""
+    with pytest.raises(SnapshotRefused) as caught:
+        load({"snapshot_id": "X", "contract_version": "9.9.9"})
+    assert caught.value.code == "contract_major_unsupported"
+    assert "9.9.9" in str(caught.value)
+
+    # A LATER minor loads: the contract's registry rule is that additions are
+    # never breaking, so a payload built against a newer point release is fine.
+    later_minor, _ = load({"snapshot_id": "X", "contract_version": "1.9.0"})
+    assert later_minor.snapshot_id == "X"
+
+
+def test_a_snapshot_cut_before_the_typed_date_is_refused_in_one_sentence():
+    """Amendment 002 was not an addition — it changed four date fields from
+    strings to `Date` — so the registry rule that additions are never breaking
+    does not cover it, and a pre-v1.2 payload cannot be read.
+
+    The first real snapshot is exactly this: `3ae88642…` declares `1.1.0` and
+    carries `"04/24/2025"` where a `Date` now belongs. Without a minor floor it
+    produced 113 unlabelled type errors about a field nobody was asking about,
+    when the actual answer is one sentence naming the amendment and whose move
+    it is. Refusing here is also what stops the tempting wrong fix: a parser on
+    this side would resolve `05/04/2023` by house convention and manufacture a
+    fact the source does not state."""
+    with pytest.raises(SnapshotRefused) as caught:
+        load({"snapshot_id": "X", "contract_version": "1.1.0"})
+    assert caught.value.code == "contract_minor_predates_typed_date"
+    assert "re-cut" in str(caught.value)
+
+
+def test_a_gap_that_does_not_parse_is_quarantined_not_fatal_and_not_dropped():
+    """The third option, and both alternatives are worse.
+
+    Failing the load costs every valid table and warning in the payload over gap
+    shape drift — which is not hypothetical: the first real snapshot's 81 gaps
+    all carry a bare-string `subject`, against 4 valid tables and 289 valid
+    warnings. Dropping them silently puts a hole in the one list whose
+    completeness is the whole promise (§3.2.4). So they are carried as authoring
+    text for the sender, counted, and visible."""
+    snap, defects = load({
+        "snapshot_id": "X",
+        "gaps": [
+            {"id": "g1", "kind": "missing_value", "subject": "element-1234",
+             "because": {"code": "c"}, "would_close": "a value"},
+            {"id": "g2", "kind": "missing_value",
+             "subject": {"kind": "param", "id": "max_span_mm"},
+             "because": {"code": "c"}, "would_close": "a value"},
+        ],
+    })
+    assert len(snap.gaps) == 1, "the conforming gap still loads"
+    assert len(defects) == 1
+    assert "published gap 0" in defects[0] and "subject" in defects[0]
+    assert ingest(snap, gap_defects=defects).gap_defects == defects
+
+
+def test_a_hole_the_publisher_already_declared_is_not_counted_twice(snapshot):
+    """The first real snapshot publishes all 16 of its `condition_point_uncovered`
+    gaps AND carries the same 16 points in `table.uncovered`, from which
+    `expand()` independently derives its own — 32 gaps for 16 holes, every one
+    appearing twice in a curator's queue.
+
+    `GapSubject.key()` is what makes them recognisable as one hole: parameter,
+    scope and point together. That identity is exactly what v1.2's `ParamRef`
+    added, which is the argument for having implemented the type rather than
+    widening `id` into a longer string."""
+    doubled = snapshot.model_copy(deep=True)
+    table = doubled.parameters[0]
+    point = table.uncovered[0]
+    derived = expand(table, tenant=doubled.tenant)[1]
+    mine = next(g for g in derived if g.subject.point == point)
+    doubled.gaps.append(mine.model_copy(deep=True, update={"id": "THEIRS"}))
+
+    out = ingest(doubled)
+    keys = [g.subject.key() for g in out.gaps]
+    assert len(keys) == len(set(keys)), "one hole, one gap"
+    assert out.deduped == 1
+    # theirs survives, ours is the one suppressed: it is their declaration
+    assert "THEIRS" in {g.id for g in out.gaps}
+
+
+def test_every_cited_document_resolves_inside_the_snapshot(snapshot):
+    """§1.2.1 BINDING, and it is machine-checkable in ten lines. §3.2.2 forbids
+    Planning from calling Discovery during a run, so a `belongs_to` that resolves
+    to nothing in the payload reproduces the exact defect the field was added to
+    close, with extra fields.
+
+    The first real snapshot PASSES this — 543 cited refs, 75 distinct hashes, 0
+    dangling — which is the right outcome for a check on a promise being kept,
+    and no reason not to have the check."""
+    assert snapshot.dangling_refs() == []
+
+    broken = snapshot.model_copy(deep=True)
+    broken.source_docs = []
+    assert broken.dangling_refs(), "a ref with nothing to join to must be visible"
+
+
+def test_a_knowledge_global_snapshot_states_a_null_tenant():
+    """§1.1: `TenantId  str | null`, where `null` is tenant-agnostic. As `str`
+    this rejected a conforming Knowledge-global payload outright, and `""` is a
+    third fact — a tenant named empty string — not a spelling of absent."""
+    snap, _ = load({"snapshot_id": "X", "tenant": None})
+    assert snap.tenant is None
