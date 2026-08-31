@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from fenceai.core.dates import Date, precedes
 from fenceai.knowledge.source_policy import (
-    SHIPPED_DEFAULT, AdmittedBy, Candidate, SourcePolicyRow, admit, resolve,
+    SHIPPED_DEFAULT, AdmittedBy, Candidate, SourcePolicyRow, admit,
+    explain_rejection, resolve,
 )
 
 
@@ -486,3 +487,34 @@ def test_a_more_specific_policy_row_wins_over_the_catch_all():
                                curation_level=2)).rank
     assert rank_of("active") == 1, "the catch-all still governs an unnamed status"
     assert rank_of("superseded") == 9, "the specific row wins wherever it is listed"
+
+
+def test_explain_rejection_separates_the_two_reasons_a_source_fails():
+    """The two codes send a person to different work, which is the standard a
+    `Gap` is held to (§1.2.1's `would_close`).
+
+    `source_inadmissible` — no admissible row covers this class for this task, so
+    no amount of reviewing helps; somebody must find a different document.
+    `source_below_min_curation` — the class is fine and the reading is not checked
+    enough, which is bounded, queueable work on a document already in hand.
+
+    Direct coverage because `explain_rejection` is public and only the curation
+    branch was reachable through the fixture: the inadmissible branch was emitted
+    nowhere in the suite."""
+    inadmissible = _candidate(source_class="spec_sheet", curation_level=2)
+    assert explain_rejection(SHIPPED_DEFAULT, "structural_parameter",
+                             inadmissible) == "source_inadmissible"
+
+    unchecked = _candidate(source_class="sealed_approval", curation_level=1)
+    assert explain_rejection(SHIPPED_DEFAULT, "structural_parameter",
+                             unchecked) == "source_below_min_curation"
+
+    # ...and None where the source is fine, so a caller cannot mistake a pass
+    ok = _candidate(source_class="sealed_approval", curation_level=2)
+    assert explain_rejection(SHIPPED_DEFAULT, "structural_parameter", ok) is None
+
+    # a class with NO row at all is inadmissible, not a crash — the same default
+    # `_row_for` gives an unrecognised axis value
+    assert explain_rejection(SHIPPED_DEFAULT, "installation_step",
+                             _candidate(source_class="tested_report")) == \
+        "source_inadmissible"

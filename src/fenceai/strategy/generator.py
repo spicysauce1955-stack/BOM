@@ -1412,7 +1412,12 @@ class _SegmentModel:
     # the model's own line is manufactured in. They are not the same claim and a
     # warning that called the second one "a fallback" would be telling the reader
     # we guessed a number the manufacturer stated.
-    max_span_basis: Literal["rule", "fallback", "manufactured_width"] = "rule"
+    # `declined_bound` is its own basis, not a flavour of `fallback`. A fallback
+    # means nobody stated a limit; this means somebody did, we refused to trust
+    # it, and we are nonetheless refusing to be laxer than it. Those read
+    # differently to anyone deciding whether the number is safe to build to.
+    max_span_basis: Literal[
+        "rule", "fallback", "manufactured_width", "declined_bound"] = "rule"
     # The per-span COUNTS nobody stated: `param -> the gap node that says so`.
     # Keyed by the parameter because the param name IS the field name above, so
     # the reporter reads the value with `getattr` and cannot drift from it. Same
@@ -1497,7 +1502,14 @@ def _segment_view(
     One function because two callers ask the same question about one model: the
     segment that lays out its bays, and the post that stands beside them.
     """
-    seg_kb = (KnowledgeBase(versions=[*kb.versions, *_policy_knowledge(model)])
+    # `model_copy(update=...)` rather than a fresh `KnowledgeBase`, so this stays
+    # a VIEW of the base rather than a partial reconstruction of it. Built from
+    # `versions` alone, every other field silently reverted to its default — the
+    # source verdicts and the declined bounds would both vanish here, with
+    # nothing failing, and the next reader of a per-model base would get a
+    # provenance-free copy that looks complete.
+    seg_kb = (kb.model_copy(update={
+        "versions": [*kb.versions, *_policy_knowledge(model)]})
               if model.layout_policy else kb)
     return seg_kb, {"scope": bind_scope(scope, {"series": model.id}),
                     "run": run_ctx, "site": site}
@@ -1707,6 +1719,30 @@ def _generate_run(
             FALLBACK_MAX_SPAN_MM if assumed
             else next(a.value for a in res.winner.actions if a.kind == "set_param")
         )
+        # A DECLINED source is not silence, and the fallback is only conservative
+        # relative to silence. When the source policy refuses an unverified
+        # structural row (§1.4), the row produces no rule — so without this the
+        # run treats "nobody told us" and "we were told 858 mm and declined to
+        # believe it" identically, and lays out to 1800. That is WIDER than the
+        # document it refused, on the one parameter whose curation bar exists to
+        # stop exactly that, and `FALLBACK_MAX_SPAN_MM`'s own note already forbids
+        # it: *"a fallback that guessed WIDER would be a fallback that could fall
+        # down."*
+        #
+        # Declining to trust a number is not the same as believing the opposite.
+        # An unverified claim that something is unsafe is still evidence about
+        # risk, so the most restrictive thing anybody said stands as a ceiling
+        # while remaining unattributed — it backs no line and wins no tie.
+        #
+        # Lower is safer HERE, and the direction is NOT general, which is why this
+        # sits beside the hard-tie handling below rather than in the loader: the
+        # same argument that keeps `min_rail_separation_mm` out of a shared rule.
+        declined_bound: Mm | None = None
+        if assumed:
+            declined = [v for v in kb.declined.get("max_span_mm", []) if v > 0]
+            if declined:
+                declined_bound = min(declined)
+                max_span_mm = min(max_span_mm, declined_bound)
         # A DISAGREEING TIE inside the hard band, survivable only because one
         # contender is published (`evaluator.resolve`). Never let the alphabet
         # decide a safety limit: the tie-break that picks a winner is
@@ -1808,6 +1844,9 @@ def _generate_run(
             max_span_ref="" if assumed else res.winner.version.ref,
             max_span_assumed=assumed,
             max_span_basis=("manufactured_width" if yielded_to_exact
+                            else "declined_bound"
+                            if assumed and declined_bound is not None
+                            and max_span_mm == declined_bound
                             else "fallback" if assumed else "rule"),
             firing_node_id=firing.id,
             rails_per_span=rails,
@@ -3306,14 +3345,32 @@ def _report_uncovered_max_span(
         }
         basis = (
             "the width its line is manufactured in"
-            if sm.max_span_basis == "manufactured_width" else "a fallback"
+            if sm.max_span_basis == "manufactured_width"
+            else "a limit we declined to trust"
+            if sm.max_span_basis == "declined_bound"
+            else "a fallback"
         )
-        message = (
-            f"No rule states max_span_mm for {sm.model.ref} in section {run.id}; "
-            f"{len(affected)} bay(s) laid out to {basis} of {sm.max_span} mm."
-        )
+        # A declined bound gets its OWN code and sentence. Filed under
+        # `uncovered_max_span` it would read "no rule states max_span_mm", which
+        # is false and in the misleading direction: a rule stated it, the source
+        # policy refused the source, and the number in the plan is that refused
+        # limit being honoured as a ceiling rather than trusted as a value.
+        declined = sm.max_span_basis == "declined_bound"
+        if declined:
+            message = (
+                f"max_span_mm for {sm.model.ref} in section {run.id} came from a "
+                f"source this run declined to trust; {len(affected)} bay(s) laid "
+                f"out to {sm.max_span} mm, which is no wider than that source "
+                f"stated."
+            )
+        else:
+            message = (
+                f"No rule states max_span_mm for {sm.model.ref} in section {run.id}; "
+                f"{len(affected)} bay(s) laid out to {basis} of {sm.max_span} mm."
+            )
         strategy.warnings.append(StrategyWarning(
-            code="uncovered_max_span", severity="warning", message=message,
+            code="declined_max_span" if declined else "uncovered_max_span",
+            severity="warning", message=message,
             element_refs=affected, decision_ref=sm.firing_node_id, params=params,
         ))
         strategy.gaps.append(Gap(

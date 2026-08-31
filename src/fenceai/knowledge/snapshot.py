@@ -35,7 +35,7 @@ from pydantic import BaseModel
 from pydantic import ValidationError
 
 from fenceai.core.dates import Date
-from fenceai.core.gaps import Gap
+from fenceai.core.gaps import Because, Gap, GapSubject
 from fenceai.core.warnings import DocumentWarning, warning_errors
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.knowledge.parameters import ParameterTable, expand
@@ -325,6 +325,7 @@ def ingest(
     versions: list[KnowledgeVersion] = []
     discovered: list[Gap] = []
     admitted: dict[str, AdmittedBy] = {}
+    colliding: set[str] = set()
     # §1.4's third criterion needs a document's own `issue_date`, and that lives
     # only on `SourceDoc`. Indexed once here rather than resolved per row: the
     # join is snapshot-level (§1.2.1's closure rule), and `expand()` needs exactly
@@ -340,7 +341,23 @@ def ingest(
         )
         versions.extend(expanded)
         discovered.extend(gaps)
-        admitted.update(table_admitted)
+        # A ref appearing from TWO tables cannot be attributed. `_object_id` is
+        # parameter + scope + row index, which is unique within a table and not
+        # across them: two unscoped tables for one parameter produce the same ref
+        # for their row 0. A blind `update()` then let the second table's verdict
+        # describe the first table's number — printing "backed by a spec sheet"
+        # about a value that came from a sealed approval, which is a false
+        # provenance claim rendered as fact.
+        #
+        # So a collision drops BOTH verdicts and reports it. Claiming neither is
+        # the only honest option: we cannot tell which document backed which
+        # number, and picking one would be inventing the answer.
+        for ref, verdict in table_admitted.items():
+            if ref in admitted and admitted[ref] != verdict:
+                admitted.pop(ref)
+                colliding.add(ref)
+            elif ref not in colliding:
+                admitted[ref] = verdict
 
     # A hole the publisher already declared is not a second hole. The first real
     # snapshot publishes all 16 of its `condition_point_uncovered` gaps AND
@@ -350,11 +367,35 @@ def ingest(
     # same hole: parameter, scope and point together. That identity is exactly
     # what v1.2's `ParamRef` added, which is the argument for having implemented
     # it rather than widening `id` to a longer string.
+    # What this run declined to trust, gathered from the refusals themselves so
+    # there is no second channel and no chance of the two disagreeing.
+    declined: dict[str, list[int]] = {}
+    for gap in discovered:
+        value = gap.because.params.get("declined_mm")
+        name = gap.because.params.get("parameter")
+        if isinstance(value, int) and not isinstance(value, bool) and isinstance(name, str):
+            declined.setdefault(name, []).append(value)
+
+    for ref in sorted(colliding):
+        discovered.append(Gap(
+            id=f"gap:ambiguous_version_ref:{ref}",
+            kind="unmodellable_entity",
+            subject=GapSubject(kind="param", id=ref.rsplit("@v", 1)[0],
+                                tenant=snapshot.tenant),
+            because=Because(code="ambiguous_version_ref",
+                             params={"knowledge_ref": ref}),
+            would_close=(f"an identity that distinguishes the two published rows "
+                         f"resolving to {ref}, so each number can name the "
+                         f"document behind it"),
+            closes_by="planning", severity="warns_line",
+        ))
+
     published_keys = {g.subject.key() for g in snapshot.gaps}
     kept = [g for g in discovered if g.subject.key() not in published_keys]
 
     return Ingested(
-        knowledge=KnowledgeBase(versions=versions, admitted=admitted),
+        knowledge=KnowledgeBase(versions=versions, admitted=admitted,
+                                declined=declined),
         warnings=list(snapshot.warnings),
         # The closure rule gives `warning_errors` the one thing it needs to judge
         # an annexe-scoped ref: the documents that actually came with the payload.

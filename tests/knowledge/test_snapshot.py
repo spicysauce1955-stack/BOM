@@ -546,18 +546,35 @@ def test_the_fixtures_own_rows_fall_back_when_unchecked(snapshot):
     kb.versions = [v for v in kb.versions if v.object_id != "K-MAXSPAN"]
     kb.versions.extend(out.knowledge.versions)
 
+    # The INGESTED base, extended — not a fresh `KnowledgeBase(versions=...)`.
+    # Rebuilding it drops `admitted` and `declined` to their defaults, and a
+    # review found that exact trap live in `generator.py`'s per-model view. A test
+    # that rebuilt the base would silently stop exercising the fix it was written
+    # for, which is what happened here first.
+    base = out.knowledge.model_copy(update={"versions": kb.versions})
     result = generate(
-        straight_topology(6000), KnowledgeBase(versions=kb.versions),
+        straight_topology(6000), base,
         demo_catalog(), site=SiteConditions(exposure_category="C", hvhz=False),
         models=FenceModelLibrary(models=list(demo_models().values())),
         parts=PartLibrary(parts=demo_parts()),
         default_model=FenceModelChoice(model_id="M-VINYL"))
 
-    # laid out to the fallback, not to the refused published maximum
-    assert all(s.width_mm <= FALLBACK_MAX_SPAN_MM for s in result.strategy.spans)
-    # ...and the run says so, rather than quietly assuming
+    # NEVER LAXER THAN WHAT WE DECLINED. This assertion replaces
+    # `all(width <= FALLBACK_MAX_SPAN_MM)`, which could not fail — 1500 is always
+    # under 1800 — and which concealed the defect a review found: refusing an
+    # unverified structural row used to WIDEN the bays from 858 mm to 1500 mm,
+    # because the fallback is conservative relative to SILENCE and "we were told
+    # 858 and declined to believe it" is not silence.
+    declined = min(v for v in out.knowledge.declined["max_span_mm"])
+    assert declined < FALLBACK_MAX_SPAN_MM, "the fixture must exercise the case"
+    assert all(s.width_mm <= declined for s in result.strategy.spans)
+
+    # ...and the run says WHICH number it used, under its own code. Filed as
+    # `uncovered_max_span` it would read "no rule states max_span_mm" — false,
+    # and false in the direction that hides a refusal.
     codes = {w.code for w in result.strategy.warnings}
-    assert "uncovered_max_span" in codes
+    assert "declined_max_span" in codes
+    assert "uncovered_max_span" not in codes
 
     # the refusal itself is reported, with the work that would close it
     refused = [g for g in out.gaps
@@ -618,3 +635,53 @@ def test_the_verdict_reaches_the_decision_graph_and_absence_means_unjudged(snaps
     # authored rules are present and carry NO verdict — not a failing one
     assert any(ref.startswith("K-") for ref in unjudged)
     assert not any(ref.startswith("K-") for ref in judged)
+
+
+def test_a_registry_addition_never_fails_the_load(snapshot):
+    """§2: *"Registry additions are not amendments — new part types, warning
+    codes, condition dimensions and source classes need no ratification."*
+
+    That guarantee was broken by this slice and a review caught it. Judging a row
+    builds a policy `Candidate`, whose `source_class` is a closed `Literal`, from
+    a `Provenance.source_class` that is deliberately open — so a snapshot naming a
+    class we had not registered loaded fine at the door and then raised a raw
+    `ValidationError` from inside `ingest()`, losing every table, warning and gap
+    in the payload. §1.4 itself records that two classes were ADDED in its last
+    revision, so this is the expected case, not a hypothetical.
+
+    Used-and-flagged, matching the unrecognised-task decision: a hole in our
+    registry is not a defect in their data."""
+    grown = snapshot.model_copy(deep=True)
+    grown.parameters[0].rows[0].provenance.source_class = "engineering_letter"
+
+    out = ingest(grown, as_of="2026-08-25")   # must not raise
+    codes = [g.because.code for g in out.gaps]
+    assert codes.count("source_class_unrecognised") == 1
+    unjudged = next(g for g in out.gaps
+                    if g.because.code == "source_class_unrecognised")
+    assert unjudged.closes_by == "planning", "a policy row here, not a curator's"
+    assert unjudged.because.params["source_class"] == "engineering_letter"
+
+    # the row is USED — and carries no verdict, so nothing claims it was checked
+    assert any(v.object_id.startswith("max_span_mm@") for v in out.knowledge.versions)
+    assert not any("engineering_letter" == a.source_class
+                   for a in out.knowledge.admitted.values())
+
+
+def test_a_declined_value_travels_with_its_refusal(snapshot):
+    """The refused number and the source's own lexeme reach the gap.
+
+    Without them the refusal can only say that *something* was refused, and the
+    sentence the whole slice exists to make possible — *"we did not use the
+    manufacturer's 36 inches because nobody has verified it"* — is not derivable
+    from anything the run persists. It is also what lets a consumer that knows its
+    parameter's safe direction refuse to be laxer than a limit it declined."""
+    out = ingest(snapshot, as_of="2026-08-25")
+    refused = [g for g in out.gaps
+               if g.because.code == "source_below_min_curation"]
+    assert refused, "the fixture's structural rows are below the bar"
+    assert all("declined_mm" in g.because.params for g in refused)
+    # the source's own words, not only our arithmetic (§1.1)
+    assert any("declined_raw" in g.because.params for g in refused)
+    # and they are gathered for the generator, keyed by parameter
+    assert out.knowledge.declined["max_span_mm"]

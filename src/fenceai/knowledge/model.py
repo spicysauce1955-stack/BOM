@@ -241,6 +241,21 @@ class KnowledgeBase(BaseModel):
     # provenance to judge, and an absent verdict means "not judged" rather than
     # "judged and passed". A renderer must show those differently.
     admitted: dict[str, AdmittedBy] = {}
+    # Values this run DECLINED to trust, by parameter name, in mm.
+    #
+    # A refused source is not silence, and the difference decides a number. The
+    # `max_span_mm` fallback exists for silence — "nothing covered this exposure
+    # category" — and is conservative relative to that. "A source we have not
+    # verified told us 858 mm and we declined to believe it" is a different fact,
+    # and treating it as silence lays out bays WIDER than the document we refused
+    # said was safe. `FALLBACK_MAX_SPAN_MM`'s own note already forbids that: *"a
+    # fallback that guessed WIDER would be a fallback that could fall down."*
+    #
+    # Which DIRECTION is safe is not general — lower is safer for a span limit and
+    # higher for a rail separation — so nothing here interprets these. They are
+    # carried for the site that knows its own parameter, which is the same rule
+    # the generator's hard-tie handling already follows.
+    declined: dict[str, list[int]] = {}
 
     def admitted_for(self, version: "KnowledgeVersion") -> "AdmittedBy | None":
         """The verdict for one version, or None where none was recorded."""

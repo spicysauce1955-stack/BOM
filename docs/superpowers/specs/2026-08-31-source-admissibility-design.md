@@ -192,3 +192,99 @@ its own key in both languages.
 - **`Interval` consumption (amendment 007)** — ratified, unbuilt on both sides.
   Until it lands, the real snapshot's 16 rows still condition on a bracket
   nothing binds, so they are inert regardless of admissibility.
+
+---
+
+## 12 · What an adversarial review found after it shipped
+
+Two of these were safety-relevant and both were mine. Recorded in full, because
+a design doc that only lists what went right is a design doc nobody consults.
+
+### 12.1 · The fallback was not conservative — the gate made plans LESS safe
+
+§4 step 2 said the generator's existing "nothing covered `max_span_mm`" path
+"was built for exactly this shape of hole." **It was not.** That fallback is
+conservative relative to **silence**. "A source we have not verified told us
+858 mm and we declined to believe it" is not silence, and treating it as silence
+took the number the wrong way:
+
+| site | source said | before the fix | after |
+|---|---|---|---|
+| exposure C, non-HVHZ | 1219 mm | **1500 mm bays** | 858 mm bays |
+| exposure C, **HVHZ** | 914 mm | **1500 mm bays** | 858 mm bays |
+
+In a hurricane zone the slice laid out bays **75% wider** than the document it
+had just refused — on the one parameter class whose curation bar exists to
+prevent that. `FALLBACK_MAX_SPAN_MM`'s own note already forbade it: *"a fallback
+that guessed WIDER would be a fallback that could fall down."*
+
+**Fix.** A refusal now carries the declined value (`declined_mm`) and the
+source's own lexeme, `ingest()` gathers them per parameter onto
+`KnowledgeBase.declined`, and the span resolver takes
+`min(FALLBACK_MAX_SPAN_MM, declined)`. **Declining to trust a number is not the
+same as believing the opposite**: an unverified claim that something is unsafe is
+still evidence about risk, so the most restrictive thing anybody said stands as a
+ceiling while backing no line and winning no tie. It gets its own basis
+(`declined_bound`) and its own code (`declined_max_span`), because filed under
+`uncovered_max_span` it would read "no rule states this" — false, and false in
+the direction that hides a refusal.
+
+**Known cost, accepted:** the bound is the minimum across all refused rows, so a
+non-HVHZ run is held to the HVHZ limit. Matching conditions first would mean
+selectively trusting data we refused. A fence built tighter than it needs to be
+stands up; this repo already prefers that trade.
+
+**Direction is not general** — lower is safer for a span limit, higher for a rail
+separation — so nothing interprets `declined`; it sits beside the hard-tie
+handling, at the site that knows its own parameter.
+
+### 12.2 · A registry addition took down the whole snapshot
+
+§2 of the contract guarantees new source classes need no ratification. But
+judging a row builds a policy `Candidate` whose `source_class` is a closed
+`Literal`, so a snapshot naming an unregistered class loaded fine at the door and
+then raised a raw `ValidationError` inside `ingest()` — losing 4 tables, 289
+warnings and 81 gaps because the other team registered a word. §1.4 records that
+two classes were added in its own last revision, so this was the expected case.
+
+The asymmetry is the embarrassing part: the design agonised over the unknown
+**task** registry and then made the unknown **class** an unhandled exception.
+Now both decline to judge and report it.
+
+### 12.3 · The rest
+
+- **A verdict could be misattributed.** `_object_id` is unique within a table,
+  not across tables, so two unscoped tables for one parameter let the second's
+  verdict describe the first's number — "backed by a spec sheet" printed about a
+  sealed approval's value. A collision now drops **both** verdicts and reports
+  it: claiming neither is the only honest option when we cannot tell which is
+  which.
+- **Obligation 3 was unenforced.** A row with no citation at all was admitted
+  silently, so the chip claimed "checked by a person" with nothing to click
+  through to. Still judged — the axes are all on the row, and refusing to judge
+  would make an uncited row *more* admissible — but now reported.
+- **`dependents_of_knowledge` was broken by our own id change.** It split on the
+  first `@`, and a published object_id now contains one, so impact analysis
+  returned nothing for the real id and everything for the bare parameter name.
+- **The per-model knowledge view dropped every verdict**, because it rebuilt
+  `KnowledgeBase(versions=...)` instead of copying. `model_copy(update=...)` now.
+  The same trap then bit the new test that was supposed to catch 12.1.
+- **A test whose assertion could not fail.** `all(width <= FALLBACK_MAX_SPAN_MM)`
+  is true for 1500 by construction, and it was the assertion standing where
+  12.1 should have been caught. It now asserts against the declined bound.
+
+## 13 · Still open, deliberately
+
+- **The verdict is not persisted.** `store/db.py` returns a base with `admitted`
+  empty, and `KnowledgeVersion` keeps no provenance, so a reloaded run can
+  neither read the verdict back nor re-derive it. The seam is
+  `(snapshot_id, ref) → AdmittedBy` stored beside the versions.
+- **`ingest()` has no production caller.** The published path is test-only, so
+  the chip cannot appear in the app yet. That is the next wiring, not this slice.
+- **A published row used unjudged is indistinguishable from an authored one** on
+  the plan: the graph payload carries no `origin`. Three states, two renderings.
+- **`policy_version` is never stamped on a run.** Once the operator-policy seam
+  lands, two runs with identical knowledge and different policies would be
+  indistinguishable.
+- **A refusal reaches no `defeated` edge.** Removing a row before the evaluator
+  changes which facts compete, and the graph cannot say the policy did it.

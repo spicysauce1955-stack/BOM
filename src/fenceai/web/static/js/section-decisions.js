@@ -111,10 +111,6 @@ export async function render() {
   wire(host, runId);
 }
 
-/** Pure: `(section decisions, decision id -> its comments, which form is open)`
- *  -> the panel's markup. Takes its state as arguments rather than reading the
- *  module's, so node can render it exactly as the browser does — which is where
- *  the escaping rule and the empty cases are actually checked. */
 /** What a cited fact's SOURCE was worth (§1.4 `admitted_by`), as one chip.
  *
  *  Rendered only where a verdict EXISTS. An absent verdict means the fact was
@@ -130,13 +126,17 @@ export async function render() {
  *  name rather than as a missing translation. */
 function admittedHtml(verdict) {
   if (!verdict) return "";
-  const level = t("decisions.curation_level").replace(
+  const level = esc(t("decisions.curation_level")).replace(
     "{level}", `<span class="num">${esc(String(verdict.curation_level))}</span>`);
   return `<span class="admitted" data-level="${esc(String(verdict.curation_level))}"
     >${esc(t("decisions.admitted_by"))}
     <bdi class="sku">${esc(verdict.source_class)}</bdi> · ${level}</span>`;
 }
 
+/** Pure: `(section decisions, decision id -> its comments, which form is open)`
+ *  -> the panel's markup. Takes its state as arguments rather than reading the
+ *  module's, so node can render it exactly as the browser does — which is where
+ *  the escaping rule and the empty cases are actually checked. */
 export function sectionHtml(body, threads = new Map(), openOn = null, earlier = 0) {
   const admitted = body.admitted || {};
   const rows = body.decisions.map((d) => {

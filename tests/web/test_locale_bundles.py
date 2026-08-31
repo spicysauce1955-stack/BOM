@@ -100,6 +100,21 @@ WARNING_CODES = [
     # A table naming a task our TaskCode registry has no row for. Its rows are
     # used UNJUDGED, so this warning is the only thing saying so.
     "parameter_task_unrecognised",
+    # ...and the same for a source class. Both registries may grow without an
+    # amendment (§2), so neither may fail a load — and a row used unjudged has
+    # to say so, or it is indistinguishable from one that passed.
+    "source_class_unrecognised",
+    # A span limit taken from a source the run DECLINED to trust. Its own code
+    # rather than `uncovered_max_span`, because that one says "no rule states
+    # this" — false here, and false in the misleading direction.
+    "declined_max_span",
+    # Obligation 3's other half: a row with NO citation at all. Judged anyway
+    # (the axes are on the row), but reported — a provenance chip with no
+    # document behind it is a claim a reader cannot check.
+    "source_ref_missing",
+    # Two published rows resolving to one identity. Neither verdict is recorded,
+    # because attributing one to the wrong number is worse than attributing none.
+    "ambiguous_version_ref",
     "panel_length_unresolved",
     # Containment. Both say a credit did NOT happen — a credit that lands
     # cleanly is a smaller purchase and needs no warning — and both exist
@@ -276,6 +291,7 @@ def test_backend_code_list_is_current():
         # the list. A code with no bundle entry renders as raw English inside a
         # Hebrew sentence the day something first shows it.
         src / "knowledge" / "parameters.py",
+            src / "knowledge" / "snapshot.py",
         # Continuity's codes are LITERALS here and reach `StrategyWarning` as
         # `code=note.code` — a variable — so scanning the generator finds nothing
         # and the guard was blind to all three. Exactly the hole every entry

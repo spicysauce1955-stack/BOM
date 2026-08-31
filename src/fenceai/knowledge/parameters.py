@@ -35,13 +35,29 @@ from fenceai.core.gaps import Because, EntityRef, Gap, GapSubject, SourceRef
 from fenceai.knowledge.ast import And, Cmp, Expr, FieldRef, Lit
 from fenceai.knowledge.model import KnowledgeVersion, SetParam, SetToken
 from fenceai.knowledge.source_policy import (
-    AdmittedBy, Candidate, SourcePolicyRow, TaskCode, explain_rejection, resolve,
+    AdmittedBy, Candidate, SourceClass, SourcePolicyRow, TaskCode,
+    explain_rejection, resolve,
 )
 
-# The tasks this engine's policy vocabulary knows (§1.4). A published table may
-# declare one we have not registered yet — see `_judge`, which uses the fact and
-# says so rather than rejecting data over a gap in our own list.
+# The two §1.4 vocabularies this engine's policy is written against. A published
+# table may name a value in either that we have not registered yet, and BOTH are
+# registries the contract guarantees can grow without an amendment (§2):
+#
+#   "Registry additions are not amendments — new part types, warning codes,
+#    condition dimensions and source classes need no ratification."
+#
+# So an unregistered value must never fail a load. `Candidate.source_class` and
+# `task` are closed `Literal`s in the policy module — correctly, since the policy
+# is a table over known axes — and handing them an unregistered value raises a
+# raw `ValidationError` that takes down the whole snapshot. §1.4 itself records
+# that two source classes were ADDED in its last revision, so this is the
+# expected case, not a hypothetical.
+#
+# `_judge` therefore checks both and declines to judge, and `expand()` raises a
+# gap saying so. Used-and-flagged, not refused: a hole in our registry is not a
+# defect in their data.
 KNOWN_TASKS: frozenset[str] = frozenset(get_args(TaskCode))
+KNOWN_SOURCE_CLASSES: frozenset[str] = frozenset(get_args(SourceClass))
 
 # The hit policies this engine can actually honour. `unique` is a CLAIM about the
 # condition space ("these rows are disjoint") which `_overlap_gaps` checks and the
@@ -339,7 +355,11 @@ def _judge(
     """
     if policy is None:
         return None, None
+    # Neither axis may be judged against a vocabulary that does not contain it,
+    # and neither may take the load down for growing (§2). Both decline.
     if table.task not in KNOWN_TASKS:
+        return None, None
+    if row.provenance.source_class not in KNOWN_SOURCE_CLASSES:
         return None, None
     candidates = _candidates_for(row, issue_dates)
     resolution = resolve(policy, table.task, candidates)   # type: ignore[arg-type]
@@ -437,6 +457,11 @@ def expand(
             gaps.append(_bad_value_gap(table, row, index, tenant))
             continue
         object_id = _object_id(table, index)
+        if (policy is not None and table.task in KNOWN_TASKS
+                and row.provenance.source_class not in KNOWN_SOURCE_CLASSES):
+            # Per ROW, unlike the task gap: a table may mix classes, and which
+            # row carries the unregistered one is what a reader needs.
+            gaps.append(_source_class_unrecognised_gap(table, row, index, tenant))
         # Validity is judged BEFORE admissibility and independently of it. The
         # two are different questions about the same row — "is this authority in
         # force?" and "is this source good enough?" — and one can invalidate the
@@ -461,6 +486,15 @@ def expand(
         if precedes(as_of_date, row.valid_from) is True:
             gaps.append(_not_yet_in_force_gap(table, row, index, as_of, tenant))
 
+        if policy is not None and not row.provenance.cites:
+            # Obligation 3: *"Every value carries at least one resolvable
+            # SourceRef."* Judged anyway — the axes the policy reads are all on
+            # the row, so refusing to judge would make an UNCITED row more
+            # admissible than a cited one, which is backwards — but reported,
+            # because the verdict is about to be shown beside the number and
+            # "backed by a sealed approval, checked by a person" with nothing to
+            # click through to is a provenance claim with no document behind it.
+            gaps.append(_source_ref_missing_gap(table, row, index, tenant))
         admitted_by, rejected = _judge(table, row, policy, issue_dates)
         if rejected is not None:
             # NOT expanded. A value the policy refuses must not reach the
@@ -727,6 +761,21 @@ def _rejected_source_gap(
         "source_class": prov.source_class,
         "curation_level": prov.curation_level,
     }
+    # The DECLINED number and the source's own lexeme travel with the refusal.
+    #
+    # Two things needed this and neither is cosmetic. A reader has to be able to
+    # see WHAT we declined — "we did not use the manufacturer's 36 inches" is the
+    # sentence that makes a refusal reviewable, and without the value the gap can
+    # only say that something was refused. And a refused value is still evidence
+    # about RISK: a source we have not verified saying "no wider than 858 mm" does
+    # not become permission to build 1500 mm bays. `min_bound_mm` is what lets a
+    # consumer that knows its parameter's safe direction refuse to be laxer than
+    # a number it declined to trust. Carrying it here rather than in a second
+    # channel keeps one object describing one refusal.
+    if isinstance(row.value, Quantity) and row.value.unit == "mm":
+        params["declined_mm"] = to_mm(row.value)
+        if row.value.value_raw:
+            params["declined_raw"] = row.value.value_raw[0]
     # Both codes are written as LITERALS here rather than passed through from
     # `explain_rejection`, and that is not redundancy. `tests/web/
     # test_locale_bundles.py` finds every emitted code by scanning for
@@ -754,6 +803,61 @@ def _rejected_source_gap(
         cites=list(prov.cites),
         would_close=would_close,
         closes_by="knowledge", severity="warns_line",
+    )
+
+
+def _source_ref_missing_gap(
+    table: ParameterTable, row: ParameterRow, index: int, tenant: str | None,
+) -> Gap:
+    """A row carrying no citation at all (obligation 3).
+
+    `dangling_refs` catches a ref that resolves to no document; this catches the
+    other half, which nothing checked: no ref at all. The row is still used and
+    still judged — see the call site — so this is a report about what a reader
+    will not be able to check, not a refusal.
+    """
+    return Gap(
+        id=f"gap:source_ref_missing:{_object_id(table, index)}",
+        kind="missing_value",
+        subject=_param_subject(table, tenant, point=dict(row.conditions) or None),
+        because=Because(code="source_ref_missing",
+                         params={"parameter": table.parameter,
+                                 "source_class": row.provenance.source_class}),
+        would_close=(f"a resolvable SourceRef on {table.parameter} row {index}, so "
+                     f"a reader can see the document behind the number"),
+        closes_by="knowledge", severity="warns_line",
+    )
+
+
+def _source_class_unrecognised_gap(
+    table: ParameterTable, row: ParameterRow, index: int, tenant: str | None,
+) -> Gap:
+    """A row naming a source class this engine's policy has no row for.
+
+    `SourceClass` is a registry the contract guarantees can grow without an
+    amendment, and §1.4 records that two classes were added in its own last
+    revision — so this is the expected case. Before it was handled, an
+    unregistered class raised a raw `ValidationError` from inside `Candidate`
+    and took the entire snapshot down: 4 tables, 289 warnings and 81 gaps lost
+    because the other team registered a word. That is the opposite of what a
+    registry is for, and it violated §3.2.4 into the bargain.
+
+    So the row is used UNJUDGED and this says so. `closes_by: planning` — the
+    fix is a policy row here, not anything a curator can do to their document.
+    """
+    return Gap(
+        id=f"gap:source_class_unrecognised:{_object_id(table, index)}",
+        kind="unmodellable_entity",
+        subject=_param_subject(table, tenant, point=dict(row.conditions) or None),
+        because=Because(code="source_class_unrecognised",
+                         params={"parameter": table.parameter,
+                                 "source_class": row.provenance.source_class,
+                                 "task": table.task}),
+        cites=list(row.provenance.cites),
+        would_close=(f"a source-policy row for {row.provenance.source_class!r} on "
+                     f"{table.task or 'this task'}, so this row can be judged "
+                     f"rather than used unjudged"),
+        closes_by="planning", severity="warns_line",
     )
 
 

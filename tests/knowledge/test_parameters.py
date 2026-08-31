@@ -23,9 +23,11 @@ from pydantic import ValidationError
 
 from fenceai.catalog.demo import demo_catalog
 from fenceai.core.dates import Date
+from fenceai.core.gaps import SourceRef
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.evaluator import resolve_param, resolve_token
 from fenceai.knowledge.model import KnowledgeBase
+from fenceai.knowledge.source_policy import SHIPPED_DEFAULT
 from fenceai.knowledge.parameters import (
     ParameterRow, ParameterTable, Provenance, Quantity, Token, expand, to_mm,
 )
@@ -589,3 +591,76 @@ def test_a_published_value_is_titled_by_its_own_lexeme():
         value=Quantity(amount_milli=1234567, unit="mm"))]))[0]
     assert "1234.567 mm" in bare[0].title
     assert "e+" not in bare[0].title
+
+
+def test_a_task_we_have_not_registered_is_used_and_flagged_not_refused():
+    """The slice's riskiest decision, and it had no test at all until a review
+    said so.
+
+    `TaskCode` is a registry we own (§1.4). A table declaring a task we have not
+    added would otherwise have every row REFUSED for a hole in our own list
+    rather than any defect in their data — a failure mode that looks exactly like
+    the publisher being wrong. So the rows are used and a gap says we could not
+    judge them.
+
+    The cost is stated rather than hidden, and that is what the last two
+    assertions are for: nothing records a verdict for these rows, so no surface
+    can claim their source was checked."""
+    table = _span_table(task="thermal_movement_allowance", rows=[ParameterRow(
+        conditions={"exposure_category": "C"},
+        value=Quantity(amount_milli=1200000, unit="mm"),
+        provenance=Provenance(source_class="marketing", curation_level=0,
+                              cites=[SourceRef(id="s1", belongs_to="h1")]))])
+
+    versions, gaps, admitted = expand(table, policy=SHIPPED_DEFAULT)
+
+    # used: `marketing` at level 0 would be refused outright for a structural
+    # parameter, so this row surviving is the decision working
+    assert len(versions) == 1
+    # flagged: exactly ONE gap for the table, not one per row
+    assert [g.because.code for g in gaps] == ["parameter_task_unrecognised"]
+    assert gaps[0].closes_by == "planning"
+    assert gaps[0].because.params["task"] == "thermal_movement_allowance"
+    # and unjudged: nothing vouches for it
+    assert admitted == {}
+
+
+def test_one_gap_per_table_for_an_unregistered_task_not_one_per_row():
+    """Sixteen identical notes about one missing registry entry is noise; one is
+    a work item. Asserted separately from the behaviour above because the count
+    is the property that regresses when the check moves into the row loop."""
+    many = _span_table(task="thermal_movement_allowance", rows=[
+        ParameterRow(conditions={"exposure_category": c},
+                     value=Quantity(amount_milli=1200000, unit="mm"),
+                     provenance=Provenance(
+                         source_class="marketing", curation_level=0,
+                         cites=[SourceRef(id="s1", belongs_to="h1")]))
+        for c in ("B", "C", "D")])
+    gaps = expand(many, policy=SHIPPED_DEFAULT)[1]
+    assert [g.because.code for g in gaps] == ["parameter_task_unrecognised"]
+
+
+def test_a_source_class_we_have_not_registered_is_flagged_per_row():
+    """Per ROW, unlike the task, because a table may mix classes and which row
+    carries the unregistered one is what a reader needs.
+
+    The contrast with the test above is the point: an unregistered TASK is a fact
+    about the whole table, an unregistered CLASS is a fact about one row."""
+    mixed = _span_table(task="structural_parameter", rows=[
+        ParameterRow(conditions={"exposure_category": "B"},
+                     value=Quantity(amount_milli=1800000, unit="mm"),
+                     provenance=Provenance(
+                         source_class="engineering_letter", curation_level=0,
+                         cites=[SourceRef(id="s1", belongs_to="h1")])),
+        ParameterRow(conditions={"exposure_category": "C"},
+                     value=Quantity(amount_milli=1200000, unit="mm"),
+                     provenance=Provenance(
+                         source_class="sealed_approval", curation_level=2,
+                         cites=[SourceRef(id="s2", belongs_to="h2")])),
+    ])
+    versions, gaps, admitted = expand(mixed, policy=SHIPPED_DEFAULT)
+    codes = [g.because.code for g in gaps]
+    assert codes.count("source_class_unrecognised") == 1
+    # both rows are used: the unregistered one unjudged, the known one admitted
+    assert len(versions) == 2
+    assert len(admitted) == 1

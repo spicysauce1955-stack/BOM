@@ -78,7 +78,15 @@ class DecisionGraph(BaseModel):
         starts = {
             e.to_id
             for e in self.edges
-            if e.type == "governed_by" and e.knowledge_ref and e.knowledge_ref.split("@")[0] == object_id
+            # `rsplit("@v", 1)` and not `split("@")`: a published object_id
+            # contains `@` itself now that it carries its table's scope
+            # (`max_span_mm@model/M-VINYL#0`), so splitting on the FIRST `@`
+            # yielded the bare parameter name. Impact analysis then returned
+            # nothing for the real object_id and everything under every scope for
+            # `max_span_mm` — collapsing the two manufacturers' footing rows that
+            # the scope was added to keep apart.
+            if e.type == "governed_by" and e.knowledge_ref
+            and e.knowledge_ref.rsplit("@v", 1)[0] == object_id
         }
         result: dict[str, DecisionNode] = {nid: self.node(nid) for nid in starts}
         stack = list(starts)
