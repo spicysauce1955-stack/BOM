@@ -222,12 +222,44 @@ SHIPPED_DEFAULT: list[SourcePolicyRow] = [
 
 
 def _row_for(
-    policy: list[SourcePolicyRow], task: TaskCode, source_class: SourceClass,
+    policy: list[SourcePolicyRow], task: TaskCode, candidate: Candidate,
 ) -> SourcePolicyRow | None:
+    """The policy row governing this candidate — MOST SPECIFIC match wins.
+
+    This used to take a bare `source_class` and return the first row matching
+    `(task, source_class)`, which meant a table could hold only ONE row per pair.
+    That silently broke the axis §1.4's own BINDING paragraph requires:
+
+    > `version_status` is a policy axis. A superseded approval and its
+    > replacement are otherwise the *same* source class, the same role and the
+    > same task — the policy would rank them identically.
+
+    Expressing that means several rows per `(task, source_class)`, one per
+    status. Under the old lookup only the first was ever consulted, and
+    `admit()`'s own status check then rejected every candidate the first row did
+    not name — so an operator writing exactly the table the contract describes
+    got two of three statuses reported **inadmissible** rather than ranked. The
+    failure was invisible because `SHIPPED_DEFAULT` has one row per pair.
+
+    Specificity order: a row naming both `version_status` and `role` beats one
+    naming a single axis, which beats the `null`-on-both catch-all. Within one
+    specificity level the first row wins, so an operator's ordering still
+    decides between genuine duplicates rather than this inventing a rule.
+    """
+    best: SourcePolicyRow | None = None
+    best_score = -1
     for row in policy:
-        if row.task == task and row.source_class == source_class:
-            return row
-    return None
+        if row.task != task or row.source_class != candidate.source_class:
+            continue
+        if row.version_status is not None \
+                and row.version_status != candidate.version_status:
+            continue
+        if row.role is not None and row.role != candidate.role:
+            continue
+        score = (row.version_status is not None) + (row.role is not None)
+        if score > best_score:
+            best, best_score = row, score
+    return best
 
 
 def admit(
@@ -237,13 +269,13 @@ def admit(
     silently, from this function's point of view; a caller that must say WHY
     (a warned line, a decision-graph note) reads `row.admissible` /
     `min_curation` off the policy directly rather than this collapsing them.
+
+    The `version_status`/`role` axes are matched by `_row_for` now rather than
+    re-checked here: a row that does not apply to this candidate is not the
+    candidate's row, and treating it as one is what made the axis unusable.
     """
-    row = _row_for(policy, task, candidate.source_class)
+    row = _row_for(policy, task, candidate)
     if row is None or not row.admissible:
-        return None
-    if row.version_status is not None and row.version_status != candidate.version_status:
-        return None
-    if row.role is not None and row.role != candidate.role:
         return None
     if candidate.curation_level < row.min_curation:
         return None

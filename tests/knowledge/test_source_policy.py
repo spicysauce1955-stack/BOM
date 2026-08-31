@@ -357,3 +357,65 @@ def test_the_shipped_default_does_not_yet_use_version_status_as_an_axis():
     decision, and this test is here so that decision is made on purpose rather
     than discovered later in a BOM."""
     assert all(row.version_status is None for row in SHIPPED_DEFAULT)
+
+
+def test_version_status_is_usable_as_a_policy_axis():
+    """§1.4 BINDING: *"`version_status` is a policy axis. A superseded approval
+    and its replacement are otherwise the same source class, the same role and
+    the same task — the policy would rank them identically."*
+
+    Expressing that requires SEVERAL rows per `(task, source_class)`, one per
+    status. The lookup used to return the first row matching the pair and ignore
+    the status, so only one was ever consulted and `admit()` then reported every
+    candidate that row did not name as **inadmissible** — an operator writing
+    exactly the table the contract describes got two of three statuses silently
+    excluded rather than ranked.
+
+    Invisible until now because `SHIPPED_DEFAULT` carries one row per pair, and
+    the Knowledge team's recommendation on `superseded` is unimplementable
+    without it."""
+    policy = [
+        SourcePolicyRow(task="structural_parameter", source_class="sealed_approval",
+                        version_status="active", admissible=True, rank=1, min_curation=2),
+        SourcePolicyRow(task="structural_parameter", source_class="sealed_approval",
+                        version_status="unknown", admissible=True, rank=2, min_curation=2),
+        SourcePolicyRow(task="structural_parameter", source_class="sealed_approval",
+                        version_status="superseded", admissible=True, rank=3, min_curation=2),
+    ]
+    ranks = {}
+    for status in ("active", "unknown", "superseded"):
+        got = admit(policy, "structural_parameter",
+                    Candidate(source_class="sealed_approval", version_status=status,
+                              curation_level=2))
+        assert got is not None, f"{status} must rank, not vanish"
+        ranks[status] = got.rank
+    assert ranks == {"active": 1, "unknown": 2, "superseded": 3}
+
+    # ...and the replacement now beats the document it superseded, which is the
+    # real pair in `3ae88642` and the whole point of the axis
+    sup = Candidate(source_class="sealed_approval", version_status="superseded",
+                    curation_level=2, content_hash="aaa", label="1c487c73")
+    rep = Candidate(source_class="sealed_approval", version_status="unknown",
+                    curation_level=2, content_hash="bbb", label="f650c3f1")
+    for order in ([sup, rep], [rep, sup]):
+        assert resolve(policy, "structural_parameter", order).winner.label == "f650c3f1"
+
+
+def test_a_more_specific_policy_row_wins_over_the_catch_all():
+    """An operator demoting one status should not have to restate every other.
+    A `null` `version_status` row is the catch-all §1.4 calls "any", and a row
+    naming a status is more specific — so the two coexist rather than the
+    ordering of the list deciding which is consulted."""
+    policy = [
+        SourcePolicyRow(task="structural_parameter", source_class="sealed_approval",
+                        admissible=True, rank=1, min_curation=2),
+        SourcePolicyRow(task="structural_parameter", source_class="sealed_approval",
+                        version_status="superseded", admissible=True, rank=9,
+                        min_curation=2),
+    ]
+    def rank_of(status):
+        return admit(policy, "structural_parameter",
+                     Candidate(source_class="sealed_approval", version_status=status,
+                               curation_level=2)).rank
+    assert rank_of("active") == 1, "the catch-all still governs an unnamed status"
+    assert rank_of("superseded") == 9, "the specific row wins wherever it is listed"

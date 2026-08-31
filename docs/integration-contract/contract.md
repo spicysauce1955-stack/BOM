@@ -12,20 +12,21 @@
 ║  An edit made any other way is a defect, whoever made it.                ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
-Version:   v1.3. Amendments 005, 006, 007 accepted — §1.4's tie-break rewritten
-           because the v1.2 wording was intransitive and its chain incomplete
-           (005, trigger B: three tied candidates admitted a cycle, and no
-           per-candidate key can satisfy both BINDING paragraphs at once); a
-           `paired` `value_type`, so a footing schedule's two certified design
-           points cross together instead of one being discarded (006, trigger D,
-           accepted with Planning's modification that the members name their
-           parameters rather than implying them by position); and
-           `range(<UnitCode>)` plus `Interval`, because a condition dimension can
-           be a quantity and a bracket published as an English phrase satisfied
-           neither obligation 4 nor obligation 2's `uncovered` (007, trigger D —
-           a 25.4 mm band sat between two real brackets, belonging to neither and
-           reportable as nothing). Filed and dispositioned in conversation.md
-           T25/T27/T28/T29 and amendments/005-007.
+Version:   v1.3. Amendments 005, 006, 007 accepted — §1.4's tie-break admitted a
+           cycle on tied, partially-dated candidates, and could not be made a
+           total order as worded (005, trigger B, D also applies: the chain
+           was also incomplete, and the first real snapshot contains the pair
+           that exhausts it); `ParameterTable.value_type` gained a `paired`
+           shape for a design point a source states as two numbers together —
+           a deeper footing buying a wider span — with the accepted
+           modification that a pair names its members rather than implying
+           them by position (006, trigger D); and a condition dimension whose
+           values are quantities had no way to cross at all — `fence_height`
+           publishing as an English phrase no rule could evaluate, and no gap
+           able to report the band its own two brackets left uncovered (007,
+           trigger D, BLOCKING — the one that forced this cut rather than
+           waiting to batch). Filed and dispositioned in conversation.md
+           T25/T27-T30 and amendments/005-007.
 Was:       v1.2. Amendments 002, 003, 004 accepted — a typed `Date` and what an
            absent one does to the §1.4 tie-break (002, trigger A: the untyped
            ordering was falsified against the first real snapshot); a leftover
@@ -35,10 +36,10 @@ Was:       v1.2. Amendments 002, 003, 004 accepted — a typed `Date` and what a
            vocabulary (004, trigger D — `SlotRef` ratified as RESERVED, no
            worked example on either side yet). Filed and dispositioned in
            conversation.md T15/T17/T18/T19/T20 and amendments/002-004.
-Was:       v1.1. Amendment 001 accepted — obligation 6 carried a clause §1.4 had
+Earlier:   v1.1. Amendment 001 accepted — obligation 6 carried a clause §1.4 had
            superseded, found by the Knowledge team on the cold read BEFORE
            signature, which is what the read was for. v1.0 was never ratified.
-Earlier:   v1.0. Frozen after four review rounds — an audit against this
+Original:  v1.0. Frozen after four review rounds — an audit against this
            platform's corpus, a review of the result, an audit against the
            consumer's codebase, and a re-measurement of the four surviving
            items. Every item raised by either side is dispositioned; there is
@@ -293,37 +294,37 @@ ParameterTable {
   task          TaskCode         what this parameter decides — see §1.4
   hit_policy    unique | priority | collect_min | collect_max
   value_type    quantity(<UnitCode>) | token(<closed set>)
-                | paired(<parameter>:<UnitCode>, <parameter>:<UnitCode>)
-                                                           declared ONCE
+                | paired(<parameter>:<UnitCode>, <parameter>:<UnitCode>)   declared ONCE
   domain        { exposure_category: [B,C,D], hvhz: [true,false],
-                  jurisdiction: […], code_edition: ["ASCE 7-16"],
-                  fence_height: range(<UnitCode>) }
-                # a listed dimension enumerates its values; range(<UnitCode>)
-                # declares a CONTINUOUS, quantity-valued dimension instead
+                  fence_height: range(mm), jurisdiction: […],
+                  code_edition: ["ASCE 7-16"] }
+                # a listed dimension enumerates its values, as above;
+                # range(<UnitCode>) declares a CONTINUOUS one instead
   domain_basis  measured | declared
 
   rows [ { conditions       { exposure_category: "C", hvhz: false,
-                              fence_height: Interval }
+                               fence_height: Interval }   # only on a range() dimension
            condition_basis  stated | assumed
-           value            Quantity | Token | [ [Quantity, Quantity], … ]
-                                              conforming to value_type
+           value            Quantity | Token              conforming to value_type
+                           | [[Quantity,Quantity], …]      value_type: paired only —
+                             every alternative independently valid at this point
            provenance       Provenance          class, level, status, cites
            valid_from · valid_until · authority } ]
 
-  uncovered [ { exposure_category: "D", hvhz: true } ]
+  uncovered [ { exposure_category: "D", hvhz: true } | { fence_height: Interval } ]
 }
 
-Interval      { min: Quantity | null, max: Quantity | null,
-                min_inclusive: bool, max_inclusive: bool, value_raw: [str] }
-              # a condition on a range(…) dimension. null = unbounded that side
+Interval { min: Quantity | null, max: Quantity | null,
+           min_inclusive: bool, max_inclusive: bool, value_raw: [str] }
+         # null on a bound is UNBOUNDED there, not absent — an open interval
+         # is a statement, not a missing value
 ```
 
 > **BINDING.** Within one table, no two rows may match the same point in the domain when
 > `hit_policy = unique`. Points in the domain that no row covers are listed in
-> `uncovered` — never silently omitted. Every row conforms to the table's declared
-> `value_type`. Where a dimension is declared `range(<UnitCode>)`, an `uncovered` entry
-> for it is an `Interval` rather than a value, so a band no row covers is reportable
-> rather than invisible.
+> `uncovered` — never silently omitted, and as an `Interval` rather than a point for a
+> `range()` dimension, so a band between two stated brackets is reportable rather than
+> invisible. Every row conforms to the table's declared `value_type`.
 
 `value_type` sits on the **table** rather than the row so that one column cannot hold both
 `10000 deg_milli` and `not_rackable`. `not_rackable` is not an angle — it is a different
@@ -331,46 +332,28 @@ parameter, and belongs to a `slope_method` table while `max_rack` stays a real a
 conditioned on it. Without the declaration, every consumer must branch on the type of
 every cell.
 
-**`paired` exists because a footing table's rows are design points, not one number.** A
-deeper footing buys a wider post spacing, and both combinations are certified at the same
-condition point — a builder may choose either. Under a single-valued `value_type` that
-shape had two exits and both lose something: two competing rows at one point is exactly
-what `unique` is built to catch, and `collect_min`/`priority` silently discards the
-cheaper compliant option — 7 posts against 9 on a 40 ft run is a different BOM, a
-different pour and a different price. So a `paired` row's `value` is a **list of
-same-point alternatives**, and nothing is discarded. Exactly one row still occupies each
-domain point, by construction, so `unique` needs no special case.
+A `paired` member **names its parameter** rather than relying on position:
+`paired(mm, mm)` would distinguish a footing depth from a max span only by which slot in
+the array it occupies, and this contract refuses exactly that convention everywhere else
+— `value_raw` exists so a number cannot mean something by implication, and `Quantity`
+names its own unit rather than inferring it. A row's `value` becomes a **list** of
+same-point alternatives under `paired`, because a source stating two design points —
+a deeper footing buying a wider span — is not a `unique` violation to gap and withhold;
+it is a shape `unique` was never built to represent. Nothing is discarded, which
+`collect_min`/`priority` over the pair could not offer: choosing between alternatives is
+a cost trade-off for whoever consumes the table, not a fact this platform picks for them.
+*(Amendment 006, v1.3.)*
 
-The members **name their parameters** rather than relying on position, because the
-motivating pairing is `(mm, mm)` — two lengths, where order would be the only thing
-distinguishing a footing depth from a span. That is the same argument `Quantity` makes by
-naming its own unit and `value_raw` makes by travelling beside every number: a value that
-means something by implication is a bug waiting for a reader who does not know the
-convention.
-
-**Choosing between the alternatives is the consumer's, and deliberately not stated here.**
-It is a cost trade-off — deeper holes against more posts — so it belongs to whatever
-optimises cost, and a published `paired` value that arrived with a recommended member
-would be the `admitted_by` mistake in a new place.
-
-**`range(<UnitCode>)` exists because a dimension can be a quantity.** Real footing
-schedules condition on fence height, and a height is a length — but a listed domain can
-only hold labels, so `"Up to 48\""` and `"49\" to 76\""` crossed as English phrases. Two
-BINDING obligations broke on that. Obligation 4 says every dimension is a `Quantity` with
-its lexeme alongside, and a bracket-as-a-phrase has no thousandths at all. And obligation
-2's `uncovered` could not do its job: 48″ is 1,219,200 thousandths and 49″ is 1,244,600,
-so a **25.4 mm band sat between the two brackets belonging to neither** — and `uncovered`
-enumerates domain points, so a height in that band was not a hole it could report. The
-coverage mechanism returned a complete-looking answer that omitted a real gap, which is
-worse than the gap it exists to surface.
-
-`min_inclusive` / `max_inclusive` are explicit and carry no default, and that is the
-load-bearing part rather than fussiness. Whether such a band is a genuine dead zone in the
-source or an artefact of brackets stated in whole inches is a fact only the publisher
-holds — the pages behind these two labels are too OCR-degraded to carry the words either
-way — and a default here would settle it silently for every table ever published.
-`value_raw` keeps the phrase verbatim for the same reason it does everywhere else: a
-disagreement between the label and the bounds is a bug someone can see.
+A `range()` dimension exists because not every condition is a closed set. `fence_height`
+crosses this corpus as brackets like `"49\" to 76\""` — a length, not a token — and
+enumerating every millimetre as a domain value is not the alternative: `Interval` lets a
+row state the bounds it actually has, with `value_raw` beside them for the reason every
+other ambiguous value already carries its source lexeme. `null` on a bound is unbounded
+on that side, not a missing value — an open interval is a statement. Whether a band
+between two stated brackets is a genuine hole in the source or an artefact of whole-unit
+rounding is a fact only the publisher holds, and reporting it as an `Interval` in
+`uncovered` is what makes that band visible rather than silently swallowed by a domain
+that only ever enumerates points. *(Amendment 007, v1.3.)*
 
 `domain_basis` exists because on the 73 pages whose table grid could not be reconstructed,
 this platform is **declaring** a domain rather than reading one. `uncovered` against a
@@ -427,27 +410,28 @@ The shipped default, revised:
 `TaskCode`, `SourceClass` and `RoleCode` are closed vocabularies in the registries; the
 rows are configurable by the operator.
 
-> **BINDING.** Ranks are unique within a task row. Where an operator's edit creates a tie,
-> resolution breaks it by higher `curation_level`; then, **only where every tied candidate
-> carries an `issue_date`**, by the later `issue_date` (§1.1 `Date`); then by lexicographic
-> `source_class`; then by lexicographic `SourceDoc.content_hash`. Each step is a total
-> order over the set that reaches it, so the result never depends on the order candidates
-> were collected in — deterministically, and never silently preferring an older document.
-> Where the tied set is not wholly dated the date step does not fire at all: a `null` `iso`
-> is never ordered, and skipping the step is the only treatment of it that is neither
-> "earliest" nor "latest". `ai_proposal` is proposal-only on every task and is
-omitted from the table for width.
+> **BINDING.** Ranks are unique within a task row. Where an operator's edit creates a
+> tie, resolution breaks it by higher `curation_level`; then, only where **every** tied
+> candidate carries an `issue_date`, by the later one (§1.1 `Date`); then by
+> lexicographic `source_class`; then by lexicographic `SourceDoc.content_hash`. Each step
+> is a total order over the set that reaches it, so the result never depends on the order
+> candidates were collected in — deterministically, and never silently preferring an
+> older document. Where the tied set is not wholly dated the date step does not fire at
+> all: a `null` `iso` is never ordered, and skipping the step is the only treatment of it
+> that is neither earliest nor latest.
 >
-> *(Amendment 005. The v1.2 wording — "later `issue_date` where both carry one" — was a
-> pairwise predicate, and a pairwise predicate need not be transitive: three candidates
-> tied on rank and curation admitted a cycle, so the winner depended on collection order,
-> which is the one thing this paragraph exists to prevent. No per-candidate sort key can
-> rescue it either, because every position for a null date is "earliest" or "latest" and
-> §1.1 forbids both by name. `content_hash` terminates the chain; note what it does not
-> promise — it has no relation to recency, so the fully-exhausted case can still rank a
-> superseded document ahead of its replacement, deterministically on both sides.
-> Preventing that pairing from tying at all is `version_status`'s job, one paragraph
-> down, and an operator's to configure.)*
+> *(Amendment 005, v1.3. The clause this replaces admitted a cycle: a tie-break that
+> switches criterion by which pair is being compared is not a per-candidate key, and
+> nothing requires it to be transitive — three candidates tied at rank and curation,
+> compared pairwise exactly as worded, returned all three as the winner depending on
+> input order. The `content_hash` step terminates the chain deterministically; it is not
+> a promise that the exhausted case prefers the newer document — `content_hash` has no
+> relationship to recency. `version_status` is the axis that keeps a superseded approval
+> and its replacement from reaching this chain tied in the first place, and whether an
+> operator's policy rows use it that way is a configuration decision, not this clause's
+> to make.)*
+>
+> `ai_proposal` is proposal-only on every task and is omitted from the table for width.
 
 > **BINDING.** `version_status` is a policy axis. A superseded approval and its
 > replacement are otherwise the *same* source class, the same role and the same task —
