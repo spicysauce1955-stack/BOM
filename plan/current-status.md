@@ -1,5 +1,76 @@
 # Current status
 
+## Contract v1.3 RATIFIED — both copies byte-identical (2026-08-31)
+
+**`436100f`. `diff` between the two `contract.md` files is empty,
+`sha256sum -c` passes, 2242 tests pass. Amendments 005 + 006-as-modified + 007
+are in force.**
+
+```
+fdaf7462fb3bfd704fa487753067ce9051c7efa1065d9ce7506e331d51723b40  contract.md
+6a3469ce6e65dee71d33bbb20ec2296cbdb8a436b73b3f8dab047069ba15aad9  AMENDING.md
+```
+
+**We adopted their `contract.md` verbatim**, and the reason is worth keeping: the
+substance was independently identical on the first cut — `paired`'s signature,
+`Interval`'s five fields, the five-step tie-break, the all-or-skip clause — for
+the **third consecutive version**. Only prose differed, and theirs is the better
+text for a frozen reference: it states the rule and leaves the measured evidence
+in `amendments/`, where a reader who wants it should be sent. Ours restated the
+25.4 mm arithmetic and the 7-posts-against-9 figure inside the spec. A contract
+is read to implement against; the persuading already happened in the amendment
+files.
+
+Still theirs to do: **regenerate their `contract.sha256`**, which carries v1.2's
+digests.
+
+### Their `superseded` answer, and the defect it exposed
+
+They gave a corpus-specific recommendation we could not have derived: here
+`superseded` means a **named, citable** replacement exists (`superseded_by` is
+populated), where `unknown` means nobody established anything — so `unknown`
+should outrank `superseded` for a structural parameter.
+
+Acting on it found a real defect. `_row_for` returned the **first** row matching
+`(task, source_class)` and ignored `version_status`, so a policy table could hold
+only ONE row per pair. An operator writing exactly the axis §1.4's BINDING
+paragraph requires got:
+
+```
+sealed_approval / active      -> rank 1
+sealed_approval / unknown     -> INADMISSIBLE
+sealed_approval / superseded  -> INADMISSIBLE
+```
+
+**`version_status` was not usable as an axis at all** — which reframes the earlier
+finding: all 26 shipped rows leave it unset not as a considered choice but because
+the mechanism did not work. Fixed (most-specific-match wins, `null` stays the
+catch-all); two tests pin it, and the two real footing authorities now resolve to
+the replacement under either input order.
+
+### THE OPEN DECISION ON OUR SIDE
+
+**The shipped ranks are deliberately unchanged.** Their recommendation has two
+readings and they differ a lot in consequence:
+
+1. `superseded` loses to its own replacement of the same class — the case §1.4
+   describes, and the pair in `3ae88642`. **Unarguable.**
+2. *"loses to anything not known to be superseded"* — a superseded sealed
+   engineering approval losing to an unrated installation manual at level 2. **A
+   real judgment call**, possibly right for this corpus, not something to conclude
+   from one paragraph.
+
+The mechanism now supports either. Which ships decides which document backs a
+real footing depth, so it wants a deliberate call rather than a default.
+
+### Not blocked, and next
+
+Item 6's `expand()` wiring still waits on 007's *implementation*, which is theirs
+(their G57). `3ae88642` is still refused by version for 002's typed `Date` and
+still wants that one re-cut. Nothing on our side is waiting on the contract.
+
+---
+
 ## Contract v1.3 cut — our half of step 5 (2026-08-31)
 
 **`565196b`. Amendments 005 + 006-as-modified + 007 applied, `AMENDING.md`
