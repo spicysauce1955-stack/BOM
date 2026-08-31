@@ -87,6 +87,9 @@ class Candidate(BaseModel):
     role: str | None = None
     label: str = ""
     issue_date: Date | None = None
+    # §1.4's final tie-break step (amendment 005). Empty where the caller holds
+    # no `SourceDoc` — a test, not a run.
+    content_hash: str = ""
 
 
 class AdmittedBy(BaseModel):
@@ -106,6 +109,9 @@ class AdmittedBy(BaseModel):
     version_status: VersionStatus
     label: str = ""
     issue_date: Date | None = None
+    # §1.4's final tie-break step (amendment 005). Empty where the caller holds
+    # no `SourceDoc` — a test, not a run.
+    content_hash: str = ""
 
 
 class Resolution(BaseModel):
@@ -245,7 +251,7 @@ def admit(
         rank=row.rank, source_class=candidate.source_class,
         curation_level=candidate.curation_level,
         version_status=candidate.version_status, label=candidate.label,
-        issue_date=candidate.issue_date,
+        issue_date=candidate.issue_date, content_hash=candidate.content_hash,
     )
 
 
@@ -261,8 +267,11 @@ def resolve(
     3. later `issue_date` — **only when every candidate still tied carries an
        `iso`**, otherwise skipped entirely (see below);
     4. lexicographic `source_class`;
-    5. lexicographic `label` — a local determinism guarantee, NOT a
-       contract criterion (see below).
+    5. lexicographic `SourceDoc.content_hash` — §1.4's own terminator since
+       v1.3 (amendment 005);
+    6. lexicographic `label` — a local determinism guarantee, NOT a contract
+       criterion, and reachable only by a caller holding no `content_hash`
+       (see below).
 
     **Step 3, and why it is all-or-skip.** §1.4 words the criterion "later
     `issue_date` where both carry one". Read pairwise, as literally worded,
@@ -282,9 +291,10 @@ def resolve(
     whole tied set is dated, the latest wins; when any member is undated, the
     date step does not happen and resolution moves to `source_class`.
 
-    That is a READING of a BINDING clause, not a rewrite of it — the contract
-    still governs. It is filed as amendment 005 (trigger B, unimplementable);
-    if 005 is ratified with different wording, this step changes with it.
+    This was implemented as a READING of the v1.2 clause and filed as amendment
+    005 (trigger B). **005 was ratified as proposed in v1.3**, so all-or-skip is
+    now the contract's own wording rather than our reading of it, and steps 4–5
+    below are the contract's too.
 
     **Step 5, and why `label` is in the key at all.** Steps 1–4 are not a
     total order: two candidates can share a rank, a curation level, a date
@@ -326,5 +336,18 @@ def resolve(
                 tied = [ab for ab in tied
                         if ab.issue_date is not None
                         and ab.issue_date.iso == newest.iso]
-    winner = min(tied, key=lambda ab: (ab.source_class, ab.label))
+    # §1.4's last two steps, in order. `content_hash` is the contract's own
+    # terminator (amendment 005): every `SourceDoc` carries one, §1.2.1's closure
+    # rule already guarantees it resolves, and it is stable across re-cuts of the
+    # same document — so both sides compute the same winner rather than each
+    # inventing a tiebreak. `label` sits behind it only for a caller holding no
+    # source doc at all, which is a test, not a run.
+    #
+    # What this does NOT promise, and the Knowledge team was right to make us say
+    # so: a content hash has no relation to recency. Once every named criterion
+    # has tied, this can rank a superseded document ahead of its replacement —
+    # deterministically, on both sides, but still the older one. Keeping that
+    # pairing from tying in the first place is `version_status`'s job, and
+    # `SHIPPED_DEFAULT` does not currently use it (see its own note).
+    winner = min(tied, key=lambda ab: (ab.source_class, ab.content_hash, ab.label))
     return Resolution(admitted=admitted, winner=winner)

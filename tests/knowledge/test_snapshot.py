@@ -61,7 +61,7 @@ def test_the_contracts_whole_payload_parses(snapshot):
     left alone — a private model for them would be a shape nobody agreed to, and
     it would look like support."""
     assert snapshot.regime == "us_astm"
-    assert snapshot.contract_version == "1.2.0"
+    assert snapshot.contract_version == "1.3.0"
     assert len(snapshot.parameters) == 2
     assert len(snapshot.gaps) == 3
 

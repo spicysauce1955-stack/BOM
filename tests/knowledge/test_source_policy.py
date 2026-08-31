@@ -309,3 +309,51 @@ def test_a_custom_policy_row_is_just_data_no_code_change_needed():
     # ...and `ai_proposal` admits nowhere in the shipped default itself —
     # proposal-only on every task, per §1.4.
     assert admit(SHIPPED_DEFAULT, "product_description", c) is None
+
+
+def test_the_exhausted_chain_terminates_on_the_contracts_own_content_hash():
+    """§1.4's final step since v1.3 (amendment 005). Every named criterion has
+    tied, so something has to decide — and it has to be a value BOTH sides
+    compute the same way, or two implementations stamp different `admitted_by`
+    and hash differently, which is the failure the paragraph exists to prevent.
+    `content_hash` is on every `SourceDoc` and §1.2.1's closure rule already
+    guarantees it resolves.
+
+    The second assertion is the honest limit, and the Knowledge team's
+    disposition of 005 is what made us write it down: **a content hash has no
+    relation to recency.** Once the chain is exhausted this can rank a superseded
+    document ahead of its replacement — deterministically, on both sides, but
+    still the older one. Keeping that pairing from tying at all is
+    `version_status`'s job, not this chain's."""
+    older = Candidate(source_class="sealed_approval", version_status="superseded",
+                      curation_level=2, content_hash="aaa", label="older")
+    newer = Candidate(source_class="sealed_approval", version_status="unknown",
+                      curation_level=2, content_hash="bbb", label="newer")
+
+    # deterministic under both input orders — the point of having a terminator
+    assert resolve(SHIPPED_DEFAULT, "structural_parameter",
+                   [older, newer]).winner.content_hash == "aaa"
+    assert resolve(SHIPPED_DEFAULT, "structural_parameter",
+                   [newer, older]).winner.content_hash == "aaa"
+
+    # ...and the limit: `aaa` won because it sorts first, not because it is newer
+    assert resolve(SHIPPED_DEFAULT, "structural_parameter",
+                   [older, newer]).winner.version_status == "superseded"
+
+
+def test_the_shipped_default_does_not_yet_use_version_status_as_an_axis():
+    """§1.4 BINDING: *"`version_status` is a policy axis. A superseded approval
+    and its replacement are otherwise the same source class, the same role and
+    the same task — the policy would rank them identically."*
+
+    Every row in `SHIPPED_DEFAULT` leaves `version_status` at `None` ("any"), so
+    the contract's own predicted collision happens: the two real footing
+    authorities in `3ae88642` tie at rank 1 and the terminator picks the
+    superseded one. This test PINS THE CURRENT STATE rather than the desired one,
+    deliberately — the fix changes which document backs a real number, and the
+    contract warns in both directions (40.7% of the platform's human-gated facts
+    come from a superseded document, so ranking `superseded` inadmissible would
+    delete a great deal of usable knowledge). It is an operator-configuration
+    decision, and this test is here so that decision is made on purpose rather
+    than discovered later in a BOM."""
+    assert all(row.version_status is None for row in SHIPPED_DEFAULT)
