@@ -14,12 +14,15 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
+from pydantic import ValidationError
+
 from fenceai.fencemodel.demo import demo_model_versions
 from fenceai.parts.demo import demo_parts
 from fenceai.fencemodel.library import FenceModelLibrary
 from fenceai.fencemodel.model import FenceModel
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
+from fenceai.knowledge.snapshot import Snapshot, ingest
 from fenceai.learning.model import Correction
 from fenceai.parts.model import Part, PartLibrary
 from fenceai.fulfillment.supply_run import SupplyRun
@@ -50,6 +53,20 @@ CREATE TABLE IF NOT EXISTS catalogs (id TEXT PRIMARY KEY, doc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS quotes (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, status TEXT NOT NULL,
     created_at TEXT NOT NULL, doc TEXT NOT NULL);
+-- A published Snapshot, kept as the DOCUMENT the other team sent (§1.2), keyed
+-- by its own `snapshot_id`. The contract guarantees a hash resolves to the same
+-- bytes until `retain_until`, which is what makes the document worth storing and
+-- the derived reading not: source verdicts are a function of (snapshot, policy,
+-- task), so they are re-derived on every load rather than frozen here. See
+-- `knowledge_base()`.
+CREATE TABLE IF NOT EXISTS knowledge_snapshots (
+    snapshot_id TEXT PRIMARY KEY, loaded_at TEXT NOT NULL, doc TEXT NOT NULL);
+-- Which one a run resolves against. A one-row table rather than a column on
+-- something else, because "the active snapshot" is a fact about the installation
+-- and not about any project — and the CHECK is what keeps it one row rather than
+-- a convention somebody has to remember.
+CREATE TABLE IF NOT EXISTS active_snapshot (
+    only_row INTEGER PRIMARY KEY CHECK (only_row = 1), snapshot_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
     action TEXT NOT NULL, ref TEXT NOT NULL);
@@ -256,11 +273,86 @@ class Store:
             self._conn.rollback()
             raise
 
+    # -- the published snapshot ------------------------------------------------
+
+    def save_snapshot(self, snapshot: Snapshot, actor: str = "system") -> None:
+        """Store a published snapshot's DOCUMENT, and make it the active one.
+
+        The document, not what we made of it. §1.2.1 promises a hash resolves to
+        the same bytes until `retain_until`, so the document is the durable thing;
+        the versions, verdicts and declined bounds are re-derived by
+        `knowledge_base()` on every read. See its docstring for why that is not
+        laziness.
+        """
+        self._conn.execute(
+            "INSERT INTO knowledge_snapshots (snapshot_id, loaded_at, doc) "
+            "VALUES (?,?,?) ON CONFLICT(snapshot_id) DO UPDATE SET "
+            "doc=excluded.doc, loaded_at=excluded.loaded_at",
+            (snapshot.snapshot_id, _now(), snapshot.model_dump_json()),
+        )
+        self._conn.execute(
+            "INSERT INTO active_snapshot (only_row, snapshot_id) VALUES (1,?) "
+            "ON CONFLICT(only_row) DO UPDATE SET snapshot_id=excluded.snapshot_id",
+            (snapshot.snapshot_id,),
+        )
+        self._audit(actor, "save_snapshot", snapshot.snapshot_id)
+        self._conn.commit()
+
+    def active_snapshot(self) -> Snapshot | None:
+        """The published snapshot runs resolve against, or None if none loaded."""
+        row = self._conn.execute(
+            "SELECT s.doc FROM active_snapshot a "
+            "JOIN knowledge_snapshots s ON s.snapshot_id = a.snapshot_id "
+            "WHERE a.only_row = 1"
+        ).fetchone()
+        return Snapshot.model_validate_json(row[0]) if row else None
+
+    def snapshot_ids(self) -> list[str]:
+        """Every snapshot ever loaded, newest first. Historical runs pin an id."""
+        return [r[0] for r in self._conn.execute(
+            "SELECT snapshot_id FROM knowledge_snapshots ORDER BY loaded_at DESC"
+        ).fetchall()]
+
     def knowledge_base(self) -> KnowledgeBase:
+        """Authored knowledge, plus the active published snapshot re-ingested.
+
+        **The published half is re-derived here rather than stored**, and that is
+        the design rather than an economy. A source verdict (§1.4 `admitted_by`)
+        is a function of `(snapshot, policy, task)` — and the policy is an
+        operator's editable table — so a verdict frozen at load time records an
+        answer the next policy edit makes false, with nothing to say it changed.
+        Read models are derived, never stored, and a verdict is a read model.
+
+        It also means one code path serves a fresh load and a reload, so the two
+        cannot disagree. A stored run that rendered different provenance from a
+        fresh one would be the worst possible version of this feature.
+
+        A snapshot that no longer parses does NOT take the store down: authored
+        knowledge is returned and the published half is absent, which is the same
+        state as "none loaded" and is recoverable by loading a conforming one.
+        Raising here would make one bad document lock a user out of their own
+        authored rules.
+        """
         rows = self._conn.execute(
             "SELECT doc FROM knowledge_versions ORDER BY object_id, version"
         ).fetchall()
-        return KnowledgeBase(versions=[KnowledgeVersion.model_validate_json(r[0]) for r in rows])
+        authored = [KnowledgeVersion.model_validate_json(r[0]) for r in rows]
+
+        snapshot = None
+        try:
+            snapshot = self.active_snapshot()
+        except ValidationError:
+            snapshot = None
+        if snapshot is None:
+            return KnowledgeBase(versions=authored)
+
+        ingested = ingest(snapshot)
+        return KnowledgeBase(
+            versions=[*authored, *ingested.knowledge.versions],
+            admitted=ingested.knowledge.admitted,
+            declined=ingested.knowledge.declined,
+            snapshot_id=snapshot.snapshot_id,
+        )
 
     def next_version(self, object_id: str) -> int:
         row = self._conn.execute(

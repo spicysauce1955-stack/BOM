@@ -21,7 +21,7 @@ flowchart TB
         PD["generate() · resolve_panel() · fit_pattern()<br/>plan_cuts() · build_structure() · panel_elevation()"]
     end
     subgraph L4["persistence"]
-        ST["store/db.py — 11 tables, documents as JSON"]
+        ST["store/db.py — 13 tables, documents as JSON"]
     end
 
     R --> PI
@@ -43,7 +43,7 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ## The API surface
 
-54 routes. Grouped by what they are for rather than by path:
+56 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
@@ -136,7 +136,7 @@ is safer for `min_rail_separation_mm`.
 
 ## Persistence
 
-Eleven tables — ten document stores plus the append-only `audit_log`. Documents are
+Thirteen tables — twelve document stores plus the append-only `audit_log`. Documents are
 stored as JSON `doc` columns; the schema holds only what is queried or ordered by.
 
 ```sql
@@ -150,8 +150,26 @@ corrections(id, project_id, doc)
 inventories(project_id, doc)
 catalogs(id, doc)
 quotes(id, project_id, status, created_at, doc)
+knowledge_snapshots(snapshot_id, loaded_at, doc)      -- the published document
+active_snapshot(only_row, snapshot_id)                -- CHECK (only_row = 1)
 audit_log(seq, at, actor, action, ref)
 ```
+
+**The published snapshot is stored as the DOCUMENT, and what we make of it is not.**
+`knowledge_snapshots` keeps the bytes the Knowledge Platform sent, keyed by its own
+`snapshot_id` — the contract promises a hash resolves to the same bytes until
+`retain_until`, which is exactly what makes a document worth persisting. The
+versions, the source verdicts (§1.4 `admitted_by`) and the declined bounds are
+**re-derived by `knowledge_base()` on every read**, because a verdict is a function
+of `(snapshot, policy, task)` and the policy is an operator's editable table:
+freezing it would record an answer the next policy edit makes false. Read models are
+derived, never stored, and a verdict is a read model. It also leaves one code path
+for a fresh load and a reload, so a stored run cannot render different provenance
+from a fresh one.
+
+`active_snapshot` is a one-row table because "which snapshot runs resolve against"
+is a fact about the installation rather than about any project. The `CHECK` is what
+keeps it one row instead of a convention somebody has to remember.
 
 **A run id answers one question; a supply run answers the other.** `generation_runs`
 holds the DESIGN — what fence this is, pure and deterministic and reproducible for

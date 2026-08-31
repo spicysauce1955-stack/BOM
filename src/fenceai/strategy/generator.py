@@ -286,6 +286,7 @@ def generate(
         site_facts=dict(site_facts),
         knowledge_snapshot=knowledge.snapshot_set(),
         snapshot_hash=knowledge.snapshot_hash(),
+        snapshot_id=knowledge.snapshot_id,
         overrides_applied=sorted(applied),
         policy=policy,
         demand_skus=demand_skus,

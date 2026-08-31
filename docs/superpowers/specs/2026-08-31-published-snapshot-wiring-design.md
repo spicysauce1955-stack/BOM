@@ -1,6 +1,6 @@
 # Opening the door: a published snapshot that reaches a real run
 
-**Date:** 2026-08-31 · **Status:** design, awaiting approval
+**Date:** 2026-08-31 · **Status:** BUILT. §9 records what the build found.
 **Contract:** §1.2 (`Snapshot`), §1.5 (Resolution surface), §3.2 obligations 1–3
 **Build-order:** the wiring three slices have been built behind
 
@@ -141,3 +141,64 @@ ingest's gaps and warnings surfaced where gaps already surface.
 | `strategy/generator.py` | stamp it |
 | `web/static/js/` + `i18n` | where the active snapshot and a refusal are shown |
 | `tests/` | per step, plus the reload, plus a smoke check |
+
+---
+
+## 9 · What the build found
+
+### 9.1 · The door is open. The demo data cannot walk through it.
+
+Everything in §6 is built and tested: the snapshot persists, the verdicts survive
+a reload, the run pins the publisher's id, and the refusal arrives as one
+sentence. `[measured]` end to end through the HTTP routes.
+
+**But the provenance chip still does not appear on a default project**, and the
+reason is not a wiring defect — it is the data:
+
+- the fixture's two tables are scoped to `series: M-VINYL`
+- a default project generates with **no fence model at all** (`models_used` is
+  empty), so a row scoped to a product line can never match
+- setting the project to `M-VINYL` fails earlier, at
+  `no_item_covers_part_spec` — the demo catalog has no post covering that
+  model's spec
+
+So the scope mechanism is working exactly as designed, and the shipped demo data
+has no overlap with the shipped fixture. The chip is proven reachable in code
+(`tests/knowledge/test_snapshot.py`) and remains unreachable by clicking.
+
+**This is the same class of gap this slice was written to close, one layer out**,
+so it is recorded rather than quietly declared done. Two ways to close it, and
+both are product decisions rather than technical ones:
+
+1. **Give the demo catalog a post that covers `M-VINYL`.** Then a project set to
+   that model exercises the whole path with the fixture as it stands. Touches
+   demo data only.
+2. **Add an unscoped table to the fixture.** Applies to every product, so any
+   project shows it. But the obvious candidate parameter is `max_span_mm`, which
+   authored `K-MAXSPAN` already sets — so published and authored knowledge would
+   compete, and that can move golden scenario numbers. Not a change to make as a
+   footnote to a wiring slice.
+
+### 9.2 · The scanner blind spot, a third time
+
+`SnapshotRefused` takes its code positionally, so both refusal codes were
+invisible to the locale guard — the same failure as `explain_rejection`'s pair
+last slice. Now raised with `code=` so the literal is in the form the scan reads.
+Three occurrences of one pattern is a pattern: **a code that is not a literal at
+the site that emits it will not be found**, and the guard can only guard what it
+can read.
+
+### 9.3 · Hebrew on the knowledge surface
+
+Per instruction, the Knowledge-Platform surface carries **English in both
+bundles**: source classes, curation levels, snapshot ids, contract versions. The
+vocabulary is another team's and largely untranslatable as data — `sealed_approval`
+is an identifier, not a word — and the surrounding Hebrew we would have to invent
+is terminology no Hebrew-speaking contractor has been offered. Confidently wrong
+Hebrew reads as authoritative; English reads as English.
+
+Key-set parity is untouched and still enforced, so the mechanism stays whole and
+real Hebrew later is a bundle edit with no code change. The decision is pinned by
+`KNOWLEDGE_SURFACE_UNTRANSLATED` and a test, so it cannot drift in either
+direction — including six keys from earlier slices whose invented Hebrew was
+converted, so the policy is applied rather than half-applied.

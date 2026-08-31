@@ -251,6 +251,19 @@ class GenerationRun(BaseModel):
     site_facts: dict = {}
     knowledge_snapshot: list[tuple[str, int]] = []
     snapshot_hash: str = ""
+    # The PUBLISHER's snapshot id (§1.2), and it is what §3.2 obligation 1 asks
+    # for: *"pin a snapshot hash on every run; re-fetch historical runs by hash,
+    # never re-resolve."*
+    #
+    # `snapshot_hash` above does NOT satisfy that and never could — it is our own
+    # digest of the `(object_id, version)` list, so it answers "which knowledge
+    # objects" including authored ones, and cannot be handed back to the
+    # publisher to fetch anything. Both are kept because they answer different
+    # questions; only this one is the promise.
+    #
+    # Empty on a run against authored knowledge alone, which is every run until a
+    # snapshot is loaded.
+    snapshot_id: str = ""
     overrides_applied: list[str] = []
     policy: dict = {}
     # demand product selection resolved from knowledge at generation time

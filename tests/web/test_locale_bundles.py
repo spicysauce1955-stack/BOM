@@ -142,12 +142,78 @@ WARNING_CODES = [
 ]
 CRITIQUE_CODES = ["narrow_span"]
 
+# Keys whose Hebrew is DELIBERATELY the English string, and the list exists so
+# that stays a decision rather than looking like an untranslated leftover.
+#
+# These are the Knowledge-Platform surface: source classes, curation levels,
+# snapshot ids, contract versions. The vocabulary is another team's and largely
+# untranslatable as data (`sealed_approval` is an identifier, not a word), and
+# the surrounding Hebrew we would have to invent for it is technical terminology
+# no Hebrew-speaking fence contractor has ever been offered. Confidently wrong
+# Hebrew reads as authoritative; English reads as English.
+#
+# Key-set parity is UNAFFECTED and still enforced below — the mechanism stays
+# whole, so adding real Hebrew later is a bundle edit and no code change. If that
+# day comes, this list is the work queue.
+#
+# It does NOT cover quoted document warnings: those are exempt for a different
+# and stronger reason (translating a manufacturer's liability sentence
+# manufactures a claim), and the tests at the end of this file guard that half.
+KNOWLEDGE_SURFACE_UNTRANSLATED = [
+    "warning.source_inadmissible",
+    "warning.source_below_min_curation",
+    "warning.source_class_unrecognised",
+    "warning.source_ref_missing",
+    "warning.ambiguous_version_ref",
+    "warning.parameter_task_unrecognised",
+    "error.contract_major_unsupported",
+    "error.contract_minor_predates_typed_date",
+    "error.snapshot_malformed",
+    "knowledge.snapshot.none",
+    "knowledge.snapshot.active",
+    "knowledge.snapshot.admitted",
+    "knowledge.snapshot.declined",
+    "knowledge.snapshot.gaps",
+]
+
+
+def test_the_knowledge_surface_carries_english_in_both_bundles_on_purpose():
+    """A decision, pinned so it cannot drift in either direction.
+
+    Two failure modes this catches. Someone adds invented Hebrew to one of these
+    keys, believing they are completing a translation — the assertion says the
+    English is intentional and points at the reasoning. Or someone adds a NEW
+    knowledge-surface code and quietly gives it invented Hebrew, which this
+    cannot see; that is why the list is named rather than derived, and why a new
+    code belongs on it as deliberately as it belongs in the bundles.
+    """
+    en, he = _bundles()
+    for key in KNOWLEDGE_SURFACE_UNTRANSLATED:
+        assert key in en, f"{key} is listed here but missing from en.json"
+        assert key in he, f"{key} is listed here but missing from he.json"
+        assert he[key] == en[key], (
+            f"{key} carries Hebrew. That may well be an improvement — but it is a "
+            f"reversal of a recorded decision, so change the list and this test "
+            f"together rather than only the bundle."
+        )
+
+
 # Codes rendered as `error.<code>` rather than `warning.<code>`: a refusal, not a
 # note on an answer. `core.errors.ReadRefused` (a stored run that cannot be read)
 # and the `GenerationFailure` variants that carry a code — the failures a USER
 # can cause from the editors, which must not fall through to the client's
 # generic "the action failed (422)".
 REFUSAL_CODES = [
+    # -- the published-snapshot door (§1.2, §3.2.3) ------------------------------
+    # A snapshot this engine will not load. All three reach a person as a typed
+    # 400 from `POST /api/knowledge/snapshot`, and the first two are INVISIBLE to
+    # the scan below: `SnapshotRefused` takes its code positionally, so no
+    # `code="..."` literal exists for a regex to find. The third is written at the
+    # route. Same blind spot as `explain_rejection`'s pair, same remedy — the
+    # list is maintained by hand precisely for codes the scanner cannot read.
+    "contract_major_unsupported",
+    "contract_minor_predates_typed_date",
+    "snapshot_malformed",
     "run_predates_fence_model",
     # a stored strategy whose derived member run points at a bay or slot that is
     # no longer in it — same class, same remedy

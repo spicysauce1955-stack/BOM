@@ -172,7 +172,8 @@ def test_the_doc_counts_the_tables_the_store_actually_creates():
     tables = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", db._SCHEMA))
     doc = (DOCS / "04-backend.md").read_text()
     claimed = re.search(r"(\w+) tables — ", doc)
-    words = {"Eight": 8, "Nine": 9, "Ten": 10, "Eleven": 11, "Twelve": 12}
+    words = {"Eight": 8, "Nine": 9, "Ten": 10, "Eleven": 11, "Twelve": 12,
+             "Thirteen": 13, "Fourteen": 14, "Fifteen": 15, "Sixteen": 16}
     assert claimed, "the backend doc no longer states a table count"
     assert words.get(claimed.group(1)) == len(tables), (
         f"the doc says {claimed.group(1)} tables and the schema creates "

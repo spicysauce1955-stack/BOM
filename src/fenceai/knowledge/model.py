@@ -256,6 +256,17 @@ class KnowledgeBase(BaseModel):
     # carried for the site that knows its own parameter, which is the same rule
     # the generator's hard-tie handling already follows.
     declined: dict[str, list[int]] = {}
+    # The PUBLISHER's `snapshot_id` (§1.2), where a published snapshot is in play.
+    #
+    # §3.2 obligation 1 asks us to pin a snapshot hash on every run and re-fetch
+    # historical runs by hash. `snapshot_hash()` below is NOT that: it is our own
+    # digest of the `(object_id, version)` list, which answers "which knowledge
+    # objects" — authored ones included — and cannot be handed back to the
+    # publisher. Both are worth having; only this one satisfies the obligation.
+    #
+    # Empty for a base with no published snapshot, which is every base built from
+    # authored knowledge alone.
+    snapshot_id: str = ""
 
     def admitted_for(self, version: "KnowledgeVersion") -> "AdmittedBy | None":
         """The verdict for one version, or None where none was recorded."""

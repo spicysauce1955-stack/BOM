@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
+from pydantic import ValidationError
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -50,6 +51,7 @@ from fenceai.fulfillment.supply_run import (
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.knowledge.discovery_stub import SourceRefResolved, resolve_batch
 from fenceai.knowledge.model import KnowledgeVersion
+from fenceai.knowledge.snapshot import SnapshotRefused, ingest, load
 from fenceai.learning.impact import (
     ImpactCase,
     ImpactReport,
@@ -876,6 +878,85 @@ def review_candidate(object_id: str, version: int, body: ReviewBody):
 
 
 # -- knowledge -------------------------------------------------------------------
+
+@app.get("/api/knowledge/snapshot")
+def active_snapshot():
+    """The published snapshot runs resolve against, and what it became.
+
+    `loaded: false` is an ordinary state, not an error — this installation has
+    authored knowledge and no published snapshot, which is how every one starts
+    and how one works with the Knowledge Platform unreachable (§3.2.2).
+    """
+    snapshot = state.store.active_snapshot()
+    if snapshot is None:
+        return {"loaded": False, "history": state.store.snapshot_ids()}
+    ingested = ingest(snapshot)
+    return {
+        "loaded": True,
+        "snapshot_id": snapshot.snapshot_id,
+        "contract_version": snapshot.contract_version,
+        "regime": snapshot.regime,
+        "tenant": snapshot.tenant,
+        "versions": len(ingested.knowledge.versions),
+        # The counts a person actually asks about: how much came in, how much
+        # this engine declined to use, and how many holes were reported.
+        "admitted": len(ingested.knowledge.admitted),
+        "declined": {k: len(v) for k, v in ingested.knowledge.declined.items()},
+        "gaps": len(ingested.gaps),
+        "warnings": len(ingested.warnings),
+        "unconsumed": ingested.unconsumed,
+        "history": state.store.snapshot_ids(),
+    }
+
+
+@app.post("/api/knowledge/snapshot")
+def load_snapshot(body: dict):
+    """Load a published snapshot document, and make it the active one.
+
+    Explicit, never automatic. A knowledge base that swapped itself under a
+    project would change numbers with no action anyone took — the same reason
+    generation sits behind a button rather than firing on edit.
+
+    **The refusal is the important path here**, not the happy one. The first
+    document anyone tries is `3ae88642`, which predates §1.1's typed `Date` and
+    is refused by version — so `load()`'s one-sentence explanation is what a
+    person meets first, and it reaches them as a typed 400 rather than a stack
+    trace.
+    """
+    try:
+        snapshot, gap_defects = load(body)
+    except SnapshotRefused as refused:
+        raise HTTPException(400, {
+            "code": refused.code, "message": str(refused),
+        }) from refused
+    except ValidationError as invalid:
+        # A payload that is not a snapshot at all. English, uncoded, addressed to
+        # whoever is holding the document — `validate_model`'s own convention for
+        # authoring text, and the same audience.
+        raise HTTPException(400, {
+            "code": "snapshot_malformed",
+            "message": "this document does not parse as a Snapshot (§1.2)",
+            "errors": [
+                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
+                for e in invalid.errors()[:10]
+            ],
+        }) from invalid
+
+    state.store.save_snapshot(snapshot, actor="user")
+    ingested = ingest(snapshot, gap_defects=gap_defects)
+    return {
+        "snapshot_id": snapshot.snapshot_id,
+        "versions": len(ingested.knowledge.versions),
+        "admitted": len(ingested.knowledge.admitted),
+        "gaps": len(ingested.gaps),
+        # Published gaps we could not parse. Carried and counted rather than
+        # dropped: "we were told 81 things and could read none of them" is a fact
+        # the sender needs, and silence about it is the one thing that hides drift.
+        "gap_defects": len(ingested.gap_defects),
+        "warning_defects": len(ingested.warning_defects),
+        "unconsumed": ingested.unconsumed,
+    }
+
 
 @app.get("/api/knowledge")
 def list_knowledge():

@@ -271,17 +271,21 @@ def load(raw: dict[str, Any]) -> tuple[Snapshot, list[str]]:
         parts = declared.split(".")
         major = parts[0]
         if not major.isdigit() or int(major) != SUPPORTED_CONTRACT_MAJOR:
+            # `code=` rather than positional, so the literal is in the form
+            # `tests/web/test_locale_bundles.py` can find. It scans for
+            # `code="..."` at the raise site, and a code it cannot read is a code
+            # that reaches a person with no sentence in either bundle.
             raise SnapshotRefused(
-                "contract_major_unsupported",
-                f"snapshot declares contract_version {declared!r}; this engine "
+                code="contract_major_unsupported",
+                message=f"snapshot declares contract_version {declared!r}; this engine "
                 f"speaks {SUPPORTED_CONTRACT_MAJOR}.x. Refused at load rather "
                 f"than at generate (§3.2 obligation 3)",
             )
         minor = parts[1] if len(parts) > 1 and parts[1].isdigit() else "0"
         if int(minor) < MINIMUM_CONTRACT_MINOR:
             raise SnapshotRefused(
-                "contract_minor_predates_typed_date",
-                f"snapshot declares contract_version {declared!r}. §1.1's typed "
+                code="contract_minor_predates_typed_date",
+                message=f"snapshot declares contract_version {declared!r}. §1.1's typed "
                 f"`Date` has been BINDING since v1.2 (amendment 002), and this "
                 f"payload predates it — its `issue_date`, `expiration_date`, "
                 f"`valid_from` and `valid_until` are bare strings. It needs a "
