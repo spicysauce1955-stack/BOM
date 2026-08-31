@@ -100,9 +100,26 @@ class DecisionGraph(BaseModel):
 
 
 class GraphBuilder:
-    def __init__(self, admitted: dict[str, dict] | None = None) -> None:
+    def __init__(self, admitted: dict[str, dict] | None = None,
+                 origins: dict[str, str] | None = None) -> None:
         self._graph = DecisionGraph()
         self._n = 0
+        # Whether each fact was AUTHORED here or PUBLISHED by the Knowledge
+        # Platform, keyed the same way. Three states have to be distinguishable
+        # on a plan and only two were:
+        #
+        #   authored              -- our own rule. No document behind it, so
+        #                            there is nothing to have checked.
+        #   published + verdict   -- somebody's document, and we know what its
+        #                            source was worth.
+        #   published, NO verdict -- somebody's document that we could not judge,
+        #                            because the task or class was outside our
+        #                            policy registry. Used, and unvouched for.
+        #
+        # Without `origin` the first and third rendered identically: absence of a
+        # verdict read as "nothing to check" when it sometimes meant "we could
+        # not check". One of those is fine and the other is a warning.
+        self._origins = origins or {}
         # Which source admitted each published fact, keyed `"OBJ@vN"` — §1.4's
         # `admitted_by`, computed at ingest and recorded on the RUN.
         #
@@ -181,6 +198,9 @@ class GraphBuilder:
         verdict = self._admitted.get(knowledge_ref)
         if verdict is not None:
             payload["admitted_by"] = verdict
+        origin = self._origins.get(knowledge_ref)
+        if origin:
+            payload["origin"] = origin
         node = DecisionNode(
             id=f"d{self._n:04d}",
             ordinal=self._n,

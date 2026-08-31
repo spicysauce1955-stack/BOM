@@ -213,6 +213,7 @@
   "decisions.start_conversation": "פתחו שיחה",
   "decisions.title": "ההחלטות של הקטע הזה",
   "decisions.unavailable": "לא ניתן היה לקרוא את ההחלטות של הקטע הזה.",
+  "decisions.unjudged": "source not judged",
   "drawer.bought_as": "אופן הרכישה",
   "drawer.chosen": "נבחר",
   "drawer.committed": "מתוך {on_hand} במלאי, {committed} כבר משובצים בגדר הזו",

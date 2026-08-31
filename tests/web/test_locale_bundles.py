@@ -177,6 +177,7 @@ KNOWLEDGE_SURFACE_UNTRANSLATED = [
     "error.contract_minor_predates_typed_date",
     "error.snapshot_malformed",
     "error.snapshot_id_mismatch",
+    "decisions.unjudged",
     "knowledge.snapshot.none",
     "knowledge.snapshot.active",
     "knowledge.snapshot.admitted",

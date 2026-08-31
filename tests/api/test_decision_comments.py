@@ -219,7 +219,8 @@ def test_an_unknown_section_is_empty_rather_than_missing():
             # branches wrongly the first time it is missing for a
             # different reason.
             assert got.json() == {
-                "section_id": section, "decisions": [], "admitted": {}}
+                "section_id": section, "decisions": [],
+                "admitted": {}, "origins": {}}
 
 
 def test_the_same_question_gets_the_same_answer_twice():

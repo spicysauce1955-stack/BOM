@@ -124,8 +124,16 @@ export async function render() {
  *  rendered as data inside `<bdi>` and never used to build a locale key — the day
  *  the other side registers a class we have no word for, it must read as its own
  *  name rather than as a missing translation. */
-function admittedHtml(verdict) {
-  if (!verdict) return "";
+function admittedHtml(verdict, origin) {
+  // THREE states, not two. An absent verdict used to render as nothing, which is
+  // right for an authored rule — our own, no document behind it, nothing to have
+  // checked — and wrong for a PUBLISHED row we could not judge, which is used and
+  // vouched for by nobody. Those had been indistinguishable on the plan.
+  if (!verdict) {
+    if (origin !== "published") return "";
+    return `<span class="admitted unjudged"
+      >${esc(t("decisions.unjudged"))}</span>`;
+  }
   const level = esc(t("decisions.curation_level")).replace(
     "{level}", `<span class="num">${esc(String(verdict.curation_level))}</span>`);
   return `<span class="admitted" data-level="${esc(String(verdict.curation_level))}"
@@ -139,6 +147,7 @@ function admittedHtml(verdict) {
  *  the escaping rule and the empty cases are actually checked. */
 export function sectionHtml(body, threads = new Map(), openOn = null, earlier = 0) {
   const admitted = body.admitted || {};
+  const origins = body.origins || {};
   const rows = body.decisions.map((d) => {
     const said = threads.get(d.node_id) || [];
     return `<div class="decision" data-node="${esc(d.node_id)}">
@@ -146,7 +155,7 @@ export function sectionHtml(body, threads = new Map(), openOn = null, earlier = 
       ${d.governed_by.length
         ? `<div class="meta">${esc(t("decisions.governed_by"))}
              ${d.governed_by.map((ref) => `<span class="sku">${esc(ref)}</span>${
-                 admittedHtml(admitted[ref])}`).join(", ")}</div>`
+                 admittedHtml(admitted[ref], origins[ref])}`).join(", ")}</div>`
         : ""}
       ${said.map(commentHtml).join("")}
       ${said.length

@@ -64,6 +64,11 @@ class SectionDecisions(BaseModel):
     # provenance to judge. A surface must render that differently from a judged
     # pass, or it claims a check nobody performed.
     admitted: dict[str, dict] = {}
+    # Whether each cited fact was authored here or published, keyed the same way.
+    # Carried because absence of a verdict has TWO meanings and a surface has to
+    # tell them apart: an authored rule has no document to have checked, while a
+    # published row we could not judge is used and unvouched for.
+    origins: dict[str, str] = {}
 
 
 def _touching(topology: Topology) -> dict[str, set[str]]:
@@ -154,5 +159,12 @@ def decisions_for_section(
         and n.payload.get("knowledge_ref") in cited
         and n.payload.get("admitted_by")
     }
+    origins = {
+        n.payload["knowledge_ref"]: n.payload["origin"]
+        for n in graph.nodes
+        if n.action == "knowledge_version"
+        and n.payload.get("knowledge_ref") in cited
+        and n.payload.get("origin")
+    }
     return SectionDecisions(
-        section_id=section_id, decisions=out, admitted=admitted)
+        section_id=section_id, decisions=out, admitted=admitted, origins=origins)

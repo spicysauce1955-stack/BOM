@@ -1,5 +1,70 @@
 # Current status
 
+## Real published knowledge, ingested unmodified for the first time (2026-08-31)
+
+**`a4181dbf…` loads with nothing done to it.** No local migration, no simulated
+amendment, no fixture. Every earlier attempt needed something first: `3ae88642`
+failed with 113 validation errors, and `9e760aae` needed amendment 002 applied to
+a local copy before it would parse.
+
+```
+tables            9      gaps parsed     65      gap_defects      0
+source_docs      75      dangling refs    0      warning_defects  0
+versions         16      distinct ids    16      admitted         16
+snapshot_id verifies against its own members
+```
+
+### What made it possible, on both sides
+
+**Theirs:** amendments 002 (typed `Date`) and 004 (`Gap.subject` ref types) built
+rather than only ratified, 006 and 007 implemented, and the `snapshot_id`
+canonicalisation answered in full (`conversation.md` T38). `05/04/2023` publishes
+as `iso: null` beside its lexeme — §1.1's null rule honoured on the exact string
+the contract cites.
+
+**Ours:** `Interval` conditions compiling to real comparisons; `paired` refused
+with a gap naming the work; the contract's own `subject` union parsed at the door;
+`snapshot_id` verification; the published path wired through the store and API.
+
+### Two defects worth remembering, both ours
+
+**Our `GapSubject` could not parse the contract's own union.** §1.2.1 writes
+`subject` as `EntityRef | ParamRef` — `{kind, id, tenant}` where `kind` is the
+OPEN registry value. Ours carried an `entity | param` discriminator *we invented*
+for internal convenience, in a field the contract uses for something else. They
+implemented 004 exactly as ratified and all 65 gaps still failed here. **The
+symptom pointed at them; the cause was ours.** A private convenience that mirrors
+a contract field's name is a trap.
+
+**The fix nearly re-opened the `SlotRef` hole.** Reading an unrecognised `kind` as
+a registry value would have turned `{kind: "slot"}` into a valid entity —
+admitting the one shape §1.1 reserves, through the function written to obey §1.1.
+Caught by the test that exists *because* we emitted a slot-shaped subject once.
+
+### Also landed today
+
+- **A published-but-unjudged row no longer looks like our own rule.** Three
+  states now render distinctly: authored (nothing to check), judged (verdict),
+  published-and-unjudged (used, vouched for by nobody).
+- **`snapshot_id` verification replaces a false claim.** The old digest hashed
+  `parameters` alone while its docstring called itself *"the one property of a
+  snapshot this side can verify without trusting the sender."* It verified
+  nothing. It does now, and a one-field change is refused.
+- **`Run.snapshot_id`** pins the publisher's id, which is what §3.2 obligation 1
+  actually asks for. Our own digest answers a different question and stays.
+
+## What is next, and what it is waiting on
+
+| | State |
+|---|---|
+| **A cost objective choosing between `paired` design points** | **The only thing Knowledge is waiting on us for.** Five correct `footing_schedule` tables, refused with a gap. Needs a design: a choice set is an optimiser objective, not a fact. |
+| The provenance chip visible on a default project | **Sized, not attempted.** The fixture's tables are scoped to `M-VINYL`, whose post requirement wants vinyl posts with `routed_faces` varying per post kind. Real demo-data work with golden-scenario risk — not a footnote to another slice. |
+| Item 7 — provenance on spec fields | **Blocked.** No `Part` has ever been published; 7 of 144 documents have any promoted table fact. |
+| Policy versioning | Deferred with a seam. Must land WITH an operator policy UI, not after. |
+| A refusal reaching a `defeated` edge | Open. Removing a row before the evaluator changes which facts compete, and the graph cannot say the policy did it. |
+
+---
+
 ## Contract v1.3 RATIFIED — both copies byte-identical (2026-08-31)
 
 **`436100f`. `diff` between the two `contract.md` files is empty,

@@ -209,10 +209,11 @@ def generate(
     # The source verdicts ride on the knowledge base, so they reach the graph
     # without changing this function's signature and without `generate()`
     # reaching for anything (ADR-0004: it stays pure).
-    builder = GraphBuilder(admitted={
-        ref: verdict.model_dump(mode="json")
-        for ref, verdict in knowledge.admitted.items()
-    })
+    builder = GraphBuilder(
+        admitted={ref: verdict.model_dump(mode="json")
+                  for ref, verdict in knowledge.admitted.items()},
+        origins={v.ref: v.origin for v in knowledge.versions},
+    )
     strategy = Strategy(id="strategy")
     applied: set[str] = set()
     # dimensions known for the whole run; narrower ones (surface, context) are

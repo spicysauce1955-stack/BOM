@@ -213,6 +213,7 @@
   "decisions.start_conversation": "Start a conversation",
   "decisions.title": "This section's decisions",
   "decisions.unavailable": "This section's decisions could not be read.",
+  "decisions.unjudged": "source not judged",
   "drawer.bought_as": "Bought as",
   "drawer.chosen": "chosen",
   "drawer.committed": "of {on_hand} on hand, {committed} already on this fence",

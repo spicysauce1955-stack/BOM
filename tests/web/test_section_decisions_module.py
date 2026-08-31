@@ -153,9 +153,21 @@ out.hostile_class = sectionHtml({
     curation_level: 0, version_status: "active" } },
 });
 
+// THREE states: a published row we could not judge must not look like our own
+// authored rule, which is what "no verdict renders nothing" produced.
+out.unjudged_published = sectionHtml({
+  ...BODY,
+  admitted: {},
+  origins: { "K-MAXSPAN@v1": "published" },
+});
+out.authored = sectionHtml({
+  ...BODY, admitted: {}, origins: { "K-MAXSPAN@v1": "authored" },
+});
+
 await setLocale("he");
 out.he_judged = sectionHtml(JUDGED);
 out.he_keys = { admitted: HE["decisions.admitted_by"],
+                unjudged: HE["decisions.unjudged"],
                 level: HE["decisions.curation_level"] };
 
 console.log(JSON.stringify(out));
@@ -334,3 +346,20 @@ def test_a_hostile_source_class_is_escaped(rendered):
     assert "<img" not in html
     assert "&lt;img" in html
     assert 'onerror="alert' not in html, "the quote must be escaped, not raw"
+
+
+def test_a_published_row_nobody_could_judge_is_not_shown_as_our_own_rule(rendered):
+    """The third state, and the one that was missing.
+
+    An absent verdict used to render as nothing at all. That is correct for an
+    AUTHORED rule — ours, no document behind it, so there is nothing to have
+    checked — and wrong for a PUBLISHED row whose source we could not judge,
+    because the task or class fell outside our policy registry. That row is used
+    and vouched for by nobody, and it looked identical to a company rule.
+
+    Both halves are asserted, because the distinction is the whole point: the
+    published one gains a marker, the authored one still gains nothing."""
+    assert "unjudged" in rendered["unjudged_published"]
+    assert "unjudged" not in rendered["authored"]
+    # ...and the authored case is still clean rather than merely different
+    assert "admitted" not in rendered["authored"]
