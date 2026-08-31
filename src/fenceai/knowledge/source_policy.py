@@ -148,17 +148,61 @@ class Resolution(BaseModel):
 # on installation_step and product_description) is not a row at all: no row
 # for a (task, source_class) pair means inadmissible, the same as an
 # unrecognised axis value — see `_row_for`.
+#
+# `version_status` is used as an axis on `structural_parameter` ONLY, and that is
+# a scoping decision rather than an oversight. It is where a superseded approval
+# and its replacement actually compete over a number that decides how deep
+# somebody digs, and it is the task the Knowledge team scoped their
+# recommendation to. Extending it to another task is two rows and no code — but a
+# product description does not get safer for knowing which brochure was
+# reprinted, and a policy that demotes documents everywhere for no stated reason
+# is harder to justify to an operator than one that does it where it matters.
 SHIPPED_DEFAULT: list[SourcePolicyRow] = [
     # -- structural_parameter: admissible at rank 4, and only at level 2 --
+    #
+    # Ranks step in TENS, so a superseded document can sit one below its own
+    # replacement without displacing the class beneath it. That is the whole of
+    # the decision recorded here: **a superseded document loses to its own
+    # replacement, and to nothing else.**
+    #
+    # The Knowledge team recommended this axis and supplied the corpus fact that
+    # makes it right (`conversation.md` T31): in this corpus `superseded` means a
+    # NAMED, citable replacement exists — `superseded_by` is populated — where
+    # `unknown` means nobody has established anything. So "this document says a
+    # specific other document replaced it" is stronger negative evidence than
+    # "unrated", and `unknown` deserves to outrank `superseded`.
+    #
+    # They also proposed a stronger reading: that a superseded structural value
+    # should lose to *anything* not known to be superseded, including a lower
+    # class. **Not taken.** It would put a superseded sealed engineering approval
+    # below an unrated installation manual, and a stamped approval does not stop
+    # being engineering evidence the day it is renewed. 40.7% of this corpus's
+    # human-gated facts come from a superseded document; demoting them past every
+    # weaker class would discard most of the structural knowledge that exists.
+    # The one-step demotion fixes the case §1.4 actually describes — an approval
+    # and its own replacement tying — and changes nothing else.
     SourcePolicyRow(task="structural_parameter", source_class="sealed_approval",
-                     admissible=True, rank=1, min_curation=2),
+                     admissible=True, rank=10, min_curation=2),
+    SourcePolicyRow(task="structural_parameter", source_class="sealed_approval",
+                     version_status="superseded",
+                     admissible=True, rank=11, min_curation=2),
     SourcePolicyRow(task="structural_parameter", source_class="tested_report",
-                     admissible=True, rank=2, min_curation=2),
+                     admissible=True, rank=20, min_curation=2),
+    SourcePolicyRow(task="structural_parameter", source_class="tested_report",
+                     version_status="superseded",
+                     admissible=True, rank=21, min_curation=2),
     SourcePolicyRow(task="structural_parameter", source_class="industry_standard",
-                     admissible=True, rank=3, min_curation=2),
+                     admissible=True, rank=30, min_curation=2),
+    SourcePolicyRow(task="structural_parameter", source_class="industry_standard",
+                     version_status="superseded",
+                     admissible=True, rank=31, min_curation=2),
     SourcePolicyRow(task="structural_parameter",
                      source_class="manufacturer_installation_instruction",
-                     admissible=True, rank=4, min_curation=2),
+                     admissible=True, rank=40, min_curation=2),
+    SourcePolicyRow(task="structural_parameter",
+                     source_class="manufacturer_installation_instruction",
+                     version_status="superseded",
+                     admissible=True, rank=41, min_curation=2),
     SourcePolicyRow(task="structural_parameter", source_class="spec_sheet",
                      admissible=False),
     SourcePolicyRow(task="structural_parameter", source_class="marketing",

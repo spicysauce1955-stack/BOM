@@ -130,16 +130,24 @@ def test_no_admissible_candidate_resolves_to_no_winner_not_a_crash():
 
 # -- the real snapshot (`3ae88642…`, 2026-08-30) ---------------------------
 
-def test_the_first_real_publishs_provenance_is_admissible_at_rank_1():
+def test_the_first_real_publishs_provenance_is_admissible_at_the_top_rank():
     """`footing_depth_mm`'s rows carry `source_class: sealed_approval`,
-    `curation_level: 2` — exactly what the shipped default admits at rank 1
-    for `structural_parameter`. The real data and the shipped policy agree
-    without either side being adjusted to fit the other."""
+    `curation_level: 2` — exactly what the shipped default admits at the top
+    rank for `structural_parameter`. The real data and the shipped policy agree
+    without either side being adjusted to fit the other.
+
+    Asserted as "no admissible class outranks it" rather than as a literal
+    number, because the number is not the property. The shipped ranks step in
+    tens so a superseded document can sit one below its own replacement, and a
+    test pinned to `== 1` fails on a renumbering that changes no ordering at
+    all."""
     c = _candidate(source_class="sealed_approval", version_status="unknown",
                     curation_level=2, label="f650c3f14efedaae")
     admitted = admit(SHIPPED_DEFAULT, "structural_parameter", c)
     assert admitted is not None
-    assert admitted.rank == 1
+    best = min(r.rank for r in SHIPPED_DEFAULT
+               if r.task == "structural_parameter" and r.admissible)
+    assert admitted.rank == best
 
 
 def test_the_snapshots_two_footing_authorities_resolve_identically_in_either_input_order():
@@ -157,9 +165,16 @@ def test_the_snapshots_two_footing_authorities_resolve_identically_in_either_inp
     exists to prevent — and two implementations would stamp different
     `admitted_by` and hash differently.
 
-    Note what is and is not being asserted. `label` order carries no editorial
-    preference; it is an opaque caller identifier. The property is not "the
-    dated one wins", it is "the same one wins every time".
+    **These two no longer tie at all**, and that is the point of the shipped
+    policy now using `version_status` as an axis on `structural_parameter`: the
+    superseded approval ranks one step below its replacement rather than beside
+    it. So this pair never reaches the tie-break, and the RIGHT document wins
+    rather than merely a consistent one.
+
+    Both properties are asserted, because they fail differently. Order
+    independence is the original regression and must hold whatever the ranks
+    are. Preferring the replacement is the new behaviour, and would silently
+    revert if a future edit dropped the `superseded` rows.
     """
     superseded = _candidate(
         source_class="sealed_approval", version_status="superseded",
@@ -175,9 +190,14 @@ def test_the_snapshots_two_footing_authorities_resolve_identically_in_either_inp
                         [dated, superseded])
 
     assert forward.winner == reversed_.winner
-    # Lexicographically first of the two authority hashes — stable, not better.
-    assert forward.winner.label == "authority:9d21be07c4a15f38"
+    # ...and it is the replacement, not whichever hash sorts first. Under the
+    # old single-row table this assertion read `9d21be07…` — the superseded one.
+    assert forward.winner.label == "authority:f650c3f14efedaae"
+    assert forward.winner.version_status != "superseded"
+    # both are still ADMITTED — a snapshot carries every admissible row, and a
+    # decision graph has to be able to say what the winner beat (§1.4)
     assert {ab.label for ab in forward.admitted} == {ab.label for ab in reversed_.admitted}
+    assert len(forward.admitted) == 2
 
 
 # -- the `issue_date` step: all-or-skip (§1.4 read via `amendments/005`) ---
@@ -319,44 +339,91 @@ def test_the_exhausted_chain_terminates_on_the_contracts_own_content_hash():
     `content_hash` is on every `SourceDoc` and §1.2.1's closure rule already
     guarantees it resolves.
 
-    The second assertion is the honest limit, and the Knowledge team's
-    disposition of 005 is what made us write it down: **a content hash has no
-    relation to recency.** Once the chain is exhausted this can rank a superseded
-    document ahead of its replacement — deterministically, on both sides, but
-    still the older one. Keeping that pairing from tying at all is
-    `version_status`'s job, not this chain's."""
-    older = Candidate(source_class="sealed_approval", version_status="superseded",
-                      curation_level=2, content_hash="aaa", label="older")
-    newer = Candidate(source_class="sealed_approval", version_status="unknown",
-                      curation_level=2, content_hash="bbb", label="newer")
+    The last assertion is the honest limit, and the Knowledge team's disposition
+    of 005 is what made us write it down: **a content hash has no relation to
+    recency.** Whatever wins here wins because it sorts first, not because it is
+    newer. Keeping a superseded document and its replacement from reaching this
+    chain tied at all is `version_status`'s job, not this chain's.
+
+    Both candidates share a `version_status` deliberately. The shipped policy now
+    separates `superseded` from everything else, so a superseded/replacement pair
+    is decided at `rank` and never arrives here. Exhausting the chain takes two
+    documents alike in every named respect — two undated approvals of the same
+    class, which is the ordinary case rather than a contrived one.
+    """
+    one = Candidate(source_class="sealed_approval", version_status="unknown",
+                    curation_level=2, content_hash="aaa", label="one")
+    two = Candidate(source_class="sealed_approval", version_status="unknown",
+                    curation_level=2, content_hash="bbb", label="two")
 
     # deterministic under both input orders — the point of having a terminator
     assert resolve(SHIPPED_DEFAULT, "structural_parameter",
-                   [older, newer]).winner.content_hash == "aaa"
+                   [one, two]).winner.content_hash == "aaa"
     assert resolve(SHIPPED_DEFAULT, "structural_parameter",
-                   [newer, older]).winner.content_hash == "aaa"
+                   [two, one]).winner.content_hash == "aaa"
 
-    # ...and the limit: `aaa` won because it sorts first, not because it is newer
+    # ...and the honest limit: `aaa` won because it sorts first. Nothing here
+    # knows which document is newer, and a hash never will.
     assert resolve(SHIPPED_DEFAULT, "structural_parameter",
-                   [older, newer]).winner.version_status == "superseded"
+                   [one, two]).winner.label == "one"
 
 
-def test_the_shipped_default_does_not_yet_use_version_status_as_an_axis():
-    """§1.4 BINDING: *"`version_status` is a policy axis. A superseded approval
-    and its replacement are otherwise the same source class, the same role and
-    the same task — the policy would rank them identically."*
+def test_a_superseded_structural_source_loses_to_its_replacement_and_to_nothing_else():
+    """The shipped policy's `version_status` axis, and the exact scope of it.
 
-    Every row in `SHIPPED_DEFAULT` leaves `version_status` at `None` ("any"), so
-    the contract's own predicted collision happens: the two real footing
-    authorities in `3ae88642` tie at rank 1 and the terminator picks the
-    superseded one. This test PINS THE CURRENT STATE rather than the desired one,
-    deliberately — the fix changes which document backs a real number, and the
-    contract warns in both directions (40.7% of the platform's human-gated facts
-    come from a superseded document, so ranking `superseded` inadmissible would
-    delete a great deal of usable knowledge). It is an operator-configuration
-    decision, and this test is here so that decision is made on purpose rather
-    than discovered later in a BOM."""
-    assert all(row.version_status is None for row in SHIPPED_DEFAULT)
+    §1.4 BINDING: *"A superseded approval and its replacement are otherwise the
+    same source class, the same role and the same task — the policy would rank
+    them identically."* It did, and the first published snapshot contains that
+    pair. The axis fixes it.
+
+    The Knowledge team supplied the corpus fact that decides the direction
+    (`conversation.md` T31): here `superseded` means a NAMED, citable replacement
+    exists, where `unknown` means nobody established anything — so "a specific
+    other document replaced this" is stronger negative evidence than "unrated".
+
+    **Both halves are asserted, and the second is the decision.** They proposed
+    that a superseded structural value should lose to *anything* not known to be
+    superseded, including a lower class. That was not taken: a stamped approval
+    does not stop being engineering evidence the day it is renewed, and 40.7% of
+    this corpus's human-gated facts come from a superseded document. So the
+    demotion is exactly one step — below its own class's replacement, above the
+    class beneath it."""
+    def rank(source_class, status):
+        got = admit(SHIPPED_DEFAULT, "structural_parameter",
+                    _candidate(source_class=source_class, version_status=status,
+                               curation_level=2))
+        return None if got is None else got.rank
+
+    # half one: superseded loses to its own replacement, in every class
+    for source_class in ("sealed_approval", "tested_report", "industry_standard",
+                         "manufacturer_installation_instruction"):
+        assert rank(source_class, "superseded") > rank(source_class, "active")
+        assert rank(source_class, "superseded") > rank(source_class, "unknown")
+
+    # half two: and to NOTHING else — a superseded sealed approval still beats an
+    # active tested report, an industry standard and an installation manual
+    assert rank("sealed_approval", "superseded") < rank("tested_report", "active")
+    assert rank("tested_report", "superseded") < rank("industry_standard", "active")
+    assert rank("industry_standard", "superseded") < \
+        rank("manufacturer_installation_instruction", "active")
+
+    # the demotion changes admissibility for nobody — every class the table
+    # admits is still admitted, superseded or not
+    assert rank("sealed_approval", "superseded") is not None
+    assert rank("spec_sheet", "active") is None, "inadmissible stays inadmissible"
+
+
+def test_the_version_status_axis_is_scoped_to_structural_parameter_on_purpose():
+    """It is where a superseded approval and its replacement actually compete
+    over a number that decides how deep somebody digs. A product description
+    does not get safer for knowing which brochure was reprinted, and a policy
+    that demotes documents everywhere for no stated reason is harder to justify
+    to an operator than one that does it where it matters.
+
+    Pinned so that extending it later is a deliberate edit with a reason, not a
+    drive-by consistency fix."""
+    axis_tasks = {r.task for r in SHIPPED_DEFAULT if r.version_status is not None}
+    assert axis_tasks == {"structural_parameter"}
 
 
 def test_version_status_is_usable_as_a_policy_axis():
