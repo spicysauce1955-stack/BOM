@@ -210,12 +210,21 @@ took the number the wrong way:
 
 | site | source said | before the fix | after |
 |---|---|---|---|
-| exposure C, non-HVHZ | 1219 mm | **1500 mm bays** | 858 mm bays |
-| exposure C, **HVHZ** | 914 mm | **1500 mm bays** | 858 mm bays |
+| exposure C | 1219 mm | **1500 mm bays** | 858 mm bays |
+| exposure C, HVHZ | 914 mm | **1500 mm bays** | 858 mm bays |
 
-In a hurricane zone the slice laid out bays **75% wider** than the document it
-had just refused — on the one parameter class whose curation bar exists to
-prevent that. `FALLBACK_MAX_SPAN_MM`'s own note already forbade it: *"a fallback
+**The defect is general, and the first row is the one that matters.** In the
+ordinary case the slice laid out bays 25% wider than the document it had just
+refused; the HVHZ row is the same defect louder, not a different one. An earlier
+draft of this section led with the hurricane figure, which overstated the
+scope — the bug had nothing to do with which conditions were in play.
+
+Worth recording alongside it: the 914 mm HVHZ row is in **our fixture**, which we
+wrote. All four tables in the first real snapshot declare `hvhz` in their domain
+and **no row conditions on it**, so nothing published exercises that case. Citing
+it as evidence was citing our own test data.
+
+`FALLBACK_MAX_SPAN_MM`'s own note already forbade the widening: *"a fallback
 that guessed WIDER would be a fallback that could fall down."*
 
 **Fix.** A refusal now carries the declined value (`declined_mm`) and the
@@ -230,7 +239,8 @@ ceiling while backing no line and winning no tie. It gets its own basis
 the direction that hides a refusal.
 
 **Known cost, accepted:** the bound is the minimum across all refused rows, so a
-non-HVHZ run is held to the HVHZ limit. Matching conditions first would mean
+run is held to the strictest limit any refused row stated, whatever conditions it
+was scoped to. Matching conditions first would mean
 selectively trusting data we refused. A fence built tighter than it needs to be
 stands up; this repo already prefers that trade.
 
