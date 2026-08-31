@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 GapKind = Literal[
     "unmodellable_entity",       # the corpus describes something no type fits
@@ -113,6 +113,69 @@ class GapSubject(BaseModel):
     # than imported: `core/` describing a `ParameterTable` type would invert the
     # dependency, and a gap only needs to carry the point, not interpret it.
     point: dict[str, str | bool | int | dict] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_the_contracts_own_union(cls, data):
+        """Parse the contract's `EntityRef | ParamRef`, not only our envelope.
+
+        §1.2.1 writes `subject` as a bare UNION — `{kind, id, tenant}` for an
+        `EntityRef`, `{parameter, scope, point}` for a `ParamRef`. The envelope
+        below, with its `entity | param` discriminator, is OURS: a deliberate
+        internal choice so a curator queue gets one shape instead of three code
+        paths. It is not what crosses.
+
+        That deviation had a cost we did not see until real data arrived. The
+        publisher implemented amendment 004 exactly as ratified and every one of
+        their 65 gaps still failed to parse here, because their `kind` carries the
+        REGISTRY value (`element`, `source_document`) where ours expects the
+        discriminator. Our envelope was reading their open vocabulary as our
+        closed one — and the symptom looked like their defect.
+
+        So the mapping happens at the door, once. Structural detection rather
+        than a `kind` lookup: `parameter` identifies a `ParamRef` and `ref_kind`
+        identifies our own shape round-tripping, so neither depends on a registry
+        value happening not to collide with a discriminator word.
+
+        A shape matching neither is left to fail. `snapshot.load()` quarantines a
+        gap that will not parse, so an unrecognised subject is reported to the
+        sender rather than guessed at — and `SlotRef` is still RESERVED, so there
+        is no third arm to add.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "parameter" in data:                     # ParamRef (§1.1)
+            return {
+                "kind": "param",
+                "id": data["parameter"],
+                "tenant": data.get("tenant"),
+                "scope": data.get("scope"),
+                "point": data.get("point"),
+            }
+        if "ref_kind" in data or data.get("kind") in ("entity", "param"):
+            return data                             # already our envelope
+        if data.get("kind") == "slot":
+            # §1.1: `SlotRef` is RESERVED — *"No producer may emit a slot-shaped
+            # `Gap.subject` until an amendment defines it."*
+            #
+            # This branch is here because the mapper above nearly destroyed that.
+            # Reading an unrecognised `kind` as a registry value turned
+            # `{kind: "slot"}` into an entity with `ref_kind: "slot"` — silently
+            # admitting the one shape the contract forbids, through the very
+            # function written to accept the contract's shapes. The reservation
+            # has to be refused explicitly, not left to fall through a default.
+            raise ValueError(
+                "SlotRef is RESERVED (§1.1): no producer may emit a slot-shaped "
+                "Gap.subject until an amendment defines it"
+            )
+        if "kind" in data and "id" in data:          # EntityRef (§1.1)
+            return {
+                "kind": "entity",
+                "ref_kind": data["kind"],
+                "id": data["id"],
+                "tenant": data.get("tenant"),
+            }
+        return data
 
     def key(self) -> str:
         """A stable identity for this subject, scope and point included.

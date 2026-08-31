@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -77,6 +78,58 @@ MINIMUM_CONTRACT_MINOR = 2
 CONSUMED = ("parameters", "gaps", "warnings", "source_docs")
 CARRIED = ("part_types", "parts", "models", "procedures",
            "combinations", "rules")
+
+
+# §1.2's "sha256 over the canonical member list", with the canonicalisation the
+# Knowledge team specified in `conversation.md` T38 — asked in T30 §6, answered in
+# full, and this is the first time either side can check a snapshot against its
+# own declared id.
+#
+# The rules, all of them theirs:
+#   * these fifteen members, and `retain_until`/`snapshot_id` are NOT among them
+#     (the id is computed from the member dict and attached afterwards, so it is
+#     never self-referential);
+#   * `policy_version` IS inside, as §1.4 requires;
+#   * an unpublished member is `[]`, never absent — "declared and empty" reads as
+#     a decision where a missing key reads as an oversight;
+#   * keys sorted at every depth, so field order in the assembled dict is not
+#     part of the identity.
+CANONICAL_MEMBERS = (
+    "tenant", "regime", "spine_version", "contract_version", "policy_version",
+    "source_docs", "warnings", "gaps", "part_types", "parts", "models",
+    "procedures", "parameters", "combinations", "rules",
+)
+
+# A declared id we will actually check: 64 hex characters. A fixture states
+# something like `FIXTURE-not-a-real-snapshot` ON PURPOSE, so that it cannot be
+# mistaken for published data — verifying it would be checking a hash nobody
+# claimed to have computed.
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def canonical_snapshot_id(raw: dict[str, Any]) -> str:
+    """The `snapshot_id` a payload's own members imply (§1.2).
+
+    Computed from the RAW document rather than from a parsed `Snapshot`: the hash
+    is over the bytes the publisher assembled, and a round trip through our types
+    could differ in ways that say nothing about whether the document is intact.
+    """
+    members = {k: raw.get(k, []) for k in CANONICAL_MEMBERS}
+    return hashlib.sha256(json.dumps(
+        members, sort_keys=True, ensure_ascii=False,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def snapshot_id_matches(raw: dict[str, Any]) -> bool | None:
+    """Whether a payload's declared id matches its members.
+
+    `None` where the declared id is not hash-shaped, which is a fixture saying so
+    about itself rather than a failure — see `_SHA256`.
+    """
+    declared = str(raw.get("snapshot_id") or "")
+    if not _SHA256.match(declared):
+        return None
+    return canonical_snapshot_id(raw) == declared
 
 
 class SnapshotRefused(ValueError):
@@ -293,6 +346,22 @@ def load(raw: dict[str, Any]) -> tuple[Snapshot, list[str]]:
                 f"'05/04/2023' here would manufacture a fact the source does "
                 f"not state",
             )
+
+    # §1.2.1: a snapshot fetched by hash resolves to the same bytes. Now that the
+    # canonicalisation is agreed (T38), a mismatch is checkable rather than a
+    # thing we hoped about — and it means the document changed between the
+    # publisher hashing it and us reading it, which no downstream check would
+    # notice because every field would still be individually well-formed.
+    if snapshot_id_matches(payload) is False:
+        raise SnapshotRefused(
+            code="snapshot_id_mismatch",
+            message=(
+                f"this payload's members hash to "
+                f"{canonical_snapshot_id(payload)} but it declares "
+                f"{payload.get('snapshot_id')!r}. The document is not the one "
+                f"that id names."
+            ),
+        )
 
     gaps, defects = [], []
     for index, item in enumerate(payload.get("gaps") or []):

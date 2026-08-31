@@ -176,6 +176,7 @@ KNOWLEDGE_SURFACE_UNTRANSLATED = [
     "error.contract_major_unsupported",
     "error.contract_minor_predates_typed_date",
     "error.snapshot_malformed",
+    "error.snapshot_id_mismatch",
     "knowledge.snapshot.none",
     "knowledge.snapshot.active",
     "knowledge.snapshot.admitted",
@@ -221,6 +222,11 @@ REFUSAL_CODES = [
     "contract_major_unsupported",
     "contract_minor_predates_typed_date",
     "snapshot_malformed",
+    # §1.2.1: a snapshot fetched by hash resolves to the same bytes. Checkable
+    # since T38 agreed the canonicalisation, and a mismatch means the document
+    # changed between the publisher hashing it and us reading it -- which no
+    # field-level check would notice, because every field is still well-formed.
+    "snapshot_id_mismatch",
     "run_predates_fence_model",
     # a stored strategy whose derived member run points at a bay or slot that is
     # no longer in it — same class, same remedy

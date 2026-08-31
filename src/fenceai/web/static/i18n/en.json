@@ -289,6 +289,7 @@
   "error.site_conditions_changed": "The site conditions changed after this run was generated, so this document would describe a different fence. Generate again to see it.",
   "error.sku_not_eligible": "{sku} is not one of the products the {slot_key} slot of this panel can be built from, so the panel was not priced with it. Choose one of the products offered for that part.",
   "error.slot_not_purchasable": "{slot_key} is a part that comes inside another part, so no product is bought for it separately — it arrives with whatever supplies the part that contains it.",
+  "error.snapshot_id_mismatch": "This document's contents do not hash to the snapshot id it declares, so it is not the snapshot that id names. Fetch it again.",
   "error.snapshot_malformed": "This document does not parse as a Snapshot. The specific fields are listed below, for whoever is holding the document.",
   "error.topology_changed": "The drawing changed since this strategy was computed. Generate again to lay it out over the fence as it is now.",
   "error.unresolved_supply": "This strategy has {n} part(s) no product can supply, so it cannot be frozen into a quote that would under-price the job.",

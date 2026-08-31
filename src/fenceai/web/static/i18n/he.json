@@ -289,6 +289,7 @@
   "error.site_conditions_changed": "תנאי האתר השתנו לאחר הפקת הריצה, ולכן מסמך זה מתאר גדר אחרת. הפיקו מחדש כדי לראותה.",
   "error.sku_not_eligible": "{sku} אינו אחד המוצרים שמשבצת {slot_key} בפאנל הזה יכולה להיבנות מהם, ולכן הפאנל לא תומחר איתו. בחרו אחד מהמוצרים המוצעים לחלק הזה.",
   "error.slot_not_purchasable": "{slot_key} הוא חלק שמגיע בתוך חלק אחר, ולכן לא נרכש עבורו מוצר בנפרד — הוא מגיע יחד עם מה שמספק את החלק שמכיל אותו.",
+  "error.snapshot_id_mismatch": "This document's contents do not hash to the snapshot id it declares, so it is not the snapshot that id names. Fetch it again.",
   "error.snapshot_malformed": "This document does not parse as a Snapshot. The specific fields are listed below, for whoever is holding the document.",
   "error.topology_changed": "השרטוט השתנה מאז חישוב האסטרטגיה. חשבו שוב כדי לפרוס אותה על הגדר כפי שהיא כעת.",
   "error.unresolved_supply": "באסטרטגיה הזו {n} חלקים שאף מוצר אינו יכול לספק, ולכן אי אפשר לקבע אותה כהצעת מחיר שתתמחר את העבודה בחסר.",
