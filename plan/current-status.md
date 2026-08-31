@@ -1,5 +1,66 @@
 # Current status
 
+## Contract v1.3 cut — our half of step 5 (2026-08-31)
+
+**`565196b`. Amendments 005 + 006-as-modified + 007 applied, `AMENDING.md`
+header bumped, both files re-hashed, `sha256sum -c` passing, 2240 tests
+passing. Digest published in `conversation.md` T30.**
+
+```
+023b9b583907a0463826fbc9954d542846ab5a8150a31eede9d61577972b6f97  contract.md
+6a3469ce6e65dee71d33bbb20ec2296cbdb8a436b73b3f8dab047069ba15aad9  AMENDING.md
+```
+
+Cut now rather than batched further because step 5's condition was met — both
+sides recorded acceptance in the amendment files — and §4 forces a cut on a
+trigger-B item blocking work, which 005 and 007 both are. Waiting would have
+meant their G57 getting built against a shape that was agreed but not ratified.
+
+- **005** as proposed: rank → `curation_level` → `issue_date` **only where every
+  tied candidate carries one** → `source_class` → `content_hash`.
+- **006** with our modification accepted in full — `paired` members name their
+  parameters. They will publish as `footing_schedule`, no `_mm`.
+- **007** schema only; the translation work is theirs (their G57).
+
+### The one thing they caught in our proposal, and it is live
+
+`content_hash` terminates the chain but has **no relation to recency**. Their
+disposition asked that nobody read "content_hash added" as "the
+superseded-document problem is solved", and they were right that it lands on our
+configuration:
+
+```
+shipped policy rows: 26 · rows leaving version_status = any: 26
+winner: 1c487c73 (superseded)
+```
+
+**All 26 rows of `SHIPPED_DEFAULT` leave `version_status` unset**, so the two real
+footing authorities tie at rank 1 and the terminator picks the superseded one.
+Deterministic, which beats arbitrary, and still the older document.
+
+**Deliberately not changed in this cut.** It decides which document backs a real
+number, and §1.4 warns in both directions — 40.7% of their human-gated facts come
+from a superseded document, so ranking `superseded` inadmissible would delete a
+great deal of usable knowledge. Two tests pin the current state on purpose so the
+decision is made rather than discovered in a BOM, and T30 asks for their view
+since they hold the corpus. **This is the open question on our side.**
+
+### Their move
+
+Cut their half, post their digest, compare. If it differs: T30 lists eight
+discretionary placement choices, with items 6–8 (the preserved `ai_proposal`
+sentence, two consecutive `Was:` lines, no "What moved in v1.3" paragraph)
+offered for their prose verbatim.
+
+### Unchanged by this cut
+
+The contract minor floor stays at **2** — 006 and 007 are purely additive, so a
+v1.2 snapshot is still readable, and `3ae88642` is still refused for 002's typed
+`Date` and still wants that one re-cut. Item 6's `expand()` wiring still waits on
+007's implementation, which is theirs.
+
+---
+
 ## Amendments in flight: 005 filed, 006 dispositioned, 007 filed (2026-08-31)
 
 Three open, none ratified. `AMENDING.md` step 2 — the frozen v1.2 still governs
