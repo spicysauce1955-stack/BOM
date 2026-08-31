@@ -1,5 +1,46 @@
 # Current status
 
+## Amendments in flight: 005 filed, 006 dispositioned, 007 filed (2026-08-31)
+
+Three open, none ratified. `AMENDING.md` step 2 — the frozen v1.2 still governs
+while they sit.
+
+| | What | Whose move |
+|---|---|---|
+| **005** | §1.4's tie-break is intransitive and incomplete. Ours, trigger B. | theirs to disposition |
+| **006** | A `paired` `value_type`, so a footing/span table keeps both valid design points. Theirs, trigger D. **We dispositioned ACCEPT-MODIFIED.** | theirs to re-disposition our two changes |
+| **007** | A quantity-valued condition dimension cannot cross. Ours, trigger D. **BLOCKING.** | theirs to disposition |
+
+**007 is the one that matters for us.** It is the finding the v1.2 audit recorded
+as report-only, now filed, because it is what actually stops item 6 producing a
+correct number: all four published tables condition on `fence_height` as
+`"Up to 48\""` / `"49\" to 76\""`, so all 16 rows compile to
+`bay.fence_height == '49" to 76"'` — false for every project that will ever run,
+and reported as *not applicable* rather than broken. And because 48″ is 1 219 200
+thousandths against 49″'s 1 244 600, a **25.4 mm band sits between the two
+brackets in neither of them**, which `uncovered` cannot report because it
+enumerates domain points and that height is not one.
+
+**On 006 we asked for two things.** Its members must NAME their parameters —
+`paired(footing_depth_mm:mm, max_span_mm:mm)` — because both units are `mm`, so
+position would be the only distinction, and positional meaning is what this
+contract refuses everywhere else. And its "zero cost to Planning" is the parsing
+cost mistaken for the cost: **a list of alternatives is not a fact, it is a
+choice set**, which this engine has no category for. Choosing between "deeper
+footing, fewer posts" and "shallower footing, more posts" is a cost trade-off, so
+it belongs to the BOM optimiser as an objective. Recorded, not pushed back on —
+the contract should not pick the alternative for us.
+
+Their T26 also closed T14's double-publish in code (16 duplicate gaps → 0). Our
+dedup is **kept rather than deleted** now that it is idle: it costs nothing and
+guards a case neither side can see coming.
+
+**Working in `fence-rag`:** their session was live again. `0055535` carries their
+finished T26 and 006 body because our reply had to go in those same files;
+their four other modified files are untouched and still uncommitted.
+
+---
+
 ## v1.2 adapted, and the audit found more than v1.2 asked for (2026-08-30)
 
 **2238 tests pass · contract hashes OK · architecture fitness 9/9.** The `Date`
