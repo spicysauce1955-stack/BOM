@@ -89,6 +89,17 @@ WARNING_CODES = [
     # and all three were accepted and dropped. Refused now, with a gap that
     # closes by a resolver in this repo.
     "parameter_hit_policy_unsupported",
+    # §1.4's source policy, applied at expansion. Two of these three are
+    # INVISIBLE to the scan that keeps this list honest: `explain_rejection`
+    # returns them from `source_policy.py` and the gap site passes the result
+    # through as a variable, so no `code="..."` literal exists to find. That is
+    # the case this hand-maintained list exists for — a code the scanner cannot
+    # see is a code that reaches a screen as its own key in both languages.
+    "source_inadmissible",
+    "source_below_min_curation",
+    # A table naming a task our TaskCode registry has no row for. Its rows are
+    # used UNJUDGED, so this warning is the only thing saying so.
+    "parameter_task_unrecognised",
     "panel_length_unresolved",
     # Containment. Both say a credit did NOT happen — a credit that lands
     # cleanly is a smaller purchase and needs no warning — and both exist

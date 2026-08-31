@@ -52,6 +52,18 @@ class ScopedDecision(BaseModel):
 class SectionDecisions(BaseModel):
     section_id: str
     decisions: list[ScopedDecision] = []
+    # What each cited fact's SOURCE was worth, keyed by the same knowledge ref
+    # `governed_by` / `defeated` already carry (§1.4 `admitted_by`).
+    #
+    # DERIVED from the graph, never stored: the verdict lives on the graph's own
+    # `knowledge_version` node, and this is a projection of it for the refs this
+    # section actually cites. Read models are pure functions of their inputs, and
+    # a second copy of a verdict is a second copy that can disagree.
+    #
+    # A ref ABSENT from this map is NOT JUDGED — authored knowledge, with no
+    # provenance to judge. A surface must render that differently from a judged
+    # pass, or it claims a check nobody performed.
+    admitted: dict[str, dict] = {}
 
 
 def _touching(topology: Topology) -> dict[str, set[str]]:
@@ -132,4 +144,15 @@ def decisions_for_section(
             defeated=[e.knowledge_ref for e in graph.in_edges(node.id)
                       if e.type == "defeated" and e.knowledge_ref],
         ))
-    return SectionDecisions(section_id=section_id, decisions=out)
+    # Only the refs this section cites, so a section's read model stays about
+    # that section — the graph holds the verdict for every fact in the run.
+    cited = {ref for d in out for ref in (*d.governed_by, *d.defeated)}
+    admitted = {
+        n.payload["knowledge_ref"]: n.payload["admitted_by"]
+        for n in graph.nodes
+        if n.action == "knowledge_version"
+        and n.payload.get("knowledge_ref") in cited
+        and n.payload.get("admitted_by")
+    }
+    return SectionDecisions(
+        section_id=section_id, decisions=out, admitted=admitted)

@@ -39,6 +39,9 @@ from fenceai.core.gaps import Gap
 from fenceai.core.warnings import DocumentWarning, warning_errors
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.knowledge.parameters import ParameterTable, expand
+from fenceai.knowledge.source_policy import (
+    SHIPPED_DEFAULT, AdmittedBy, SourcePolicyRow,
+)
 
 # §1.2 BINDING: a snapshot serves exactly ONE standards regime and declares it.
 Regime = Literal["us_astm", "cn_gb"]
@@ -305,6 +308,7 @@ def load(raw: dict[str, Any]) -> tuple[Snapshot, list[str]]:
 
 def ingest(
     snapshot: Snapshot, *, as_of: str = "", gap_defects: list[str] | None = None,
+    policy: list[SourcePolicyRow] | None = SHIPPED_DEFAULT,
 ) -> Ingested:
     """A published snapshot, as knowledge this engine already knows how to use.
 
@@ -320,10 +324,23 @@ def ingest(
     """
     versions: list[KnowledgeVersion] = []
     discovered: list[Gap] = []
+    admitted: dict[str, AdmittedBy] = {}
+    # §1.4's third criterion needs a document's own `issue_date`, and that lives
+    # only on `SourceDoc`. Indexed once here rather than resolved per row: the
+    # join is snapshot-level (§1.2.1's closure rule), and `expand()` needs exactly
+    # this one field from it — everything else a candidate is built from is on the
+    # row's own `Provenance`.
+    issue_dates = {d.content_hash: d.issue_date
+                   for d in snapshot.source_docs
+                   if d.content_hash and d.issue_date is not None}
     for table in snapshot.parameters:
-        expanded, gaps = expand(table, as_of=as_of, tenant=snapshot.tenant)
+        expanded, gaps, table_admitted = expand(
+            table, as_of=as_of, tenant=snapshot.tenant,
+            policy=policy, issue_dates=issue_dates,
+        )
         versions.extend(expanded)
         discovered.extend(gaps)
+        admitted.update(table_admitted)
 
     # A hole the publisher already declared is not a second hole. The first real
     # snapshot publishes all 16 of its `condition_point_uncovered` gaps AND
@@ -337,7 +354,7 @@ def ingest(
     kept = [g for g in discovered if g.subject.key() not in published_keys]
 
     return Ingested(
-        knowledge=KnowledgeBase(versions=versions),
+        knowledge=KnowledgeBase(versions=versions, admitted=admitted),
         warnings=list(snapshot.warnings),
         # The closure rule gives `warning_errors` the one thing it needs to judge
         # an annexe-scoped ref: the documents that actually came with the payload.

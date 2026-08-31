@@ -1,6 +1,7 @@
 # Judging a published fact before using it, and showing what backed it
 
-**Date:** 2026-08-31 · **Status:** design, awaiting approval
+**Date:** 2026-08-31 · **Status:** BUILT. §10 records where the build corrected
+the design.
 **Contract:** §1.4 (source policy), obligations §3.1.6 and §3.3.2
 **Build-order:** item 6
 
@@ -135,3 +136,59 @@ wrong bar; this one agrees with the data that exists.
 | `decisions/graph.py` | the verdict on the existing knowledge node |
 | `web/static/js/` + both `i18n` bundles | render it; two new codes in en **and** he |
 | `tests/` + `tests/scenarios/` | per step, plus the golden number |
+
+---
+
+## 10 · What the build corrected
+
+Recorded because a design that is quietly wrong in two places and shipped
+anyway teaches the next reader nothing.
+
+### 10.1 · Validity had to be judged BEFORE admissibility, not after
+
+§4 put the policy gate first and returned early. That masked a real fact: the
+fixture's `max_span_mm` row 2 is **both** unchecked **and** backed by an NOA that
+expired in 2025. Rejecting on the source and stopping reported only *"a reviewer
+should check this against the source image"* — which sends a reviewer to open a
+crop for a document that lapsed two years ago.
+
+That is exactly the wasted bounded work the review queue exists to avoid, so the
+two checks are now independent: *"is this authority in force?"* and *"is this
+source good enough?"* are different questions about the same row, and a row can
+fail both. Both are reported.
+
+### 10.2 · The golden number did not move
+
+§8 predicted a golden scenario would change. **None did**, and the reason is
+worth keeping: the scenarios build knowledge with `demo_knowledge()`, which is
+authored. Authored knowledge has no provenance, so there is nothing to judge and
+nothing changes. The prediction was wrong in the safe direction, and the
+`golden-scenarios` skill was not needed.
+
+The behaviour is instead pinned directly, over the fixture, by
+`test_the_fixtures_own_rows_fall_back_when_unchecked`.
+
+### 10.3 · Two smaller things
+
+**The verdict key had to be `KnowledgeVersion.ref`**, not a rebuilt string. It
+was first written as `OBJ@N` where the graph's `governed_by` edges use `OBJ@vN`,
+and the symptom was a verdict that silently reached no graph node at all —
+suite green, feature absent. Both sides now go through the one property.
+
+**Two of the three new warning codes were invisible to the locale guard.** It
+finds codes by scanning for `code="..."` at the emitting site, and these arrived
+as a variable returned from `explain_rejection`. They are now written as literals
+at the gap site. A code the guard cannot read is a code that reaches a screen as
+its own key in both languages.
+
+## 11 · What is still deferred, and where the seam is
+
+- **`paired` values** — `SUPPORTED_HIT_POLICIES` and `value_type` parsing are the
+  seam; nobody publishes one yet, and the open question is where a choice set
+  lives (an optimiser objective, not a fact).
+- **Operator-configured policy** — `ingest(snapshot, policy=...)` and
+  `expand(..., policy=...)` are already parameterised; only storage and a UI are
+  missing.
+- **`Interval` consumption (amendment 007)** — ratified, unbuilt on both sides.
+  Until it lands, the real snapshot's 16 rows still condition on a bracket
+  nothing binds, so they are inert regardless of admissibility.

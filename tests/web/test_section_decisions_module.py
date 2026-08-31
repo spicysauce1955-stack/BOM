@@ -120,6 +120,44 @@ out.he_earlier = sectionHtml(BODY, new Map(), null, 3);
 out.he_hostile = sectionHtml(
   { section_id: '<img src=x onerror="alert(1)">', decisions: [] });
 
+// -- §1.4 `admitted_by`: what backed a number, beside the fact that decided it
+await setLocale("en");
+const JUDGED = {
+  ...BODY,
+  admitted: {
+    "K-MAXSPAN@v1": {
+      rank: 40, source_class: "manufacturer_installation_instruction",
+      curation_level: 2, version_status: "unknown",
+    },
+  },
+};
+out.judged = sectionHtml(JUDGED);
+// an ABSENT verdict renders nothing rather than an "unverified" claim: an
+// authored rule has no document behind it to have checked
+out.unjudged = sectionHtml(BODY);
+
+// an OPEN-registry class we have no word for must read as its own name, never
+// as a raw locale key
+out.unknown_class = sectionHtml({
+  ...BODY,
+  admitted: { "K-MAXSPAN@v1": {
+    rank: 1, source_class: "future_class_we_have_no_word_for",
+    curation_level: 0, version_status: "active" } },
+});
+
+// a hostile class name is data, not markup
+out.hostile_class = sectionHtml({
+  ...BODY,
+  admitted: { "K-MAXSPAN@v1": {
+    rank: 1, source_class: '<img src=x onerror="alert(1)">',
+    curation_level: 0, version_status: "active" } },
+});
+
+await setLocale("he");
+out.he_judged = sectionHtml(JUDGED);
+out.he_keys = { admitted: HE["decisions.admitted_by"],
+                level: HE["decisions.curation_level"] };
+
 console.log(JSON.stringify(out));
 """
 
@@ -250,3 +288,49 @@ def test_an_isolated_parameter_is_still_escaped(rendered):
     html = rendered["he_hostile"]
     assert "<bdi>&lt;img src=x onerror=" in html
     assert "<img src=x" not in html
+
+
+# -- §1.4's verdict, shown where the fact that decided the number is shown ------
+
+def test_what_backed_a_number_is_shown_beside_the_fact_that_decided_it(rendered):
+    """Obligation §3.3.2: show curation level and source class wherever a value
+    appears. Until now the panel named the fact (`K-MAXSPAN@v1`) and said nothing
+    about whether anyone had checked the document behind it."""
+    assert "manufacturer_installation_instruction" in rendered["judged"]
+    assert rendered["he_keys"]["admitted"] in rendered["he_judged"]
+    assert rendered["he_keys"]["level"].replace("{level}", "") .strip() \
+        in rendered["he_judged"].replace("<span class=\"num\">2</span>", "")
+
+
+def test_an_unjudged_fact_shows_no_verdict_rather_than_a_failing_one(rendered):
+    """The distinction the whole slice turns on. An authored company rule has no
+    document behind it, so there is nothing to have checked — and rendering
+    "unverified" there would be a claim about provenance that does not apply,
+    while rendering nothing is the honest reading: this is our rule.
+
+    A judged pass and an unjudged fact must therefore look different on screen,
+    which is why absence is rendered as absence and never defaulted."""
+    assert "admitted" not in rendered["unjudged"]
+    assert "K-MAXSPAN@v1" in rendered["unjudged"], "the fact is still named"
+
+
+def test_an_unregistered_source_class_reads_as_itself_not_as_a_locale_key(rendered):
+    """`SourceClass` is an OPEN registry — the other side adds entries without a
+    release here (§2). So it is rendered as DATA and never concatenated into a
+    locale key, or the day they register one we have no word for it appears on
+    screen as `decisions.source_class.future_thing` in both languages."""
+    assert "future_class_we_have_no_word_for" in rendered["unknown_class"]
+    assert "decisions.source_class" not in rendered["unknown_class"]
+
+
+def test_a_hostile_source_class_is_escaped(rendered):
+    """It arrives over the boundary, so it is untrusted text like any other.
+
+    Asserted on the ANGLE BRACKET rather than on `onerror=`: the escaped string
+    still contains that substring as text, and a test forbidding it would pass
+    only by accident of wording. What makes it inert is that no element is
+    created, so `<img` must not survive and the quote must be escaped."""
+    html = rendered["hostile_class"]
+    assert "<img" not in html
+    assert "&lt;img" in html
+    assert 'onerror="alert' not in html, "the quote must be escaped, not raw"

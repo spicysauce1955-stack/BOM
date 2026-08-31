@@ -214,7 +214,12 @@ def test_an_unknown_section_is_empty_rather_than_missing():
         for section in ("nope", "n2"):
             got = client.get(f"/api/runs/{run_id}/sections/{section}/decisions")
             assert got.status_code == 200
-            assert got.json() == {"section_id": section, "decisions": []}
+            # `admitted` is empty rather than absent, for the same reason
+            # `decisions` is: a surface forced to branch on a missing key
+            # branches wrongly the first time it is missing for a
+            # different reason.
+            assert got.json() == {
+                "section_id": section, "decisions": [], "admitted": {}}
 
 
 def test_the_same_question_gets_the_same_answer_twice():

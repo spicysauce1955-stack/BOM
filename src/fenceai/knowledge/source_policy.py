@@ -306,6 +306,35 @@ def _row_for(
     return best
 
 
+def explain_rejection(
+    policy: list[SourcePolicyRow], task: TaskCode, candidate: Candidate,
+) -> str | None:
+    """WHY this candidate was refused, as a warning code — or None if admitted.
+
+    `admit()` collapses the reasons on purpose, and its docstring says a caller
+    needing the reason should read the policy directly. This is that reader,
+    living beside the policy rather than in the loader, so the two cannot drift.
+
+    The two codes are separated because they send a person to different work, and
+    that is the whole standard a `Gap` is held to (§1.2.1's `would_close`):
+
+    * `source_inadmissible` — no admissible row covers this class for this task.
+      Closes by finding a better document; no amount of reviewing helps.
+    * `source_below_min_curation` — the class is admissible and the reading is not
+      checked enough. Closes by a reviewer opening the crop, which is bounded,
+      queueable work on a document already in hand.
+
+    Collapsing them into "unusable source" would put both in one queue and make
+    the actionable one indistinguishable from the one nobody can action.
+    """
+    row = _row_for(policy, task, candidate)
+    if row is None or not row.admissible:
+        return "source_inadmissible"
+    if candidate.curation_level < row.min_curation:
+        return "source_below_min_curation"
+    return None
+
+
 def admit(
     policy: list[SourcePolicyRow], task: TaskCode, candidate: Candidate,
 ) -> AdmittedBy | None:

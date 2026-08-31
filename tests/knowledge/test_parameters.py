@@ -153,7 +153,7 @@ def test_value_type_declares_the_column_once():
 # -- expansion: a table becomes ordinary knowledge ------------------------------
 
 def test_rows_expand_into_published_knowledge_versions():
-    versions, gaps = expand(_span_table())
+    versions, gaps, _ = expand(_span_table())
     assert len(versions) == 2
     # THE seam: a loader that used the constructor would make published rows look
     # home-grown, and two that tie and disagree would raise
@@ -187,7 +187,7 @@ def test_an_expanded_table_drives_a_real_generation():
     through the SAME evaluator, so it needs no privileged channel."""
     kb = demo_knowledge()
     kb.versions = [v for v in kb.versions if v.object_id != "K-MAXSPAN"]
-    versions, _ = expand(_span_table())
+    versions, _, _ = expand(_span_table())
     kb.versions.extend(versions)
 
     b = generate(straight_topology(6000), kb, demo_catalog(),
@@ -226,7 +226,7 @@ def test_a_token_valued_parameter_lands_as_a_token():
         rows=[ParameterRow(conditions={"exposure_category": "C"},
                            value=Token(key="stepped_only"))],
     )
-    versions, gaps = expand(table)
+    versions, gaps, _ = expand(table)
     assert not gaps
     kb = KnowledgeBase(versions=versions)
     res = resolve_token(kb, {"scope": {}, "site": {"exposure_category": "C"}},
@@ -239,7 +239,7 @@ def test_a_token_outside_the_declared_set_is_a_gap_not_a_coercion():
         parameter="slope_method", value_type="token(stepped_only|racked)",
         rows=[ParameterRow(value=Token(key="whatever_the_fitter_thinks"))],
     )
-    versions, gaps = expand(table)
+    versions, gaps, _ = expand(table)
     assert not versions
     assert [g.because.code for g in gaps] == ["parameter_value_nonconforming"]
     assert gaps[0].kind == "disputed" and gaps[0].on == "value"
@@ -251,7 +251,7 @@ def test_a_token_row_on_a_quantity_table_is_a_gap_not_a_crash():
     the table contradicting itself, exactly like an out-of-set token, and must
     not raise."""
     table = _span_table(rows=[ParameterRow(value=Token(key="stepped_only"))])
-    versions, gaps = expand(table)
+    versions, gaps, _ = expand(table)
     assert not versions
     assert [g.because.code for g in gaps] == ["parameter_value_nonconforming"]
 
@@ -263,7 +263,7 @@ def test_a_quantity_row_on_a_token_table_is_a_gap_not_a_crash():
         parameter="slope_method", value_type="token(stepped_only|racked)",
         rows=[ParameterRow(value=Quantity(amount_milli=1200000, unit="mm"))],
     )
-    versions, gaps = expand(table)
+    versions, gaps, _ = expand(table)
     assert not versions
     assert [g.because.code for g in gaps] == ["parameter_value_nonconforming"]
 
@@ -284,7 +284,7 @@ def test_a_length_resolver_never_receives_a_word():
 def test_uncovered_points_become_gaps_never_silence():
     """§1.3 BINDING: points no row covers are listed, never silently omitted."""
     table = _span_table(uncovered=[{"exposure_category": "D"}])
-    _, gaps = expand(table)
+    _, gaps, _ = expand(table)
     assert [g.because.code for g in gaps] == ["uncovered_parameter_point"]
     assert gaps[0].subject.id == "max_span_mm"
 
@@ -336,7 +336,7 @@ def test_a_lapsed_row_is_marked_against_as_of_and_still_expanded():
         value=Quantity(amount_milli=1200000, unit="mm"),
         valid_until=Date(iso="2025-01-01"), authority="ASCE 7-10")])
 
-    versions, gaps = expand(table, as_of="2026-08-25")
+    versions, gaps, _ = expand(table, as_of="2026-08-25")
     assert len(versions) == 1, "the row still applies; it is not a hole"
     assert [g.because.code for g in gaps] == ["parameter_authority_lapsed"]
     assert gaps[0].because.params["as_of"] == "2026-08-25"
@@ -374,7 +374,7 @@ def test_an_unnormalisable_valid_until_is_never_ordered():
         conditions={"exposure_category": "C"},
         value=Quantity(amount_milli=1200000, unit="mm"),
         valid_until=unreadable, authority="NOA-123")])
-    versions, gaps = expand(table, as_of="2026-08-30")
+    versions, gaps, _ = expand(table, as_of="2026-08-30")
     assert len(versions) == 1
     assert not gaps, "a date this side cannot read must not be judged lapsed"
 
@@ -426,7 +426,7 @@ def test_a_row_not_yet_in_force_is_marked_rather_than_applied_silently():
         value=Quantity(amount_milli=1200000, unit="mm"),
         valid_from=Date(iso="2030-01-01"), authority="ASCE 7-28")])
 
-    versions, gaps = expand(table, as_of="2026-08-30")
+    versions, gaps, _ = expand(table, as_of="2026-08-30")
     assert len(versions) == 1, "the row is not a hole; it is not yet in force"
     assert [g.because.code for g in gaps] == ["parameter_not_yet_in_force"]
 
@@ -455,7 +455,7 @@ def test_scope_tenant_published_as_null_is_accepted_and_unused():
         "value_type": "quantity(mm)",
         "rows": [{"value": {"amount_milli": 762000, "unit": "mm"}}],
     })
-    versions, gaps = expand(table)
+    versions, gaps, _ = expand(table)
     assert len(versions) == 1
     assert not gaps
 
@@ -467,7 +467,7 @@ def test_fence_model_is_a_recognised_entity_kind():
     replacement, since nothing says the next publisher will not use one of
     those instead."""
     table = _span_table(scope={"kind": "fence_model", "id": "mfr/example"})
-    versions, gaps = expand(table)
+    versions, gaps, _ = expand(table)
     assert not gaps, "a recognised kind must not report as unmappable"
     assert versions[0].scope == {"series": "mfr/example"}
 
@@ -535,7 +535,7 @@ def test_a_hit_policy_this_engine_cannot_honour_is_refused_not_approximated():
     Refusing is the same call `_scope_for` already makes about a scope we cannot
     aim — a confident wrong number is worse than an honest absent one — and it
     closes by a schema change HERE, so the gap is `closes_by="planning"`."""
-    versions, gaps = expand(_span_table(hit_policy="collect_min"))
+    versions, gaps, _ = expand(_span_table(hit_policy="collect_min"))
     assert not versions, "a policy we cannot honour must not silently expand"
     assert [g.because.code for g in gaps] == ["parameter_hit_policy_unsupported"]
     assert gaps[0].closes_by == "planning"

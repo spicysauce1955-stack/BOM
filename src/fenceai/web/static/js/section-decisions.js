@@ -115,14 +115,38 @@ export async function render() {
  *  -> the panel's markup. Takes its state as arguments rather than reading the
  *  module's, so node can render it exactly as the browser does — which is where
  *  the escaping rule and the empty cases are actually checked. */
+/** What a cited fact's SOURCE was worth (§1.4 `admitted_by`), as one chip.
+ *
+ *  Rendered only where a verdict EXISTS. An absent verdict means the fact was
+ *  never judged — an authored company rule has no document behind it — and
+ *  showing "unverified" there would be a claim about provenance that does not
+ *  apply, while showing nothing at all is the honest reading: this is our rule,
+ *  not somebody's document.
+ *
+ *  `source_class` and `curation_level` are the two things obligation §3.3.2 asks
+ *  to be shown wherever a value appears. The class is an OPEN registry, so it is
+ *  rendered as data inside `<bdi>` and never used to build a locale key — the day
+ *  the other side registers a class we have no word for, it must read as its own
+ *  name rather than as a missing translation. */
+function admittedHtml(verdict) {
+  if (!verdict) return "";
+  const level = t("decisions.curation_level").replace(
+    "{level}", `<span class="num">${esc(String(verdict.curation_level))}</span>`);
+  return `<span class="admitted" data-level="${esc(String(verdict.curation_level))}"
+    >${esc(t("decisions.admitted_by"))}
+    <bdi class="sku">${esc(verdict.source_class)}</bdi> · ${level}</span>`;
+}
+
 export function sectionHtml(body, threads = new Map(), openOn = null, earlier = 0) {
+  const admitted = body.admitted || {};
   const rows = body.decisions.map((d) => {
     const said = threads.get(d.node_id) || [];
     return `<div class="decision" data-node="${esc(d.node_id)}">
       <div class="expl" dir="auto">${esc(d.sentence)}</div>
       ${d.governed_by.length
         ? `<div class="meta">${esc(t("decisions.governed_by"))}
-             <span class="sku">${esc(d.governed_by.join(", "))}</span></div>`
+             ${d.governed_by.map((ref) => `<span class="sku">${esc(ref)}</span>${
+                 admittedHtml(admitted[ref])}`).join(", ")}</div>`
         : ""}
       ${said.map(commentHtml).join("")}
       ${said.length

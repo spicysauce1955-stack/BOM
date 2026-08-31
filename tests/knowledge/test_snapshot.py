@@ -106,23 +106,67 @@ def test_the_fixture_digest_is_stable_and_is_not_the_contracts_snapshot_id(snaps
 # -- ingestion -----------------------------------------------------------------
 
 def test_tables_become_ordinary_knowledge(snapshot):
+    """One version, not four, and the source policy is why (§1.4).
+
+    The fixture's three `max_span_mm` rows are a `structural_parameter` at
+    `curation_level: 1`, and the shipped policy requires level 2 for anything
+    structural — nobody has checked those numbers against the page. So they do not
+    become knowledge at all. `slope_method` is an `installation_step`, which
+    carries no curation bar, so it survives.
+
+    That split is deliberate in the fixture: one change exercises a refusal and
+    an admission at once."""
     out = ingest(snapshot, as_of="2026-08-25")
-    # 3 max_span rows + 1 slope_method fallback row
-    assert len(out.knowledge.versions) == 4
+    assert [v.object_id for v in out.knowledge.versions] == [
+        "slope_method@model/M-VINYL#0"]
     assert all(v.origin == "published" for v in out.knowledge.versions)
+
+
+def test_the_source_that_admitted_a_value_is_recorded_on_the_run(snapshot):
+    """§1.4 BINDING: `admitted_by` is recorded **on the run**, never on the
+    published row — it depends on the task the value is being used for, which only
+    the planner knows.
+
+    So it rides on `KnowledgeBase`, which is what `generate()` already receives.
+    An ABSENT verdict means "not judged" and must never be read as "judged and
+    passed": authored knowledge has no provenance to judge, so it has no entry
+    here, and a renderer has to show those two states differently."""
+    out = ingest(snapshot, as_of="2026-08-25")
+    version = out.knowledge.versions[0]
+    verdict = out.knowledge.admitted_for(version)
+    assert verdict is not None
+    assert verdict.source_class == "manufacturer_installation_instruction"
+    assert verdict.curation_level == 1
+    # the rejected rows produced no version, so there is nothing to vouch for
+    assert len(out.knowledge.admitted) == 1
 
 
 def test_published_and_discovered_gaps_are_one_list_but_counted_apart(snapshot):
     """They are the same type by contract. But "your table declares a hole" and
     "your table contradicts itself" are different messages to send back."""
     out = ingest(snapshot, as_of="2026-08-25")
-    assert len(out.gaps) == 6
-    assert out.discovered == 3
+    assert len(out.gaps) == 9
+    assert out.discovered == 6
     # the platform's own gaps come FIRST — what it chose to tell us, before our
     # findings about its data
     assert [g.because.code for g in out.gaps[:3]] == [
         "gate_not_modelled", "readers_disagreed_on_bracket",
         "parameter_condition_excluded"]
+
+
+def test_an_unchecked_row_that_is_also_expired_reports_both(snapshot):
+    """Validity and admissibility are separate questions about the same row, and
+    the order they are asked in has a cost.
+
+    The fixture's `max_span_mm` row 2 is BOTH below the curation bar and backed by
+    an NOA that expired in 2025. Judging admissibility first and stopping would
+    report only *"a reviewer should check this against the source image"* — sending
+    a reviewer to open a crop for a document that lapsed two years ago. That is
+    precisely the wasted bounded work the review queue exists to avoid, so both
+    are reported."""
+    codes = [g.because.code for g in ingest(snapshot, as_of="2026-08-25").gaps]
+    assert codes.count("source_below_min_curation") == 3
+    assert "parameter_authority_lapsed" in codes
 
 
 def test_the_lapsed_row_is_found_against_the_pinned_as_of(snapshot):
@@ -188,14 +232,29 @@ def test_a_published_gate_gap_keeps_closes_by_planning(snapshot):
 def test_an_ingested_snapshot_drives_a_real_generation(snapshot):
     """Published knowledge resolves through the SAME evaluator as authored rules,
     so it needs no privileged channel into the generator. This is the property
-    the whole expansion exists for, exercised over a whole document."""
+    the whole expansion exists for, exercised over a whole document.
+
+    The rows are raised to `curation_level: 2` first, because that is what makes
+    them ADMISSIBLE for a structural parameter under the shipped policy (§1.4) —
+    and admissible is the precondition for this property being exercisable at all.
+    The fixture ships them at level 1 on purpose, so the refusal path has
+    something to refuse; `test_the_fixtures_own_rows_fall_back_when_unchecked`
+    below is that half. Between them, both outcomes of the same gate are pinned.
+
+    This is not the test bending to fit the policy. A published row that nobody
+    has checked SHOULD NOT drive a generation, so the only honest way to test
+    "published rows drive generation" is with rows a reviewer has signed off."""
     from fenceai.fencemodel.demo import demo_models
     from fenceai.fencemodel.library import FenceModelLibrary
     from fenceai.fencemodel.selection import FenceModelChoice
     from fenceai.parts.demo import demo_parts
     from fenceai.parts.model import PartLibrary
 
-    out = ingest(snapshot, as_of="2026-08-25")
+    checked = snapshot.model_copy(deep=True)
+    for table in checked.parameters:
+        for row in table.rows:
+            row.provenance.curation_level = 2
+    out = ingest(checked, as_of="2026-08-25")
     kb = demo_knowledge()
     kb.versions = [v for v in kb.versions if v.object_id != "K-MAXSPAN"]
     kb.versions.extend(out.knowledge.versions)
@@ -252,7 +311,7 @@ def test_a_scope_we_cannot_aim_is_refused_not_widened():
         parameter="max_span_mm", scope={"kind": "orchard_row", "id": "X"},
         value_type="quantity(mm)",
         rows=[ParameterRow(value=Quantity(amount_milli=1200000, unit="mm"))])
-    versions, gaps = expand(table)
+    versions, gaps, _ = expand(table)
 
     assert versions == [], "a table we cannot aim must not apply everywhere"
     assert [g.because.code for g in gaps] == ["parameter_scope_unmappable"]
@@ -460,3 +519,102 @@ def test_a_knowledge_global_snapshot_states_a_null_tenant():
     third fact — a tenant named empty string — not a spelling of absent."""
     snap, _ = load({"snapshot_id": "X", "tenant": None})
     assert snap.tenant is None
+
+
+def test_the_fixtures_own_rows_fall_back_when_unchecked(snapshot):
+    """The other half of the gate, and the behaviour a person actually sees.
+
+    The fixture's `max_span_mm` rows are exactly what the shipped policy refuses:
+    a `structural_parameter` at `curation_level: 1`, where the bar is 2. So they
+    become no knowledge at all, and the generator's EXISTING "nothing covered
+    max_span_mm" path takes over — `FALLBACK_MAX_SPAN_MM`, a gap node, and a
+    warning on every bay built to it.
+
+    **No new fallback machinery was written for this slice.** That path was built
+    for a hole of exactly this shape, and a refused source is one. The number
+    moving here is the point: 1500 mm bays under a published maximum become 1500
+    mm bays under a conservative assumption, and the plan says which it used."""
+    from fenceai.fencemodel.demo import demo_models
+    from fenceai.fencemodel.library import FenceModelLibrary
+    from fenceai.fencemodel.selection import FenceModelChoice
+    from fenceai.parts.demo import demo_parts
+    from fenceai.parts.model import PartLibrary
+    from fenceai.strategy.generator import FALLBACK_MAX_SPAN_MM
+
+    out = ingest(snapshot, as_of="2026-08-25")
+    kb = demo_knowledge()
+    kb.versions = [v for v in kb.versions if v.object_id != "K-MAXSPAN"]
+    kb.versions.extend(out.knowledge.versions)
+
+    result = generate(
+        straight_topology(6000), KnowledgeBase(versions=kb.versions),
+        demo_catalog(), site=SiteConditions(exposure_category="C", hvhz=False),
+        models=FenceModelLibrary(models=list(demo_models().values())),
+        parts=PartLibrary(parts=demo_parts()),
+        default_model=FenceModelChoice(model_id="M-VINYL"))
+
+    # laid out to the fallback, not to the refused published maximum
+    assert all(s.width_mm <= FALLBACK_MAX_SPAN_MM for s in result.strategy.spans)
+    # ...and the run says so, rather than quietly assuming
+    codes = {w.code for w in result.strategy.warnings}
+    assert "uncovered_max_span" in codes
+
+    # the refusal itself is reported, with the work that would close it
+    refused = [g for g in out.gaps
+               if g.because.code == "source_below_min_curation"]
+    assert len(refused) == 3
+    assert "reviewer" in refused[0].would_close
+    assert refused[0].cites, "a refusal names the document it refused"
+
+
+def test_the_verdict_reaches_the_decision_graph_and_absence_means_unjudged(snapshot):
+    """Step 4 of the slice: what backed a number is visible in the explanation.
+
+    Nothing new is invented in the graph. `governed_by` edges have always carried
+    a fact's ref, so every decision a published fact governed was already
+    traceable to it; the verdict joins onto that same ref. That is why showing it
+    cost no new plumbing and no signature change.
+
+    The second assertion is the one that matters more. An authored company rule
+    has NO verdict, and that must render differently from a judged pass — an
+    absent verdict means "never judged", and a surface that showed the two alike
+    would claim a provenance check nobody performed on a rule we wrote
+    ourselves."""
+    from fenceai.fencemodel.demo import demo_models
+    from fenceai.fencemodel.library import FenceModelLibrary
+    from fenceai.fencemodel.selection import FenceModelChoice
+    from fenceai.parts.demo import demo_parts
+    from fenceai.parts.model import PartLibrary
+
+    checked = snapshot.model_copy(deep=True)
+    for table in checked.parameters:
+        for row in table.rows:
+            row.provenance.curation_level = 2
+    out = ingest(checked, as_of="2026-08-25")
+    kb = demo_knowledge()
+    kb.versions = [v for v in kb.versions if v.object_id != "K-MAXSPAN"]
+    kb.versions.extend(out.knowledge.versions)
+
+    result = generate(
+        straight_topology(6000),
+        KnowledgeBase(versions=kb.versions, admitted=out.knowledge.admitted),
+        demo_catalog(), site=SiteConditions(exposure_category="C", hvhz=False),
+        models=FenceModelLibrary(models=list(demo_models().values())),
+        parts=PartLibrary(parts=demo_parts()),
+        default_model=FenceModelChoice(model_id="M-VINYL"))
+
+    fact_nodes = [n for n in result.graph.nodes
+                  if n.action == "knowledge_version"]
+    judged = {n.payload["knowledge_ref"]: n.payload["admitted_by"]
+              for n in fact_nodes if n.payload.get("admitted_by")}
+    unjudged = [n.payload["knowledge_ref"] for n in fact_nodes
+                if not n.payload.get("admitted_by")]
+
+    published = next(r for r in judged if r.startswith("max_span_mm@"))
+    assert judged[published]["source_class"] == \
+        "manufacturer_installation_instruction"
+    assert judged[published]["curation_level"] == 2
+
+    # authored rules are present and carry NO verdict — not a failing one
+    assert any(ref.startswith("K-") for ref in unjudged)
+    assert not any(ref.startswith("K-") for ref in judged)

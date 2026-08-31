@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from fenceai.core.units import Mm
 from fenceai.knowledge.ast import Expr, field_paths
+from fenceai.knowledge.source_policy import AdmittedBy
 
 KnowledgeType = Literal[
     "fact", "hard_constraint", "company_rule", "preference", "heuristic", "override", "candidate"
@@ -225,6 +226,30 @@ class KnowledgeBase(BaseModel):
     """The active snapshot handed to a generation run."""
 
     versions: list[KnowledgeVersion] = []
+    # Which source admitted each published version, keyed `"OBJ@vN"` — the run's
+    # answer under §1.4, and the reason it rides HERE rather than on
+    # `KnowledgeVersion`.
+    #
+    # `admitted_by` is an output of a run, not a property of published data. A
+    # field for it on the version would be a place to record an answer that
+    # depends on the task the value is being used for, which is exactly the
+    # confusion amendment 001 removed from the contract once already. It rides on
+    # the base because the base is what `generate()` already receives, so nothing
+    # about that signature changes and `generate()` stays pure.
+    #
+    # Empty for authored knowledge, and correctly so: `demo_knowledge()` has no
+    # provenance to judge, and an absent verdict means "not judged" rather than
+    # "judged and passed". A renderer must show those differently.
+    admitted: dict[str, AdmittedBy] = {}
+
+    def admitted_for(self, version: "KnowledgeVersion") -> "AdmittedBy | None":
+        """The verdict for one version, or None where none was recorded."""
+        # `ref` rather than a rebuilt string: `"OBJ@vN"` is the format the
+        # decision graph's `governed_by` edges already use, and a second place
+        # that spells it is a second place that can spell it differently. It
+        # already did, once, and the symptom was a verdict that silently reached
+        # no graph node at all.
+        return self.admitted.get(version.ref)
 
     def active(self) -> list[KnowledgeVersion]:
         return [v for v in self.versions if v.status == "active"]

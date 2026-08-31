@@ -206,7 +206,13 @@ def generate(
     # Created once and threaded read-write into every resolution. Drained in ONE
     # place below, after the strategy exists to hang the warnings on.
     sink = ConflictSink()
-    builder = GraphBuilder()
+    # The source verdicts ride on the knowledge base, so they reach the graph
+    # without changing this function's signature and without `generate()`
+    # reaching for anything (ADR-0004: it stays pure).
+    builder = GraphBuilder(admitted={
+        ref: verdict.model_dump(mode="json")
+        for ref, verdict in knowledge.admitted.items()
+    })
     strategy = Strategy(id="strategy")
     applied: set[str] = set()
     # dimensions known for the whole run; narrower ones (surface, context) are

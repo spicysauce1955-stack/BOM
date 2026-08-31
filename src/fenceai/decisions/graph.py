@@ -92,9 +92,23 @@ class DecisionGraph(BaseModel):
 
 
 class GraphBuilder:
-    def __init__(self) -> None:
+    def __init__(self, admitted: dict[str, dict] | None = None) -> None:
         self._graph = DecisionGraph()
         self._n = 0
+        # Which source admitted each published fact, keyed `"OBJ@vN"` — §1.4's
+        # `admitted_by`, computed at ingest and recorded on the RUN.
+        #
+        # It arrives as plain dicts rather than as `AdmittedBy`, deliberately:
+        # `decisions/` must not import the knowledge package. The graph's job is
+        # to carry a payload a renderer can read, and typing this field would
+        # tie the explanation layer to the module that happens to produce the
+        # verdict today.
+        #
+        # An ABSENT entry means NOT JUDGED, and never "judged and passed".
+        # Authored knowledge has no provenance, so it has no entry, and a
+        # surface that rendered the two the same way would claim a check that
+        # nobody performed.
+        self._admitted = admitted or {}
 
     def add(
         self,
@@ -151,12 +165,20 @@ class GraphBuilder:
             if n.kind == "input_fact" and n.payload.get("knowledge_ref") == knowledge_ref:
                 return n.id
         self._n += 1
+        payload: dict = {"knowledge_ref": knowledge_ref}
+        # The verdict joins onto the ref that is already here. Nothing new is
+        # invented in the graph: `governed_by` and `defeated` edges have always
+        # carried this ref, so every decision a published fact governed can
+        # already be traced to it — this adds what that fact's source was worth.
+        verdict = self._admitted.get(knowledge_ref)
+        if verdict is not None:
+            payload["admitted_by"] = verdict
         node = DecisionNode(
             id=f"d{self._n:04d}",
             ordinal=self._n,
             kind="input_fact",
             action="knowledge_version",
-            payload={"knowledge_ref": knowledge_ref},
+            payload=payload,
         )
         self._graph.nodes.append(node)
         return node.id

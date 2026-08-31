@@ -26,7 +26,7 @@ on `post.role`, expanded now and selected when a post exists.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel
 
@@ -34,6 +34,14 @@ from fenceai.core.dates import Date, is_iso_date, precedes
 from fenceai.core.gaps import Because, EntityRef, Gap, GapSubject, SourceRef
 from fenceai.knowledge.ast import And, Cmp, Expr, FieldRef, Lit
 from fenceai.knowledge.model import KnowledgeVersion, SetParam, SetToken
+from fenceai.knowledge.source_policy import (
+    AdmittedBy, Candidate, SourcePolicyRow, TaskCode, explain_rejection, resolve,
+)
+
+# The tasks this engine's policy vocabulary knows (§1.4). A published table may
+# declare one we have not registered yet — see `_judge`, which uses the fact and
+# says so rather than rejecting data over a gap in our own list.
+KNOWN_TASKS: frozenset[str] = frozenset(get_args(TaskCode))
 
 # The hit policies this engine can actually honour. `unique` is a CLAIM about the
 # condition space ("these rows are disjoint") which `_overlap_gaps` checks and the
@@ -274,6 +282,74 @@ def _scope_for(table: ParameterTable) -> tuple[dict[str, str], str | None]:
     return {dimension: str(table.scope.get("id", ""))}, None
 
 
+def _candidates_for(
+    row: ParameterRow, issue_dates: dict[str, Date] | None,
+) -> list[Candidate]:
+    """One row's citations, as competing candidates.
+
+    **This is the scope of the whole mechanism and it is deliberately small.** A
+    row carries ONE `Provenance` — one `source_class`, one `curation_level`, one
+    `version_status` (§1.3) — and one or more `cites`. So the candidates differ
+    only in WHICH document is being leant on: its `content_hash`, and its
+    `issue_date`. That is not a technicality: 8 of the 16 rows in the first real
+    snapshot cite two documents, so "which citation admits this row" is a real
+    question with a real answer, not a degenerate one-element case.
+
+    A row with no citations still yields one candidate, from the row's own
+    provenance. Obligation 3 says every value carries at least one resolvable
+    `SourceRef`, so an uncited row is a payload defect — but refusing to judge it
+    would make an uncited row MORE admissible than a cited one, which is exactly
+    backwards. It is judged on what it does carry.
+    """
+    dates = issue_dates or {}
+    hashes = [c.belongs_to for c in row.provenance.cites if c.belongs_to] or [""]
+    return [
+        Candidate(
+            source_class=row.provenance.source_class,      # type: ignore[arg-type]
+            version_status=row.provenance.version_status,
+            curation_level=row.provenance.curation_level,
+            content_hash=content_hash,
+            label=content_hash,
+            issue_date=dates.get(content_hash),
+        )
+        for content_hash in hashes
+    ]
+
+
+def _judge(
+    table: ParameterTable, row: ParameterRow,
+    policy: list[SourcePolicyRow] | None, issue_dates: dict[str, Date] | None,
+) -> tuple[AdmittedBy | None, str | None]:
+    """Is this row's source good enough for this table's task? (§1.4)
+
+    Returns `(admitted_by, rejection_code)` — exactly one of which is set, or
+    both None when no policy was supplied and no judgement was asked for.
+
+    **`resolve()` is used, and it scopes strictly INTO this row.** It answers
+    "which of this row's own citations admits it, and at what rank". It is never
+    used to choose BETWEEN rows: that is the evaluator's question, answered once,
+    for authored and published knowledge alike. Two mechanisms selecting between
+    facts is the failure the whole knowledge design is built to avoid — they
+    would eventually disagree, and neither could explain the other.
+
+    An unrecognised `task` is NOT a rejection. Task codes are a registry we own
+    (§1.4), so a table naming one we have not added would otherwise have every
+    row refused for a hole in OUR list rather than any defect in their data. The
+    row is used and the caller raises a gap saying we could not judge it.
+    """
+    if policy is None:
+        return None, None
+    if table.task not in KNOWN_TASKS:
+        return None, None
+    candidates = _candidates_for(row, issue_dates)
+    resolution = resolve(policy, table.task, candidates)   # type: ignore[arg-type]
+    if resolution.winner is not None:
+        return resolution.winner, None
+    # Every citation failed. They share the row's class, level and status, so
+    # they fail for the same reason — the first one explains all of them.
+    return None, explain_rejection(policy, table.task, candidates[0])   # type: ignore[arg-type]
+
+
 def _condition_for(table: ParameterTable, row: ParameterRow) -> Expr | None:
     """A row's conditions as an evaluator expression, each key in the namespace
     its declared scope names.
@@ -301,7 +377,9 @@ def _path(table: ParameterTable, key: str) -> str:
 
 def expand(
     table: ParameterTable, *, as_of: str = "", tenant: str | None = None,
-) -> tuple[list[KnowledgeVersion], list[Gap]]:
+    policy: list[SourcePolicyRow] | None = None,
+    issue_dates: dict[str, Date] | None = None,
+) -> tuple[list[KnowledgeVersion], list[Gap], dict[str, AdmittedBy]]:
     """One published table -> ordinary knowledge, plus the gaps it declares.
 
     Every version is built through `KnowledgeVersion.from_published`, never the
@@ -323,6 +401,7 @@ def expand(
     """
     versions: list[KnowledgeVersion] = []
     gaps: list[Gap] = []
+    admitted: dict[str, AdmittedBy] = {}
     tokens = table.token_values()
 
     # An `as_of` this side cannot read is OUR bug, not a publisher's, so it is
@@ -339,35 +418,36 @@ def expand(
     if unmappable is not None:
         # Nothing is expanded. A table we cannot aim is not a table we may apply
         # everywhere, and this closes by a schema change HERE, not by a curator.
-        return [], [_unmappable_scope_gap(table, unmappable, tenant)]
+        return [], [_unmappable_scope_gap(table, unmappable, tenant)], {}
 
     if table.hit_policy not in SUPPORTED_HIT_POLICIES:
         # Same argument, one field over: expanding these rows would produce a
         # number, and the number would be wrong.
-        return [], [_unsupported_hit_policy_gap(table, tenant)]
+        return [], [_unsupported_hit_policy_gap(table, tenant)], {}
+
+    if policy is not None and table.task not in KNOWN_TASKS:
+        # Once per table, not once per row: the hole is our registry, and one
+        # note about it is a work item where sixteen identical ones are noise.
+        # The rows are still expanded — see `_judge`.
+        gaps.append(_task_unrecognised_gap(table, tenant))
 
     for index, row in enumerate(table.rows):
         action = _action_for(table, row, tokens)
         if action is None:
             gaps.append(_bad_value_gap(table, row, index, tenant))
             continue
-        versions.append(KnowledgeVersion.from_published(
-            object_id=_object_id(table, index),
-            version=1,
-            # A published row is a fact about the world, not a company rule —
-            # `fact` is the tier the demo base already gives measured inputs, and
-            # the row's own `authority` field is what a policy will read later.
-            type="fact",
-            scope=scope,
-            condition=_condition_for(table, row),
-            actions=[action],
-            title=f"{table.parameter} = {_display(row.value)}",
-            attributed_to="knowledge_platform",
-        ))
-        # Both ends of the validity window, judged through §1.1's `Date` rule:
+        object_id = _object_id(table, index)
+        # Validity is judged BEFORE admissibility and independently of it. The
+        # two are different questions about the same row — "is this authority in
+        # force?" and "is this source good enough?" — and one can invalidate the
+        # work the other implies. A row that is both unchecked and expired must
+        # report both: `source_below_min_curation` alone sends a reviewer to open
+        # a crop for a document that lapsed two years ago, which is precisely the
+        # wasted bounded work the review queue exists to avoid.
+        #
         # `precedes` returns None when either side carries no `iso`, and None is
         # NOT "no" — it means the question has no answer, so no gap is reported
-        # rather than a wrong one. That is the null rule doing its job: an
+        # rather than a wrong one. That is §1.1's null rule doing its job: an
         # undated authority is never treated as earliest or latest, so it is
         # never silently declared lapsed and never silently declared current.
         if precedes(row.valid_until, as_of_date) is True:
@@ -381,9 +461,40 @@ def expand(
         if precedes(as_of_date, row.valid_from) is True:
             gaps.append(_not_yet_in_force_gap(table, row, index, as_of, tenant))
 
+        admitted_by, rejected = _judge(table, row, policy, issue_dates)
+        if rejected is not None:
+            # NOT expanded. A value the policy refuses must not reach the
+            # evaluator at all — the whole point of §1.4 is that the decision
+            # graph can say "a spec sheet was inadmissible for a structural
+            # parameter" instead of the value silently never existing. The
+            # generator's existing "no rule covered this" path then produces a
+            # conservative fallback, a gap node and a warned line, which is the
+            # shape that path was built for.
+            gaps.append(_rejected_source_gap(table, row, index, rejected, tenant))
+            continue
+        version = KnowledgeVersion.from_published(
+            object_id=object_id,
+            version=1,
+            # A published row is a fact about the world, not a company rule —
+            # `fact` is the tier the demo base already gives measured inputs, and
+            # the row's own `authority` field is what a policy will read later.
+            type="fact",
+            scope=scope,
+            condition=_condition_for(table, row),
+            actions=[action],
+            title=f"{table.parameter} = {_display(row.value)}",
+            attributed_to="knowledge_platform",
+        )
+        versions.append(version)
+        if admitted_by is not None:
+            # Keyed by `ref`, the same `"OBJ@vN"` the decision graph's
+            # `governed_by` edges carry — so the verdict joins onto an edge that
+            # already exists rather than needing a second identity scheme.
+            admitted[version.ref] = admitted_by
+
     gaps.extend(_overlap_gaps(table, tenant))
     gaps.extend(_uncovered_gaps(table, tenant))
-    return versions, gaps
+    return versions, gaps, admitted
 
 
 def _action_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | None):
@@ -591,6 +702,86 @@ def _overlap_gaps(table: ParameterTable, tenant: str | None) -> list[Gap]:
                 closes_by="knowledge", severity="warns_line",
             ))
     return out
+
+
+def _rejected_source_gap(
+    table: ParameterTable, row: ParameterRow, index: int, code: str,
+    tenant: str | None,
+) -> Gap:
+    """A row the source policy refused (§1.4), and what would let it be used.
+
+    `missing_value` is the kind, and it is the honest one: after the policy has
+    spoken there IS no admissible value for this point. It is not `disputed` —
+    nobody disagrees about the number — and it is not `uncovered_condition`,
+    because the table does cover the point; what is missing is a source good
+    enough to rely on there.
+
+    `would_close` differs by code because the two need different people. Below
+    the curation bar, the work is bounded and already queued: a reviewer opens
+    the crop for a document we hold. Inadmissible, no amount of reviewing helps —
+    somebody must find a different document.
+    """
+    prov = row.provenance
+    params: dict[str, str | int] = {
+        "parameter": table.parameter, "task": table.task,
+        "source_class": prov.source_class,
+        "curation_level": prov.curation_level,
+    }
+    # Both codes are written as LITERALS here rather than passed through from
+    # `explain_rejection`, and that is not redundancy. `tests/web/
+    # test_locale_bundles.py` finds every emitted code by scanning for
+    # `code="..."` at the site that emits it — a code arriving as a variable is
+    # invisible to it, and an unseen code reaches a screen as its own key in both
+    # languages. The guard can only guard what it can read.
+    if code == "source_below_min_curation":
+        because = Because(code="source_below_min_curation", params=params)
+        would_close = (
+            f"a reviewer confirming {table.parameter} row {index} against the "
+            f"source image, raising it to curation level 2"
+        )
+    else:
+        because = Because(code="source_inadmissible", params=params)
+        would_close = (
+            f"a {table.parameter} value for these conditions from a source class "
+            f"the policy admits for {table.task or 'this task'} — "
+            f"{prov.source_class or 'this row’s class'} is not one"
+        )
+    return Gap(
+        id=f"gap:{code}:{_object_id(table, index)}",
+        kind="missing_value",
+        subject=_param_subject(table, tenant, point=dict(row.conditions) or None),
+        because=because,
+        cites=list(prov.cites),
+        would_close=would_close,
+        closes_by="knowledge", severity="warns_line",
+    )
+
+
+def _task_unrecognised_gap(table: ParameterTable, tenant: str | None) -> Gap:
+    """A table declaring a task this engine's policy vocabulary has no row for.
+
+    `TaskCode` is a registry we own (§1.4), so this is a hole in OUR list, not a
+    defect in their data — hence `closes_by: planning`, and hence the rows are
+    expanded anyway. Refusing them would mean a published fact going unused
+    because we had not added a word, which is a failure mode that looks exactly
+    like the data being wrong.
+
+    The cost of using them is stated rather than hidden: they are used
+    **unjudged**, so no `admitted_by` is recorded for them and nothing claims
+    their source was checked.
+    """
+    return Gap(
+        id=f"gap:task_unrecognised:{table.parameter}:{table.task}",
+        kind="unmodellable_entity",
+        subject=_param_subject(table, tenant),
+        because=Because(code="parameter_task_unrecognised",
+                         params={"parameter": table.parameter,
+                                 "task": table.task}),
+        would_close=(f"a {table.task!r} entry in this engine's TaskCode registry "
+                     f"and a source-policy row for it, so its rows can be judged "
+                     f"rather than used unjudged"),
+        closes_by="planning", severity="warns_line",
+    )
 
 
 def _unmappable_scope_gap(
