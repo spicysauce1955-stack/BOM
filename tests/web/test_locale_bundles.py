@@ -115,6 +115,12 @@ WARNING_CODES = [
     # Two published rows resolving to one identity. Neither verdict is recorded,
     # because attributing one to the wrong number is worse than attributing none.
     "ambiguous_version_ref",
+    # A `paired` table (006), which the publisher now sends for real — five
+    # `footing_schedule` tables in the first snapshot that carries them. The
+    # contract shape is ratified and correct; what is missing is on this side,
+    # and it is not a parser: choosing between design points is a cost
+    # trade-off for the optimiser, not a fact for the evaluator.
+    "parameter_paired_unsupported",
     "panel_length_unresolved",
     # Containment. Both say a credit did NOT happen — a credit that lands
     # cleanly is a smaller purchase and needs no warning — and both exist
@@ -166,6 +172,7 @@ KNOWLEDGE_SURFACE_UNTRANSLATED = [
     "warning.source_ref_missing",
     "warning.ambiguous_version_ref",
     "warning.parameter_task_unrecognised",
+    "warning.parameter_paired_unsupported",
     "error.contract_major_unsupported",
     "error.contract_minor_predates_typed_date",
     "error.snapshot_malformed",

@@ -118,6 +118,40 @@ class Token(BaseModel):
     value_raw: list[str] = []
 
 
+class Interval(BaseModel):
+    """§1.3 `Interval` — a condition on a `range(<UnitCode>)` dimension (007).
+
+    A condition dimension can be a QUANTITY. Real footing schedules condition on
+    fence height, and a height is a length — but a listed domain can only hold
+    labels, so `"Up to 48\""` used to cross as an English phrase that no rule
+    could evaluate and no `uncovered` entry could report a hole in.
+
+    `min`/`max` are `null` for **unbounded on that side**, which is a statement
+    rather than an absence — do not confuse it with §1.1's `Date` null. And the
+    inclusivity flags carry no default: the real brackets leave a 25.4 mm band
+    between them, and whether that band is a dead zone in the source or an
+    artefact of whole-inch rounding is a fact only the publisher holds.
+
+    `value_raw` is the publisher's own phrase, for the reason it exists
+    everywhere else: a disagreement between the label and the bounds is a bug
+    somebody can see.
+    """
+
+    min: Quantity | None = None
+    max: Quantity | None = None
+    min_inclusive: bool = True
+    max_inclusive: bool = True
+    value_raw: list[str] = []
+
+    def label(self) -> str:
+        """What the source said, falling back to the bounds we would compare."""
+        if self.value_raw:
+            return self.value_raw[0]
+        lo = f"{to_mm(self.min)}mm" if self.min else "-"
+        hi = f"{to_mm(self.max)}mm" if self.max else "-"
+        return f"{lo}..{hi}"
+
+
 class Provenance(BaseModel):
     """§1.1. `admitted_by` is deliberately NOT here — it is an output of a RUN
     (§1.4), so a field for it on published data would be a place to record an
@@ -130,14 +164,21 @@ class Provenance(BaseModel):
 
 
 class ParameterRow(BaseModel):
-    conditions: dict[str, str | int | bool] = {}
+    # A condition value is a token OR, since 007, an `Interval` on a
+    # `range(<UnitCode>)` dimension. `bool` precedes `int` for the reason
+    # `Because.params` needs it: `hvhz: true` admitted through an int arm
+    # becomes 1 and renders as one.
+    conditions: dict[str, str | bool | int | Interval] = {}
     # Obligation 15. `stated` with EMPTY conditions means the document gave none:
     # such a row is a fallback, is excluded from the `unique` overlap check, and
     # asserts nothing about the points it lands on. 66% of the structural facts
     # in the class §1.4 admits are exactly this shape, and publishing them into a
     # declared domain would assert brackets the source never stated.
     condition_basis: Literal["stated", "assumed"] = "stated"
-    value: Quantity | Token
+    # `[[Quantity, Quantity], …]` is 006's `paired` shape: one row holding
+    # several independently-valid design points at the same conditions, so a
+    # deeper footing buying a wider span is not lost by picking one.
+    value: Quantity | Token | list[list[Quantity]]
     provenance: Provenance = Provenance()
     # §1.1 `Date`, BINDING since v1.2 (amendment 002). These were `str | None`,
     # which is how a `MM/DD/YYYY` lexeme came to be compared against an ISO
@@ -170,14 +211,21 @@ class ParameterTable(BaseModel):
     # a different parameter. Without the declaration every consumer must branch on
     # the type of every cell.
     value_type: str = "quantity(mm)"
-    domain: dict[str, list] = {}
+    # A listed dimension enumerates its values; `range(<UnitCode>)` declares a
+    # CONTINUOUS one instead (007), so the value is a string rather than a list.
+    domain: dict[str, list | str] = {}
     # `declared` means we may not know this table's real extent; `measured` means
     # it really does not cover that point. Different facts, rendered differently.
     domain_basis: Literal["measured", "declared"] = "declared"
     # Obligation 13: a published condition key declares its scope.
     condition_scope: dict[str, ConditionScope] = {}
     rows: list[ParameterRow] = []
-    uncovered: list[dict[str, str | int | bool]] = []
+    # §1.3 BINDING, as amended by 007: where a dimension is `range(<UnitCode>)`,
+    # an `uncovered` entry for it is an `Interval` rather than a value — which is
+    # what makes a BAND no row covers reportable at all. The 25.4 mm gap between
+    # `Up to 48"` and `49" to 76"` was previously invisible: `uncovered`
+    # enumerated domain points, and a height in that band was not a point.
+    uncovered: list[dict[str, str | bool | int | Interval]] = []
 
     def token_values(self) -> set[str] | None:
         """The closed set for `token(a|b|c)`, or None for a quantity table."""
@@ -251,6 +299,26 @@ def _scope_ref(table: ParameterTable) -> EntityRef | None:
     )
 
 
+def _plain(point: dict | None) -> dict | None:
+    """A point as plain data, so a `Gap` carries it without knowing our types.
+
+    `Interval` is a `ParameterTable` type and `core/gaps.py` deliberately does not
+    import it — a gap needs to CARRY a point, not interpret one, and `core/`
+    describing a knowledge type would invert the dependency. So the model is
+    dumped here, at the one boundary that knows both sides.
+
+    `mode="json"` and not `dict()`: the point ends up in a `because.params` that a
+    renderer reads and an API returns, so nested `Quantity` models have to be
+    plain too, not one level of dict wrapping more models.
+    """
+    if point is None:
+        return None
+    return {
+        k: (v.model_dump(mode="json") if isinstance(v, BaseModel) else v)
+        for k, v in point.items()
+    }
+
+
 def _param_subject(
     table: ParameterTable, tenant: str | None,
     point: dict[str, str | int | bool] | None = None,
@@ -264,7 +332,7 @@ def _param_subject(
     collapsed into 8 ids and half a curator's queue disappeared.
     """
     return GapSubject(kind="param", id=table.parameter, tenant=tenant,
-                      scope=_scope_ref(table), point=point)
+                      scope=_scope_ref(table), point=_plain(point))
 
 
 def _object_id(table: ParameterTable, index: int) -> str:
@@ -381,12 +449,35 @@ def _condition_for(table: ParameterTable, row: ParameterRow) -> Expr | None:
     """
     if not row.conditions:
         return None
-    terms = [
-        Cmp(cmp="==",
-            left=FieldRef(path=_path(table, key)),
-            right=Lit(value=value))
-        for key, value in sorted(row.conditions.items())
-    ]
+    terms: list[Expr] = []
+    for key, value in sorted(row.conditions.items()):
+        path = _path(table, key)
+        if isinstance(value, Interval):
+            # An `Interval` compiles to REAL COMPARISONS, which is the whole
+            # point of 007. Before it, `fence_height` arrived as `"Up to 48\""`
+            # and became `bay.fence_height == 'Up to 48"'` — false for every
+            # project that will ever run, because a bay's height is an integer in
+            # millimetres. It reported as not-applicable rather than as broken,
+            # which is why nobody noticed 16 inert rows.
+            #
+            # The inclusivity flags pick the operator rather than being assumed:
+            # the publisher states them precisely because the band between two
+            # brackets is theirs to define, not ours to round away.
+            if value.min is not None:
+                terms.append(Cmp(cmp=">=" if value.min_inclusive else ">",
+                                 left=FieldRef(path=path),
+                                 right=Lit(value=to_mm(value.min))))
+            if value.max is not None:
+                terms.append(Cmp(cmp="<=" if value.max_inclusive else "<",
+                                 left=FieldRef(path=path),
+                                 right=Lit(value=to_mm(value.max))))
+            # An interval unbounded on BOTH sides constrains nothing, and
+            # contributing no term is the honest reading — not a term that is
+            # always true, which would look like a condition in the explanation.
+            continue
+        terms.append(Cmp(cmp="==", left=FieldRef(path=path), right=Lit(value=value)))
+    if not terms:
+        return None
     return terms[0] if len(terms) == 1 else And(items=terms)
 
 
@@ -439,6 +530,11 @@ def expand(
         # Nothing is expanded. A table we cannot aim is not a table we may apply
         # everywhere, and this closes by a schema change HERE, not by a curator.
         return [], [_unmappable_scope_gap(table, unmappable, tenant)], {}
+
+    if table.value_type.startswith("paired("):
+        # Once per table rather than once per row: a `paired` table is one thing
+        # this engine cannot consume, and one work item is what that is.
+        return [], [_paired_unsupported_gap(table, tenant)], {}
 
     if table.hit_policy not in SUPPORTED_HIT_POLICIES:
         # Same argument, one field over: expanding these rows would produce a
@@ -537,6 +633,19 @@ def _action_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | Non
     `value_type` is declared once on the table, so a row that disagrees with it is
     the table contradicting itself — a gap, not something to coerce.
     """
+    if table.value_type.startswith("paired("):
+        # A `paired` row is a CHOICE SET, not a fact: several design points, each
+        # independently valid at the same conditions, and a builder picks. This
+        # engine has no such category — rules fire and the evaluator resolves ONE
+        # value per parameter — so there is nothing here to land it as.
+        #
+        # Refused rather than approximated, and that is the whole reason 006 was
+        # accepted in the shape it was: taking the first alternative, or the
+        # shallowest footing, would silently discard the cheaper compliant option
+        # (7 posts against 9 on a 40 ft run) and present the survivor as the
+        # answer. Choosing between them is a cost trade-off and belongs to
+        # whatever optimises cost, not to a loader.
+        return None
     if tokens is not None:
         if not isinstance(row.value, Token) or row.value.key not in tokens:
             return None
@@ -598,7 +707,7 @@ def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
             # interpolated into a Hebrew sentence, which is English leaking
             # through a locale template with Python's `True` inside it.
             because=Because(code="uncovered_parameter_point",
-                             params={"parameter": table.parameter, "point": point,
+                             params={"parameter": table.parameter, "point": _plain(point),
                                      "domain_basis": table.domain_basis}),
             would_close=(
                 f"a {table.parameter} row for {where}" if measured else
@@ -672,6 +781,40 @@ def _date_label(d: Date | None) -> str:
     return d.raw() or (d.iso or "")
 
 
+def _paired_unsupported_gap(table: ParameterTable, tenant: str | None) -> Gap:
+    """A `paired` table (006), which this engine cannot yet consume.
+
+    The contract shape is ratified and the publisher is using it correctly — five
+    `footing_schedule` tables in the first snapshot that carries them. What is
+    missing is on this side, and it is not a parser: a row holding
+    `(depth, span)` alternatives is a set of admissible DESIGN POINTS, and
+    choosing between them is a cost trade-off — deeper holes against more posts —
+    which belongs to the BOM optimiser as an objective rather than to the
+    evaluator as a fact.
+
+    So: `closes_by: planning`, and the `would_close` names the actual work rather
+    than the symptom. Refusing the table is the same call `_scope_for` makes about
+    a scope we cannot aim: no number is better than a confident wrong one, and
+    picking an alternative here would discard the option the contract was amended
+    to preserve.
+    """
+    return Gap(
+        id=f"gap:paired_unsupported:{table.parameter}",
+        kind="unmodellable_entity",
+        subject=_param_subject(table, tenant),
+        because=Because(code="parameter_paired_unsupported",
+                         params={"parameter": table.parameter,
+                                 "value_type": table.value_type,
+                                 "alternatives": sum(
+                                     len(r.value) for r in table.rows
+                                     if isinstance(r.value, list))}),
+        would_close=(f"a cost objective in the Planning repo that chooses between "
+                     f"{table.parameter}'s design points, so a builder gets the "
+                     f"cheaper compliant one rather than whichever was listed first"),
+        closes_by="planning", severity="warns_line",
+    )
+
+
 def _unsupported_hit_policy_gap(table: ParameterTable, tenant: str | None) -> Gap:
     """A `hit_policy` this engine cannot honour — refused, never approximated.
 
@@ -729,7 +872,7 @@ def _overlap_gaps(table: ParameterTable, tenant: str | None) -> list[Gap]:
                 because=Because(code="parameter_rows_overlap",
                                  params={"parameter": table.parameter,
                                          "row": i, "other_row": j,
-                                         "point": point}),
+                                         "point": _plain(point)}),
                 would_close=(f"disjoint conditions on rows {i} and {j} of "
                              f"{table.parameter}, or a hit_policy that admits "
                              f"more than one match"),

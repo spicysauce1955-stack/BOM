@@ -664,3 +664,99 @@ def test_a_source_class_we_have_not_registered_is_flagged_per_row():
     # both rows are used: the unregistered one unjudged, the known one admitted
     assert len(versions) == 2
     assert len(admitted) == 1
+
+
+# -- amendment 007: a condition dimension that is a quantity --------------------
+
+def test_an_interval_condition_compiles_to_real_comparisons():
+    """The whole point of 007, and the defect it closes.
+
+    Before it, `fence_height` crossed as the English phrase `"Up to 48\\""` and
+    compiled to `bay.fence_height == 'Up to 48"'`. A bay's height here is an
+    integer in millimetres, so that comparison was false for every project that
+    would ever run — and because it merely never matched, it reported as *not
+    applicable* rather than as broken. Sixteen published rows were inert and
+    nothing said so.
+
+    The bound is converted through `to_mm`, so the comparison is against the same
+    integer millimetres the rest of the engine stores."""
+    from fenceai.knowledge.ast import field_paths
+    from fenceai.knowledge.parameters import Interval, _condition_for
+
+    table = _span_table(
+        condition_scope={"fence_height": "bay"},
+        domain={"fence_height": "range(mm)"},
+        rows=[ParameterRow(conditions={"fence_height": Interval(
+            max=Quantity(amount_milli=1219200, unit="mm", value_raw=['48"']),
+            max_inclusive=True, value_raw=['Up to 48"'])},
+            value=Quantity(amount_milli=1200000, unit="mm"))])
+
+    expr = _condition_for(table, table.rows[0])
+    assert field_paths(expr) == {"bay.fence_height"}
+    dumped = expr.model_dump(mode="json")
+    assert dumped["cmp"] == "<="
+    assert dumped["right"]["value"] == 1219, "48 inches, in whole millimetres"
+
+
+def test_the_inclusivity_flags_pick_the_operator_rather_than_being_assumed():
+    """The publisher states them because the band between two stated brackets is
+    theirs to define. 48″ and 49″ leave 25.4 mm between them, and whether that is
+    a dead zone or whole-inch rounding is a fact only they hold — so an exclusive
+    bound must compile to `<`, not to `<=` with a shrug."""
+    from fenceai.knowledge.parameters import Interval, _condition_for
+
+    def op(**flags):
+        t = _span_table(
+            condition_scope={"fence_height": "bay"},
+            rows=[ParameterRow(conditions={"fence_height": Interval(
+                min=Quantity(amount_milli=1244600, unit="mm"), **flags)},
+                value=Quantity(amount_milli=1200000, unit="mm"))])
+        return _condition_for(t, t.rows[0]).model_dump(mode="json")["cmp"]
+
+    assert op(min_inclusive=True) == ">="
+    assert op(min_inclusive=False) == ">"
+
+
+def test_an_interval_unbounded_on_both_sides_constrains_nothing():
+    """Contributing no term is the honest reading. A term that is always true
+    would appear in the explanation as a condition somebody stated."""
+    from fenceai.knowledge.parameters import Interval, _condition_for
+
+    table = _span_table(
+        condition_scope={"fence_height": "bay"},
+        rows=[ParameterRow(conditions={"fence_height": Interval()},
+                           value=Quantity(amount_milli=1200000, unit="mm"))])
+    assert _condition_for(table, table.rows[0]) is None
+
+
+# -- amendment 006: a paired value is refused, not approximated -----------------
+
+def test_a_paired_table_is_refused_with_the_work_that_would_close_it():
+    """The publisher now sends these for real, and correctly — five
+    `footing_schedule` tables using the named-member form we asked for in the
+    disposition of 006.
+
+    What is missing is on this side, and refusing is the point rather than a
+    shortfall: a row holding `(depth, span)` alternatives is a set of admissible
+    DESIGN POINTS, and taking the first one would silently discard the cheaper
+    compliant option — 7 posts against 9 on a 40 ft run. That is the exact loss
+    006 was accepted in this shape to prevent, so re-introducing it in the loader
+    would waste the amendment.
+
+    `closes_by: planning`, because the work is a cost objective here."""
+    table = ParameterTable(
+        parameter="footing_schedule", task="structural_parameter",
+        value_type="paired(footing_depth_mm:mm, max_span_mm:mm)",
+        rows=[ParameterRow(
+            conditions={"exposure_category": "C"},
+            value=[[Quantity(amount_milli=609600, unit="mm", value_raw=['24"']),
+                    Quantity(amount_milli=1676400, unit="mm", value_raw=['66"'])],
+                   [Quantity(amount_milli=914400, unit="mm", value_raw=['36"']),
+                    Quantity(amount_milli=2235200, unit="mm", value_raw=['88"'])]])])
+
+    versions, gaps, admitted = expand(table, policy=SHIPPED_DEFAULT)
+    assert not versions, "no number is better than the wrong one of two"
+    assert [g.because.code for g in gaps] == ["parameter_paired_unsupported"]
+    assert gaps[0].closes_by == "planning"
+    assert gaps[0].because.params["alternatives"] == 2
+    assert "cheaper compliant" in gaps[0].would_close

@@ -27,6 +27,7 @@ type is worth having at all:
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
 from pydantic import BaseModel
@@ -106,7 +107,12 @@ class GapSubject(BaseModel):
     # `ParamRef.scope` — which product or assembly the parameter belongs to.
     scope: EntityRef | None = None
     # `ParamRef.point` — the cell inside the table, or None for the whole table.
-    point: dict[str, str | int | bool] | None = None
+    # A dimension's value is a token, a bool, a number — or, on a `range()`
+    # dimension, an `Interval` (§1.3, amendment 007). The interval's own shape
+    # belongs to the knowledge layer, so it is accepted here as a mapping rather
+    # than imported: `core/` describing a `ParameterTable` type would invert the
+    # dependency, and a gap only needs to carry the point, not interpret it.
+    point: dict[str, str | bool | int | dict] | None = None
 
     def key(self) -> str:
         """A stable identity for this subject, scope and point included.
@@ -122,7 +128,13 @@ class GapSubject(BaseModel):
         if self.kind == "entity":
             return f"entity:{self.ref_kind}/{self.id}@{tenant}"
         scope = f"{self.scope.kind}/{self.scope.id}" if self.scope else "~unscoped"
-        point = (";".join(f"{k}={self.point[k]!r}" for k in sorted(self.point))
+        # `json.dumps(sort_keys=True)` for a mapping value rather than `repr`:
+        # a dict's repr follows insertion order, so two identical intervals
+        # parsed from differently-ordered JSON would key differently and the
+        # same hole would count twice.
+        point = (";".join(
+            f"{k}=" + (json.dumps(v, sort_keys=True) if isinstance(v, dict) else repr(v))
+            for k, v in ((k, self.point[k]) for k in sorted(self.point)))
                  if self.point else "~whole-table")
         return f"param:{self.id}@{scope}#{point}@{tenant}"
 
@@ -160,9 +172,13 @@ class SourceRef(BaseModel):
 # point's `hvhz: true` is a boolean, and under a `str | int` annotation pydantic
 # admits it through the `int` arm and stores `1` — after which the sentence renders
 # "hvhz=1" in both languages and the type has silently lost a fact it was handed.
-# The nested dict is the contract's own `point` shape (§1.1 `ParamRef.point`), which
-# the first real snapshot publishes on all 16 of its uncovered-condition gaps.
-ParamValue = str | bool | int | dict[str, str | bool | int]
+#
+# The nested value is `PointValue`, which is itself allowed to be a mapping: since
+# amendment 007 a condition on a `range()` dimension is an `Interval`, whose own
+# `min`/`max` are `Quantity` objects — so a point is two levels deep, not one. A
+# one-level annotation admitted the outer dict and rejected the interval inside it.
+PointValue = str | bool | int | dict
+ParamValue = str | bool | int | dict[str, PointValue]
 
 
 class Because(BaseModel):

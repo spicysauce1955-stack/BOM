@@ -1041,6 +1041,7 @@
   "warning.parameter_condition_excluded": "{parameter} אינו חל על {point} — המקור שולל את הטווח הזה במפורש, ואינו רק לא מכוסה",
   "warning.parameter_hit_policy_unsupported": "טבלת {parameter} שפורסמה נפתרת לפי {hit_policy}, שהמנוע עדיין אינו תומך בו — הטבלה לא הוחלה",
   "warning.parameter_not_yet_in_force": "השורה מטעם {authority} עבור {parameter} נכנסת לתוקף רק ב-{valid_from}, אחרי תאריך הריצה {as_of}",
+  "warning.parameter_paired_unsupported": "The published {parameter} table offers {alternatives} design points per condition ({value_type}); this engine cannot yet choose between them, so the table was not applied",
   "warning.parameter_rows_overlap": "השורות {row} ו-{other_row} של {parameter} מכסות שתיהן את {point}, אך הטבלה מצהירה שהתנאים אינם חופפים — לא נבחר ערך",
   "warning.parameter_scope_unmappable": "טבלת {parameter} שפורסמה מוגבלת ל-{entity_kind}, שאין לו ממד במנוע — הטבלה לא הוחלה",
   "warning.parameter_task_unrecognised": "A published {parameter} table decides {task}, which this engine has no source policy for — its rows were used without their sources being judged",
