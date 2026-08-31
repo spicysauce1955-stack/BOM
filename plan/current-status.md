@@ -48,10 +48,28 @@ the mechanism did not work. Fixed (most-specific-match wins, `null` stays the
 catch-all); two tests pin it, and the two real footing authorities now resolve to
 the replacement under either input order.
 
-### THE OPEN DECISION ON OUR SIDE
+### DECIDED (2026-08-31): the one-step reading
 
-**The shipped ranks are deliberately unchanged.** Their recommendation has two
-readings and they differ a lot in consequence:
+**A superseded structural source loses to its own replacement and to nothing
+else.** `8773c5f`. `structural_parameter`'s ranks now step in tens with a
+`version_status: "superseded"` row one below each class (10/11, 20/21, 30/31,
+40/41), so the pair §1.4 describes no longer ties and never reaches the
+tie-break. Measured on the real pair: `f650c3f1` (the replacement) wins under
+both input orders, where the superseded `1c487c73` previously won by content
+hash.
+
+**The stronger reading was declined**, and the reasoning is in the table's own
+comment so it reads as a choice rather than an oversight: it would rank a
+superseded sealed engineering approval below an unrated installation manual, and
+a stamped approval does not stop being engineering evidence the day it is
+renewed. 40.7% of the corpus's human-gated facts come from a superseded
+document. Reversible on Knowledge's word — the mechanism supports either, and
+T33 says so.
+
+Scoped to `structural_parameter` deliberately; a test pins the scope so
+extending it is an edit with a reason rather than a consistency tidy-up.
+
+The two readings, for the record:
 
 1. `superseded` loses to its own replacement of the same class — the case §1.4
    describes, and the pair in `3ae88642`. **Unarguable.**
