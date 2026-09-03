@@ -79,9 +79,232 @@ def type_text(c, text: str) -> None:
     time.sleep(0.2)
 
 
+def _smoke_post_inspector(c) -> None:
+    """The post inspector: four directives that never had a control, and the
+    refusal that keeps the fourth from writing an override the generator drops.
+
+    Every check here asserts a CONSEQUENCE, not a rendering. Forcing a sku has
+    to reach the BOM line for that post; forcing masonry has to remove that
+    post's footing line; and refusing to suppress a corner has to leave the
+    project with no override at all — a panel that drew three selects and wrote
+    nothing would screenshot identically to one that works.
+    """
+    project_js = "document.getElementById('project-select').value"
+
+    def overrides():
+        return c.js(f"""
+(async () => {{
+  const p = await (await fetch(`/api/projects/${{{project_js}}}`)).json();
+  return (p.overrides || []).map(o => o.directive);
+}})()""")
+
+    def last_run():
+        return c.js(f"""
+(async () => {{
+  const runs = await (await fetch(`/api/projects/${{{project_js}}}/runs`)).json();
+  const id = runs[runs.length - 1].id;
+  const result = await (await fetch(`/api/runs/${{id}}`)).json();
+  const bom = await (await fetch(`/api/runs/${{id}}/bom`)).json();
+  return {{
+    id, n_runs: runs.length,
+    orphaned: result.orphaned_overrides || [],
+    posts: result.strategy.posts.map(p => ({{
+      id: p.id, kind: p.kind, sku: p.sku, mounting: p.mounting,
+      run_ref: p.run_ref, pinned: p.pinned, station_mm: p.station_mm,
+    }})),
+    // the RESOLVED demand lines: `role` says what a line is for and `pegs`
+    // says which element caused it, so "this post's product" and "this post's
+    // footing" are both answerable without parsing a sku
+    lines: (bom.requirements || []).map(l => ({{
+      role: l.role, sku: l.sku, pegs: l.pegs,
+    }})),
+  }};
+}})()""")
+
+    def post_title(post_id):
+        """What the plan canvas currently says this post IS — drawn from the last
+        generation, which is exactly the thing a directive must NOT change."""
+        return c.js("""
+(() => {
+  const id = %s;
+  const title = [...document.querySelectorAll('#g-overlay title')]
+    .find(n => n.textContent.split('\\n')[0] === id);
+  return title ? title.textContent : '';
+})()""" % json.dumps(post_id))
+
+    def select_post(post_id):
+        """A real click on the post's circle, at the coordinates it occupies —
+        the same gesture a person makes, through whatever handler owns it.
+
+        The empty-canvas click first is not ceremony. `#g-handles` is painted
+        OVER `#g-overlay`, so while a section is selected its midpoint ghost and
+        its vertex handles sit exactly on top of the posts at those stations —
+        and a click there reaches the handle, not the post. Deselecting first is
+        what a person does anyway, and it makes the target unambiguous.
+
+        The wait is keyed on `data-post`, never on the panel merely existing: the
+        previous post's panel is still on screen when the click misses, so
+        "a panel is open" would report success for a click that did nothing.
+        """
+        c.click(*c.canvas_px(1000, -3000))
+        time.sleep(0.4)
+        box = c.js("""
+(() => {
+  const id = %s;
+  const title = [...document.querySelectorAll('#g-overlay title')]
+    .find(n => n.textContent.split('\\n')[0] === id);
+  if (!title) return null;
+  const r = title.parentNode.getBoundingClientRect();
+  return [r.x + r.width / 2, r.y + r.height / 2];
+})()""" % json.dumps(post_id))
+        if not box:
+            return False
+        c.click(box[0], box[1])
+        return bool(wait_for(
+            c,
+            "document.getElementById('post-inspector')?.dataset.post === %s"
+            % json.dumps(post_id),
+            timeout=6))
+
+    # --- a project of this case's own -----------------------------------------
+    # This case runs last, after a reload that discarded the tab and project
+    # state everything above it built. It rebuilds what it needs rather than
+    # inheriting it, so the order of the cases in _CHOICE_CASES cannot matter.
+    c.cmd("Page.navigate", url=f"http://localhost:{PORT}/")
+    time.sleep(3)
+    c.js("window.confirm = () => true; window.alert = () => {}; undefined")
+    wait_for(c, f"!!{project_js}", timeout=10)
+    if c.js("document.documentElement.lang") != "en":
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1)
+    c.js("document.getElementById('new-project-name').value = 'post-inspector'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    # An L, drawn as two runs meeting at a node the fence TURNS at: the corner
+    # post the suppress control has to refuse, plus a straight 6 m run with
+    # interior line posts for the three controls that apply.
+    c.click(*c.element_center("#tool-draw"))
+    c.click(*c.canvas_px(0, 0))
+    c.click(*c.canvas_px(6000, 0))
+    c.click(*c.canvas_px(6000, 4000))
+    c.key("Enter")
+    time.sleep(1.5)
+    c.click(*c.element_center("#tool-select"))
+    c.click(*c.element_center("#btn-generate"))
+    time.sleep(2.5)
+
+    before = last_run()
+    lines = [p for p in before["posts"]
+             if p["kind"] == "line" and not p["run_ref"].startswith("node:")
+             and not p["pinned"]]
+    corners = [p for p in before["posts"] if p["kind"] == "corner"]
+    check("the fixture has line posts to edit and a corner to refuse",
+          len(lines) >= 2 and len(corners) >= 1,
+          {"kinds": sorted({p["kind"] for p in before["posts"]}),
+           "n_posts": len(before["posts"])})
+    if len(lines) < 2 or not corners:
+        return
+    sku_post, mount_post, corner_post = lines[0], lines[1], corners[0]
+
+    # --- force_post_sku --------------------------------------------------------
+    opened = select_post(sku_post["id"])
+    panel = c.js("""
+({ sku: !!document.getElementById('post-force-sku'),
+   mounting: !!document.getElementById('post-force-mounting'),
+   vertical: !!document.getElementById('post-force-vertical'),
+   suppress: !!document.getElementById('post-suppress') })""")
+    check("selecting a post opens a panel with a control for each directive",
+          opened and all(panel.values()), panel)
+    forced_sku = c.js("""
+(() => {
+  const sel = document.getElementById('post-force-sku');
+  if (!sel) return null;
+  const cur = %s;
+  const others = [...sel.options].map(o => o.value).filter(v => v && v !== cur);
+  if (!others.length) return null;
+  const pick = others.includes('POST-S-HD') ? 'POST-S-HD' : others[0];
+  sel.value = pick;
+  sel.dispatchEvent(new Event('change'));
+  return pick;
+})()""" % json.dumps(sku_post["sku"]))
+    time.sleep(2)
+    stored = overrides()
+    pending = c.js("!!document.getElementById('post-pending')")
+    drawn = post_title(sku_post["id"])
+    check("forcing a product stores the directive and says so",
+          forced_sku is not None
+          and any(d["kind"] == "force_post_sku" and d["sku"] == forced_sku
+                  and abs(d["station_mm"] - sku_post["station_mm"]) <= 25
+                  for d in stored)
+          and pending,
+          {"forced": forced_sku, "stored": stored, "pending": pending})
+    # ...and nothing regenerated behind it: the plan still draws the post the
+    # last run resolved, which is the whole reason the pending line exists
+    check("the forced product does not regenerate the run behind the user",
+          forced_sku is not None and sku_post["id"] in drawn
+          and forced_sku not in drawn
+          and last_run()["n_runs"] == before["n_runs"],
+          {"drawn": drawn, "forced": forced_sku})
+
+    # --- force_mounting on a DIFFERENT post ------------------------------------
+    # Different because `_make_post` puts a forced sku ABOVE a masonry mount: on
+    # one post the sku check would mask the mounting check entirely.
+    footing_before = [l for l in before["lines"]
+                      if l["role"] == "concrete" and mount_post["id"] in l["pegs"]]
+    opened_mount = select_post(mount_post["id"])
+    if opened_mount:
+        c.js("""
+{ const sel = document.getElementById('post-force-mounting');
+  sel.value = 'masonry';
+  sel.dispatchEvent(new Event('change')); }
+'ok'""")
+        time.sleep(2)
+
+    # --- suppress_post: refused on a corner ------------------------------------
+    opened_corner = select_post(corner_post["id"])
+    refusal = c.js("""
+({ present: !!document.getElementById('post-suppress'),
+   disabled: !!document.getElementById('post-suppress')?.disabled,
+   why: document.getElementById('post-suppress-why')?.textContent || '' })""")
+    c.js("document.getElementById('post-suppress')?.click(); 'ok'")
+    time.sleep(1.2)
+    after_attempt = overrides()
+    check("a corner post refuses suppression at the control, with the reason",
+          opened_corner and refusal["present"] and refusal["disabled"]
+          and "corner" in refusal["why"].lower()
+          and not any(d["kind"] == "suppress_post" for d in after_attempt),
+          {"refusal": refusal, "stored": after_attempt})
+    c.shot("22-post-inspector.png")
+
+    # --- and now the consequences ----------------------------------------------
+    c.click(*c.element_center("#btn-generate"))
+    time.sleep(2.5)
+    after = last_run()
+    post_line = next((l for l in after["lines"]
+                      if l["role"] == "post" and sku_post["id"] in l["pegs"]), None)
+    check("the forced product is the product the BOM buys for that post",
+          post_line is not None and post_line["sku"] == forced_sku,
+          {"line": post_line, "forced": forced_sku})
+    footing_after = [l for l in after["lines"]
+                     if l["role"] == "concrete" and mount_post["id"] in l["pegs"]]
+    mounted = next((p for p in after["posts"] if p["id"] == mount_post["id"]), None)
+    check("forcing masonry changes that post's footing line",
+          opened_mount and len(footing_before) == 1 and not footing_after
+          and mounted is not None and mounted["mounting"] == "masonry",
+          {"opened": opened_mount, "before": footing_before,
+           "after": footing_after, "post": mounted})
+    # The refusal's real claim: nothing the panel wrote is an override the
+    # generator has to disown. A control that offered suppression on the corner
+    # would land here as an `orphaned_override` and nowhere else.
+    check("every directive the panel wrote is one the run applies",
+          not after["orphaned"], after["orphaned"])
+
+
 # Cases added by the choice-set and hand-placement work. Append your function
 # to this list; define the function itself directly above this comment.
-_CHOICE_CASES: list = []
+_CHOICE_CASES: list = [
+    _smoke_post_inspector,
+]
 
 
 def main() -> int:
