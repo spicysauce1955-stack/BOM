@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from fenceai.knowledge.parameters import default_point, paired_points
 from fenceai.knowledge.snapshot import (
     SnapshotRefused, canonical_snapshot_id, ingest, load, snapshot_id_matches,
 )
@@ -112,20 +113,78 @@ def test_a_published_gap_is_addressable(raw):
 
 
 def test_ingesting_it_produces_usable_knowledge_and_names_what_it_cannot(raw):
-    """What the whole chain is for. 16 rows become knowledge with a source
-    verdict each; the five `paired` tables are refused with a gap naming the work
-    that would let us use them, rather than approximated into a number."""
+    """What the whole chain is for. 31 rows become knowledge with a source
+    verdict each.
+
+    **This assertion changed on purpose, and it is the shape of the change that
+    matters.** It used to read `16` versions and `parameter_paired_unsupported`
+    in the codes: the five `footing_schedule` tables were refused whole, because
+    a row holding `(depth, span)` alternatives had nowhere to land in an engine
+    where the evaluator resolves ONE value per parameter. That refusal is gone
+    because the hole it named is filled — a paired row's alternatives are design
+    points now, the shortest span is the one we build, and the deeper-hole
+    option is offered beside it rather than discarded. The 15 new versions are
+    those five tables' three rows each.
+
+    What REPLACED the refusal is `uncovered_parameter_point`, and the count is
+    the interesting part: 12 before, 32 now. Refusing a table returned before
+    `_uncovered_gaps` ran, so the twenty condition points these schedules
+    themselves declare uncovered — exposure D under HVHZ, and the rest — were
+    invisible for as long as the table was refused. One gap that said *"we
+    cannot use this"* was standing in front of twenty that say *"nobody has
+    published this"*, which are a curator's work rather than ours.
+    """
     snapshot, defects = load(raw)
     out = ingest(snapshot, as_of="2026-08-31", gap_defects=defects)
 
     refs = {(v.object_id, v.version) for v in out.knowledge.versions}
-    assert len(out.knowledge.versions) == 16
-    assert len(refs) == 16, "no two published rows share an identity"
-    assert len(out.knowledge.admitted) == 16, "every row's source was judged"
+    assert len(out.knowledge.versions) == 31
+    assert len(refs) == 31, "no two published rows share an identity"
+    assert len(out.knowledge.admitted) == 31, "every row's source was judged"
 
-    codes = {g.because.code for g in out.gaps}
-    assert "parameter_paired_unsupported" in codes
+    codes = [g.because.code for g in out.gaps]
+    assert "parameter_paired_unsupported" not in codes
+    assert codes.count("uncovered_parameter_point") == 32
     assert out.warning_defects == []
+
+
+def test_the_paired_schedules_land_the_alternative_they_build(raw):
+    """The five tables the previous test used to count as refused, by value.
+
+    Every one of them defaults to the same three points — 24" at 66" centres in
+    exposure B, 30" at 68" in C, 30" at 56" in D — because that is the shortest
+    span each row states, and the shortest span is the fence with the most posts
+    in it. The deeper alternative (30"/97", 36"/88", 36"/75") is what a person
+    can be offered with what it saves, and this asserts it is not what an
+    unanswered run silently gets.
+
+    Named against the real document rather than a fixture because that is the
+    whole point of this file: the shape is amendment 006's, the numbers are the
+    publisher's, and nothing was done to either first.
+    """
+    snapshot, _ = load(raw)
+    schedules = [t for t in snapshot.parameters
+                 if t.value_type.startswith("paired(")]
+    assert len(schedules) == 5
+
+    for table in schedules:
+        by_exposure = {
+            row.conditions["exposure_category"]:
+                default_point(paired_points(table, row))
+            for row in table.rows
+        }
+        assert {k: p.bindings for k, p in by_exposure.items()} == {
+            "B": {"footing_depth_mm": 610, "max_span_mm": 1676},
+            "C": {"footing_depth_mm": 762, "max_span_mm": 1727},
+            "D": {"footing_depth_mm": 762, "max_span_mm": 1422},
+        }
+        # Obligation 5 all the way through: the inches a reader checks against
+        # the page survive beside our millimetres.
+        assert by_exposure["B"].lexemes == {"footing_depth_mm": '24"',
+                                            "max_span_mm": '66"'}
+        alternatives = [p.label for row in table.rows
+                        for p in paired_points(table, row) if not p.is_default]
+        assert alternatives == ['30" · 97"', '36" · 88"', '36" · 75"']
 
 
 # -- the parts snapshot (`b2f2fe45…`, obligation 5's first vertical slice) ------
@@ -158,7 +217,11 @@ def test_the_first_snapshot_carrying_parts_loads_and_verifies(parts_raw):
     every spec value is judged. In THIS cut both spec-bearing rails still hold
     `spec: []` — the values were withheld pending C15 — so there is nothing to
     admit, and `part_specs` being empty is the payload's state rather than a
-    consumer that does nothing."""
+    consumer that does nothing.
+
+    The version count moved from 16 to 31 for the reason it moved in the first
+    fixture: this cut carries the same nine parameter tables, and the five
+    `paired` schedules among them are consumed now rather than refused."""
     snapshot, gap_defects = load(parts_raw)
     assert snapshot_id_matches(parts_raw) is True
     assert gap_defects == []
@@ -167,7 +230,7 @@ def test_the_first_snapshot_carrying_parts_loads_and_verifies(parts_raw):
 
     out = ingest(snapshot, as_of="2026-09-03", gap_defects=gap_defects)
     assert out.unconsumed == {}
-    assert len(out.knowledge.versions) == 16
+    assert len(out.knowledge.versions) == 31
     assert len(snapshot.parts) == 11 and len(snapshot.part_types) == 5
     assert out.part_specs == [], "this cut published no spec values yet"
     assert out.part_defects == [], "every parent chain reaches the spine"

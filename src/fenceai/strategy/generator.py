@@ -3619,7 +3619,7 @@ def _choice_unavailable_gap(
     work item and *"bob's 2500 mm bays no longer fit"* is.
 
     Reported rather than resolved in silence — the same call
-    `knowledge/parameters.py`'s `_paired_unsupported_gap` makes about a table
+    `knowledge/parameters.py`'s `_unsupported_hit_policy_gap` makes about a table
     this engine cannot consume.
     """
     return Gap(

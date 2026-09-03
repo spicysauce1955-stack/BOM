@@ -729,34 +729,41 @@ def test_an_interval_unbounded_on_both_sides_constrains_nothing():
     assert _condition_for(table, table.rows[0]) is None
 
 
-# -- amendment 006: a paired value is refused, not approximated -----------------
+# -- amendment 006: a paired value lands its default point ---------------------
 
-def test_a_paired_table_is_refused_with_the_work_that_would_close_it():
-    """The publisher now sends these for real, and correctly — five
-    `footing_schedule` tables using the named-member form we asked for in the
-    disposition of 006.
+def test_a_paired_table_lands_the_point_it_builds_and_is_judged_like_any_row():
+    """This table used to be REFUSED, and the refusal was right for as long as
+    this engine had nowhere to put a second admissible answer. It has one now:
+    the alternatives are design points, the shortest span is the one we build,
+    and the deeper-hole option is offered beside it with what it saves.
 
-    What is missing is on this side, and refusing is the point rather than a
-    shortfall: a row holding `(depth, span)` alternatives is a set of admissible
-    DESIGN POINTS, and taking the first one would silently discard the cheaper
-    compliant option — 7 posts against 9 on a 40 ft run. That is the exact loss
-    006 was accepted in this shape to prevent, so re-introducing it in the loader
-    would waste the amendment.
+    Two properties are asserted here that a `paired_points` unit test cannot
+    reach. Both actions land on ONE version, so the evaluator can never resolve a
+    610 mm hole beside the 2235 mm span from the other alternative — a fence the
+    sealed approval does not cover. And the row is judged by §1.4 like every
+    other published row: `sealed_approval` at curation 2 for a structural
+    parameter is admitted, and nothing about being paired exempts it.
 
-    `closes_by: planning`, because the work is a cost objective here."""
+    The alternative is not discarded, which is what 006 was ratified to protect:
+    `paired_points` still returns both, and `tests/knowledge/test_paired_points.py`
+    holds that half."""
     table = ParameterTable(
         parameter="footing_schedule", task="structural_parameter",
         value_type="paired(footing_depth_mm:mm, max_span_mm:mm)",
         rows=[ParameterRow(
             conditions={"exposure_category": "C"},
+            provenance=Provenance(
+                cites=[SourceRef(id="doc-1", belongs_to="doc-1")],
+                source_class="sealed_approval", curation_level=2),
             value=[[Quantity(amount_milli=609600, unit="mm", value_raw=['24"']),
                     Quantity(amount_milli=1676400, unit="mm", value_raw=['66"'])],
                    [Quantity(amount_milli=914400, unit="mm", value_raw=['36"']),
                     Quantity(amount_milli=2235200, unit="mm", value_raw=['88"'])]])])
 
     versions, gaps, admitted = expand(table, policy=SHIPPED_DEFAULT)
-    assert not versions, "no number is better than the wrong one of two"
-    assert [g.because.code for g in gaps] == ["parameter_paired_unsupported"]
-    assert gaps[0].closes_by == "planning"
-    assert gaps[0].because.params["alternatives"] == 2
-    assert "cheaper compliant" in gaps[0].would_close
+    assert gaps == []
+    assert len(versions) == 1
+    assert {(a.param, a.value) for a in versions[0].actions} == {
+        ("footing_depth_mm", 610), ("max_span_mm", 1676)}
+    assert versions[0].title == 'footing_schedule = 24" · 66"'
+    assert set(admitted) == {versions[0].ref}, "a paired row is judged, not exempt"

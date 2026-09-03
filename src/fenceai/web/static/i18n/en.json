@@ -1045,7 +1045,6 @@
   "warning.parameter_condition_excluded": "{parameter} does not extend to {point} — the source explicitly excludes this range, it is not merely uncovered",
   "warning.parameter_hit_policy_unsupported": "The published {parameter} table resolves by {hit_policy}, which this engine cannot yet honour — the table was not applied",
   "warning.parameter_not_yet_in_force": "The {authority} row for {parameter} is not in force until {valid_from}, after this run's date {as_of}",
-  "warning.parameter_paired_unsupported": "The published {parameter} table offers {alternatives} design points per condition ({value_type}); this engine cannot yet choose between them, so the table was not applied",
   "warning.parameter_rows_overlap": "Rows {row} and {other_row} of {parameter} both cover {point}, but the table declares its conditions disjoint — no value was chosen",
   "warning.parameter_scope_unmappable": "A published {parameter} table is scoped to a {entity_kind}, which this engine cannot aim at — the table was not applied",
   "warning.parameter_task_unrecognised": "A published {parameter} table decides {task}, which this engine has no source policy for — its rows were used without their sources being judged",

@@ -38,6 +38,12 @@ from fenceai.knowledge.source_policy import (
     AdmittedBy, Candidate, SourceClass, SourcePolicyRow, TaskCode,
     explain_rejection, resolve,
 )
+# `strategy.choices` is a pure leaf over `core.units` and imports nothing from
+# here, so this is a one-way edge rather than a cycle. `DesignPoint` is not
+# duplicated for the knowledge layer's convenience: a paired row's alternatives
+# and a gap's alternative bay widths are the same concept measured on different
+# axes, and two types for it is how one of them silently stops carrying a lexeme.
+from fenceai.strategy.choices import DesignPoint
 
 # The two §1.4 vocabularies this engine's policy is written against. A published
 # table may name a value in either that we have not registered yet, and BOTH are
@@ -260,6 +266,108 @@ def to_mm(q: Quantity) -> int:
     if rem >= 500:
         whole += 1
     return -whole if q.amount_milli < 0 else whole
+
+
+def paired_columns(value_type: str) -> list[str]:
+    """The parameter each column of a `paired(...)` row binds, in DECLARED order.
+
+    `paired(footing_depth_mm:mm, max_span_mm:mm)` -> `["footing_depth_mm",
+    "max_span_mm"]`. Amendment 006's named-member form exists precisely so this
+    is never positional: a publisher who lists the span first is not wrong, and a
+    reader that assumed depth-then-span would silently sink a 1676 mm hole under
+    a 610 mm span and report it as a sealed engineering answer.
+
+    A member declared in a unit this engine does not store at rest is not
+    reinterpreted — `[]` comes back and the row lands as nonconforming, which is
+    the same call `_action_for` already makes about `quantity(in)`.
+    """
+    if not (value_type.startswith("paired(") and value_type.endswith(")")):
+        return []
+    names: list[str] = []
+    for member in value_type[7:-1].split(","):
+        name, sep, unit = member.partition(":")
+        if not sep or not name.strip() or unit.strip() != "mm":
+            return []
+        names.append(name.strip())
+    # "paired" with one column is not a pair. Refused rather than read as an
+    # ordinary quantity: a table declaring itself paired and holding one member
+    # is a table disagreeing with itself, and coercing it invents the agreement.
+    return names if len(names) > 1 else []
+
+
+def paired_points(table: ParameterTable, row: ParameterRow) -> list[DesignPoint]:
+    """One `DesignPoint` per alternative in a `paired` row (amendment 006).
+
+    A paired row is not one fact with several fields: it is several *jointly*
+    valid design points at the same conditions — 24" holes at 66" centres **or**
+    30" holes at 97" — and a builder picks. Splitting the pair into independent
+    per-parameter rules would let the evaluator resolve the shallow hole beside
+    the wide span, which is a fence the document never approved.
+
+    Order is the publisher's, because that is data; which one we BUILD is
+    `default_point`'s answer and is deliberately not the first.
+
+    `lexemes` carry `value_raw[0]` per binding — obligation 5: convert once at
+    the boundary and keep the source's own words for display, so the panel can
+    show `24" (610 mm)` and a reader can check it against the page.
+
+    A row that does not conform to its table's own declaration yields `[]`; the
+    caller raises `parameter_value_nonconforming`, the same as any other
+    disagreement between a row and its `value_type`.
+    """
+    columns = paired_columns(table.value_type)
+    if not columns or not isinstance(row.value, list):
+        return []
+    points: list[DesignPoint] = []
+    for pair in row.value:
+        if not isinstance(pair, list) or len(pair) != len(columns):
+            # Not "drop the extra": which members of a wider tuple were meant is
+            # a fact only the publisher holds, and guessing it is the failure
+            # 006 was ratified to prevent.
+            return []
+        try:
+            bindings = {name: to_mm(q) for name, q in zip(columns, pair)}
+        except ValueError:
+            return []
+        lexemes = {name: q.value_raw[0] for name, q in zip(columns, pair)
+                   if q.value_raw}
+        points.append(DesignPoint(
+            # Identity is the VALUES, not the position: a re-cut that reorders a
+            # row's alternatives must not turn a stored selection into a
+            # different fence, and `choice_unavailable` exists for a point that
+            # genuinely went away rather than for one that moved.
+            id=f"{table.parameter}:" + "x".join(str(bindings[c]) for c in columns),
+            label=" · ".join(lexemes.get(c) or str(bindings[c]) for c in columns),
+            bindings=bindings, lexemes=lexemes,
+        ))
+    built = default_point(points)
+    if built is not None:
+        built.is_default = True
+    return points
+
+
+def default_point(points: list[DesignPoint]) -> DesignPoint | None:
+    """Which alternative the engine builds when nobody has chosen: the SHORTEST
+    `max_span_mm`.
+
+    Most posts, stiffest fence, and the deeper-hole option one click away. The
+    engine does not spend the customer's money on its own initiative — the
+    cheaper point is offered with what it saves, and a person decides (spec §6,
+    *"never money"*).
+
+    `min` is stable, so two alternatives stating the same span resolve to the
+    first the publisher listed rather than to whichever the sort felt like.
+
+    A paired row that binds no span has no such rule, and inventing one from
+    another column would be this function guessing which parameter buys
+    tolerance: the first alternative as published is the honest fallback, and it
+    is the one case where publication order decides anything here.
+    """
+    if not points:
+        return None
+    if not all("max_span_mm" in p.bindings for p in points):
+        return points[0]
+    return min(points, key=lambda p: p.bindings["max_span_mm"])
 
 
 # A table's `scope` is an **EntityRef** — `{kind, id, tenant}`, naming which
@@ -531,11 +639,6 @@ def expand(
         # everywhere, and this closes by a schema change HERE, not by a curator.
         return [], [_unmappable_scope_gap(table, unmappable, tenant)], {}
 
-    if table.value_type.startswith("paired("):
-        # Once per table rather than once per row: a `paired` table is one thing
-        # this engine cannot consume, and one work item is what that is.
-        return [], [_paired_unsupported_gap(table, tenant)], {}
-
     if table.hit_policy not in SUPPORTED_HIT_POLICIES:
         # Same argument, one field over: expanding these rows would produce a
         # number, and the number would be wrong.
@@ -548,8 +651,8 @@ def expand(
         gaps.append(_task_unrecognised_gap(table, tenant))
 
     for index, row in enumerate(table.rows):
-        action = _action_for(table, row, tokens)
-        if action is None:
+        actions = _actions_for(table, row, tokens)
+        if not actions:
             gaps.append(_bad_value_gap(table, row, index, tenant))
             continue
         object_id = _object_id(table, index)
@@ -611,8 +714,8 @@ def expand(
             type="fact",
             scope=scope,
             condition=_condition_for(table, row),
-            actions=[action],
-            title=f"{table.parameter} = {_display(row.value)}",
+            actions=actions,
+            title=f"{table.parameter} = {_row_label(table, row)}",
             attributed_to="knowledge_platform",
         )
         versions.append(version)
@@ -627,35 +730,56 @@ def expand(
     return versions, gaps, admitted
 
 
-def _action_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | None):
-    """The action a row lands as, or None when the row does not conform.
+def _actions_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | None):
+    """The actions a row lands as, or `[]` when the row does not conform.
 
     `value_type` is declared once on the table, so a row that disagrees with it is
     the table contradicting itself — a gap, not something to coerce.
+
+    A list, not one action, because of `paired` (006): the alternative this
+    engine builds binds SEVERAL parameters at once, and they land on one version
+    so that the evaluator can never resolve half of a pair. Everything else
+    returns a single-element list and reads exactly as it did.
     """
     if table.value_type.startswith("paired("):
-        # A `paired` row is a CHOICE SET, not a fact: several design points, each
-        # independently valid at the same conditions, and a builder picks. This
-        # engine has no such category — rules fire and the evaluator resolves ONE
-        # value per parameter — so there is nothing here to land it as.
+        # A paired row states several design points, and the one that lands as
+        # knowledge is the DEFAULT — the shortest span (spec §6). The others are
+        # not discarded: they are the choice set a person is offered, measured
+        # against this baseline and resolved back through `resolve_param` as a
+        # synthesized version, so precedence and defeat edges keep working.
         #
-        # Refused rather than approximated, and that is the whole reason 006 was
-        # accepted in the shape it was: taking the first alternative, or the
-        # shallowest footing, would silently discard the cheaper compliant option
-        # (7 posts against 9 on a 40 ft run) and present the survivor as the
-        # answer. Choosing between them is a cost trade-off and belongs to
-        # whatever optimises cost, not to a loader.
-        return None
+        # This is why the pair may not be split into two independent rules. Both
+        # numbers are one statement of the source's — 24" holes are approved at
+        # 66" centres and at nothing wider — and two rules would let the
+        # evaluator pick the shallow hole from one and the wide span from the
+        # other, producing a fence the sealed approval does not cover.
+        built = default_point(paired_points(table, row))
+        if built is None:
+            return []
+        return [SetParam(param=name, value=value)
+                for name, value in built.bindings.items()]
     if tokens is not None:
         if not isinstance(row.value, Token) or row.value.key not in tokens:
-            return None
-        return SetToken(param=table.parameter, value=row.value.key)
+            return []
+        return [SetToken(param=table.parameter, value=row.value.key)]
     if not isinstance(row.value, Quantity) or table.quantity_unit() != "mm":
-        return None
+        return []
     try:
-        return SetParam(param=table.parameter, value=to_mm(row.value))
+        return [SetParam(param=table.parameter, value=to_mm(row.value))]
     except ValueError:
-        return None
+        return []
+
+
+def _row_label(table: ParameterTable, row: ParameterRow) -> str:
+    """A row's value as a title — for a `paired` row, the alternative we built.
+
+    A title naming the whole row would state two spans the run does not honour;
+    naming the point that landed is what makes `governed_by` legible.
+    """
+    if table.value_type.startswith("paired("):
+        built = default_point(paired_points(table, row))
+        return built.label if built is not None else ""
+    return _display(row.value)
 
 
 def _display(value) -> str:
@@ -779,40 +903,6 @@ def _date_label(d: Date | None) -> str:
     if d is None:
         return ""
     return d.raw() or (d.iso or "")
-
-
-def _paired_unsupported_gap(table: ParameterTable, tenant: str | None) -> Gap:
-    """A `paired` table (006), which this engine cannot yet consume.
-
-    The contract shape is ratified and the publisher is using it correctly — five
-    `footing_schedule` tables in the first snapshot that carries them. What is
-    missing is on this side, and it is not a parser: a row holding
-    `(depth, span)` alternatives is a set of admissible DESIGN POINTS, and
-    choosing between them is a cost trade-off — deeper holes against more posts —
-    which belongs to the BOM optimiser as an objective rather than to the
-    evaluator as a fact.
-
-    So: `closes_by: planning`, and the `would_close` names the actual work rather
-    than the symptom. Refusing the table is the same call `_scope_for` makes about
-    a scope we cannot aim: no number is better than a confident wrong one, and
-    picking an alternative here would discard the option the contract was amended
-    to preserve.
-    """
-    return Gap(
-        id=f"gap:paired_unsupported:{table.parameter}",
-        kind="unmodellable_entity",
-        subject=_param_subject(table, tenant),
-        because=Because(code="parameter_paired_unsupported",
-                         params={"parameter": table.parameter,
-                                 "value_type": table.value_type,
-                                 "alternatives": sum(
-                                     len(r.value) for r in table.rows
-                                     if isinstance(r.value, list))}),
-        would_close=(f"a cost objective in the Planning repo that chooses between "
-                     f"{table.parameter}'s design points, so a builder gets the "
-                     f"cheaper compliant one rather than whichever was listed first"),
-        closes_by="planning", severity="warns_line",
-    )
 
 
 def _unsupported_hit_policy_gap(table: ParameterTable, tenant: str | None) -> Gap:
