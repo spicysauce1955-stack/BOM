@@ -15,8 +15,8 @@ import { currentLocale, t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import { layoutWithPin, snapCandidates, violations } from "./post-drag.js";
 import {
-  addIntervalEvent, addPointEvent, generateStrategy, on, reloadProject,
-  saveTopology, setSelection, setTool, state,
+  addIntervalEvent, addPointEvent, generateStrategy, maxSpanFor, on,
+  reloadProject, saveTopology, setSelection, setTool, state,
 } from "./state.js";
 import { tagOf } from "./structure-data.js";
 import {
@@ -196,7 +196,7 @@ function setupCanvas() {
   }, { passive: false });
 
   svg.addEventListener("pointerdown", (ev) => {
-    const target = ev.target;
+    let target = ev.target;
     // Panning, in order of how likely a user is to find it:
     //   drag empty canvas (any tool)  ·  middle button  ·  Ctrl/Cmd + drag
     // "empty" means the pointer is on nothing editable — a drag that starts on a
@@ -218,11 +218,19 @@ function setupCanvas() {
       drag = { kind: "dot", runId: target.dataset.run, dotIndex: +target.dataset.dot,
         started: false, start: [ev.clientX, ev.clientY] };
       svg.setPointerCapture(ev.pointerId);
-    } else if (target.classList.contains("ghost")) {
+    } else if (target.classList.contains("ghost") && !postUnder(ev)) {
+      // `!postUnder(ev)`: `#g-handles` paints AFTER `#g-overlay`, so a midpoint
+      // ghost (r 5) sits ON TOP of any post drawn at that midpoint (r 6) and
+      // takes its pointerdown. On a run whose bays divide evenly — the common
+      // case — a post lands exactly there, so selecting the run made that post
+      // undraggable and the gesture inserted a vertex instead. Both affordances
+      // are wanted, so the ghost yields where a draggable post is under it
+      // rather than either layer being reordered away.
       drag = { kind: "ghost", runId: target.dataset.run, seg: +target.dataset.seg,
         started: false, start: [ev.clientX, ev.clientY] };
       svg.setPointerCapture(ev.pointerId);
-    } else if (target.dataset.post && runById(target.dataset.run)) {
+    } else if ((target = postUnder(ev) || target).dataset.post
+               && runById(target.dataset.run)) {
       // A THIRD kind on the one drag session, not a second session: the 4 px
       // threshold, the single pushSnapshot and the pointer capture below are the
       // gesture discipline (spec §9.2), and two sessions would be two copies of
@@ -505,25 +513,6 @@ function neighbourStations(runId, exceptStation) {
   for (const s of fixedStationsFor(runId, exceptStation)) out.add(s);
   out.delete(exceptStation);
   return [...out].sort((a, b) => a - b);
-}
-
-/** The resolved maximum span for a run, read off the DECISION GRAPH rather than
- *  inferred from what the last generation happened to build.
- *
- *  `resolve_max_span` (or `uncovered_param`, when no rule covered it) carries
- *  the value this run was laid out to. Two fence models can meet on one run and
- *  resolve differently, so the preview takes the smallest: a preview that warns
- *  early is a nuisance, one that promises a bay the generator refuses is a
- *  wrong price shown confidently. 0 means "no run yet" and disables the check. */
-function maxSpanFor(runId) {
-  let out = 0;
-  for (const node of state.result?.graph?.nodes || []) {
-    const p = node.payload || {};
-    if (p.param !== "max_span_mm" || p.run_id !== runId) continue;
-    if (!Number.isFinite(p.value)) continue;
-    out = out ? Math.min(out, p.value) : p.value;
-  }
-  return out;
 }
 
 /** The picture one pointermove needs. Rebuilt per move because the neighbours
@@ -1347,6 +1336,19 @@ function renderTopology() {
     el("rect", { x: p[0] - 4, y: p[1] - 4, width: 8, height: 8, fill: "#334155",
       "pointer-events": "none" }, g);
   }
+}
+
+/** The draggable post under the pointer, ignoring what is painted over it.
+ *
+ *  Only ever consulted for a gesture that already landed on a handles-layer
+ *  element, so it costs nothing on the ordinary path. It stops at the first
+ *  post it finds: `elementsFromPoint` is front-to-back, so that is the topmost
+ *  one, which is the one the user is looking at — a pending marker before the
+ *  generated post it displaces. */
+function postUnder(ev) {
+  for (const e of document.elementsFromPoint(ev.clientX, ev.clientY))
+    if (e.dataset?.post && runById(e.dataset.run)) return e;
+  return null;
 }
 
 // Dots of the selected run: squares (vertex handles) + midpoint ghosts (circles).

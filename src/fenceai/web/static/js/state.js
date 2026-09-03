@@ -115,3 +115,28 @@ export function addIntervalEvent(runId, payload, start, end) {
   });
   return true;
 }
+
+/** The resolved maximum span for a run, read off the DECISION GRAPH rather than
+ *  inferred from what the last generation happened to build.
+ *
+ *  `resolve_max_span` — or `uncovered_param`, where no rule covered it — carries
+ *  the value the run was actually laid out to. Two fence models can meet on one
+ *  run and resolve differently, so a preview takes the SMALLEST: warning early
+ *  is a nuisance, promising a bay the generator will refuse is a wrong price
+ *  shown confidently. `0` means "no run yet", which disables the check.
+ *
+ *  It lives here, on the bus, because both drag adapters need it and neither may
+ *  import the other. It was written twice — once in `editor.js`, and once in
+ *  `profile.js` as a `{}` seam that made `violations()` inert — which is exactly
+ *  the drift `post-drag.js` exists to prevent, one level up. The pure module
+ *  cannot hold it: it may not see `state`. */
+export function maxSpanFor(runId) {
+  let out = 0;
+  for (const node of state.result?.graph?.nodes || []) {
+    const p = node.payload || {};
+    if (p.param !== "max_span_mm" || p.run_id !== runId) continue;
+    if (!Number.isFinite(p.value)) continue;
+    out = out ? Math.min(out, p.value) : p.value;
+  }
+  return out;
+}

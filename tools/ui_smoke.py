@@ -565,19 +565,28 @@ def _smoke_side_drag(c) -> None:
     # one write through state.js, which is the whole reason two adapters can
     # move the same post without an edge between them.
     #
-    # When Task 2 lands (the plan canvas grows `data-post`/`data-pinned`), the
-    # stronger form of this case is
-    # `document.querySelectorAll('[data-post][data-pinned="1"]').length == 1`;
-    # today those attributes do not exist and asserting them would fail here for
-    # a reason that has nothing to do with this adapter.
+    # Task 2 landed, so the stronger form is now assertable: the PLAN CANVAS
+    # draws its own pending marker for an override the side view created. It is
+    # scoped to `#canvas` because `inspector.js` also writes `data-post`, and a
+    # global query would count the card as a second post.
+    #
+    # `pinned == 1` and not merely "a marker exists": the generated posts in the
+    # same canvas carry `data-pinned="0"` (this run predates the override and
+    # was never regenerated), so a marker drawn with the wrong flag — or a stale
+    # canvas still showing the pre-drag layout — reads as 0 or 2 here, never 1.
     other_view = c.js("""
 (() => {
   const cards = [...document.querySelectorAll('#override-list .card')];
-  return {n: cards.length, text: cards.map(c => c.textContent).join(' | ')};
+  const canvas = document.getElementById('canvas');
+  return {n: cards.length, text: cards.map(c => c.textContent).join(' | '),
+          pinned: canvas
+            ? canvas.querySelectorAll('[data-post][data-pinned="1"]').length : -1};
 })()""")
     check("another module shows the same drop, without either knowing the other",
           other_view["n"] == 1 and "pin_post" in other_view["text"]
           and "run2" in other_view["text"], other_view)
+    check("the plan canvas draws the post the SIDE view moved, marked pinned",
+          other_view["pinned"] == 1, other_view)
     c.shot("40-side-drag.png")
 
     # --- the same post, dragged again ------------------------------------

@@ -14,7 +14,8 @@ import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import {
-  addIntervalEvent, addPointEvent, on, reloadProject, saveTopology, setSelection, state,
+  addIntervalEvent, addPointEvent, maxSpanFor, on, reloadProject, saveTopology,
+  setSelection, state,
 } from "./state.js";
 import {
   currentUnit, enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu,
@@ -1230,8 +1231,18 @@ function moveTopDot(d, x, y) {
  *  limits for a run, return `{maxSpanMm, minSpanMm}` from it and the preview
  *  starts filtering ticks and flagging bays with no other change in this file.
  *  Same for `stock`/`piecesPerBay`, which turn on `snapCandidates`' yield tick. */
-function spanLimitsOf(_entry) {
-  return {};
+function spanLimitsOf(entry) {
+  // Was `{}` — a named seam, because `state.result` carries the strategy and
+  // not the `max_span_mm` that shaped it, and inferring a maximum from the
+  // widest bay on screen would let the preview refuse a legal tick or bless an
+  // illegal one. The plan canvas answered the same question by reading the
+  // DECISION GRAPH, which does carry it; `maxSpanFor` is that read, moved onto
+  // the bus so the two adapters cannot give different answers.
+  //
+  // `minSpanMm` stays 0 deliberately: the sliver PREFERENCE lives in knowledge
+  // and reaches no frontend surface, so `violations()` reports only the hard
+  // maximum — the one the plan and the quote actually carry.
+  return { maxSpanMm: maxSpanFor(entry.run.id), minSpanMm: 0 };
 }
 
 /** The stations this run's layout is PINNED to, minus the post being dragged.
