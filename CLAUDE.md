@@ -94,9 +94,11 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
 ## The boundary contract is FROZEN
 
 `docs/integration-contract/contract.md` is a byte-identical copy of the contract in
-`fence-rag/docs/integration/`. **Both are frozen at v1.1. Do not edit either.**
+`fence-rag/docs/integration/`. **Both are frozen at v1.3. Do not edit either.**
 (v1.0 was never ratified — amendment 001 was accepted before signature and cut as
-v1.1. The contract's own header is authoritative on this.)
+v1.1; 002–004 made v1.2, and 005–007 made v1.3. Do not trust this line over the
+file: the contract's own header is authoritative on its version, and it has been
+ahead of this sentence before.)
 
 - Verify before relying on it:
   `(cd docs/integration-contract && sha256sum -c contract.sha256)` — the paths inside

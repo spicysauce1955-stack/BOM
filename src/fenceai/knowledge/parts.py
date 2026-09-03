@@ -27,8 +27,11 @@ facts is the failure the knowledge design exists to avoid.
 resolvable citation reaches no bill of materials, because nothing in this engine
 can say which catalog product a published `Part` is. That gap is emitted rather
 than implied — `published_spec_unapplied`, the same call
-`parameter_paired_unsupported` makes: the publisher is correct, the missing
-mechanism is ours, and the `would_close` names the work.
+`parameter_hit_policy_unsupported` makes: the publisher is correct, the missing
+mechanism is ours, and the `would_close` names the work. (The analogy used to
+name `parameter_paired_unsupported`, which is retired: amendment 006 gave
+`paired` rows a shape and `parameters.py` now binds both columns. That is the
+outcome this code is waiting for, and a retired sibling makes a poor landmark.)
 
 **What is deliberately absent.** No spec value becomes a `KnowledgeVersion`. A
 parameter row is a rule about a fence and belongs in front of the evaluator; a
@@ -338,9 +341,11 @@ def _unapplied_gap(spec: PublishedSpec) -> Gap:
     claim to be a published `Part` — so an operator told "2 values admitted"
     would otherwise reasonably believe the plan had changed.
 
-    Same kind and `closes_by` as `parameter_paired_unsupported`, for the same
+    Same kind and `closes_by` as `parameter_hit_policy_unsupported`, for the same
     reason: the publisher is correct, the missing piece is ours, and refusing to
-    say so is how a hypothesis becomes a fact nobody checked.
+    say so is how a hypothesis becomes a fact nobody checked. (Was
+    `parameter_paired_unsupported`, retired once amendment 006 gave paired rows
+    a shape this engine binds.)
     """
     return Gap(
         id=f"gap:published_spec_unapplied:{spec.part_id}#{spec.key}",

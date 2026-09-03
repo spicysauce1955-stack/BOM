@@ -3,6 +3,108 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Session close — 2026-09-03, latest: choice sets are BUILT, both views drag
+
+**2461 tests · contract hashes OK at v1.3 · browser smoke SEE BELOW.**
+
+The design from the section below this one is implemented. Backend tasks 1–9 and
+every frontend task are in. **Task 10 is the only one not built, and it is
+blocked for a reason worth reading (below).**
+
+### What a person can now do that they could not this morning
+
+Generate a run whose bays divide two admissible ways, and a panel offers both —
+the fence on screen first, the alternative beside it with the measures that
+separate them. Drag any post to where they actually want it, **in the plan canvas
+or in the side view**, and the drop is an anchored override, not a regeneration.
+Lock a bay at a width they chose. Nothing auto-fires; the generate button is
+still the only thing that generates.
+
+### The rules this had to obey, and where each one lives
+
+- **A probe may not probe.** `generate(offer_alternatives=False)` bounds depth at
+  1, so `n` alternatives cost `1 + n` generations rather than `G(n) = 1 + n·G(n-1)`.
+- **A probe may only count what a `Strategy` holds** — posts, bays, pieces,
+  warnings. Not boards, not cuts: a cut plan is built in the supply layer against
+  one yard's stock (ADR-0011), and a board saving promised from here would be a
+  second, disagreeing answer. `_countable_axes` has no `boards` key and its
+  absence is asserted.
+- **A default and a decision are different facts.** `resolve_choice_set_default`
+  and `resolve_choice_set` are two templates in both languages, and the first
+  cannot name a chooser because there is nobody to name.
+- **A layout point's loser rides in the node payload, never on a `defeated`
+  edge.** `defeated=` mints an `input_fact` node per ref, so a width list there
+  would invent a knowledge fact. A `lock_bay` that departs from a resolved
+  maximum DOES take the edge — that loser is a real version.
+- **The hard-max guard got narrower, not absent.** An over-wide bay nobody locked
+  still raises `GenerationFailure`; the authorisation is scoped to the interval
+  the lock placed. `test_an_over_wide_bay_nobody_locked_still_fails_loudly`
+  simulates the accident (a `layout_segment` returning the whole segment as one
+  bay) and asserts it is still fatal *in a run that has a lock in it*.
+
+### The two defects the SECOND adapter found — both invisible to unit tests
+
+Writing the same gesture twice is what surfaced them, and neither would have
+appeared with one view.
+
+**Two answers to one question.** `editor.js` read the max span off the DECISION
+GRAPH; `profile.js` had `spanLimitsOf(_entry) { return {}; }` — a named seam that
+made `violations()` inert, so the side view would preview a bay the generator
+refuses. The read now lives on `state.js`, which both adapters already import.
+It cannot live in `post-drag.js`: that module may not see state, which is the
+point of it. **This is the drift the shared pure module prevents, one level up —
+extracting the math is not enough if the INPUTS to it are re-derived per view.**
+
+**`#g-handles` paints after `#g-overlay`.** A selected run's midpoint ghost sat
+on top of the post at that midpoint and took its pointerdown — and a run that
+divides evenly into its bays *always* puts a post there, so this was the ordinary
+case. Resolving it in the hit test only moved the dead affordance from one to the
+other; both wanted the same pixel. The ghost now renders 12 px **perpendicular**
+to its segment (perpendicular, because the overlay's flat `-8` y slides ALONG a
+vertical run rather than beside it). The smoke harness had already been working
+around this defect with a deselect-first ritual, documented as if it were
+inherent.
+
+### THE NEXT THING
+
+**Task 10 — footing depth must reach the bill of materials.** Everything else is
+built. Today `demand/derive.py` adds one flat unit of concrete per ground post
+and `footing_depth_mm` is read nowhere downstream, so a shallower schedule
+**cannot show a saving even though it is now selectable**. The choice is honest
+about this — it measures posts, bays and pieces and says nothing about concrete —
+but the offer is thinner than it looks until this lands.
+
+It is not a small task and it moves golden numbers: footing volume becomes a
+function of depth, the catalog needs a concrete line that can vary, and
+`tests/scenarios` S01–S14 will shift. Treat it as its own slice with its own
+review, not as a tail of this one.
+
+**Watch for:** I asserted "400 L against 334 L" in an early draft of the spec.
+That was π·r²·h done on paper and presented as though the engine had produced it.
+Corrected there; do not let it back in. The whole point of §7 is that nothing is
+measured outside a real generation.
+
+### Two follow-ups named but not taken
+
+- **`plan_cuts` raises on a piece longer than its stock.** Fine today because
+  nothing offers a bay that wide, but it is a `raise` in a path a future choice
+  could reach.
+- **`tests/tools/test_persona_stack.py` binds port 8800.** Two test runs at once
+  collide. Environmental, not a regression — but it makes concurrent agents look
+  like they broke something.
+
+### Housekeeping done this session
+
+`CLAUDE.md` now says v1.3 (it said v1.1, two amendments stale) and warns not to
+trust that line over the file's own header. `knowledge/parts.py` and its test
+cited `parameter_paired_unsupported` as an analogy; that code was retired when
+paired rows started binding, so they now cite `parameter_hit_policy_unsupported`
+and say what happened. `conversation.md` **T45** sent — unprompted, because T44
+had recorded the paired refusal as a standing fact about our side and it stopped
+being true.
+
+---
+
 ## Session close — 2026-09-03, latest: choice sets designed twice
 
 **2351 tests · contract hashes OK · v1.3 (not v1.1 — see below).**

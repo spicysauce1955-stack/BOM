@@ -196,7 +196,7 @@ function setupCanvas() {
   }, { passive: false });
 
   svg.addEventListener("pointerdown", (ev) => {
-    let target = ev.target;
+    const target = ev.target;
     // Panning, in order of how likely a user is to find it:
     //   drag empty canvas (any tool)  ·  middle button  ·  Ctrl/Cmd + drag
     // "empty" means the pointer is on nothing editable — a drag that starts on a
@@ -218,19 +218,11 @@ function setupCanvas() {
       drag = { kind: "dot", runId: target.dataset.run, dotIndex: +target.dataset.dot,
         started: false, start: [ev.clientX, ev.clientY] };
       svg.setPointerCapture(ev.pointerId);
-    } else if (target.classList.contains("ghost") && !postUnder(ev)) {
-      // `!postUnder(ev)`: `#g-handles` paints AFTER `#g-overlay`, so a midpoint
-      // ghost (r 5) sits ON TOP of any post drawn at that midpoint (r 6) and
-      // takes its pointerdown. On a run whose bays divide evenly — the common
-      // case — a post lands exactly there, so selecting the run made that post
-      // undraggable and the gesture inserted a vertex instead. Both affordances
-      // are wanted, so the ghost yields where a draggable post is under it
-      // rather than either layer being reordered away.
+    } else if (target.classList.contains("ghost")) {
       drag = { kind: "ghost", runId: target.dataset.run, seg: +target.dataset.seg,
         started: false, start: [ev.clientX, ev.clientY] };
       svg.setPointerCapture(ev.pointerId);
-    } else if ((target = postUnder(ev) || target).dataset.post
-               && runById(target.dataset.run)) {
+    } else if (target.dataset.post && runById(target.dataset.run)) {
       // A THIRD kind on the one drag session, not a second session: the 4 px
       // threshold, the single pushSnapshot and the pointer capture below are the
       // gesture discipline (spec §9.2), and two sessions would be two copies of
@@ -1338,18 +1330,7 @@ function renderTopology() {
   }
 }
 
-/** The draggable post under the pointer, ignoring what is painted over it.
- *
- *  Only ever consulted for a gesture that already landed on a handles-layer
- *  element, so it costs nothing on the ordinary path. It stops at the first
- *  post it finds: `elementsFromPoint` is front-to-back, so that is the topmost
- *  one, which is the one the user is looking at — a pending marker before the
- *  generated post it displaces. */
-function postUnder(ev) {
-  for (const e of document.elementsFromPoint(ev.clientX, ev.clientY))
-    if (e.dataset?.post && runById(e.dataset.run)) return e;
-  return null;
-}
+const GHOST_OFFSET_PX = 12;
 
 // Dots of the selected run: squares (vertex handles) + midpoint ghosts (circles).
 function renderHandles() {
@@ -1359,8 +1340,26 @@ function renderHandles() {
   if (!run) return;
   const pts = runPoints(run);
   for (let i = 0; i + 1 < pts.length; i++) {
-    const m = toPx([(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2]);
-    el("circle", { cx: m[0], cy: m[1], r: 5, class: "ghost",
+    const a = toPx(pts[i]), b = toPx(pts[i + 1]);
+    const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    // Offset PERPENDICULAR to the segment, not laid on it.
+    //
+    // A ghost drawn at the true midpoint collides with the generated post that
+    // lands there whenever a run divides evenly into its bays — which is the
+    // ordinary case, not a corner one. `#g-handles` paints after `#g-overlay`,
+    // so the ghost took the pointerdown and the post could not be dragged;
+    // resolving that in the hit test only moved the dead affordance from one to
+    // the other, because both wanted the same pixel. So the handle steps aside:
+    // 12 px clears r 6 + r 5 with room, and perpendicular works on a run of any
+    // direction, unlike the overlay's flat -8 y (which slides ALONG a vertical
+    // run rather than beside it).
+    //
+    // The vertex this inserts is still computed from `data-seg` and the drop
+    // point, so where the handle sits changes nothing about what it does.
+    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+    const len = Math.hypot(dx, dy) || 1;
+    const off = [(-dy / len) * GHOST_OFFSET_PX, (dx / len) * GHOST_OFFSET_PX];
+    el("circle", { cx: m[0] + off[0], cy: m[1] + off[1], r: 5, class: "ghost",
       "data-run": run.id, "data-seg": i }, g);
   }
   pts.forEach((p, i) => {

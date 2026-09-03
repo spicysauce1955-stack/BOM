@@ -227,7 +227,7 @@ def test_every_admitted_value_reports_that_nothing_can_apply_it_yet():
     engine can claim to be a published `Part` — and an operator reading "2
     values admitted" would otherwise believe the plan had changed.
 
-    Same call, same kind and same `closes_by` as `parameter_paired_unsupported`:
+    Same call, same kind and same `closes_by` as `parameter_hit_policy_unsupported`:
     the publisher is correct, the mechanism is missing here, and the
     `would_close` names the work rather than the symptom."""
     out = _consume(_rail(_length()))

@@ -274,10 +274,14 @@ def _smoke_post_inspector(c) -> None:
         the same gesture a person makes, through whatever handler owns it.
 
         The empty-canvas click first is not ceremony. `#g-handles` is painted
-        OVER `#g-overlay`, so while a section is selected its midpoint ghost and
-        its vertex handles sit exactly on top of the posts at those stations —
-        and a click there reaches the handle, not the post. Deselecting first is
-        what a person does anyway, and it makes the target unambiguous.
+        OVER `#g-overlay`, so while a section is selected its VERTEX HANDLES sit
+        exactly on top of the posts at those stations — and a click there
+        reaches the handle, not the post. (The midpoint ghost used to do this
+        too, on every run that divides evenly into its bays; it now renders 12 px
+        off its segment, so that half is no longer a hazard. A vertex handle
+        still is: it marks a corner, which is where a post also always stands,
+        and there the two really are the same place.) Deselecting first is what
+        a person does anyway, and it makes the target unambiguous.
 
         The wait is keyed on `data-post`, never on the panel merely existing: the
         previous post's panel is still on screen when the click misses, so
@@ -2654,7 +2658,20 @@ fetch('/api/knowledge').then(r => r.json())
         c.click(*c.element_center("#tool-select"))
         c.click(*c.canvas_px(1500, 0))       # select the run
         time.sleep(0.3)
-        c.drag(*c.canvas_px(3000, 0), *c.canvas_px(3000, 1000))  # ghost -> vertex
+        # Grab the ghost where it actually IS, rather than at the midpoint it
+        # marks: the handle is drawn 12 px off its segment so it cannot collide
+        # with the post that stands at that midpoint whenever a run divides
+        # evenly. A hardcoded midpoint here would drag empty canvas and pan.
+        ghost = c.js("""
+(() => {
+  const e = document.querySelector('#g-handles .ghost');
+  if (!e) return null;
+  const r = e.getBoundingClientRect();
+  return [r.x + r.width / 2, r.y + r.height / 2];
+})()""")
+        check("the selected section offers a midpoint ghost", ghost is not None)
+        if ghost:
+            c.drag(ghost[0], ghost[1], *c.canvas_px(3000, 1000))  # ghost -> vertex
         time.sleep(0.5)
         n_vertices = c.js("""
 fetch(`/api/projects/${document.getElementById('project-select').value}`)
