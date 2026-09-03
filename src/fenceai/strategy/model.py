@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, field_validator
 
 from fenceai.core.gaps import Gap
+from fenceai.strategy.choices import ChoiceSet
 from fenceai.core.units import Mm
 from fenceai.decisions.graph import DecisionGraph
 from fenceai.fencemodel.resolve import ResolvedPanel
@@ -326,3 +327,8 @@ class GenerationResult(BaseModel):
     # overrides that no longer matched the topology — reported, never mutated on the
     # caller's objects (generate() is pure, ADR-0004)
     orphaned_overrides: list[str] = []
+    # The questions this run carries: where two or more answers were admissible
+    # and nothing in the data preferred one. DERIVED, never stored — a question
+    # is about the current geometry and knowledge, and is rebuilt every
+    # generation. The person's ANSWER is what persists, on the project.
+    choice_sets: list[ChoiceSet] = []

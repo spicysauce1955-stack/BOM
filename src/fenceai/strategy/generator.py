@@ -22,6 +22,7 @@ from fenceai.catalog.model import CATALOG_SCHEMA_VERSION, Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.gaps import Because, Gap, GapSubject
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
+from fenceai.strategy.choices import ChoiceSet
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
@@ -47,10 +48,10 @@ from fenceai.knowledge.evaluator import (
 )
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
 from fenceai.parts.model import PartLibrary
-from fenceai.project.model import SiteConditions
+from fenceai.project.model import Selection, SiteConditions
 from fenceai.parts.resolve import resolve_model_parts
 from fenceai.strategy.continuity import BayFacts, SlotFacts, derive_member_runs
-from fenceai.strategy.layout import boundaries, layout_segment
+from fenceai.strategy.layout import LayoutResult, boundaries, layout_segment
 from fenceai.strategy.model import (
     Gate,
     MemberRun,
@@ -190,12 +191,17 @@ def generate(
     default_model: FenceModelChoice | None = None,
     parts: PartLibrary | None = None,
     site: SiteConditions | None = None,
+    choices: list[Selection] | None = None,
+    offer_alternatives: bool = True,
 ) -> GenerationResult:
     """`parts` is threaded in exactly as `models` is, and for the same reason:
     `generate()` is pure (ADR-0004), so it may not reach for a store. `None` means
     the caller has no library — the model documents are then used exactly as
     authored, which is what every call site predating parts meant."""
     overrides = overrides or []
+    # The caller's list is never mutated (ADR-0004: `generate()` is pure), and a
+    # probe deep-copies it to swap one answer in.
+    selections = list(choices or [])
     models = models or FenceModelLibrary()
     policy = {**DEFAULT_POLICY, **(policy or {})}
     # Bound ONCE, here, and threaded read-only from this point: `generate()` is
@@ -248,6 +254,7 @@ def generate(
             topology, run, knowledge, scope, site_facts, sink, catalog, overrides, policy,
             builder, strategy, applied, demand_skus, models_used,
             models, default_model, parts, parts_used, resolved_posts,
+            selections,
         )
 
     _check_post_lengths(topology, knowledge, scope, site_facts, sink, catalog, builder, strategy)
@@ -325,6 +332,21 @@ def generate(
     # (default_height_mm), and dropping the whole dict would make two genuinely
     # different fences hash the same — the opposite mistake, and the worse one.
     design_policy = {k: v for k, v in policy.items() if k != "objective_preset"}
+    # A choice changes the DESIGN — bay widths, a footing depth, where the stub
+    # sits — so it belongs in the digest by this function's own rule: "anything
+    # that changes what the run MEANS belongs in the digest". It is the mirror
+    # image of v3's removal of `objective_preset`, which came OUT because a
+    # design is what it is regardless of how it will be bought.
+    #
+    # Appended ONLY when non-empty, and that is what makes `RUN_DIGEST_VERSION`
+    # unnecessary: every existing run id stays stable, and the first recorded
+    # choice still mints a new one. Over-splitting is safe; under-splitting
+    # serves the wrong fence under a reused id, which is what a `RunMeta` field
+    # would have done — it would never have reached the hash at all.
+    choice_digest = sorted(
+        (c.choice_set, c.scope, tuple(c.widths), tuple(sorted(c.bindings.items())))
+        for c in selections
+    )
     run_meta.id = "run_" + hashlib.sha256(
         json.dumps(
             # project_id is BOUND AS A SCOPE DIMENSION (bind_scope, above), so a
@@ -344,7 +366,8 @@ def generate(
              # fences, and `save_run` is INSERT OR IGNORE — without this they
              # share an id and every later read of the second serves the first.
              site_facts,
-             PLANNING_BEHAVIOR_VERSION, RUN_DIGEST_VERSION],
+             PLANNING_BEHAVIOR_VERSION, RUN_DIGEST_VERSION,
+             *([choice_digest] if choice_digest else [])],
             sort_keys=True, default=str,
         ).encode()
     ).hexdigest()[:12]
@@ -1645,7 +1668,9 @@ def _generate_run(
     parts: PartLibrary | None,
     parts_used: list[PartUse],
     resolved_posts: dict | None = None,
+    selections: list[Selection] | None = None,
 ) -> None:
+    selections = selections or []
     length = run_length(topo, run)
     slope_permille = max_slope_permille(topo, run)
     run_fact = builder.add(
@@ -2317,6 +2342,40 @@ def _generate_run(
             prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
             exact_mm=sm.exact_span,
         )
+        # A person's answer for THIS GAP, if they gave one. The scope is the gap
+        # between fixed stations and not the section, because a corner, a gate, a
+        # terrain step — or one pinned post — makes a run several gaps, and an
+        # answer measured for one of them is not an answer for another.
+        # NOT `scope`: that name is already this function's bound scope dict.
+        gap_scope = f"gap:{run.id}:{seg_start}"
+        picked = next((c for c in selections
+                       if c.choice_set == "bay_layout"
+                       and c.scope == gap_scope), None)
+        if picked is not None:
+            default_widths = list(layout.widths)
+            if _widths_fit(picked.widths, seg_len, sm.max_span):
+                layout = LayoutResult(
+                    widths=list(picked.widths),
+                    rejected_alternative=layout.rejected_alternative,
+                    remainder_mm=layout.remainder_mm,
+                    exact_over_max=layout.exact_over_max,
+                )
+                builder.add(
+                    "choice", "resolve_choice_set",
+                    payload={"run_id": run.id, "choice_set": "bay_layout",
+                             "scope": gap_scope, "widths": list(picked.widths),
+                             "displaced": default_widths,
+                             "chosen_by": picked.author},
+                    inputs=[run_fact.id, sm.firing_node_id],
+                )
+            else:
+                # Never a silent fallback, and never a silent obedience: widths
+                # that no longer fit the gap or exceed the resolved maximum are
+                # refused, the default stands, and the plan says whose answer
+                # was lost. A stale answer must not build an over-maximum fence
+                # because somebody once chose it under a laxer rule.
+                strategy.gaps.append(
+                    _choice_unavailable_gap(run, gap_scope, picked, seg_len))
         governed = [r for r in (sm.max_span_ref, layout_pref_ref) if r]
         if layout.exact_over_max:
             _exact_over_max(builder, strategy, run, sm)
@@ -3303,6 +3362,63 @@ def _report_unfilled_posts(strategy: Strategy, builder: GraphBuilder) -> None:
         would_close="a default_component rule naming the ground-post product for role post_ground",
         closes_by="knowledge", severity="warns_line",
     ))
+
+
+def _widths_fit(widths: list[Mm], seg_len: Mm, max_span: Mm) -> bool:
+    """Is this width list still buildable in this gap?
+
+    Two checks, and deliberately not a third. The widths must fill the gap
+    exactly, and no bay may exceed the RESOLVED maximum span — which is what
+    stops a stale answer building an over-maximum fence because somebody chose it
+    under a laxer rule.
+
+    `min_span` is NOT checked, and that is the design being consistent with
+    itself: `layout_segment` only warns about a sliver, and a person may want a
+    400 mm bay against a wall. A selected sliver is built and reported through
+    the `sliver_span` warning the span loop already emits, rather than refused
+    here — refusing it would make an answered question stricter than an
+    unanswered one.
+
+    Admissibility rather than membership of a candidate set, for a reason worth
+    keeping: what a person chose is the WIDTHS. If they are still buildable they
+    are still the answer, even where a changed `max_span` means a different
+    generator would now propose them. It also avoids needing the candidate set
+    before a choice can be honoured, which would be circular — candidates are
+    measured from the baseline this choice helps produce.
+    """
+    if not widths or any(w <= 0 for w in widths):
+        return False
+    return sum(widths) == seg_len and max(widths) <= max_span
+
+
+def _choice_unavailable_gap(
+    run: Run, scope: str, picked: Selection, seg_len: Mm,
+) -> Gap:
+    """A recorded answer that no longer fits the gap it was given for.
+
+    `closes_by: planning` because nothing a curator publishes fixes it: either
+    the person answers again or this engine stops offering what they picked. The
+    widths and the author both travel, because *"an answer was lost"* is not a
+    work item and *"bob's 2500 mm bays no longer fit"* is.
+
+    Reported rather than resolved in silence — the same call
+    `knowledge/parameters.py`'s `_paired_unsupported_gap` makes about a table
+    this engine cannot consume.
+    """
+    return Gap(
+        id=f"gap:choice_unavailable:{scope}",
+        kind="missing_value",
+        subject=GapSubject(kind="entity", ref_kind="section", id=run.id),
+        because=Because(code="choice_unavailable",
+                         params={"choice_set": picked.choice_set,
+                                 "scope": scope,
+                                 "widths": list(picked.widths),
+                                 "gap_mm": seg_len,
+                                 "author": picked.author}),
+        would_close=(f"choose again for {picked.choice_set} on {scope}, or "
+                     f"restore the layout this project was built to"),
+        closes_by="planning", severity="warns_line",
+    )
 
 
 def _report_uncovered_max_span(

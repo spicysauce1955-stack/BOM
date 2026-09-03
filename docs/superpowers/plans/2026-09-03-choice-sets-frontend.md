@@ -254,6 +254,15 @@ place from the generator — 800 mm apart on the spec's own worked example.
 
 **Do this before Task 2**, not after: Task 2 is what starts posting rigid anchors.
 
+**Known, pre-existing, and deliberately not fixed here.** Python's `round()` is
+banker's rounding; JS `Math.round` is half-up. On a *proportional* anchor whose scaled
+offset lands exactly on `.5`, the two resolvers differ by 1 mm — inside
+`NUMERIC_TOLERANCE_MM`, present long before this work, and outside the one function this
+task touches. The agent that found it chose case values avoiding the tie rather than
+hiding it. Flagged because the frontend contract's wording is *"mirror … exactly"*: if
+that is to be literally true, the proportional arm needs its own change and its own
+reason.
+
 ---
 
 ### Task 2: Adapter A — dragging in the plan canvas

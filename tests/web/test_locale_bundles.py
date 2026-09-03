@@ -121,6 +121,11 @@ WARNING_CODES = [
     # and it is not a parser: choosing between design points is a cost
     # trade-off for the optimiser, not a fact for the evaluator.
     "parameter_paired_unsupported",
+    # A person's recorded answer that no longer fits the gap it was given for —
+    # a re-cut snapshot, an edited model, a redrawn fence. Never a silent
+    # fallback: the default stands AND the plan names the widths that were lost
+    # and who chose them.
+    "choice_unavailable",
     # Item 7's honest half. A published spec value can be judged, joined and
     # admitted and still reach no BOM line, because no product in this engine can
     # claim to be a published `Part`. Emitted per admitted value rather than once

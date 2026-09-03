@@ -489,6 +489,9 @@ def generate_route(project_id: str):
             # threaded in, never read from inside: `generate()` is pure (ADR-0004)
             parts=state.store.part_library(),
             site=project.site,
+            # A person's answers are an INPUT to generation, threaded like the
+            # site and the parts — never a patch on its output.
+            choices=project.choices,
         )
     except GenerationFailure as e:
         # code + params when the failure carries them, exactly as the read routes

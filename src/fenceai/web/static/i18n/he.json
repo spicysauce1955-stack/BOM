@@ -1012,6 +1012,7 @@
   "units.mm": "מ\"מ",
   "units.toggle_title": "החלפת יחידות תצוגה (מ\"מ / ס\"מ)",
   "warning.ambiguous_version_ref": "Two published rows resolve to the same identity {knowledge_ref}, so neither number can name the document behind it",
+  "warning.choice_unavailable": "הבחירה של {author} ברוחבי המפתחים אינה מתאימה עוד לקטע זה, ולכן נעשה שימוש בפריסה הרגילה.",
   "warning.clear_gap_exceeded": "מרווח של {value_mm} {u} בקטע {run_id} חורג מהמגבלה של {limit_mm} {u} ({n} מפתחים) — צמצמו את הריווח או הרחיבו את השלבים",
   "warning.contained_credit_surplus": "{contained} כולל {qty} חלקים יותר מכפי שה{slot} של הפאנל דורש ב-{n} מפתחים — החלקים העודפים מגיעים בערכה ואינם מכסים דבר, ולכן הופחת מההזמנה רק מה שנדרש",
   "warning.contained_credit_unmatched": "{contained} אמור לספק את ה{slot} של הפאנל, אך דגם {model_ref} אינו בונה {slot} ב-{n} מפתחים — החלקים האלה מגיעים בערכה ואינם מכסים דבר, ולכן לא הופחת דבר מההזמנה",

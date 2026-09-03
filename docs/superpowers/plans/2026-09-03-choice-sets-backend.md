@@ -23,9 +23,19 @@ easy to re-introduce.
 (`run.choice_sets`, the overrides endpoint) plus one duplicated arithmetic
 (`yield_threshold`), pinned from the frontend side.
 
-**Status:** Tasks 1 (`5e68733`), 2 (`38f9823`), 3 + 4 (`3e34f28`) and 5 (`8cc2c86`) are
-**DONE**. Tasks 6–10 open; **Task 6 (`generator.py`) carries all four shape changes and the
-whole gate risk.**
+**Status:** Tasks 1 (`5e68733`), 2 (`38f9823`), 3 + 4 (`3e34f28`), 5 (`8cc2c86`) and
+**Task 6 stages A + B** are **DONE**. Task 6 stage C (phase 2 — alternatives, probes,
+measures, the filter) is next, then Tasks 7–10.
+
+**A correction to Task 6 found while building it.** Honouring a selection does NOT require
+the candidate set: it requires validating the chosen WIDTHS against the gap — they fill it
+exactly, and no bay exceeds the resolved maximum. That removes a circular dependency the
+task as written would have hit (candidates are measured from the baseline a choice helps
+produce) and is the better rule besides: what a person chose is the widths, so if they are
+still buildable they are still the answer, even where a changed `max_span` means a
+different generator would now propose them. `min_span` is deliberately NOT validated — a
+selected sliver is built and reported through the existing `sliver_span`, because refusing
+it would make an answered question stricter than an unanswered one.
 
 Two accepted consequences recorded by the agent that built Tasks 3–4, neither a defect:
 `override_station` returns `station or None`, so a genuine pin at station 0 is

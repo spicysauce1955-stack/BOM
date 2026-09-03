@@ -1012,6 +1012,7 @@
   "units.mm": "mm",
   "units.toggle_title": "Switch display units (mm / cm)",
   "warning.ambiguous_version_ref": "Two published rows resolve to the same identity {knowledge_ref}, so neither number can name the document behind it",
+  "warning.choice_unavailable": "{author}'s choice of bay widths no longer fits this section, so the usual layout was used instead.",
   "warning.clear_gap_exceeded": "A gap of {value_mm} {u} in section {run_id} exceeds the {limit_mm} {u} limit ({n} bay(s)) — narrow the spacing or widen the members",
   "warning.contained_credit_surplus": "{contained} brings {qty} more than the {slot} of this panel needs in {n} bay(s) — the extra pieces arrive in the box and cover nothing, so only what was needed came off the order",
   "warning.contained_credit_unmatched": "{contained} is meant to supply the {slot} of this panel, but model {model_ref} does not build a {slot} in {n} bay(s) — those pieces arrive in the box and cover nothing, so nothing was taken off the order",

@@ -20,6 +20,13 @@ NodeKind = Literal[
     # annexe (build order item 8) can select on it — nothing in `report/` does
     # today, and the annexe does not exist yet.
     "gap",
+    # Two answers were admissible and nothing in the data preferred one, so a
+    # person chose — or the stated default stood. Its own kind rather than a
+    # `selection` (which is this engine picking a product) or an
+    # `override_applied` (which means the engine got something wrong): nothing
+    # was wrong here, and a node that said otherwise would misattribute a
+    # decision. specs/2026-09-03-design-choices-and-placement-design.md §3.
+    "choice",
 ]
 EdgeType = Literal["derived_from", "governed_by", "defeated", "input_from", "assumption_of"]
 
