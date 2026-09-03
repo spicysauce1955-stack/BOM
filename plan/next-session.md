@@ -17,12 +17,11 @@ State:    Items 1-11 done and pushed. Item 6's mechanism (SourcePolicy,
           provenance — NOT YET wired into expand()/generator.py; that
           integration (recording admitted_by on a run, rendering it in the
           decision graph, warning below min_curation) is the next concrete
-          step. Item 7 (Provenance on SpecField, the source_docs join) has
-          everything it needs (real source_docs, real resolving citations)
-          and has not been started. Full end-to-end real-snapshot ingestion
-          is separately blocked on a Knowledge-side defect (Gap.subject not
-          yet structured) — reported as conversation.md T14, does not block
-          6 or 7 since both build against ParameterTable directly.
+          step. Item 7 (Provenance on SpecField, the source_docs join) is
+          DONE — 2026-09-03, see its row below. Full end-to-end real-snapshot
+          ingestion was separately blocked on a Knowledge-side defect
+          (Gap.subject not yet structured) — reported as conversation.md T14,
+          fixed on their side by amendment 004 and now passing.
 ```
 
 ## 2026-08-30 — real curation-level-2 data landed; items 6 and 7 unblocked
@@ -234,7 +233,7 @@ not as settled.
 | **11** | `report/assembly.py` — bay and post scopes, `requires` edges as a partial order | 10 | yes |
 | ~~8~~ | ~~Warning model — `attaches_to`, the registry split, the **annexe**~~ | — | **done** 2026-08-26 — `core/warnings.py`, `report/annexe.py`, S19 |
 | **6** | Source policy — mechanism built (`knowledge/source_policy.py`), **not wired** into `expand()`/generator: `admitted_by` on a real run, decision-graph rendering, below-`min_curation` warning | nothing | yes |
-| **7** | `Provenance` on `SpecField`, the `source_docs` join | nothing | yes |
+| ~~7~~ | ~~`Provenance` on `SpecField`, the `source_docs` join~~ | — | **done** 2026-09-03 — `knowledge/parts.py`, `specs/2026-09-03-spec-field-provenance-design.md`. Built against `f4d40fb8…`, the first cut publishing real spec values. What it deliberately did NOT build: the link from a published `Part` to a catalog product — see that spec's §7 |
 
 **9, 10 and 11 are genuinely parallel** — different modules, different read models — which
 items 6-11 never were as a chain. They are the right shape for concurrent agents.

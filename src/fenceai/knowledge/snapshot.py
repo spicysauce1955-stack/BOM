@@ -16,7 +16,8 @@ any of it into a fact.
 **Only the parts this engine can act on are modelled.** `parameters` becomes
 knowledge through `parameters.expand`; `gaps` are carried through as the
 contract's own `Gap`; `warnings` are the contract's own `DocumentWarning`, placed
-by `report/annexe.py` (obligation 10 and §3.3.5). The rest — `parts`, `models`,
+by `report/annexe.py` (obligation 10 and §3.3.5); `parts` and `part_types` are
+judged and joined by `knowledge/parts.py` (item 7). The rest — `models`,
 `procedures`, `combinations`, `rules` — are accepted, counted and NOT parsed into
 private types. A field parsed into a shape we invented is a shape nobody agreed to, and
 this repo has already made that mistake once, under the contract's own type name.
@@ -40,6 +41,10 @@ from fenceai.core.gaps import Because, Gap, GapSubject
 from fenceai.core.warnings import DocumentWarning, warning_errors
 from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion
 from fenceai.knowledge.parameters import ParameterTable, expand
+from fenceai.knowledge.parts import (
+    Part, PartType, PublishedSpec, consume,
+)
+from fenceai.knowledge.source_docs import SourceDoc
 from fenceai.knowledge.source_policy import (
     SHIPPED_DEFAULT, AdmittedBy, SourcePolicyRow,
 )
@@ -75,9 +80,16 @@ MINIMUM_CONTRACT_MINOR = 2
 # every field a §1.4 candidate needs — and the resolution target of §1.2.1's
 # closure rule. Reporting 75 of them as "unconsumed" told the other team we had
 # no use for the join their whole provenance model hangs off.
-CONSUMED = ("parameters", "gaps", "warnings", "source_docs")
-CARRIED = ("part_types", "parts", "models", "procedures",
-           "combinations", "rules")
+# `part_types` and `parts` left CARRIED when item 7 gave them somewhere to go,
+# which is the only honest way for an entry to leave that list. A spec field's
+# value is judged against §1.4 and joined to the documents behind it, and
+# `part_types` is what `Part.type` resolves against — so a part filed under an
+# extension nobody published is now a reported defect rather than an unread
+# field. What this engine still cannot do with an admitted value is said out
+# loud, per value, as `published_spec_unapplied`.
+CONSUMED = ("parameters", "gaps", "warnings", "source_docs",
+            "part_types", "parts")
+CARRIED = ("models", "procedures", "combinations", "rules")
 
 
 # §1.2's "sha256 over the canonical member list", with the canonicalisation the
@@ -145,30 +157,6 @@ class SnapshotRefused(ValueError):
         self.code = code
 
 
-class SourceDoc(BaseModel):
-    """§1.1 — the provenance definition every `SourceRef.belongs_to` joins to.
-
-    Typed at last, and the two date fields are why it had to be: §1.4's tie-break
-    reads `issue_date`, and until this existed there was no path from a published
-    document to the policy that ranks it. `version_status` and `superseded_by`
-    matter for the same reason — the first real snapshot contains an approval and
-    the approval that supersedes it, both backing structural rows, and a run that
-    cannot see the relation cannot tell them apart.
-
-    Unknown fields are tolerated rather than refused: the real payload carries
-    `also_filed_as`, which is theirs to add and not ours to have an opinion about
-    (§2 — a registry addition is never a breaking change).
-    """
-
-    content_hash: str
-    source_class: str = ""
-    version_status: Literal["active", "superseded", "unknown"] = "unknown"
-    version_status_basis: str = ""
-    issue_date: Date | None = None
-    expiration_date: Date | None = None
-    superseded_by: list[str] = []
-
-
 class Snapshot(BaseModel):
     """§1.2, field for field."""
 
@@ -201,8 +189,15 @@ class Snapshot(BaseModel):
     # and the only place a candidate's `issue_date` and `version_status` live.
     source_docs: list[SourceDoc] = []
 
-    part_types: list[Any] = []
-    parts: list[Any] = []
+    # §2.1/§3.1, typed since item 7. `Part.spec` is the second place a number
+    # read off a page crosses this boundary, and §2.4 says it has the identical
+    # admissibility problem a `ParameterTable` row has — so it is judged by the
+    # same policy, through the same `resolve()`, and joined to the same
+    # `source_docs`. `part_types` is `Part.type`'s resolution target: without it
+    # the parent chain §2.1 makes BINDING cannot be walked.
+    part_types: list[PartType] = []
+    parts: list[Part] = []
+
     models: list[Any] = []
     procedures: list[Any] = []
     combinations: list[Any] = []
@@ -235,6 +230,16 @@ class Snapshot(BaseModel):
         for table in self.parameters:
             for row in table.rows:
                 cited |= {c.belongs_to for c in row.provenance.cites if c.belongs_to}
+        # Parts, both levels. While `parts` arrived as `Any` this check could not
+        # see into them, so a published part could cite a document the payload
+        # never carried and every closure test still passed. `Part.cites` is the
+        # definition's own evidence and a `SpecField`'s is the individual value's;
+        # both join to the same `source_docs`, so both are inside the rule.
+        for part in self.parts:
+            cited |= {c.belongs_to for c in part.cites if c.belongs_to}
+            for field in part.spec:
+                cited |= {c.belongs_to for c in field.provenance.cites
+                          if c.belongs_to}
         return sorted(cited - known)
 
     def unconsumed(self) -> dict[str, int]:
@@ -296,6 +301,20 @@ class Ingested(BaseModel):
     # hole ourselves" are one work item, not two.
     deduped: int = 0
     discovered: int = 0
+    # Published spec values, judged and joined (item 7). NOT merged into
+    # `knowledge` and the reason is the same one that keeps warnings out of it: a
+    # parameter row is a rule about a fence and belongs in front of the
+    # evaluator, while a spec field is a fact about an ITEM. Giving it a
+    # `KnowledgeVersion` would put two kinds of thing on one precedence ladder
+    # where nothing selects between them.
+    part_specs: list[PublishedSpec] = []
+    # Parts whose shapes contradict their own schema, and parts this engine
+    # cannot file. Authoring text, same audience and same convention as
+    # `warning_defects` and `gap_defects`: an edit at the sender, not a curator's
+    # queue.
+    part_defects: list[str] = []
+    # Published parts not consumed because their `status` is not `active`.
+    inactive_parts: list[str] = []
     unconsumed: dict[str, int] = {}
     snapshot_id: str = ""
     regime: Regime = "us_astm"
@@ -407,6 +426,11 @@ def ingest(
     issue_dates = {d.content_hash: d.issue_date
                    for d in snapshot.source_docs
                    if d.content_hash and d.issue_date is not None}
+    # The same join, kept WHOLE for parts rather than shredded to one field:
+    # `parts.consume` resolves a spec field's citations to the documents
+    # themselves, because the question it answers for a reviewer is *"which
+    # documents is this value leaning on"* and a date alone cannot answer it.
+    docs = {d.content_hash: d for d in snapshot.source_docs if d.content_hash}
     for table in snapshot.parameters:
         expanded, gaps, table_admitted = expand(
             table, as_of=as_of, tenant=snapshot.tenant,
@@ -443,6 +467,15 @@ def ingest(
     # What this run declined to trust, gathered from the refusals themselves so
     # there is no second channel and no chance of the two disagreeing.
     declined: dict[str, list[int]] = {}
+    # Item 7. The parts path is deliberately NOT a second selection mechanism:
+    # it judges each published spec value's own citations and stops there, the
+    # way `_judge` scopes strictly into a parameter row. Its gaps join
+    # `discovered` so they get the same dedup against what the publisher already
+    # declared, and so "our findings about their data" stays one list.
+    parts = consume(snapshot.parts, snapshot.part_types,
+                    docs=docs, policy=policy)
+    discovered.extend(parts.gaps)
+
     for gap in discovered:
         value = gap.because.params.get("declined_mm")
         name = gap.because.params.get("parameter")
@@ -481,6 +514,9 @@ def ingest(
         gap_defects=list(gap_defects or []),
         deduped=len(discovered) - len(kept),
         discovered=len(kept),
+        part_specs=parts.specs,
+        part_defects=parts.defects,
+        inactive_parts=parts.inactive,
         unconsumed=snapshot.unconsumed(),
         snapshot_id=snapshot.snapshot_id,
         regime=snapshot.regime,

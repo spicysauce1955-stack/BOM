@@ -97,3 +97,77 @@ def test_a_run_pins_the_publishers_snapshot_id(raw):
         # our own digest is still there and still answers its own question
         assert run["snapshot_hash"]
         assert run["snapshot_hash"] != run["snapshot_id"]
+
+
+# -- published parts, over HTTP (item 7) ---------------------------------------
+
+_A_RAIL = {
+    "id": "shared/not-a-real-rail",
+    "status": "active",
+    "type": {"key": "rail", "namespace": "shared"},
+    "name_i18n": {"en": "Not a real rail"},
+    "spec": [{
+        "key": "nominal_length_mm", "agree": "==",
+        "value": {"amount_milli": 4876800, "unit": "mm",
+                  "value_raw": ["16 foot lengths"]},
+        "provenance": {
+            "cites": [{"id": "ref-1", "belongs_to": "FIXTURE-doc-1"}],
+            "source_class": "manufacturer_installation_instruction",
+            "curation_level": 0, "version_status": "unknown",
+        },
+    }],
+}
+
+
+def _with_a_part(raw: dict) -> dict:
+    payload = json.loads(json.dumps(raw))
+    payload["parts"] = [_A_RAIL]
+    payload["source_docs"] = payload["source_docs"] + [{
+        "content_hash": "FIXTURE-doc-1",
+        "source_class": "manufacturer_installation_instruction",
+        "version_status": "unknown",
+    }]
+    return payload
+
+
+def test_the_snapshot_summary_counts_the_spec_values_it_judged(raw):
+    """`unconsumed` used to be the only thing this route said about parts, and
+    it said the honest thing at the time: nothing consumed them. Now that they
+    are judged, the count of judged values is what an operator needs — with the
+    reminder that a judged value is not a value in a plan."""
+    with TestClient(app) as client:
+        got = client.post("/api/knowledge/snapshot", json=_with_a_part(raw))
+        assert got.status_code == 200, got.text
+        assert got.json()["part_specs"] == 1
+
+        active = client.get("/api/knowledge/snapshot").json()
+        assert active["part_specs"] == 1
+        assert active["unconsumed"] == {}
+
+
+def test_a_judged_spec_value_is_inspectable_with_the_documents_behind_it(raw):
+    """The reviewer's question §1.2.1 calls out — *"which documents is this
+    definition built from"* — answered per VALUE rather than per definition,
+    because that is the level admissibility is decided at.
+
+    Its own route rather than a field on the summary: the summary is counts a
+    person scans, and a snapshot may carry thousands of parts."""
+    with TestClient(app) as client:
+        client.post("/api/knowledge/snapshot", json=_with_a_part(raw))
+
+        body = client.get("/api/knowledge/parts").json()
+        assert body["loaded"] is True
+        spec = body["specs"][0]
+        assert spec["part_id"] == "shared/not-a-real-rail"
+        assert spec["key"] == "nominal_length_mm"
+        assert spec["task"] == "component_dimension"
+        assert spec["admitted_by"]["rank"] == 3
+        assert [d["content_hash"] for d in spec["sources"]] == ["FIXTURE-doc-1"]
+        assert body["defects"] == []
+
+
+def test_the_parts_route_reports_no_snapshot_as_a_state(raw):
+    with TestClient(app) as client:
+        body = client.get("/api/knowledge/parts").json()
+        assert body["loaded"] is False
+        assert body["specs"] == []

@@ -904,8 +904,42 @@ def active_snapshot():
         "declined": {k: len(v) for k, v in ingested.knowledge.declined.items()},
         "gaps": len(ingested.gaps),
         "warnings": len(ingested.warnings),
+        # Published spec values this run judged (item 7). A COUNT here and the
+        # values themselves at `/api/knowledge/parts`: this response is the
+        # numbers a person scans, and a snapshot may carry thousands of parts.
+        "part_specs": len(ingested.part_specs),
+        "part_defects": len(ingested.part_defects),
         "unconsumed": ingested.unconsumed,
         "history": state.store.snapshot_ids(),
+    }
+
+
+@app.get("/api/knowledge/parts")
+def published_parts():
+    """Every published spec value, with the documents behind it.
+
+    The reviewer's question §1.2.1 names — *"which documents is this definition
+    built from"* — answered per VALUE rather than per definition, because
+    admissibility is decided per value (§2.4: a rail length is `derived`,
+    marketing-grade OCR or PE-sealed depending which of eleven documents it came
+    from).
+
+    Nothing renders this yet. It exists anyway, for the reason the frontend
+    design gives for its own step 1: building the surface is what tells us
+    whether the data is what a reviewer needs. `defects` is authoring text for
+    whoever holds the payload, so it is returned as-is and rendered escaped and
+    LTR — never through the warning registry.
+    """
+    snapshot = state.store.active_snapshot()
+    if snapshot is None:
+        return {"loaded": False, "specs": [], "defects": [], "inactive": []}
+    ingested = ingest(snapshot)
+    return {
+        "loaded": True,
+        "snapshot_id": snapshot.snapshot_id,
+        "specs": ingested.part_specs,
+        "defects": ingested.part_defects,
+        "inactive": ingested.inactive_parts,
     }
 
 
@@ -954,6 +988,11 @@ def load_snapshot(body: dict):
         # the sender needs, and silence about it is the one thing that hides drift.
         "gap_defects": len(ingested.gap_defects),
         "warning_defects": len(ingested.warning_defects),
+        # Judged spec values, and the parts whose own shapes contradict their
+        # schema — the same split every other pair here has: what we could use,
+        # and what needs an edit at the sender.
+        "part_specs": len(ingested.part_specs),
+        "part_defects": len(ingested.part_defects),
         "unconsumed": ingested.unconsumed,
     }
 

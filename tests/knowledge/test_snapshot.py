@@ -685,3 +685,119 @@ def test_a_declined_value_travels_with_its_refusal(snapshot):
     assert any("declined_raw" in g.because.params for g in refused)
     # and they are gathered for the generator, keyed by parameter
     assert out.knowledge.declined["max_span_mm"]
+
+
+# -- parts arrive (item 7): the join, the closure rule, and the honest report ---
+#
+# The fixture carries none — it was written before any `Part` had ever been
+# published — so these build the smallest payload that exercises the path. Real
+# published parts are pinned in `test_real_snapshot.py`, which is where a shape
+# question gets its actual answer; these are about the DOOR behaving.
+
+_PART_PAYLOAD = {
+    "snapshot_id": "FIXTURE-parts-not-a-real-snapshot",
+    "tenant": "not-a-real-tenant",
+    "contract_version": "1.3.0",
+    "source_docs": [{
+        "content_hash": "d0" * 32,
+        "source_class": "manufacturer_installation_instruction",
+        "version_status": "unknown",
+    }],
+    "part_types": [{
+        "key": "picket", "namespace": "mfr/not-a-real-manufacturer",
+        "parent": {"key": "infill", "namespace": "shared"},
+        "label_i18n": {"en": "picket"},
+    }],
+    "parts": [{
+        "id": "shared/not-a-real-rail",
+        "version": 1, "status": "active",
+        "type": {"key": "rail", "namespace": "shared"},
+        "name_i18n": {"en": "Not a real rail"},
+        "authorship": "third_party_authored",
+        "cites": [{"id": "ref-1", "belongs_to": "d0" * 32}],
+        "contributing_sources": ["d0" * 32],
+        "spec": [{
+            "key": "nominal_length_mm", "agree": "==",
+            "value": {"amount_milli": 4876800, "unit": "mm",
+                      "value_raw": ["16 foot lengths"]},
+            "provenance": {
+                "cites": [{"id": "ref-1", "belongs_to": "d0" * 32}],
+                "source_class": "manufacturer_installation_instruction",
+                "curation_level": 0, "version_status": "unknown",
+            },
+        }],
+    }],
+}
+
+
+def test_a_parts_spec_citation_is_inside_the_closure_rule():
+    """§1.2.1 is BINDING for every `SourceRef` cited ANYWHERE in a snapshot, and
+    while `parts` arrived as `Any` the check could not see into them — so a
+    published part could cite a document the payload never carried and every
+    closure test still passed. The hole was invisible for the honest reason:
+    nobody had published a part."""
+    payload = json.loads(json.dumps(_PART_PAYLOAD))
+    payload["parts"][0]["spec"][0]["provenance"]["cites"] = [
+        {"id": "ref-x", "belongs_to": "ee" * 32}]
+    snapshot = Snapshot.model_validate(payload)
+
+    assert snapshot.dangling_refs() == ["ee" * 32]
+
+
+def test_a_parts_own_roll_up_citation_is_checked_too():
+    """`Part.cites` is the definition's own evidence, distinct from any one
+    field's. Both join to the same `source_docs`, so both are inside the rule."""
+    payload = json.loads(json.dumps(_PART_PAYLOAD))
+    payload["parts"][0]["cites"] = [{"id": "ref-y", "belongs_to": "ff" * 32}]
+    snapshot = Snapshot.model_validate(payload)
+
+    assert snapshot.dangling_refs() == ["ff" * 32]
+
+
+def test_parts_leave_the_unconsumed_list_because_they_are_judged_now():
+    """An entry may only leave `unconsumed` when it has somewhere to go — the
+    standard `warnings` met when the annexe gave them a home, and `source_docs`
+    met when it became the join target.
+
+    `part_types` leaves for the same reason and it is not a technicality: it is
+    what `Part.type` resolves against, so a part filed under an extension
+    nobody published is now a reportable defect rather than an unread field."""
+    snapshot = Snapshot.model_validate(_PART_PAYLOAD)
+    out = ingest(snapshot)
+
+    assert out.unconsumed == {}
+    assert [s.key for s in out.part_specs] == ["nominal_length_mm"]
+    assert out.part_specs[0].admitted_by.rank == 3
+    # the join, end to end: the document behind the value came with the payload
+    assert [d.content_hash for d in out.part_specs[0].sources] == ["d0" * 32]
+
+
+def test_a_part_this_engine_cannot_file_is_authoring_text_not_a_gap():
+    """A payload contradicting its own schema closes by an edit at the sender,
+    which is `warning_defects`' and `gap_defects`' audience — not a curator's
+    queue and not a `Gap`."""
+    payload = json.loads(json.dumps(_PART_PAYLOAD))
+    payload["parts"][0]["type"] = {"key": "gate_kit",
+                                   "namespace": "mfr/not-a-real-manufacturer"}
+    snapshot = Snapshot.model_validate(payload)
+    out = ingest(snapshot)
+
+    assert any("gate_kit" in d for d in out.part_defects), out.part_defects
+    # The filing failure raised no gap of its own. The one gap here is about the
+    # VALUE, which is judged either way: the admissibility of a number and the
+    # filing of the part it describes are two separate questions.
+    assert [g.because.code for g in out.gaps] == ["published_spec_unapplied"]
+
+
+def test_an_admitted_spec_value_says_that_nothing_here_can_apply_it():
+    """The half of item 7 that keeps it honest. Nothing in this repo can say
+    which catalog product a published `Part` is, so an operator reading "1 value
+    admitted" would otherwise believe the plan had changed."""
+    snapshot = Snapshot.model_validate(_PART_PAYLOAD)
+    out = ingest(snapshot)
+
+    unapplied = [g for g in out.gaps
+                 if g.because.code == "published_spec_unapplied"]
+    assert len(unapplied) == 1
+    assert unapplied[0].closes_by == "planning"
+    assert unapplied[0].because.params["part"] == "shared/not-a-real-rail"

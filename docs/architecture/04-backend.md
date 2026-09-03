@@ -43,7 +43,7 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ## The API surface
 
-56 routes. Grouped by what they are for rather than by path:
+57 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
@@ -53,6 +53,7 @@ domain testable without a database and what keeps `generate()` reproducible.
 | Read models | `GET /runs/{id}/structure`, `GET /runs/{id}/bom` | 409 on stale topology or catalog. `/bom` also carries `grouped` — the same demand by section, panel and decision, and it does NOT 409 on topology. Both are read models that WRITE: `/bom` returns the `supply` run it stored and `/structure` stamps its `supply_id`, through one construction so the sheet and the BOM can never name different yards. Idempotent by digest (ADR-0011). Both also carry `quoted_warnings` — every warning the fence models QUOTE from their documents, each placed where §3.3.5 says it renders (`report/annexe.py`): the setting-out sheet draws the annexe, `/bom` draws the product notices on the line group, and each carries the buckets it does not draw so nothing is lost at the edge of a surface |
 | Money | `POST /runs/{id}/quote`, `GET/POST /quotes/{id}[/accept]`, `GET /projects/{id}/quotes` | Immutable snapshots with a lifecycle |
 | Knowledge | `GET/POST /knowledge`, `POST /knowledge/{id}/{v}/retire`, `POST /knowledge/preview-impact` | Versioned; never edited in place |
+| Published knowledge | `GET/POST /knowledge/snapshot`, `GET /knowledge/parts` | The boundary door (contract §1.2). Loading is explicit and never automatic — a knowledge base that swapped itself under a project would change numbers with no action anyone took. The POST's interesting path is the REFUSAL: an unknown contract major, a payload predating §1.1's typed `Date`, or a document whose members do not hash to the id it declares, each a typed 400 with one sentence. `/knowledge/parts` is item 7's surface: every published `SpecField` value with its §1.4 verdict and the `SourceDoc`s its citations resolve to — per value, not per part, because admissibility is decided per value |
 | Learning | `GET/POST /projects/{id}/corrections`, `POST /projects/{id}/propose-knowledge`, `GET /candidates`, `POST /candidates/{id}/{v}/review` | Candidates are inert. The GET is filterable by `decision_ref`/`element_ref`/`generation_run_id` |
 | Parts | `GET /parts`, `GET /part-types` | The shared library a model's slot names; read-only, versioned like knowledge |
 | Vocabularies | `GET /vocabularies` | The length rules, fixing bases and objective presets the schema accepts, so the editor offers exactly them rather than keeping a copy. Names only — the words live in the locale bundles the browser already loads. The seam for the handler registries of `specs/2026-08-25-engine-architecture.md` §4: when a fixing basis becomes a registration rather than a `Literal` arm, only `fencemodel/vocabulary.py` changes |

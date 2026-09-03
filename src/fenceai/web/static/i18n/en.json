@@ -1049,6 +1049,7 @@
   "warning.parameter_task_unrecognised": "A published {parameter} table decides {task}, which this engine has no source policy for — its rows were used without their sources being judged",
   "warning.parameter_value_nonconforming": "A published {parameter} row does not match the table's declared type ({value_type}) and was not used",
   "warning.pattern_residual_large": "Section {run_id} leaves {value_mm} {u} of the pattern unfilled, over the {limit_mm} {u} tolerance ({n} bay(s))",
+  "warning.published_spec_unapplied": "{part} publishes {parameter}, and this run judged the source good enough to use it — but no product in this catalog claims to be that part, so the value reaches no line",
   "warning.rail_separation_insufficient": "In section {run_id} the rail above the bottom one is only {value_mm} {u} up, under the {limit_mm} {u} anti-climb limit ({n} bay(s))",
   "warning.site_condition_missing": "{n} site condition(s) that decide how this fence is built are not set ({dimensions}) — the rules and fence-model options that depend on them did not apply",
   "warning.sliver_span": "Span {span_id} is {width_mm} {u}, below preferred minimum {min_mm} {u}.",

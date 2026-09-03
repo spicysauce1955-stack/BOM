@@ -121,6 +121,12 @@ WARNING_CODES = [
     # and it is not a parser: choosing between design points is a cost
     # trade-off for the optimiser, not a fact for the evaluator.
     "parameter_paired_unsupported",
+    # Item 7's honest half. A published spec value can be judged, joined and
+    # admitted and still reach no BOM line, because no product in this engine can
+    # claim to be a published `Part`. Emitted per admitted value rather than once
+    # per snapshot: an operator told "2 values admitted" would otherwise
+    # reasonably believe the plan had changed.
+    "published_spec_unapplied",
     "panel_length_unresolved",
     # Containment. Both say a credit did NOT happen — a credit that lands
     # cleanly is a smaller purchase and needs no warning — and both exist
@@ -173,6 +179,7 @@ KNOWLEDGE_SURFACE_UNTRANSLATED = [
     "warning.ambiguous_version_ref",
     "warning.parameter_task_unrecognised",
     "warning.parameter_paired_unsupported",
+    "warning.published_spec_unapplied",
     "error.contract_major_unsupported",
     "error.contract_minor_predates_typed_date",
     "error.snapshot_malformed",
@@ -372,6 +379,10 @@ def test_backend_code_list_is_current():
         # Hebrew sentence the day something first shows it.
         src / "knowledge" / "parameters.py",
             src / "knowledge" / "snapshot.py",
+        # ...and the parts consumer, for the same reason both of the above are
+        # here: it emits codes, and a file that is not on this list is a code
+        # that reaches a screen as its own key in both languages.
+        src / "knowledge" / "parts.py",
         # Continuity's codes are LITERALS here and reach `StrategyWarning` as
         # `code=note.code` — a variable — so scanning the generator finds nothing
         # and the guard was blind to all three. Exactly the hole every entry

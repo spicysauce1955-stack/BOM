@@ -1049,6 +1049,7 @@
   "warning.parameter_task_unrecognised": "A published {parameter} table decides {task}, which this engine has no source policy for — its rows were used without their sources being judged",
   "warning.parameter_value_nonconforming": "שורה שפורסמה עבור {parameter} אינה תואמת לסוג המוצהר בטבלה ({value_type}) ולא נעשה בה שימוש",
   "warning.pattern_residual_large": "בקטע {run_id} נותרו {value_mm} {u} לא ממולאים בתבנית, מעל הסבולת של {limit_mm} {u} ({n} מפתחים)",
+  "warning.published_spec_unapplied": "{part} publishes {parameter}, and this run judged the source good enough to use it — but no product in this catalog claims to be that part, so the value reaches no line",
   "warning.rail_separation_insufficient": "בקטע {run_id} המסילה שמעל התחתונה נמצאת {value_mm} {u} בלבד מעליה, מתחת למגבלת מניעת הטיפוס של {limit_mm} {u} ({n} מפתחים)",
   "warning.site_condition_missing": "{n} תנאי אתר שקובעים כיצד נבנית הגדר אינם מוגדרים ({dimensions}) — הכללים ואפשרויות דגם הגדר התלויים בהם לא הופעלו",
   "warning.sliver_span": "המפתח {span_id} הוא {width_mm} {u} בלבד, פחות מהמינימום המועדף {min_mm} {u}.",

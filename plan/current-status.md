@@ -3,6 +3,111 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Session close — 2026-09-03, later: item 7 is built
+
+**2320 tests · contract hashes OK.** Browser smoke NOT re-run: nothing renders
+the one new locale key, and no JS or HTML changed.
+
+### Item 7 landed — a published part's numbers are judged, joined, and honest
+
+`docs/superpowers/specs/2026-09-03-spec-field-provenance-design.md` is the
+design and the build record. `knowledge/parts.py` types §2.1/§2.2/§3.1, files
+each part against the spine, joins every `SpecField`'s citations to
+`source_docs`, and judges them through the **same** §1.4 mechanism item 6 built
+— no second selection path.
+
+**They closed C15 while we were away, exactly as we specified** (`conversation.md`
+T43): `SpecField.value: Quantity | Token`, corrected in place, no amendment. And
+there is a **newer cut** — `f4d40fb8…` supersedes `b2f2fe45`, publishes the two
+real stock lengths (4876800 / 3657600 milli-mm, matching T42's independent
+arithmetic exactly), and dedupes citations that collided on one content hash.
+
+| | |
+|---|---|
+| `f4d40fb8…` | 9 tables · 67 gaps · 11 parts · **2 judged spec values** · `unconsumed: {}` |
+
+Both values admit at rank 3 (`manufacturer_installation_instruction`,
+`component_dimension`). Both documents behind them are the same class, undated,
+`unknown` — so §1.4's rank, curation and date steps all tie and the winner is
+decided by `content_hash`, amendment 005's terminator, doing real work for the
+first time.
+
+**Each admitted value emits `published_spec_unapplied` against us**, and that is
+the point rather than an omission: no product in this catalog can claim to be a
+published `Part`, so an operator reading "2 values admitted" would otherwise
+believe the plan had changed. The `would_close` names the work.
+
+### THE NEXT TWO THINGS, in order
+
+**1 · A cost objective for `paired` design points. Still the only thing they wait
+on us for**, and now the only one. Five correct `footing_schedule` tables refused
+with a gap (`parameter_paired_unsupported`, `closes_by: planning`). A row holding
+`(depth, span)` alternatives is a set of admissible design points, and taking the
+first would discard the cheaper compliant option — 7 posts against 9 on a 40 ft
+run. **Needs a design, not a patch:** a choice set is an optimiser objective, not
+a fact, and this engine resolves one value per parameter.
+
+**2 · The link item 7 deliberately did not invent: a catalog product declaring
+which published `Part` it is.** Everything downstream already exists —
+`strategy/continuity.py` derives continuity from a manufactured length
+(obligation 14), and `parts/compile.py` reads `stock_length_mm`. What is missing
+is the one field that says `shared/bt-rail-pr-3rail-white` IS this SKU. Do not
+infer it from a name: T41 §2 is the record of what that costs, and our demo
+rails are 3000/3600 mm against their 4877/3658 mm, so nothing here matches by
+accident either.
+
+### Also newly on our side of the fence
+
+**Their two `component_type_unmapped` gaps are ours to answer** (`closes_by:
+planning`, in every recent cut): is `gate_kit` — `BT-GATE-FRAME-ALUM`,
+`BT-NYLON-HW-KIT` — one part or several, and which spine key or `mfr/` extension
+does it resolve to? §2.2's mechanical test is the one to apply, and it lands on
+**build-order item 10's kit-credit rule**, which is the piece that has nowhere to
+say "this kit ships its own hinges" today. Design question, not a parse.
+
+### Open, sized, deliberately not started
+
+| | Why it is parked |
+|---|---|
+| The provenance chip on a DEFAULT project | The fixture's tables are scoped to `M-VINYL`, whose post requirement wants vinyl posts with `routed_faces` varying per post kind. Real demo-catalog work with golden-scenario risk. |
+| Policy versioning | Must land WITH an operator policy UI, not after — a historical run re-derived under an edited policy would render differently. |
+| A refusal reaching a `defeated` edge | Removing a row before the evaluator changes which facts compete, and the graph cannot say the policy did it. |
+| A reader for `GET /api/knowledge/parts` | The judged values and their documents are served and nothing renders them. Frontend work, and the evidence viewer is where it belongs. |
+
+### Two lessons this slice paid for
+
+**A completeness check is only complete against the data that existed.**
+§1.2.1's closure rule is BINDING for every `SourceRef` cited *anywhere* in a
+snapshot, and `dangling_refs()` walked warnings, gaps and parameter rows — while
+`parts` was `list[Any]`, a published part could cite a document the payload never
+carried and every closure test still passed. Nobody had published a part, so the
+check looked complete. Same shape as "only our fixture had ever come through this
+door."
+
+**The hand-maintained scanner list caught us a fourth time.**
+`published_spec_unapplied` shipped green through 2317 tests with no locale entry
+in either bundle, because `tests/web/test_locale_bundles.py` scans a list of
+files and `knowledge/parts.py` was not on it. A new emitting file is a new entry
+on that list; there is no automatic version of this while the list is written by
+hand.
+
+### Working agreements to keep
+
+- **`fence-rag` is docs-only for us.** Stage named files, never `git add -A` —
+  they committed twice DURING this session (`G63`, a CLI change), so assume live.
+- **The contract is frozen at v1.3.** BINDING changes need a ratified amendment;
+  registry additions are not amendments. A shape in a DELEGATED document
+  (`knowledge-datamodel.md`) is theirs to correct without one — that is how C15
+  closed.
+- **Never regenerate the contract hash to clear a failure** — find the edit.
+- Snapshot ids in `tests/knowledge/test_real_snapshot.py` are **pinned on
+  purpose** and go stale by design. `b2f2fe45` is kept beside `f4d40fb8`
+  deliberately: it is the only cut carrying the list-valued `because` params.
+- **`architecture-critic` and `test-reviewer` have not been run on this slice** —
+  it adds domain types, so CLAUDE.md asks for both before the milestone.
+
+---
+
 ## Session close — 2026-09-03
 
 **2283 tests · 262/262 browser smoke · contract hashes OK · both repos clean.**
