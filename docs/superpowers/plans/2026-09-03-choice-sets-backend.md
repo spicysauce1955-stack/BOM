@@ -23,6 +23,16 @@ easy to re-introduce.
 (`run.choice_sets`, the overrides endpoint) plus one duplicated arithmetic
 (`yield_threshold`), pinned from the frontend side.
 
+**Status:** Tasks 1 (`5e68733`), 2 (`38f9823`), 3 + 4 (`3e34f28`) and 5 (`8cc2c86`) are
+**DONE**. Tasks 6–10 open; **Task 6 (`generator.py`) carries all four shape changes and the
+whole gate risk.**
+
+Two accepted consequences recorded by the agent that built Tasks 3–4, neither a defect:
+`override_station` returns `station or None`, so a genuine pin at station 0 is
+indistinguishable from a bare `PinPost` — station 0 always carries a boundary post anyway;
+and `Anchor` gaining a field changes `Override.model_dump()`, which is inside the run
+digest, so a project holding overrides mints a new run id once. No test hardcodes a digest.
+
 ## Global Constraints
 
 - **Integer millimetres and cents at rest; float only transient** (ADR-0002).

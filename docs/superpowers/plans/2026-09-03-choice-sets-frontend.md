@@ -17,9 +17,14 @@ node for the pure module; `tools/ui_smoke.py` (CDP) for the gestures.
 §9 and §10 are this plan's sections. Read §0 first: rev 1's frontend tasks had no
 executable assertion between them.
 
-**Companion plan:** `2026-09-03-choice-sets-backend.md`. **Task 1 here needs nothing from it** —
-`post-drag.js` is pure and node-tested, so it can be written first. Tasks 2–5 need the
-backend's anchored overrides (its Tasks 3–4) and the choices CRUD (its Task 5).
+**Status:** Task 1 **DONE** (`c52a334`). Tasks 2–6 open.
+
+**Companion plan:** `2026-09-03-choice-sets-backend.md`. **Correction:** an earlier draft of
+this header said Task 1 needed nothing from the backend plan. That was false and an agent
+proved it — Task 1's own test imports `yield_threshold` from `fenceai.strategy.layout`,
+which is the backend plan's Task 2. The MODULE is pure and independent; the TEST that keeps
+its twin honest is not. **Task 1 depends on backend Task 2.** Tasks 2–5 additionally need
+the backend's anchored overrides (its Tasks 3–4) and the choices CRUD (its Task 5).
 
 ## Global Constraints
 
@@ -219,6 +224,35 @@ Expected: PASS (4 tests)
 git add src/fenceai/web/static/js/post-drag.js tests/web/test_post_drag_module.py
 git commit -m "feat(web): pure post-drag arithmetic, shared by both canvases and pinned to the Python threshold"
 ```
+
+---
+
+### Task 1b: Mirror the re-anchor policy in `geom.js`
+
+**Files:**
+- Modify: `src/fenceai/web/static/js/geom.js`
+- Test: `tests/web/test_geom_anchor_module.py` (create, node)
+
+Backend Task 3 put a `reanchor: "proportional" | "rigid"` policy on `Anchor` and honoured
+it inside `anchor_station`. **`geom.stationOfAnchor` still resolves everything
+proportionally** — verified: `grep reanchor js/geom.js` finds nothing. Nothing is broken
+today because no JS code creates a rigid anchor yet, but the frontend contract is explicit
+that these two functions *"mirror backend `make_anchor`/`anchor_station` exactly"*, and the
+moment Task 2 posts a rigid anchor the canvas would draw a dragged post in a different
+place from the generator — 800 mm apart on the spec's own worked example.
+
+- [ ] **Step 1:** a node test asserting `stationOfAnchor` on a stretched segment returns the
+  proportional station for a `proportional` anchor and the rigid offset for a `rigid` one,
+  with the same numbers `tests/topology/test_anchor_reanchor.py` pins on the Python side.
+  Copy the harness from `tests/web/test_base_top_module.py`, including
+  `assert proc.returncode == 0, proc.stderr`.
+- [ ] **Step 2:** run it; the rigid case fails.
+- [ ] **Step 3:** branch on `anchor.reanchor`, defaulting to `proportional` when the field
+  is absent — a stored anchor has no such key and must keep its behaviour.
+- [ ] **Step 4:** `uv run pytest tests/web -q`, then the full suite.
+- [ ] **Step 5:** commit.
+
+**Do this before Task 2**, not after: Task 2 is what starts posting rigid anchors.
 
 ---
 
