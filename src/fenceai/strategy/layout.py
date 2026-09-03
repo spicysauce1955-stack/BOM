@@ -118,3 +118,83 @@ def boundaries(start_mm: Mm, widths: list[Mm]) -> list[Mm]:
     for w in widths:
         out.append(out[-1] + w)
     return out
+
+
+def yield_threshold(stock_mm: Mm, kerf_mm: Mm, pieces: int) -> Mm:
+    """The longest PIECE that still yields `pieces` per stock length.
+
+    `plan_cuts` charges each piece `length + kerf` against a capacity of
+    `stock + kerf` — it credits back the kerf nobody cuts after the last piece —
+    so `pieces` fit exactly when `pieces * (p + kerf) <= stock + kerf`. Integer
+    division, because a threshold rounded up names a length that does not fit.
+
+    **This is a threshold on the PIECE, not on the bay.** An infill piece is cut
+    to the clear opening (`fencemodel/resolve.py`), which is narrower than its
+    bay by one whole post face — so a caller turning this into a bay width adds
+    the face back. Getting that wrong is how the first draft of this design came
+    to advertise a saving 70 mm away from where it actually is, and to claim a
+    cliff at 1000 mm where two pieces already fit.
+
+    It also has a twin in `web/static/js/post-drag.js`, because the browser needs
+    it to place a snap tick. `tests/web/test_post_drag_module.py` compares the
+    two over a grid rather than trusting two literals to stay equal.
+    """
+    if pieces < 1 or stock_mm <= 0:
+        return 0
+    return (stock_mm + kerf_mm) // pieces - kerf_mm
+
+
+def alternative_widths(
+    length_mm: Mm,
+    max_span_mm: Mm,
+    *,
+    default: list[Mm],
+    exact_mm: Mm | None = None,
+    min_span_mm: Mm | None = None,
+    piece_stock_mm: Mm | None = None,
+    kerf_mm: Mm = 3,
+    piece_shorter_by_mm: Mm = 0,
+) -> list[tuple[str, list[Mm]]]:
+    """Width lists worth offering BESIDE the one already built.
+
+    `default` is passed in rather than recomputed, and that is the point:
+    `layout_segment` decides what is built — honouring `prefer_equal`, a nominal
+    width preference, and a `min_span` rule it only WARNS about — and a second
+    opinion here is how the built layout came to be missing from its own panel.
+
+    `piece_stock_mm` and `piece_shorter_by_mm` come from the BASELINE's resolved
+    infill: its product's stock length, and how much narrower a piece is than the
+    bay holding it. Neither exists until a panel is resolved, which is why
+    candidate generation runs after the baseline rather than at the layout site.
+    With no stock known this returns no yield alternative rather than a guessed
+    one.
+
+    Every returned list already honours the resolved maximum and minimum span, so
+    an offered point never needs a person to be told it was inadmissible.
+    """
+    out: list[tuple[str, list[Mm]]] = []
+    seen = {tuple(default)}
+
+    def offer(name: str, widths: list[Mm]) -> None:
+        if not widths or tuple(widths) in seen:
+            return
+        if max(widths) > max_span_mm:
+            return
+        if min_span_mm and min(widths) < min_span_mm:
+            return
+        seen.add(tuple(widths))
+        out.append((name, widths))
+
+    if length_mm <= 0:
+        return out
+    if exact_mm:
+        offer("tiling", exact_layout(length_mm, exact_mm)[0])
+    if piece_stock_mm:
+        # Two pieces per board is the only step worth offering: three is a bay
+        # under 700 mm on 2 m stock, which is what `min_span_mm` exists to
+        # refuse — and a generator that offers slivers is the one an operator
+        # turns off.
+        target = yield_threshold(piece_stock_mm, kerf_mm, 2) + piece_shorter_by_mm
+        if 0 < target < max_span_mm:
+            offer("best_yield", equal_layout(length_mm, target))
+    return out
