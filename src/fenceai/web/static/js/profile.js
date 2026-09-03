@@ -5,18 +5,26 @@
 // gesture -> pushSnapshot -> mutate -> saveTopology. The station axis is
 // NEVER mirrored in RTL (spec §3; #profile-svg is direction:ltr in CSS).
 
-import { esc } from "./api.js";
+import { apiSend, esc } from "./api.js";
 import {
-  clearGroup, el, endpointNodeAt, groundSamplesFor, groundZAt, nodeById, runById,
-  runLength, runPoints, stationOfAnchor,
+  anchorFor, clearGroup, el, endpointNodeAt, groundSamplesFor, groundZAt, nodeById,
+  runById, runLength, runPoints, stationOfAnchor,
 } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
-import { addIntervalEvent, addPointEvent, on, saveTopology, setSelection, state } from "./state.js";
 import {
-  enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu, unitLabel,
+  addIntervalEvent, addPointEvent, on, reloadProject, saveTopology, setSelection, state,
+} from "./state.js";
+import {
+  currentUnit, enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu,
+  unitLabel,
 } from "./units.js";
+// Every NUMBER a post drag needs comes from here, and none of it lives in this
+// file — the role base-top.js plays for the base actions. The plan canvas drags
+// the same post through the same three functions, and that is the only reason
+// the two views cannot drift apart. There is no import between the adapters.
+import { layoutWithPin, snapCandidates, violations } from "./post-drag.js";
 import { sectionOf, tagOf } from "./structure-data.js";
 import {
   STEP_RISE_MM, enforceLocks, flatPoints, levelPoints, lockOf, matchEnds, setLock,
@@ -36,6 +44,9 @@ const DEFAULT_POST_MM = 1800;
 const GAP_MM = 600;          // visual gap before a disconnected section
 const STEP_SNAP_PX = 12;     // dragging a top dot within this of a neighbour snaps
                              // its pos to the neighbour's — that's how a STEP is made
+                             // (a dragged POST snaps to its ticks the same way)
+const POST_DRAG_PX = 4;      // under this a post gesture is a CLICK, not a drag
+                             // (spec §9.2) — the vertical drags use 3
 const HINT_LIFT_PX = 6;      // dashed creation-hint line sits this far above ground
 // band/edge tones per built-base surface (matches plan-view BASE_COLORS)
 const BASE_TONES = { masonry_wall: "#dc2626", concrete: "#64748b" };
@@ -302,7 +313,9 @@ const snapZ = (z) => Math.round(z / Z_SNAP) * Z_SNAP;
 
 // ---------- rendering ----------
 const GROUPS = ["p-grid", "p-result", "p-ground", "p-wall", "p-intent", "p-edit",
-  "p-dims", "p-labels"];
+  "p-dims", "p-labels",
+  // last, so the live drag preview draws over everything it is about to change
+  "p-drag"];
 
 function ensureGroups() {
   const svg = document.getElementById("profile-svg");
@@ -335,6 +348,7 @@ function render() {
   const { chain, span } = buildChain();
   view = computeView(chain, span);
 
+  clearGroup("p-drag");   // a preview belongs to one gesture, never to a redraw
   renderGrid(chain);
   renderResult(chain);
   renderGround(chain);
@@ -899,19 +913,87 @@ function renderResult(chain) {
       el("line", { x1: x, y1: y0, x2: x + lean, y2: y1,
         class: `profile-post${sel === post.id ? " selected" : ""}`,
         "data-id": post.id }, g);
+      // A LINE post is the only one a person may move: a corner, a gate edge and
+      // a node post are placed by the geometry, and pinning one says nothing the
+      // topology does not already say. `data-station` is RUN-LOCAL — the x axis
+      // of this panel is a chain coordinate, and reading it as a station is the
+      // bug this adapter exists to not have.
+      const draggable = post.run_ref === run.id && post.kind === "line";
       const hit = el("line", { x1: x, y1: y0, x2: x + lean, y2: y1,
-        class: "profile-post-hit", "data-id": post.id }, g);
+        class: "profile-post-hit", "data-id": post.id,
+        "data-run": run.id, "data-station": String(Math.round(station)),
+        ...(draggable ? { "data-drag": "1" } : {}) }, g);
       el("title", {}, hit).textContent =
         `${post.id}\n${post.sku} (${enumWord(post.kind)}, ${enumWord(post.mounting)})`;
       const postTag = tagOf(post.id);
       if (postTag)
         el("text", { x: x + lean, y: y1 - 4, "text-anchor": "middle", class: "elem-tag",
           "pointer-events": "none" }, g).textContent = postTag;
+      // a draggable post never reaches this listener — pointer capture retargets
+      // the click to the svg, and `endDrag` takes the same path for it
       hit.addEventListener("click", () => {
         setSelection({ runId: run.id, elementId: post.id });
         inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm });
       });
     }
+
+    renderPendingPins(entry, g);
+  }
+}
+
+// Where a `pin_post` directive applies, mirroring backend `override_station`:
+// the ANCHOR wins where a directive carries both, because `station_mm` is the
+// reading from the geometry as it was.
+function pinStationOf(run, directive) {
+  if (directive.anchor) return stationOfAnchor(run, directive.anchor);
+  return directive.station_mm || null;
+}
+
+// The pin whose post this drag picked up, or null when the drag started from a
+// post the generator placed. Matching by STATION rather than by element id is
+// the ADR-0004 rule: an override is anchored to (run, station, kind), never to
+// generated element identity.
+function pinOverrideIdAt(runId, station) {
+  const run = runById(runId);
+  if (!run) return null;
+  for (const ov of state.project?.overrides || []) {
+    if (ov.run_id !== runId || ov.directive.kind !== "pin_post") continue;
+    const s = pinStationOf(run, ov.directive);
+    if (s !== null && Math.abs(s - station) <= 1) return ov.id;
+  }
+  return null;
+}
+
+/** Pins that the strategy on screen has not been recomputed for.
+ *
+ *  A pin is a fact about the PROJECT and is saved the moment it is dropped; a
+ *  post position is a fact about the RUN, and dropping does not regenerate.
+ *  Drawing the two as two kinds of thing is the honest rendering of that — and
+ *  without it the dropped post springs back to wherever the previous run put it
+ *  and a working feature reads as a broken one (spec §9.2).
+ *
+ *  Styled inline rather than through a class: this marker is not a new visual
+ *  vocabulary, it is the plan canvas's pinned amber said in the side view, and
+ *  it carries no text, so it needs no locale key. */
+function renderPendingPins(entry, g) {
+  const { run, samples } = entry;
+  for (const ov of state.project?.overrides || []) {
+    if (ov.run_id !== run.id || ov.directive.kind !== "pin_post") continue;
+    const station = pinStationOf(run, ov.directive);
+    if (station === null) continue;
+    // a pin the last generation already honoured IS the post drawn above
+    if (entry.result.posts.some((p) => Math.abs(p.station - station) <= 1)) continue;
+    const x = xOf(gsOf(entry, station));
+    const gz = groundZAt(samples, Math.round(station));
+    const y0 = yOf(gz), y1 = yOf(gz + DEFAULT_POST_MM);
+    el("line", { x1: x, y1: y0, x2: x, y2: y1, class: "profile-post-pending",
+      stroke: "#f59e0b", "stroke-width": 3, "stroke-dasharray": "5 3",
+      "stroke-linecap": "round", "pointer-events": "none" }, g);
+    // and it is draggable in its own right: the second drag of "the same post"
+    // starts here, which is what lets the DELETE find the pin to replace
+    el("line", { x1: x, y1: y0, x2: x, y2: y1, class: "profile-post-hit",
+      "data-run": run.id, "data-station": String(Math.round(station)),
+      "data-ov": ov.id, "data-drag": "1" }, g);
   }
 }
 
@@ -942,22 +1024,42 @@ function setupSvg() {
         idx: +target.dataset.idx, started: false,
         startX: ev.clientX, startY: ev.clientY };
       svg.setPointerCapture(ev.pointerId);
+    } else if (target.classList.contains("profile-post-hit")
+               && target.dataset.drag === "1") {
+      const from = Math.round(+target.dataset.station);
+      drag = { kind: "post", runId: target.dataset.run, from, station: from,
+        postId: target.dataset.id || null,
+        // the pin this gesture is REPLACING, decided at pick-up: after the drop
+        // the station it sat at is gone, and there is no PUT /overrides
+        ovId: target.dataset.ov || pinOverrideIdAt(target.dataset.run, from),
+        started: false, startX: ev.clientX, startY: ev.clientY };
+      svg.setPointerCapture(ev.pointerId);
     }
   });
 
   svg.addEventListener("pointermove", (ev) => {
     if (!drag || !view) return;
     if (!drag.started) {
-      // top dots drag in BOTH axes (pos + z); everything else vertically only
-      const moved = Math.abs(ev.clientY - drag.startY) >= 3 ||
-        (drag.kind === "topdot" && Math.abs(ev.clientX - drag.startX) >= 3);
+      // top dots drag in BOTH axes (pos + z); a post moves along the fence only;
+      // everything else vertically only
+      const moved = drag.kind === "post"
+        ? Math.abs(ev.clientX - drag.startX) >= POST_DRAG_PX
+        : Math.abs(ev.clientY - drag.startY) >= 3
+          || (drag.kind === "topdot" && Math.abs(ev.clientX - drag.startX) >= 3);
       if (!moved) return;
-      // gesture begins: snapshot BEFORE the first mutation
+      // gesture begins: snapshot BEFORE the first mutation — ONCE, here, so one
+      // drag is one undo step however many pointermoves it took
       pushSnapshot(drag.kind === "wall" ? "profile-wall"
-        : drag.kind === "topdot" ? "profile-top" : "ground");
+        : drag.kind === "topdot" ? "profile-top"
+        : drag.kind === "post" ? "move-post" : "ground");
       drag.started = true;
     }
     const [x, y] = svgPoint(ev);
+    if (drag.kind === "post") {
+      // preview ONLY: never state.project, never history, never a fetch
+      previewPost(drag, x);
+      return;
+    }
     if (drag.kind === "topdot") {
       moveTopDot(drag, x, y);
       render();
@@ -989,6 +1091,12 @@ function setupSvg() {
     if (!drag) return;
     const d = drag;
     drag = null;
+    if (d.kind === "post") {
+      clearGroup("p-drag");
+      if (d.started) commitPost(d);
+      else if (ev.type === "pointerup") selectPost(d);
+      return;
+    }
     if (d.started) {
       saveTopology(); // snapshot was pushed at gesture start
     } else if (ev.type === "pointerup" && d.kind === "sample") {
@@ -1099,6 +1207,171 @@ function moveTopDot(d, x, y) {
   pt.z_mm = Math.max(0, snapZ(zOfY(y) - groundZAt(entry.samples, Math.round(st))));
   // the dragged point wins; locked neighbours follow it in both directions
   iv.payload.points = enforceLocks(pts, groundAtPosOf(run, { s0, s1 }), d.idx);
+}
+
+// ---------- dragging a post: the side-view adapter ----------
+// THE X AXIS OF THIS PANEL IS NOT THE STATION. `buildChain()` lays several runs
+// end to end with GAP_MM spacers and a `reversed` flag, so x is a global CHAIN
+// coordinate: dividing it by the scale moves a post the WRONG WAY on a reversed
+// section and into the WRONG RUN on a chain. `localStationOf` is the only
+// conversion allowed below, and every other number comes from post-drag.js —
+// which the plan canvas calls too. The two adapters have no edge between them;
+// they meet in that module and in state.js.
+
+/** The span rule this run was laid out to, for the preview.
+ *
+ *  Empty today, and deliberately: `state.result` carries the STRATEGY, not the
+ *  requirement that shaped it, so the browser is not told the maximum. Absent
+ *  limits make `snapCandidates` and `violations` say "no rule to break", which
+ *  is the honest reading — inferring a maximum from the widest bay on screen
+ *  would let the preview refuse a legal tick or bless an illegal one.
+ *
+ *  The seam is here: when the generate response carries the resolved span
+ *  limits for a run, return `{maxSpanMm, minSpanMm}` from it and the preview
+ *  starts filtering ticks and flagging bays with no other change in this file.
+ *  Same for `stock`/`piecesPerBay`, which turn on `snapCandidates`' yield tick. */
+function spanLimitsOf(_entry) {
+  return {};
+}
+
+/** The stations this run's layout is PINNED to, minus the post being dragged.
+ *
+ *  A generated LINE post is not one of them. The engine re-lays out every free
+ *  bay around a pin — which is why `layoutWithPin` fills each gap rather than
+ *  nudging one neighbour — so boxing the gesture between the line posts on
+ *  screen would refuse placements the engine accepts, and would box a pin in
+ *  against posts the very next generation is going to move. */
+function fixedPostsOf(entry, exceptStation) {
+  const out = entry.result.posts
+    .filter(({ post }) => post.kind !== "line")
+    .map(({ station }) => Math.round(station));
+  for (const ov of state.project?.overrides || []) {
+    if (ov.run_id !== entry.run.id || ov.directive.kind !== "pin_post") continue;
+    const s = pinStationOf(entry.run, ov.directive);
+    if (s !== null) out.push(Math.round(s));
+  }
+  return [...new Set([0, entry.L, ...out])]
+    .filter((s) => Math.abs(s - exceptStation) > 1)
+    .sort((a, b) => a - b);
+}
+
+// the two placed posts a dragged post lives between; the run ends bound it
+function neighboursOf(fixed, station, L) {
+  let prev = 0, next = L;
+  for (const s of fixed) {
+    if (s < station && s > prev) prev = s;
+    if (s > station && s < next) next = s;
+  }
+  return { prev, next };
+}
+
+// which bays in a `layoutWithPin` result touch the dropped station
+function baysAround(widths, station) {
+  let cum = 0, before = null, after = null;
+  for (let i = 0; i < widths.length; i++) {
+    if (cum === station) after = i;
+    cum += widths[i];
+    if (cum === station) before = i;
+  }
+  return { before, after };
+}
+
+/** One preview step. Reads the pointer, asks post-drag.js where the post may
+ *  land, and draws — nothing here touches state.project, history or the server. */
+function previewPost(d, x) {
+  const entry = chainEntry(d.runId);
+  if (!entry) return;
+  const fixed = fixedPostsOf(entry, d.from);
+  const { prev, next } = neighboursOf(fixed, d.from, entry.L);
+  const limits = spanLimitsOf(entry);
+  // the ONE conversion: chain x -> station local to THIS run, reversal and all
+  const raw = Math.max(prev + 1, Math.min(Math.round(localStationOf(entry, x)), next - 1));
+  const cands = snapCandidates({
+    station: raw, prev, next, ...limits, displayUnit: currentUnit(),
+  });
+  // the module's own proximity idiom, borrowed from the top dots: a tick within
+  // STEP_SNAP_PX of the pointer wins, and the nearest of them wins outright
+  let station = raw, best = STEP_SNAP_PX;
+  for (const c of cands) {
+    const dx = Math.abs(x - xOf(gsOf(entry, c.station)));
+    if (dx <= best) { best = dx; station = c.station; }
+  }
+  d.station = station;
+  drawPostPreview(entry, station, cands, fixed, limits);
+}
+
+function drawPostPreview(entry, station, cands, fixed, limits) {
+  const g = clearGroup("p-drag");
+  const { samples } = entry;
+  const gz = groundZAt(samples, station);
+  const x = xOf(gsOf(entry, station));
+  const y0 = yOf(gz), y1 = yOf(gz + DEFAULT_POST_MM);
+
+  // the snap ticks first, so the ghost post draws over them
+  for (const c of cands) {
+    const cx = xOf(gsOf(entry, c.station));
+    el("line", { x1: cx, y1: y0 + 4, x2: cx, y2: y0 - 10, class: "profile-dim-tick",
+      "stroke-dasharray": "2 2", "pointer-events": "none" }, g);
+    // `label` is the bare targeted bay width in the display unit — a pure module
+    // can neither translate nor name a unit, so the adapter adds the unit
+    el("text", { x: cx, y: y0 + 14, "text-anchor": "middle",
+      class: "profile-tick-label num", "pointer-events": "none" }, g)
+      .textContent = `${c.label} ${unitLabel()}`;
+  }
+
+  // the bays this drop would make, laid out the way the backend will lay them out
+  const { widths } = layoutWithPin(fixed, entry.L, station, limits);
+  const bad = new Set(violations(widths, limits).map((v) => v.index));
+  const { before, after } = baysAround(widths, station);
+  let cum = 0;
+  for (let i = 0; i < widths.length; i++) {
+    const s0 = cum; cum += widths[i];
+    if (i !== before && i !== after) continue;
+    const mid = xOf(gsOf(entry, s0 + widths[i] / 2));
+    const label = el("text", { x: mid, y: y1 - 6, "text-anchor": "middle",
+      class: "profile-dim-label num", "pointer-events": "none" }, g);
+    label.textContent = fmtLen(widths[i]);
+    // a bay that breaks the rule is SHOWN breaking it, not silently prevented
+    if (bad.has(i)) label.setAttribute("fill", "#b45309");
+  }
+
+  el("line", { x1: x, y1: y0, x2: x, y2: y1, class: "profile-post-ghost",
+    stroke: "#f59e0b", "stroke-width": 3, "stroke-dasharray": "5 3",
+    "stroke-linecap": "round", "pointer-events": "none" }, g);
+}
+
+// under the threshold the gesture was a CLICK — and pointer capture retargeted
+// it to the svg, so the post's own listener never sees it
+function selectPost(d) {
+  setSelection({ runId: d.runId, elementId: d.postId || null });
+  const post = state.result?.strategy.posts.find((p) => p.id === d.postId);
+  if (post)
+    inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm });
+}
+
+/** The drop. DELETE then POST, in that order and never the other way: there is
+ *  no `PUT /overrides` in this frontend, so without the delete a second drag of
+ *  the same post leaves two pins and a bay nobody asked for.
+ *
+ *  It does NOT generate. A drop is a fact about the project, not a new run —
+ *  `reloadProject` refreshes the project without resetting the undo stack or the
+ *  selection, and deliberately leaves `state.result` alone, which is why the
+ *  dropped post is drawn from `state.project.overrides` as a pending pin. */
+async function commitPost(d) {
+  const station = Math.round(d.station);
+  if (d.ovId)
+    await apiSend("DELETE", `/api/projects/${state.projectId}/overrides/${d.ovId}`);
+  await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
+    id: "", run_id: d.runId,
+    directive: {
+      kind: "pin_post", station_mm: station,
+      // segment-local, and RIGID: 800 mm from the corner stays 800 mm from the
+      // corner when the run is stretched. An elevation sample re-anchors
+      // proportionally; a post a person placed does not (spec §10).
+      anchor: { ...anchorFor(d.runId, station), reanchor: "rigid" },
+    },
+  });
+  await reloadProject();
 }
 
 // ---------- typed z editors ----------

@@ -435,6 +435,184 @@ def _smoke_post_inspector(c) -> None:
     # would land here as an `orphaned_override` and nowhere else.
     check("every directive the panel wrote is one the run applies",
           not after["orphaned"], after["orphaned"])
+def _smoke_side_drag(c) -> None:
+    """Adapter B — dragging a post in the SIDE VIEW (plan Task 3, spec §9.1).
+
+    The profile's x axis is NOT the station. `buildChain()` lays runs end to end
+    with a `reversed` flag — `gsOf = offset + (reversed ? L - s : s)` — so the
+    topology built below exists to make that visible: run2 is walked backwards
+    (its END is the shared corner), and a pointer moving RIGHT must therefore
+    move the post toward a SMALLER local station. A naive `x / scale` reads the
+    same drop as a much larger station on run1's side of the chain, and passes
+    any check that only asserts "an override exists". Every case here asserts a
+    number: the harness does no image diffing, so a screenshot-only case would
+    report PASS while the post lands in the wrong section.
+    """
+    # --- a chain with a reversed section ---------------------------------
+    c.js("document.getElementById('new-project-name').value = 'side-drag'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    pid = c.js("document.getElementById('project-select').value")
+
+    topo = {
+        "revision": 0,
+        "nodes": [{"id": "nA", "x_mm": 0, "y_mm": 0},
+                  {"id": "nB", "x_mm": 6000, "y_mm": 0},
+                  {"id": "nC", "x_mm": 6000, "y_mm": 6000}],
+        # run2 ENDS at the shared corner, so the walk enters it backwards
+        "runs": [{"id": "run1", "start_node_id": "nA", "end_node_id": "nB"},
+                 {"id": "run2", "start_node_id": "nC", "end_node_id": "nB"}],
+    }
+    put = c.js(
+        "fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+        " headers: {'Content-Type': 'application/json'},"
+        " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+    time.sleep(0.8)
+    # the panel and its scope are user preferences that survive in localStorage;
+    # drive them through their own controls rather than assuming a default
+    c.js("""(() => {
+  const p = document.getElementById('profile');
+  if (p.classList.contains('collapsed')) document.getElementById('profile-toggle').click();
+  const s = document.getElementById('profile-scope');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+    c.click(*c.element_center("#btn-generate"))
+    time.sleep(2.5)
+    c.element_center("#profile-svg")     # scroll the side view into frame
+    time.sleep(0.4)
+
+    runs_before = c.js("fetch('/api/projects/" + pid + "/runs')"
+                       ".then(r => r.json()).then(l => l.length)")
+    posts = c.js("""
+(() => [...document.querySelectorAll('#profile-svg .profile-post-hit[data-run]')]
+  .map(e => {
+    const r = e.getBoundingClientRect();
+    return {run: e.dataset.run, s: Number(e.dataset.station),
+            drag: e.dataset.drag === '1',
+            x: r.x + r.width / 2, y: r.y + r.height / 2};
+  }))()""") or []
+    on_run1 = sorted([p for p in posts if p["run"] == "run1"], key=lambda p: p["s"])
+    movable = sorted([p for p in posts if p["run"] == "run2" and p["drag"]],
+                     key=lambda p: p["s"])
+    # Without this the three cases below are vacuous: nothing draggable means
+    # nothing dragged, and "no override was created" is not a passing state.
+    check("the side view offers a movable post on the reversed section",
+          put == 200 and len(on_run1) >= 2 and len(movable) >= 1
+          and all(0 < p["s"] < 6000 for p in movable),
+          {"put": put, "run1": len(on_run1), "movable": [p["s"] for p in movable]})
+    if not (len(on_run1) >= 2 and movable):
+        return
+
+    # run1 is walked FORWARDS, so on it the chain coordinate IS the station —
+    # which is what calibrates chain-mm to viewport px without this test having
+    # to know PAD, the viewBox or the container width.
+    span_px = (on_run1[-1]["x"] - on_run1[0]["x"]) / (on_run1[-1]["s"] - on_run1[0]["s"])
+    origin_px = on_run1[0]["x"] - span_px * on_run1[0]["s"]
+    target = movable[len(movable) // 2]
+    gs0 = 12000 - target["s"]          # run2: offset 6000, reversed, L 6000
+    gs1 = gs0 + 1000                   # the pointer moves 1 m along the CHAIN
+    expect = 12000 - gs1               # ...which is 1 m BACK along run2
+    naive = gs1 - 6000                 # what x/scale would have said
+    drop_x = origin_px + span_px * gs1
+    c.drag(target["x"], target["y"], drop_x, target["y"])
+    wait_for(c, "fetch('/api/projects/" + pid + "').then(r => r.json())"
+                ".then(p => p.overrides.length)")
+    time.sleep(0.8)
+    pins = c.js("fetch('/api/projects/" + pid + "').then(r => r.json())"
+                ".then(p => p.overrides.filter(o => o.directive.kind === 'pin_post'))") or []
+
+    check("a post dragged in the side view lands on the right run of the chain",
+          [o["run_id"] for o in pins] == ["run2"],
+          {"pins": [(o["run_id"], o["directive"]) for o in pins]})
+    if len(pins) != 1:
+        return
+    got = pins[0]["directive"]["anchor"]["offset_mm"]
+    # `naive` is 2 m away on this topology and on the far side of where the post
+    # started, so a reversal the adapter got wrong cannot slip through the band.
+    check("a reversed section drags in the direction the pointer moved",
+          abs(got - expect) <= 150 and abs(got - naive) > 500 and got < target["s"],
+          {"got": got, "expected": expect, "naive": naive, "from": target["s"]})
+    check("the pin carries a segment-local RIGID anchor, not a station",
+          pins[0]["directive"]["anchor"]["segment_index"] == 0
+          and pins[0]["directive"]["anchor"]["reanchor"] == "rigid",
+          pins[0]["directive"])
+
+    # The dropped post STAYS where it was dropped. `reloadProject()` does not
+    # refresh `state.result`, so without the pending marker the post springs
+    # back to where the previous run put it and a working feature reads broken.
+    marker = c.js("""
+(() => {
+  const m = document.querySelector('#profile-svg .profile-post-pending');
+  if (!m) return null;
+  const r = m.getBoundingClientRect();
+  return r.x + r.width / 2;
+})()""")
+    check("the dropped post is drawn where it was dropped, as a pending marker",
+          marker is not None and abs(marker - drop_x) <= 6,
+          {"marker": marker, "drop_x": drop_x})
+    runs_after = c.js("fetch('/api/projects/" + pid + "/runs')"
+                      ".then(r => r.json()).then(l => l.length)")
+    check("dropping a post does not regenerate", runs_after == runs_before,
+          {"before": runs_before, "after": runs_after})
+
+    # The cross-view property. `#override-list` is drawn by inspector.js, which
+    # has never heard of profile.js: both re-render from `state.project` after
+    # one write through state.js, which is the whole reason two adapters can
+    # move the same post without an edge between them.
+    #
+    # When Task 2 lands (the plan canvas grows `data-post`/`data-pinned`), the
+    # stronger form of this case is
+    # `document.querySelectorAll('[data-post][data-pinned="1"]').length == 1`;
+    # today those attributes do not exist and asserting them would fail here for
+    # a reason that has nothing to do with this adapter.
+    other_view = c.js("""
+(() => {
+  const cards = [...document.querySelectorAll('#override-list .card')];
+  return {n: cards.length, text: cards.map(c => c.textContent).join(' | ')};
+})()""")
+    check("another module shows the same drop, without either knowing the other",
+          other_view["n"] == 1 and "pin_post" in other_view["text"]
+          and "run2" in other_view["text"], other_view)
+    c.shot("40-side-drag.png")
+
+    # --- the same post, dragged again ------------------------------------
+    # There is no PUT /overrides: without the DELETE this leaves two pins and a
+    # bay nobody asked for. The second gesture starts on the PENDING marker,
+    # which is the post as the user now sees it.
+    again = c.js("""
+(() => {
+  const e = document.querySelector('#profile-svg .profile-post-hit[data-ov]');
+  if (!e) return null;
+  const r = e.getBoundingClientRect();
+  return {x: r.x + r.width / 2, y: r.y + r.height / 2, s: Number(e.dataset.station)};
+})()""")
+    check("the pending post is draggable in its own right", again is not None, again)
+    if again:
+        # LEFT along the chain is BACK along run2 — the reversal again, this
+        # time starting from a station the generator never placed
+        c.drag(again["x"], again["y"], again["x"] - span_px * 2500, again["y"])
+        time.sleep(1.5)
+        after_two = c.js("fetch('/api/projects/" + pid + "').then(r => r.json())"
+                         ".then(p => p.overrides.filter("
+                         "o => o.directive.kind === 'pin_post'))") or []
+        check("dragging the same post twice leaves ONE pin",
+              len(after_two) == 1
+              and after_two[0]["directive"]["anchor"]["offset_mm"] != got,
+              [o["directive"] for o in after_two])
+
+    # One gesture is one undo step: the snapshot is pushed once, past the
+    # threshold, however many pointermoves the drag took.
+    c.click(*c.element_center("#btn-undo"))
+    time.sleep(2.0)
+    undone = c.js("fetch('/api/projects/" + pid + "').then(r => r.json())"
+                  ".then(p => p.overrides.filter("
+                  "o => o.directive.kind === 'pin_post').length)")
+    check("one drag is one undo step", undone == (1 if again else 0), undone)
 
 
 # Cases added by the choice-set and hand-placement work. Append your function
@@ -442,6 +620,7 @@ def _smoke_post_inspector(c) -> None:
 _CHOICE_CASES: list = [
     _smoke_choices_panel,
     _smoke_post_inspector,
+    _smoke_side_drag,
 ]
 
 
