@@ -4,6 +4,7 @@ import { apiGet, apiSend, esc } from "./api.js";
 import {
   el, field, loadCatalogProducts, option, skuSelect, updateAdvancedUi,
 } from "./builder-ui.js";
+import { initChoices } from "./choices.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
 import { emit, on, reloadProject, state } from "./state.js";
@@ -131,6 +132,12 @@ export function initTabs() {
     alert(t("inventory.saved"));
     await renderInventory();
   });
+
+  // The plan's open questions (spec §2). Mounted here rather than in app.js
+  // because that file is not this task's, and the panel owns its own host: it
+  // subscribes to project-loaded/result-changed itself and renders nothing of
+  // anyone else's.
+  initChoices();
 
   on("project-loaded", () => {
     renderAnnTargets(); renderAnnotations(); renderInventory(); maybeRenderBom();

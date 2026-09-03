@@ -79,9 +79,148 @@ def type_text(c, text: str) -> None:
     time.sleep(0.2)
 
 
+def _smoke_choices_panel(c) -> None:
+    """The plan's open questions, answered from the plan itself (spec §2).
+
+    Three things only a browser can say. That the panel offers BOTH answers —
+    the layout the engine built and the one it displaced, because a default is
+    never eliminated (§5.2) and a panel missing its own answer is the failure
+    that rule exists to retire. That answering writes a selection and **fires no
+    generation** (§16): the run on screen is still the run that was built, the
+    answer shows as PENDING, and nothing here reaches `generate`. And that a
+    difference nobody can count is STATED ("no material change") rather than
+    left as a blank cell, which reads as a panel that failed to load.
+
+    On its own project, deliberately. These assertions are about one question on
+    a 5 m run; on whatever project the previous case last drew they would be
+    about whatever it drew.
+    """
+    pid = c.js("""
+fetch('/api/projects', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({name: 'choices'})})
+  .then((r) => r.json())
+  .then((p) => fetch(`/api/projects/${p.id}/topology`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({revision: 0,
+      nodes: [{id: 'n1', x_mm: 0, y_mm: 0}, {id: 'n2', x_mm: 5000, y_mm: 0}],
+      runs: [{id: 'run1', start_node_id: 'n1', end_node_id: 'n2'}]}),
+  }).then(() => p.id))""")
+    check("a 5 m run to ask the question about", bool(pid), pid)
+    if not pid:
+        return
+    # The case before this one deep-links the evidence viewer, which leaves an
+    # overlay over the drawing and a hash in the URL. Clear both: a click on
+    # `#btn-generate` that lands on somebody else's overlay reports this panel
+    # broken and is not.
+    # ...and pin the display unit, because an earlier case may have left it in
+    # centimetres and the toggle assertion below is about a KNOWN starting point.
+    c.js("localStorage.setItem('fenceai.units', 'mm');"
+         " location.hash = ''; location.reload(); 'ok'")
+    wait_for(c, "!!document.getElementById('project-select').value", timeout=20)
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+    c.js("""
+{
+  const sel = document.getElementById('project-select');
+  const o = document.createElement('option');
+  o.value = %r; o.textContent = 'choices';
+  sel.appendChild(o); sel.value = %r;
+  sel.dispatchEvent(new Event('change'));
+}
+'ok'""" % (pid, pid))
+    wait_for(c, "!!document.getElementById('choices')")
+    c.click(*c.element_center("#btn-generate"))
+    # The two halves, separately: a question the backend never asked and a
+    # question the panel never drew fail the same check otherwise.
+    asked = wait_for(c, """
+fetch(`/api/projects/%s/runs`).then((r) => r.json()).then((rs) => rs.length
+  ? fetch(`/api/runs/${rs[rs.length - 1].id}`).then((x) => x.json())
+      .then((run) => (run.choice_sets || []).length)
+  : 0)""" % pid, timeout=20)
+    check("the ⚙ button generated a run, and it carries an open question",
+          asked == 1, asked)
+    wait_for(c, "document.querySelectorAll('#choices .choice-point').length")
+
+    read = """
+(() => {
+  const host = document.getElementById('choices');
+  const pts = [...host.querySelectorAll('.choice-point')];
+  return {
+    sets: host.querySelectorAll('.choice-set').length,
+    answers: pts.map((p) => p.querySelector('.choice-answer').textContent.trim()),
+    deltas: pts.map((p) => p.querySelector('.choice-delta').textContent.trim()),
+    built: pts.filter((p) => p.querySelector('.tag.active')).length,
+    pending: host.querySelectorAll('.choice-pending').length,
+    withdraw: host.querySelectorAll('.choice-withdraw').length,
+  };
+})()"""
+    shown = c.js(read)
+    check("the plan carries its open question, with the answer it was built "
+          "with AND the one it was not",
+          shown["sets"] == 1 and len(shown["answers"]) == 2
+          and shown["built"] == 1
+          and any("1667" in a for a in shown["answers"])
+          and any("1800" in a for a in shown["answers"]), shown)
+    check("a difference nobody can count is stated, not left blank",
+          all(d for d in shown["deltas"]), shown["deltas"])
+    check("nothing is pending before anybody answers", shown["pending"] == 0)
+
+    # the widths are LENGTHS: a centimetre preference has to reach them, while
+    # storage and the payload stay integer millimetres (asserted below)
+    c.click(*c.element_center("#btn-units"))
+    time.sleep(0.6)
+    cm = c.js(read)
+    check("the widths read in the reader's display unit",
+          any("166.7" in a for a in cm["answers"]), cm["answers"])
+    c.click(*c.element_center("#btn-units"))
+    time.sleep(0.6)
+
+    runs_before = c.js(
+        "fetch(`/api/projects/%s/runs`).then((r) => r.json()).then((rs) => rs.length)" % pid)
+    posts_before = c.js("document.querySelectorAll('#g-overlay circle').length")
+    clicked = c.js("""
+(() => {
+  const row = [...document.querySelectorAll('#choices .choice-point')]
+    .find((p) => p.textContent.includes('1800'));
+  if (!row) return false;
+  row.click();
+  return true;
+})()""")
+    check("the answer the plan was NOT built with can be given", bool(clicked))
+    if not clicked:
+        return
+    time.sleep(1.5)
+    answered = c.js(read)
+    runs_after = c.js(
+        "fetch(`/api/projects/%s/runs`).then((r) => r.json()).then((rs) => rs.length)" % pid)
+    posts_after = c.js("document.querySelectorAll('#g-overlay circle').length")
+    stored = c.js(
+        "fetch(`/api/projects/%s`).then((r) => r.json()).then((p) => p.choices)" % pid)
+
+    check("answering a question does not fire a generation",
+          runs_after == runs_before and posts_after == posts_before,
+          {"runs": [runs_before, runs_after], "posts": [posts_before, posts_after]})
+    check("the answer is visible as pending rather than silently stored",
+          answered["pending"] == 1 and answered["withdraw"] == 1, answered)
+    check("the selection records the widths it chose, in millimetres, against "
+          "the gap it answers",
+          stored == [{"choice_set": "bay_layout", "scope": "gap:run1:0",
+                      "widths": [1800, 1800, 1400], "bindings": {},
+                      "asked": True, "author": "user", "created_at": ""}], stored)
+    c.shot("22-choices-panel.png")
+
+    c.js("document.querySelector('#choices .choice-withdraw')?.click(); 'ok'")
+    time.sleep(1.5)
+    withdrawn = c.js(read)
+    left = c.js(
+        "fetch(`/api/projects/%s`).then((r) => r.json()).then((p) => p.choices)" % pid)
+    check("withdrawing an answer takes the pending marker with it",
+          withdrawn["pending"] == 0 and withdrawn["withdraw"] == 0 and left == [],
+          {"panel": withdrawn, "stored": left})
+
+
 # Cases added by the choice-set and hand-placement work. Append your function
 # to this list; define the function itself directly above this comment.
-_CHOICE_CASES: list = []
+_CHOICE_CASES: list = [_smoke_choices_panel]
 
 
 def main() -> int:
