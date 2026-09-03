@@ -167,12 +167,19 @@ export function anchorFor(runId, station) {
 }
 
 export function stationOfAnchor(run, anchor) {
-  // resolve an anchor to a current station exactly like backend anchor_station():
-  // proportional re-anchoring within the (possibly resized) originating segment
+  // resolve an anchor to a current station exactly like backend anchor_station(),
+  // honouring the anchor's own `reanchor` policy — the ONE branch, mirrored:
+  //   proportional (the default) — an elevation sample a third of the way along a
+  //     wall stays a third of the way along when the wall is stretched (ADR-0003);
+  //   rigid — the OFFSET is what a person measured, so it survives the edit; a
+  //     post 800 mm past a corner stays 800 mm past that corner.
+  // Absent means proportional: no anchor stored in any existing project carries
+  // the field, and their behaviour may not change.
+  // Both the clamp and the scaling are segment-local, exactly like the anchor.
   const lens = segmentLengths(run);
   const i = Math.max(0, Math.min(anchor.segment_index, lens.length - 1));
   const segLen = lens[i];
-  const offset = anchor.seg_len_at_authoring_mm === segLen
+  const offset = anchor.reanchor === "rigid" || anchor.seg_len_at_authoring_mm === segLen
     ? Math.min(anchor.offset_mm, segLen)
     : Math.round((anchor.offset_mm * segLen) / Math.max(anchor.seg_len_at_authoring_mm, 1));
   return lens.slice(0, i).reduce((a, b) => a + b, 0) + offset;
