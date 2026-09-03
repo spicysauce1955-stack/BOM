@@ -6,16 +6,17 @@ import { apiSend, esc } from "./api.js";
 import { loadCatalogProducts } from "./builder-ui.js";
 import { isSelectable, loadModelListing, modelOptionLabel } from "./fence-models.js";
 import {
-  clearGroup, el, endpointNodeAt, GROUND_TOL_MM, groundSamplesFor, groundZAt,
-  nodeById, pointAtStation, runAtPoint, runById, runLength, runPoints, snapPoint,
-  stationAtPoint, stationOfAnchor, toMmRaw, toPx,
+  anchorFor, clearGroup, el, endpointNodeAt, GROUND_TOL_MM, groundSamplesFor,
+  groundZAt, nodeById, pointAtStation, RUN_HIT_MM, runAtPoint, runById, runLength,
+  runPoints, snapPoint, stationAtPoint, stationOfAnchor, toMmRaw, toPx,
 } from "./geom.js";
 import { pushSnapshot, redo, undo } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
 import { inspect } from "./inspector.js";
+import { layoutWithPin, snapCandidates, violations } from "./post-drag.js";
 import {
-  addIntervalEvent, addPointEvent, generateStrategy, on, saveTopology,
-  setSelection, setTool, state,
+  addIntervalEvent, addPointEvent, generateStrategy, on, reloadProject,
+  saveTopology, setSelection, setTool, state,
 } from "./state.js";
 import { tagOf } from "./structure-data.js";
 import {
@@ -154,6 +155,12 @@ function setupCanvas() {
   // empty-canvas CTA layer (created here, not in index.html: editor-owned DOM);
   // separate from g-draft so clearing the draft layer never leaves CTA remnants
   el("g", { id: "g-cta", "pointer-events": "none" }, svg);
+  // The post drag's preview layer, and the reason `pointermove` can promise to
+  // touch nothing else: a preview drawn HERE cannot be mistaken for state,
+  // because nothing but the drag ever writes to it and the drag clears it on
+  // release. Last child, so it draws over the overlay; `pointer-events: none`
+  // so a preview mark can never eat the drop.
+  el("g", { id: "g-post-preview", "pointer-events": "none" }, svg);
 
   svg.addEventListener("click", (ev) => {
     if (suppressClick) { suppressClick = false; return; }
@@ -215,6 +222,25 @@ function setupCanvas() {
       drag = { kind: "ghost", runId: target.dataset.run, seg: +target.dataset.seg,
         started: false, start: [ev.clientX, ev.clientY] };
       svg.setPointerCapture(ev.pointerId);
+    } else if (target.dataset.post && runById(target.dataset.run)) {
+      // A THIRD kind on the one drag session, not a second session: the 4 px
+      // threshold, the single pushSnapshot and the pointer capture below are the
+      // gesture discipline (spec §9.2), and two sessions would be two copies of
+      // it that could disagree. `from` is where this drag started, which is what
+      // pointerup needs in order to DELETE the pin it is replacing.
+      drag = { kind: "post", runId: target.dataset.run,
+        postId: target.dataset.post, from: +target.dataset.station,
+        postKind: target.dataset.kind, postPinned: target.dataset.pinned === "1",
+        overrideId: target.dataset.override || null,
+        station: +target.dataset.station, suppress: false, refused: false,
+        started: false, start: [ev.clientX, ev.clientY] };
+      svg.setPointerCapture(ev.pointerId);
+      // Capture retargets the compatibility `click` to the capturing element,
+      // so the circle's own click listener will not fire for this gesture and
+      // the under-threshold click is answered in `onDragEnd` instead. Deferring
+      // the capture to the 4 px threshold to keep that listener alive is worse
+      // and was tried: a capture taken mid-gesture drops every pointermove
+      // after it, and the post lands one step into the drag.
     }
   });
   svg.addEventListener("pointermove", (ev) => {
@@ -317,8 +343,14 @@ function onDragMove(ev) {
   const [mx, my] = svgCoords(ev);
   if (!drag.started) {
     if (Math.hypot(ev.clientX - drag.start[0], ev.clientY - drag.start[1]) < 4) return;
-    // gesture begins: snapshot BEFORE any mutation
-    pushSnapshot(drag.kind === "ghost" ? "insert-vertex" : "move-dot");
+    // gesture begins: snapshot BEFORE any mutation.
+    // A post drag is the one kind that mutates NOTHING while it moves, so its
+    // single snapshot is pushed at release instead (`commitPostDrag`), where it
+    // is still the last thing before the first write. Pushed here it would also
+    // be pushed for a drop the pointer REFUSED, and an undo step that restores
+    // an identical project is a keystroke that does nothing.
+    if (drag.kind !== "post")
+      pushSnapshot(drag.kind === "ghost" ? "insert-vertex" : "move-dot");
     if (drag.kind === "ghost") {
       const run = runById(drag.runId);
       run.interior_vertices.splice(drag.seg, 0, [mx, my]);
@@ -327,6 +359,10 @@ function onDragMove(ev) {
     }
     drag.started = true;
   }
+  // A post drag draws and nothing else: no state.project, no history past the
+  // snapshot above, no fetch. Everything it needs is a position, and every
+  // position it needs comes from post-drag.js.
+  if (drag.kind === "post") { previewPostDrag(mx, my); return; }
   const run = runById(drag.runId);
   const pts = runPoints(run);
   const anchor = pts[drag.dotIndex > 0 ? drag.dotIndex - 1 : 1];
@@ -356,10 +392,20 @@ function onDragEnd() {
   const d = drag;
   drag = null;
   clearGroup("g-snap");
+  clearGroup("g-post-preview");
+  updateStatus();
   // swallow the click that may follow this pointer gesture; a drag fires no
   // click at all, so clear the flag on the next tick either way
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 0);
+  if (d.kind === "post") {
+    // Under the 4 px threshold the gesture IS a click and opens the inspector
+    // (spec §9.2.5) — answered here rather than by the circle's own listener,
+    // which the pointer capture taken at pointerdown has already bypassed.
+    if (d.started) commitPostDrag(d);
+    else openPostInspector(d);
+    return;
+  }
   if (d.started) {
     setSelection({ runId: d.runId, dotIndex: d.dotIndex });
     saveTopology(); // snapshot was pushed at gesture start
@@ -395,6 +441,265 @@ function deleteSelectedDot() {
     setSelection({});
     saveTopology();
   }
+}
+
+// ---------- select tool: dragging a post (spec §9, adapter A) ----------------
+// This is the CANVAS half of the gesture and nothing else: hit-test a circle,
+// project a pointer onto the run's polyline, write the one override both
+// adapters write. Every number comes from `post-drag.js`, which the side view
+// calls too — inlining the arithmetic here is exactly the drift `base-top.js`
+// exists to prevent, and the two views would then draw the same post in two
+// places.
+//
+// Pointer tolerances, in world millimetres:
+//   POST_SNAP_MM    — how close a snap candidate must be to be taken;
+//   DROP_ON_POST_MM — how close a drop must be to a neighbouring post to MEAN
+//                     that post, which is the suppress gesture.
+const POST_SNAP_MM = 100;
+const DROP_ON_POST_MM = RUN_HIT_MM;
+
+/** Where a placement directive currently applies, or null when it says nothing.
+ *
+ *  Mirrors backend `override_station` (strategy/overrides.py): the ANCHOR wins
+ *  where a directive carries both, because `station_mm` is the reading the
+ *  geometry HAD, and preferring it would freeze a pin at the number it wore
+ *  when the run was a different length. */
+function placementStation(run, directive) {
+  if (directive.anchor) return stationOfAnchor(run, directive.anchor);
+  return directive.station_mm || null;
+}
+
+/** The stations a drag may neither move nor lay out across: run ends, every
+ *  generated post that is not a plain line post — a corner, a gate edge, a step,
+ *  a transition — and every post a person already pinned.
+ *
+ *  That set is the generator's own `fixed` (`{0, length} | corners |
+ *  transitions | pinned | gate_edges | steps`), READ BACK off the last run
+ *  rather than recomputed here. The browser owning a second copy of that rule is
+ *  how a preview starts promising a layout the generator will not build. */
+function fixedStationsFor(runId, exceptStation) {
+  const run = runById(runId);
+  const out = new Set();
+  for (const post of state.result?.strategy.posts || []) {
+    if (post.run_ref !== runId) continue;
+    if (post.kind === "line" && !post.pinned) continue;
+    out.add(post.station_mm);
+  }
+  for (const ov of state.project?.overrides || []) {
+    if (ov.run_id !== runId || ov.directive.kind !== "pin_post") continue;
+    const s = placementStation(run, ov.directive);
+    if (s !== null) out.add(s);
+  }
+  out.delete(exceptStation);
+  return [...out].sort((a, b) => a - b);
+}
+
+/** Every post the pointer could land ON, which is a different question from
+ *  which stations are fixed: a plain line post is free to be re-laid-out, but
+ *  dropping another post onto it is still a gesture about it. */
+function neighbourStations(runId, exceptStation) {
+  const run = runById(runId);
+  const out = new Set([0, runLength(run)]);
+  for (const post of state.result?.strategy.posts || [])
+    if (post.run_ref === runId) out.add(post.station_mm);
+  for (const s of fixedStationsFor(runId, exceptStation)) out.add(s);
+  out.delete(exceptStation);
+  return [...out].sort((a, b) => a - b);
+}
+
+/** The resolved maximum span for a run, read off the DECISION GRAPH rather than
+ *  inferred from what the last generation happened to build.
+ *
+ *  `resolve_max_span` (or `uncovered_param`, when no rule covered it) carries
+ *  the value this run was laid out to. Two fence models can meet on one run and
+ *  resolve differently, so the preview takes the smallest: a preview that warns
+ *  early is a nuisance, one that promises a bay the generator refuses is a
+ *  wrong price shown confidently. 0 means "no run yet" and disables the check. */
+function maxSpanFor(runId) {
+  let out = 0;
+  for (const node of state.result?.graph?.nodes || []) {
+    const p = node.payload || {};
+    if (p.param !== "max_span_mm" || p.run_id !== runId) continue;
+    if (!Number.isFinite(p.value)) continue;
+    out = out ? Math.min(out, p.value) : p.value;
+  }
+  return out;
+}
+
+/** The picture one pointermove needs. Rebuilt per move because the neighbours
+ *  change as the pointer crosses them.
+ *
+ *  `minSpanMm: 0` is deliberate and not a stub: the sliver PREFERENCE lives in
+ *  knowledge and reaches no frontend surface, and inventing one here would draw
+ *  a rule nobody wrote. `violations()` therefore reports only the hard maximum,
+ *  which is the one the plan and the quote carry. */
+function postDragContext(d) {
+  const run = runById(d.runId);
+  return {
+    run,
+    length: runLength(run),
+    fixed: fixedStationsFor(d.runId, d.from),
+    neighbours: neighbourStations(d.runId, d.from),
+    limits: { maxSpanMm: maxSpanFor(d.runId), minSpanMm: 0 },
+  };
+}
+
+// The two stations a candidate sits between. Not layout arithmetic — the bays
+// themselves are `layoutWithPin`'s answer, never this function's.
+function bracket(stations, station) {
+  let prev = 0, next = Infinity;
+  for (const s of stations) {
+    if (s < station) prev = Math.max(prev, s);
+    else if (s > station) next = Math.min(next, s);
+  }
+  return [prev, next];
+}
+
+function previewPostDrag(mx, my) {
+  const d = drag;
+  const ctx = postDragContext(d);
+  // stationAtPoint returns {station, dist} and DISCARDS which segment won, so
+  // the anchor is re-derived with anchorFor at drop time — never from this.
+  const raw = stationAtPoint(ctx.run, mx, my).station;
+  const station = Math.max(0, Math.min(raw, ctx.length));
+
+  // Dropping a post onto its neighbour says "this post should not be here",
+  // which is a suppression and not a move.
+  const onto = ctx.neighbours.find((s) => Math.abs(s - station) <= DROP_ON_POST_MM);
+  if (onto !== undefined) {
+    d.station = onto;
+    d.suppress = true;
+    // ...but only a LINE post can be suppressed. A corner, a gate edge, a step
+    // or a pinned post is structural, so the gesture is refused HERE, at the
+    // pointer, rather than written as an override that immediately reports
+    // itself orphaned in a warning list nobody was looking at.
+    d.refused = d.postKind !== "line" || d.postPinned;
+    renderPostPreview(ctx, d, []);
+    return;
+  }
+  d.suppress = false;
+  d.refused = false;
+  const [prev, next] = bracket(ctx.neighbours, station);
+  // No `stock`/`piecesPerBay`: the browser has no infill stock length for this
+  // bay that it did not invent, and a yield tick computed from a guess
+  // advertises a saving the cut list will not deliver. Counts come from the
+  // backend (spec §9.1) — this module only ever computes a position.
+  const snaps = snapCandidates({
+    station, prev, next, ...ctx.limits, displayUnit: currentUnit(),
+  });
+  let taken = null;
+  for (const c of snaps)
+    if (taken === null || Math.abs(c.station - station) < Math.abs(taken.station - station))
+      taken = c;
+  d.station = taken && Math.abs(taken.station - station) <= POST_SNAP_MM
+    ? taken.station : station;
+  renderPostPreview(ctx, d, snaps);
+}
+
+function renderPostPreview(ctx, d, snaps) {
+  const g = clearGroup("g-post-preview");
+  // The layout this drop would produce — the one the backend will build, from
+  // the module that mirrors `equal_layout`. A pin does not exempt the run from
+  // the maximum: it only says where one post goes.
+  const { widths } = layoutWithPin(
+    ctx.fixed, ctx.length, d.suppress ? null : d.station, ctx.limits);
+  const broken = violations(widths, ctx.limits);
+  const badBays = new Set(broken.map((v) => v.index));
+  let at = 0;
+  for (let i = 0; i < widths.length; i++) {
+    const a = toPx(pointAtStation(ctx.run.id, at));
+    const b = toPx(pointAtStation(ctx.run.id, at + widths[i]));
+    el("line", { x1: a[0], y1: a[1] + 13, x2: b[0], y2: b[1] + 13,
+      stroke: badBays.has(i) ? "#dc2626" : "#0f766e", "stroke-width": 3,
+      "stroke-dasharray": "3 3", opacity: 0.85 }, g);
+    at += widths[i];
+  }
+  for (const c of snaps) {
+    const p = toPx(pointAtStation(ctx.run.id, c.station));
+    el("line", { x1: p[0], y1: p[1] - 15, x2: p[0], y2: p[1] + 15,
+      stroke: "#94a3b8", "stroke-width": 1, "stroke-dasharray": "2 3" }, g);
+  }
+  const p = toPx(pointAtStation(ctx.run.id, d.station));
+  el("circle", { cx: p[0], cy: p[1], r: 9, fill: "none",
+    stroke: d.suppress ? "#dc2626" : "#f59e0b", "stroke-width": 3,
+    "stroke-dasharray": d.suppress ? "3 3" : "none" }, g);
+  if (d.refused) {
+    // a refusal has to be visible at the pointer, or it reads as a dead drag
+    el("line", { x1: p[0] - 10, y1: p[1] - 10, x2: p[0] + 10, y2: p[1] + 10,
+      stroke: "#dc2626", "stroke-width": 3 }, g);
+    el("line", { x1: p[0] + 10, y1: p[1] - 10, x2: p[0] - 10, y2: p[1] + 10,
+      stroke: "#dc2626", "stroke-width": 3 }, g);
+  }
+  const bar = document.getElementById("statusbar");
+  if (!bar) return;
+  if (d.suppress) {
+    bar.textContent = t(d.refused ? "editor.drag_no_suppress" : "editor.drag_suppress");
+    return;
+  }
+  const worst = broken[0];
+  bar.textContent = tu("editor.drag_station", { station_mm: d.station })
+    + (widths.length
+      ? ` · ${tu("editor.drag_bays", { min_mm: Math.min(...widths), max_mm: Math.max(...widths) })}`
+      : "")
+    + (worst ? ` · ${tu("editor.drag_over_max", { over_mm: worst.over_mm })}` : "");
+}
+
+/** A press on a post that never became a drag: select it and explain it.
+ *
+ *  A PENDING marker is deliberately silent here. It is not a generated element,
+ *  there is no decision trail to walk, and asking for one would answer "no
+ *  decisions" about a placement the person made themselves. Its own panel is
+ *  the inspector work Task 5 owns. */
+function openPostInspector(d) {
+  setSelection({ runId: d.runId, elementId: d.postId });
+  const post = (state.result?.strategy.posts || []).find((p) => p.id === d.postId);
+  if (post)
+    inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm });
+}
+
+/** The placement overrides this drag started from — the ones pointerup has to
+ *  delete before it posts a replacement.
+ *
+ *  Exact when the drag started on a PENDING marker (it carries its own override
+ *  id); by resolved station otherwise, which is how a drag that started on a
+ *  generated post finds the pin that put it there. */
+function placementOverridesFrom(d) {
+  const run = runById(d.runId);
+  return (state.project?.overrides || []).filter((ov) => {
+    if (ov.run_id !== d.runId) return false;
+    if (d.overrideId) return ov.id === d.overrideId;
+    const kind = ov.directive.kind;
+    if (kind !== "pin_post" && kind !== "suppress_post") return false;
+    const s = placementStation(run, ov.directive);
+    return s !== null && Math.abs(s - d.from) <= GROUND_TOL_MM;
+  });
+}
+
+async function commitPostDrag(d) {
+  if (!runById(d.runId)) return;
+  if (d.refused) return;   // refused at the pointer: nothing is written at all
+  // A suppression is about the post the drag STARTED on, so it is anchored
+  // there; a move is anchored where the pointer let go.
+  const station = d.suppress ? d.from : d.station;
+  const anchor = { ...anchorFor(d.runId, station), reanchor: "rigid" };
+  // once per gesture, and the last thing before the first write
+  pushSnapshot("move-post");
+  try {
+    // DELETE first. There is no `PUT /overrides`: without this a second drag on
+    // the same post leaves TWO pins and a bay nobody asked for.
+    for (const ov of placementOverridesFrom(d))
+      await apiSend("DELETE",
+        `/api/projects/${state.projectId}/overrides/${ov.id}`);
+    await apiSend("POST", `/api/projects/${state.projectId}/overrides`, {
+      id: "", run_id: d.runId,
+      directive: { kind: d.suppress ? "suppress_post" : "pin_post", anchor },
+    });
+    // reloadProject, never openProject: an override is not a topology change and
+    // must not wipe the undo stack. It does NOT refresh state.result — which is
+    // why the placement is drawn as a pending marker below, and why nothing here
+    // generates. Generation stays behind the button.
+    await reloadProject();
+  } catch { /* apiSend has already shown and logged the failure */ }
 }
 
 // ---------- event tools: gate/base/ground/pin popover (Task 8) ----------
@@ -1066,7 +1371,14 @@ function renderHandles() {
 
 function renderOverlay() {
   const g = clearGroup("g-overlay");
-  if (!state.result || !document.getElementById("chk-overlay").checked) return;
+  if (!document.getElementById("chk-overlay").checked) return;
+  if (state.result) renderGeneratedOverlay(g);
+  // LAST, so a pending marker sits ON TOP of the generated post it displaces and
+  // the next drag grabs the placement rather than the stale run state.
+  renderPendingPlacements(g);
+}
+
+function renderGeneratedOverlay(g) {
   const s = state.result.strategy;
   for (const span of s.spans) {
     const p0 = toPx(pointAtStation(span.run_ref, span.start_station_mm));
@@ -1107,18 +1419,84 @@ function renderOverlay() {
     }
     if (!xy) continue;
     const p = toPx(xy);
+    // A post had no identity in the DOM at all — a bare <circle>. These
+    // attributes are what makes it draggable: which post, on which run, at which
+    // station, and (kind + pinned) whether it is a post that may be suppressed
+    // at all. A node post (`run_ref` "node:...") gets them too and is simply
+    // never picked up, because `runById` cannot resolve its run.
     const c = el("circle", { cx: p[0], cy: p[1], r: post.reinforced ? 8 : 6,
       fill: POST_COLORS[post.kind] || "#2563eb",
       stroke: post.pinned ? "#f59e0b" : post.mounting === "masonry" ? "#dc2626" : "#fff",
-      "stroke-width": post.pinned ? 3 : 2, cursor: "pointer" }, g);
+      "stroke-width": post.pinned ? 3 : 2, cursor: "pointer",
+      "data-post": post.id, "data-run": post.run_ref,
+      "data-station": post.station_mm, "data-kind": post.kind,
+      "data-pinned": post.pinned ? "1" : "0" }, g);
     el("title", {}, c).textContent =
       `${post.id}\n${post.sku} (${enumWord(post.kind)}, ${enumWord(post.mounting)})`;
     const postTag = tagOf(post.id);
     if (postTag)
       el("text", { x: p[0] + 7, y: p[1] - 7, "font-size": 9, class: "elem-tag",
         "pointer-events": "none" }, g).textContent = postTag;
-    c.addEventListener("click", () =>
-      inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm }));
+    c.addEventListener("click", () => {
+      // the latch the pointer gesture sets: a completed drag must not ALSO open
+      // the inspector. Under the 4 px threshold the latch is never set, and the
+      // gesture is the click it looks like.
+      if (suppressClick) return;
+      inspect(post.id, "inspect.post", { sku: post.sku, station_mm: post.station_mm });
+    });
+  }
+}
+
+/** Placements the person has made and the engine has not yet been asked about.
+ *
+ *  Drawn from `state.project.overrides`, hollow and dashed, deliberately not
+ *  looking like a generated post — because they are not one. `reloadProject()`
+ *  does not refresh `state.result`, so the overlay still holds the previous
+ *  run's posts; without this marker the post a person just dropped springs back
+ *  to where the old run put it and a working feature reads as a broken one.
+ *
+ *  Showing the two as two kinds of thing is the honest rendering, not a
+ *  cosmetic one: a pin is a fact about the PROJECT and is saved immediately, a
+ *  post position is a fact about the RUN and has not been recomputed. Nothing
+ *  here generates — that stays behind the button.
+ *
+ *  Only a pin is draggable. A suppression marks a post that should not exist,
+ *  and dragging one would be a gesture with no meaning. */
+function renderPendingPlacements(g) {
+  if (!state.project) return;
+  for (const ov of state.project.overrides || []) {
+    const d = ov.directive;
+    const suppressed = d.kind === "suppress_post";
+    if (d.kind !== "pin_post" && !suppressed) continue;
+    const run = runById(ov.run_id);
+    if (!run) continue;
+    const station = placementStation(run, d);
+    if (station === null) continue;   // orphaned: the warning list says so
+    const xy = pointAtStation(run.id, station);
+    if (!xy) continue;
+    const p = toPx(xy);
+    const c = el("circle", { cx: p[0], cy: p[1], r: 7, fill: "none",
+      stroke: suppressed ? "#dc2626" : "#f59e0b", "stroke-width": 2.5,
+      "stroke-dasharray": "3 3", class: "pending-post", "data-pending": "1",
+      ...(suppressed ? {} : {
+        // `fill: none` under the default `visiblePainted` leaves the INTERIOR of
+        // the ring transparent to hit-testing, so a pointer aimed at the middle
+        // of the marker fell straight through to the run's hit band and the
+        // marker could not be picked up at all. `all` is what makes the shape a
+        // target rather than its outline.
+        "pointer-events": "all",
+        cursor: "pointer", "data-post": `pending:${ov.id}`, "data-override": ov.id,
+        "data-run": run.id, "data-station": station,
+        // a pinned post is not suppressible, so a drag of this marker onto a
+        // neighbour is refused the same way the generator would refuse it
+        "data-kind": "line", "data-pinned": "1",
+      }),
+    }, g);
+    el("title", {}, c).textContent =
+      t(suppressed ? "editor.pending_suppress" : "editor.pending_pin");
+    if (suppressed)
+      el("line", { x1: p[0] - 5, y1: p[1] - 5, x2: p[0] + 5, y2: p[1] + 5,
+        stroke: "#dc2626", "stroke-width": 2, "pointer-events": "none" }, g);
   }
 }
 

@@ -613,6 +613,205 @@ def _smoke_side_drag(c) -> None:
                   ".then(p => p.overrides.filter("
                   "o => o.directive.kind === 'pin_post').length)")
     check("one drag is one undo step", undone == (1 if again else 0), undone)
+def _smoke_plan_drag(c) -> None:
+    """Adapter A: dragging a generated post in the plan canvas (spec §9).
+
+    Its own project, because every assertion counts overrides and a run somebody
+    else drew lays out differently. 4200 mm under the demo knowledge's 1800 mm
+    maximum becomes three 1400 bays, so the interior LINE posts sit at 1400 and
+    2800 — and a drop at 2500 leaves 1100 and 1700, breaking no rule. That is
+    deliberate: these checks are about where a pin lands, not about the
+    over-maximum path, which `tests/strategy/test_lock_bay.py` owns.
+
+    Nothing here is a screenshot: the harness does no image diffing and
+    `tools/smoke_baseline/` does not exist, so a case that only photographs the
+    canvas reports PASS while the bug ships. Every assertion is a `check()`.
+    """
+
+    def st(expr: str) -> str:
+        """Read the LIVE app state from a CDP evaluate.
+
+        There is no `window.state`: every module talks through `state.js`, which
+        is an ES module. Importing the URL the page itself imported hands back
+        the very object the views mutate — the module registry is keyed by URL —
+        rather than a fresh copy. `Runtime.evaluate` is called with
+        awaitPromise, so the promise has resolved by the time `c.js` returns.
+        """
+        return ("import('./js/state.js').then(m => { const state = m.state;"
+                f" return ({expr}); }})")
+
+    def drag(from_mm: int, to_mm: int) -> None:
+        """Press on the post at `from_mm`, ONE move to `to_mm`, release.
+
+        NOT `c.drag`, and the difference is the whole point. Its eight
+        intermediate moves are what a hand does, but headless Chrome under load
+        fires `pointercancel` on a CAPTURED pointer partway through a gesture —
+        it does it to the pre-existing vertex drag too, so it is the input layer
+        and not this feature. A cancelled gesture that had already reached its
+        destination still commits there (`pointercancel` ends the drag through
+        the same `onDragEnd`), while a truncated eight-step one drops the post
+        one step in and reports a wrong station as a product bug.
+
+        One move is also enough: the 4 px threshold and the destination are both
+        crossed by it.
+        """
+        x0, y0 = c.canvas_px(from_mm, 0)
+        x1, y1 = c.canvas_px(to_mm, 0)
+        c.cmd("Input.dispatchMouseEvent", type="mousePressed", x=x0, y=y0,
+              button="left", buttons=1, clickCount=1)
+        c.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=x1, y=y1,
+              button="left", buttons=1)
+        time.sleep(0.05)
+        c.cmd("Input.dispatchMouseEvent", type="mouseReleased", x=x1, y=y1,
+              button="left", buttons=0, clickCount=1)
+        time.sleep(0.3)
+
+    def run() -> None:
+        # The evidence viewer is deep-linked open by the case before this one and
+        # its overlay covers the page, so every click below would land on IT.
+        # Close it the way a person would, and drop the hash it left behind.
+        c.js("document.querySelector('[data-evidence-close]')?.click();"
+             " if (location.hash) location.hash = ''; 'ok'")
+        time.sleep(0.5)
+        c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+        time.sleep(0.4)
+        c.js("document.getElementById('new-project-name').value = 'placement'; 'ok'")
+        c.click(*c.element_center("#btn-new-project"))
+        time.sleep(1.5)
+        # ...and SAY that it worked. Without this the case would silently run
+        # against whatever project the previous case left open — which is
+        # exactly what a swallowed click looks like from here.
+        empty_start = c.js(st("state.project.topology.runs.length === 0"))
+        check("this case runs on a project of its own", bool(empty_start))
+        # an empty project fits back to the default view, so the world
+        # coordinates below are on screen whatever the previous case left the
+        # viewBox at
+        c.click(*c.element_center("#btn-fit"))
+        c.click(*c.element_center("#tool-draw"))
+        c.click(*c.canvas_px(0, 0))
+        c.click(*c.canvas_px(4200, 0))
+        c.key("Enter")
+        time.sleep(1.5)
+        c.click(*c.element_center("#tool-select"))
+        c.click(*c.element_center("#btn-fit"))   # zoom to the run: 1 px is ~11 mm
+        c.js("document.getElementById('chk-overlay').checked = true; 'ok'")
+        c.click(*c.element_center("#btn-generate"))
+        posts = wait_for(c, st("JSON.stringify((state.result"
+                               " ? state.result.strategy.posts : [])"
+                               ".filter(p => p.run_ref === 'run1')"
+                               ".map(p => p.station_mm))"), timeout=25)
+        check("the run laid out where this case's coordinates assume it did",
+              posts == "[1400,2800]", posts)
+        if posts != "[1400,2800]":
+            return   # every coordinate below is derived from that layout
+
+        # --- a press under the threshold is still a click --------------------
+        c.js("document.getElementById('inspector-body').textContent = 'SENTINEL'; 'ok'")
+        c.click(*c.canvas_px(1400, 0))
+        opened = wait_for(c, "document.getElementById('inspector-body')"
+                             ".textContent.indexOf('SENTINEL') < 0")
+        check("a press under 4 px still opens the post inspector", bool(opened))
+
+        # --- drag the post at 2800 to 2500 -----------------------------------
+        # Let the explanation fetch above finish first: `inspect()` APPENDS its
+        # lines after an await, so a sentinel planted mid-flight would be
+        # overwritten by the click already made rather than by the drag.
+        time.sleep(1.5)
+        run_before = c.js(st("state.result.run.id"))
+        c.js("document.getElementById('inspector-body').textContent = 'SENTINEL'; 'ok'")
+        drag(2800, 2500)
+        wait_for(c, st("(state.project.overrides || [])"
+                       ".filter(o => o.directive.kind === 'pin_post').length"),
+                 timeout=15)
+        pins = c.js(st("state.project.overrides"
+                       ".filter(o => o.directive.kind === 'pin_post').length"))
+        check("a post can be dragged and lands where the pointer did", pins == 1, pins)
+        anchor = c.js(st("JSON.stringify(state.project.overrides"
+                         ".filter(o => o.directive.kind === 'pin_post')"
+                         ".map(o => [o.directive.anchor.segment_index,"
+                         "           o.directive.anchor.offset_mm,"
+                         "           o.directive.anchor.reanchor]))"))
+        check("the pin carries a segment-local RIGID anchor, not a station",
+              anchor == '[[0,2500,"rigid"]]', anchor)
+        body = c.js("document.getElementById('inspector-body').textContent")
+        check("a drag does not also open the inspector", body == "SENTINEL", body)
+        # the overlay still holds the previous run's posts, so without this
+        # marker the dropped post springs back and a working feature reads as a
+        # broken one
+        pending = c.js(
+            "document.querySelectorAll('#g-overlay circle[data-pending]').length")
+        check("the drop is drawn as a pending marker, distinct from a generated post",
+              pending == 1, pending)
+        check("a drop does not fire a generation",
+              c.js(st("state.result.run.id")) == run_before)
+        c.shot("30-post-dragged.png")
+
+        # --- and again, on the same post: there is no PUT /overrides ---------
+        # 3200 rather than somewhere nearer: the selected run's midpoint GHOST
+        # sits at 2100 and is painted above the overlay, so a gesture that
+        # starts within ~110 mm of it inserts a vertex instead of moving a post.
+        drag(2500, 3200)
+        wait_for(c, st("state.project.overrides.some("
+                       "o => o.directive.kind === 'pin_post'"
+                       " && o.directive.anchor.offset_mm === 3200)"), timeout=15)
+        pins = c.js(st("state.project.overrides"
+                       ".filter(o => o.directive.kind === 'pin_post').length"))
+        check("dragging the same post twice leaves ONE pin", pins == 1, pins)
+
+        # --- dropping a post onto its neighbour ------------------------------
+        # Refused first: a PINNED post is not suppressible, and the refusal has
+        # to happen at the pointer rather than as an override that immediately
+        # reports itself orphaned.
+        drag(3200, 2800)
+        time.sleep(1.5)
+        after = c.js(st("JSON.stringify((state.project.overrides || []).map("
+                        "o => [o.directive.kind, o.directive.anchor.offset_mm]))"))
+        check("dropping a post that may not be suppressed writes nothing at all",
+              after == '[["pin_post",3200]]', after)
+        # ...and allowed for a plain line post, which is the gesture the
+        # backend's anchored `suppress_post` matching exists for
+        drag(1400, 2800)
+        wait_for(c, st("state.project.overrides"
+                       ".some(o => o.directive.kind === 'suppress_post')"), timeout=15)
+        killed = c.js(st("JSON.stringify(state.project.overrides"
+                         ".filter(o => o.directive.kind === 'suppress_post')"
+                         ".map(o => [o.directive.anchor.segment_index,"
+                         "           o.directive.anchor.offset_mm,"
+                         "           o.directive.anchor.reanchor]))"))
+        check("dropping a LINE post onto its neighbour suppresses it, anchored",
+              killed == '[[0,1400,"rigid"]]', killed)
+        check("suppressing one post does not disturb the pin on another",
+              c.js(st("state.project.overrides"
+                      ".filter(o => o.directive.kind === 'pin_post').length")) == 1)
+        c.shot("31-post-suppressed.png")
+
+        # --- one drag is one undo step ---------------------------------------
+        # Last, because undo restores through saveTopology() and that clears
+        # state.result: there are no generated posts left to drag afterwards.
+        # Four gestures are on the stack (draw, drag, drag, suppress) and the
+        # REFUSED drop is deliberately not one of them, so each Ctrl+Z peels
+        # exactly one thing that actually happened.
+        c.key("z", ctrl=True)
+        wait_for(c, st("!state.project.overrides"
+                       ".some(o => o.directive.kind === 'suppress_post')"), timeout=15)
+        c.key("z", ctrl=True)
+        back = wait_for(c, st("state.project.overrides.some("
+                              "o => o.directive.kind === 'pin_post'"
+                              " && o.directive.anchor.offset_mm === 2500)"), timeout=15)
+        check("one drag is one undo step — the second drag alone comes off", bool(back))
+        c.key("z", ctrl=True)
+        empty = wait_for(c, st("state.project.overrides.length === 0"), timeout=15)
+        check("the next step is the first drag, and the drawing survives both",
+              bool(empty) and c.js(st("state.project.topology.runs.length")) == 1)
+
+    print("  -- plan canvas: hand placement --")
+    try:
+        run()
+    except Exception as exc:   # noqa: BLE001
+        # A raise here aborts main() before the tally line and takes every other
+        # agent's cases with it. A crash IS a failure, and it is reported as one
+        # through the same channel as everything else.
+        check("the plan-canvas placement case ran to completion", False, repr(exc))
 
 
 # Cases added by the choice-set and hand-placement work. Append your function
@@ -621,6 +820,7 @@ _CHOICE_CASES: list = [
     _smoke_choices_panel,
     _smoke_post_inspector,
     _smoke_side_drag,
+    _smoke_plan_drag,
 ]
 
 
