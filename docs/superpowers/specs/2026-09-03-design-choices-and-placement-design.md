@@ -1,63 +1,96 @@
 # Two right answers, and a pointer for when neither is yours
 
-**Date:** 2026-09-03 · **Status:** DESIGN, not started
-**Contract:** §1.3 (`paired`), §1.4, §2.2 · ADR-0004 (overrides), ADR-0007 (layout,
-cut planning), ADR-0002 (int mm at rest)
-**Supersedes nothing.** Extends `2026-08-31-source-admissibility-design.md` (item 6)
-and closes the `paired` gap `2026-09-03-spec-field-provenance-design.md` §7 names.
-**Drawing set:** the visual companion to this spec is an artifact, rev C, twelve
-sheets. Where a number here has a picture, the sheet is cited as `S-04`.
+**Date:** 2026-09-03 · **Status:** DESIGN, rev 2 — **rewritten after four adversarial
+reviews**. §0 records what changed and why; the reviews' verdicts on rev 1 were
+RETHINK and INADEQUATE, and they were right.
+**Contract:** frozen at **v1.3**. §13 is the boundary analysis: **no amendment**, two
+registry additions, three of our eight obligations bind the design.
+**Also:** ADR-0002 (int mm at rest), ADR-0003 (anchoring), ADR-0004 (overrides),
+ADR-0007 (layout, cut planning), ADR-0011 (design vs supply identity)
+**Plans:** `plans/2026-09-03-choice-sets-backend.md` and
+`plans/2026-09-03-choice-sets-frontend.md` — two tracks, one seam (§14).
 
 ---
+
+## 0 · What the review changed, and why rev 1 could not be patched
+
+Every measured number in rev 1 was correct — 30 of 30, re-derived independently. The
+wiring was not. Four things changed shape; everything else follows from them.
+
+| Rev 1 assumed | The code says | Rev 2 |
+|---|---|---|
+| A design point can bind `max_span_mm` directly | One resolution path exists — `resolve_param` — carrying authority precedence, hard-tie collapse, a declined-source ceiling and a `governed_by` ref. Bypassing it makes the run report *"no rule states max_span_mm"* about a sealed engineering table | **A parameter point becomes synthesized `KnowledgeVersion`s** (§12), as a model's `layout_policy` already does. A *layout* point binds no parameter and needs none — §5.1 |
+| A candidate can be measured at the layout site | `resolve_panel` runs **after** the span loop and consumes the bay width the layout produces. Circular. The three fields rev 1 read (`sm.infill_stock_mm`, `_kerf_mm`, `_rows`) do not exist | **Nothing is measured outside a real generation** (§7). `strategy/measure.py` is deleted before it is written |
+| The scope of a question is the section | The block sat inside a **per-segment** loop. Any corner, gate, step — or one pinned post — emitted duplicate questions and applied one answer to a segment it was never measured for | **One pass decides default and alternatives, over gaps between fixed stations.** Scope is the gap |
+| Two questions cost three generations | A probe called full `generate()`, which probed again: `G(n) = 1 + n·G(n-1)`. Two questions cost **5**; six sections cost **1957** | **`offer_alternatives` is an input flag** (§7). `n` questions cost `1 + n` by construction |
+
+Six more findings that each killed a claim rev 1 made in print:
+
+- **Placement is not free.** `continuity._greedy_extent` walks bays *in station order* —
+  *"how many of these bays one piece covers, starting at the first."* Reordering
+  `2000·2000·1000` into `1000·2000·2000` changes a continuous rail from `4000+1000` to
+  `3000+2000`: **+2 boards on 4**. A terrain step or gate edge can make it ±1 post.
+- **The yield cliff was on the wrong length.** An infill piece is cut to the *clear
+  opening*; `clear_opening_mm` subtracts a whole post face. With a 90 mm post a 1000 mm
+  bay yields a 910 mm slat and two already fit, so there is no cliff at 1000 at all.
+- **"Odd bay" was a preference wearing a filter's clothes.** Drop it and the tiling
+  layout dominates *the layout this engine ships today* on posts, boards and cuts.
+- **Four fixed measures do not fit every question.** On a 3 m run both footing points
+  give identical posts, boards and cuts — the panel would print "same everything" for
+  answers 25% apart in concrete, which §4.1 quotes and never measured.
+- **`"choice"` is not a `NodeKind`** (closed `Literal` of 12), and `defeated=` mints an
+  `input_fact` node per ref — a design-point id would have **invented a fake knowledge
+  fact**, against that method's own comment.
+- **A selection keyed on a generator name is not an identity.** `fewest_posts` is
+  *defined relative to* `max_span`, so answering a footing question silently turned
+  "three equal bays of 1667" into two bays of 2500.
+
+And two that would have failed on the first run: `plan_cuts` **raises** on a piece longer
+than its stock, so measuring the deep-footing point (2439 mm bays) crashed a generation;
+and the yield snap tick at station 4002 made the *previous* bay 2002 mm — 2 mm over the
+maximum passed into the same function call.
 
 ## 1 · The problem, in one paragraph
 
 Sometimes more than one fence is right, and this engine hides it. A published
-`footing_schedule` states *"24″ holes with posts up to 66″ apart, **or** 30″ holes
-up to 97″"* — both stamped by the same engineer — and we refuse the whole table
-(`parameter_paired_unsupported`). A 5 m run with 2 m panels can be three equal bays
-or two panels and a stub, and the engine picks one by a flag nobody set. And when a
-person places a post by hand, the layout puts another one back in the middle
-without a word. Three shapes of one problem: **the engine decides where nothing
-entitles it to decide, and says nothing about the answer it discarded.**
+`footing_schedule` states *"24″ holes with posts up to 66″ apart, **or** 30″ holes up to
+97″"* — both stamped by the same engineer — and we refuse the whole table
+(`parameter_paired_unsupported`). A 5 m run with 2 m panels can be three equal bays or two
+panels and a stub, and the engine picks one by a flag nobody set. And when a person places
+a post by hand, the layout puts another one back in the middle without a word. Three
+shapes of one problem: **the engine decides where nothing entitles it to decide, and says
+nothing about the answer it discarded.**
 
 ## 2 · What changes for the person
 
-**Today:** a plan says *"bays 1667, 1667, 1666"*. Nothing says why, or that
-`2000 · 2000 · 1000` was computed and thrown away, or that a sealed approval offered
-a footing schedule that needs three fewer posts.
-
-**After:** the plan carries its open questions. Each shows the answer it wasn't and
-what the difference is in things you can count:
+The plan carries its open questions. Each shows the answer it wasn't and the difference in
+things you can count — with the publisher's own words on the row, because obligation 5
+requires it (§13):
 
 ```text
-Section A · 5.0 m · 2 open questions · 1 pinned · 2 posts placed by hand
+Section A · gap 0–5000 · 2 open questions · 1 pinned · 2 posts placed by hand
 
-BAY WIDTHS                                        2 of 5 candidates survived
-▸ 2000 · 2000 · 1000    two bays uncut, one stub          built
-○ 1667 · 1667 · 1666    every bay equal        same posts · same boards · +20 cuts
+BAY WIDTHS
+▸ 2000 · 2000 · 1000    two bays uncut, one stub      built
+○ 1667 · 1667 · 1666    every bay the same width      same posts · same boards · +20 cuts
 
-WHERE THE SHORT PANEL SITS                              no material change
-▸ 2000 · 2000 · 1000    at the far end                   built
-○ 2000 · 1000 · 2000    centred
-○ 1000 · 2000 · 2000    at the start
+WHERE THE SHORT PANEL SITS
+▸ 2000 · 2000 · 1000    at the far end                built
+○ 2000 · 1000 · 2000    centred                       −2 boards
+○ 1000 · 2000 · 2000    at the start                  −2 boards
 
-FOOTINGS                                       pinned for this job — not asked
-  610 mm deep · posts ≤ 1676 mm
+FOOTINGS · exposure B                            pinned for this job — not asked
+  24″ deep (610 mm) · posts ≤ 66″ (1676 mm)
 ```
 
-...and when none of the offered answers is the one you want, **you drag the post
-where it goes**, in the plan or in the side view, and the engine re-flows only the
-gaps you left alone.
+...and when none of the offered answers is the one you want, **you drag the post where it
+goes**, in the plan or the side view, and the engine re-flows only the gaps you left alone.
 
-## 3 · The concept, and its name
+## 3 · The concept
 
-A **choice set** is a question: two or more **design points** that are all
-admissible, where nothing in the data prefers one. A person answering it makes a
-**selection**.
-
-This is a fifth kind beside the four the foundation already keeps apart, and it
-belongs beside them rather than inside one:
+A **choice set** is a question: two or more **design points**, all admissible, where
+nothing in the data prefers one. A person answering it makes a **selection**. A fifth kind
+beside the four the foundation keeps apart:
 
 | Kind | Says | Resolved by |
 |---|---|---|
@@ -65,393 +98,319 @@ belongs beside them rather than inside one:
 | preference | nicer if | the evaluator, by precedence |
 | objective | minimise this | supply resolution, by price |
 | override | the engine got this wrong, here | a person, at a station |
-| **choice set** | **two right answers** | **a person, or a stated default** |
+| **choice set** | **two right answers** | **a person, or the default** |
 
-Nothing was wrong, so it is not an override; neither point is *nicer*, so it is not
-a preference. The distinction is what lets the plan say *"a sealed approval stated
-two answers and you picked the second"* instead of *"overridden by bob"* — and it is
-why a selection is anchored to a **scope** (this section, this fence model) while an
-override is anchored to a **station**. An override dies when the fence is redrawn; a
-choice should not.
-
-**A choice set is defined by admissibility, not by provenance.** It may come from a
-published row, from a model declaration, or from the geometry itself. What keeps it
-honest is the dominance filter in §5, not where the ambiguity came from.
+Nothing was wrong, so it is not an override; neither point is *nicer*, so it is not a
+preference. That distinction is why a selection is anchored to a **scope** while an
+override is anchored to a **station** — an override dies when the fence is redrawn, a
+choice should not. It is also why **a selection is not a correction** (obligation 7): a
+correction says the engine got it wrong; a selection picks between answers that are all
+right.
 
 ## 4 · Where design points come from
 
-Three sources, all present in data we already hold.
-
 **4.1 · A `paired` parameter row (§1.3).** `footing_schedule` binds
-`(footing_depth_mm, max_span_mm)` and states several pairs per condition. Each pair
-is one design point: a set of parameter bindings. On a 12.192 m run at exposure B
-the two published points are 9 posts in 610 mm holes against 6 posts in 762 mm holes
-— 400 L of concrete against 334 L (`S-05`).
+`(footing_depth_mm, max_span_mm)` and states several pairs per condition. On a 12.192 m run
+at exposure B: 9 posts in 610 mm holes (400 L of concrete) against 6 posts in 762 mm holes
+(334 L).
 
-**4.2 · Bay widths.** `layout.py` already computes an equal-width layout and an
-exact-tiling layout and returns the loser as `rejected_alternative`. Both are design
-points; a third is generated (§5).
+**4.2 · Bay widths.** The layout the engine builds, plus the manufactured tiling where the
+model declares `exact_span_mm`, plus a yield-driven width where the baseline's resolved
+infill has a stock length.
 
-**4.3 · Stub placement.** Where a layout leaves an odd bay, its position is a design
-point in its own right — and today it is an artifact: `exact_layout` returns the
-remainder last, so the stub lands at the far end of the run **as the person happened
-to draw it** (`S-02`). Redrawing the same fence the other way moves it.
+**4.3 · Stub placement.** Where a layout leaves an odd bay, its position is a design point
+— and today it is an artifact: `exact_layout` returns the remainder last, so the stub
+lands at the far end of the run *as the person happened to draw it*.
 
-## 5 · How many options appear: generate, then filter by dominance
+## 5 · Which points are offered
 
-For bay widths, exactly three candidates are generated:
+### 5.1 · Two kinds of point, and only one needs synthesizing
 
-1. **fewest posts** — equal widths at `n = ceil(L / max_span)`;
-2. **manufactured tiling** — `floor(L / exact_span)` full bays plus the remainder,
-   where the model declares `exact_span_mm`;
-3. **best yield** — the largest bay width at or below the next
-   whole-pieces-per-board threshold, `(stock + kerf) / k − kerf`.
+- A **parameter point** asserts parameter values (`footing_depth_mm`, `max_span_mm`). It
+  becomes synthesized `KnowledgeVersion`s and is resolved by `resolve_param` like any
+  rule — so precedence, hard ties, defeat edges and `governed_by` all keep working.
+- A **layout point** is a width list for one gap. It binds no parameter and bypasses no
+  evaluator: `layout_segment` is a function the generator calls, and every offered width
+  list already honours the *resolved* `max_span_mm` and `min_span_mm`.
 
-Then any candidate worse on **every** measure than another candidate is dropped and
-never shown. Four measures, all of which the engine already computes:
+Keeping these apart is what makes the fix precise rather than blanket.
 
-| Measure | Source |
-|---|---|
-| posts | the layout |
-| boards bought | `plan_cuts()` — kerf-aware, remnant-first, optimality-certified |
-| cut operations | the same plan |
-| odd bays | widths differing by more than `NUMERIC_TOLERANCE_MM` (1 mm) |
+### 5.2 · The default is always offered and never eliminated
 
-**The odd-bay measure uses the engine's own tolerance on purpose.** `equal_layout`
-spreads a remainder one millimetre at a time, so `1667 · 1667 · 1666` must count as
-equal — a naive `len(set(widths)) > 1` calls it odd and the filter then offers a
-question nobody asked.
+Whatever the engine builds is a point, first in the list, exempt from filtering. That one
+rule retires four separate failures: the built layout being absent from its own panel, a
+`choice_unavailable` firing for a point being built on the same screen, a `min_span` rule
+that only *warns* in `layout_segment` while *rejecting* in candidate generation, and
+`prefer_equal=False` producing a baseline no generator proposes.
 
-Measured through `plan_cuts()`, for a 5 m run with ten slat rows per bay out of 2 m
-stock. **`gen` marks which of the three generators proposes each layout** — the other
-two rows are measured only to show that the filter would have dropped them anyway:
+### 5.3 · Dominance over commensurable axes only
 
-| Layout | gen | Posts | Boards @ 3 mm kerf | Boards @ 0 kerf | Cuts | Odd bay |
-|---|---|---|---|---|---|---|
-| 3 × 1667 | fewest posts | 4 | 30 | 30 | 30 | no |
-| 2000 · 2000 · 1000 | tiling | 4 | 30 | 25 | 10 / 5 | yes |
-| 6 × 833 | best yield @ 3 mm | 7 | 30 | 30 | 60 | no |
-| 5 × 1000 | best yield @ 0 | 6 | 50 | 25 | 50 / 25 | no |
-| 4 × 1250 | — | 5 | 40 | 40 | 40 | no |
+A point is dropped when another point is at least as good on **every axis both carry** and
+strictly better on one. Axes are **open** — a point carries what it differs on:
 
-**Two survive with a saw; three survive without one** (`S-04`). With a 3 mm kerf,
-`5 × 1000` — the intuitive "one board makes two panels" layout — is dominated
-outright: two 1000 mm pieces cost `2 × (1000 + 3) = 2006` against a capacity of
-`stock + kerf = 2003`, so each 1 m piece still consumes a whole board. With no kerf
-it survives, because it then buys the fewest boards *and* keeps every bay equal, at
-two extra posts. **The option count comes out of the data, not out of a cap.**
+| Axis | Where it comes from | On which questions |
+|---|---|---|
+| `posts` | the probe's own post elements | every layout point |
+| `boards`, `cuts` | the probe's own cut plans, per product | any point whose pieces change |
+| `concrete_l`, `holes` | the probe's own BOM | footing points |
 
-`waste_mm` is deliberately **not** a measure. A 333 mm offcut clears
-`min_reusable_remnant_mm` (300) and becomes inventory, so every layout above reports
-zero waste and the differences would be invisible. Reusable remnants are not a
-measure either: an offcut is an asset if the yard reuses it and clutter if it
-doesn't, and that is not the engine's call to make.
+**"All bays equal" is printed on the row, not filtered on.** It is taste, and taste does
+not eliminate. `odd_bay` as a filter axis was the only thing hiding that our own default
+is dominated on posts, boards and cuts.
 
-## 6 · What the engine still decides on its own
+Nothing is measured that a generation did not produce. There is no second cut packer, no
+`rows_per_bay` guess, and no candidate measured on a length the planner will never see.
 
-**Never money.** The engine does not spend the customer's money on its own
-initiative; it shows what the alternative saves and waits.
+## 6 · What the engine decides on its own
 
-- **Where the engine has an answer today, that answer stays the default.** The
-  layout and placement defaults are exactly today's behaviour, so no golden number
-  moves and this lands without re-baselining the release gate.
-- **A `paired` row, refused today, defaults to the shortest `max_span`** — most
-  posts, stiffest fence, cheapest option one click away.
-- **A stale point is never a silent fallback.** They re-cut the snapshot and the
-  30″/97″ pair is gone: the default applies **and** the plan carries
-  `choice_unavailable`, naming the point that vanished and who had chosen it.
-- **A set with one surviving point is not a question.** A 6 m run tiled by 2 m
-  panels divides exactly, so there is no stub, no placement question, and
-  `rejected_alternative` is already `None`.
-- **A dependent set whose parent moved is dropped, not orphaned.** Choose equal
-  widths and the placement question disappears along with any stored answer to it.
+**Never money.** It shows what the alternative saves and waits.
 
-## 7 · Costing the alternatives
+- **Where the engine has an answer today, that answer stays the default** — so no golden
+  number moves and the release gate needs no re-baselining.
+- **A `paired` row, refused today, defaults to the shortest `max_span`** — most posts,
+  stiffest fence, cheaper option one click away.
+- **A stale point is never a silent fallback.** The widths a selection names are no longer
+  offered → the default applies **and** `choice_unavailable` names the widths and their
+  author. **Including when the question was pinned**, which then reopens: telling a person
+  to choose again through a control that pinning removed is not a report.
+- **A set with one point is not a question.** A 6 m run tiled by 2 m panels divides
+  exactly; there is no stub and no placement question.
+- **A dependent set whose parent moved is dropped, not orphaned.**
 
-Deltas are measured **one choice at a time against the baseline**, never as a cross
-product: two questions cost a baseline plus two probes — three passes, not four
-combinations. **Each probe is a full `generate()`**, never a cheaper parallel
-calculation; a second way of counting posts is how a read model comes to disagree
-with the bill of materials.
+## 7 · Costing, and the order that makes it possible
 
-**Placement questions cost zero probes.** Reordering widths changes no bay width, so
-the demand lines and the cut plan are identical — same posts, same boards, same cuts,
-only the stations move. The panel says *"no material change"* and means it.
+```text
+phase 1   lay out every gap by default-or-selection            → the baseline strategy
+          panels resolved, products chosen, cut plans built
+phase 2   per gap, derive alternative width lists FROM the baseline
+          (the model's exact_span; the resolved infill's stock + kerf)
+          probe each: generate(..., offer_alternatives=False)
+          diff the physical counts; filter; attach to the run
+```
 
-**The run stores physical deltas only** — −3 posts, −3 caps, −66 L, −5 boards.
-Money is derived where prices live (the BOM and quote layer), so a price change can
-never leave a stale figure on a stored run.
+**Candidate generation moves after the baseline too**, not only measurement — the
+yield-driven width depends on the resolved infill product, which does not exist until the
+panel is resolved.
 
-**No silent cap.** Pinning (§8) is what keeps the probe count down rather than a
-number we picked, but the count per generation is logged so a runaway is visible.
+`offer_alternatives=False` inside a probe bounds depth at 1, so **`n` questions cost
+`1 + n` generations**. Each probe is a full `generate()`: a cheaper path needs a second
+implementation of post counting, and the moment it disagrees the panel advertises a saving
+the cut list does not deliver.
 
-## 8 · Four things a person can do, coarse to fine
+**The run stores physical deltas only.** Money is derived where prices live (ADR-0011:
+what a fence *costs* belongs to a `SupplyRun` against one yard), so a price change can
+never leave a stale figure on a stored run. `boards` and `cuts` are physical counts from
+the probe's own plan, not a purchase promise — the panel labels them as such.
+
+## 8 · Four things a person can do
 
 | Act | Says | Anchored to | Mechanism |
 |---|---|---|---|
-| **choose** | centre the stub on this section | a scope | `project.choices` (new) |
-| **place** | that post, there | a station | `pin_post` / `suppress_post` (exist) |
-| **lock** | this bay, as I placed it | an interval | `lock_bay` (new directive) |
-| **pin the question** | we always dig 610, stop asking | a scope | `project.choices`, `asked: false` |
+| **choose** | centre the stub in this gap | a scope | `project.choices` |
+| **place** | that post, there | an anchor | `pin_post` / `suppress_post` |
+| **lock** | this bay, as I placed it | an anchor + a width | `lock_bay` |
+| **pin the question** | we always dig 610, stop asking | a scope | `asked: false` |
 
-**Pinning is not choosing.** Choosing answers *this* project and keeps offering the
-alternative; pinning says *this is how we work* — no panel entry, no probe, not
-counted as an open question. And because a `paired` row binds depth and span
-together, **pinning either bound parameter resolves the point**: *"we always dig
-610"* and *"posts never beyond 1676"* select the same schedule from opposite ends.
+Pinning is not choosing: choosing answers *this* project and keeps offering the
+alternative; pinning says *this is how we work*. And because a `paired` row binds depth and
+span together, **pinning either bound parameter resolves the point**.
 
-### 8.1 · Five directives exist. One is reachable from the screen.
-
-| Directive | In the UI today |
-|---|---|
-| `pin_post` | click a station, popover, save |
-| `suppress_post` | **no button anywhere** |
-| `force_post_sku` | no button, no locale key |
-| `force_mounting` | no button, no locale key |
-| `force_vertical` | no button, no locale key |
-
-The layout already treats a pin correctly — `fixed = {0, length} | corners |
-transitions | pinned | gate_edges | steps`, and `layout_segment` only fills the gaps
-between fixed stations. **So the architecture for hand placement is already here;
-what is missing is the pointer.** Most of this slice is surfacing what the engine
-already accepts, plus one new directive.
+**Five directives exist; one is reachable from the screen.** `pin_post` has a
+click-and-popover; `suppress_post`, `force_post_sku`, `force_mounting` and
+`force_vertical` have no control and no locale key. The layout already treats a pin as a
+hard boundary — `fixed = {0, length} | corners | transitions | pinned | gate_edges | steps
+| model_transitions` — so most of "full control" is surfacing what the engine accepts.
 
 ## 9 · Dragging a post, in both views
 
-The plan canvas and the side-view profile are separate modules that communicate only
-through `state.js`. Putting the drag in both without letting them drift means the
-decision cannot live in either one.
+### 9.1 · One pure module, two adapters that are NOT symmetric
 
-### 9.1 · One pure module, two adapters
-
-**`js/post-drag.js` — pure: no DOM, no state, no imports from a view.** The same
-role `base-top.js` plays for the profile's base actions, and tested the same way, in
-node (`tests/web/test_post_drag_module.py`, after
-`tests/web/test_base_top_module.py`).
+**`js/post-drag.js` — no DOM, no state, no view imports, and no `units.js`** (it imports
+`state.js`). The role `base-top.js` plays for the profile's base actions, tested the same
+way in node.
 
 ```text
-layoutWithPin(fixedStations, length, station, {maxSpanMm, minSpanMm})
-        -> { widths, fixed }                     what the layout becomes
-snapCandidates({station, prev, next, maxSpanMm, displayUnit,
-                stock: {lengthMm, kerfMm}, rowsPerBay})
-        -> [{ station, kind: "round"|"equal"|"yield", label }]
-violations(widths, {maxSpanMm, minSpanMm})
-        -> [{ index, code, over_mm }]
-yieldThreshold(stockMm, kerfMm, pieces)   -> (stock + kerf) / pieces - kerf
+layoutWithPin(fixedStations, length, station, {maxSpanMm, minSpanMm})  -> {widths}
+snapCandidates({station, prev, next, maxSpanMm, minSpanMm,
+                displayUnit, stock: {lengthMm, kerfMm}, piecesPerBay})
+        -> [{station, kind: "round"|"equal"|"yield", label}]   already filtered
+violations(widths, {maxSpanMm, minSpanMm}) -> [{index, code, over_mm}]
+yieldThreshold(stockMm, kerfMm, pieces)    -> (stock + kerf) / pieces - kerf
 ```
 
-**Adapter A — the plan canvas (`editor.js`).** The pointer is 2D and the post is
-constrained to the run's polyline, so the projection is
-`geom.stationAtPoint(run, xMm, yMm)`, which already exists and already mirrors the
-backend's station math. The existing drag session (`drag = {kind: "dot" | "ghost"}`)
-gains `kind: "post"`; everything else — the 4 px threshold, `pushSnapshot` once at
-drag start, the pointer-capture idiom — is reused unchanged. Dragging past a corner
-moves the post onto the next segment, which is exactly why §10 has to land first.
+**Adapter A — the plan canvas.** `geom.stationAtPoint(run, x, y)` returns
+`{station, dist}`, not a number, and discards which segment won — so the anchor is
+re-derived with `geom.anchorFor`. The post `<circle>`s carry **no** `data-*` attributes
+today and need them, and the existing `click`→`inspect` handler needs a suppress latch so
+a completed drag does not also open the inspector.
 
-**Adapter B — the side-view profile (`profile.js`).** Here the horizontal axis
-already *is* the station, so the projection is one division. The module already
-drags top dots with a proximity snap (`STEP_SNAP_PX`), so the gesture idiom exists;
-the new drag reuses it and delegates its arithmetic to `post-drag.js` rather than
-inlining it, which is the rule `base-top.js` exists to enforce.
+**Adapter B is not the trivial one.** `profile.js buildChain()` chains **several runs**
+with `GAP_MM` spacers and a `reversed` flag; `gsOf = offset + (reversed ? L - s : s)`. So
+the x axis is a *global chain* coordinate: a naive division moves a post the wrong way on
+a reversed run and into the wrong run on a chain. It uses `localStationOf(entry, x)`.
 
-**Neither adapter touches the other's DOM.** On drop, both write the same override
-through `state.js` and both re-render from state, so a post dragged in the plan
-appears moved in the profile without either module knowing the other exists.
+**Snap candidates are filtered through `violations()` before they are drawn.** The rev-1
+yield tick made the neighbouring bay 2 mm over the maximum passed into the same call.
 
-### 9.2 · What you see while dragging, and what you see on release
+**The yield tick is labelled per bay, never as a board count.** The threshold is on the
+*clear opening*, so it converts through the resolved post face; and `plan_cuts` packs
+globally, pairing a 998 with a 1002 across bays, so per-bay yield is not decomposable into
+a run-level promise. The browser computes a *position*; every count comes from the backend.
 
-**During the drag — geometry only, and free:** a ghost at the original station, both
-neighbouring bay widths live in the display unit, and the snap rail. Three snap
-kinds, and the third is the one a person cannot judge:
+### 9.2 · Gesture discipline
 
-- **round** — a whole unit in the current display preference, via `units.snapStep()`,
-  so a centimetre-preference user snaps to centimetres;
-- **equal** — the station that makes this bay match a neighbour;
-- **yield** — the station that drops the bay to the next whole-pieces-per-board
-  threshold. On 2 m stock with a 3 mm kerf the threshold is 998.5 mm, so a 1000 mm
-  bay takes 10 boards for ten slat rows and a **998 mm bay takes 5** (`S-07`).
-  Two millimetres of post, half the boards.
+1. `pointerdown` on a post records the start; nothing else happens.
+2. Past 4 px, `pushSnapshot("move-post")` **once** — from `history.js`, not `state.js`.
+3. `pointermove` draws into a preview layer only: never `state.project`, never history,
+   never a fetch.
+4. `pointerup` **DELETEs the pin this drag started from, then POSTs the new one.** There is
+   no `PUT /overrides` in the frontend, so without the delete a second drag leaves two pins
+   and a bay nobody asked for.
+5. Under 4 px it is a **click**: select the post and open its inspector, which is where the
+   three unreachable directives get their controls.
 
-**On release — one generation, and the bill.** Not during the drag: a generation per
-pointer frame is not affordable, and a half-priced drag is worse than none.
+Dropping a post onto its neighbour is a `suppress_post` — but only a **line** post can be
+suppressed; a corner, gate edge, step or pinned post cannot, so the gesture is refused at
+the pointer rather than creating an override that immediately reports itself orphaned.
 
-**The frontend never claims a quantity it computed itself.** `yieldThreshold` decides
-where a *snap tick* goes; the board count on the panel always comes from the backend
-generation after the drop. One arithmetic in two places would eventually disagree,
-and the read-model rule (never recompute a quantity) is the same rule pointed at the
-browser.
+## 10 · One anchor resolver, two behaviours
 
-### 9.3 · Gesture discipline
+`anchor_station` re-anchors **proportionally** when a segment's length changed (ADR-0003),
+and `geom.stationOfAnchor` mirrors it. Rev 1 added a second resolver that kept the offset
+rigid — putting the same pin 800 mm apart in the two views.
 
-The mutation order is the frontend contract's, unchanged:
+**The policy goes on the anchor:** `Anchor.reanchor: "proportional" | "rigid"`, honoured
+inside `anchor_station` itself and mirrored in `geom.stationOfAnchor`. A post is `rigid`
+(800 mm from the corner stays 800 mm from the corner); an elevation sample stays
+`proportional`. One resolver, one semantics per anchor, no divergence.
 
-1. `pointerdown` on a post records the start; **nothing else happens yet**;
-2. past 4 px, `pushSnapshot("move-post")` **once**, and the drag begins;
-3. `pointermove` draws into a preview layer only — it never touches
-   `state.project` and never pushes history;
-4. `pointerup` POSTs the override, then `reloadProject()` — not `openProject`,
-   which would wipe the undo stack;
-5. a pointer that never passes the threshold is a **click**: select the post and
-   open its inspector, which is where `force_post_sku` and `force_mounting` finally
-   get a control.
-
-Drop a post onto its neighbour and the gesture is a `suppress_post` rather than a
-`pin_post` — the delete that has never had a button.
-
-## 10 · A defect this work has to fix first
-
-`PinPost.station_mm` is an **absolute station on the run**, while every point event
-in the topology uses a segment-local
-`Anchor{segment_index, offset_mm, seg_len_at_authoring_mm}` — a shape that exists
-precisely so the system can tell that a segment changed underneath it.
-
-Pin a post 800 mm past a corner, then drag the corner 1500 mm along the first leg,
-and station 3800 now lands on the **first** leg, 700 mm *before* the corner. The
-post changed legs (`S-09`). With one pinned post nobody notices; with a hand-built
-layout it is the first thing that happens.
-
-**The fix is to give a pin the anchor every point event already has**, honouring the
-frontend contract's own words: *author with `geom.anchorFor`, resolve with
-`geom.stationOfAnchor`, never read `anchor.offset_mm` as a station.* Where a segment
-shrinks past its own anchor the override orphans, which the run already reports as
-`orphaned_override` — visible rather than silent.
-
-Migration: `station_mm` stays readable for stored overrides and is resolved as
-segment 0's offset when no anchor is present, so existing projects keep working and
-nothing needs a data migration to be correct on a single-segment run — which is
-every run the demo and the golden scenarios use.
+`PinPost.station_mm` stays readable for stored overrides — every golden scenario is
+single-segment, where both readings agree — and a directive carrying neither an anchor nor
+a station orphans loudly rather than pinning at station 0.
 
 ## 11 · When a placement breaks a rule
 
-Today the engine wins this argument in silence: pin posts 3 m apart under a 2 m
-maximum and `layout_segment` puts a post back in the middle. The person asked for one
-bay and got two, with nothing said. **That is the wrong failure** — not a silent
-number, a silently ignored instruction.
-
-**Decided: allow it, mark it, attribute it.** The drag succeeds and the post goes
-where the pointer went. A locked bay wider than the resolved `max_span_mm` is built
-as placed, and:
+Today the engine wins this argument in silence: pin posts 3 m apart under a 2 m maximum and
+`layout_segment` puts a post back in the middle. **Decided: allow it, mark it, attribute
+it.** A locked bay is built as placed, and:
 
 - the bay renders in the warning treatment on every surface that draws it;
-- the plan and the quote both carry `span_placed_over_maximum` with the approved
-  figure, the placed figure and the difference (`2438` against `1676`, `+762`);
-- the decision graph records that **a person** placed it, with the actor and the
-  date, so nothing reads as the engine's own choice (`S-08`).
+- the plan and the quote carry `span_placed_over_maximum` with the approved figure, the
+  placed figure and the difference (`2438` against `1676`, `+762`), plus the actor — which
+  lives on `Override.author`, not on the directive;
+- the decision graph records that **a person** placed it;
+- a locked bay *narrower* than a `prefer_min_span_width` rule uses the existing
+  `sliver_span`, because a 400 mm bay against a wall is a thing people want.
 
-The engine never silently complies and never silently refuses. That is the standard a
-declined published value is already held to, pointed the other way: there we refuse a
-number and say so; here we accept one and say so.
+**This is not a contract matter** (§13) but it *is* the first authorized exception to
+`golden-scenarios.md`'s hard-max invariant, which already anticipates one: *"unless
+authorized exception exists — none in demo KB."* The invariant is restated as a
+conjunction and `tests/scenarios/test_invariants.py` enforces the new form, so the next
+accidental over-max span does not look authorized.
 
-The same treatment covers the other direction: a locked bay **narrower** than a
-`prefer_min_span_width` rule allows is built as placed and reported through the
-`sliver_span` warning that already exists — a person may well want a 400 mm bay
-against a wall, and the plan simply says that they asked for one.
-
-An **unlocked** gap is different — the engine may still add posts inside it, because
-that gap is what was left to it.
+An **unlocked** gap is different: the engine may still add posts inside it, because that
+gap is what was left to it.
 
 ## 12 · The mechanism
 
-```text
-published row ─┐
-the geometry ──┼─► candidates ─► dominance ─► generate() ─► the run ─► the plan
-plan_cuts() ───┘   (3 generated)  (2-3 left)   baseline +    widths ·   alternatives
-                                               1 probe/point  physical    with money
-                                                    ▲          delta      derived
-                    your placements ───────────────┤
-                    pin · suppress · lock          │
-                                                    │
-                    project.choices ───────────────┘
-                    scope · point · who · when · pinned?
-```
+`project.choices` is an input to `generate()`, threaded exactly as `site` and `parts` were
+— `generate()` takes no `Project` and a fitness test forbids a domain module loading its
+own data.
 
-`project.choices` is an **input** to `generate()`, read like any other, and part of
-the run digest — which needs `RUN_DIGEST_VERSION` bumped to `digest-v5`. The digest's
-own rule decides this: *anything that changes what the run MEANS belongs in the
-digest*, and `objective_preset` was removed from it because *a design is what it is
-regardless of how it will be bought*. A choice changes the design. So the same
-project with the same choices produces the identical run forever, and a new choice
-mints a new run id rather than patching an old run's output.
+A `Selection` carries **the widths it chose**, not the name of the generator that proposed
+them: `fewest_posts` is *defined relative to* `max_span`, so a name is not an identity.
 
-Rendering: a `choice` node in the decision graph, with the losing point on a
-`defeated` edge — the existing convention, which already cites the loser. Both
-sentences are templated per language, so `he.json` and `en.json` stay key-identical,
-and dimensions render through `tu()` so a centimetre preference reads in
-centimetres while storage and the wire stay integer millimetres.
+**The digest is not versioned.** `choices` joins the hashed positional list **only when
+non-empty**, so every existing run id stays stable and the first recorded choice still
+mints a new one. Over-splitting is safe; under-splitting serves the wrong fence under a
+reused id, which is what a `RunMeta` field would have done. `digest-v5` is not needed.
 
-## 13 · Three slices
+`NodeKind` gains `"choice"` — it is a closed `Literal`. The losing point rides a
+`defeated` edge **only for a parameter point**, whose synthesized version has a real ref;
+a layout point's loser goes in the node payload, because `defeated=` materialises a
+knowledge node per ref and a design-point id there would invent a fact.
 
-**Slice 1 — the machinery and the two geometry questions.** No boundary work at all:
-the candidates come from `layout.py` and `plan_cuts()`, both already here. Choice
-sets, `project.choices`, pinning, `digest-v5`, the dominance filter, the panel, the
-graph node. Every golden number holds, because every default is today's answer.
+## 13 · Effect on the boundary contract
 
-**Slice 2 — direct placement.** The anchor fix first, then the drag in both views:
-`post-drag.js`, the two adapters, `lock_bay`, `span_placed_over_maximum`, the
-suppress gesture, and controls for the three directives that have none.
+**No amendment.** Consuming a `paired` row is amendment **006**, ratified and in force at
+v1.3. Nothing here edits either copy of `contract.md`.
 
-**Slice 3 — the `paired` row.** Extract design points from the published table and
-delete `parameter_paired_unsupported`. Small once slice 1 exists, and it closes the
-only thing the Knowledge team is waiting on us for (`conversation.md` T44).
+**Two registry additions**, explicitly not amendments (§2: routing them through
+ratification *"would destroy the property that lets the two teams move at different
+speeds"*):
 
-All three are one implementation plan, in this order. Slice 2 depends on slice 1 for
-the panel it hangs its controls on; slice 3 depends on slice 1 for the choice-set
-types and on nothing in slice 2.
+- the platform codes `choice_unavailable` and `span_placed_over_maximum` — §2's table says
+  *"whoever raises it; both locale bundles required"*;
+- one `EntityRef.kind` value where a gap's subject is a section — an open registry on the
+  same terms as `TaskCode` and `SourceClass`.
 
-## 14 · Files
+**Three of our eight obligations bind the design:**
 
-| File | Slice | What |
+| | Obligation | Effect |
 |---|---|---|
-| `strategy/choices.py` | 1 | new — `ChoiceSet`, `DesignPoint`, candidate generation, the dominance filter |
-| `strategy/layout.py` | 1 | expose the three candidates rather than one chosen layout + one loser |
-| `project/model.py` | 1 | `Project.choices` |
-| `strategy/generator.py` | 1 | read the choices, probe the alternatives, record physical deltas, `digest-v5` |
-| `decisions/graph.py`, `decisions/explain.py` | 1 | the `choice` node and both templates |
-| `api/app.py` | 1 | choices CRUD; the alternatives on the run |
-| `web/static/js/choices.js` | 1 | new — the panel |
-| `strategy/overrides.py` | 2 | `PinPost.anchor`, `SuppressPost.anchor`, new `LockBay` |
-| `topology/station.py` | 2 | resolve an override anchor (mirrors `make_anchor`) |
-| `web/static/js/post-drag.js` | 2 | new — pure drag arithmetic, snaps, violations |
-| `web/static/js/editor.js` | 2 | adapter A: `drag.kind === "post"` |
-| `web/static/js/profile.js` | 2 | adapter B: the station axis it already has |
-| `web/static/js/inspector.js` | 2 | the post inspector: sku, mounting, vertical |
-| `knowledge/parameters.py` | 3 | `paired` rows become design points |
-| `web/static/i18n/{en,he}.json` | 1–3 | every new code, both bundles, key-identical |
+| 4 | **Never fail a run over a gap** | `plan_cuts` raising on a 2439 mm bay would have failed a run over a published table. §7's ordering removes it |
+| 5 | **Convert units once, keep the source lexeme for display** | The panel shows `24″ (610 mm)`, not `610 mm`. `Quantity.value_raw` carries the lexemes and rev 1 discarded them |
+| 6 | **Report gaps back with evidence, via `POST /gaps`** | `choice_unavailable` crosses the boundary, so the code is declared to them — the registry mechanism, not a courtesy. It is also useful to them: a re-cut removed a point a customer had chosen |
+
+Obligations 1, 2, 3, 7 and 8 are unaffected. **Choice sets and selections never cross** —
+derived per run, or stored on the project.
+
+**And one thing that looks like a contract matter and is not.** A person building a bay
+wider than a published, sealed maximum breaches **no obligation**: none of the eight
+requires Planning to honour a published hard constraint. Reading it the other way would
+have sent the other team a false amendment.
+
+## 14 · Two tracks, one seam
+
+**Backend — ~70% of the work and all of the risk.** `strategy/choices.py` (new),
+`layout.py`, `topology/station.py`, `overrides.py`, `decisions/graph.py`,
+`generator.py` (the four shape changes), `explain.py`, `project/model.py`, `api/app.py`,
+`knowledge/parameters.py`, and the invariant in `docs/scenarios/` +
+`tests/scenarios/`.
+
+**Frontend.** `js/post-drag.js` (new, pure), `js/choices.js` (new), `editor.js` and
+`profile.js` (the two adapters), `inspector.js`, `history.js` (choices are not in
+`snapshot()`), both locale bundles, and `tools/ui_smoke.py` cases that assert through
+`check()` — the harness does no image diffing, so a screenshot-only case reports PASS
+while the anchor bug ships.
+
+**The seam:** two JSON surfaces — the run's `choice_sets`, and the overrides endpoint —
+plus exactly one arithmetic in both languages, `yieldThreshold`, pinned by a node test
+against the Python reference. `post-drag.js` is pure and needs nothing from the backend,
+so the tracks are independent for most of their length.
 
 ## 15 · How we will know it works
 
-- **The golden gate does not move in slice 1.** Every default is today's answer; a
-  moved number means a default changed by accident.
-- `tests/web/test_post_drag_module.py` runs the pure module in node: the yield
-  threshold at 998/1000, an equal-snap, a violation at 2438 against 1676, and a drag
-  past a corner changing `segment_index`.
-- A dominance test over the measured table in §5: two survivors at 3 mm kerf, three
-  at zero, and `5 × 1000` dominated in the first and not the second.
-- A stale-choice test: remove the chosen point from the snapshot, assert the default
-  applies **and** `choice_unavailable` names it.
-- An anchor test: pin a post, lengthen the first segment, assert the offset from the
-  corner is unchanged — the test that fails today.
-- One golden scenario at a run length where the **shallow** footing option wins, so
-  the panel is exercised in both directions rather than only the one the 40 ft run
-  happens to show.
+- **The golden gate does not move** while every default is today's answer. Asserted by
+  literals derived from the demo knowledge (`max_span_mm = 1800` → a 5 m run is
+  `[1667, 1667, 1666]`), not by a fixture attribute that can only be produced by calling
+  the thing under test.
+- **`n` questions cost `1 + n` generations**, asserted on a count carried on the result
+  rather than a cross-test accumulator.
+- **Two runs agree on the questions too** — `strategy`, `graph` *and* `choice_sets` dumps
+  equal, extending `test_determinism` rather than re-asserting that a digest equals itself.
+- **A pin resolves exactly as every other anchor does** — `override_station(...) ==
+  anchor_station(...)` on a segment that changed length, which is the one case rev 1's
+  tests avoided.
+- **The two yield thresholds are one formula** — a parametrised grid emitted by node and
+  compared against the Python function, including the degenerate `pieces = 0` row where JS
+  gives `Infinity`.
+- **A reversed declaration reverses the bindings** — the `paired` column names are read
+  from the declared `value_type`, and the test that claims it uses a fixture whose declared
+  order differs from its value order.
+- **The default is shown even when dominated**, and a choice never fires
+  `choice_unavailable` for a point being built.
+- **One golden scenario at a run length where the shallow footing wins**, so the panel is
+  exercised in both directions and not only the one the 40 ft run happens to show.
 
 ## 16 · What this deliberately does not do
 
-- **It does not price a design during a drag.** Geometry live, money on release.
-- **It does not let the frontend compute a quantity.** The yield threshold places a
-  snap tick; every count on the panel comes from the backend.
-- **It does not move the stub default.** Centred is the better look and moving it
-  re-baselines the gate; it is one click away instead.
-- **It does not add a company-level pin.** *"We always dig 610"* is not a fact about
-  this fence, and its honest home is a company default a project can depart from.
-  Slice 1 records pins per project and leaves that seam named.
-- **It does not touch the boundary contract.** Consuming a `paired` row needs no
-  amendment: the shape is ratified and correct, and what was missing was ours.
-
-## 17 · Open
-
-1. **Are those the right four measures?** Posts, boards, cuts, odd bays. Remnants
-   were left out on purpose (§5).
-2. **Does the post inspector belong in this slice or the next?** Three directives
-   have no control at all; giving them one is cheap once a post is selectable, and
-   it is also scope this design did not set out to cover.
+- **No pricing during a drag.** Geometry live, money on release.
+- **The frontend never computes a quantity.** It computes a snap position.
+- **The stub default does not move.** Centred is the better look and moving it re-baselines
+  the gate; it is one click away instead.
+- **No company-level pin.** *"We always dig 610"* is not a fact about this fence; its home
+  is a company default a project can depart from. Recorded per project, seam named.
+- **No auto-generation.** Generation stays behind the explicit button; the drop leaves a
+  stale overlay with a regenerate affordance rather than firing a run.
+- **The contract is not touched.**
