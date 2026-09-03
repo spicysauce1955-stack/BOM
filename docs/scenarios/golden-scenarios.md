@@ -414,7 +414,8 @@ apart.
 
 ## Invariants checked across all scenarios
 
-- span width ≤ applicable hard maximum (unless authorized exception exists — none in demo KB)
+- span width ≤ applicable hard maximum, **or** a `lock_bay` override placed that bay
+  and the run carries `span_placed_over_maximum` naming it (see below)
 - Σ(cuts + kerf) ≤ stock length for every stock bar in a cut plan
 - package purchases ≥ engineering demand
 - every BOM line traces to ≥ 1 requirement line, every requirement to ≥ 1 strategy element, every element to ≥ 1 decision
@@ -476,3 +477,43 @@ bill of materials.
 The audit of all thirteen refusal sites, with the verdict and the reasoning on each,
 is `docs/reviews/generation-failure-audit-2026-08-25.md`. Asserted by
 `tests/strategy/test_never_block.py` and by the invariant suite.
+
+### The hard maximum's one authorized exception — a bay somebody placed
+
+*Added 2026-09-03 with `lock_bay` (design §11). Until that day the hard-max
+invariant read "unless authorized exception exists — none in demo KB", and there
+were none: a bay wider than the resolved maximum meant no plan at all.*
+
+The engine used to win this argument in silence. Pin two posts 3 m apart under a
+1.8 m maximum and `layout_segment` put a post back in the middle — the person
+measured one thing and the drawing showed another. So a bay a person placed by
+hand is now built **as placed**. The exception is exactly one, and it is stated as
+a conjunction so that the guard got *narrower* rather than absent:
+
+- **A bay may exceed the resolved maximum only when a `lock_bay` override put it
+  there.** Anything else — a layout bug, a knowledge rule with a wrong number, a
+  boundary the layout mishandled — still raises `GenerationFailure`. That is the
+  whole point of the restatement: the danger was never the locked bay, it was an
+  *accidental* over-wide bay quietly ceasing to fail and shipping as a warned line
+  that looks like somebody meant it.
+- **Allowed, marked, attributed.** The run carries
+  `span_placed_over_maximum` — `{run_id, placed_mm, max_mm, over_mm, author}`, so
+  every surface that draws the bay has the approved figure, the placed figure and
+  the difference — and the decision graph carries an `override_applied` /
+  `lock_bay` node with the `author` on it, because a departure with no name on it
+  reads as the engine's own choice.
+- **The authorization is scoped to the locked interval, not to the run.** The bays
+  the engine laid out beside a locked one are still under the maximum, and one
+  lock in a section authorizes one bay.
+- **A lock the layout could not honour authorizes nothing.** A corner, a gate edge
+  or a terrain step inside the interval means this is no longer the bay that was
+  signed off on: the lock is not applied (`orphaned_override` reports it) and the
+  gap is laid out normally.
+- **A locked bay *narrower* than a `prefer_min_span_width` rule keeps the existing
+  `sliver_span`** and gets no second code — a 400 mm bay against a wall is a thing
+  people want.
+- **An unlocked gap is still subdivided.** That gap is what was left to the
+  engine.
+
+Asserted by `tests/strategy/test_lock_bay.py` and by the invariant suite
+(`test_span_width_within_hard_max_unless_a_lock_placed_it`).

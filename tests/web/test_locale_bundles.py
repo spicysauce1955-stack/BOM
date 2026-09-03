@@ -34,6 +34,11 @@ WARNING_CODES = [
     "continuity_override_unbuildable",
     "continuity_stock_length_unknown",
     "sliver_span",
+    # the hard maximum's one authorized exception: a `lock_bay` override placed
+    # this bay, so it is built as placed, marked and attributed. A sentence about
+    # the reader's OWN action, so it is translated — not Knowledge-Platform
+    # vocabulary held back on KNOWLEDGE_SURFACE_UNTRANSLATED.
+    "span_placed_over_maximum",
     "unknown_product",
     "knowledge_conflict",
     "node_surface_disagreement",

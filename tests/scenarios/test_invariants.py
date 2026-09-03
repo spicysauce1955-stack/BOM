@@ -295,14 +295,80 @@ def rerun(spine):
     return result, reqs, bom
 
 
-def test_span_never_exceeds_hard_max(spine):
-    """1800 mm for every fixture built to the demo knowledge base; the
+def _over_max_authorizations(result) -> tuple[set[str], set[str]]:
+    """The two halves of the conjunction: which bays a lock placed, and which
+    bays the run reports as placed over the maximum."""
+    locked = {ref
+              for n in result.graph.nodes
+              if n.kind == "override_applied" and n.action == "lock_bay"
+              for ref in n.scope_refs}
+    warned = {ref
+              for w in result.strategy.warnings
+              if w.code == "span_placed_over_maximum"
+              for ref in w.element_refs}
+    return locked, warned
+
+
+def test_span_width_within_hard_max_unless_a_lock_placed_it(spine):
+    """The invariant in its post-`lock_bay` form (golden-scenarios.md, "The hard
+    maximum's one authorized exception").
+
+    A CONJUNCTION, deliberately. Until 2026-09-03 a bay over the resolved maximum
+    meant no plan at all, and `lock_bay` makes that conditional. The risk is not
+    the locked bay: it is that an accidental over-wide bay stops failing loudly
+    and passes as somebody's decision. So an over-maximum bay is admissible here
+    only when a `lock_bay` node placed THAT bay and the run says so — and the
+    messages below name which half is missing rather than reporting a width.
+
+    No fixture in this suite carries a lock, so every bay must be within the
+    limit; 1800 mm for every fixture built to the demo knowledge base, while the
     continuity fixture carries its own maximum as a `layout_policy` contribution
-    (97 in), which is the point of that fixture and not an exception to this
-    rule."""
+    (97 in), which is the point of that fixture and not an exception to this rule.
+    """
     result, _, _, _, rest = spine
     limit = MAX_SPAN_MM if rest[4] is not None and rest[4].model_id == "M-BOARD" else 1800
-    assert all(sp.width_mm <= limit for sp in result.strategy.spans)
+    locked, warned = _over_max_authorizations(result)
+    for sp in result.strategy.spans:
+        if sp.width_mm <= limit:
+            continue
+        assert sp.id in locked, (
+            f"{sp.id} is {sp.width_mm} mm against a {limit} mm maximum and no "
+            "lock_bay override placed it — that is an accident, not an exception")
+        assert sp.id in warned, (
+            f"{sp.id} was placed over the {limit} mm maximum and the run does "
+            "not carry span_placed_over_maximum for it")
+
+
+def test_a_lock_is_the_only_thing_that_authorizes_an_over_max_bay():
+    """The authorized branch, exercised — otherwise the conjunction above is
+    vacuous across a suite whose fixtures carry no lock.
+
+    Both halves have to hold together: without the warning a locked bay is a
+    silent departure, and without the lock the warning would be the engine
+    excusing its own arithmetic.
+    """
+    from fenceai.strategy.overrides import LockBay
+    from fenceai.topology.station import make_anchor
+
+    topo = straight_topology(5000)
+    at = make_anchor(topo, topo.run("run1"), 0).model_copy(
+        update={"reanchor": "rigid"})
+    result = generate(topo, demo_knowledge(), demo_catalog(), overrides=[
+        Override(id="lock1", run_id="run1", author="bob",
+                 directive=LockBay(at=at, width_mm=3000)),
+    ])
+    locked, warned = _over_max_authorizations(result)
+    over = [sp for sp in result.strategy.spans if sp.width_mm > 1800]
+    assert [sp.width_mm for sp in over] == [3000]
+    assert over[0].id in locked and over[0].id in warned
+    # and the exception did not spread: every other bay is still within 1800
+    assert all(sp.width_mm <= 1800
+               for sp in result.strategy.spans if sp.id != over[0].id)
+    # the spine still holds over a locked run
+    reqs = resolve_supply(
+        derive_requirements(result.strategy, demo_catalog()), demo_catalog()
+    ).requirements
+    assert fulfill(reqs, demo_catalog()).lines
 
 
 def test_cut_plans_feasible_and_conserving(spine):

@@ -1060,6 +1060,7 @@
   "warning.source_inadmissible": "{parameter} came from a {source_class}, which is not admissible for {task} — the published value was not used",
   "warning.source_ref_missing": "A published {parameter} row from a {source_class} carries no source reference, so the number cannot be traced to a document",
   "warning.span_not_exact": "קטע {run_id} אינו מתחלק למפתחים של {exact_mm} {u}: נותרו {remainder_mm} {u} כמפתח חריג — דגם {model_ref} מיוצר במידה אחת",
+  "warning.span_placed_over_maximum": "בקטע {run_id}, {author} הציב מפתח ברוחב {placed_mm} {u} — {over_mm} {u} מעל המקסימום של {max_mm} {u}. המפתח נבנה כפי שהוצב",
   "warning.substitute_needs_approval": "{sku} הוא תחליף מוצע עבור ה{role}{slot} ב-{pegs} ודורש אישור לפני שימוש",
   "warning.tilted_stepped": "הקטע {run_id} משלב עמודים נטויים ({mode}) עם פאנלים מדורגים — פאנלים מדורגים מתאימים בדרך כלל לעמודים אנכיים; בדקו את התכנון",
   "warning.uncovered_max_span": "אין כלל הקובע מפתח מרבי עבור {model_ref} בקטע {run_id}; {n} מפתחים תוכננו לפי {value_mm} {u} — אשרו לפני הזמנה",

@@ -66,7 +66,7 @@ from fenceai.strategy.model import (
     Strategy,
     StrategyWarning,
 )
-from fenceai.strategy.overrides import Override
+from fenceai.strategy.overrides import Override, override_station
 from fenceai.topology.model import Run, Topology
 from fenceai.topology.station import (
     anchor_station,
@@ -2034,14 +2034,28 @@ def _generate_run(
     # -- overrides addressed to this run ---------------------------------------
     pinned_stations: dict[Mm, Override] = {}
     suppress_ovs: list[Override] = []
+    # start station -> the override that fixed the bay there. `override_station`
+    # rather than `station_mm`, because a lock carries ONLY an anchor: a width a
+    # person measured is meaningless without the place they measured it from, and
+    # a stored station is the reading the geometry HAD — preferring it would move
+    # the bay the moment the run changed length.
+    locked_bays: dict[Mm, Override] = {}
     for ov in overrides:
         if ov.run_id != run.id:
             continue
         d = ov.directive
-        if d.kind == "pin_post" and 0 < d.station_mm < length:
-            pinned_stations[d.station_mm] = ov
+        station = override_station(topo, run, d)
+        if d.kind == "pin_post" and station is not None and 0 < station < length:
+            pinned_stations[station] = ov
         elif d.kind == "suppress_post":
             suppress_ovs.append(ov)
+        elif d.kind == "lock_bay" and station is not None \
+                and d.width_mm > 0 and 0 <= station \
+                and station + d.width_mm <= length:
+            # A lock that runs past the end of its section is NOT clamped to fit:
+            # a narrower bay is not the bay anybody signed off on. It stays
+            # uncollected and `orphaned_override` reports it.
+            locked_bays[station] = ov
     # `force_vertical` is collected by `_run_post_facts` below, because a POST's
     # panel facts read the mode it forces too — one list, so a bay and the post
     # beside it cannot disagree about which overrides cover them.
@@ -2079,6 +2093,11 @@ def _generate_run(
         if gate_slope_res.winner else None)
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
     fixed |= gate_edges | step_stations
+    # BOTH ends of a locked bay are structural boundaries, for the plainest
+    # reason: a bay built exactly as placed has to be a segment of its own, or
+    # the layout it was meant to escape subdivides it anyway.
+    fixed |= {s for st, lov in locked_bays.items()
+              for s in (st, st + lov.directive.width_mm)}
     # a model change is a structural boundary for the same reason a base transition
     # is: a bay may not straddle the place where the fence becomes a different fence
     fixed |= set(fence_model_transition_stations(topo, run))
@@ -2398,20 +2417,52 @@ def _generate_run(
         sm = segment_model(choice)
         model = sm.model
         rails_per_span, screws_per_span = sm.rails_per_span, sm.screws_per_span
-        layout = layout_segment(
-            seg_len, sm.max_span,
-            prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
-            exact_mm=sm.exact_span,
-        )
+        # A bay a person placed by hand is built AS PLACED: one span of the width
+        # they measured, never a subdivision of it. Without this the engine wins
+        # the argument in silence — pin two posts 3 m apart under a 1.8 m maximum
+        # and `layout_segment` puts a post back in the middle (§11).
+        locked_ov = locked_bays.get(seg_start)
+        if locked_ov is not None and locked_ov.directive.width_mm != seg_len:
+            # Something structurally unsuppressable — a corner, a gate edge, a
+            # terrain step — landed inside the interval, so this is no longer the
+            # bay that was signed off on. Not applied (`orphaned_override` says
+            # so) and NOT authorized: the engine lays the gap out normally.
+            locked_ov = None
+        lock_node_id: str | None = None
+        if locked_ov is not None:
+            layout = LayoutResult(widths=[seg_len], rejected_alternative=None)
+            applied.add(locked_ov.id)
+            # `author` off the enclosing Override, not the directive: the
+            # directive says what was done, the override says who did it, and a
+            # bay over the maximum is only readable as deliberate with a name on
+            # it. Without this node the departure reads as the engine's own
+            # choice.
+            lock_node_id = builder.add(
+                "override_applied", "lock_bay",
+                payload={"override_id": locked_ov.id, "run_id": run.id,
+                         "station_mm": seg_start, "width_mm": seg_len,
+                         "author": locked_ov.author},
+                scope_refs=[f"span@{run.id}:{seg_start}-{seg_end}"],
+                inputs=[run_fact.id],
+            ).id
+        else:
+            layout = layout_segment(
+                seg_len, sm.max_span,
+                prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
+                exact_mm=sm.exact_span,
+            )
         # A person's answer for THIS GAP, if they gave one. The scope is the gap
         # between fixed stations and not the section, because a corner, a gate, a
         # terrain step — or one pinned post — makes a run several gaps, and an
         # answer measured for one of them is not an answer for another.
         # NOT `scope`: that name is already this function's bound scope dict.
         gap_scope = f"gap:{run.id}:{seg_start}"
-        picked = next((c for c in selections
-                       if c.choice_set == "bay_layout"
-                       and c.scope == gap_scope), None)
+        # A lock is the more specific instruction and it is about THIS bay, so a
+        # gap-scoped layout answer does not get to re-split it.
+        picked = None if locked_ov is not None else next(
+            (c for c in selections
+             if c.choice_set == "bay_layout"
+             and c.scope == gap_scope), None)
         if picked is not None:
             default_widths = list(layout.widths)
             if _widths_fit(picked.widths, seg_len, sm.max_span):
@@ -2442,7 +2493,10 @@ def _generate_run(
         # re-derived, because `layout_segment` weighs a nominal preference and a
         # `min_span` rule it only warns about — a second opinion computed later
         # is how the built layout came to be missing from its own panel.
-        if gap_log is not None:
+        # Not for a locked gap: there is nothing to offer where a person already
+        # answered, and an alternative costed against a hand-placed bay would be
+        # an offer to undo it.
+        if gap_log is not None and locked_ov is None:
             gap_log.append({
                 "run_id": run.id, "scope": gap_scope, "seg_len": seg_len,
                 "widths": list(layout.widths),
@@ -2729,9 +2783,30 @@ def _generate_run(
                 scope_refs=[span.id], inputs=panel_inputs,
             )
             if width > sm.max_span:
-                raise GenerationFailure(
-                    f"span {span.id} width {width} exceeds hard max {sm.max_span}",
-                    constraint_refs=[r for r in [sm.max_span_ref] if r],
+                # NARROWER than it was, not absent. A bay may exceed the resolved
+                # maximum ONLY where a `lock_bay` override put it there — allow
+                # it, mark it, attribute it (§11). Everything else still stops the
+                # run, because the danger here is not the locked bay: it is that
+                # an ACCIDENTAL over-wide bay — a layout bug, a knowledge rule
+                # with a wrong number — quietly stops failing and ships as a
+                # warned line that looks like somebody meant it.
+                if locked_ov is None:
+                    raise GenerationFailure(
+                        f"span {span.id} width {width} exceeds hard max {sm.max_span}",
+                        constraint_refs=[r for r in [sm.max_span_ref] if r],
+                    )
+                strategy.warnings.append(
+                    StrategyWarning(
+                        code="span_placed_over_maximum", severity="warning",
+                        message=f"Span {span.id} was placed {width} mm wide by "
+                                f"{locked_ov.author} — {width - sm.max_span} mm over "
+                                f"the {sm.max_span} mm maximum.",
+                        params={"run_id": run.id, "placed_mm": width,
+                                "max_mm": sm.max_span,
+                                "over_mm": width - sm.max_span,
+                                "author": locked_ov.author},
+                        element_refs=[span.id], decision_ref=lock_node_id,
+                    )
                 )
             if v_mode == "stepped" and max_gap is not None and 0 < abs(gz1 - gz0) <= max_step \
                     and abs(gz1 - gz0) > max_gap:
