@@ -42,14 +42,35 @@ def cumulative_stations(points: list[tuple[Mm, Mm]]) -> list[Mm]:
 
 
 def anchor_station(topo: Topology, run: Run, anchor: Anchor) -> Mm:
-    """Resolve an anchor to a current station, re-anchoring proportionally within its
-    originating segment if that segment's length changed (ADR-0003 anchoring rule)."""
+    """Resolve an anchor to a current station within its originating segment
+    (ADR-0003 anchoring rule), honouring the anchor's own `reanchor` policy.
+
+    THE ONLY ANCHOR RESOLVER. Both behaviours live here because rev 1 of the
+    hand-placement design added a second resolver for overrides that kept the
+    offset rigid, and the two disagreed: the same pinned post drew 800 mm apart
+    in the plan canvas and in the generator (spec §10). `geom.stationOfAnchor`
+    mirrors this function and nothing else may re-derive it.
+
+    - `proportional` (the default, so nothing stored changes meaning): an
+      elevation sample a third of the way along a wall stays a third of the way
+      along when the wall is stretched.
+    - `rigid`: the OFFSET is the fact a person measured, so it survives the edit
+      unchanged. Past the end of a segment that SHRANK it clamps to that
+      segment's length — it never returns None. Whether a post that far out is
+      still wanted is the generator's decision (`orphaned_override`), made from a
+      resolved station; a resolver that sometimes returned None would force every
+      caller to branch on a case only one of them cares about.
+
+    Both the clamp and the scaling are segment-local, exactly like the anchor: a
+    rigid offset on a later leg clamps to THAT leg, so an earlier leg's length
+    still shifts the absolute station and only its own leg can strand it.
+    """
     points = run_points(topo, run)
     lens = segment_lengths(points)
     if not 0 <= anchor.segment_index < len(lens):
         raise InvalidTopology(f"anchor segment {anchor.segment_index} out of range")
     seg_len = lens[anchor.segment_index]
-    if anchor.seg_len_at_authoring_mm == seg_len:
+    if anchor.reanchor == "rigid" or anchor.seg_len_at_authoring_mm == seg_len:
         offset = min(anchor.offset_mm, seg_len)
     else:
         offset = round(anchor.offset_mm * seg_len / anchor.seg_len_at_authoring_mm)

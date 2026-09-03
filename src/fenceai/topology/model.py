@@ -31,6 +31,19 @@ class Anchor(BaseModel):
     segment_index: int
     offset_mm: Mm
     seg_len_at_authoring_mm: Mm
+    # How this anchor follows a change in its segment's length. PROPORTIONAL is
+    # ADR-0003's rule and stays the default, so nothing stored changes meaning:
+    # an elevation sample a third of the way along a wall stays a third of the
+    # way along when the wall is stretched.
+    #
+    # RIGID is for an anchor whose OFFSET is the fact — a post a person placed
+    # 800 mm from a corner. Stretch an earlier leg and it is still 800 mm from
+    # that corner, which is what they measured.
+    #
+    # The policy lives here rather than in a second resolver because rev 1's
+    # second resolver put the same pin 800 mm apart in the canvas and the
+    # generator (spec §10).
+    reanchor: Literal["proportional", "rigid"] = "proportional"
 
 
 # --- point event payloads -------------------------------------------------
