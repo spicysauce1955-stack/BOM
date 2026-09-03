@@ -62,7 +62,7 @@ from fenceai.learning.impact import (
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
-from fenceai.project.model import Annotation, Project, SiteConditions
+from fenceai.project.model import Annotation, Project, Selection, SiteConditions
 from fenceai.report.annexe import WarningPlacement, place_for_plan
 from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
@@ -434,6 +434,43 @@ def delete_override(project_id: str, override_id: str):
         raise HTTPException(404, "override not found")
     state.store.save_project(project)
     return {"deleted": override_id}
+
+
+# -- choices -------------------------------------------------------------------
+# Deliberately its own group and not an extension of overrides: a choice is not
+# an override. An override says the engine got this wrong HERE and patches an
+# output at a station; a selection answers a question the data left open and is
+# an INPUT to generation, anchored to a scope that outlives a redraw.
+
+@app.put("/api/projects/{project_id}/choices")
+def put_choice(project_id: str, selection: Selection) -> Selection:
+    """Upsert one selection by `(choice_set, scope)`.
+
+    PUT and not POST because an answer is not an accumulation: choosing again
+    replaces, or a project would carry two answers to one question and the
+    generator would have to guess which is current. `asked=False` arrives on
+    this same route — a pin is the same record with one flag."""
+    project = _project(project_id)
+    project.choices = [
+        c for c in project.choices if c.key() != selection.key()
+    ] + [selection]
+    state.store.save_project(project)
+    return selection
+
+
+@app.delete("/api/projects/{project_id}/choices/{choice_set}")
+def delete_choice(project_id: str, choice_set: str, scope: str):
+    """The scope is a QUERY parameter, not a path segment: a real scope is
+    `model:mfr/certainteed/rail` and a path segment cannot carry the slashes."""
+    project = _project(project_id)
+    before = len(project.choices)
+    project.choices = [
+        c for c in project.choices if c.key() != (choice_set, scope)
+    ]
+    if len(project.choices) == before:
+        raise HTTPException(404, "choice not found")
+    state.store.save_project(project)
+    return {"deleted": choice_set, "scope": scope}
 
 
 # -- generation, decisions, BOM -------------------------------------------------
