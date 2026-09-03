@@ -39,8 +39,10 @@ backend's anchored overrides (its Tasks 3–4) and the choices CRUD (its Task 5)
   millimetres** (`24" (610 mm)`), and `Quantity.value_raw` carries it.
 - CSS uses logical properties only. **The plan canvas and the side-view profile are NEVER
   mirrored in RTL.** Any user text through `esc()`.
-- **No auto-generation.** Generation stays behind the explicit button; a drop leaves a
-  stale overlay with a regenerate affordance rather than firing a run.
+- **No auto-generation.** Generation stays behind the explicit button. A drop draws the
+  placement as a **pending marker** from `state.project.overrides` — distinct from a
+  generated post — because the overlay still holds the previous run's posts and without the
+  marker the dropped post springs back.
 - `tools/ui_smoke.py` records pass/fail **only** through `check(name, ok, detail)`. It
   does no image diffing and `tools/smoke_baseline/` does not exist — so a screenshot-only
   case reports PASS while the bug ships. **Every smoke case here asserts through
@@ -281,6 +283,11 @@ Four edits, in this order:
    reanchor: "rigid"}}`, then `reloadProject()`. Set a `suppressClick` latch so the
    completed drag does not also fire the circle's existing `click`→`inspect`; a gesture
    under the threshold is the click, and opens the inspector.
+5. **Draw the pending marker.** `reloadProject()` does not refresh `state.result`, so the
+   overlay still holds the previous run's posts. Render each `pin_post` override as a
+   pending post at its resolved station, visibly distinct from a generated one, so the
+   dropped post stays where it was dropped. This is not cosmetic: a pin is saved project
+   state, a post position is un-recomputed run state, and the two must not look alike.
 
 - [ ] **Step 4: Run it to verify it passes**
 
@@ -390,8 +397,16 @@ Asserted, with `assert proc.returncode == 0, proc.stderr` first:
   label through `esc()`, lengths through `tu()`. Add `project.choices` to `history.js`'s
   `snapshot()` — it is not there, so undo currently pops the wrong gesture.
 - [ ] **Step 4: Run** `uv run pytest tests/web -q` and the smoke suite with a case
-  asserting that answering a question changes `state.project.choices` and leaves
-  `state.result` stale with a regenerate affordance — **not** an auto-generation.
+  asserting that answering a question changes `state.project.choices`, leaves
+  `state.result` untouched — **not** an auto-generation — and shows the answer as pending,
+  the same treatment a dropped post gets:
+
+```python
+check("answering a question does not fire a generation",
+      c.js("state.result.run.id") == before_run_id)
+check("the answer is visible as pending rather than silently stored",
+      c.js("document.querySelectorAll('.choice-pending').length") == "1")
+```
 - [ ] **Step 5: Commit.**
 
 ---

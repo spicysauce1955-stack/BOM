@@ -269,6 +269,14 @@ a run-level promise. The browser computes a *position*; every count comes from t
 5. Under 4 px it is a **click**: select the post and open its inspector, which is where the
    three unreachable directives get their controls.
 
+**The dropped post stays where it was dropped, as a PENDING marker.** The posts on the
+plan are drawn from the last generation, and a drop does not regenerate — so without this
+the post springs back to where the old run put it and a working feature reads as a broken
+one. The marker is drawn from `state.project.overrides`, visibly distinct from a generated
+post, and it is telling the truth rather than papering over it: **a pin is a fact about the
+project and is saved immediately; a post position is a fact about the run and has not been
+recomputed.** Showing them as two kinds of thing is the honest rendering of that.
+
 Dropping a post onto its neighbour is a `suppress_post` — but only a **line** post can be
 suppressed; a corner, gate edge, step or pinned post cannot, so the gesture is refused at
 the pointer rather than creating an override that immediately reports itself orphaned.
@@ -411,6 +419,7 @@ so the tracks are independent for most of their length.
   the gate; it is one click away instead.
 - **No company-level pin.** *"We always dig 610"* is not a fact about this fence; its home
   is a company default a project can depart from. Recorded per project, seam named.
-- **No auto-generation.** Generation stays behind the explicit button; the drop leaves a
-  stale overlay with a regenerate affordance rather than firing a run.
+- **No auto-generation.** Generation stays behind the explicit button. A drop shows the
+  placement as a pending marker (§9.2) rather than firing a run — the rule is kept without
+  the feature looking defective.
 - **The contract is not touched.**
