@@ -419,8 +419,15 @@ def generate(
             points.append(DesignPoint(
                 id=name, label=" · ".join(str(w) for w in widths),
                 widths=list(widths), axes=axes,
+                # SORTED, not raw set-intersection order. A set of strings
+                # iterates in hash order, which varies between PROCESSES — so
+                # the same fence would serialise its delta with the keys in a
+                # different order on a different run, and `test_determinism`
+                # cannot see it because it compares two results inside ONE
+                # process. Found by the panel, which had started pinning a
+                # display order to compensate for this.
                 delta={k: axes[k] - baseline_axes[k]
-                       for k in set(axes) & set(baseline_axes)
+                       for k in sorted(set(axes) & set(baseline_axes))
                        if axes[k] != baseline_axes[k]},
             ))
         kept = offered(points)

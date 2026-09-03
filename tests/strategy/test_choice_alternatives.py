@@ -108,3 +108,21 @@ def test_the_probe_does_not_leak_into_the_baseline():
     assert [s.width_mm for s in out.strategy.spans] == [1667, 1667, 1666]
     assert out.strategy.gaps == [] or all(
         g.because.code != "choice_unavailable" for g in out.strategy.gaps)
+
+
+def test_the_delta_keys_are_ordered_the_same_in_every_process():
+    """A set of strings iterates in HASH order, which differs between processes.
+    So the same fence could serialise its delta keys in a different order on a
+    different run — and `test_determinism` cannot see it, because it compares two
+    results inside one process where the hash seed is fixed.
+
+    Asserted as sortedness rather than by spawning a second interpreter: that is
+    the property the fix provides, and it holds in any process.
+    """
+    for cs in _run().choice_sets:
+        for point in cs.points:
+            assert list(point.delta) == sorted(point.delta)
+            # every delta key names an axis this point actually carries — a
+            # delta on a measure the point never claimed would be a difference
+            # against nothing
+            assert set(point.delta) <= set(point.axes)
