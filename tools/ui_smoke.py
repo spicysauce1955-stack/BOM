@@ -79,6 +79,11 @@ def type_text(c, text: str) -> None:
     time.sleep(0.2)
 
 
+# Cases added by the choice-set and hand-placement work. Append your function
+# to this list; define the function itself directly above this comment.
+_CHOICE_CASES: list = []
+
+
 def main() -> int:
     # a stale server on our port would silently serve old code/data — abort loudly
     try:
@@ -4286,6 +4291,14 @@ document.querySelector('#gaps .panel.gaps')
         check("no uncaught page errors", not c.page_errors)
         if c.page_errors:
             print("  page errors:", *c.page_errors[:5], sep="\n    ")
+
+        # -- CHOICE-SET AND PLACEMENT CASES ------------------------------------
+        # Each lives in its own `_smoke_*(c)` function defined above `main()`,
+        # called from here by ONE line. That is not style: this function is
+        # 4000 lines, and several people adding cases inline turns every
+        # addition into a merge conflict with every other.
+        for _case in _CHOICE_CASES:
+            _case(c)
 
         failed = [n for n, ok in CHECKS if not ok]
         print(f"\n{len(CHECKS) - len(failed)}/{len(CHECKS)} checks passed")
