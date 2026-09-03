@@ -24,7 +24,28 @@ easy to re-introduce.
 (`yield_threshold`), pinned from the frontend side.
 
 **Status:** Tasks 1 (`5e68733`), 2 (`38f9823`), 3 + 4 (`3e34f28`), 5 (`8cc2c86`) and
-**all of Task 6**, **Task 7** and **Task 8** are **DONE**. Tasks 9–10 open.
+**all of Task 6**, **Task 7**, **Task 8** and **Task 9** are **DONE**. **Task 10 is
+BLOCKED**, and the blocker is real rather than scope.
+
+**Task 9 is half-consumed, and the commit says so.** The DEFAULT point lands as published
+knowledge and `resolve_param` decides it like any rule, so the five real `footing_schedule`
+tables now govern runs instead of being refused. The ALTERNATIVES are produced and not
+consumed: nothing builds a `footing_schedule` `ChoiceSet`, and the generator's selection
+path reads only `c.widths` — `Selection.bindings` reaches nothing but the digest. No test
+claims otherwise.
+
+**Task 10 cannot be written as specified.** Two independent blockers:
+
+1. No `footing_schedule` choice set exists yet (the unconsumed half above).
+2. **The shallow schedule can never win, at any run length.** `demand/derive.py` adds one
+   flat `CONC-25` per ground post; `footing_depth_mm` is read nowhere in demand, the BOM or
+   the catalog. Concrete therefore tracks post count exactly, so the shallow point — the
+   shortest span, hence the most posts — always buys the most concrete. The premise *"at
+   40 ft the deeper schedule wins on posts AND concrete, so nothing exercises the other
+   direction"* is false: there is no other direction until concrete is a function of depth.
+
+Unblocking it means modelling footing volume in `demand/derive.py` and the catalog, which
+moves existing golden numbers — its own piece of work, with its own reason.
 
 **A hole in this plan, found by the agent that built Task 8: NO task wired
 `override_station` into `generator.py`.** Tasks 3–4 added the resolver to `overrides.py`

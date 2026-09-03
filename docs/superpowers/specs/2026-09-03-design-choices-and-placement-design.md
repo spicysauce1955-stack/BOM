@@ -111,8 +111,17 @@ right.
 
 **4.1 · A `paired` parameter row (§1.3).** `footing_schedule` binds
 `(footing_depth_mm, max_span_mm)` and states several pairs per condition. On a 12.192 m run
-at exposure B: 9 posts in 610 mm holes (400 L of concrete) against 6 posts in 762 mm holes
-(334 L).
+at exposure B: 9 posts in 610 mm holes against 6 posts in 762 mm holes.
+
+> **CORRECTION.** Earlier drafts of this section quoted *"400 L of concrete against 334 L"*.
+> **This engine cannot compute those numbers.** `demand/derive.py` adds ONE flat unit of
+> concrete per ground post — `footing_depth_mm` is read nowhere in demand, the BOM or the
+> catalog. So concrete tracks post count exactly, and a deeper schedule always buys LESS
+> concrete because it needs fewer posts. The 400/334 figures were π·r²·h arithmetic done on
+> paper and presented as though the engine produced them; a volume model as a function of
+> depth and diameter does not exist here. Building one changes existing golden numbers
+> (`tests/scenarios/test_invariants.py` pins 5 footings at 0.5 bag → 3 bags), so it is its
+> own piece of work, not a footnote to this one.
 
 **4.2 · Bay widths.** The layout the engine builds, plus the manufactured tiling where the
 model declares `exact_span_mm`, plus a yield-driven width where the baseline's resolved
@@ -154,7 +163,8 @@ strictly better on one. Axes are **open** — a point carries what it differs on
 | `pieces` | the probe's own member runs — absent where no model details a continuous member | any point that changes continuity |
 | `warnings` | the probe's own warning list — a candidate that introduces a sliver is worse in a way worth counting | any point |
 | ~~`boards`, `cuts`~~ | **NOT available here.** A `Strategy` holds no cut plan; what a fence costs is a `SupplyRun` against one yard (ADR-0011). Derived in the BOM layer, per candidate | — |
-| `concrete_l`, `holes` | the BOM layer, for footing points | footing points |
+| ~~`concrete_l`~~ | **Does not exist.** Concrete is one flat unit per ground post; depth is not modelled anywhere downstream of knowledge | — |
+| `holes` | the BOM layer — and it equals the post count, so it adds nothing a layout point does not already carry | footing points |
 
 **"All bays equal" is printed on the row, not filtered on.** It is taste, and taste does
 not eliminate. `odd_bay` as a filter axis was the only thing hiding that our own default
