@@ -131,3 +131,54 @@ def test_an_over_wide_bay_nobody_locked_still_fails_loudly(monkeypatch):
             Override(id="o2", run_id="run1", author="bob",
                      directive=LockBay(at=_rigid(topo, 0), width_mm=1500)),
         ])
+
+
+def test_the_span_limit_is_recorded_as_the_version_the_placement_beat():
+    """A `defeated` edge cites the LOSING version (decision-model.md), and here
+    the loser is real: a resolved span limit lost to a person's placement.
+
+    This is the case that edge is FOR, and the contrast worth keeping — a layout
+    point's loser is a width list with no version behind it, so it rides in a
+    payload instead. `GraphBuilder.add(defeated=...)` materialises a knowledge
+    node per ref, and a width list there would invent a fact.
+    """
+    topo = straight_topology(5000)
+    out = generate(topo, demo_knowledge(), demo_catalog(), overrides=[
+        Override(id="o1", run_id="run1", author="bob",
+                 directive=LockBay(at=_rigid(topo, 0), width_mm=3000)),
+    ])
+    node = next(n for n in out.graph.nodes if n.action == "lock_bay")
+    defeated = [e for e in out.graph.edges
+                if e.to_id == node.id and e.type == "defeated"]
+    assert defeated, "the span limit this placement departed from is named"
+    assert all(e.knowledge_ref for e in defeated)
+
+
+def test_a_lock_within_the_maximum_defeats_nothing():
+    """No departure, no loser. An edge here would say a rule was overruled when
+    the placement obeyed it — and a graph that cries defeat on every lock is a
+    graph nobody reads twice."""
+    topo = straight_topology(5000)
+    out = generate(topo, demo_knowledge(), demo_catalog(), overrides=[
+        Override(id="o1", run_id="run1", author="bob",
+                 directive=LockBay(at=_rigid(topo, 0), width_mm=1500)),
+    ])
+    node = next(n for n in out.graph.nodes if n.action == "lock_bay")
+    assert not [e for e in out.graph.edges
+                if e.to_id == node.id and e.type == "defeated"]
+
+
+@pytest.mark.parametrize("lang", ["en", "he"])
+def test_the_placement_reads_as_an_override_in_both_languages(lang):
+    """It was rendering through the `generic` template — `{action}: {payload}` —
+    so a departure from a published maximum reached a reader as a dict."""
+    from fenceai.decisions.explain import explain_node
+    topo = straight_topology(5000)
+    out = generate(topo, demo_knowledge(), demo_catalog(), overrides=[
+        Override(id="o1", run_id="run1", author="bob",
+                 directive=LockBay(at=_rigid(topo, 0), width_mm=3000)),
+    ])
+    node = next(n for n in out.graph.nodes if n.action == "lock_bay")
+    text = explain_node(out.graph, node, lang=lang)
+    assert "{" not in text and "}" not in text
+    assert "payload" not in text

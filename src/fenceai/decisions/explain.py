@@ -12,7 +12,13 @@ from __future__ import annotations
 from fenceai.decisions.graph import DecisionGraph, DecisionNode
 
 _OVERRIDE_ACTIONS = frozenset(
-    {"pin_post", "suppress_post", "force_post_sku", "force_mounting", "force_vertical"}
+    {"pin_post", "suppress_post", "force_post_sku", "force_mounting",
+     "force_vertical",
+     # A bay built exactly as a person placed it. It belongs here rather than
+     # falling through to `generic`, which renders `{action}: {payload}` — a
+     # departure from a published maximum is the last thing that should reach a
+     # reader as a dict.
+     "lock_bay"}
 )
 _INPUT_FACT_ACTIONS = frozenset(
     {"topology_node", "run_geometry", "gate_event", "knowledge_version"}

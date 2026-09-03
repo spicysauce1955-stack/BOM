@@ -24,7 +24,19 @@ easy to re-introduce.
 (`yield_threshold`), pinned from the frontend side.
 
 **Status:** Tasks 1 (`5e68733`), 2 (`38f9823`), 3 + 4 (`3e34f28`), 5 (`8cc2c86`) and
-**all of Task 6** and **Task 7** are **DONE**. Tasks 8–10 open.
+**all of Task 6**, **Task 7** and **Task 8** are **DONE**. Tasks 9–10 open.
+
+**A hole in this plan, found by the agent that built Task 8: NO task wired
+`override_station` into `generator.py`.** Tasks 3–4 added the resolver to `overrides.py`
+and the generator went on reading `d.station_mm` directly — so an anchored `PinPost`
+resolved to station 0 and was silently orphaned, and Task 8's own first test failed on it.
+Wired for `pin_post` and `lock_bay` in Task 8's commit.
+
+**Still outstanding, and deliberately so:** `suppress_post` is matched later through
+`_near(ov.directive.station_mm, s)`, so it is still on the raw station. An anchored
+suppress — which the frontend's drop-on-neighbour gesture will produce — would not apply.
+It needs the same wiring plus a change to that helper, and it belongs with frontend Task 2
+rather than smuggled into a task whose tests do not reach it.
 
 **A gap in Task 7 as written, found by building it.** The plan's test expected a
 `resolve_choice_set_default` node, but stage B emitted a `choice` node only where somebody

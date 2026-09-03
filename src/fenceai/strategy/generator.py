@@ -2463,6 +2463,15 @@ def _generate_run(
             # choice.
             lock_node_id = builder.add(
                 "override_applied", "lock_bay",
+                # The span limit's own version, on a `defeated` edge, where the
+                # lock departs from it: a person's placement beat a resolved
+                # rule, and that is precisely what the edge means. Unlike a
+                # layout point — whose loser is a width list with no version
+                # behind it, and which therefore rides in a payload — this is a
+                # real knowledge ref, so the edge cannot invent a fact.
+                defeated=([sm.max_span_ref]
+                          if sm.max_span_ref and locked_ov.directive.width_mm
+                          > sm.max_span else []),
                 payload={"override_id": locked_ov.id, "run_id": run.id,
                          "station_mm": seg_start, "width_mm": seg_len,
                          "author": locked_ov.author},
