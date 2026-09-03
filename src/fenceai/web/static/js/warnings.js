@@ -44,7 +44,12 @@ export function localizedByCode(prefix, code, params, fallback) {
 // English literal.
 function paramText(v) {
   if (typeof v === "boolean") return t(v ? "common.yes" : "common.no");
-  if (v && typeof v === "object" && !Array.isArray(v)) {
+  // A list renders as its members, separated. The publisher sends one where a
+  // gap names the several shapes it could not choose between, and `String(v)`
+  // on an array happens to produce comma-joined output with no spaces — close
+  // enough to look intentional and wrong enough to read as a bug.
+  if (Array.isArray(v)) return v.map(paramText).join(", ");
+  if (v && typeof v === "object") {
     // sorted, matching the backend's own `GapSubject.key()` ordering, so the
     // same point reads the same way everywhere it appears
     return Object.keys(v).sort()

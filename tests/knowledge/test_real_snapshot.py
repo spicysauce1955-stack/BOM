@@ -122,3 +122,56 @@ def test_ingesting_it_produces_usable_knowledge_and_names_what_it_cannot(raw):
     codes = {g.because.code for g in out.gaps}
     assert "parameter_paired_unsupported" in codes
     assert out.warning_defects == []
+
+
+# -- the parts snapshot (`b2f2fe45…`, obligation 5's first vertical slice) ------
+
+PARTS_SNAPSHOT = Path(
+    "/home/user/Workspace/fence-rag/workspace/snapshots"
+    "/b2f2fe45326f42dac10d0d0203337b917b6613e1c8d04f0c6dd39806f54beb03.json")
+
+
+@pytest.fixture()
+def parts_raw() -> dict:
+    if not PARTS_SNAPSHOT.exists():
+        pytest.skip(f"parts snapshot not available at {PARTS_SNAPSHOT}")
+    return json.loads(PARTS_SNAPSHOT.read_text())
+
+
+def test_the_first_snapshot_carrying_parts_loads_and_verifies(parts_raw):
+    """Obligation 5 closed for one vertical slice: 11 `Part`s and 5 `PartType`
+    extensions, every parent chain terminating in the spine.
+
+    We do not consume them yet — that is item 7 — so they report as
+    `unconsumed`, which is the honest word for a payload this engine carries and
+    does nothing with. What matters here is that their arrival breaks nothing."""
+    snapshot, gap_defects = load(parts_raw)
+    assert snapshot_id_matches(parts_raw) is True
+    assert gap_defects == []
+    assert len(snapshot.parameters) == 9
+    assert snapshot.dangling_refs() == []
+
+    out = ingest(snapshot, as_of="2026-09-03", gap_defects=gap_defects)
+    assert out.unconsumed == {"part_types": 5, "parts": 11}
+    assert len(out.knowledge.versions) == 16
+
+
+def test_a_because_param_may_be_a_list(parts_raw):
+    """§1.2.1 puts no ceiling on what a `because` param is, and this snapshot is
+    where that stopped being theoretical: a `specfield_wire_shape_unresolved`
+    gap names the candidate shapes it could not choose between, which is a list
+    of strings.
+
+    Our `params` type allowed a scalar or a mapping and not a list, so both gaps
+    were quarantined — the third time a shape the contract permits was rejected
+    by a narrower type of ours. Worth a test rather than a widened annotation
+    alone, because the renderer has to format it too: `String(v)` on an array
+    produces comma-joined output with no spaces, which looks deliberate and is
+    not."""
+    snapshot, gap_defects = load(parts_raw)
+    assert gap_defects == []
+    listed = [g for g in snapshot.gaps
+              if isinstance(g.because.params.get("candidate_shapes"), list)]
+    assert len(listed) == 2
+    assert all(g.closes_by == "planning" for g in listed), (
+        "the shape question is ours to settle, not a curator's")

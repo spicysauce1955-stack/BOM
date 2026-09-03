@@ -241,7 +241,14 @@ class SourceRef(BaseModel):
 # `min`/`max` are `Quantity` objects — so a point is two levels deep, not one. A
 # one-level annotation admitted the outer dict and rejected the interval inside it.
 PointValue = str | bool | int | dict
-ParamValue = str | bool | int | dict[str, PointValue]
+# A LIST is admissible too, and the publisher sends one: a
+# `specfield_wire_shape_unresolved` gap names the candidate shapes it could not
+# choose between, which is a list of strings and nothing else. §1.2.1 puts no
+# ceiling on what a param IS — the only real constraint is that a renderer can
+# format it, and a list of scalars is the easiest thing there is.
+ParamValue = (str | bool | int
+              | list[str | bool | int]
+              | dict[str, PointValue])
 
 
 class Because(BaseModel):
