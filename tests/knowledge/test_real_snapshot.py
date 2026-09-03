@@ -30,7 +30,11 @@ SNAPSHOT = Path(
 @pytest.fixture()
 def raw() -> dict:
     if not SNAPSHOT.exists():
-        pytest.skip(f"published snapshot not available at {SNAPSHOT}")
+        pytest.skip(
+            f"published snapshot not available at {SNAPSHOT}. The id is PINNED "
+            f"on purpose — a test that followed 'whatever is newest' would "
+            f"silently start asserting about a different document. When the "
+            f"Knowledge Platform re-cuts, update the constant deliberately.")
     return json.loads(SNAPSHOT.read_text())
 
 
@@ -134,7 +138,8 @@ PARTS_SNAPSHOT = Path(
 @pytest.fixture()
 def parts_raw() -> dict:
     if not PARTS_SNAPSHOT.exists():
-        pytest.skip(f"parts snapshot not available at {PARTS_SNAPSHOT}")
+        pytest.skip(f"parts snapshot not available at {PARTS_SNAPSHOT} — pinned "
+                    f"deliberately, see the note on the fixture above")
     return json.loads(PARTS_SNAPSHOT.read_text())
 
 

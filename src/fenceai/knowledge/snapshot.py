@@ -501,7 +501,13 @@ def fixture_digest(snapshot: Snapshot) -> str:
     could.
 
     What it is good for is what the tests actually use it for: catching a fixture
-    that changed underneath a test. The real question — how the publisher
+    that changed underneath a test.
+
+    **It is not made redundant by `canonical_snapshot_id`**, which does verify a
+    real snapshot against its declared id. That one deliberately exempts an id
+    that is not hash-shaped, and our fixture declares `FIXTURE-…` on purpose so
+    it cannot be mistaken for published data — so the fixture is exactly the case
+    real verification cannot cover. Two functions, two jobs; do not collapse them. The real question — how the publisher
     canonicalises — is a registry-level conversation to have with them, not an
     amendment, and is recorded in `docs/reviews/`.
     """

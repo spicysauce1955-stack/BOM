@@ -1,5 +1,91 @@
 # Current status
 
+> **Start here.** This section is the handoff. Everything below it is history in
+> reverse order.
+
+## Session close — 2026-09-03
+
+**2283 tests · 262/262 browser smoke · contract hashes OK · both repos clean.**
+Contract frozen at **v1.3**, byte-identical in both repos, verified both sides.
+
+### Real published knowledge flows end to end
+
+Two published snapshots load with **nothing done to them**, and both verify
+against their own declared ids:
+
+| | |
+|---|---|
+| `a4181dbf…` | 9 tables · 65 gaps · 0 defects · 16 versions, all admitted |
+| `b2f2fe45…` | + **11 Parts, 5 PartType extensions** (obligation 5's first slice) |
+
+`snapshot_id` verification works because they answered the canonicalisation
+question (`conversation.md` T38); a payload with one field changed is refused.
+
+### THE NEXT TWO THINGS, in order
+
+**1 · Item 7 — provenance on spec fields. Newly unblocked, and ours.**
+`b2f2fe45` is the first snapshot ever to carry `Part`s, so obligation 6's other
+half (`Provenance` on `SpecField`, the `source_docs` join) finally has data.
+Today they report as `unconsumed: {part_types: 5, parts: 11}` — the honest word
+for a payload this engine carries and does nothing with.
+
+**Read `conversation.md` T41/T42 first.** They asked whether `SpecField.value`
+must be a full `Quantity`; we answered that **no amendment is needed** (the type
+is not in `contract.md`, and obligation 4 already forbids a bare `_mm` field),
+but that their proposed `value: Quantity` is one case too broad because
+`SpecField.key` itself lists `colour`. We proposed `Quantity | Token`. **They
+have uncommitted edits to `knowledge-datamodel.md` and `CANDIDATES.md` as of
+this close** — check what they settled before building against either shape.
+
+**2 · A cost objective for `paired` design points. The only thing they wait on
+us for.** Five correct `footing_schedule` tables, refused with a gap
+(`parameter_paired_unsupported`, `closes_by: planning`). A row holding
+`(depth, span)` alternatives is a set of admissible design points, and taking the
+first would discard the cheaper compliant option — 7 posts against 9 on a 40 ft
+run. **Needs a design, not a patch:** a choice set is an optimiser objective, not
+a fact, and this engine resolves one value per parameter.
+
+### Open, sized, deliberately not started
+
+| | Why it is parked |
+|---|---|
+| The provenance chip on a DEFAULT project | The fixture's tables are scoped to `M-VINYL`, whose post requirement wants vinyl posts with `routed_faces` varying per post kind. Real demo-catalog work with golden-scenario risk. |
+| Policy versioning | Must land WITH an operator policy UI, not after — a historical run re-derived under an edited policy would render differently. |
+| A refusal reaching a `defeated` edge | Removing a row before the evaluator changes which facts compete, and the graph cannot say the policy did it. |
+
+### Three lessons this session paid for
+
+**A private convenience that borrows a contract field's name is a trap.** Our
+`GapSubject.kind` was our own `entity|param` discriminator sitting in the field
+the contract uses for an OPEN registry. They implemented amendment 004 exactly as
+ratified and all 65 gaps still failed here — **symptom pointing at them, cause
+ours.** Three instances of that pattern now (the flattened `point` dict, the
+`subject` union, list-valued `because` params); the tests name it as a pattern.
+
+**Refusing to trust a number is not believing the opposite.** The admissibility
+gate first made plans *less* safe: it declined an unverified 914 mm span limit
+and laid out 1500 mm bays, because the fallback is conservative relative to
+SILENCE and a refusal is not silence. A declined value now stands as a ceiling.
+
+**Three assertions in this session could not fail** — `all(width <= 1800)` where
+every width was 1500; a test that rebuilt the object under test and dropped the
+field it was verifying. Both sat exactly where a real defect hid. The tests that
+paid off were the ones written about mistakes already made: the `SlotRef` test
+caught us re-opening that hole an hour after closing it.
+
+### Working agreements to keep
+
+- **`fence-rag` is docs-only for us.** Stage named files, never `git add -A` —
+  their session is frequently live and they had uncommitted work at this close.
+- **The contract is frozen.** BINDING changes need a ratified amendment; the
+  procedure and the four triggers are in `AMENDING.md`. Registry additions are
+  not amendments.
+- **Never regenerate the contract hash to clear a failure** — find the edit.
+- Snapshot ids in `tests/knowledge/test_real_snapshot.py` are **pinned on
+  purpose** and go stale by design. Update them deliberately.
+
+---
+
 ## Real published knowledge, ingested unmodified for the first time (2026-08-31)
 
 **`a4181dbf…` loads with nothing done to it.** No local migration, no simulated
