@@ -24,7 +24,15 @@ easy to re-introduce.
 (`yield_threshold`), pinned from the frontend side.
 
 **Status:** Tasks 1 (`5e68733`), 2 (`38f9823`), 3 + 4 (`3e34f28`), 5 (`8cc2c86`) and
-**all of Task 6** are **DONE**. Tasks 7–10 open.
+**all of Task 6** and **Task 7** are **DONE**. Tasks 8–10 open.
+
+**A gap in Task 7 as written, found by building it.** The plan's test expected a
+`resolve_choice_set_default` node, but stage B emitted a `choice` node only where somebody
+had chosen — so a plan built on the usual answer explained itself as though the question
+did not exist, and a reader could not tell *"this is what we do"* from *"somebody decided
+this"*. Both nodes are emitted now, and only where a question actually stands. Also: the
+sentences name the **segment stations**, not the internal `gap:run1:0` scope key — a lookup
+identifier is not a place, and in Hebrew it rendered as `בgap:run1:0`.
 
 **A second correction to Task 6, found in stage C — and it is the architecture critic's
 finding 4 landing properly.** A probe cannot measure `boards` or `cuts`, because a

@@ -428,6 +428,30 @@ def generate(
             choice_sets.append(ChoiceSet(
                 id="bay_layout", scope=gap["scope"],
                 question="choices.question.bay_widths", points=kept))
+            # A question nobody answered still gets a node. Without it a plan
+            # built on the usual answer explains itself as though the question
+            # did not exist — and the reader cannot tell "this is what we do"
+            # from "somebody decided this". The node is emitted only where a
+            # question actually stands: a gap with one admissible layout has
+            # nothing to say.
+            #
+            # The losing widths ride in the PAYLOAD, not on a `defeated` edge:
+            # `GraphBuilder.add(defeated=...)` materialises an `input_fact` node
+            # per ref, so a width list there would invent a knowledge fact —
+            # against that method's own comment that nothing new is invented in
+            # the graph. A parameter point, which has a synthesized version and
+            # a real ref, is the case that edge is for.
+            if not any(c.choice_set == "bay_layout" and c.scope == gap["scope"]
+                        for c in selections):
+                builder.add(
+                    "choice", "resolve_choice_set_default",
+                    payload={"run_id": gap["run_id"], "choice_set": "bay_layout",
+                             "scope": gap["scope"],
+                             "segment": gap["segment"],
+                             "widths": list(gap["widths"]),
+                             "alternatives": [list(p.widths) for p in kept
+                                               if not p.is_default]},
+                )
     run_meta.probe_count = probes
 
     return GenerationResult(
@@ -2424,7 +2448,9 @@ def _generate_run(
                 builder.add(
                     "choice", "resolve_choice_set",
                     payload={"run_id": run.id, "choice_set": "bay_layout",
-                             "scope": gap_scope, "widths": list(picked.widths),
+                             "scope": gap_scope,
+                             "segment": [seg_start, seg_end],
+                             "widths": list(picked.widths),
                              "displaced": default_widths,
                              "chosen_by": picked.author},
                     inputs=[run_fact.id, sm.firing_node_id],
@@ -2445,6 +2471,7 @@ def _generate_run(
         if gap_log is not None:
             gap_log.append({
                 "run_id": run.id, "scope": gap_scope, "seg_len": seg_len,
+                "segment": [seg_start, seg_end],
                 "widths": list(layout.widths),
                 "displaced": (list(layout.rejected_alternative)
                               if layout.rejected_alternative else None),

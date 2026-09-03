@@ -68,6 +68,19 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "Post at station {station_mm} {u} ({kind}, {mounting} mount, {sku}) "
             "on {surface} base."
         ),
+        # A choice set: two answers were admissible and this is the one built.
+        # TWO templates, because "nobody chose" and "you chose" are different
+        # facts — one sentence covering both would assert a decision that may
+        # never have happened, which is the conflation the fifth kind exists to
+        # prevent (spec §3).
+        "resolve_choice_set": (
+            "Segment {segment}: bay widths {widths}, chosen by {chosen_by} "
+            "over {displaced}."
+        ),
+        "resolve_choice_set_default": (
+            "Segment {segment}: bay widths {widths}. Nobody has chosen, so the "
+            "usual answer stands; {alternatives} was also admissible."
+        ),
         "layout_spans": "Segment {segment} divided into spans {widths}.",
         "layout_spans_alt": (
             " Alternative {alt_widths} was rejected because of {rejected_because}."
@@ -305,6 +318,14 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "עמוד בתחנה {station_mm} {u} ({kind}, עיגון {mounting}, {sku}) "
             "על בסיס {surface}."
         ),
+        "resolve_choice_set": (
+            "קטע {segment}: רוחבי מפתחים {widths}, בבחירת {chosen_by} במקום "
+            "{displaced}."
+        ),
+        "resolve_choice_set_default": (
+            "קטע {segment}: רוחבי מפתחים {widths}. אף אחד לא בחר, ולכן נשארת "
+            "התשובה הרגילה; גם {alternatives} היה קביל."
+        ),
         "layout_spans": "המקטע {segment} חולק למפתחים {widths}.",
         "layout_spans_alt": " החלופה {alt_widths} נדחתה בגלל {rejected_because}.",
         "create_span": (
@@ -522,6 +543,17 @@ def _fmt(t: dict[str, str], key: str, lang: str, units: str, **kw) -> str:
             out[k] = v
     out["u"] = _UNIT_WORDS.get(lang, _UNIT_WORDS["en"]).get(units, units)
     return t[key].format(**out)
+
+
+def _widths(widths) -> str:
+    """A bay list as a reader would say it, not as Python prints it.
+
+    `[1667, 1667, 1666]` in a sentence is a list literal wearing a sentence's
+    clothes. The separator is a middle dot because the plan canvas and the
+    dimension strings already use one for a chain of bays, and because a comma
+    reads as a list of unrelated things.
+    """
+    return " · ".join(str(w) for w in (widths or []))
 
 
 def explain_node(
@@ -789,6 +821,18 @@ def explain_node(
             # payload is that ref. The three facts above are sentences, because
             # the section view puts them at the top of what a person reads.
             base = _fmt(t, "input_fact", lang, units, action=node.action, payload=p)
+        case "resolve_choice_set":
+            base = _fmt(t, "resolve_choice_set", lang, units,
+                widths=_widths(p.get("widths")), segment=p.get("segment"),
+                chosen_by=p.get("chosen_by"),
+                displaced=_widths(p.get("displaced")),
+            )
+        case "resolve_choice_set_default":
+            base = _fmt(t, "resolve_choice_set_default", lang, units,
+                widths=_widths(p.get("widths")), segment=p.get("segment"),
+                alternatives=" / ".join(
+                    _widths(w) for w in (p.get("alternatives") or [])),
+            )
         case _:
             base = _fmt(t, "generic", lang, units, action=node.action, payload=p)
     if governed:
