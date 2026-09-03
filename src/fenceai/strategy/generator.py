@@ -22,7 +22,7 @@ from fenceai.catalog.model import CATALOG_SCHEMA_VERSION, Catalog, catalog_hash
 from fenceai.core.errors import GenerationFailure
 from fenceai.core.gaps import Because, Gap, GapSubject
 from fenceai.core.units import SNAP_TOLERANCE_MM, Mm, slope_len_mm
-from fenceai.strategy.choices import ChoiceSet
+from fenceai.strategy.choices import ChoiceSet, DesignPoint, offered
 from fenceai.decisions.graph import GraphBuilder
 from fenceai.fencemodel.demo import legacy_model
 from fenceai.fencemodel.library import FenceModelLibrary, content_hash
@@ -51,7 +51,9 @@ from fenceai.parts.model import PartLibrary
 from fenceai.project.model import Selection, SiteConditions
 from fenceai.parts.resolve import resolve_model_parts
 from fenceai.strategy.continuity import BayFacts, SlotFacts, derive_member_runs
-from fenceai.strategy.layout import LayoutResult, boundaries, layout_segment
+from fenceai.strategy.layout import (
+    LayoutResult, alternative_widths, boundaries, layout_segment,
+)
 from fenceai.strategy.model import (
     Gate,
     MemberRun,
@@ -202,6 +204,9 @@ def generate(
     # The caller's list is never mutated (ADR-0004: `generate()` is pure), and a
     # probe deep-copies it to swap one answer in.
     selections = list(choices or [])
+    # Populated by the span loop, consumed by phase 2 below. `None` inside a
+    # probe, which is what makes a probe cost one generation and not n.
+    gap_log: list[dict] | None = [] if offer_alternatives else None
     models = models or FenceModelLibrary()
     policy = {**DEFAULT_POLICY, **(policy or {})}
     # Bound ONCE, here, and threaded read-only from this point: `generate()` is
@@ -254,7 +259,7 @@ def generate(
             topology, run, knowledge, scope, site_facts, sink, catalog, overrides, policy,
             builder, strategy, applied, demand_skus, models_used,
             models, default_model, parts, parts_used, resolved_posts,
-            selections,
+            selections, gap_log,
         )
 
     _check_post_lengths(topology, knowledge, scope, site_facts, sink, catalog, builder, strategy)
@@ -371,8 +376,63 @@ def generate(
             sort_keys=True, default=str,
         ).encode()
     ).hexdigest()[:12]
+    # -- phase 2: what else this fence could have been ------------------------
+    #
+    # AFTER the baseline, because a candidate is measured by generating it and
+    # because the bounds it must honour are the RESOLVED ones. `offer_alternatives`
+    # is False inside every probe, which bounds the depth at 1 and makes the cost
+    # `1 + n` by construction rather than by a cap — a probe that probed would
+    # cost `G(n) = 1 + n·G(n-1)`: five generations for two questions, 1957 for six.
+    choice_sets: list[ChoiceSet] = []
+    probes = 0
+    for gap in gap_log or []:
+        # The layout `layout_segment` displaced is free and is the one alternative
+        # guaranteed to be admissible — it is what the engine itself weighed.
+        candidates: list[tuple[str, list[Mm]]] = []
+        if gap["displaced"]:
+            candidates.append(("displaced", gap["displaced"]))
+        candidates.extend(alternative_widths(
+            gap["seg_len"], gap["max_span"],
+            default=gap["widths"], exact_mm=gap["exact_span"],
+            min_span_mm=gap["min_span"],
+        ))
+        if not candidates:
+            continue
+
+        baseline_axes = _countable_axes(
+            GenerationResult(run=run_meta, strategy=strategy, graph=graph))
+        points = [DesignPoint(
+            id="default", label=" · ".join(str(w) for w in gap["widths"]),
+            widths=list(gap["widths"]), axes=baseline_axes, is_default=True)]
+        for name, widths in candidates:
+            probed = generate(
+                topology, knowledge, catalog, overrides=overrides, policy=policy,
+                project_id=project_id, models=models,
+                default_model=default_model, parts=parts, site=site,
+                choices=[*selections,
+                          Selection(choice_set="bay_layout", scope=gap["scope"],
+                                     widths=list(widths), author="probe")],
+                offer_alternatives=False,
+            )
+            probes += 1
+            axes = _countable_axes(probed)
+            points.append(DesignPoint(
+                id=name, label=" · ".join(str(w) for w in widths),
+                widths=list(widths), axes=axes,
+                delta={k: axes[k] - baseline_axes[k]
+                       for k in set(axes) & set(baseline_axes)
+                       if axes[k] != baseline_axes[k]},
+            ))
+        kept = offered(points)
+        if len(kept) > 1:
+            choice_sets.append(ChoiceSet(
+                id="bay_layout", scope=gap["scope"],
+                question="choices.question.bay_widths", points=kept))
+    run_meta.probe_count = probes
+
     return GenerationResult(
-        run=run_meta, strategy=strategy, graph=graph, orphaned_overrides=orphaned
+        run=run_meta, strategy=strategy, graph=graph, orphaned_overrides=orphaned,
+        choice_sets=choice_sets
     )
 
 
@@ -1669,6 +1729,7 @@ def _generate_run(
     parts_used: list[PartUse],
     resolved_posts: dict | None = None,
     selections: list[Selection] | None = None,
+    gap_log: list[dict] | None = None,
 ) -> None:
     selections = selections or []
     length = run_length(topo, run)
@@ -2376,6 +2437,20 @@ def _generate_run(
                 # because somebody once chose it under a laxer rule.
                 strategy.gaps.append(
                     _choice_unavailable_gap(run, gap_scope, picked, seg_len))
+        # What phase 2 needs and only this loop knows: the gap, what was built
+        # there, and the bounds any alternative must honour. Logged rather than
+        # re-derived, because `layout_segment` weighs a nominal preference and a
+        # `min_span` rule it only warns about — a second opinion computed later
+        # is how the built layout came to be missing from its own panel.
+        if gap_log is not None:
+            gap_log.append({
+                "run_id": run.id, "scope": gap_scope, "seg_len": seg_len,
+                "widths": list(layout.widths),
+                "displaced": (list(layout.rejected_alternative)
+                              if layout.rejected_alternative else None),
+                "max_span": sm.max_span, "min_span": min_span,
+                "exact_span": sm.exact_span,
+            })
         governed = [r for r in (sm.max_span_ref, layout_pref_ref) if r]
         if layout.exact_over_max:
             _exact_over_max(builder, strategy, run, sm)
@@ -3362,6 +3437,37 @@ def _report_unfilled_posts(strategy: Strategy, builder: GraphBuilder) -> None:
         would_close="a default_component rule naming the ground-post product for role post_ground",
         closes_by="knowledge", severity="warns_line",
     ))
+
+
+def _countable_axes(result: GenerationResult) -> dict[str, int]:
+    """What a generation can honestly count about the fence it just produced.
+
+    **`boards` and `cuts` are absent, and that is the design being consistent.**
+    A `Strategy` holds posts, spans, gates, warnings and member runs; it holds no
+    cut plan, because what a fence COSTS is a `SupplyRun` against one yard's
+    stock and inventory (ADR-0011). A board count promised from here would be a
+    second answer to a question the supply layer already answers — and the first
+    draft of this design promised exactly that, from a length the cut planner is
+    never handed.
+
+    `pieces` is the continuous-member count and is absent where no model details
+    a member to pass a post, which is the normal case. An absent axis is not a
+    zero: `choices.dominates` compares only axes both points carry, so a
+    candidate is never eliminated on a measure it never claimed.
+    """
+    axes = {
+        "posts": len(result.strategy.posts),
+        "bays": len(result.strategy.spans),
+    }
+    pieces = sum(mr.qty for mr in result.strategy.member_runs)
+    if pieces:
+        axes["pieces"] = pieces
+    # A candidate that introduces a sliver, or an over-max bay, is worse in a way
+    # a person should see counted rather than discover on the drawing.
+    warned = len([w for w in result.strategy.warnings if w.severity != "info"])
+    if warned:
+        axes["warnings"] = warned
+    return axes
 
 
 def _widths_fit(widths: list[Mm], seg_len: Mm, max_span: Mm) -> bool:

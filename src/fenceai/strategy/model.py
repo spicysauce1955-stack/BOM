@@ -219,6 +219,11 @@ class PartUse(BaseModel):
 class GenerationRun(BaseModel):
     id: str
     project_id: str = ""
+    # How many extra generations this run spent costing the alternatives it
+    # offers. Recorded rather than capped: the cost is `1 + n` by construction
+    # (a probe never probes), and a number on the run is how a runaway becomes
+    # visible instead of expensive.
+    probe_count: int = 0
     topology_revision: int = 0
     # The site conditions this run was generated against. Same job as
     # `topology_revision` and guarded the same way: a derived view laid over

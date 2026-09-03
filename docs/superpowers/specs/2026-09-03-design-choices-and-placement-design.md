@@ -150,9 +150,11 @@ strictly better on one. Axes are **open** — a point carries what it differs on
 
 | Axis | Where it comes from | On which questions |
 |---|---|---|
-| `posts` | the probe's own post elements | every layout point |
-| `boards`, `cuts` | the probe's own cut plans, per product | any point whose pieces change |
-| `concrete_l`, `holes` | the probe's own BOM | footing points |
+| `posts`, `bays` | the probe's own post and span lists | every layout point |
+| `pieces` | the probe's own member runs — absent where no model details a continuous member | any point that changes continuity |
+| `warnings` | the probe's own warning list — a candidate that introduces a sliver is worse in a way worth counting | any point |
+| ~~`boards`, `cuts`~~ | **NOT available here.** A `Strategy` holds no cut plan; what a fence costs is a `SupplyRun` against one yard (ADR-0011). Derived in the BOM layer, per candidate | — |
+| `concrete_l`, `holes` | the BOM layer, for footing points | footing points |
 
 **"All bays equal" is printed on the row, not filtered on.** It is taste, and taste does
 not eliminate. `odd_bay` as a filter axis was the only thing hiding that our own default

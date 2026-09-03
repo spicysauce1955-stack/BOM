@@ -174,6 +174,7 @@
   "checklist.draw": "Draw a fence section — ✏️ then click on the map, Enter to finish",
   "checklist.gate": "Add a gate — 🚪 then click a spot on a section",
   "checklist.title": "Getting started",
+  "choices.question.bay_widths": "Bay widths",
   "common.add": "Add",
   "common.cancel": "Cancel",
   "common.close": "Close",

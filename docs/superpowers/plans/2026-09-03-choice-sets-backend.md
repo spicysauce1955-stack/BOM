@@ -24,8 +24,17 @@ easy to re-introduce.
 (`yield_threshold`), pinned from the frontend side.
 
 **Status:** Tasks 1 (`5e68733`), 2 (`38f9823`), 3 + 4 (`3e34f28`), 5 (`8cc2c86`) and
-**Task 6 stages A + B** are **DONE**. Task 6 stage C (phase 2 — alternatives, probes,
-measures, the filter) is next, then Tasks 7–10.
+**all of Task 6** are **DONE**. Tasks 7–10 open.
+
+**A second correction to Task 6, found in stage C — and it is the architecture critic's
+finding 4 landing properly.** A probe cannot measure `boards` or `cuts`, because a
+`Strategy` holds no cut plan: what a fence COSTS is a `SupplyRun` against one yard's stock
+and inventory (ADR-0011). The axes a generation can honestly count are `posts`, `bays`,
+`pieces` (continuous members, absent where no model details one) and `warnings`. Boards
+belong to the BOM layer and must be derived there per candidate, later — **spec §5.3's axis
+table overstates what this layer can produce and needs that row corrected.** The
+alternative also comes from `layout_segment`'s own `rejected_alternative`, which is free
+and is guaranteed admissible because it is what the engine itself weighed.
 
 **A correction to Task 6 found while building it.** Honouring a selection does NOT require
 the candidate set: it requires validating the chosen WIDTHS against the gap — they fill it
