@@ -3,6 +3,121 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Session close — 2026-09-03, latest: choice sets designed twice
+
+**2351 tests · contract hashes OK · v1.3 (not v1.1 — see below).**
+
+### What landed
+
+**Item 7 — provenance on spec fields** (`418e7cd`). Published `Part`s are filed
+against the spine, every `SpecField` is judged through §1.4 and joined to
+`source_docs`, and `unconsumed` is `{}` against a real snapshot for the first
+time. `conversation.md` **T44** sent. Details in the section below this one.
+
+**The choice-set design, rev 2** (`df76e8f`, `99dd35d`) — and the story is the
+useful part. Rev 1 was a full spec plus a 15-task plan. Four adversarial agents
+reviewed it and returned **RETHINK** and **INADEQUATE**. Every measured number
+survived (30/30, re-derived independently); the wiring did not.
+
+**Backend tasks 1–2 built** (`5e68733`, `38f9823`): `strategy/choices.py` and
+`layout.py`'s `yield_threshold` + `alternative_widths`.
+
+### The four things that changed SHAPE, because each is a trap worth remembering
+
+1. **A design point may not bind a parameter outside `resolve_param`.** One
+   resolution path exists, carrying precedence, hard-tie collapse and a
+   `governed_by` ref; bypassing it makes a run report *"no rule states
+   max_span_mm"* about a sealed engineering table. A *parameter* point now
+   becomes synthesized `KnowledgeVersion`s, as a model's `layout_policy` already
+   does. A *layout* point binds nothing and needs none — that distinction is
+   what makes the fix precise rather than blanket.
+2. **Nothing is measured outside a real generation.** `resolve_panel` runs AFTER
+   the span loop and consumes the bay width the layout produces — circular — so
+   `strategy/measure.py` was deleted before it was written. It would also have
+   been a second cut packer, which the spec forbade in its own §7.
+3. **A question is scoped to a GAP between fixed stations, not a section.** The
+   rev-1 block sat inside a per-segment loop, so any corner, gate, step — or one
+   pinned post — emitted duplicate questions and applied one answer to a gap it
+   was never measured for. Slices 1 and 2 collided: pinning a post broke the
+   scope key.
+4. **Probing is an input flag.** A probe called full `generate()`, which probed
+   again: `G(n) = 1 + n·G(n-1)`. Two questions cost **5** generations, six
+   sections **1957**. `offer_alternatives=False` bounds depth at 1.
+
+### Six claims rev 1 made in print, and the code that disproved each
+
+| Claim | What the code says |
+|---|---|
+| Placement variants cost zero probes | `_greedy_extent` walks bays **in station order**, so reordering `2000·2000·1000` changes a rail from `4000+1000` to `3000+2000`: **+2 boards on 4** |
+| A 998 mm bay halves that bay's boards | A piece is cut to the **clear opening**; with a 90 mm post a 1000 mm bay yields a 910 mm slat and two already fit. No cliff at 1000 at all |
+| "Odd bay" is a measure like the others | Drop it and the tiling layout **dominates the layout we ship today** on posts, boards and cuts. A taste axis was hiding that |
+| Four fixed measures fit every question | On a 3 m run both footing points measure identically — the panel would print "same everything" for answers 25% apart in concrete |
+| A `"choice"` graph node with the point on a `defeated` edge | `NodeKind` is a closed `Literal` of 12, and `defeated=` mints an `input_fact` node per ref — a point id there **invents a knowledge fact** |
+| A selection names the point chosen | Point ids were generator names, and `fewest_posts` is *defined relative to* `max_span`. Choosing a footing silently turned "three equal bays" into two of 2500 |
+
+Two would have failed on the first run: `plan_cuts` **raises** on a piece longer
+than its stock, so measuring the deep-footing point (2439 mm bays) crashed a
+generation; and the yield snap tick at 4002 made the *previous* bay 2002 mm, 2 mm
+over the maximum passed into the same call.
+
+### THE NEXT THING
+
+**Finish the two plans.** `plans/2026-09-03-choice-sets-backend.md` (10 tasks)
+and `plans/2026-09-03-choice-sets-frontend.md` (5 tasks). Backend tasks 1–2 are
+done. **Task 6 (`generator.py`) carries all four shape changes and the whole
+gate risk** — read spec §5–§7 and §12 before touching it, and run
+`tests/scenarios` after every sub-step.
+
+**Task 8 edits the system's hard-constraint enforcement point.** `generator.py`
+raises `GenerationFailure` when a span exceeds `sm.max_span`; `lock_bay` makes
+that conditional. Pair it with restating the invariant in
+`docs/scenarios/golden-scenarios.md` — which already anticipates one: *"unless
+authorized exception exists — none in demo KB"* — or the next accidental
+over-max span looks authorized.
+
+### The contract: no amendment, and one obligation we were breaching
+
+**No BINDING item changes.** Consuming `paired` is amendment 006, in force at
+v1.3. Two registry additions only (two platform codes, one `EntityRef.kind`).
+
+**Obligation 5 was being breached and nobody had noticed:** *"convert units
+once, at the boundary, and keep the source lexeme for display."* The panel showed
+`610 mm` where the source said `24"`, and `Quantity.value_raw` carries it. The
+publisher's own words go on the row.
+
+**And one thing that looks like a contract matter and is not:** a person building
+a bay wider than a sealed published maximum breaches **no obligation** — none of
+the eight requires Planning to honour a published hard constraint. It breaches
+our own invariant. Reading it the other way would have sent a false amendment.
+
+### CLAUDE.md is stale about the contract version
+
+`CLAUDE.md:97-99` says the contract is frozen at **v1.1**. It is **v1.3**
+(2026-08-31, amendments 005/006/007 in force) — the contract's own header is
+authoritative and says so. An adversarial fact-check caught it. The
+`contract-frozen-v1` memory is corrected; **CLAUDE.md is not, and should be.**
+
+### Three lessons this session paid for
+
+**An adversarial review is worth more than a careful one.** Four agents with
+distinct briefs — architecture, tests, facts, counterexamples — found ~40
+findings in a spec and plan that had already been self-reviewed. The fact-checker
+verifying all 30 numbers correct is what made the structural findings credible
+rather than noise.
+
+**A plan that quotes an identifier must have read it.** Rev 1's Task 5 read
+`sm.infill_stock_mm`, `sm.infill_kerf_mm` and `sm.infill_rows` off the segment
+model. None exists. That is not a typo — reaching them at that point in
+generation is circular, and the plan could not have been executed at all.
+
+**A test can assert a false claim about the domain and pass review.** Building
+task 1, my own test asserted that `2000·2000·1000` and `1667·1667·1666` do not
+dominate each other. They do, which is precisely the finding that made the
+default exempt. I had explained it correctly in prose and encoded the opposite in
+a test.
+
+---
+
 ## Session close — 2026-09-03, later: item 7 is built
 
 **2320 tests · contract hashes OK.** Browser smoke NOT re-run: nothing renders
