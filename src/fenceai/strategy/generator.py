@@ -2057,7 +2057,13 @@ def _generate_run(
 
     # -- overrides addressed to this run ---------------------------------------
     pinned_stations: dict[Mm, Override] = {}
-    suppress_ovs: list[Override] = []
+    # (resolved station, override) — resolved HERE, through `override_station`,
+    # exactly as a pin and a lock are. Matching a suppression on raw
+    # `directive.station_mm` meant an ANCHORED suppression could never apply: a
+    # directive carrying only an anchor reads station 0, so it silently missed
+    # every post and then reported itself orphaned. That is the shape the drag
+    # gesture in the plan canvas produces.
+    suppress_ovs: list[tuple[Mm, Override]] = []
     # start station -> the override that fixed the bay there. `override_station`
     # rather than `station_mm`, because a lock carries ONLY an anchor: a width a
     # person measured is meaningless without the place they measured it from, and
@@ -2071,8 +2077,11 @@ def _generate_run(
         station = override_station(topo, run, d)
         if d.kind == "pin_post" and station is not None and 0 < station < length:
             pinned_stations[station] = ov
-        elif d.kind == "suppress_post":
-            suppress_ovs.append(ov)
+        elif d.kind == "suppress_post" and station is not None:
+            # `None` stays uncollected, so a suppression carrying neither an
+            # anchor nor a station orphans loudly instead of deleting the post
+            # nearest station 0.
+            suppress_ovs.append((station, ov))
         elif d.kind == "lock_bay" and station is not None \
                 and d.width_mm > 0 and 0 <= station \
                 and station + d.width_mm <= length:
@@ -2595,7 +2604,7 @@ def _generate_run(
         # `resolve_panel` is asked how wide the opening is.
         for s in stations[1:-1]:
             suppressor = next(
-                (ov for ov in suppress_ovs if _near(ov.directive.station_mm, s)), None
+                (ov for at, ov in suppress_ovs if _near(at, s)), None
             )
             if suppressor is not None:
                 applied.add(suppressor.id)

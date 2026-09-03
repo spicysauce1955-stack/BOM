@@ -13,6 +13,9 @@ import typing
 import pytest
 from pydantic import ValidationError
 
+from fenceai.catalog.demo import demo_catalog
+from fenceai.knowledge.demo import demo_knowledge
+from fenceai.strategy.generator import generate
 from fenceai.strategy.overrides import (
     Directive,
     LockBay,
@@ -136,6 +139,71 @@ def test_lock_bay_round_trips_through_the_discriminated_union():
     assert isinstance(back.directive, LockBay)
     assert back.directive.kind == "lock_bay"
     assert override_station(topo, topo.run("run1"), back.directive) == 2000
+
+
+# --- and the generator has to USE the resolution, not re-read the field ------
+
+def _suppress(topo, station, **kw):
+    return Override(id="o1", run_id="run1",
+                    directive=SuppressPost(anchor=_rigid(topo, topo.run("run1"),
+                                                         station), **kw))
+
+
+def test_an_anchored_suppression_actually_removes_the_post():
+    """The half of this that `override_station` alone could not fix.
+
+    `_run_layout` matched a suppression on RAW `directive.station_mm` while a
+    pin and a lock both went through `override_station`. A suppression carrying
+    only an anchor reads `station_mm == 0`, so it matched no post at all — and
+    the drag gesture in the plan canvas produces exactly that directive. The
+    post came back, silently, with an `orphaned_override` warning as the only
+    trace.
+    """
+    topo = straight_topology(5000)   # demo max_span 1800 -> line posts at 1667, 3334
+    out = generate(topo, demo_knowledge(), demo_catalog(),
+                   overrides=[_suppress(topo, 1667)])
+    stations = [p.station_mm for p in out.strategy.posts if p.kind == "line"]
+    assert stations == [3334]
+    assert out.orphaned_overrides == []
+
+
+def test_an_anchored_suppression_follows_its_post_when_the_run_is_edited():
+    """A rigid anchor is the whole reason the directive carries one. Authored
+    against a 5000 mm run and generated against a longer one, it still names the
+    station a person pointed at — where a stored `station_mm` would have been
+    the reading the geometry HAD."""
+    authored = straight_topology(5000)
+    ov = _suppress(authored, 1667)
+    longer = straight_topology(6000)   # line posts at 1500, 3000, 4500
+    assert override_station(longer, longer.run("run1"), ov.directive) == 1667
+    out = generate(longer, demo_knowledge(), demo_catalog(), overrides=[ov])
+    # 1667 is no post on THIS layout, so nothing is removed and the override
+    # says so rather than deleting the nearest post it can find
+    assert [p.station_mm for p in out.strategy.posts if p.kind == "line"] \
+        == [1500, 3000, 4500]
+    assert out.orphaned_overrides == [ov.id]
+
+
+def test_a_station_only_suppression_still_applies():
+    """Every override stored before anchors existed carries `station_mm` and
+    nothing else. The wiring change must not drop them."""
+    topo = straight_topology(5000)
+    out = generate(topo, demo_knowledge(), demo_catalog(), overrides=[
+        Override(id="o1", run_id="run1",
+                 directive=SuppressPost(station_mm=1667))])
+    assert [p.station_mm for p in out.strategy.posts if p.kind == "line"] == [3334]
+    assert out.orphaned_overrides == []
+
+
+def test_a_suppression_with_neither_anchor_nor_station_is_orphaned():
+    """`station_mm` defaults to 0, so an empty directive used to mean "the post
+    nearest station 0" — which is a real post on any run that has one there."""
+    topo = straight_topology(5000)
+    out = generate(topo, demo_knowledge(), demo_catalog(), overrides=[
+        Override(id="o1", run_id="run1", directive=SuppressPost())])
+    assert [p.station_mm for p in out.strategy.posts if p.kind == "line"] \
+        == [1667, 3334]
+    assert out.orphaned_overrides == ["o1"]
 
 
 def test_every_directive_kind_resolves_to_somewhere_or_to_none():
