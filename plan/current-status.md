@@ -3,6 +3,95 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Session close — 2026-09-04: the salesperson MVP is built
+
+**2528 tests · browser smoke 342/342 · contract hashes OK at v1.3.**
+
+Spec: `docs/superpowers/specs/2026-09-04-sales-mvp-design.md`. Read it before
+anything else — it records a product decision that is not derivable from code.
+
+### What changed, and it is bigger than the code
+
+The previous session shipped the choice-set feature correctly and it was still
+the wrong call: two batches of concurrent agents, no working checkpoint, and the
+user saw it for the first time at the end. Their verdict was that we bit off more
+than we could chew. **The tell was that letting them evaluate their own product
+took a three-part guided tour with a lookup table of run lengths.**
+
+So the product now names WHO it is for. Three company roles — **salesperson**,
+**office person**, **super user** — and the MVP targets the salesperson only:
+
+> A sold job, captured completely enough that the office person never has to
+> phone the salesperson.
+
+Completeness, not accuracy. Established by asking rather than assuming: they work
+on a **laptop after the visit**, from **tape/laser measurements**, and they close
+the sale at the house from experience — so the app's number is written
+confirmation, never what wins the deal.
+
+Nothing was deleted. Four slices, each committed and pushed on its own.
+
+### The four slices
+
+**Slice 2 — sales mode.** `js/role.js` owns a hide-list, `style.css` obeys it via
+`<html data-role>`, and `t()` resolves `sales.<key>` ahead of `<key>` so the same
+control gets a salesperson's words. Hidden: post pinning, overrides, choice sets,
+the decision graph, the inspector, gaps, eight of ten tabs.
+
+**Slice 1 — a job is a job.** A typed `Job` (customer/address/sold_by/sold_on)
+and `PUT /projects/{id}/job`, which is the route that matters: they start with a
+customer name, draw for twenty minutes, then find the address on the sketch.
+
+**Slice 3 — the property.** `SiteContext` on `Project`, never in `Topology` — a
+landmark changes no quantity, and in the topology it would 409 the structure
+sheet because somebody nudged a driveway. Asserted, not intended: a test pins
+that `generate()` has no parameter a landmark could reach it through.
+
+**Slice 4 — the handover sheet.** `report/handover.py`, derived from the PROJECT
+rather than a run, because by the time a `Strategy` exists the silent defaults
+(1800 mm height, `soil` base) have been applied and look decided. Plus an
+estimate that says it is an estimate.
+
+### THE NEXT THING — and it is a decision, not a task
+
+**The user has not yet judged any of this.** Four slices were built in sequence on
+their instruction to continue without stopping, so the checkpoint each slice was
+designed around has not happened. Before building more, get them to open the app
+in **Salesperson** mode and walk one job end to end.
+
+Two guesses in particular are mine and unreviewed:
+
+- **`#gaps` is hidden from sales.** My reasoning: a gap reports what the
+  knowledge behind *every* job cannot answer, so to a salesperson it reads as a
+  fault in the sale they just made. If they need "we cannot price this model",
+  that is wrong.
+- **The generate button is kept.** A salesperson may not need to generate at all
+  now that slice 4 gives them the estimate.
+
+**Then:** the office person's MVP. It is the next persona in the chain and the
+one that receives everything the salesperson just recorded. Its road has not been
+drawn.
+
+### Still open, unchanged from before
+
+- **Backend Task 10** (footing depth reaching the BOM) is still blocked and still
+  moves golden numbers. A shallower footing schedule is selectable and **cannot
+  show a saving** until `demand/derive.py` models volume as a function of depth.
+- `plan_cuts` raises on a piece longer than its stock.
+- `tests/tools/test_persona_stack.py` binds port 8800; two runs at once collide.
+- `tools/persona_lab`'s roster is engineering-shaped and now disagrees with the
+  three company roles. Not merged on purpose — they answer different questions —
+  but somebody will eventually try.
+
+### The lesson this session paid for, in one line
+
+**A green suite is not a checkpoint; a person opening the app is.** Every slice
+here had a defect that 2528 passing tests could not see, and four of the five
+were *silent* — nothing threw, nothing looked broken, the feature was simply
+absent or wrong. The table is in the spec.
+
+---
+
 ## Session close — 2026-09-03, latest: choice sets are BUILT, both views drag
 
 **2461 tests · contract hashes OK at v1.3 · browser smoke SEE BELOW.**
