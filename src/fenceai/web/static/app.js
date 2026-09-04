@@ -20,6 +20,7 @@ import { initSite } from "./js/site.js";
 import { initStructureData } from "./js/structure-data.js";
 import { initStructure } from "./js/structure.js";
 import { initTabs } from "./js/tabs.js";
+import { initRole, setRole } from "./js/role.js";
 import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
 function setupHeader() {
@@ -33,6 +34,9 @@ function setupHeader() {
   document.getElementById("btn-locale").addEventListener("click",
     () => setLocale(currentLocale() === "he" ? "en" : "he"));
   document.getElementById("btn-units").addEventListener("click", toggleUnits);
+  const role = document.getElementById("role-select");
+  role.value = state.role;
+  role.addEventListener("change", () => setRole(role.value));
   // the unit label itself is localized: relabel the button when the language flips
   on("locale-changed", updateUnitsButton);
 }
@@ -63,6 +67,7 @@ function setupUndoButtons() {
 async function main() {
   await initI18n();
   initUnits();      // display unit before the first render (i18n first: it labels it)
+  initRole();       // ...and who is looking, before anything is drawn for them
   initEditor();
   initInspector();
   initTabs();

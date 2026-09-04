@@ -21,6 +21,7 @@ anything about it. The tests at the end of this file are the ones that can.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
@@ -1260,3 +1261,44 @@ def test_the_quoted_surface_never_offers_to_translate():
     comment containing the word."""
     src = _code_only(STATIC / "js" / "doc-warnings.js")
     assert "translate" not in src.lower()
+
+
+# -- the sales vocabulary (`sales.<key>` beats `<key>` when role is sales) ------
+
+def test_every_sales_override_renames_a_key_that_actually_exists():
+    """A `sales.foo` with no `foo` behind it renames nothing and never renders.
+
+    It is the silent half of the same failure the role hide-list has: the
+    override sits in both bundles, passes key parity, and a salesperson simply
+    keeps reading the engineer's word.
+    """
+    en = json.loads((STATIC / "i18n" / "en.json").read_text())
+    overrides = {k[len("sales."):] for k in en if k.startswith("sales.")}
+    missing = sorted(k for k in overrides if k not in en)
+    assert not missing, f"sales overrides for keys that do not exist: {missing}"
+
+
+def test_every_sales_override_is_a_string_the_STATIC_pass_can_reach():
+    """The guard `role.js` relies on, and the reason `setRole` calls only
+    `applyStatic()`.
+
+    Switching role re-renders the static `data-i18n` pass and nothing else. That
+    is sufficient exactly while every sales override targets a key used as a
+    `data-i18n` / `-title` / `-placeholder` attribute in `index.html`. The first
+    override aimed at a JS-rendered string would render the wrong words until
+    the next language toggle — a bug the browser already caught once in this
+    mechanism's first hour.
+
+    So: fail here instead. The fix when it fires is not to delete the override
+    but to make the module that renders it listen for `role-changed`, and then
+    to widen this test to admit that module.
+    """
+    en = json.loads((STATIC / "i18n" / "en.json").read_text())
+    html = (STATIC / "index.html").read_text()
+    static_keys = set(re.findall(r'data-i18n(?:-title|-placeholder)?="([^"]+)"', html))
+    overrides = {k[len("sales."):] for k in en if k.startswith("sales.")}
+    unreachable = sorted(overrides - static_keys)
+    assert not unreachable, (
+        "sales overrides on keys the static pass never walks — either wire the "
+        f"rendering module to `role-changed` and widen this test, or drop them: "
+        f"{unreachable}")

@@ -747,3 +747,39 @@ button.evidence-link:hover { filter: none; color: #1d4ed8; }
   border-radius: 6px; padding: 6px 10px; }
 .evidence-reading-value { display: flex; align-items: baseline; gap: 8px; }
 .evidence-doc-title { font-weight: 600; }
+
+/* ============================================================================
+   Role modes — which of the company's three people is looking.
+   `js/role.js` owns the LIST; this file only obeys it. Keyed on <html
+   data-role>, so nothing here needs a module to reach into another's subtree.
+
+   PRESENTATION ONLY. Hiding is not a permission: the API is unchanged and a
+   switch back shows everything. Never treat this as a boundary that protects.
+
+   The selectors below are duplicated from `role.js` by necessity — CSS cannot
+   read a JS array — and `tests/web/test_role_sync.py` is what stops the two
+   copies from drifting.
+   ========================================================================= */
+
+/* --- sales: a salesperson records what was SOLD, never how it is BUILT --- */
+html[data-role="sales"] #tool-pin,
+html[data-role="sales"] #override-list,
+html[data-role="sales"] #choices,
+html[data-role="sales"] #section-decisions,
+html[data-role="sales"] #inspector,
+html[data-role="sales"] #gaps,
+html[data-role="sales"] #chk-overlay-label,
+html[data-role="sales"] #profile-exag,
+html[data-role="sales"] #tabs button[data-tab="knowledge"],
+html[data-role="sales"] #tabs button[data-tab="review"],
+html[data-role="sales"] #tabs button[data-tab="structure"],
+html[data-role="sales"] #tabs button[data-tab="assembly"],
+html[data-role="sales"] #tabs button[data-tab="panel"],
+html[data-role="sales"] #tabs button[data-tab="models"],
+html[data-role="sales"] #tabs button[data-tab="bom"],
+html[data-role="sales"] #tabs button[data-tab="inventory"] { display: none; }
+
+/* --- office: holds the inventory and the items; authoring RULES is the
+       super user's bench --- */
+html[data-role="office"] #tabs button[data-tab="knowledge"],
+html[data-role="office"] #tabs button[data-tab="review"] { display: none; }

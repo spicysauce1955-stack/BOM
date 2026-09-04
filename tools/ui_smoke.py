@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import shutil
 import subprocess
@@ -829,7 +830,106 @@ def _smoke_plan_drag(c) -> None:
 
 # Cases added by the choice-set and hand-placement work. Append your function
 # to this list; define the function itself directly above this comment.
+def _smoke_sales_mode(c) -> None:
+    """The salesperson's app is the same app with the engineering taken out.
+
+    Three things only a browser can answer. That the hide-list actually HIDES —
+    `role.js` and `style.css` hold the list twice and `tests/web/test_role_sync.py`
+    proves they agree with each other, which is not the same as proving either
+    agrees with the rendered page. That the surfaces recording what was SOLD
+    survive, because a mode that hid those would be small rather than useful.
+    And that the words change: a salesperson is non-technical, so "⚙ Generate
+    strategy" and "Height intent" are the defect, not the labels around them.
+
+    Asserted through `getComputedStyle`, never `offsetParent`: a panel inside a
+    tab that happens to be inactive is invisible for a reason that has nothing to
+    do with the role, and would report this mode working when it is not.
+    """
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+    time.sleep(0.4)
+
+    shown = """
+(() => {
+  const vis = (sel) => {
+    const e = document.querySelector(sel);
+    if (!e) return "missing";
+    return getComputedStyle(e).display === "none" ? "hidden" : "shown";
+  };
+  return {
+    pin: vis("#tool-pin"),
+    knowledge: vis('#tabs button[data-tab="knowledge"]'),
+    bom: vis('#tabs button[data-tab="bom"]'),
+    inspector: vis("#inspector"),
+    gaps: vis("#gaps"),
+    base: vis("#tool-base"),
+    height: vis("#tool-height"),
+    model_row: vis("#model-row"),
+    profile: vis("#profile"),
+    generate: document.getElementById("btn-generate").textContent.trim(),
+    tab1: document.querySelector('#tabs button[data-tab="canvas"]').textContent.trim(),
+    height_label: document.querySelector("#tool-height .t-label").textContent.trim(),
+  };
+})()"""
+
+    before = c.js(shown)
+    check("the full app shows the engineering surfaces to begin with",
+          before["pin"] == "shown" and before["knowledge"] == "shown"
+          and before["inspector"] == "shown", before)
+
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  s.value = 'sales';
+  s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""")
+    time.sleep(0.6)
+    sales = c.js(shown)
+
+    check("sales mode hides every surface that decides how the fence is BUILT",
+          all(sales[k] == "hidden" for k in
+              ("pin", "knowledge", "bom", "inspector", "gaps")), sales)
+    check("sales mode keeps every surface that records what was SOLD",
+          all(sales[k] == "shown" for k in
+              ("base", "height", "model_row", "profile")), sales)
+    # The rename is the half a hide-list cannot do. `sales.<key>` beats `<key>`
+    # in `t()` only in this mode, so these strings prove the layer resolves —
+    # and prove it on the STATIC pass, which runs over the whole page at once.
+    check("the words are a salesperson's, not an engineer's",
+          "Generate strategy" not in sales["generate"]
+          and sales["tab1"] != before["tab1"]
+          and sales["height_label"] == "Height", sales)
+    c.shot("50-sales-mode.png")
+
+    # Hebrew, because the app opens in it and a sales key present in one bundle
+    # and missing from the other renders an English word to a Hebrew reader.
+    c.js("document.getElementById('btn-locale').click(); 'ok'")
+    time.sleep(0.8)
+    he = c.js(shown)
+    check("the sales vocabulary exists in Hebrew too",
+          all(not re.search(r"[A-Za-z]{3}", he[k])
+              for k in ("generate", "tab1", "height_label")), he)
+    check("switching language does not un-hide the engineering surfaces",
+          he["pin"] == "hidden" and he["knowledge"] == "hidden", he)
+    c.js("document.getElementById('btn-locale').click(); 'ok'")
+    time.sleep(0.8)
+
+    # ...and back, because a mode nobody can leave is a mode that traps the
+    # office person who borrowed the salesperson's laptop.
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  s.value = 'all';
+  s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""")
+    time.sleep(0.6)
+    back = c.js(shown)
+    check("leaving sales mode restores the whole app",
+          back["pin"] == "shown" and back["knowledge"] == "shown"
+          and back["generate"] == before["generate"], back)
+
+
 _CHOICE_CASES: list = [
+    _smoke_sales_mode,
     _smoke_choices_panel,
     _smoke_post_inspector,
     _smoke_side_drag,

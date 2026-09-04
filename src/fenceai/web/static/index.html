@@ -15,6 +15,14 @@
       <button id="btn-new-project" data-i18n="project.create">Create</button>
       <button id="btn-locale" title="עברית / English">עב / EN</button>
       <button id="btn-units" title="mm / cm">mm</button>
+      <!-- Which of the company's three people is looking. A PRESENTATION
+           preference like the unit toggle beside it — it hides surfaces, it
+           does not revoke anything, and it is never a permission. -->
+      <select id="role-select" data-i18n-title="role.title" title="Who is using this">
+        <option value="sales" data-i18n="role.sales">Salesperson</option>
+        <option value="office" data-i18n="role.office">Office</option>
+        <option value="all" data-i18n="role.all">Everything</option>
+      </select>
       <span id="ai-badge" class="badge"></span>
     </div>
   </header>
@@ -54,7 +62,11 @@
           <div class="toolbar">
             <button id="btn-generate" class="primary" data-i18n="editor.generate">⚙ Generate strategy</button>
             <button id="btn-fit" data-i18n-title="editor.fit" title="Fit view">⤢</button>
-            <label><input type="checkbox" id="chk-overlay" checked> <span data-i18n="editor.show_overlay">show strategy overlay</span></label>
+            <!-- id so a role can hide the CONTROL while leaving the checkbox
+                 itself checked and functioning: whether generated posts are
+                 drawn is not a salesperson's decision, but the drawing they see
+                 is still the fence. -->
+            <label id="chk-overlay-label"><input type="checkbox" id="chk-overlay" checked> <span data-i18n="editor.show_overlay">show strategy overlay</span></label>
             <div id="draft-actions" style="display:none">
               <button id="btn-finish-draft" class="primary" data-i18n="editor.finish_run">Finish run</button>
               <button id="btn-cancel-draft" data-i18n="editor.cancel_run">Cancel</button>

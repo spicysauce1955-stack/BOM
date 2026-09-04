@@ -9,9 +9,30 @@ export function currentLocale() {
   return state.locale;
 }
 
+// A salesperson is explicitly non-technical, so the same control needs
+// different WORDS rather than a different control: "Height intent" is the same
+// button as "How tall", and "⚙ Generate strategy" is "⚙ Work out the fence".
+//
+// So one optional layer, resolved here rather than at ~200 call sites: in sales
+// mode `sales.<key>` wins if it exists, and every key without one falls straight
+// through. That makes the sales vocabulary a short OVERRIDE LIST — only the
+// words that are actually wrong for a salesperson — instead of a second full
+// bundle that would drift from this one the first time anybody edited either.
+//
+// It reads `state.role` rather than importing role.js, which would be a cycle
+// (role.js emits through state.js, and this module is imported by nearly
+// everything). Same reason units.js reads `state.units`.
+function lookup(table, key) {
+  if (state.role === "sales") {
+    const plain = table[`sales.${key}`];
+    if (plain !== undefined) return plain;
+  }
+  return table[key];
+}
+
 export function t(key, params = {}) {
   const table = tables[state.locale] || {};
-  let s = table[key] ?? (tables.en || {})[key] ?? key;
+  let s = lookup(table, key) ?? lookup(tables.en || {}, key) ?? key;
   for (const [k, v] of Object.entries(params)) s = s.replaceAll(`{${k}}`, String(v));
   return s;
 }

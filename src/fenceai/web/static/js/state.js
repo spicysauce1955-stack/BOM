@@ -11,6 +11,10 @@ export const state = {
   selection: { runId: null, dotIndex: null, elementId: null },
   locale: "en",        // Task 10 flips the default to "he"
   units: "mm",         // DISPLAY unit only (mm | cm); storage is always int mm
+  // Which of the company's three people is looking (sales | office | all).
+  // A presentation preference exactly like `units`, and never a permission: it
+  // hides surfaces, it revokes nothing, and the API does not know it exists.
+  role: "all",
   tool: "select",
   draftNodes: [],
   nodeSeq: 1,
