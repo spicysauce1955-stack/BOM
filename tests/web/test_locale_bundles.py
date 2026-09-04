@@ -1278,27 +1278,53 @@ def test_every_sales_override_renames_a_key_that_actually_exists():
     assert not missing, f"sales overrides for keys that do not exist: {missing}"
 
 
-def test_every_sales_override_is_a_string_the_STATIC_pass_can_reach():
-    """The guard `role.js` relies on, and the reason `setRole` calls only
-    `applyStatic()`.
+def test_every_sales_override_reaches_the_screen_when_the_role_changes():
+    """The guard `role.js` relies on.
 
-    Switching role re-renders the static `data-i18n` pass and nothing else. That
-    is sufficient exactly while every sales override targets a key used as a
-    `data-i18n` / `-title` / `-placeholder` attribute in `index.html`. The first
-    override aimed at a JS-rendered string would render the wrong words until
-    the next language toggle — a bug the browser already caught once in this
-    mechanism's first hour.
+    Switching role re-renders the static `data-i18n` pass. That reaches every
+    label in `index.html` and NOTHING a module renders through `t()` at render
+    time — so an override on a JS-rendered string would show the wrong words
+    until the next language toggle. The browser caught exactly that bug in this
+    mechanism's first hour, when hiding worked and the vocabulary lagged one
+    switch behind.
 
-    So: fail here instead. The fix when it fires is not to delete the override
-    but to make the module that renders it listen for `role-changed`, and then
-    to widen this test to admit that module.
+    So an override is admissible by one of two routes, and no third:
+
+    1. its key is a `data-i18n` attribute in `index.html` — the static pass, or
+    2. a module that subscribes to `role-changed` renders that namespace, and
+       therefore re-renders itself when the role changes.
+
+    Route 2 is matched on the key's NAMESPACE rather than the literal key,
+    because a module that renders a family of fields builds those keys
+    dynamically (`t(`job.${f}`)`) and no static scan can see them. That is
+    looser than route 1 and deliberately still not a rubber stamp: adding
+    `sales.foo.bar` with no role-aware module mentioning `foo.` fails here.
     """
     en = json.loads((STATIC / "i18n" / "en.json").read_text())
     html = (STATIC / "index.html").read_text()
     static_keys = set(re.findall(r'data-i18n(?:-title|-placeholder)?="([^"]+)"', html))
+
+    role_aware = [m.read_text() for m in (STATIC / "js").glob("*.js")
+                  if 'on("role-changed"' in m.read_text()]
+
+    def reachable(key: str) -> bool:
+        if key in static_keys:
+            return True
+        namespace = key.split(".")[0] + "."
+        return any(namespace in src for src in role_aware)
+
     overrides = {k[len("sales."):] for k in en if k.startswith("sales.")}
-    unreachable = sorted(overrides - static_keys)
+    unreachable = sorted(k for k in overrides if not reachable(k))
     assert not unreachable, (
-        "sales overrides on keys the static pass never walks — either wire the "
-        f"rendering module to `role-changed` and widen this test, or drop them: "
-        f"{unreachable}")
+        "sales overrides that nothing would re-render on a role change — either "
+        "make the rendering module subscribe to `role-changed`, or drop the "
+        f"override: {unreachable}")
+
+
+def test_at_least_one_module_subscribes_to_role_changed():
+    """Guards the guard. The check above passes vacuously if the scan finds no
+    role-aware modules at all — a rename of the event, or of the subscription
+    idiom, would silently turn route 2 into "anything goes"."""
+    role_aware = [m.name for m in (STATIC / "js").glob("*.js")
+                  if 'on("role-changed"' in m.read_text()]
+    assert role_aware, "no module subscribes to role-changed — has the event been renamed?"

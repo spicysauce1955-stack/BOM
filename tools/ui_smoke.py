@@ -928,8 +928,101 @@ def _smoke_sales_mode(c) -> None:
           and back["generate"] == before["generate"], back)
 
 
+def _smoke_job_identity(c) -> None:
+    """A project is a JOB somebody sold (slice 1 of the salesperson MVP).
+
+    `Project` was `id, name`, so the picker said "project 7" — the first thing a
+    salesperson sees and the last thing that told them anything.
+
+    The assertion that matters is the SECOND save. A salesperson enters this
+    after the visit from paper: they start with a customer name, draw for twenty
+    minutes, and only then find the address on the sketch. If naming the job cost
+    them the drawing, the panel would be worse than the blank field it replaced.
+    """
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+    c.js("document.getElementById('new-project-name').value = 'jobtest'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    pid = c.js("document.getElementById('project-select').value")
+    check("a job to name", bool(pid), pid)
+    if not pid:
+        return
+
+    fill = """
+(() => {
+  const set = (id, v) => {
+    const e = document.getElementById(id);
+    if (!e) return false;
+    e.value = v;
+    return true;
+  };
+  const ok = %s;
+  document.getElementById('job-save').click();
+  return ok;
+})()"""
+    check("the job panel is on screen before anything is drawn",
+          c.js("!!document.getElementById('job-panel')"))
+
+    # --- name the customer, then draw ------------------------------------
+    c.js(fill % "set('job-customer', 'Dana Levy')")
+    time.sleep(1.2)
+    after_first = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                       ".then(p => p.job)" % pid)
+    check("a job can be started with only a customer",
+          (after_first or {}).get("customer") == "Dana Levy", after_first)
+
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 5000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]}
+    c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+
+    # --- ...and only now find the address on the sketch ------------------
+    c.js(fill % ("set('job-address', 'Herzl 12') && "
+                 "set('job-sold_by', 'bob') && set('job-sold_on', '2026-09-04')"))
+    time.sleep(1.5)
+    final = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                 ".then(p => ({job: p.job, runs: p.topology.runs.length}))" % pid)
+    check("the address can be added afterwards WITHOUT losing the drawing",
+          final["job"]["address"] == "Herzl 12" and final["runs"] == 1, final)
+    check("the whole job is recorded",
+          final["job"]["customer"] == "Dana Levy"
+          and final["job"]["sold_by"] == "bob"
+          and final["job"]["sold_on"] == "2026-09-04", final["job"])
+
+    # The picker is the payoff: this is the surface that said "project 7".
+    # By id, not by "whichever is selected": an earlier case may have left the
+    # selection elsewhere, and this case is about how THIS job is labelled.
+    label = c.js("""
+(() => {
+  const s = document.getElementById('project-select');
+  return [...s.options].find((o) => o.value === %s)?.textContent || '(no option)';
+})()""" % json.dumps(pid))
+    check("the picker calls the job what a person would call it",
+          label == "Dana Levy — Herzl 12", label)
+    c.shot("51-job-identity.png")
+
+    # A date that is not a date is refused AT THE BOUNDARY, and changes nothing.
+    c.js(fill % "set('job-sold_on', '') && set('job-customer', 'Dana Levy')")
+    time.sleep(1.2)
+    kept = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                ".then(p => p.job.customer)" % pid)
+    check("clearing an optional field leaves the rest of the job intact",
+          kept == "Dana Levy", kept)
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
+    _smoke_job_identity,
     _smoke_choices_panel,
     _smoke_post_inspector,
     _smoke_side_drag,

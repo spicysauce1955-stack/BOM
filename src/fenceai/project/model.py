@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+import re
+
+from pydantic import BaseModel, field_validator, model_validator
 
 from fenceai.ai.records import InterpretationRecord
 from fenceai.core.units import Mm
@@ -14,6 +16,72 @@ from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.project.site import SITE_DIMENSIONS, SiteConditions
 from fenceai.strategy.overrides import Override
 from fenceai.topology.model import Topology
+
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+class Job(BaseModel):
+    """Who bought this fence, where, who sold it, and when.
+
+    A salesperson does not sell a project; they sell a fence to a person at an
+    address on a day. `Project` was `id, name`, so every screen after the first
+    read as *"project 7"* — and the office person receiving the layout needs all
+    four of these before anything else on the page means much.
+
+    **Typed rather than four loose fields**, following `SiteConditions` and
+    `fence_model`: it reaches the handover, so a typo has to fail at the boundary
+    rather than at rendering, and *"is this job identified?"* has one answer in
+    one place instead of four `if`s spread across the surfaces that ask.
+
+    **Blank is allowed everywhere except everywhere-at-once.** The salesperson
+    enters this after the visit, from paper; refusing a job because the address
+    is not typed yet would make the first field they fill in the one that blocks
+    them. Completeness is REPORTED by the handover sheet, not enforced here — the
+    two are different jobs and conflating them turns a checklist into a gate.
+    What is refused is a `Job` with nothing in it at all, which would make
+    `job is not None` a lie the handover then reports as an identified job.
+    """
+
+    customer: str = ""
+    address: str = ""
+    # Who sold it. Not an auth claim — this app has no accounts; it is what the
+    # salesperson types so the office person knows whom to phone.
+    sold_by: str = ""
+    # ISO date, or "" for nobody has said. Validated because it reaches the
+    # handover and any later "when was this sold" question: a free-form string
+    # would let "yesterday" through and fail somewhere far from whoever typed it.
+    sold_on: str = ""
+
+    @field_validator("customer", "address", "sold_by", "sold_on", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        # Two jobs for "Dana Levy" and "Dana Levy " are one customer. Stripped
+        # at the boundary rather than at every comparison, so it stays true
+        # everywhere including the picker's sort.
+        return v.strip() if isinstance(v, str) else v
+
+    @field_validator("sold_on")
+    @classmethod
+    def _iso_date(cls, v: str) -> str:
+        if v and not _DATE_RE.fullmatch(v):
+            raise ValueError(f"sold_on must be an ISO date (YYYY-MM-DD), got {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def _not_entirely_blank(self) -> "Job":
+        if not any((self.customer, self.address, self.sold_by, self.sold_on)):
+            raise ValueError("a Job with no field set carries less than no job "
+                             "at all — leave Project.job as None instead")
+        return self
+
+    def label(self) -> str:
+        """What a person would call this job.
+
+        Customer first, because that is how a salesperson refers to a job out
+        loud; the address disambiguates two fences for the same person.
+        """
+        parts = [p for p in (self.customer, self.address) if p]
+        return " — ".join(parts) if parts else (self.sold_by or self.sold_on)
 
 
 class Annotation(BaseModel):
@@ -90,7 +158,21 @@ class Project(BaseModel):
     # the run, so a typo has to fail at the boundary, not at generation.
     # None keeps the compatibility path (M-LEGACY, seeded from demand skus).
     fence_model: FenceModelChoice | None = None
+    # Who bought this fence, where, who sold it and when. `None` means nobody
+    # has said — every project that exists today has no job on it, and none of
+    # them may break.
+    job: Job | None = None
     # What kind of site this is. A typed field rather than another key in the
     # bare `policy` dict, for `fence_model`'s reason: it is stamped on the run
     # and guards every derived view, so a typo has to fail at the boundary.
     site: SiteConditions = SiteConditions()
+
+    def display_name(self) -> str:
+        """What to call this project on any surface a person reads.
+
+        Exists so no surface has to know whether a job is set: the picker, the
+        title and the handover all call this one method. `name` remains the
+        field 59 routes and the whole existing suite key on — a job that also has
+        a customer simply DISPLAYS as the customer.
+        """
+        return self.job.label() if self.job else self.name

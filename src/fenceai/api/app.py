@@ -62,7 +62,7 @@ from fenceai.learning.impact import (
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
-from fenceai.project.model import Annotation, Project, Selection, SiteConditions
+from fenceai.project.model import Annotation, Job, Project, Selection, SiteConditions
 from fenceai.report.annexe import WarningPlacement, place_for_plan
 from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
@@ -322,18 +322,46 @@ def health():
 
 class ProjectCreate(BaseModel):
     name: str
+    # Who bought this fence, where, who sold it and when. Optional, because
+    # every existing caller — the demo project created on first boot, the smoke
+    # suite, the whole test suite — posts a name and nothing else.
+    job: Job | None = None
 
 
 @app.post("/api/projects")
 def create_project(body: ProjectCreate) -> Project:
-    project = Project(id=new_id("proj"), name=body.name)
+    project = Project(id=new_id("proj"), name=body.name, job=body.job)
+    state.store.save_project(project)
+    return project
+
+
+@app.put("/api/projects/{project_id}/job")
+def put_job(project_id: str, job: Job) -> Project:
+    """Name the job, or finish naming it.
+
+    The route that matters more than the create form. A salesperson enters this
+    after the visit from paper notes: they start with a customer name, draw for
+    twenty minutes, and only then find the address on the sketch. If creation
+    were the only way to set this, finding the address would cost them the
+    drawing.
+
+    Unrevisioned, unlike `/site` and `/topology`. Those are INPUTS to generation,
+    so a derived view must be able to tell whether it is stale against them;
+    who bought the fence changes no quantity and invalidates nothing.
+    """
+    project = _project(project_id)
+    project.job = job
     state.store.save_project(project)
     return project
 
 
 @app.get("/api/projects")
 def list_projects() -> list[dict]:
-    return [{"id": p.id, "name": p.name} for p in state.store.list_projects()]
+    # `label` is what a person would call the job; `name` stays because the
+    # picker is not the only caller and something keyed on it must not silently
+    # start reading a customer's name instead.
+    return [{"id": p.id, "name": p.name, "label": p.display_name()}
+            for p in state.store.list_projects()]
 
 
 @app.get("/api/projects/{project_id}")

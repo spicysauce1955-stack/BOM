@@ -783,3 +783,12 @@ html[data-role="sales"] #tabs button[data-tab="inventory"] { display: none; }
        super user's bench --- */
 html[data-role="office"] #tabs button[data-tab="knowledge"],
 html[data-role="office"] #tabs button[data-tab="review"] { display: none; }
+
+/* --- the job panel (slice 1): who bought this fence, where, who sold it --- */
+.job-fields { display: flex; flex-direction: column; gap: 6px; margin-block: 6px; }
+.job-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.job-field input { inline-size: 100%; box-sizing: border-box; }
+.job-actions { display: flex; align-items: center; gap: 8px; margin-block-start: 6px; }
+/* Reported, never enforced — a salesperson enters this from paper after the
+   visit, so the blank fields are a note to them, not a wall. */
+.job-missing { margin-block-start: 6px; font-style: italic; }

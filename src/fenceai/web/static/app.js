@@ -9,6 +9,7 @@ import { initEvidence } from "./js/evidence.js";
 import { currentLocale, initI18n, setLocale, t } from "./js/i18n.js";
 import { canRedo, canUndo, redo, undo } from "./js/history.js";
 import { initInspector } from "./js/inspector.js";
+import { initJob } from "./js/job.js";
 import { initModelEditor } from "./js/model-editor.js";
 import { initPanel } from "./js/panel.js";
 import { initProfile } from "./js/profile.js";
@@ -39,6 +40,9 @@ function setupHeader() {
   role.addEventListener("change", () => setRole(role.value));
   // the unit label itself is localized: relabel the button when the language flips
   on("locale-changed", updateUnitsButton);
+  // ...and the picker is labelled by the JOB, which can be named long after the
+  // project was created.
+  on("job-changed", refreshProjectList);
 }
 
 async function refreshProjectList() {
@@ -47,7 +51,10 @@ async function refreshProjectList() {
   sel.innerHTML = "";
   for (const p of list) {
     const o = document.createElement("option");
-    o.value = p.id; o.textContent = p.name;
+    // `label` is the API's own answer (Job.label(), or the name when
+    // there is no job) — computed there so the picker and the handover
+    // cannot disagree about what a job is called.
+    o.value = p.id; o.textContent = p.label || p.name;
     sel.appendChild(o);
   }
   if (state.projectId) sel.value = state.projectId;
@@ -80,6 +87,7 @@ async function main() {
   initAssembly();
   initProfile();
   initChecklist();
+  initJob();
   initEvidence();
   setupHeader();
   setupUndoButtons();

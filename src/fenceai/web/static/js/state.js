@@ -24,6 +24,7 @@ export const state = {
 
 // events: "project-loaded","topology-changed","result-changed",
 //         "selection-changed","locale-changed","units-changed","tool-changed",
+//         "role-changed","job-changed",
 //         "tab-changed","structure-loaded","fit-view","fence-models-changed"
 const bus = new EventTarget();
 export function on(event, fn) { bus.addEventListener(event, (e) => fn(e.detail)); }

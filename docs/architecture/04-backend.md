@@ -43,11 +43,11 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ## The API surface
 
-59 routes. Grouped by what they are for rather than by path:
+60 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
-| Projects & topology | `GET/POST /projects`, `GET /projects/{id}`, `PUT /projects/{id}/topology`, `PUT /projects/{id}/site` | Both PUTs bump their own `revision`, server-side — a client that forgot to would make a stale document look current |
+| Projects & topology | `GET/POST /projects`, `GET /projects/{id}`, `PUT /projects/{id}/topology`, `PUT /projects/{id}/site`, `PUT /projects/{id}/job` | The two revisioned PUTs bump their own `revision` server-side — a client that forgot to would make a stale document look current. `/job` is deliberately NOT revisioned: who bought the fence, where, who sold it and when changes no quantity and invalidates no derived view. It is a separate route from creation because a salesperson enters this after the visit from paper — they start with a customer name, draw for twenty minutes, and only then find the address on the sketch, which must not cost them the drawing. `GET /projects` carries `label` beside `name` for the same person: the picker said *"project 7"* |
 | Generation | `POST /projects/{id}/generate`, `GET /projects/{id}/runs`, `GET /runs/{id}` | The only write that decides a fence |
 | Explanation | `GET /runs/{id}/explain/{element_id}`, `GET /runs/{id}/sections/{section_id}/decisions`, `GET /runs/{id}/impact/{object_id}` | Takes `lang` **and** `units`. The section view 409s on a moved topology and the element view does not — see below |
 | Read models | `GET /runs/{id}/structure`, `GET /runs/{id}/bom` | 409 on stale topology or catalog. `/bom` also carries `grouped` — the same demand by section, panel and decision, and it does NOT 409 on topology. Both are read models that WRITE: `/bom` returns the `supply` run it stored and `/structure` stamps its `supply_id`, through one construction so the sheet and the BOM can never name different yards. Idempotent by digest (ADR-0011). Both also carry `quoted_warnings` — every warning the fence models QUOTE from their documents, each placed where §3.3.5 says it renders (`report/annexe.py`): the setting-out sheet draws the annexe, `/bom` draws the product notices on the line group, and each carries the buckets it does not draw so nothing is lost at the edge of a surface |
