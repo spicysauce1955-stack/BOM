@@ -62,6 +62,7 @@ from fenceai.learning.impact import (
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
+from fenceai.report.handover import handover_gaps
 from fenceai.project.model import (
     Annotation, Job, Project, Selection, SiteConditions, SiteContext,
 )
@@ -369,6 +370,27 @@ def put_context(project_id: str, context: SiteContext) -> Project:
     project.context = context
     state.store.save_project(project)
     return project
+
+
+@app.get("/api/projects/{project_id}/handover")
+def get_handover(project_id: str) -> dict:
+    """What the office still needs from the salesperson.
+
+    A read model, derived and never stored — and derived from the PROJECT, not
+    from a run: by the time a `Strategy` exists the silent defaults (1800 mm
+    height, `soil` base) have already been applied and look decided, and
+    catching them before that is the whole point.
+
+    GET rather than a field on `/projects/{id}` because it is a computed view,
+    and putting it on the aggregate would make every project read recompute it.
+    """
+    project = _project(project_id)
+    gaps = handover_gaps(project)
+    return {"gaps": [g.model_dump() for g in gaps],
+            # The estimate is withheld while a BLOCKING item stands — a price
+            # for a fence with no model chosen is a number with nothing behind
+            # it. The handover itself is never withheld.
+            "estimate_ready": not any(g.blocking for g in gaps)}
 
 
 @app.get("/api/projects")

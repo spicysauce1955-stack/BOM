@@ -1129,10 +1129,158 @@ def _smoke_property_context(c) -> None:
     check("a landmark can be removed", left == 1, left)
 
 
+def _smoke_handover_sheet(c) -> None:
+    """What the office still needs, and an estimate that says it is one
+    (slice 4 of the salesperson MVP).
+
+    The whole MVP succeeds or fails on this panel: *captured completely enough
+    that the office person never has to phone the salesperson.* So the case
+    walks a job from empty to complete and asserts the sheet empties out — a
+    checklist that never reaches zero is noise and gets ignored.
+
+    The wording RULES are pinned in `tests/web/test_handover_module.py`; what
+    only a browser can say is that the sheet reacts to a job being filled in, and
+    that the number never appears without the sentence that qualifies it.
+    """
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+    c.js("document.getElementById('new-project-name').value = 'handover'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    pid = c.js("document.getElementById('project-select').value")
+
+    read = """
+(() => {
+  const host = document.getElementById('handover-panel');
+  if (!host) return null;
+  return {
+    gaps: [...host.querySelectorAll('.handover-gaps li')].map(e => e.textContent.trim()),
+    blocking: host.querySelectorAll('.handover-gaps li.blocking').length,
+    amount: host.querySelector('.handover-amount .num')?.textContent.trim() || null,
+    note: host.querySelector('.handover-estimate .meta')?.textContent.trim() || '',
+    ready: host.querySelectorAll('.handover-ready').length,
+  };
+})()"""
+    empty = c.js(read)
+    check("an empty job says the first thing that is wrong, and only that",
+          empty is not None and len(empty["gaps"]) == 1
+          and empty["blocking"] == 1, empty)
+    check("no number is shown for a fence that does not exist",
+          empty["amount"] is None and empty["note"] != "", empty)
+
+    # --- draw, name, and place the property ------------------------------
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 5000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]}
+    c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+    drawn = c.js(read)
+    check("a drawn fence turns one item into the real list",
+          len(drawn["gaps"]) > 1, drawn)
+    # The silent defaults are the point of the exercise: nobody said how tall.
+    check("the assumed height is named with the number that will be built",
+          any("1800" in g for g in drawn["gaps"]), drawn["gaps"])
+
+    # Say what was sold. Without this the sheet correctly BLOCKS the estimate —
+    # `generate()` still works via the M-LEGACY compatibility path, but "the
+    # engine can price something" and "the salesperson said what they sold" are
+    # different claims, and only the second one the office can order from.
+    # `active_version` non-null is what makes a row SELECTABLE: the listing
+    # deliberately keeps draft-only models visible so they read as "not yet
+    # published" rather than vanishing, and picking one is a 422.
+    model = c.js("""
+fetch('/api/fence-models').then(r => r.json()).then((ms) => {
+  const id = (ms.find((m) => m.active_version != null) || {}).id;
+  if (!id) return 'none';
+  return fetch('/api/projects/%s/fence-model', {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({model_id: id})}).then(r => r.status);
+})""" % pid)
+    check("the model that was sold could be recorded", model == 200, model)
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+
+    # Read BEFORE the save, or the "-4" below is measured against the answer.
+    before_naming = c.js(read)
+    c.js("""(() => {
+  document.getElementById('job-customer').value = 'Dana Levy';
+  document.getElementById('job-address').value = 'Herzl 12';
+  document.getElementById('job-sold_by').value = 'bob';
+  document.getElementById('job-sold_on').value = '2026-09-04';
+  document.getElementById('job-save').click();
+  return 'ok';
+})()""")
+    time.sleep(1.5)
+    named = c.js(read)
+    check("naming the job removes exactly those four questions",
+          len(named["gaps"]) == len(before_naming["gaps"]) - 4,
+          {"before": before_naming["gaps"], "after": named["gaps"]})
+
+    # --- generate, and check the number arrives WITH its sentence --------
+    c.click(*c.element_center("#btn-generate"))
+    time.sleep(3.0)
+    priced = c.js(read)
+    check("a generated run produces an estimate", priced["amount"], priced)
+    check("the estimate never stands without the sentence that qualifies it",
+          bool(priced["note"]), priced)
+    # Items are still outstanding here (no property drawn), so the number must
+    # say it will move — the failure this guards is a salesperson sending a
+    # customer a figure that reads as a commitment.
+    check("an estimate from an incomplete layout says it will move",
+          len(priced["gaps"]) > 0 and priced["note"] != "", priced)
+    c.shot("53-handover-sheet.png")
+
+    # --- and the state the whole MVP aims at -----------------------------
+    ctx = {"landmarks": [{"id": "lm1", "kind": "street", "label": "",
+                          "points": [[-1000, -2000], [9000, -2000]],
+                          "closed": False}]}
+    c.js("fetch('/api/projects/" + pid + "/context', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(ctx) + ")}).then(r => r.status)")
+    ev = {"height": 1500}
+    c.js("""(() => {
+  const p = window.__fenceaiTest || {};
+  return 'ok';
+})()""")
+    # height + base stated through the API, because this case is about the
+    # SHEET rather than about the two tools that already have their own cases
+    full = c.js("""
+fetch('/api/projects/%s').then(r => r.json()).then((p) => {
+  const run = p.topology.runs[0];
+  const a0 = {segment_index: 0, offset_mm: 0, seg_len_at_authoring_mm: 5000};
+  const a1 = {segment_index: 0, offset_mm: 5000, seg_len_at_authoring_mm: 5000};
+  run.interval_events.push(
+    {id: 'ev-h', start_anchor: a0, end_anchor: a1,
+     payload: {kind: 'height_intent', height_mm: %d}},
+    {id: 'ev-b', start_anchor: a0, end_anchor: a1,
+     payload: {kind: 'base', surface: 'soil'}});
+  return fetch('/api/projects/%s/topology', {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(p.topology)}).then(r => r.status);
+})""" % (pid, ev["height"], pid))
+    check("the height and base could be stated", full == 200, full)
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+    done = c.js(read)
+    check("a fully recorded job has nothing left for the office to ask",
+          done["gaps"] == [] and done["ready"] == 1, done)
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
     _smoke_property_context,
+    _smoke_handover_sheet,
     _smoke_choices_panel,
     _smoke_post_inspector,
     _smoke_side_drag,

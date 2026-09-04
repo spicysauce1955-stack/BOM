@@ -10,6 +10,7 @@ import { currentLocale, initI18n, setLocale, t } from "./js/i18n.js";
 import { canRedo, canUndo, redo, undo } from "./js/history.js";
 import { initInspector } from "./js/inspector.js";
 import { initContext } from "./js/context.js";
+import { initHandover } from "./js/handover.js";
 import { initJob } from "./js/job.js";
 import { initModelEditor } from "./js/model-editor.js";
 import { initPanel } from "./js/panel.js";
@@ -90,6 +91,7 @@ async function main() {
   initChecklist();
   initJob();
   initContext();
+  initHandover();
   initEvidence();
   setupHeader();
   setupUndoButtons();

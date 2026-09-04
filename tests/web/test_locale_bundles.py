@@ -418,9 +418,25 @@ def test_backend_code_list_is_current():
         for body in table.findall(text):
             emitted |= set(re.findall(r':\s*"([a-z_]+)"', body))
     emitted.discard("generic")  # CritiqueNote default, never emitted explicitly
-    known = set(WARNING_CODES) | set(CRITIQUE_CODES) | set(REFUSAL_CODES)
-    assert emitted == known, {"unlisted": sorted(emitted - known),
-                              "listed_but_gone": sorted(known - emitted)}
+    # A FOURTH family, and the reason it is listed separately rather than folded
+    # into the three above: a handover item renders under `handover.<code>`, not
+    # `warning.<code>`, so the per-list tests that follow would demand the wrong
+    # key. `report/handover.py` arrived inside the `report/*.py` glob and this
+    # guard caught it immediately — which is the guard working, not a nuisance.
+    from fenceai.report.handover import HANDOVER_CODES
+    known = (set(WARNING_CODES) | set(CRITIQUE_CODES) | set(REFUSAL_CODES)
+             | set(HANDOVER_CODES))
+    # Built from a loop variable (`code=f"{field}_missing"`), so no literal
+    # exists for the scan to find — the same shape as continuity's
+    # `code=note.code` noted above. They are real codes and stay in
+    # `HANDOVER_CODES`; they are exempt only from the "listed but gone"
+    # direction, and `test_the_handover_code_list_is_current` names all four
+    # explicitly so they are not merely unchecked.
+    unscannable = {"customer_missing", "address_missing", "sold_by_missing",
+                   "sold_on_missing"}
+    assert emitted == known - unscannable, {
+        "unlisted": sorted(emitted - known),
+        "listed_but_gone": sorted(known - unscannable - emitted)}
 
 
 # The evidence viewer's own half of the split (js/evidence.js `warningsHtml`,
@@ -1328,3 +1344,44 @@ def test_at_least_one_module_subscribes_to_role_changed():
     role_aware = [m.name for m in (STATIC / "js").glob("*.js")
                   if 'on("role-changed"' in m.read_text()]
     assert role_aware, "no module subscribes to role-changed — has the event been renamed?"
+
+
+def test_every_handover_code_has_locale_entries():
+    """The salesperson MVP's own codes, guarded like every other platform code.
+
+    A code with no entry reaches the screen as its own key — `handover.
+    base_assumed` in the middle of a sentence — and that has shipped green four
+    times in this repo, each time because a new module was outside whatever the
+    guard happened to scan.
+    """
+    from fenceai.report.handover import HANDOVER_CODES
+    en = json.loads((STATIC / "i18n" / "en.json").read_text())
+    he = json.loads((STATIC / "i18n" / "he.json").read_text())
+    for code in HANDOVER_CODES:
+        assert f"handover.{code}" in en, code
+        assert f"handover.{code}" in he, code
+
+
+def test_the_handover_code_list_is_current():
+    """...and the list itself cannot go stale.
+
+    `HANDOVER_CODES` is hand-maintained beside the emitting sites, so a code
+    added to `handover_gaps` without being listed would be invisible to the test
+    above — the exact shape of the four failures that motivated every entry in
+    `test_backend_code_list_is_current`'s scanned list.
+
+    The `{field}_missing` family is checked by name rather than by regex: it is
+    built from a loop variable, so no literal exists to find, and a scan that
+    silently matched nothing there would pass forever.
+    """
+    from fenceai.report.handover import HANDOVER_CODES
+    src = (Path(__file__).resolve().parents[2] / "src" / "fenceai" / "report"
+           / "handover.py").read_text()
+    literals = set(re.findall(r'HandoverGap\(code="([a-z_]+)"', src))
+    listed = set(HANDOVER_CODES)
+    assert literals <= listed, f"emitted but not listed: {sorted(literals - listed)}"
+    for field in ("customer", "address", "sold_by", "sold_on"):
+        assert f"{field}_missing" in listed, field
+    assert 'code=f"{field}_missing"' in src, (
+        "the per-field family changed shape — this test names those four codes "
+        "explicitly because they have no literal to scan for")

@@ -801,3 +801,20 @@ html[data-role="office"] #tabs button[data-tab="review"] { display: none; }
 .context-label-input { flex: 1; min-inline-size: 0; }
 /* A landmark is a backdrop, so its label never competes with a bay dimension. */
 .context-label { font-style: italic; }
+
+/* --- the handover sheet (slice 4): what the office still needs --- */
+.handover-gaps { list-style: none; margin: 6px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.handover-gaps li { padding-inline-start: 14px; position: relative; }
+.handover-gaps li::before { content: "○"; position: absolute; inset-inline-start: 0; }
+/* Blocking means the office cannot start — it withholds the ESTIMATE, and is
+   deliberately the only item that looks different. */
+.handover-gaps li.blocking::before { content: "●"; }
+.handover-ready { font-size: 12px; }
+.handover-estimate { margin-block-start: 10px; padding-block-start: 8px;
+  border-block-start: 1px solid #e2e8f0; }
+.handover-amount { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-block-end: 4px; }
+.handover-amount .num { font-size: 18px; font-variant-numeric: tabular-nums; }
+.handover-amount-label { text-transform: uppercase; letter-spacing: .06em;
+  font-size: 11px; color: #64748b; }
