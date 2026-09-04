@@ -24,7 +24,7 @@ export const state = {
 
 // events: "project-loaded","topology-changed","result-changed",
 //         "selection-changed","locale-changed","units-changed","tool-changed",
-//         "role-changed","job-changed",
+//         "role-changed","job-changed","context-changed",
 //         "tab-changed","structure-loaded","fit-view","fence-models-changed"
 const bus = new EventTarget();
 export function on(event, fn) { bus.addEventListener(event, (e) => fn(e.detail)); }
@@ -90,6 +90,32 @@ export async function generateStrategy() {
 
 export async function refreshProject() {
   await openProject(state.projectId);
+}
+
+/** Persist the house/street/boundary layer.
+ *
+ *  Here rather than in `context.js` for the same reason `saveTopology` is here:
+ *  state.js is the one channel modules mutate through, and a module reaching
+ *  the API on its own would put two writers on one project.
+ *
+ *  It does NOT touch `saveTopology`. A landmark changes no quantity, so it must
+ *  not bump the topology revision — that would 409 the structure sheet because
+ *  somebody nudged a driveway. */
+export async function saveContext() {
+  state.project = await apiSend(
+    "PUT", `/api/projects/${state.projectId}/context`, state.project.context
+  );
+  emit("context-changed", state.project.context);
+}
+
+/** Add a landmark locally. The caller persists with `saveContext()` — same
+ *  shape as `addPointEvent` + `saveTopology`, so a drag that is cancelled
+ *  mid-gesture leaves nothing on the server. */
+export function addLandmark(landmark) {
+  if (!state.project) return false;
+  state.project.context = state.project.context || { landmarks: [] };
+  state.project.context.landmarks.push(landmark);
+  return true;
 }
 
 export async function reloadProject() {

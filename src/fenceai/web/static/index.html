@@ -53,6 +53,11 @@
           <button id="tool-height" class="tool" data-i18n-title="tool.height" title="Height intent"><span class="t-icon">📏</span><span class="t-label" data-i18n="toolbar.height">Height</span></button>
           <button id="tool-model" class="tool" data-i18n-title="tool.model" title="Fence model"><span class="t-icon">🧩</span><span class="t-label" data-i18n="toolbar.model">Model</span></button>
           <button id="tool-pin" class="tool" data-i18n-title="tool.pin" title="Pin post"><span class="t-icon">📍</span><span class="t-label" data-i18n="toolbar.pin">Pin</span></button>
+          <!-- The property, not the fence: drag a rectangle for the house, a
+               line for the street. Below the fence tools because they are the
+               backdrop, and a salesperson draws the fence first. -->
+          <button id="tool-house" class="tool" data-i18n-title="tool.house" title="House"><span class="t-icon">🏠</span><span class="t-label" data-i18n="toolbar.house">House</span></button>
+          <button id="tool-street" class="tool" data-i18n-title="tool.street" title="Street"><span class="t-icon">🛣️</span><span class="t-label" data-i18n="toolbar.street">Street</span></button>
           <div class="toolbar-spacer"></div>
           <button id="btn-undo" data-i18n-title="tool.undo" title="Undo (Ctrl+Z)"><span class="t-icon">↶</span><span class="t-label" data-i18n="toolbar.undo">Undo</span></button>
           <button id="btn-redo" data-i18n-title="tool.redo" title="Redo (Ctrl+Shift+Z)"><span class="t-icon">↷</span><span class="t-label" data-i18n="toolbar.redo">Redo</span></button>
@@ -81,6 +86,13 @@
           </div>
           <svg id="canvas" viewBox="0 0 900 500" preserveAspectRatio="xMidYMid meet">
             <g id="g-grid"></g>
+            <!-- The house, the street, the boundary. FIRST, so the property is
+                 the backdrop the fence is drawn on rather than something drawn
+                 over it; every element inside is pointer-events:none, because a
+                 house that swallowed a click on the fence in front of it would
+                 make the drawing harder to edit than it was before. -->
+            <g id="g-context"></g>
+            <g id="g-context-draft"></g>
             <g id="g-topology"></g>
             <g id="g-overlay"></g>
             <g id="g-handles"></g>

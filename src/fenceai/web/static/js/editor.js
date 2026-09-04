@@ -13,10 +13,14 @@ import {
 import { pushSnapshot, redo, undo } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
 import { inspect } from "./inspector.js";
+import {
+  clearDraft as clearContextDraft, nextLandmarkId,
+  renderDraft as renderContextDraft, shapeFor,
+} from "./context.js";
 import { layoutWithPin, snapCandidates, violations } from "./post-drag.js";
 import {
-  addIntervalEvent, addPointEvent, generateStrategy, maxSpanFor, on,
-  reloadProject, saveTopology, setSelection, setTool, state,
+  addIntervalEvent, addLandmark, addPointEvent, generateStrategy, maxSpanFor, on,
+  reloadProject, saveContext, saveTopology, setSelection, setTool, state,
 } from "./state.js";
 import { tagOf } from "./structure-data.js";
 import {
@@ -65,7 +69,12 @@ function renderAllCanvas() {
 }
 
 // ---------- toolbar ----------
-const TOOLS = ["select", "draw", "gate", "base", "ground", "height", "pin", "model"];
+const TOOLS = ["select", "draw", "gate", "base", "ground", "height", "pin", "model",
+               "house", "street"];
+// The property layer. Its own list because these do not place an EVENT on a run
+// — they describe what is around the fence, and nothing they draw reaches
+// generation (see `project/model.py` SiteContext).
+const CONTEXT_TOOLS = ["house", "street"];
 
 function setupToolbar() {
   for (const tool of TOOLS) {
@@ -197,6 +206,26 @@ function setupCanvas() {
 
   svg.addEventListener("pointerdown", (ev) => {
     const target = ev.target;
+    // BEFORE the pan check, and that ordering is the whole bug this line fixes.
+    // A landmark is drawn on EMPTY canvas by definition — the house goes where
+    // the fence is not — so `onSomething` below is false for every one of these
+    // gestures and panning swallowed them all. Ctrl/middle-drag still pans,
+    // because a person needs to move the view while placing a house.
+    if (CONTEXT_TOOLS.includes(state.tool) && state.project
+        && ev.button === 0 && !ev.ctrlKey && !ev.metaKey) {
+      // One gesture, one shape: press, drag, release. A click-click-click
+      // polyline would be a second draft state machine beside the one this file
+      // already owns for runs, and a house is a rectangle anyway.
+      //
+      // `svgCoords`, not units.js's `toMm` — this is a POINT on the canvas and
+      // the other converts a display value. Both are called toMm in their own
+      // module, which is exactly how they get confused.
+      ev.preventDefault();
+      drag = { kind: "landmark", landmarkKind: state.tool, from: svgCoords(ev),
+               started: false, start: [ev.clientX, ev.clientY] };
+      svg.setPointerCapture(ev.pointerId);
+      return;
+    }
     // Panning, in order of how likely a user is to find it:
     //   drag empty canvas (any tool)  ·  middle button  ·  Ctrl/Cmd + drag
     // "empty" means the pointer is on nothing editable — a drag that starts on a
@@ -341,6 +370,12 @@ function onPointerMove(ev) {
 // ---------- select tool: drag / insert / delete ----------
 function onDragMove(ev) {
   const [mx, my] = svgCoords(ev);
+  if (drag.kind === "landmark") {
+    drag.started = true;
+    drag.to = [mx, my];
+    renderContextDraft(drag.landmarkKind, drag.from, drag.to);
+    return;
+  }
   if (!drag.started) {
     if (Math.hypot(ev.clientX - drag.start[0], ev.clientY - drag.start[1]) < 4) return;
     // gesture begins: snapshot BEFORE any mutation.
@@ -398,6 +433,22 @@ function onDragEnd() {
   // click at all, so clear the flag on the next tick either way
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 0);
+  if (d.kind === "landmark") {
+    clearContextDraft();
+    const shape = shapeFor(d.landmarkKind, d.from, d.to);
+    // null for a gesture too small to be deliberate — a stray click with the
+    // house tool active must not leave an invisible 3 mm building the office
+    // person then has to ask about.
+    if (!shape) return;
+    // No `pushSnapshot`: undo/redo is the TOPOLOGY's history, and a landmark is
+    // not topology. Removing one is the ✕ on its row in the context panel.
+    addLandmark({
+      id: nextLandmarkId(state.project?.context?.landmarks),
+      kind: d.landmarkKind, label: "", ...shape,
+    });
+    saveContext();
+    return;
+  }
   if (d.kind === "post") {
     // Under the 4 px threshold the gesture IS a click and opens the inspector
     // (spec §9.2.5) — answered here rather than by the circle's own listener,

@@ -792,3 +792,12 @@ html[data-role="office"] #tabs button[data-tab="review"] { display: none; }
 /* Reported, never enforced — a salesperson enters this from paper after the
    visit, so the blank fields are a note to them, not a wall. */
 .job-missing { margin-block-start: 6px; font-style: italic; }
+
+/* --- the property layer (slice 3): what is around the fence --- */
+.context-list { list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 4px; }
+.context-list li { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.context-kind { color: #64748b; min-inline-size: 60px; }
+.context-label-input { flex: 1; min-inline-size: 0; }
+/* A landmark is a backdrop, so its label never competes with a bay dimension. */
+.context-label { font-style: italic; }

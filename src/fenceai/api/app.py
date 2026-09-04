@@ -62,7 +62,9 @@ from fenceai.learning.impact import (
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
-from fenceai.project.model import Annotation, Job, Project, Selection, SiteConditions
+from fenceai.project.model import (
+    Annotation, Job, Project, Selection, SiteConditions, SiteContext,
+)
 from fenceai.report.annexe import WarningPlacement, place_for_plan
 from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
@@ -351,6 +353,20 @@ def put_job(project_id: str, job: Job) -> Project:
     """
     project = _project(project_id)
     project.job = job
+    state.store.save_project(project)
+    return project
+
+
+@app.put("/api/projects/{project_id}/context")
+def put_context(project_id: str, context: SiteContext) -> Project:
+    """The house, the street, the boundary — what makes the layout a PLACE.
+
+    Unrevisioned, like `/job` and unlike `/topology` and `/site`. A landmark
+    changes no quantity and no derived view can be stale against it; giving it a
+    revision would imply otherwise and invite somebody to check against it.
+    """
+    project = _project(project_id)
+    project.context = context
     state.store.save_project(project)
     return project
 

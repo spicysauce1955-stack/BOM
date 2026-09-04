@@ -1020,9 +1020,119 @@ def _smoke_job_identity(c) -> None:
           kept == "Dana Levy", kept)
 
 
+def _smoke_property_context(c) -> None:
+    """The house and the street (slice 3 of the salesperson MVP).
+
+    A salesperson describes a layout relative to the house and the road, and the
+    office person cannot read an abstract coordinate plane as a PLACE. What only
+    a browser can say here: that a press-drag-release actually reaches
+    `shapeFor` and persists, that the backdrop does NOT eat clicks meant for the
+    fence in front of it, and — the property that keeps this slice cheap — that
+    drawing a house does not touch the topology revision.
+
+    The geometry itself is pinned in `tests/web/test_context_module.py`, so this
+    case asserts the wiring rather than re-deriving the rectangle.
+    """
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+    c.js("document.getElementById('new-project-name').value = 'property'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    pid = c.js("document.getElementById('project-select').value")
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 8000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]}
+    c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+    rev_before = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                      ".then(p => p.topology.revision)" % pid)
+
+    # --- drag a house ----------------------------------------------------
+    c.click(*c.element_center("#tool-house"))
+    time.sleep(0.3)
+    c.drag(*c.canvas_px(1000, 3000), *c.canvas_px(7000, 8000))
+    time.sleep(1.2)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    check("dragging with the house tool records a closed outline",
+          len(marks) == 1 and marks[0]["kind"] == "house"
+          and marks[0]["closed"] is True and len(marks[0]["points"]) == 4, ctx)
+
+    # --- and a street ----------------------------------------------------
+    c.click(*c.element_center("#tool-street"))
+    time.sleep(0.3)
+    c.drag(*c.canvas_px(-1000, -2000), *c.canvas_px(10000, -2000))
+    time.sleep(1.2)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    check("dragging with the street tool records an open line",
+          len(marks) == 2 and marks[1]["kind"] == "street"
+          and marks[1]["closed"] is False and len(marks[1]["points"]) == 2, ctx)
+    check("the two landmarks do not share an id",
+          len({m["id"] for m in marks}) == len(marks), marks)
+
+    drawn = c.js("document.querySelectorAll('#g-context path').length")
+    check("both are drawn on the canvas", drawn == 2, drawn)
+    c.shot("52-property-context.png")
+
+    # --- the property that keeps this slice cheap ------------------------
+    rev_after = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                     ".then(p => p.topology.revision)" % pid)
+    check("drawing the property does NOT touch the topology revision",
+          rev_after == rev_before, {"before": rev_before, "after": rev_after})
+
+    # --- the backdrop must not eat the fence -----------------------------
+    # The house was drawn straddling the run. With the select tool, a click on
+    # the run inside the house's footprint must still select the RUN — a
+    # backdrop that swallowed clicks would make the drawing harder to edit than
+    # it was before there was a house.
+    c.click(*c.element_center("#tool-select"))
+    time.sleep(0.3)
+    c.click(*c.canvas_px(4000, 0))
+    time.sleep(0.5)
+    selected = c.js("document.getElementById('run-select')?.value || ''")
+    check("a click through the house still reaches the fence", selected == "run1",
+          selected)
+    hits = c.js("""
+(() => [...document.querySelectorAll('#g-context *')]
+  .filter((e) => getComputedStyle(e).pointerEvents !== 'none').length)()""")
+    check("nothing in the property layer accepts a pointer at all", hits == 0, hits)
+
+    # --- naming one, and removing it -------------------------------------
+    named = c.js("""
+(() => {
+  const input = document.querySelector('#context-panel .context-label-input');
+  if (!input) return false;
+  input.value = "the neighbour's side";
+  input.dispatchEvent(new Event('change'));
+  return true;
+})()""")
+    check("a landmark can be named from the panel", bool(named))
+    time.sleep(1.2)
+    labelled = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                    ".then(p => p.context.landmarks[0].label)" % pid)
+    check("the label is what the office person will read",
+          labelled == "the neighbour's side", labelled)
+
+    c.js("document.querySelector('#context-panel .context-remove')?.click(); 'ok'")
+    time.sleep(1.2)
+    left = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                ".then(p => p.context.landmarks.length)" % pid)
+    check("a landmark can be removed", left == 1, left)
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
+    _smoke_property_context,
     _smoke_choices_panel,
     _smoke_post_inspector,
     _smoke_side_drag,

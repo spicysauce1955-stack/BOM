@@ -84,6 +84,92 @@ class Job(BaseModel):
         return " — ".join(parts) if parts else (self.sold_by or self.sold_on)
 
 
+# A landmark KIND is a registry, not a free string: each is drawn differently and
+# means something specific to the office person reading the layout. Adding one is
+# a one-line change here — the seam is deliberate, because a salesperson will
+# eventually want a driveway, a pool or a neighbour's fence, and none of those
+# needs a schema discussion. Inventing one by typo is still refused.
+LANDMARK_KINDS = ("house", "street", "boundary", "other")
+
+
+class Landmark(BaseModel):
+    """Something on the property that is NOT the fence.
+
+    A salesperson does not think *"node at (0,0) to node at (12000,0)"*; they
+    think *"along the street side, then it turns in toward the house."* Without
+    this the office person cannot read the layout as a place, and every question
+    they would otherwise answer themselves becomes a phone call.
+
+    **One shape for everything.** A house is a closed polyline, a street is an
+    open one. A salesperson sketching on paper draws both with the same stroke,
+    and two geometry types would buy nothing but a second set of edge cases.
+
+    Coordinates are integer millimetres in the topology's own plane (ADR-0002) —
+    a float here would put the house on a different grid from the fence.
+    """
+
+    id: str
+    kind: str = "other"
+    # Free text beside the kind: "the neighbour's fence", "driveway". The kind
+    # says how to DRAW it; the label says what it IS.
+    label: str = ""
+    points: list[tuple[Mm, Mm]]
+    closed: bool = False
+
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, v: str) -> str:
+        if v not in LANDMARK_KINDS:
+            raise ValueError(f"unknown landmark kind {v!r}; "
+                             f"one of {', '.join(LANDMARK_KINDS)}")
+        return v
+
+    @field_validator("points", mode="before")
+    @classmethod
+    def _round_to_mm(cls, v):
+        if isinstance(v, list):
+            return [(round(p[0]), round(p[1])) if isinstance(p, (list, tuple))
+                    and len(p) == 2 else p for p in v]
+        return v
+
+    @model_validator(mode="after")
+    def _is_a_shape(self) -> "Landmark":
+        # One point is not a shape: it draws as nothing and reads as a landmark
+        # that failed to render. Two cannot enclose anything, so a "closed" line
+        # is a contradiction that would draw as a line and claim to be a
+        # building.
+        least = 3 if self.closed else 2
+        if len(self.points) < least:
+            raise ValueError(
+                f"a {'closed ' if self.closed else ''}landmark needs at least "
+                f"{least} points, got {len(self.points)}")
+        return self
+
+
+class SiteContext(BaseModel):
+    """Everything on the property that is not the fence.
+
+    **On the PROJECT, never in `Topology`.** A landmark changes no quantity;
+    `Topology` is what `generate()` consumes and what every derived view checks
+    its staleness against, so a house in there would bump the topology revision
+    and 409 the structure sheet because somebody nudged a driveway.
+
+    Unrevisioned for the same reason. There is nothing downstream that could be
+    stale against it.
+    """
+
+    landmarks: list[Landmark] = []
+
+    @model_validator(mode="after")
+    def _unique_ids(self) -> "SiteContext":
+        ids = [lm.id for lm in self.landmarks]
+        if len(ids) != len(set(ids)):
+            # `Topology` refuses this for the same reason: downstream they
+            # silently merge, and a delete would remove the wrong one.
+            raise ValueError("duplicate landmark ids in context")
+        return self
+
+
 class Annotation(BaseModel):
     id: str
     target_ref: str  # "project" | "run:<id>" | "node:<id>" | "event:<id>"
@@ -162,6 +248,10 @@ class Project(BaseModel):
     # has said — every project that exists today has no job on it, and none of
     # them may break.
     job: Job | None = None
+    # The house, the street, the boundary — everything on the property that is
+    # NOT the fence. Never in `Topology`: a landmark changes no quantity, and
+    # putting it there would 409 every derived view whenever a driveway moved.
+    context: SiteContext = SiteContext()
     # What kind of site this is. A typed field rather than another key in the
     # bare `policy` dict, for `fence_model`'s reason: it is stamped on the run
     # and guards every derived view, so a typo has to fail at the boundary.
