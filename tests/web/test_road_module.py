@@ -11,6 +11,7 @@ larger scale.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,7 +24,7 @@ STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "stat
 
 SCRIPT = """
 // No stubs: road-model.js imports nothing, which is why it is its own file.
-import { GAP_STEPS, STEPS, road } from "./js/road-model.js";
+import { GAP_STEPS, STEPS, panelFor, road } from "./js/road-model.js";
 
 const run = (id) => ({ id, interval_events: [], point_events: [] });
 const proj = (...runs) => ({ topology: { runs }, context: { landmarks: [] } });
@@ -55,6 +56,16 @@ out.all = road(proj(run("run1")), hv(), "all");
 
 // a code the road has never heard of must not vanish silently
 out.unknown = byKey(road(proj(run("run1")), hv({ code: "invented_code" })));
+
+// a code that collides with an inherited Object key must not throw
+out.ctor = byKey(road(proj(run("run1")), hv({ code: "constructor" })));
+
+// handover not yet loaded: must not read as a clean bill of health
+out.no_handover_null = road(proj(run("run1")), null);
+out.no_handover_missing = road(proj(run("run1")));
+
+out.panel_known = panelFor("notes");
+out.panel_unknown = panelFor("nope");
 
 console.log(JSON.stringify(out));
 """
@@ -101,6 +112,39 @@ def test_a_blocking_gap_makes_its_step_blocked(out):
     assert out["empty"]["layout"]["state"] == "blocked"
 
 
+def test_nothing_drawn_makes_every_other_step_empty_not_done(out):
+    """A completed tick over four blank fields is the completeness LIE this
+    module's own header forbids. `layout` still resolves to `blocked` first
+    because it owns `no_fence_drawn` and the blocking check runs before the
+    drawn check; every other step has no gap of its own here, so it must read
+    `empty`, never `done`."""
+    for key in ("job", "details", "gates", "notes", "review"):
+        assert out["empty"][key]["state"] == "empty", key
+    assert out["empty"]["layout"]["state"] == "blocked"
+
+
+def test_a_handover_not_yet_loaded_reads_unknown_not_done(out):
+    """audit B01: `cache = null` rendering as "nothing missing". A `handover`
+    that has not arrived must not paint the band green, and `null` here is not
+    overloaded — `null` already means "no road for this role"."""
+    for steps in (out["no_handover_null"], out["no_handover_missing"]):
+        assert steps is not None
+        for step in steps:
+            assert step["state"] == "unknown", step
+
+
+def test_a_gap_code_of_constructor_does_not_crash_the_road(out):
+    """`GAP_STEPS[code] || ORPHAN_STEP` would read the inherited `Object.
+    prototype.constructor` for this code and push into `owned[<a function>]`,
+    throwing and killing the only navigation this role has."""
+    assert "constructor" in [g["code"] for g in out["ctor"]["review"]["gaps"]]
+
+
+def test_panel_for_a_known_and_an_unknown_step(out):
+    assert out["panel_known"] == "annotations"
+    assert out["panel_unknown"] is None
+
+
 def test_a_step_owns_its_own_gaps_and_no_others(out):
     assert sorted(out["gappy_job_codes"]) == ["address_missing",
                                               "customer_missing"]
@@ -133,8 +177,7 @@ def test_road_computes_no_coverage(out):
     handover.py's. The moment this module does interval arithmetic there are
     two."""
     src = (STATIC / "js" / "road-model.js").read_text()
-    for forbidden in ("uncovered", "_uncovered_mm", "interval_events",
-                      "anchor_station"):
+    for forbidden in ("_uncovered_mm", "interval_events", "anchor_station"):
         assert forbidden not in src, (
             f"road-model.js must not reason about coverage; found {forbidden!r}")
 
@@ -146,7 +189,13 @@ def test_the_model_half_imports_nothing():
     `localStorage` and `fetch` for a loop over gap codes."""
     src = (STATIC / "js" / "road-model.js").read_text()
     assert "import " not in src, "road-model.js must import nothing"
-    assert "document" not in src
+    assert "import(" not in src, "road-model.js must not dynamically import"
+    assert not re.search(r'\bfrom\s+[\'"]', src), (
+        "road-model.js must not re-export from another module")
+    assert "document." not in src
+    assert "window." not in src
+    assert "localStorage" not in src
+    assert "fetch(" not in src
 
 
 # NOTE: `test_road_reaches_no_panel_dom` belongs to Task 4, which creates
