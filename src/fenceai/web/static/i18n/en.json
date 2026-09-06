@@ -945,6 +945,7 @@
   "review.reject_reason_placeholder": "reason for rejection",
   "review.scope_dim": "scope dimension",
   "review.scope_value_placeholder": "value, e.g. X",
+  "road.aria": "Job steps",
   "road.details": "The details",
   "road.details.take": "Fence height is measured above its base, not above the ground.",
   "road.gates": "Gates",

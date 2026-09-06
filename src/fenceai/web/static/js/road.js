@@ -53,6 +53,11 @@ export function render() {
   host.hidden = steps === null;
   if (steps === null) return;
   build(host);
+  // Set every render, not in `build()`: `build()` runs once, so freezing the
+  // label there would leave it in whatever locale was active on the FIRST
+  // render — `i18n.js: applyStatic` has no aria walker, so this is the only
+  // path that can ever translate it, and it must follow `locale-changed`.
+  host.setAttribute("aria-label", t("road.aria"));
   for (const step of steps) {
     const btn = host.querySelector(`[data-step="${step.key}"]`);
     if (!btn) continue;
@@ -72,5 +77,12 @@ export function initRoad() {
   on("project-loaded", render);
   on("handover-changed", render);
   on("locale-changed", render);
-  on("role-changed", render);
+  on("role-changed", () => {
+    render();
+    // Entering sales from another role can leave a panel the road does not
+    // claim active and visible — the BOM tab, say — while the band says step
+    // 1. The band is this role's only navigation, so it must not describe a
+    // screen the user is not on.
+    if (currentRole() === "sales") showStep(current);
+  });
 }
