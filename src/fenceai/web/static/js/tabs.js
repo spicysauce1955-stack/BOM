@@ -19,18 +19,35 @@ import {
 } from "./doc-warnings.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
+/** Switch to a tab by name — the ONE path that moves the `active` class.
+ *
+ *  Extracted from the click handler because `road.js` must be able to show the
+ *  annotations panel without touching it: once `#tabs` is hidden for sales, a
+ *  `.click()` on the button is a module poking an invisible element in a
+ *  subtree it does not own.
+ *
+ *  An unknown name is INERT rather than a throw. The road resolves a step to a
+ *  panel name, and a typo there must cost one dead step, not the whole
+ *  navigation — which, with the strip hidden, is the entire way around the app.
+ */
+export function setTab(name) {
+  const btn = document.querySelector(`#tabs button[data-tab="${name}"]`);
+  const panel = document.getElementById(`tab-${name}`);
+  if (!btn || !panel) return;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
+  btn.classList.add("active");
+  panel.classList.add("active");
+  // These three render lazily, on first sight of their tab.
+  if (name === "knowledge") renderKnowledge();
+  if (name === "review") renderCandidates();
+  if (name === "bom") renderBom();
+  emit("tab-changed", name);
+}
+
 export function initTabs() {
   document.querySelectorAll("#tabs button").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#tabs button").forEach((b) => b.classList.remove("active"));
-      document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
-      btn.classList.add("active");
-      document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
-      if (btn.dataset.tab === "knowledge") renderKnowledge();
-      if (btn.dataset.tab === "review") renderCandidates();
-      if (btn.dataset.tab === "bom") renderBom();
-      emit("tab-changed", btn.dataset.tab);   // other tabs own their own rendering
-    }));
+    btn.addEventListener("click", () => setTab(btn.dataset.tab)));
 
   document.getElementById("btn-add-ann").addEventListener("click", async () => {
     const text = document.getElementById("ann-text").value.trim();
