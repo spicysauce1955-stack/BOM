@@ -64,6 +64,40 @@ def _complete() -> Project:
     return p
 
 
+def _drawn_two(**kw) -> Project:
+    """Two runs sharing a corner — what a real job looks like, and the shape
+    `run_ids` exists to disambiguate. Separate from `_drawn` because six
+    assertions above key off the single-run project."""
+    topo = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=5000, y_mm=0),
+               Node(id="n3", x_mm=5000, y_mm=4000)],
+        runs=[Run(id="run1", start_node_id="n1", end_node_id="n2"),
+              Run(id="run2", start_node_id="n2", end_node_id="n3")],
+    )
+    return Project(id="p1", name="untitled", topology=topo, **kw)
+
+
+def _complete_two() -> Project:
+    p = _drawn_two(job=Job(customer="Dana Levy", address="Herzl 12",
+                           sold_by="bob", sold_on="2026-09-04"),
+                   fence_model=FenceModelChoice(model_id="M-VINYL"),
+                   context=SiteContext(landmarks=[
+                       Landmark(id="lm1", kind="house", closed=True,
+                                points=[(0, 3000), (5000, 3000), (5000, 8000)]),
+                   ]))
+    for run in p.topology.runs:
+        length = 5000 if run.id == "run1" else 4000
+        a0 = make_anchor(p.topology, run, 0)
+        a1 = make_anchor(p.topology, run, length)
+        run.interval_events = [
+            IntervalEvent(id=f"{run.id}-e1", start_anchor=a0, end_anchor=a1,
+                          payload=HeightIntentPayload(height_mm=1500)),
+            IntervalEvent(id=f"{run.id}-e2", start_anchor=a0, end_anchor=a1,
+                          payload=BasePayload(surface="soil")),
+        ]
+    return p
+
+
 def test_an_empty_project_says_the_first_thing_that_is_wrong():
     """Nothing drawn is the one item that makes the rest moot — an address for a
     fence that does not exist is not progress."""
@@ -255,3 +289,47 @@ def test_overlapping_intervals_do_not_double_count_as_over_coverage():
     ]
     gap = next(g for g in handover_gaps(p) if g.code == "height_assumed")
     assert gap.params["uncovered_mm"] == 1000
+
+
+def test_an_assumed_gap_names_the_stretches_it_is_about():
+    """The office phones about a specific stretch, and so does the salesperson
+    looking for the one they missed. A count saves neither call.
+
+    Carried, never rendered: the sentence in both bundles interpolates
+    `{runs}` and `{uncovered_mm}`, and a Hebrew sentence naming
+    `run3, run7` would be worse than a row you can click.
+    """
+    project = _complete_two()
+    # two runs, neither with a height stated over its whole length
+    for run in project.topology.runs:
+        run.interval_events = [ev for ev in run.interval_events
+                               if ev.payload.kind != "height_intent"]
+    gaps = {g.code: g for g in handover_gaps(project)}
+
+    named = gaps["height_assumed"].params["run_ids"]
+    assert named == sorted(r.id for r in project.topology.runs)
+    # the count and the sum stay: they are what the sentence renders
+    assert gaps["height_assumed"].params["runs"] == len(named)
+
+
+def test_only_the_uncovered_stretches_are_named():
+    """A run whose height IS stated must not appear in the list, or clicking
+    the row lands the salesperson on a stretch with nothing wrong with it."""
+    project = _complete_two()
+    covered = project.topology.runs[0]
+    bare = project.topology.runs[1]
+    bare.interval_events = [ev for ev in bare.interval_events
+                            if ev.payload.kind != "height_intent"]
+    gaps = {g.code: g for g in handover_gaps(project)}
+    assert gaps["height_assumed"].params["run_ids"] == [bare.id]
+    assert covered.id not in gaps["height_assumed"].params["run_ids"]
+
+
+def test_a_base_gap_names_its_stretches_too():
+    project = _complete_two()
+    for run in project.topology.runs:
+        run.interval_events = [ev for ev in run.interval_events
+                               if ev.payload.kind != "base"]
+    gaps = {g.code: g for g in handover_gaps(project)}
+    assert gaps["base_assumed"].params["run_ids"] == sorted(
+        r.id for r in project.topology.runs)

@@ -139,9 +139,19 @@ def handover_gaps(project: Project) -> list[HandoverGap]:
         # different sentences, and only the second one a person can act on.
         # `uncovered_mm` is there for the same reason one step further in: "four
         # metres of this run" is actionable where "this run" is not.
+        #
+        # `run_ids` goes one step further again, and is CARRIED, never rendered:
+        # the road's gap row uses it to select the stretch, while the sentence in
+        # both bundles still says "2 stretches". A Hebrew sentence naming
+        # `run3, run7` would be worse than a row you can click. It is valid for
+        # the payload that carried it and is not a durable reference — run ids
+        # can be reused after a delete and reopen (`state.js` re-derives
+        # `runSeq` as max-suffix + 1), the same discipline ADR-0004 applies to
+        # overrides.
         out.append(HandoverGap(code="height_assumed", params={
             "height_mm": DEFAULT_POLICY["default_height_mm"],
             "runs": sum(1 for v in bare_height.values() if v),
+            "run_ids": sorted(rid for rid, v in bare_height.items() if v),
             "uncovered_mm": sum(bare_height.values())}))
 
     bare_base = {r.id: _uncovered_mm(topo, r, "base") for r in topo.runs}
@@ -152,6 +162,7 @@ def handover_gaps(project: Project) -> list[HandoverGap]:
         out.append(HandoverGap(code="base_assumed", params={
             "surface": DEFAULT_SURFACE,
             "runs": sum(1 for v in bare_base.values() if v),
+            "run_ids": sorted(rid for rid, v in bare_base.items() if v),
             "uncovered_mm": sum(bare_base.values())}))
 
     return out
