@@ -5,7 +5,7 @@
 
 ## Session close — 2026-09-04: the salesperson MVP is built
 
-**2528 tests · browser smoke 342/342 · contract hashes OK at v1.3.**
+**2535 tests · browser smoke 344/344 · contract hashes OK at v1.3.**
 
 Spec: `docs/superpowers/specs/2026-09-04-sales-mvp-design.md`. Read it before
 anything else — it records a product decision that is not derivable from code.
@@ -51,6 +51,37 @@ that `generate()` has no parameter a landmark could reach it through.
 rather than a run, because by the time a `Strategy` exists the silent defaults
 (1800 mm height, `soil` base) have been applied and look decided. Plus an
 estimate that says it is an estimate.
+
+### An audit arrived from another session, and it was right
+
+`docs/visualizations/salesperson-mvp/` — **untracked, 24 MB, 192 files, not
+mine.** A UI proposal package with two rounds of user studies, screenshots, an
+adversarial review and `sales-ui-audit.md`. **It is not committed and a
+`git clean -fd` would destroy it. Somebody has to decide what it is for.**
+
+Its audit found three real defects in slice 4 and slice 2, all fixed in
+`884c09d` and all verified before accepting:
+
+- **B01** — a 500 on `/handover` rendered *"Nothing missing — ready to hand
+  over"* on a project with ZERO runs. `cache = null` → `cache?.gaps || []` → an
+  empty list → the happiest reading. Now three states: loading / failed /
+  checked. My own test had covered this half-way, and the half it covered is the
+  telling part: it asserted a failed fetch shows no NUMBER and never that it
+  shows no READINESS.
+- **B02** — existence is not coverage. A height stated over one metre of five
+  reported nothing missing. `_uncovered_mm` merges intervals; extended to the
+  base too, which the audit did not test but which resolves per station
+  identically.
+- **Observation 2** — a reload in sales mode kept the hiding and lost the
+  wording. The same missing `applyStatic()` as the `setRole` bug, one path
+  further back.
+
+**Its remaining findings are NOT addressed** and are the best available list of
+what to do next: B03/B04, G01–G03, U01–U06, plus two named observations — the
+model summary directs a salesperson to the Panel tab that sales mode HIDES, and
+there is no file-upload control, so the sheet reaches "ready" with no signed
+contract, drawing or photo attached. That last one is a real product question:
+readiness must not be read as evidence-package validation.
 
 ### THE NEXT THING — and it is a decision, not a task
 
