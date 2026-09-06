@@ -3,6 +3,79 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Session close — 2026-09-06: the visualization package got a decision
+
+**2540 tests · browser smoke 344/344.**
+
+The 24 MB package that arrived untracked from another session is now committed
+(`9de94eb`) and, for the first of the five things in it, decided.
+
+### It is five things, not one
+
+`docs/visualizations/salesperson-mvp/` contains (A) a six-step storyboard of a
+proposed salesperson screen, (B) an argument for measurement confidence, (C) an
+evidence/attachment package, (D) an office transfer lifecycle, and (E) an audit
+of the app as it actually stands. Only A has a spec. **D is the OFFICE person's
+MVP and must not be built from the storyboard's preview screen** — that is how
+a second MVP starts by accident.
+
+The studies and the five-agent review inside the package are AI-agent
+simulations, not user evidence. The audit half is different and stronger: it
+drove a real browser against this repo and reproduced what it found, which is
+why `handover.py` cites it by path.
+
+### The finding that made A cheap
+
+The storyboard's Ground / Base / Fence separation reads as a domain proposal and
+is not one. `Node.z_mm`, `ElevationSamplePayload`, `BasePayload.surface`,
+`BaseTopPayload.points`, `BaseTopPoint.lock` are all already there, and
+`BaseTopPoint.z_mm` is commented **in the type** as *"height of the base top
+ABOVE local ground"*. The model already separates them; the SCREEN blurs them.
+
+The one clause with nowhere to live is *"planned per drawing rev 3, not
+measured"* — every `z_mm` reads as measured fact. That is B, it is the only
+genuinely new domain concept in the package, and it is not specced yet.
+
+### `docs/superpowers/specs/2026-09-06-salesperson-road-design.md`
+
+The road exists and nothing shows it. Read it before building any of it; the
+load-bearing decisions are that the road is a **map and never a wizard** (a
+wizard is defeated by typing junk to get past a step, which turns a completeness
+report into a completeness lie), and that it **computes no completeness of its
+own** — three surfaces already answer "what is left" and disagree.
+
+**One open question is deliberately left open** and wants answering before the
+plan: does the road replace the tab strip for sales, or sit above it? It changes
+what `role.js` HIDES rather than what it words.
+
+### Audit B03 fixed, and one found while verifying it (`e77883b`)
+
+The canvas aside's model row read `project.fence_model` alone, so a job with both
+stretches sold as M-SLAT through *What was sold* still said "No model chosen" —
+and sent the salesperson to the Panel tab, which their own role hides. It also
+disagreed with the handover sheet three centimetres away. B01, B02 and B04 were
+already fixed by `884c09d`; **B03 was the last of the four.**
+
+Found while verifying, in the browser smoke's OWN screenshot rather than by any
+test: `#tool-model`, `#tool-house` and `#tool-street` printed the literal string
+`hint.model` under the canvas, in both languages. `editor.js` builds that key as
+`hint.${state.tool}` — a **dynamic** key, the one shape `test_bundle_key_parity`
+cannot see, because both bundles agreed with each other and neither had the
+entry. All three are tools a salesperson KEEPS. New guard:
+`test_every_tool_on_the_rail_has_a_hint_in_both_bundles`.
+
+`test_every_hidden_selector_exists` failed on the new `#model-row-hint` and was
+right to — its id scan read `.id = "x"` and object-literal forms but not ids in
+HTML template strings, which is how most of this frontend builds DOM.
+
+### Still recorded, not scheduled
+
+Audit observations 3–6. Observation 5 is visible in
+`tools/smoke-out/50-sales-mode.png` today: the generated summary offers *"see the
+priced BOM →"* while the BOM tab is hidden from the role.
+
+---
+
 ## Session close — 2026-09-04: the salesperson MVP is built
 
 **2535 tests · browser smoke 344/344 · contract hashes OK at v1.3.**
