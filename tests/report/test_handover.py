@@ -156,3 +156,102 @@ def test_naming_the_model_on_a_stretch_counts_as_naming_it():
         end_anchor=make_anchor(p.topology, run, 5000),
         payload=FenceModelPayload(model_id="M-VINYL"))]
     assert "no_model_chosen" not in _codes(p)
+
+
+# -- B02 from the UI audit: existence is not coverage --------------------------
+#
+# `docs/visualizations/salesperson-mvp/sales-ui-audit.md`. The original checks
+# asked whether a height/base/model event EXISTS on a run. A 5 m run with a
+# height stated over its first metre therefore reported nothing missing, leaving
+# four metres nobody had specified — and the office person receives a sheet that
+# says the job is complete.
+#
+# Extended to the BASE as well, which the audit did not test but which has
+# identical semantics: `base_surface_at` resolves per STATION, so partial base
+# coverage leaves the rest on silent `soil` exactly as partial height coverage
+# leaves it on 1800.
+
+def _partial(kind_payload, from_mm: int, to_mm: int) -> Project:
+    p = _complete()
+    run = p.topology.runs[0]
+    run.interval_events = [
+        ev for ev in run.interval_events
+        if ev.payload.kind != kind_payload.kind
+    ] + [IntervalEvent(
+        id="e-partial",
+        start_anchor=make_anchor(p.topology, run, from_mm),
+        end_anchor=make_anchor(p.topology, run, to_mm),
+        payload=kind_payload)]
+    return p
+
+
+def test_a_height_covering_one_metre_of_five_does_not_count_as_stated():
+    """Audit B02, first case. Four metres are left on the silent 1800 default and
+    the sheet used to report nothing missing."""
+    p = _partial(HeightIntentPayload(height_mm=1500), 0, 1000)
+    gap = next(g for g in handover_gaps(p) if g.code == "height_assumed")
+    assert gap.params["uncovered_mm"] == 4000
+
+
+def test_a_base_covering_part_of_a_run_does_not_count_either():
+    """Not in the audit, and the same defect: `base_surface_at` resolves per
+    station, so the uncovered remainder stands on silent `soil`."""
+    p = _partial(BasePayload(surface="soil"), 0, 2000)
+    gap = next(g for g in handover_gaps(p) if g.code == "base_assumed")
+    assert gap.params["uncovered_mm"] == 3000
+
+
+def test_a_model_covering_part_of_a_run_with_no_project_default_is_reported():
+    """Audit B02, second case. Four metres with no assigned model and no default
+    to fall back on."""
+    from fenceai.topology.model import FenceModelPayload
+    p = _partial(FenceModelPayload(model_id="M-VINYL"), 0, 1000)
+    p.fence_model = None
+    assert "no_model_chosen" in _codes(p)
+
+
+def test_a_project_default_covers_every_metre_no_event_reaches():
+    """The other half, and why coverage is not checked for the model when a
+    default exists: a project-level choice applies wherever no event says
+    otherwise, so partial event coverage is complete coverage."""
+    from fenceai.topology.model import FenceModelPayload
+    p = _partial(FenceModelPayload(model_id="M-SLAT"), 0, 1000)
+    assert p.fence_model is not None
+    assert "no_model_chosen" not in _codes(p)
+
+
+def test_two_abutting_intervals_together_cover_the_run():
+    """Merged, not counted. Somebody who states 0-2000 and 2000-5000 has
+    specified the whole run, and a sheet that demanded one event would be asking
+    them to undo work they did correctly."""
+    p = _complete()
+    run = p.topology.runs[0]
+    run.interval_events = [ev for ev in run.interval_events
+                           if ev.payload.kind != "height_intent"] + [
+        IntervalEvent(id="e-a", start_anchor=make_anchor(p.topology, run, 0),
+                      end_anchor=make_anchor(p.topology, run, 2000),
+                      payload=HeightIntentPayload(height_mm=1500)),
+        IntervalEvent(id="e-b", start_anchor=make_anchor(p.topology, run, 2000),
+                      end_anchor=make_anchor(p.topology, run, 5000),
+                      payload=HeightIntentPayload(height_mm=1800)),
+    ]
+    assert "height_assumed" not in _codes(p)
+
+
+def test_overlapping_intervals_do_not_double_count_as_over_coverage():
+    """0-3000 and 2000-5000 overlap by a metre. Naive summation reports 6000 mm
+    covered on a 5000 mm run, which is fine by accident here and wrong the moment
+    a gap sits beside the overlap."""
+    p = _complete()
+    run = p.topology.runs[0]
+    run.interval_events = [ev for ev in run.interval_events
+                           if ev.payload.kind != "height_intent"] + [
+        IntervalEvent(id="e-a", start_anchor=make_anchor(p.topology, run, 0),
+                      end_anchor=make_anchor(p.topology, run, 3000),
+                      payload=HeightIntentPayload(height_mm=1500)),
+        IntervalEvent(id="e-b", start_anchor=make_anchor(p.topology, run, 2000),
+                      end_anchor=make_anchor(p.topology, run, 4000),
+                      payload=HeightIntentPayload(height_mm=1800)),
+    ]
+    gap = next(g for g in handover_gaps(p) if g.code == "height_assumed")
+    assert gap.params["uncovered_mm"] == 1000

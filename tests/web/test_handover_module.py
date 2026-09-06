@@ -24,7 +24,7 @@ import pytest
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
 SCRIPT = """
-import { estimateNoteKey, estimateReady } from "./js/handover.js";
+import { estimateNoteKey, estimateReady, readinessShown } from "./js/handover.js";
 
 const clean = { gaps: [], estimate_ready: true };
 const gappy = { gaps: [{ code: "address_missing" }], estimate_ready: true };
@@ -44,6 +44,15 @@ const out = {
   no_run_shows:  estimateReady(clean, null),
   zero_shows:    estimateReady(clean, 0),
   missing_shows: estimateReady(null, 250000),
+
+  // audit B01: readiness may only be established by a SUCCESSFUL check
+  ready_checked:  readinessShown("checked", clean),
+  ready_failed:   readinessShown("failed", null),
+  ready_loading:  readinessShown("loading", null),
+  // the exact reproduction: a 500 left `cache = null`, and an empty gap list
+  // read as "nothing missing" on a project with zero runs
+  ready_failed_but_empty: readinessShown("failed", { gaps: [] }),
+  ready_checked_gappy:    readinessShown("checked", gappy),
 };
 console.log(JSON.stringify(out));
 """
@@ -99,3 +108,20 @@ def test_a_failed_fetch_shows_no_number_rather_than_a_wrong_one(out):
     without the sheet that qualifies it is the worst available outcome."""
     assert out["missing_shows"] is False
     assert out["missing_note"] == "handover.estimate_blocked"
+
+
+def test_readiness_requires_a_check_that_actually_succeeded(out):
+    """Audit B01, and the worst failure available to this panel.
+
+    A 500 on `/handover` set `cache = null`; `cache?.gaps || []` read as an empty
+    list; an empty list rendered as *"Nothing missing — this job is ready to hand
+    over."* on a project with **zero runs**. Three states, not two: an unknown
+    state must read as unknown, because telling somebody their job is complete
+    when nobody checked is worse than telling them nothing.
+    """
+    assert out["ready_checked"] is True
+    assert out["ready_failed"] is False
+    assert out["ready_loading"] is False
+    assert out["ready_failed_but_empty"] is False, (
+        "an empty gap list from a FAILED check is the B01 conflation itself")
+    assert out["ready_checked_gappy"] is False

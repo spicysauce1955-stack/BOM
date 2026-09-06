@@ -113,4 +113,11 @@ export function initRole() {
   const stored = localStorage.getItem("fenceai.role");
   state.role = ROLES.includes(stored) ? stored : "all";
   document.documentElement.dataset.role = state.role;
+  // The same `applyStatic()` `setRole` needs, for the same reason and one path
+  // further back — audit observation 2. `initI18n` runs first and applies the
+  // static pass while the role is still the default, so a reload in sales mode
+  // hid the right surfaces and then showed "Topology & Strategy" and "Generate
+  // strategy" on them. Switching role or language reapplied the wording, which
+  // is what made it look like a rendering hiccup rather than a missing call.
+  applyStatic();
 }

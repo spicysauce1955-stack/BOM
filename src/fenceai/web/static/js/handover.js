@@ -23,7 +23,16 @@ import { t } from "./i18n.js";
 import { on, state } from "./state.js";
 import { money, tu } from "./units.js";
 
-let cache = null;   // last /handover payload
+// Three states, not two, and that is audit finding B01
+// (`docs/visualizations/salesperson-mvp/sales-ui-audit.md`): a 500 on
+// `/handover` set `cache = null`, `cache?.gaps || []` read as an empty list, and
+// an empty list rendered as "Nothing missing — this job is ready to hand over."
+// on a project with ZERO runs. Readiness may only be established by a
+// successful response for the current job; not-yet-loaded and failed must both
+// say so instead of inheriting the happiest reading.
+const LOADING = "loading", FAILED = "failed", CHECKED = "checked";
+let status = LOADING;
+let cache = null;   // last successful /handover payload
 let total = null;   // last BOM total in cents, or null for "no run yet"
 
 /** True when the number may be shown at all. Mirrors the backend's own answer
@@ -31,6 +40,13 @@ let total = null;   // last BOM total in cents, or null for "no run yet"
  *  is exactly one too many. */
 export function estimateReady(handover, bomTotalCents) {
   return Boolean(handover?.estimate_ready) && Number.isFinite(bomTotalCents);
+}
+
+/** Whether "nothing missing" may be SHOWN. Separate from "the gap list is
+ *  empty", because those coincide only when a check actually succeeded — the
+ *  conflation audit B01 reproduced. */
+export function readinessShown(state_, handover) {
+  return state_ === CHECKED && (handover?.gaps || []).length === 0;
 }
 
 /** The sentence under the number. Separate and pure so the rule — an estimate
@@ -48,25 +64,38 @@ function gapSentence(gap) {
   // assembled in JS reaches a Hebrew-first reader as English. `u` is supplied
   // for the length-bearing item so `{height_mm} {u}` renders in the reader's
   // own display unit rather than always in millimetres.
-  return gap.params && gap.params.height_mm !== undefined
-    ? tu(`handover.${gap.code}`, gap.params)
-    : t(`handover.${gap.code}`, gap.params || {});
+  // Any item carrying a LENGTH goes through `tu`, which converts and supplies
+  // `{u}` — `uncovered_mm` made that two items rather than one, and a literal
+  // millimetre figure in a centimetre-mode sentence is the exact defect the
+  // `{…_mm}` + `{u}` convention exists to prevent.
+  const params = gap.params || {};
+  return params.uncovered_mm !== undefined || params.height_mm !== undefined
+    ? tu(`handover.${gap.code}`, params)
+    : t(`handover.${gap.code}`, params);
 }
 
 function render() {
   const host = ensureHost();
   if (!host) return;
-  const gaps = cache?.gaps || [];
+  const gaps = status === CHECKED ? (cache.gaps || []) : [];
   const noteKey = estimateNoteKey(cache, total);
   const showNumber = estimateReady(cache, total);
+  const summary = gaps.length
+    ? `<div class="meta">${esc(t("handover.intro"))}</div>
+       <ul class="handover-gaps">${gaps.map((g) => `
+         <li class="${g.blocking ? "blocking" : ""}">${esc(gapSentence(g))}</li>`
+       ).join("")}</ul>`
+    : readinessShown(status, cache)
+      ? `<div class="handover-ready">${esc(t("handover.ready"))}</div>`
+      // Never "ready". An unknown state reads as unknown, because the one thing
+      // this panel must not do is tell somebody their job is complete when
+      // nobody checked.
+      : `<div class="handover-unknown meta">${
+          esc(t(status === FAILED ? "handover.unavailable" : "handover.checking"))
+        }</div>`;
   host.innerHTML = `
     <h3>${esc(t("handover.title"))}</h3>
-    ${gaps.length
-      ? `<div class="meta">${esc(t("handover.intro"))}</div>
-         <ul class="handover-gaps">${gaps.map((g) => `
-           <li class="${g.blocking ? "blocking" : ""}">${esc(gapSentence(g))}</li>`
-         ).join("")}</ul>`
-      : `<div class="handover-ready">${esc(t("handover.ready"))}</div>`}
+    ${summary}
     <div class="handover-estimate">
       ${showNumber
         ? `<div class="handover-amount">
@@ -82,8 +111,12 @@ async function refresh() {
   if (!state.projectId) return;
   try {
     cache = await apiGet(`/api/projects/${state.projectId}/handover`);
+    status = CHECKED;
   } catch {
+    // The previous payload is dropped along with the status: a stale list beside
+    // a fresh drawing is a different wrong answer, not a safer one.
     cache = null;
+    status = FAILED;
   }
   // The BOM is fetched only when a run exists — asking for a price before
   // anything has been generated would 404 on every keystroke, and "no run yet"

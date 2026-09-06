@@ -913,6 +913,21 @@ def _smoke_sales_mode(c) -> None:
     c.js("document.getElementById('btn-locale').click(); 'ok'")
     time.sleep(0.8)
 
+    # A RELOAD in sales mode, which is how a salesperson actually arrives: the
+    # role persists in localStorage, so the hiding survived — and the WORDING
+    # did not, because `initI18n` applies the static pass while the role is
+    # still the default and `initRole` never re-applied it (audit observation
+    # 2). It looked like a rendering hiccup because switching role or language
+    # fixed it.
+    c.js("location.reload(); 'ok'")
+    wait_for(c, "!!document.getElementById('project-select').value", timeout=20)
+    time.sleep(1.0)
+    reloaded = c.js(shown)
+    check("a reload in sales mode keeps the sales VOCABULARY, not just the hiding",
+          reloaded["pin"] == "hidden"
+          and "Generate strategy" not in reloaded["generate"]
+          and reloaded["tab1"] == sales["tab1"], reloaded)
+
     # ...and back, because a mode nobody can leave is a mode that traps the
     # office person who borrowed the salesperson's laptop.
     c.js("""(() => {
@@ -1188,6 +1203,11 @@ def _smoke_handover_sheet(c) -> None:
     # The silent defaults are the point of the exercise: nobody said how tall.
     check("the assumed height is named with the number that will be built",
           any("1800" in g for g in drawn["gaps"]), drawn["gaps"])
+    # ...and with how MUCH of the fence it applies to. Audit B02: the sheet used
+    # to ask whether an event EXISTED, so a height stated over one metre of five
+    # reported nothing missing.
+    check("the sheet says how much of the fence is unspecified",
+          any("5000" in g for g in drawn["gaps"]), drawn["gaps"])
 
     # Say what was sold. Without this the sheet correctly BLOCKS the estimate —
     # `generate()` still works via the M-LEGACY compatibility path, but "the
