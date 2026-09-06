@@ -1081,6 +1081,47 @@ def _smoke_property_context(c) -> None:
           len(marks) == 1 and marks[0]["kind"] == "house"
           and marks[0]["closed"] is True and len(marks[0]["points"]) == 4, ctx)
 
+    # --- undo/redo cover the house, the same stack as every fence edit ---
+    # Placement, rename and delete all now push onto history.js's ONE stack
+    # (context is unrevisioned, so it can ride the topology's stack without
+    # sharing its revision counter) — a house must be as undoable as a moved
+    # fence dot, not a second gesture system with its own rules.
+    c.click(*c.element_center("#btn-undo"))
+    time.sleep(2.0)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    check("undo removes a just-placed house", len(marks) == 0, ctx)
+
+    c.click(*c.element_center("#btn-redo"))
+    time.sleep(2.0)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    check("redo brings the house back",
+          len(marks) == 1 and marks[0]["kind"] == "house", ctx)
+    house_before = marks[0]
+
+    # `element_center` scrolls each button into view; two of them in a row
+    # walk the canvas straight off the top of the viewport, and a drag aimed
+    # at coordinates outside it hits nothing at all (`canvas_px` computes a
+    # real point, but CDP cannot deliver a pointer event to a point the
+    # viewport doesn't contain). Reset scroll before touching the canvas
+    # again, the same idiom the annexe screenshot uses above.
+    c.js("window.scrollTo(0, 0); 'ok'")
+
+    # --- an existing house is MOVED, not re-created -----------------------
+    # A press inside the house's own outline (the hit-test in context.js,
+    # PURE and node-tested) starts a move instead of a new placement — the
+    # count below is the proof: two overlapping drags, still one landmark.
+    c.drag(*c.canvas_px(4000, 5500), *c.canvas_px(6000, 6500))
+    time.sleep(1.2)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    check("dragging an existing house moves it rather than spawning a second",
+          len(marks) == 1, ctx)
+    check("the moved house's coordinates actually changed",
+          marks[0]["points"] != house_before["points"],
+          {"before": house_before["points"], "after": marks[0]["points"]})
+
     # --- and a street ----------------------------------------------------
     c.click(*c.element_center("#tool-street"))
     time.sleep(0.3)

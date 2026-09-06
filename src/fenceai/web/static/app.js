@@ -71,6 +71,13 @@ function setupUndoButtons() {
   const refresh = () => { b1.disabled = !canUndo(); b2.disabled = !canRedo(); };
   on("project-loaded", refresh);
   on("topology-changed", refresh);
+  // A landmark gesture pushes onto this SAME stack but saves through
+  // `saveContext`, which emits only "context-changed" — without this the
+  // button stayed disabled after placing a house (Ctrl+Z still worked, since
+  // it calls `undo()` directly), which is the reported bug: undo looked
+  // broken because the on-screen control never noticed there was anything
+  // to undo.
+  on("context-changed", refresh);
   refresh();
 }
 

@@ -14,8 +14,8 @@ import { pushSnapshot, redo, undo } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import {
-  clearDraft as clearContextDraft, nextLandmarkId,
-  renderDraft as renderContextDraft, shapeFor,
+  clearDraft as clearContextDraft, landmarkAt, landmarkById, nextLandmarkId,
+  render as renderContext, renderDraft as renderContextDraft, shapeFor,
 } from "./context.js";
 import { layoutWithPin, snapCandidates, violations } from "./post-drag.js";
 import {
@@ -221,8 +221,25 @@ function setupCanvas() {
       // the other converts a display value. Both are called toMm in their own
       // module, which is exactly how they get confused.
       ev.preventDefault();
-      drag = { kind: "landmark", landmarkKind: state.tool, from: svgCoords(ev),
-               started: false, start: [ev.clientX, ev.clientY] };
+      const from = svgCoords(ev);
+      // The hit-test is done HERE, in code against the landmark's own
+      // geometry — never via a DOM listener on the shape, which stays
+      // `pointer-events: none` (context.js) so a house can never swallow a
+      // click meant for the fence in front of it. Pressing on an existing
+      // landmark of THIS tool's kind moves it; pressing anywhere else still
+      // draws a new one exactly as before.
+      const hit = landmarkAt(state.project.context?.landmarks, from, state.tool);
+      // Stores the ID, not the landmark object: an in-flight `saveContext`
+      // (this gesture's own, or one queued by undo/redo) can swap in a new
+      // `state.project` mid-drag, and a captured object would then be a
+      // detached copy that `onDragMove` kept mutating for nothing. Looked up
+      // fresh every move via `landmarkById`, exactly like `runById` above.
+      drag = hit
+        ? { kind: "landmark-move", landmarkId: hit.id,
+            origin: hit.points.map((p) => [...p]), from,
+            started: false, start: [ev.clientX, ev.clientY] }
+        : { kind: "landmark", landmarkKind: state.tool, from,
+            started: false, start: [ev.clientX, ev.clientY] };
       svg.setPointerCapture(ev.pointerId);
       return;
     }
@@ -376,6 +393,26 @@ function onDragMove(ev) {
     renderContextDraft(drag.landmarkKind, drag.from, drag.to);
     return;
   }
+  if (drag.kind === "landmark-move") {
+    if (!drag.started) {
+      if (Math.hypot(ev.clientX - drag.start[0], ev.clientY - drag.start[1]) < 4) return;
+      // snapshot BEFORE the mutation, same discipline as every other drag
+      // here: context shares the ONE undo stack with the topology now, so a
+      // moved house must undo exactly like a moved fence dot.
+      pushSnapshot("move-landmark");
+      drag.started = true;
+    }
+    const lm = landmarkById(state.project.context?.landmarks, drag.landmarkId);
+    if (!lm) return; // undo/redo removed it out from under this drag
+    const dx = mx - drag.from[0], dy = my - drag.from[1];
+    // int mm at rest (ADR-0002): round at the boundary, same as
+    // `Landmark._round_to_mm` does server-side.
+    lm.points = drag.origin.map(([x, y]) => [
+      Math.round(x + dx), Math.round(y + dy),
+    ]);
+    renderContext();
+    return;
+  }
   if (!drag.started) {
     if (Math.hypot(ev.clientX - drag.start[0], ev.clientY - drag.start[1]) < 4) return;
     // gesture begins: snapshot BEFORE any mutation.
@@ -440,13 +477,26 @@ function onDragEnd() {
     // house tool active must not leave an invisible 3 mm building the office
     // person then has to ask about.
     if (!shape) return;
-    // No `pushSnapshot`: undo/redo is the TOPOLOGY's history, and a landmark is
-    // not topology. Removing one is the ✕ on its row in the context panel.
+    // `pushSnapshot` BEFORE the mutation, sharing the topology's ONE undo
+    // stack rather than a second one of its own: `SiteContext` is UNREVISIONED
+    // (project/model.py — "there is nothing downstream that could be stale
+    // against it"), so a landmark can ride this stack without sharing the
+    // topology's revision counter. Two stacks would make Ctrl+Z do a
+    // different thing depending on which tool was last active, and that is
+    // worse than what this replaces.
+    pushSnapshot("place-landmark");
     addLandmark({
       id: nextLandmarkId(state.project?.context?.landmarks),
       kind: d.landmarkKind, label: "", ...shape,
     });
     saveContext();
+    return;
+  }
+  if (d.kind === "landmark-move") {
+    // Moved (vs. a plain click on an existing landmark, which does nothing):
+    // persist via `saveContext`, never `saveTopology` — a landmark carries no
+    // revision to bump.
+    if (d.started) saveContext();
     return;
   }
   if (d.kind === "post") {

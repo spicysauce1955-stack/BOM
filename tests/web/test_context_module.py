@@ -18,7 +18,7 @@ import pytest
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
 SCRIPT = """
-import { DRAG_KINDS, nextLandmarkId, shapeFor } from "./js/context.js";
+import { DRAG_KINDS, landmarkAt, nextLandmarkId, shapeFor } from "./js/context.js";
 
 const out = {};
 out.kinds = DRAG_KINDS;
@@ -32,6 +32,21 @@ out.no_drag = shapeFor("house", [0, 0], null);
 out.id_empty = nextLandmarkId([]);
 out.id_gap = nextLandmarkId([{id: "lm1"}, {id: "lm3"}]);
 out.id_none = nextLandmarkId(null);
+
+// --- landmarkAt: the hit-test a move-drag needs -----------------------------
+const house = { id: "lm1", kind: "house", closed: true,
+  points: [[0, 0], [8000, 0], [8000, 6000], [0, 6000]] };
+const street = { id: "lm2", kind: "street", closed: false,
+  points: [[-2000, -3000], [20000, -3000]] };
+const marks = [house, street];
+const idOf = (lm) => lm ? lm.id : null;
+out.house_hit_inside = idOf(landmarkAt(marks, [4000, 3000], "house"));
+out.house_hit_outside = idOf(landmarkAt(marks, [9000, 3000], "house"));
+out.street_hit_on = idOf(landmarkAt(marks, [5000, -3000], "street"));
+out.street_hit_near = idOf(landmarkAt(marks, [5000, -3150], "street"));
+out.street_hit_far = idOf(landmarkAt(marks, [5000, -8000], "street"));
+out.house_wrong_kind = idOf(landmarkAt(marks, [4000, 3000], "street"));
+out.street_wrong_kind = idOf(landmarkAt(marks, [5000, -3000], "house"));
 console.log(JSON.stringify(out));
 """
 
@@ -100,3 +115,35 @@ def test_ids_are_sequential_rather_than_time_based(out):
     assert out["id_empty"] == "lm1"
     assert out["id_gap"] == "lm2"
     assert out["id_none"] == "lm1"
+
+
+def test_a_point_inside_a_house_hits_it(out):
+    assert out["house_hit_inside"] == "lm1"
+
+
+def test_a_point_outside_a_house_does_not_hit_it(out):
+    """Outside the rectangle a press must fall through to 'draw a new house',
+    the same as empty canvas — a house has no fuzzy halo around its outline."""
+    assert out["house_hit_outside"] is None
+
+
+def test_a_point_on_a_street_line_hits_it(out):
+    assert out["street_hit_on"] == "lm2"
+
+
+def test_a_point_near_a_street_line_hits_it_within_tolerance(out):
+    """A street is a line with no interior to land inside of — unlike a house,
+    it needs a tolerance band or it would be nearly impossible to grab."""
+    assert out["street_hit_near"] == "lm2"
+
+
+def test_a_point_far_from_a_street_line_does_not_hit_it(out):
+    assert out["street_hit_far"] is None
+
+
+def test_a_house_is_not_returned_when_the_kind_asked_for_is_street(out):
+    """With the house tool active, a press over a street must fall through to
+    'draw a new house' rather than silently start moving the street — and vice
+    versa. Only landmarks of the ACTIVE tool's kind are hit-testable."""
+    assert out["house_wrong_kind"] is None
+    assert out["street_wrong_kind"] is None

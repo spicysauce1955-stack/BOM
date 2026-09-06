@@ -18,6 +18,7 @@
 
 import { esc } from "./api.js";
 import { clearGroup, el, toPx } from "./geom.js";
+import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { on, state } from "./state.js";
 
@@ -50,6 +51,68 @@ export function shapeFor(kind, from, to, minMm = 300) {
       closed: true,
     };
   return null;
+}
+
+// Ray-casting point-in-polygon: a house has an interior, so "on the house"
+// means inside its outline, not near an edge.
+function pointInPolygon([px, py], points) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i], [xj, yj] = points[j];
+    const crosses = (yi > py) !== (yj > py)
+      && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+// Shortest distance from a point to a polyline (nearest point per segment,
+// clamped to the segment) — a street has no interior to land inside of.
+function distToPolyline([px, py], points) {
+  let best = Infinity;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const [ax, ay] = points[i], [bx, by] = points[i + 1];
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0;
+    const d = Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// A street is a line, not a box: without a tolerance band it would be nearly
+// impossible to grab with a mouse. 300 mm mirrors `shapeFor`'s own `minMm` —
+// a street is exactly as easy to grab as it was to draw.
+const STREET_HIT_TOL_MM = 300;
+
+/** The existing landmark of KIND under `point`, or null. PURE — no DOM, no
+ *  state — so a move-drag can ask "is this press on a landmark" the same way
+ *  `shapeFor` is asked "what shape does this drag describe": tested in node
+ *  rather than by aiming a mouse at a canvas.
+ *
+ *  Only landmarks of KIND are considered: with the house tool active, a press
+ *  over a street must fall through to "draw a new house" rather than silently
+ *  start moving the street. */
+export function landmarkAt(landmarks, point, kind) {
+  for (const lm of landmarks || []) {
+    if (lm.kind !== kind) continue;
+    if (lm.closed ? pointInPolygon(point, lm.points)
+                  : distToPolyline(point, lm.points) <= STREET_HIT_TOL_MM)
+      return lm;
+  }
+  return null;
+}
+
+/** The current landmark with this id, read fresh from whatever list is
+ *  passed in — never a reference captured once at press time. A move-drag
+ *  spans an async `saveContext()` (its own, or one queued by undo/redo);
+ *  `geom.runById`/`nodeById` are looked up fresh on every `onDragMove` for
+ *  the same reason: a captured object goes stale the moment a `state.project`
+ *  swap (a PUT response landing) replaces the array it lived in, and a drag
+ *  that kept mutating the stale copy would save nothing. */
+export function landmarkById(landmarks, id) {
+  return (landmarks || []).find((lm) => lm.id === id);
 }
 
 /** A stable id that does not collide with a landmark already on the project.
@@ -155,6 +218,10 @@ async function labelLandmark(id, label) {
   const { saveContext } = await import("./state.js");
   const lm = (state.project?.context?.landmarks || []).find((m) => m.id === id);
   if (!lm) return;
+  // BEFORE the mutation, same discipline as every topology edit: context now
+  // shares the ONE undo stack (history.js) rather than a second one, so
+  // renaming a landmark is as undoable as any fence edit.
+  pushSnapshot("rename-landmark");
   lm.label = label.trim();
   await saveContext();
 }
@@ -163,6 +230,7 @@ async function removeLandmark(id) {
   const { saveContext } = await import("./state.js");
   const ctx = state.project?.context;
   if (!ctx) return;
+  pushSnapshot("delete-landmark");
   ctx.landmarks = ctx.landmarks.filter((m) => m.id !== id);
   await saveContext();
 }
