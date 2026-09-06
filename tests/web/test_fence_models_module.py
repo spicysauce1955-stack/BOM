@@ -72,7 +72,8 @@ globalThis.fetch = async (url) => {
 
 import { setLocale } from "./js/i18n.js";
 import {
-  isSelectable, loadModelListing, modelName, modelOptionLabel, rowFor,
+  isSelectable, loadModelListing, modelName, modelOptionLabel,
+  projectModelState, rowFor,
 } from "./js/fence-models.js";
 
 const out = {};
@@ -90,6 +91,29 @@ out.found_row = modelName(rowFor(listing, "M-SLAT"));
 await setLocale("en");
 out.en_names = Object.fromEntries(listing.map((r) => [r.id, modelName(r)]));
 out.en_labels = Object.fromEntries(listing.map((r) => [r.id, modelOptionLabel(r)]));
+
+// --- what the whole fence is built to (audit B03) ---
+const run = (id, ...models) => ({
+  id, interval_events: models.map((m, i) => ({
+    id: `${id}-ev${i}`, payload: {kind: "fence_model", model_id: m},
+  })),
+});
+const project = (fence_model, ...runs) => ({fence_model, topology: {runs}});
+
+out.state_default = projectModelState(
+  project({model_id: "M-SLAT"}, run("run1"), run("run2")));
+// the B03 reproduction: no project default, both stretches sold as M-SLAT
+out.state_per_run = projectModelState(
+  project(null, run("run1", "M-SLAT"), run("run2", "M-SLAT")));
+out.state_mixed = projectModelState(
+  project(null, run("run1", "M-SLAT"), run("run2", "M-LEGACY")));
+out.state_none = projectModelState(project(null, run("run1"), run("run2")));
+// a default with one stretch sold as something else: the row must not report
+// the default alone, or it names a model half the fence is not built to
+out.state_exception = projectModelState(
+  project({model_id: "M-LEGACY"}, run("run1"), run("run2", "M-SLAT")));
+out.state_empty = projectModelState(null);
+out.state_no_runs = projectModelState(project(null));
 
 console.log(JSON.stringify(out));
 """
@@ -152,6 +176,43 @@ def test_a_name_never_renders_blank(lib):
     assert lib["he_names"]["M-NONAME"] == "M-NONAME"
     assert lib["missing_row"] == ""      # no row at all: the caller falls back
     assert lib["found_row"] == "פאנל שלבים"
+
+
+def test_a_model_sold_per_stretch_is_not_reported_as_no_model_chosen(lib):
+    """Audit B03. `What was sold` writes a `fence_model` INTERVAL EVENT on the
+    run; the canvas aside read only `project.fence_model`, so a job with both
+    stretches sold as M-SLAT still said *"No model chosen"* — and then sent the
+    salesperson to the Panel tab, which their own role hides.
+
+    It also disagreed with the handover sheet, which reports `no_model_chosen`
+    only when there is no default AND millimetres nothing covers
+    (`report/handover.py`). Two surfaces answering one question differently is
+    the defect; the wording is downstream of it."""
+    assert lib["state_per_run"] == {"kind": "per_run", "models": ["M-SLAT"]}
+    assert lib["state_mixed"] == {"kind": "mixed",
+                                  "models": ["M-LEGACY", "M-SLAT"]}
+
+
+def test_a_project_default_is_still_the_headline(lib):
+    assert lib["state_default"] == {"kind": "default", "model_id": "M-SLAT",
+                                    "models": []}
+
+
+def test_a_stretch_sold_against_the_default_is_named_beside_it(lib):
+    """A default of M-LEGACY with one stretch sold as M-SLAT is not "built to
+    M-LEGACY". The exception belongs on the row, or the office reads one model
+    for a fence that carries two."""
+    assert lib["state_exception"] == {"kind": "default", "model_id": "M-LEGACY",
+                                      "models": ["M-SLAT"]}
+
+
+def test_nothing_chosen_anywhere_still_says_nothing_chosen(lib):
+    """The B03 fix must not make the row optimistic: with no default and no
+    event, `no model chosen` is the true answer and the handover agrees."""
+    assert lib["state_none"] == {"kind": "none", "models": []}
+    assert lib["state_no_runs"] == {"kind": "none", "models": []}
+    # a project that has not loaded yet is not a project with no model
+    assert lib["state_empty"] == {"kind": "none", "models": []}
 
 
 def test_the_listing_is_fetched_once_for_every_surface_that_asks(lib):

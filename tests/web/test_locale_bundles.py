@@ -339,6 +339,26 @@ def test_bundle_key_parity():
     }
 
 
+def test_every_tool_on_the_rail_has_a_hint_in_both_bundles():
+    """`editor.js` builds the hint key as `hint.${state.tool}` — a DYNAMIC key,
+    which is the one shape `test_bundle_key_parity` cannot see: both bundles
+    agreed with each other and neither had the entry.
+
+    Found in the browser smoke's own screenshot (`21-model-event.png`), not by a
+    test: selecting *What was sold*, *House* or *Street* printed the literal
+    string `hint.model` under the canvas, in Hebrew and in English. All three are
+    tools a SALESPERSON keeps, so every one of them was on the one road the MVP
+    claims to have cut.
+    """
+    en, he = _bundles()
+    tools = sorted(set(re.findall(r'id="tool-([a-z_]+)"',
+                                  (STATIC / "index.html").read_text())))
+    assert tools, "no tools found on the rail — this check just stopped checking"
+    missing = [f"hint.{tool}" for tool in tools
+               if f"hint.{tool}" not in en or f"hint.{tool}" not in he]
+    assert not missing, missing
+
+
 def test_every_backend_code_has_locale_entries():
     en, he = _bundles()
     for code in WARNING_CODES:

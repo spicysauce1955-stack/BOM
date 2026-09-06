@@ -22,7 +22,7 @@
 
 import { apiSend, esc } from "./api.js";
 import { gapLine, hasNominal, highlightSlot, renderElevation } from "./elevation.js";
-import { isSelectable, loadModelListing, modelName, modelOptionLabel, rowFor } from "./fence-models.js";
+import { isSelectable, loadModelListing, modelName, modelOptionLabel, projectModelState, rowFor } from "./fence-models.js";
 import { currentLocale, t } from "./i18n.js";
 import { on, reloadProject, state } from "./state.js";
 import {
@@ -500,11 +500,34 @@ function warningsHtml() {
 function renderModelRow() {
   const host = document.getElementById("model-row");
   if (!host) return;
-  const choice = state.project?.fence_model;
-  host.innerHTML = `<h3>${esc(t("panel.project_model"))}</h3>`
-    + (choice
-      ? `<div dir="auto">${defaultLineHtml()}</div>`
-        + `<div class="meta"><bdi class="sku">${esc(choice.model_id)}</bdi></div>`
-      : `<div class="meta">${esc(t("panel.default_none"))}</div>`)
-    + `<div class="meta">${esc(t("panel.see_panel_tab"))}</div>`;
+  // The models actually SOLD, not the project default alone — audit B03. The
+  // rule is `projectModelState` in fence-models.js, beside the rest of "which
+  // models exist", so this row and any other surface that asks get one answer.
+  const st = projectModelState(state.project);
+  const named = (id) => modelName(rowFor(listing, id)) || id;
+  const list = st.models.map(named).join(", ");
+
+  let body;
+  if (st.kind === "default") {
+    body = `<div dir="auto">${defaultLineHtml()}</div>`
+      + `<div class="meta"><bdi class="sku">${esc(st.model_id)}</bdi></div>`
+      // a stretch sold against the default is an exception TO it: unnamed here,
+      // the row reports one model for a fence that carries two
+      + (st.models.length
+        ? `<div class="meta" dir="auto">${sentence("panel.except_on_stretches",
+                                                   { models: list })}</div>` : "");
+  } else if (st.kind === "none") {
+    body = `<div class="meta">${esc(t("panel.default_none"))}</div>`;
+  } else {
+    body = `<div class="meta" dir="auto">${sentence(
+      st.kind === "per_run" ? "panel.sold_per_stretch" : "panel.sold_mixed",
+      { models: list })}</div>`;
+  }
+
+  host.innerHTML = `<h3>${esc(t("panel.project_model"))}</h3>` + body
+    // Hidden from sales by `#model-row-hint` on role.js's list: sending somebody
+    // to a tab their own role hides is worse than saying nothing. It is an id on
+    // the hide-list rather than a `sales.` locale override because `applyStatic`
+    // walks `data-i18n` attributes, and this string is rendered by JS.
+    + `<div class="meta" id="model-row-hint">${esc(t("panel.see_panel_tab"))}</div>`;
 }

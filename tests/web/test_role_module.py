@@ -79,6 +79,15 @@ def _live_ids() -> set[str]:
         ids |= set(re.findall(r'\.id\s*=\s*"([^"]+)"', src))
         ids |= set(re.findall(r'"id":\s*"([^"]+)"', src))
         ids |= set(re.findall(r'\bid:\s*"([^"]+)"', src))
+        # ...and the form the rest of this frontend actually uses: an id written
+        # into an HTML template string and assigned with `innerHTML`. Without
+        # this the scan misses the majority of ids modules create, so a real
+        # element (`#model-row-hint`, audit B03) fails a check whose whole
+        # purpose is to prove the element exists. Matching a template id is the
+        # same trade the three patterns above already make: an id that is
+        # written but never rendered would pass, which is why this check proves
+        # a selector is REAL and the browser smoke proves it is reached.
+        ids |= set(re.findall(r'id="([^"{}]+)"', src))
     return ids
 
 

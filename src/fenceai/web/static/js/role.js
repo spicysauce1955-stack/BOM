@@ -47,6 +47,11 @@ const ALL_TABS = ["canvas", "annotations", "knowledge", "review", "structure",
 //                      fault in the sale they just made.
 //   #chk-overlay-label whether to draw generated posts is not their decision
 //   #profile-exag      vertical exaggeration is a drafting control
+//   #model-row-hint    "Change it on the Panel tab" — and the Panel tab is on
+//                      this very list. Audit B03: the row sent a salesperson to
+//                      a surface their own role hides. What was sold is set from
+//                      the canvas, so with the hint gone the row still tells
+//                      them what the fence is built to.
 const SALES_HIDDEN = [
   "#tool-pin",
   "#override-list",
@@ -56,6 +61,7 @@ const SALES_HIDDEN = [
   "#gaps",
   "#chk-overlay-label",
   "#profile-exag",
+  "#model-row-hint",
   ...ALL_TABS.filter((t) => !SALES_TABS.includes(t)).map((t) => `[data-tab="${t}"]`),
 ];
 
