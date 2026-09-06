@@ -155,7 +155,8 @@ is written confirmation and never what won the deal.
 
 Step 5 is Notes and not the storyboard's evidence pane, because attachments are a
 different spec. The notes surface exists today and is the seam that spec plugs
-into.
+into. It is also the step that decided the navigation question below: it is the
+one step whose surface is a different tab.
 
 ### Step 3, in detail: Ground, Base, Fence
 
@@ -245,6 +246,11 @@ Small, and each fixes something the adversarial review found in its own prototyp
    screenshot.
 6. **`checklist.js` is deleted, not left dormant.** A dismissible surface that
    still disagrees is a surface that will be re-enabled by somebody.
+7. **`road.js` reaches no panel's DOM.** It calls `tabs.js: setTab`, and the
+   test is that it queries nothing inside a tab panel — the module map's rule,
+   and the one this navigation change is most likely to break.
+8. **Every step resolves to a panel `SALES_TABS` allows.** A step naming a panel
+   the role cannot reach is a dead end on the only navigation the role has.
 
 ## Seams left named
 
@@ -279,12 +285,39 @@ Small, and each fixes something the adversarial review found in its own prototyp
   generated summary offers *"see the priced BOM →"* while the BOM tab is hidden
   from the role.
 
-## Open question
+## The road IS the navigation (decided)
 
-**Does the road replace the tab strip for sales, or sit above it?** Sales keeps
-two tabs — canvas and annotations — and the road's six steps map onto the canvas
-tab plus one. Making the road the primary navigation would leave the tab strip
-with nothing to do in this role; keeping both means two navigations on one screen.
-The storyboard chose the former and it reads well, but it changes what `role.js`
-hides rather than what it words, so it wants deciding before the plan is written
-rather than during it.
+**For `sales`, the six steps replace the tab strip.** `#tabs` is hidden for the
+role and the road is the only navigation on the screen. Decided 2026-09-06; the
+alternative was keeping today's strip and putting the steps inside the canvas
+tab.
+
+The reason is step 5. Sales keeps exactly two tabs — canvas and annotations — and
+with the strip kept, Notes would be reached by a TAB while every other step was
+reached by the road. The road could then never say anything about whether a
+promise made during the sale was written down: the surface would not be on it.
+A promise is the one thing in this MVP that travels to the office as a sentence
+rather than as a quantity, and leaving it off the map is how it gets forgotten.
+
+Two navigations on one screen is also the smaller version of the same fault this
+spec exists to fix — a second place answering *where am I*.
+
+### What that costs, concretely
+
+- **`role.js` hides `#tabs` itself**, not eight individual `[data-tab=…]`
+  entries. Those entries stay on the list regardless: they are what makes the
+  strip correct if it is ever shown, and removing them would make the hide-list
+  quietly wrong rather than shorter. Both copies of the list must stay equal —
+  `test_role_sync.py`.
+- **`tabs.js` gains `setTab(name)`.** It has no such export today; switching is
+  wired to the buttons' click handler, which emits `tab-changed`. `initTabs`
+  should call `setTab` from that handler so there is one path, and `road.js`
+  calls `setTab("annotations")` for step 5 and `setTab("canvas")` for the rest.
+  **`road.js` must never touch a panel's DOM** — that is the module rule, and
+  the reason this needs an export rather than a `click()`.
+- **`SALES_TABS` stops being a navigation list and becomes a reachability list**:
+  the set of panels the road is allowed to activate. Same two names, different
+  job, so its comment has to change or it will be read as the old thing.
+- **The office role is untouched.** It keeps the strip. The road does not exist
+  for it, which is the whole reason `road()` takes the role and refuses one it
+  has no road for.
