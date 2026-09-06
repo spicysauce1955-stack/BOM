@@ -198,5 +198,25 @@ def test_the_model_half_imports_nothing():
     assert "fetch(" not in src
 
 
-# NOTE: `test_road_reaches_no_panel_dom` belongs to Task 4, which creates
-# `road.js`. Adding it here would fail on a file that does not exist yet.
+def test_the_road_has_a_literal_host_id():
+    """`test_role_module.py::_live_ids` scans `id="([^"{}]+)"`, so an id built
+    by interpolation is invisible to the hide-list check."""
+    assert 'id="road"' in (STATIC / "index.html").read_text()
+
+
+def test_the_band_is_rendered_once_and_only_toggled_after():
+    """The prototype's own fix for lost keyboard focus: re-`innerHTML`ing the
+    band on every state change drops focus to BODY, and with the tab strip gone
+    the band is the only navigation on the screen."""
+    src = (STATIC / "js" / "road.js").read_text()
+    assert "children.length" in src or "dataset.built" in src, (
+        "guard the band's innerHTML so it is built once")
+
+
+def test_road_reaches_no_panel_dom():
+    """Spec invariant 7. The road switches panels through `tabs.js: setTab`;
+    querying inside a panel is the module-map violation this navigation change
+    is most likely to introduce."""
+    src = (STATIC / "js" / "road.js").read_text()
+    assert "#tab-" not in src
+    assert "setTab" in src

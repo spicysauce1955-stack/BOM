@@ -22,6 +22,21 @@ nav#tabs { display: flex; gap: 2px; background: #2c3a4d; padding: 0 12px; }
 nav#tabs button { background: none; border: none; color: #cfd8e3; padding: 9px 14px; cursor: pointer; font-size: 13px; }
 nav#tabs button.active { background: #f4f5f7; color: #1d2733; border-radius: 6px 6px 0 0; }
 
+/* The road: the salesperson's only navigation. Logical properties throughout —
+   `margin-left` on the index would put the number on the wrong side in RTL. */
+#road { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+        background: #2c3a4d; padding: 0 12px; }
+#road button { display: flex; align-items: center; gap: 8px; text-align: start;
+               background: none; border: 0; border-block-end: 3px solid transparent;
+               color: #cfd8e3; padding: 9px 12px; cursor: pointer;
+               font-size: 13px; min-height: 46px; }
+#road button[aria-current="step"] { color: #fff; font-weight: 700;
+                                    border-block-end-color: #3a7d44; }
+#road .road-index { font-size: 11px; opacity: .6; }
+#road .road-state { font-size: 11px; opacity: .8; margin-inline-start: auto; }
+#road button[data-state="blocked"] .road-state,
+#road button[data-state="missing"] .road-state { color: #f59e0b; }
+
 main { padding: 12px; }
 .tab { display: none; }
 .tab.active { display: block; }
@@ -762,6 +777,7 @@ button.evidence-link:hover { filter: none; color: #1d4ed8; }
    ========================================================================= */
 
 /* --- sales: a salesperson records what was SOLD, never how it is BUILT --- */
+html[data-role="sales"] #tabs,
 html[data-role="sales"] #tool-pin,
 html[data-role="sales"] #override-list,
 html[data-role="sales"] #choices,

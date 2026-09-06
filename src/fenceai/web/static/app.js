@@ -15,6 +15,7 @@ import { initJob } from "./js/job.js";
 import { initModelEditor } from "./js/model-editor.js";
 import { initPanel } from "./js/panel.js";
 import { initProfile } from "./js/profile.js";
+import { initRoad } from "./js/road.js";
 import {
   createProject, loadProjects, on, openProject, state,
 } from "./js/state.js";
@@ -77,6 +78,7 @@ async function main() {
   await initI18n();
   initUnits();      // display unit before the first render (i18n first: it labels it)
   initRole();       // ...and who is looking, before anything is drawn for them
+  initRoad();       // ...and the road they navigate by, before the panels load
   initEditor();
   initInspector();
   initTabs();
