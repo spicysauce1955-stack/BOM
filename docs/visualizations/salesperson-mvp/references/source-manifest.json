@@ -1,0 +1,76 @@
+{
+  "captured_at": "2026-09-06T13:41:58.340Z",
+  "purpose": "Read-only source snapshots captured during packaging; not runnable app code or a historical checkout.",
+  "files": [
+    {
+      "source": "docs/superpowers/specs/2026-09-04-sales-mvp-design.md",
+      "snapshot": "references/repository/docs/superpowers/specs/2026-09-04-sales-mvp-design.md.txt",
+      "sha256": "9f369d8b59f2615c92fff0e9cdf92f09ff54e6239254cca98fdcec50b2ac11a1"
+    },
+    {
+      "source": "src/fenceai/web/static/js/handover.js",
+      "snapshot": "references/repository/src/fenceai/web/static/js/handover.js.txt",
+      "sha256": "ec3758323791e064715f0c5a66c2dc86ce48457ddac35278c21ac9f700bd6f1a"
+    },
+    {
+      "source": "src/fenceai/report/handover.py",
+      "snapshot": "references/repository/src/fenceai/report/handover.py.txt",
+      "sha256": "6d85caa2193904fc36de0080bdd9181532f5db0b816310ed7c0beb554cebc269"
+    },
+    {
+      "source": "src/fenceai/web/static/js/panel.js",
+      "snapshot": "references/repository/src/fenceai/web/static/js/panel.js.txt",
+      "sha256": "7ccea06022658f8f4bcafb557f97d0eeee388e36106abe24ff030f7d37dbdfd6"
+    },
+    {
+      "source": "src/fenceai/web/static/app.js",
+      "snapshot": "references/repository/src/fenceai/web/static/app.js.txt",
+      "sha256": "578a514e924c7629c87180ceb1a6536d25229e44845dab01e47addda7cbb2594"
+    },
+    {
+      "source": "src/fenceai/web/static/js/role.js",
+      "snapshot": "references/repository/src/fenceai/web/static/js/role.js.txt",
+      "sha256": "0d93de804ce73efe9b9b032bca80ace60b5fc4d5c8edfa79370c3f8448c0973b"
+    },
+    {
+      "source": "src/fenceai/web/static/index.html",
+      "snapshot": "references/repository/src/fenceai/web/static/index.html.txt",
+      "sha256": "e6ce069c901a56cc7e0630474d9ed3124cab0a2a8498d324d43cf62d0f746424"
+    },
+    {
+      "source": "src/fenceai/web/static/js/editor.js",
+      "snapshot": "references/repository/src/fenceai/web/static/js/editor.js.txt",
+      "sha256": "69900b0c12942e6e6186c8a2c36983e9a5de21cf75d374a8379f78d91b82b05d"
+    },
+    {
+      "source": "src/fenceai/web/static/js/geom.js",
+      "snapshot": "references/repository/src/fenceai/web/static/js/geom.js.txt",
+      "sha256": "8859e96153a295cb03eff8a71041920f3a8650b656f6377ec68be7129bc803c1"
+    },
+    {
+      "source": "src/fenceai/strategy/generator.py",
+      "snapshot": "references/repository/src/fenceai/strategy/generator.py.txt",
+      "sha256": "41288ce4bd7b9a208014288e74b6cbf36967d8ab131ad69343113a2f978e27f4"
+    },
+    {
+      "source": "src/fenceai/web/static/i18n/en.json",
+      "snapshot": "references/repository/src/fenceai/web/static/i18n/en.json.txt",
+      "sha256": "7d88739edb43a38de0bea034fff1bcc3ed7f7ba06f285cf1de5b1938126d6b68"
+    },
+    {
+      "source": "src/fenceai/web/static/i18n/he.json",
+      "snapshot": "references/repository/src/fenceai/web/static/i18n/he.json.txt",
+      "sha256": "93c213ed0842eee31508fdab7306c92f77c640fcd7fbf86f728ed783158a33fb"
+    },
+    {
+      "source": "src/fenceai/web/static/js/evidence.js",
+      "snapshot": "references/repository/src/fenceai/web/static/js/evidence.js.txt",
+      "sha256": "4b28ecb92d39f0e9d175d8b6678f446ff75d77d47a5330a41973260bb69e1d1b"
+    },
+    {
+      "source": "src/fenceai/web/static/js/state.js",
+      "snapshot": "references/repository/src/fenceai/web/static/js/state.js.txt",
+      "sha256": "72d40ed229e100b3225cd439b6e0ba0149259812681add20f5d32e56817673a3"
+    }
+  ]
+}

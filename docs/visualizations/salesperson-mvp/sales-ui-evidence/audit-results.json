@@ -1,0 +1,25 @@
+{
+  "projectId": "proj_1aab56f70813",
+  "errors": [],
+  "lengthEdit": {
+    "lengthAfter": 5500,
+    "undone": 5000,
+    "redone": 5500
+  },
+  "persisted": {
+    "job": {
+      "customer": "Example customer",
+      "address": "18 Example Street",
+      "sold_by": "Sales walkthrough",
+      "sold_on": "2026-09-06"
+    },
+    "notes": 1,
+    "landmarks": 2,
+    "runs": 2
+  },
+  "handover": "For the office\nNothing missing — this job is ready to hand over.\nESTIMATE\n₪1,481.00\nAn estimate from what has been recorded so far — not a quote, and not an order.",
+  "visibleTabs": [
+    "Topology & Strategy",
+    "Annotations"
+  ]
+}

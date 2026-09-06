@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fence AI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Fence AI</h1>
+    <div class="project-bar">
+      <select id="project-select"></select>
+      <input id="new-project-name" data-i18n-placeholder="project.new_placeholder" placeholder="new project name">
+      <button id="btn-new-project" data-i18n="project.create">Create</button>
+      <button id="btn-locale" title="עברית / English">עב / EN</button>
+      <button id="btn-units" title="mm / cm">mm</button>
+      <!-- Which of the company's three people is looking. A PRESENTATION
+           preference like the unit toggle beside it — it hides surfaces, it
+           does not revoke anything, and it is never a permission. -->
+      <select id="role-select" data-i18n-title="role.title" title="Who is using this">
+        <option value="sales" data-i18n="role.sales">Salesperson</option>
+        <option value="office" data-i18n="role.office">Office</option>
+        <option value="all" data-i18n="role.all">Everything</option>
+      </select>
+      <span id="ai-badge" class="badge"></span>
+    </div>
+  </header>
+
+  <nav id="tabs">
+    <button data-tab="canvas" class="active" data-i18n="tabs.canvas">Topology &amp; Strategy</button>
+    <button data-tab="annotations" data-i18n="tabs.annotations">Annotations</button>
+    <button data-tab="knowledge" data-i18n="tabs.knowledge">Knowledge</button>
+    <button data-tab="review" data-i18n="tabs.review">Review queue</button>
+    <button data-tab="structure" data-i18n="tabs.structure">Structure</button>
+    <button data-tab="assembly" data-i18n="tabs.assembly">Assembly</button>
+    <button data-tab="panel" data-i18n="tabs.panel">Panel</button>
+    <button data-tab="models" data-i18n="tabs.models">Models</button>
+    <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
+    <button data-tab="inventory" data-i18n="tabs.inventory">Inventory</button>
+  </nav>
+
+  <main>
+    <!-- ============ canvas tab ============ -->
+    <section id="tab-canvas" class="tab active">
+      <div class="canvas-row">
+        <div id="toolbar">
+          <button id="tool-select" class="tool active" data-i18n-title="tool.select" title="Select / edit"><span class="t-icon">⬚</span><span class="t-label" data-i18n="toolbar.select">Select</span></button>
+          <button id="tool-draw" class="tool" data-i18n-title="tool.draw" title="Draw runs"><span class="t-icon">✏️</span><span class="t-label" data-i18n="toolbar.draw">Draw</span></button>
+          <button id="tool-gate" class="tool" data-i18n-title="tool.gate" title="Place gate"><span class="t-icon">🚪</span><span class="t-label" data-i18n="toolbar.gate">Gate</span></button>
+          <button id="tool-base" class="tool" data-i18n-title="tool.base" title="Base surface"><span class="t-icon">🧱</span><span class="t-label" data-i18n="toolbar.base">Base</span></button>
+          <button id="tool-ground" class="tool" data-i18n-title="tool.ground" title="Ground elevation point"><span class="t-icon">⛰️</span><span class="t-label" data-i18n="toolbar.ground">Ground</span></button>
+          <button id="tool-height" class="tool" data-i18n-title="tool.height" title="Height intent"><span class="t-icon">📏</span><span class="t-label" data-i18n="toolbar.height">Height</span></button>
+          <button id="tool-model" class="tool" data-i18n-title="tool.model" title="Fence model"><span class="t-icon">🧩</span><span class="t-label" data-i18n="toolbar.model">Model</span></button>
+          <button id="tool-pin" class="tool" data-i18n-title="tool.pin" title="Pin post"><span class="t-icon">📍</span><span class="t-label" data-i18n="toolbar.pin">Pin</span></button>
+          <!-- The property, not the fence: drag a rectangle for the house, a
+               line for the street. Below the fence tools because they are the
+               backdrop, and a salesperson draws the fence first. -->
+          <button id="tool-house" class="tool" data-i18n-title="tool.house" title="House"><span class="t-icon">🏠</span><span class="t-label" data-i18n="toolbar.house">House</span></button>
+          <button id="tool-street" class="tool" data-i18n-title="tool.street" title="Street"><span class="t-icon">🛣️</span><span class="t-label" data-i18n="toolbar.street">Street</span></button>
+          <div class="toolbar-spacer"></div>
+          <button id="btn-undo" data-i18n-title="tool.undo" title="Undo (Ctrl+Z)"><span class="t-icon">↶</span><span class="t-label" data-i18n="toolbar.undo">Undo</span></button>
+          <button id="btn-redo" data-i18n-title="tool.redo" title="Redo (Ctrl+Shift+Z)"><span class="t-icon">↷</span><span class="t-label" data-i18n="toolbar.redo">Redo</span></button>
+          <button id="btn-clear" data-i18n-title="tool.clear" title="Clear topology"><span class="t-icon">🗑</span><span class="t-label" data-i18n="toolbar.clear">Clear</span></button>
+        </div>
+        <div class="canvas-col">
+          <div class="toolbar">
+            <button id="btn-generate" class="primary" data-i18n="editor.generate">⚙ Generate strategy</button>
+            <button id="btn-fit" data-i18n-title="editor.fit" title="Fit view">⤢</button>
+            <!-- id so a role can hide the CONTROL while leaving the checkbox
+                 itself checked and functioning: whether generated posts are
+                 drawn is not a salesperson's decision, but the drawing they see
+                 is still the fence. -->
+            <label id="chk-overlay-label"><input type="checkbox" id="chk-overlay" checked> <span data-i18n="editor.show_overlay">show strategy overlay</span></label>
+            <div id="draft-actions" style="display:none">
+              <button id="btn-finish-draft" class="primary" data-i18n="editor.finish_run">Finish run</button>
+              <button id="btn-cancel-draft" data-i18n="editor.cancel_run">Cancel</button>
+            </div>
+          </div>
+          <div id="checklist" style="display:none">
+            <div class="checklist-header">
+              <span data-i18n="checklist.title">Getting started</span>
+              <button id="checklist-dismiss" data-i18n-title="checklist.dismiss" title="Dismiss">✕</button>
+            </div>
+            <div id="checklist-items"></div>
+          </div>
+          <svg id="canvas" viewBox="0 0 900 500" preserveAspectRatio="xMidYMid meet">
+            <g id="g-grid"></g>
+            <!-- The house, the street, the boundary. FIRST, so the property is
+                 the backdrop the fence is drawn on rather than something drawn
+                 over it; every element inside is pointer-events:none, because a
+                 house that swallowed a click on the fence in front of it would
+                 make the drawing harder to edit than it was before. -->
+            <g id="g-context"></g>
+            <g id="g-context-draft"></g>
+            <g id="g-topology"></g>
+            <g id="g-overlay"></g>
+            <g id="g-handles"></g>
+            <g id="g-draft"></g>
+            <g id="g-snap"></g>
+          </svg>
+          <div id="statusbar"></div>
+          <div id="strategy-summary" class="strategy-summary"></div>
+          <div id="warnings"></div>
+          <!-- What the run could not resolve, and who can close it. Below the
+               warnings because a warning is about THIS plan and a gap is about
+               the knowledge behind every plan; owned by js/editor.js, rendered
+               by js/gaps.js. -->
+          <div id="gaps"></div>
+          <div id="profile">
+            <div class="profile-header">
+              <span data-i18n="profile.title">Side view</span>
+              <select id="profile-scope" data-i18n-title="profile.scope">
+                <option value="all" data-i18n="profile.scope.all">Whole fence</option>
+                <option value="section" data-i18n="profile.scope.section">Selected section</option>
+              </select>
+              <select id="profile-section"></select>
+              <button id="profile-exag" data-i18n-title="profile.exaggeration" title="Vertical exaggeration">5×</button>
+              <button id="profile-toggle">▾</button>
+            </div>
+            <div id="profile-base-bar" class="profile-base-bar"></div>
+            <div id="profile-placeholder" class="meta"></div>
+            <svg id="profile-svg" viewBox="0 0 900 200" preserveAspectRatio="none"></svg>
+          </div>
+        </div>
+        <aside class="side-col">
+          <!-- what this fence is BUILT FROM, without leaving the drawing.
+               Owned by js/panel.js (the Panel tab owns the rest of the story). -->
+          <div class="panel" id="model-row"></div>
+          <!-- what KIND OF SITE this is: the prerequisite for every conditional
+               rule, and the only surface that can state one. Owned by js/site.js. -->
+          <div class="panel" id="site-conditions"></div>
+          <div class="panel">
+            <h3 data-i18n="inspect.run_editing">Run editing</h3>
+            <select id="run-select"></select>
+            <div id="run-events"></div>
+            <div id="override-list"></div>
+          </div>
+          <div class="panel" id="inspector">
+            <h3 data-i18n="inspect.title">Inspector</h3>
+            <div id="inspector-body"><em data-i18n="inspect.empty">Click a generated post, span, or gate.</em></div>
+          </div>
+          <!-- The decisions of the SELECTED SECTION, and the conversation about
+               each. Owned by js/section-decisions.js; it reads the section from
+               the same `run-select` above, because "focus on a section" is a
+               selection this panel already has rather than a second one. -->
+          <div class="panel" id="section-decisions"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============ annotations tab ============ -->
+    <section id="tab-annotations" class="tab">
+      <div class="panel">
+        <h3 data-i18n="annotations.attach">Attach annotation</h3>
+        <select id="ann-target"></select>
+        <input id="ann-text" dir="auto" data-i18n-placeholder="annotations.placeholder" placeholder="e.g. keep the top aligned with the neighbour (approx. 1750)" size="60">
+        <button id="btn-add-ann" data-i18n="common.add">Add</button>
+      </div>
+      <div id="annotation-list"></div>
+    </section>
+
+    <!-- ============ structure tab ============ -->
+    <section id="tab-structure" class="tab">
+      <div id="print-title" class="print-title"></div>
+      <div class="panel" id="structure-head">
+        <h3 data-i18n="structure.title">Structure</h3>
+        <div class="toolbar">
+          <label><span data-i18n="structure.detail">Detail</span>
+            <select id="structure-detail">
+              <option value="installer" data-i18n="structure.detail.installer">Installer</option>
+              <option value="customer" data-i18n="structure.detail.customer">Customer</option>
+            </select></label>
+          <button id="btn-structure-print" data-i18n="structure.print">🖨 Print sheet</button>
+        </div>
+        <div id="structure-totals"></div>
+      </div>
+      <div id="structure-body"></div>
+    </section>
+
+    <!-- ============ assembly tab ============
+         Two synchronized viewports over one fence: the run as it is set out
+         (macro) and one panel as it is assembled (micro). Both are rendered
+         entirely by js/assembly.js — the bar's labels carry dimensions and a
+         currency, so they cannot be static data-i18n. -->
+    <section id="tab-assembly" class="tab">
+      <div class="panel" id="assembly-bar"></div>
+      <!-- the assembly film's own control (js/assembly.js over js/animate.js).
+           Its own panel rather than a row in the bar above: the bar is rebuilt
+           whenever a dimension is typed, and a play control that vanished
+           mid-press would be a control nobody trusts. -->
+      <div class="panel" id="assembly-play"></div>
+      <div class="assembly-row" id="assembly-row">
+        <div class="panel" id="assembly-macro"></div>
+        <div class="panel" id="assembly-micro"></div>
+      </div>
+      <div id="assembly-drawer"></div>
+    </section>
+
+    <!-- ============ knowledge tab ============ -->
+    <section id="tab-knowledge" class="tab">
+      <div class="panel">
+        <h3 data-i18n="knowledge.new_version">New knowledge rule</h3>
+        <input id="k-object" data-i18n-placeholder="knowledge.object_placeholder" placeholder="object id e.g. K-MAXSPAN">
+        <select id="k-type">
+          <option value="hard_constraint" data-i18n="type.hard_constraint">hard_constraint</option>
+          <option value="company_rule" data-i18n="type.company_rule">company_rule</option>
+          <option value="preference" data-i18n="type.preference">preference</option>
+          <option value="heuristic" data-i18n="type.heuristic">heuristic</option>
+          <option value="fact" data-i18n="type.fact">fact</option>
+        </select>
+        <input id="k-title" dir="auto" data-i18n-placeholder="knowledge.title_placeholder" placeholder="title" size="40">
+        <div id="k-builder">
+          <div id="k-action-rows"></div>
+          <button id="btn-k-add-action" type="button" data-i18n="knowledge.builder.add_action">+ Add action</button>
+          <div class="meta" data-i18n="knowledge.builder.conditions_hint">Rule conditions can only be edited in Advanced (JSON).</div>
+        </div>
+        <textarea id="k-actions" dir="ltr" rows="6" cols="70" hidden>[{"kind": "set_param", "param": "max_span_mm", "value": 1800}]</textarea>
+        <div>
+          <button id="btn-k-advanced" type="button" data-i18n="knowledge.builder.advanced">Advanced (JSON)</button>
+          <button id="btn-knowledge-impact" data-i18n="impact.preview">Preview impact</button>
+          <button id="btn-add-knowledge" data-i18n="knowledge.save_version">Save new version</button>
+        </div>
+        <div id="knowledge-impact-out"></div>
+      </div>
+      <div id="knowledge-list"></div>
+    </section>
+
+    <!-- ============ review tab ============ -->
+    <section id="tab-review" class="tab">
+      <div class="panel">
+        <button id="btn-propose" data-i18n="review.propose">Propose knowledge from corrections</button>
+      </div>
+      <div id="candidate-list"></div>
+    </section>
+
+    <!-- ============ panel tab ============
+         Both children are rendered entirely by js/panel.js: the height/width
+         labels carry the display unit, so they cannot be static data-i18n. -->
+    <section id="tab-panel" class="tab">
+      <div class="panel" id="panel-picker"></div>
+      <div id="panel-preview"></div>
+    </section>
+
+    <!-- ============ models tab ============
+         The fence model EDITOR. Rendered by js/model-editor.js, which owns
+         everything under this section and nothing outside it. The row lists are
+         DOM-built (they carry live listeners over the model document); only the
+         library, the status line and the preview are innerHTML. -->
+    <section id="tab-models" class="tab">
+      <div class="panel">
+        <h3 data-i18n="model.library">Fence models</h3>
+        <div id="model-list"></div>
+        <button id="btn-model-new" type="button" data-i18n="model.new">+ New model</button>
+        <!-- the starter gallery: each card is a real preview of the panel it
+             would open, because a card that only names a structure is a name -->
+        <div id="model-gallery" hidden></div>
+      </div>
+      <div class="models-row">
+        <div class="panel" id="model-form" hidden>
+          <div id="model-settings">
+            <div id="model-head"></div>
+            <div id="model-spec-picker"></div>
+          </div>
+          <!-- the drawing IS the editor: the canvas selects, the inspector edits
+               what is selected, and the element list reaches the things a
+               drawing cannot show (a fixing with no fasteners placed yet) -->
+          <div id="model-editor">
+            <div id="model-canvas-pane">
+              <div id="model-elements"></div>
+              <div id="model-canvas"></div>
+            </div>
+            <div id="model-inspector"></div>
+          </div>
+          <details id="model-axes-box">
+            <summary data-i18n="model.axes">Option axes</summary>
+            <div id="model-axes"></div>
+          </details>
+          <!-- the escape hatch, in millimetres like every other raw-JSON box -->
+          <textarea id="model-json" dir="ltr" rows="16" cols="80" hidden></textarea>
+          <div class="toolbar">
+            <button id="btn-model-advanced" type="button" data-i18n="knowledge.builder.advanced">Advanced (JSON)</button>
+            <button id="btn-model-save" type="button" data-i18n="model.save_draft">Save draft</button>
+            <button id="btn-model-impact" type="button" data-i18n="impact.preview">Preview impact</button>
+            <button id="btn-model-publish" type="button" class="primary" data-i18n="model.publish">Publish</button>
+            <button id="btn-model-close" type="button" data-i18n="model.close">Close</button>
+          </div>
+          <div id="model-status" class="meta"></div>
+          <div id="model-errors"></div>
+          <div id="model-impact-out"></div>
+        </div>
+        <!-- two children on purpose: the bay fields keep their focus while the
+             priced body below them is replaced on every re-price -->
+        <div id="model-preview">
+          <div class="panel" id="model-preview-controls"></div>
+          <div id="model-preview-body"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ bom tab ============ -->
+    <section id="tab-bom" class="tab">
+      <div id="bom-body"></div>
+    </section>
+
+    <!-- ============ inventory tab ============ -->
+    <section id="tab-inventory" class="tab">
+      <div class="panel">
+        <h3 data-i18n="inventory.title">Inventory</h3>
+        <div id="inventory-editor">
+          <div id="inventory-table-host"></div>
+          <button id="btn-inv-add-row" type="button" data-i18n="inventory.add_row">+ Add item</button>
+        </div>
+        <textarea id="inventory-json" dir="ltr" rows="10" cols="80" hidden></textarea>
+        <div>
+          <button id="btn-inv-advanced" type="button" data-i18n="knowledge.builder.advanced">Advanced (JSON)</button>
+          <button id="btn-save-inventory" data-i18n="inventory.save">Save inventory</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ evidence viewer ============
+       Owned entirely by js/evidence.js (frontend design §3). Sits outside
+       every tab section because a citation can appear on any of them — gaps
+       in the canvas tab, quoted document warnings on the structure/panel/BOM
+       tabs — and the viewer must open over whichever one is active. Empty
+       when closed; js/evidence.js is the only module that writes here. -->
+  <div id="evidence-viewer"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
