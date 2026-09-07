@@ -499,10 +499,27 @@ export const SALES_ROAD = {
   ],
 };
 
-/** Roads by role. A role absent here has no road, and `roadFor` returns null
- *  rather than defaulting to the salesperson's: showing an office person a
- *  salesperson's map would be worse than showing them none. */
+/** Roads by role. */
 export const ROADS = { sales: SALES_ROAD };
+
+/** The road for a role, or `null` for a role that has none.
+ *
+ *  Lives HERE and not in the engine, because the engine imports nothing — that
+ *  is what keeps it node-testable with three literals and what stops a second
+ *  answer to "is this job complete?" ever getting in. Looking a role up in a
+ *  registry is the registry's job anyway.
+ *
+ *  Refusing rather than defaulting is deliberate: the office person's road and
+ *  the super user's are unwritten, and showing them the salesperson's map
+ *  would be worse than showing them none.
+ *
+ *  `Object.hasOwn`, not `ROADS[role] || null`: the latter resolves through the
+ *  prototype, so `roadFor("constructor")` would hand back `Object` — a truthy
+ *  non-road whose `.steps` is undefined. `role.js` validates against `ROLES`
+ *  so nothing reaches it today, and the guard costs one call. */
+export function roadFor(role) {
+  return Object.hasOwn(ROADS, role) ? ROADS[role] : null;
+}
 ```
 
 - [ ] **Step 2: Write the failing node test**
