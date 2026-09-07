@@ -226,6 +226,25 @@ class Selection(BaseModel):
         return (self.choice_set, self.scope)
 
 
+class Stated(BaseModel):
+    """What the salesperson has stated this job does NOT have.
+
+    Named facts, never step keys. A step key would put a screen's structure
+    into the project record, and `road_skips: ["gates"]` could be contradicted
+    by nothing — the road engine is pure and cannot see a gate. `no_gates` is a
+    claim about the FENCE, so `handover_gaps` can check it against the drawing
+    without knowing that a road or a step exists.
+
+    The point is the difference between silence and an answer. "No gates on
+    this job" and "nobody got to the gates" are the same bytes today, which is
+    exactly the defect `height_assumed` exists to prevent: a fence left on the
+    silent 1800 mm default is indistinguishable from one confirmed at 1.8 m.
+    """
+
+    no_gates: bool = False
+    no_promises: bool = False
+
+
 class Project(BaseModel):
     id: str
     name: str
@@ -256,6 +275,10 @@ class Project(BaseModel):
     # bare `policy` dict, for `fence_model`'s reason: it is stamped on the run
     # and guards every derived view, so a typo has to fail at the boundary.
     site: SiteConditions = SiteConditions()
+    # What the salesperson says this job does not have. Unrevisioned for
+    # `job`'s reason: a claim about an absence changes no quantity, so it must
+    # not bump the topology revision and 409 every derived view.
+    stated: Stated = Stated()
 
     def display_name(self) -> str:
         """What to call this project on any surface a person reads.
