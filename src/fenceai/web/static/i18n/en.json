@@ -948,6 +948,7 @@
   "review.scope_dim": "scope dimension",
   "review.scope_value_placeholder": "value, e.g. X",
   "road.aria": "Job steps",
+  "road.done_next": "Done — next: {next}",
   "road.gates": "Gates",
   "road.gates.take": "A gate's width and its distance from a corner are what the office orders from.",
   "road.job": "The job",

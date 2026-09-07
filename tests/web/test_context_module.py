@@ -147,3 +147,38 @@ def test_a_house_is_not_returned_when_the_kind_asked_for_is_street(out):
     versa. Only landmarks of the ACTIVE tool's kind are hit-testable."""
     assert out["house_wrong_kind"] is None
     assert out["street_wrong_kind"] is None
+
+
+def test_a_loaded_project_clears_a_half_drawn_landmark():
+    """The bug behind four symptoms at once.
+
+    The rubber band lives in `g-context-draft`, its own group, so that a
+    redraw of the committed landmarks cannot wipe it — which also means
+    `render()` never wipes it. It was cleared in exactly one place: the
+    pointerup that commits a landmark. A gesture that never reached that path
+    left a street-shaped line that could not be clicked (a draft carries
+    `pointer-events: none`), could not be deleted (it is no landmark, so it has
+    no row in the panel), and survived opening another job.
+
+    Textual, because the alternative is a DOM: what matters is that the
+    `project-loaded` redraw calls `clearDraft`, so a new job cannot inherit
+    somebody's abandoned gesture.
+    """
+    src = (STATIC / "js" / "context.js").read_text()
+    redraw = src[src.index("const redraw = "):]
+    redraw = redraw[:redraw.index(";") + 1]
+    assert "clearDraft()" in redraw, (
+        "the project-loaded redraw must clear the draft group, or an abandoned "
+        f"landmark gesture outlives the job it was made in: {redraw!r}")
+
+
+def test_escape_cancels_a_landmark_gesture_too():
+    """`cancelDraft` is what Escape calls, and a salesperson means by "the
+    draft" whatever they are half-way through drawing — a half-drawn house is
+    exactly that. Without this, Escape cleared the fence draft and left the
+    landmark band behind."""
+    src = (STATIC / "js" / "editor.js").read_text()
+    body = src[src.index("function cancelDraft()"):]
+    body = body[:body.index("\n}\n")]
+    assert "clearContextDraft()" in body, (
+        "Escape must clear the landmark rubber band as well as the fence draft")

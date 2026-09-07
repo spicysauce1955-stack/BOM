@@ -948,6 +948,7 @@
   "review.scope_dim": "ממד תחולה",
   "review.scope_value_placeholder": "ערך, למשל X",
   "road.aria": "שלבי העבודה",
+  "road.done_next": "סיימתי — הבא: {next}",
   "road.gates": "שערים",
   "road.gates.take": "רוחב השער והמרחק שלו מהפינה הם מה שהמשרד מזמין לפיו.",
   "road.job": "העבודה",

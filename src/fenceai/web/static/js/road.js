@@ -20,6 +20,89 @@ function currentRoad() {
   return roadFor(currentRole());
 }
 
+/** Move to the next step in this road, or stay if this is the last.
+ *
+ *  NOT a wizard, and the difference is the whole design: a wizard REFUSES to
+ *  let you leave a step, and the road forbids that — every step stays enterable
+ *  at any time, because a salesperson works from paper and may hold the sketch
+ *  and not the address. This only follows a COMPLETED gesture forward, the way
+ *  a form's Enter key moves to the next field. Nothing is blocked; a click on
+ *  any step still goes there. */
+function advance() {
+  const def = currentRoad();
+  if (!def) return;
+  const at = def.steps.findIndex((s) => s.key === current);
+  const next = def.steps[at + 1];
+  if (!next) return;
+  current = next.key;
+  showStep(current);
+  render();
+}
+
+/** The "I have finished this step" control, in a host this module OWNS.
+ *
+ *  Created here rather than written into `index.html` for `job.js`'s and
+ *  `context.js`'s reason: a module may never touch another module's DOM
+ *  subtree, so the only element `road.js` may write into is one it made.
+ *
+ *  It sits in the canvas column and NOT in the band, because the band answers
+ *  *where am I* and this answers *I am done here* — two different questions,
+ *  and putting the second inside the first is how a navigation surface starts
+ *  also being a form. It is deliberately absent from `step-surfaces.js`'s
+ *  scoped list: every step needs it, so no step may hide it. */
+function ensureDoneHost() {
+  if (typeof document === "undefined") return null;
+  let host = document.getElementById("step-done");
+  if (host) return host;
+  const col = document.querySelector(".canvas-col");
+  if (!col) return null;
+  host = document.createElement("div");
+  host.id = "step-done";
+  col.appendChild(host);
+  return host;
+}
+
+/** Render the control for the step we are on.
+ *
+ *  Built once and only re-labelled after, the same discipline the band itself
+ *  keeps: re-`innerHTML`ing drops keyboard focus to BODY, and with `#tabs`
+ *  hidden for this role there is very little left to focus.
+ *
+ *  It does NOT gate. Pressing it on a step with work still missing advances
+ *  anyway, and the badge goes on saying what is missing — because a step that
+ *  REFUSED to be left is a wizard, and a wizard gets defeated by typing junk
+ *  to get past it, which turns the completeness report the office relies on
+ *  into a completeness lie (`road-model.js`'s own header). This button moves
+ *  the salesperson on; it never certifies anything. */
+function renderDone(def) {
+  const host = ensureDoneHost();
+  if (!host) return;
+  const at = def.steps.findIndex((s) => s.key === current);
+  const next = def.steps[at + 1];
+  // The last step has nowhere to go, so it gets no control rather than a dead
+  // one. `hidden`, not removal: the host stays put so the column does not
+  // reflow every time the salesperson reaches the end and steps back.
+  host.hidden = !next;
+  if (!next) return;
+  let btn = host.querySelector("#step-done-btn");
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.id = "step-done-btn";
+    btn.className = "primary";
+    // Listener on the BUTTON, not delegated from the host: there is exactly
+    // one child, so delegation buys nothing. It also keeps this file's FIRST
+    // click-listener registration the band's own, which is the anchor
+    // `tests/web/test_road_render.py` searches for to check the skip
+    // control's invariants — stopPropagation, and snapshot before mutate. A
+    // second registration above it would silently steal that anchor and
+    // leave both unchecked. (Do not spell that call literally in a comment
+    // here either: the search is textual and a comment matches it.)
+    btn.addEventListener("click", advance);
+    host.appendChild(btn);
+  }
+  btn.textContent = t("road.done_next", { next: t(`road.${next.key}`) });
+}
+
 function showStep(stepKey) {
   const def = currentRoad();
   if (!def) return;
@@ -80,6 +163,7 @@ export function render() {
   const steps = road(def, state.handover?.gaps ?? null,
                      state.project?.stated ?? {});
   build(host, def);
+  renderDone(def);
   // Set every render, not in `build()`: `build()` runs once, so freezing the
   // label there would leave it in whatever locale was active on the FIRST
   // render — `i18n.js: applyStatic` has no aria walker, so this is the only
@@ -119,6 +203,19 @@ export function initRoad() {
   on("project-loaded", render);
   on("handover-changed", render);
   on("locale-changed", render);
+  // Step 1 is the only step with an explicit COMMIT — the other seven are
+  // canvas gestures with no "done" button to press — so it is the only one
+  // that can know the salesperson has finished. `job-changed` is what
+  // `job.js` already announces on a successful save, so this reuses it rather
+  // than inventing a second signal for one event.
+  //
+  // Guarded twice, and both guards matter: only in `sales` (no other role has
+  // a road to advance along), and only FROM step 1. The event is global, so a
+  // job saved while the salesperson is working on step 4 must not yank them
+  // off what they are doing.
+  on("job-changed", () => {
+    if (currentRole() === "sales" && current === "job") advance();
+  });
   on("role-changed", () => {
     render();
     // Entering sales from another role can leave a panel the road does not

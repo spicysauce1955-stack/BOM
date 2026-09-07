@@ -1187,6 +1187,11 @@ function cancelDraft() {
   clearLengthBuffer();
   clearGroup("g-draft");
   clearGroup("g-snap");
+  // The LANDMARK rubber band as well. Escape cancels "the draft" as a
+  // salesperson means it — whatever I am half-way through drawing — and a
+  // house or street half-drawn is exactly that. Left out, Escape cleared the
+  // fence draft and left a street-shaped line nothing could select or remove.
+  clearContextDraft();
   updateDraftButtons();
   renderCta();
 }

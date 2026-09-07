@@ -955,6 +955,14 @@ html[data-step="job"] #canvas,
 html[data-step="notes"] #canvas,
 html[data-step="review"] #canvas { display: none; }
 
+/* The "I have finished this step" control. Its own row under the drawing so
+   it reads as the end of the step's work rather than as another toolbar
+   button, and `margin-inline-start: auto` rather than `float`/`left` because
+   this app is Hebrew-first and CSS here uses logical properties only. */
+#step-done { display: flex; margin-block-start: 10px; }
+#step-done[hidden] { display: none; }
+#step-done-btn { margin-inline-start: auto; }
+
 /* --- the job panel (slice 1): who bought this fence, where, who sold it --- */
 .job-fields { display: flex; flex-direction: column; gap: 6px; margin-block: 6px; }
 .job-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }

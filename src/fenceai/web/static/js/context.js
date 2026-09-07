@@ -238,7 +238,18 @@ async function removeLandmark(id) {
 export function initContext() {
   render();
   renderPanel();
-  const redraw = () => { render(); renderPanel(); };
+  // `clearDraft` too, and it is the whole of a real bug. The rubber band lives
+  // in its own group so a redraw of the committed landmarks cannot wipe it —
+  // which also means `render()` never wipes it. It was cleared in exactly ONE
+  // place, the pointerup that commits a landmark, so a gesture that never
+  // reached that path (pointer released off-window, a project switched
+  // mid-drag) left a street-shaped line on the canvas that:
+  //   - could not be clicked, because a draft carries `pointer-events: none`
+  //   - could not be deleted, being no landmark and having no row in the list
+  //   - SURVIVED opening another job, because nothing here cleared it
+  // Four symptoms, one cause. A project being loaded is the clearest possible
+  // signal that whatever was mid-gesture is over.
+  const redraw = () => { clearDraft(); render(); renderPanel(); };
   on("project-loaded", redraw);
   on("context-changed", redraw);
   on("locale-changed", redraw);

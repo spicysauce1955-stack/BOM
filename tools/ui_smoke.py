@@ -911,6 +911,67 @@ def _smoke_sales_mode(c) -> None:
           on_model["model_row"] == "shown", on_model)
     # And the map is in steps 2-6 only: a form, a note and a summary do not
     # get a drawing behind them.
+    # Saving the job moves the salesperson on. NOT a wizard — every step stays
+    # clickable — but a completed gesture should not leave them parked on a form
+    # they have finished. Step 1 is the only step with an explicit commit to
+    # hang this on; the other seven are canvas gestures with no done button.
+    _in_step("job")
+    c.js("""(() => {
+  document.getElementById('job-customer').value = 'Cohen';
+  document.getElementById('job-address').value = '14 Herzl';
+  document.getElementById('job-save').click();
+  return 'ok';
+})()""")
+    time.sleep(2.0)
+    check("saving the job moves on to step 2, without blocking anything",
+          c.js("document.documentElement.dataset.step") == "property",
+          c.js("document.documentElement.dataset.step"))
+    check("and every step is still reachable by a click — a map, not a wizard",
+          (lambda: (c.js("document.querySelector('#road [data-step=\"review\"]').click(); 'ok'"),
+                    time.sleep(0.4),
+                    c.js("document.documentElement.dataset.step"))[2])() == "review")
+    # Every step has an explicit "I have finished this" gesture, and it is the
+    # SAME control on each — the seven canvas steps have no save button of
+    # their own, which is why step 1 advancing off its save was not enough.
+    _in_step("property")
+    label = c.js("document.getElementById('step-done-btn')?.textContent || ''")
+    check("every step offers a done control that names where it goes next",
+          label != "" and "{next}" not in label, label)
+    c.js("document.getElementById('step-done-btn').click(); 'ok'")
+    time.sleep(0.8)
+    check("pressing done on step 2 moves to step 3",
+          c.js("document.documentElement.dataset.step") == "layout",
+          c.js("document.documentElement.dataset.step"))
+    # It advances a step with work still OUTSTANDING rather than refusing. A
+    # step that could not be left is a wizard, and a wizard gets defeated by
+    # typing junk to get past it — which turns the completeness report the
+    # office relies on into a lie. The badge keeps saying what is missing.
+    _in_step("sideview")
+    before_badge = c.js("document.querySelector('#road [data-step=\"sideview\"] "
+                        ".road-state').textContent")
+    c.js("document.getElementById('step-done-btn').click(); 'ok'")
+    time.sleep(0.8)
+    check("done advances even with work outstanding, and still reports it",
+          c.js("document.documentElement.dataset.step") == "model"
+          and before_badge.strip() != "",
+          {"moved_to": c.js("document.documentElement.dataset.step"),
+           "badge_was": before_badge})
+    # and the last step has nowhere to go, so it offers no dead control
+    _in_step("review")
+    check("the last step offers no done control rather than a dead one",
+          c.js("(()=>{const h=document.getElementById('step-done');"
+               "return !h || h.hidden;})()"))
+
+    # the date box is filled in for the common case: a job entered the evening
+    # of the visit. LOCAL date, not UTC — at 01:00 in Israel the UTC slice
+    # returns yesterday, and a sale dated a day early is invisible to the office.
+    _in_step("job")
+    check("the sold-on date defaults to today, in local time",
+          c.js("document.getElementById('job-sold_on').value")
+          == c.js("(()=>{const d=new Date(),p=n=>String(n).padStart(2,'0');"
+                  "return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;})()"),
+          c.js("document.getElementById('job-sold_on').value"))
+
     check("the drawing is absent from step 1 and present in step 3",
           _in_step("job")["canvas"] == "hidden"
           and _in_step("layout")["canvas"] == "shown")
