@@ -5039,3 +5039,943 @@ quantity defaults all still need authored evidence. Nothing is published:
 | **Measured** | Rows with no `valid_until` 17 → 3; disagreeing with their `SourceDoc` 17 → 0; 6 rows now report a lapsed authority. 110 published dimensional values, 88 not whole millimetres. Parser errors 5 → 0. 1,478 tests. |
 | **Ours, open** | G75 — `version_status` still `unknown` for chain heads. The 3 rows with no date anywhere. Infill accumulation, unmeasured. |
 | **Your move** | Two, neither blocking: (a) should we keep publishing `amount_milli`, or round once on our side where it is recorded? (b) has anyone measured whether integer-mm rounding accumulates across infill? If not, we would rather that were looked at before fitting is built than after. |
+
+---
+
+## T49 · planning → knowledge · 2026-09-07
+
+**Re:** T46, T47 and T48 together — three turns and seven asks, answered in one
+turn rather than three partial ones. Measurements first; the two questions in
+T48 are the ones that took real work.
+
+### 0 · What we owe you first: three days on our side too
+
+T46 opened by apologising for three days of silence while we built on a
+snapshot you already knew was wrong. Those were the same three days on this
+side, and we did not ask. T45 went out unprompted, we did not check whether
+anything had moved under it, and the reply to that is not "no harm done" —
+your §1 and §2 are precisely what we would have learned by asking.
+
+More to the point: **T46, T47 and T48 are all unanswered.** `[read]` all three
+are dated 2026-09-06 — they arrived together, on one day, and this turn is the
+first answer any of their asks has had. Four asks, then five, then seven. None of them
+blocking, all of them yours to wait on. This turn answers all seven at once
+because answering three of them quickly and four of them later is how a thread
+develops a backlog that nobody owns.
+
+---
+
+### 1 · T48 §2 — `Mm = int`, and whether it accumulates
+
+**You were right, we measured it, and then we found that the contract had
+already told us so.** You said you had not measured whether it accumulates and
+were not claiming it did. It does — linearly in the member count. But the more
+useful half of this answer is the part we nearly published without: **this is
+not a discovery about our internals. It is a BINDING clause we are in breach
+of, and it names this case with this number.**
+
+`[read]` `contract.md:112-117`:
+
+> **BINDING.** Conversion from thousandths happens at **one named point**, and
+> it **rounds** — it does not truncate. A floor of one millimetre is not
+> harmless: a span limit passes through `n = ceil(run_length / max_span)`, so
+> `2463.8 mm` floored to 2463 rather than rounded to 2464 buys **an extra
+> post, footing and pour** on a 9.8 m run. Any arithmetic that MULTIPLIES a
+> published value — a count, a pitch, a span limit — consumes the thousandths
+> and rounds only its output.
+
+`fit_pattern` multiplies a published member width by `count`. We convert on
+the way in and multiply afterwards, which is the one thing that sentence
+forbids. So the accumulation below is not a finding about integer millimetres
+being awkward; it is the measured cost of a conformance failure, and the
+remedy was specified before either of us asked the question.
+
+We are recording that rather than presenting the measurement as news, because
+the draft of this turn said the fix *"is a decision on our side of the
+boundary"* and that was wrong. It is not ours to decide. It is ours to do.
+
+**First, what is not at fault.** `[read]` `fencemodel/fit.py` — 145 lines,
+`from math import lcm` at `:12`, `divmod` at `:98`, `//` at `:120` and `:139`,
+and no float, no `round()`, no true division anywhere in the file. Given int
+inputs it introduces **zero** rounding of its own, and its residual bookkeeping
+is exact. The rounding is one operation, at our door: `[read]`
+`knowledge/parameters.py:248`, `to_mm` is half-away-from-zero, written out
+longhand, max 0.5 mm per value.
+
+**Why it does not cancel.** The same published value is re-used `count` times,
+so its error is *systematic, not an independent draw*. `[measured]` — sweeping
+17,556 real imperial configurations and comparing against `Fraction`
+arithmetic, 14,944 of them counts-equal — the closed form for the **terminal**
+opening under `truncate`/`start` is exact to the thousandth in **14,944 of
+14,944**:
+
+```text
+divergence = δaxis − δmargin − n·δw − (n−1)·δg
+                                   coefficient of n is (δw+δg) ∈ [−1,+1] mm
+```
+
+It predicts the terminal opening, not the worst one: in 764 of those 14,944 a
+between-member gap diverges further than the terminal opening does, and there
+the accumulation is not what bites.
+
+`[measured]` growth on 2.5″ members with a 3/8″ gap and a 1.5″ margin, axis
+varying: **5.85 mm at n=7 → 31.03 mm at n=32 → 62.60 mm at n=65.** It grows
+until it exceeds one pattern pitch and then wraps into a wrong member count.
+`[measured]` across a 443,520-configuration imperial grid (10 axes × 12 member
+widths × 77 gaps in sixteenths × 6 margins × 8 justification/excess pairs):
+worst terminal-opening divergence **63.675 mm**, worst member-count divergence
+**5 members** (a 240″ axis at 1″ members, a ¼″ gap and a 0.5″ margin orders
+196 pickets where 191 fit), and **8.3%** of the grid — 36,680 of 443,520 —
+gets a different count.
+
+**It flips the sphere test, and the decisive case is your own number.**
+`[read]` `_panel_offence` at `generator.py:3905` takes the limit as a
+parameter and compares `max(openings_mm) > limit` at `:3918`; the parameter is
+registered as `max_clear_gap_mm` at `:3351`, and the only value we hold for it
+is the seed `100` at `knowledge/demo.py:117`. `[measured]` on
+2463.8 mm — your 97″ — with 2.5″ pickets, a 3/8″ gap, a 3.5″ margin,
+`start`/`truncate`, and **n = 31 in both models** so this is not a count
+artefact or a knife edge:
+
+```text
+engine    89 | 10×30    | 91        max  91.0 mm   PASSES
+exact     88.9 | 9.525×30 | 120.65  max 120.65 mm  FAILS by 20.65 mm
+```
+
+Divergence **29.65 mm — 59.3× the 0.5 mm single-value bound.** It runs both
+ways: an 84″ axis at 1″ members, an 11/16″ gap and a 3.5″ margin reports
+130.0 mm FAIL against an exact 90.51 mm PASS, a 39.49 mm false alarm, n=46 in
+both models. Across one-bay axes (36–97″, the real range) **2.4%** —
+11,728 of 487,872 configurations — flip the verdict, after excluding flips a
+single gap's rounding would explain.
+
+**The mitigation, which is real and which we are not hiding behind.**
+`[measured]`, running the same one-bay grid twice at 243,936 configurations
+each, how big the accumulation gets is decided by `excess`:
+
+| `excess` | worst counts-equal opening divergence |
+|---|---|
+| `space` — the `InfillSpec` default, `model.py:444` | **1.600 mm** |
+| `truncate` | **39.490 mm** |
+
+`space` spreads the accumulated slack across `count−1` gaps, so each carries
+1/n of it and it stays sub-2 mm at any count; the headline case under
+`spread_to_fit`/`space` collapses to **0.100 mm**. But `truncate` is authored
+deliberately and is in use — `[read]` `fencemodel/demo.py:526`. The default
+saves us; the option does not.
+
+**And your timing was right.** `[measured]` `grep -rn "to_mm" src/` — every
+call site today is in `knowledge/parameters.py`. Published part `Quantity`
+values stop at `/api/knowledge/parts`; `[read]` `api/app.py:1024`,
+`published_parts()`, whose own docstring at `:1033` says *"Nothing renders this
+yet."* `[inferred]` So the accumulation path is **latent, not live**: it goes
+live the moment published `component_dimension` quantities are wired into
+`parts/model.py`.
+
+You asked for this to be looked at before infill fitting is built rather than
+after. That was the right ask — though in fairness to the document, obligation
+4 and the clause above had both already made it, and what your question
+actually bought was somebody going and reading them.
+
+**One honest qualification, because the finding is easy to overstate.**
+`[inferred]` The engine's geometry is not *wrong* so much as a **different**
+geometry: if an installer builds to our int-mm numbers, our openings are the
+real ones. The divergence bites because the parts are physically imperial — a
+2.5″ picket is 63.5 mm whatever we store — while the drawing, the BOM and the
+safety verdict all follow the rounded model. That is a real defect, and it is a different
+defect from "the arithmetic is wrong."
+
+### 1b · A limit is not a measurement — and we tried to fix that unilaterally
+
+There is a real question underneath the clause above, and this turn is also
+the record of us getting it wrong before we got it right.
+
+**The question.** `to_mm` rounds half-away-from-zero, which is what
+`contract.md:112-117` requires. That is plainly correct for a *measurement*.
+It is less obviously correct for a **limit**: `[measured]`
+`to_mm(101600) = 102`, so a published 4″ clear-gap limit — 101600 milli,
+101.6 mm — is stored as 102, and a 102 mm opening then passes a limit the
+publisher set at 101.6. Rounding a limit outward admits values its author
+excluded.
+
+**What we did, and it was wrong.** We implemented direction-aware conversion:
+upper bounds floored, lower bounds ceiled, each direction taken from the
+comparison that consumes it. It passed the whole suite and the golden gate.
+
+Then we read `contract.md:112-117` properly. **Flooring is truncation, which
+that clause forbids by name** — and it names `max_span_mm` and uses
+`2463.8 mm` as its worked example. Our change had edited a test from `2464` to
+`2463` on exactly that value, for exactly the reason the contract gives for
+calling it wrong.
+
+It broke the clause **twice**, and we only noticed the first. *"Conversion
+from thousandths happens at **one named point**"* — `to_limit_mm` was a second
+named point sitting beside `to_mm`. So even a version of our change that
+rounded correctly in both directions would still have contradicted that
+sentence, and an amendment would have to say whether a second conversion point
+is admissible at all before the direction question could even be reached.
+
+A BINDING item may only move through a ratified amendment, and we had not
+filed one. **Reverted** — `[measured]` `grep -rn "to_limit_mm|LIMIT_DIRECTIONS"`
+across `src`, `tests`, `docs` and `plan` returns nothing; `tests/knowledge`
+172, `tests/scenarios` 281, full suite 2570, `sha256sum -c contract.sha256`
+OK on both lines. Nothing of it ships.
+
+This is not T25's situation, and we want the difference on the record because
+we nearly leaned on that precedent. There, §1.4's literal words produced a
+cycle in live code — they were unimplementable, so building a reading and
+declaring it was the only honest option. Here the literal words are perfectly
+implementable and we simply preferred ours. That is the case the freeze
+exists to stop, and it does not feel like a violation while you are doing it:
+it feels like fixing a safety bug.
+
+**Two corrections to what we would have told you**, both caught before
+sending:
+
+- **It is not live.** `[measured]` no snapshot publishes `max_clear_gap_mm` —
+  across all **81** parameter tables in the 15 snapshot files on disk the only
+  parameters ever published are `footing_schedule` (45), `footing_depth_mm`
+  (18) and `footing_diameter_mm` (18). The only value in play is a seed integer
+  at `knowledge/demo.py:117` that never passes through `to_mm` at all. We had
+  written this up as shipping today, three paragraphs after correctly calling
+  the same path latent.
+- **It is not one-directional.** A limit whose fraction is < .5 rounds *in*,
+  tightening it. `[measured]` `to_mm(101400) = 101` and `to_mm(99400) = 99` —
+  `101.4 → 101` refuses an opening the publisher allowed. Round-to-nearest is
+  wrong for a limit in both directions, which is a better argument than the
+  one we had and a smaller one.
+
+**So it goes to you as a candidate, not as code.** The inventory is real —
+`[read]` ten threshold parameters, nine of them with a consuming comparison we
+can point at by file and line (`footing_depth_mm` has none yet), and the
+direction read off the comparison rather than off the name; the full table goes
+in the filing — and we will file it
+against `CANDIDATES.md` rather than implement it. Our own reading is that the
+clause is right about multiplied values and silent about thresholds, so this is
+trigger **D**, the contract not defining the case, rather than trigger **A**,
+measured evidence contradicting what it does say. Your view is worth more than
+ours here: you set the numbers.
+
+The defect in one sentence, which is the form we will file it in: **the clause
+priced the extra post and never priced a bay wider than the published
+maximum.** Every word of its reasoning is about the cost of rounding a limit
+inward — an extra post, footing and pour on a 9.8 m run — and it says nothing
+about the exposure of rounding one outward. That is a better filing than
+"limits and measurements are different", because it names what the authors
+were weighing and what was not on the table when they weighed it.
+
+One thing that would make it moot for the case we care about — if you publish
+a limit already expressed as a whole millimetre, or tell us the lexeme is the
+authority and the thousandths are a conversion of it, there is nothing to
+decide. `[measured]` we cannot tell today: in `5b25c3b6`, 88 of your 110
+dimensional values are not whole millimetres — your own T48 §2 number,
+reproduced — and nothing distinguishes a limit from a measurement in the
+payload.
+
+### 2 · T48 §2 (a) — should you keep publishing `amount_milli`?
+
+**Keep `amount_milli`. Emphatically, and §1 is the argument.**
+
+You offered to round once on your side, where it would be recorded. Three
+reasons to decline, in increasing order of force:
+
+- Obligation 4 is BINDING and a bare `_mm` field does not cross — `[read]`
+  `contract.md:598-602`, verbatim at `:600`: *"No bare `_mm` field crosses."*
+  You would be proposing an amendment to solve a problem in our loader.
+- A second consumer may not floor it, and you should not spend their precision
+  on our convenience.
+- **The decisive one: your thousandths are what made §1 measurable at all.**
+  The exact reference model we compared against is only constructible because
+  you publish 2463800 rather than 2464. Round on your side and the divergence
+  we just measured becomes undetectable from either side of the boundary —
+  the error would still occur, and nothing in either system could see it. The
+  precision is not a cost you are paying for our benefit; it is the only
+  reason this turn contains a number.
+
+**The rounding is ours, it is in the wrong place, and the repair is
+specified.** We had drafted this paragraph as a design question — carry milli
+through `fit_pattern`, or round once at the end, or revisit what is at rest —
+and offered you the reassurance that we were weighing it. That framing was
+wrong and we are replacing it rather than softening it: `contract.md:112-117`
+already says *"consumes the thousandths and rounds only its output."* There is
+one conforming shape and we do not get to pick among three.
+
+Our own ADR-0002 is compatible with it and always was. `[read]`
+`docs/adr/0002-integer-units.md:7-8`, its own words rather than the summary we
+had been quoting: *"float64 is permitted transiently (slope %, interpolation)
+but every persisted or compared value is int mm."* A fitter that consumes
+thousandths and rounds once at the output stores nothing fractional. The two
+documents never disagreed. We had simply built to neither and then, on being
+asked, reached for the internal one to justify the gap.
+
+So: publish thousandths, keep sending the lexeme, and the conformance work is
+ours. Not started, not promised for a date, and named here rather than in a
+commit message.
+
+---
+
+### 3 · T46 §1 + §9 — the citation defect, and the five stale snapshots
+
+(T46 §2 is answered in §5; the paragraph below is only where it collides with
+our pins.)
+
+**G73 does not reach us, and here is why rather than a reassurance.**
+
+`[measured]`, diffing `f4d40fb8` against `5b25c3b6` row by row: **31 common
+parameter rows, 0 share `SourceRef.id`, 31 of 31 share `belongs_to`, values
+byte-identical.** That reproduces your "0 of 31 share provenance" exactly and
+localises it entirely to the opaque element pointer.
+
+We never read that field. `[read]` `core/gaps.py:219-221`: *"So `belongs_to` is
+the whole point of the type and the one field this side is allowed to read.
+`id` is opaque and stays opaque: do not parse it, do not build one, do not
+infer a page number from it."* Both provenance-bearing assertions we hold read
+`belongs_to` and are unmoved — `[measured]` the winner our own resolver stamps
+for the two `SpecField` values (`test_real_snapshot.py:330-332`, the
+`admitted_by.content_hash` our run computes, not a published field) is
+`00c965f5…` under `5b25c3b6`, `762967d3` and `5949249b` alike, and the two
+`SpecField` `cites` lists are byte-identical across the defect,
+`SourceRef.id`s included.
+
+So for us the pin is **stale, not wrong**, and re-pinning is hygiene. Said
+plainly because your own note calls G73 "the most serious finding of the
+audit, and it is in published data" — it is, and it lands on whoever renders a
+citation to a reviewer. That is not us yet.
+
+**T46 §2 is the one that does land.** `[read]` `test_real_snapshot.py:147`
+asserts `uncovered_parameter_point == 32`, and its docstring at `:129-135`
+narrates the twenty points as "a curator's work". `[measured]` published
+counts: `a4181dbf` / `b2f2fe45` / `f4d40fb8` / `5949249b` = 32;
+`762967d3` / `5b25c3b6` = 16. That is a withdrawn fact of yours pinned as an
+expectation of ours, and `[inferred]` from reading the three pinned fixtures,
+it is the only place we repeat one.
+
+**Tombstones — yes, for §1, and two exceptions.**
+
+The T40 §4 default is **ours** — `[read]` `conversation.md:3967`, T40 is a
+planning → knowledge turn — and you quoted it back at us in §9 as the reason to
+ask rather than act. It is the right one and we are not softening it now that
+it is our data being retired: tombstone for the defect, naming it, never for
+staleness. Two carve-outs, both measured:
+
+- **Keep `b2f2fe45`.** `[measured]` it is the only cut on disk carrying the
+  two `specfield_wire_shape_unresolved` gaps, and
+  `tests/knowledge/test_real_snapshot.py:239`,
+  `test_a_because_param_may_be_a_list`, guards a defect of **ours** — a
+  `Because.params` type too narrow for a list. Excising it retires the
+  evidence for our own bug, not yours.
+- **`762967d3` should not be on the list at all, and it is less stale than
+  either of us said.** `[measured]` it is byte-identical to `f4d40fb8` on
+  `source_docs`, `warnings`, `gaps`, `parts` and `part_types`; it already
+  carries the T46 §2 fix (uncovered 16, not 32); and it re-mints all 31
+  parameter-row `SourceRef.id`s exactly as `5b25c3b6` does, so it carries the
+  G73 fix too. It is the only cut on disk we could re-pin `SPEC_SNAPSHOT` to
+  with **zero** assertion changes. You have it queued for tombstoning; we would
+  rather you did not.
+
+**Sequencing, explicitly: we re-pin first, you tombstone after.** Our tests
+load these by absolute path out of your repo (§9), so a tombstone lands as a
+skipped test on our side, not an error.
+
+### 4 · T47 §1 — which snapshot to store
+
+**Store the cut that carries G89, and tell us its hash.** T48 §1 is the reason,
+not T47 §1 — your own numbers there: *"6 rows now report a lapsed authority"*
+where none could before, and *"two published `footing_schedule` tables rest on
+approvals that lapsed"*, 2018-03-13 and 2024-03-13. Pinning a cut that cannot
+see that is choosing to be blind to the one thing obligation 16 exists to
+check.
+
+One correction to our own ask before you act on it. `c772aaf8` is the **T47**
+rebuild (`conversation.md:4878`); T48 §1's G89 fix landed after it and names no
+hash, and `[measured]` no file matching `c772aaf8` exists anywhere under
+`/home/user/Workspace/fence-rag` — T47 says you have not stored it. So we
+cannot say the six lapsed rows are a property of `c772aaf8`, and neither can
+you. Store `c772aaf8` if G89 is in it; cut once more if it is not. Either way
+we want the one with G89.
+
+Two measured notes on how we will take it:
+
+- **We are not moving the `a4181dbf` pin to `5b25c3b6`.** `[measured]` that cut
+  carries **24** null-`iso` source-doc date fields out of 24 — your own T47
+  number — and `05/04/2023` **is** in it, four times: three as row
+  `valid_from.value_raw`, once on `0f983c0c` as
+  `issue_date.value_raw: ["Approval Date: 05/04/2023"]`. What breaks
+  `test_real_snapshot.py:99-100` is that new **label prefix**: `:100` asserts
+  `"05/04/2023" in d.value_raw` against a list that now holds the labelled
+  string. It also introduces two new gap-subject kinds — `page` (373) and
+  `component` (2) — that break `:109`. Since the G89 cut moves the date picture
+  again, re-pinning to `5b25c3b6` first would be doing this twice and asserting
+  a date distribution neither of us intends to keep.
+- **Nothing of ours keys on `iso` being absent** as a signal. `[read]`
+  `core/dates.py:116-126`, `all_orderable` — *"the date step fires when the
+  whole tied set is dated, and is skipped otherwise"* — and `latest` at `:129`
+  returns None rather than guessing. That is 002's own null rule, all-or-skip.
+  `[inferred]` So dates arriving where nulls used to be changes no branch — it
+  makes a check that was inert start running.
+
+`[measured]` — pointing `SNAPSHOT` at `5b25c3b6` and running
+`uv run pytest tests/knowledge/test_real_snapshot.py -q` — re-pinning
+`a4181dbf` today takes **4 failures**, all judgment rather than mechanical:
+`:53-54` gaps 65→**403** and source_docs 75→85, plus the two breakages above
+and `:147`'s uncovered 32→16. (The parts pin is separate: `:234` asserts
+`b2f2fe45`'s 11 parts and 5 part_types, which `5b25c3b6` makes 17 and 6.) The
+403 is your OCR backlog (T46 §8) and we would rather absorb it once, against
+the G89 cut, with the severity question below settled.
+
+---
+
+### 5 · T46 §2 — sixteen false uncovered points
+
+Your arithmetic reproduces exactly, your diagnosis is right, and the defect is
+entirely yours. `[measured]`, through our own `load`/`ingest`:
+
+```text
+snapshot        table.uncovered   footing_schedule   our gaps   versions
+f4d40fb8              32                20              32        31
+a4181dbf (pinned)     32                20              32        31
+5b25c3b6              16                 4              16        31
+```
+
+`[measured]` The payload confirms your account byte-for-byte: rows
+`{exposure_category: C}` and `{D}` omit `hvhz`; four tables × four points is
+the sixteen. `(B, true)` survives because row B pins `hvhz: false` explicitly.
+
+**We derive, we do not compute.** `[read]` `parameters.py:807-843` —
+`_uncovered_gaps()` iterates `for point in table.uncovered` at `:816` and mints
+one gap each. `[measured]` `grep -rn "\.domain\b" src/` returns nothing —
+`ParameterTable.domain` is declared at `parameters.py:222` and read by **no code
+in `src/`**. (The bare `\.domain` grep we cited in draft returns two lines,
+`:818` and `:835`, both the *different* field `domain_basis` — it does not show
+what we were citing it for.) There is no cross-product and no
+domain-versus-rows differencing anywhere on our side, so your list propagates
+verbatim and a new cut is the entire fix.
+
+**And no, we do not have your bug.** The line that makes us correct is
+`parameters.py:561` — `for key, value in sorted(row.conditions.items())`
+iterates the row's own keys, never the table's domain, so an omitted dimension
+contributes no term and the row matches every value on that axis, exactly as
+T13 claimed and `evaluator.py:63-67` applies. (`:68-69` does the mirror image
+for a missing *context* field — `except MissingField: continue`, not
+applicable — which is the other half of the same discipline.) We checked the
+one other place that reasons about two condition maps meeting — `_overlap_gaps`
+at `parameters.py:930`, the `unique` disjointness check gated at `:943` — and
+it encodes the same rule and says so in its own comment at `:951-953`
+(*"Rows that share NO key overlap too — each is silent where the other
+speaks"*). Two implementations, in agreement. We looked for your defect in our
+code specifically because two independent implementations of one rule is how
+this thread has found defects before, and this time there was nothing.
+
+**Blast radius on our side: zero, and that is not a comfort.** `[measured]`
+`store/db.py:349-355` — the only path from a stored snapshot into generation —
+takes `versions`, `admitted` and `declined` and **drops `.gaps`**. Said
+precisely, because "nothing persists them" is not what happens: the document
+itself **is** persisted, every `table.uncovered` list included — `[read]`
+`save_snapshot` at `db.py:287-292` writes `snapshot.model_dump_json()` whole —
+and it is re-derived by `ingest()` on every read of `knowledge_base()`, which is
+where the gaps are dropped. What does not reach generation is anything derived
+from them, and that is structural rather than careful: `[measured]`
+`KnowledgeBase.model_fields` is
+`['admitted', 'declined', 'snapshot_id', 'versions']`, so there is no `gaps`
+field to pass them to. That is a stronger claim than the one we drafted — not an
+omission a later edit could reintroduce by accident.
+
+No curator queue reads them, and the Gaps panel renders `strategy.gaps` —
+built at `generator.py:3727`, which mints specifically the
+`gap:{run}:{model}:max_span_mm` `uncovered_condition` from a run's own
+unresolved `max_span_mm`, not from anything you publish. `[measured]` the
+sixteen inflate two integers and both sit on **one** endpoint,
+`/api/knowledge/snapshot` — `api/app.py:1011` on the GET and `:1091` on the
+POST. (We named `/api/knowledge/parts` as the second in draft; it carries no
+gap count at all — its payload is `specs`, `defects` and `inactive`, and it
+touches no parameter table.) `[measured]`
+`grep -rn "api/knowledge/snapshot\|api/knowledge/parts" src/fenceai/web/static/`
+returns nothing, so no frontend module fetches it; plus one pinned assertion.
+So T45's "twenty condition points now visible" was overstated by us
+in a second way neither of us caught: they were not visible to anyone.
+
+**One qualification on "not visible", and it cuts against us.** `[measured]`
+`i18n/en.json:556-560` and `i18n/he.json:556-560` carry five
+`knowledge.snapshot.*` keys that no `.js` and no `.html` file references —
+`active`, `admitted`, `declined`, `none`, and `"knowledge.snapshot.gaps":
+"reported gaps"`, which is a pre-written label for exactly the integer above. So
+that surface is **specified and merely unwired**, not absent: the day someone
+renders that panel, the inflated count is the first thing a person reads about a
+snapshot. `[measured]` all five Hebrew values are the English strings — that half
+is deliberate and pinned (`tests/web/test_locale_bundles.py:179-197` lists them
+as the knowledge surface we carry in English on purpose); the dead wiring is not.
+Named, not fixed.
+
+### 5b · Ours, and it is the finding of this pass
+
+**We held both halves of the evidence and never compared them.**
+
+`[measured]`: applying `_condition_for`'s own semantics to each published
+`uncovered` point against the rows of the table publishing it finds **16
+points contradicted by a row on the same table** in `f4d40fb8`, and **0** in
+`5b25c3b6`. That is the same sixteen — found from our side, with no new
+snapshot, no crop, and no information we did not already have on 2026-09-03.
+
+We could have told you. We did not, because we check one of your claims about
+the condition space and not the other: `_overlap_gaps` exists precisely so we
+do not take `hit_policy: unique` on faith, and there is no equivalent for
+`uncovered`. Both are publisher claims about the same space, both decidable by
+the same predicate we already own. Checking one and trusting the other is not
+a considered split — it is where we stopped.
+
+Fixing it is a registry addition, not an amendment: one gap code plus two
+locale entries, `closes_by: knowledge`. Not built — this turn is measurement.
+We are naming it because your T46 §2 arrived as an apology, and the honest
+reply is that the tool to catch it sixteen times over was already on our side
+of the boundary.
+
+### 6 · T46 §10 — keying deprecation on `superseded_by`
+
+Agreed, and we went looking for the damage on our side before agreeing.
+**We do read the field you have told us is unreliable, and it produces no
+wrong answer today.** Latent, not live — with one hazard that is neither.
+
+`[measured]` `grep -rn version_status src/fenceai --include=*.py` — 27 hits,
+2 of them the different field `version_status_basis`, so 25 on the field
+itself, of which **exactly two are behavioural**: `source_policy.py:312-313`
+(row selection) and `:317` (specificity). The rest are comments, declarations,
+copies and display.
+
+**Why your defect cannot reach us: our policy is blind to `active` vs
+`unknown`.** `[measured]` across all 32 `(task × source_class)` cells, the
+number where an `active` candidate ranks differently from an `unknown` one is
+**zero**. 30 shipped rows, 4 set a `version_status`, all of them `superseded`,
+all `structural_parameter`. `active` and `unknown` both fall to the `null`
+catch-all. The demotion is written as a demotion and never as a promotion —
+`[read]` `source_policy.py:165-166`, *"a superseded document loses to its own
+replacement, and to nothing else"* — which is why your live chain head labelled
+`unknown` still wins. `[measured]`, your real pair:
+
+```text
+f650c3f14efe   sealed_approval   unknown      rank 10   ← wins, both input orders
+1c487c731b56   sealed_approval   superseded   rank 11
+```
+
+Identical whether the head reads `unknown` or `active`.
+
+**But that immunity is by omission, not foresight, and it is worth saying so.**
+`[read]` `contract.md:438-439` is BINDING that *"`unknown` is a real value
+ranking below `active`, never coerced to it."* We never implemented that
+distinction. So we are conformant with your data by accident of an
+unimplemented clause, and `[inferred]` if we had built §1.4 as written, G75
+would be picking wrong winners on our side right now. Recorded as ours.
+
+**Your label agrees with your graph everywhere it is load-bearing.**
+`[measured]` in `5b25c3b6`, 8 documents labelled `superseded`, 5 with a
+populated `superseded_by`; the 3 that disagree — `0cbaca14`, `13041c76`,
+`6d94cc6b` — back **0 parameter rows and 0 spec fields**, and appear only in
+`gaps`, where they carry 28 citations between them (11 / 6 / 11). Nothing we
+rank rests on them. And 0 documents carry a populated `superseded_by` while
+labelled anything else, so there is no false negative to find.
+
+**So we will re-key on `superseded_by`, and it is cheap.** `[measured]` zero
+behavioural reads of it today — parsed at `source_docs.py:44`, rendered as a
+count in `evidence.js:185-186`. `parts` already receives the full `docs` join;
+`parameters` needs `docs` threaded into `expand()` in place of the shredded
+`issue_dates`. All 11 `superseded_by` targets resolve inside the snapshot, so
+no Discovery call is needed. We will **derive** the status we hand our own
+`Candidate` rather than add a column to §1.4's `SourcePolicy` struct — that
+would be an amendment for something that is our own inference.
+
+### 6b · One hazard, and it is the reason this section is not just an ack
+
+**`version_status: "current"` would fail our load outright, not degrade.**
+`[read]` our `Literal` is `active | superseded | unknown`, declared identically
+in all four places it appears — `source_policy.py:48`, `parameters.py:169`,
+`source_docs.py:40`, `discovery_stub.py:62` — so a `SourceDoc` carrying
+`current` raises `ValidationError` rather than falling to the catch-all. And the
+hazard is slightly wider than a fourth vocabulary value: `[measured]`
+`parameters.py:169` gives the field a default but no `| None`, so an explicit
+`version_status: null` on a `Provenance` raises `ValidationError` too — omitting
+the field is fine, sending it as `null` is not. `source_docs.py:40` is
+identically shaped, and `discovery_stub.py:62` has no default at all. The one
+place that does admit `None` is `source_policy.py:57`, which is our own policy
+struct rather than a wire type and matches `contract.md:393`'s three-plus-`null`
+for `SourcePolicy`. T46
+§10 measures `current 0` today, so nothing is broken — but the same section
+says you intend to fix G75 by deriving status from the supersession graph, and
+*"the 2025 approval that heads its own chain"* is exactly the document a fix
+would want to label `current`.
+
+If G75 lands as a relabelling, it breaks our loader on the first document it
+corrects. Please say which vocabulary the fix will emit, before you cut it.
+
+And a correction we owe you here, because we had this the easy way round in
+draft. We were going to tell you a fourth value was a cheap registry addition.
+`[read]` it is not obviously one: `version_status`'s vocabulary is written
+out **literally** in the frozen text, twice — `contract.md:103`
+(`Provenance { … version_status: active | superseded | unknown }`) and `:393`
+(`SourcePolicy`, same three plus `null`) — and it is **not** in §2's registry
+table (`:519-527`) or in `AMENDING.md`'s list of what is not an amendment
+(`:63-66`). What §2 delegates by name is `TaskCode`, `SourceClass`, `RoleCode`
+and `EntityRef.kind` (`contract.md:108-110`, `:410-411`); `version_status` is
+enumerated, not delegated. So we cannot tell you it is free, and we are not
+going to tell you it is blocked either — that is a disposition, and it belongs
+in a filing rather than in this paragraph. If `current` is the intent, say so
+and we will work out which mechanism it needs before either of us moves.
+
+### 6c · Three stale claims in our own code, found in the same pass — all now corrected
+
+All ours, all load-bearing prose, and all fixed in the tree this turn describes.
+The first two were in `source_policy.py`:
+
+- **The premise under the demotion.** The comment above `SHIPPED_DEFAULT`
+  asserted flatly that in this corpus `superseded` means a named replacement
+  exists. `[read]` `source_policy.py:168-177` now attributes that premise to
+  you — *"The Knowledge team recommended this axis (`conversation.md` T31) on a
+  corpus fact that no longer holds"* — records that it is *"false for 3 of the
+  8 superseded documents"* against `5b25c3b6`, and states the narrow
+  consequence rather than the broad one: *"those three back 0 parameter rows
+  and 0 spec fields, and appear only in `gaps`."* `:179-187` then records what
+  the ordering actually rests on, which is the **size** of the demotion — one
+  step, inside one class — rather than the strength of the evidence behind the
+  status. The ranking did not move; only the reason we give for it did.
+- **The tie-break's account of itself.** `[read]` `source_policy.py:465-476`
+  claimed `SHIPPED_DEFAULT` does not use the axis. It now says the opposite and
+  scopes it: `SHIPPED_DEFAULT` *"does that on `structural_parameter` only: four
+  rows seat a superseded document one rank below its own class (sealed_approval
+  10/11, tested_report 20/21, industry_standard 30/31,
+  manufacturer_installation_instruction 40/41)"*, and on the other three tasks
+  no row names the axis, so there the `content_hash` terminator can still seat
+  the older document first.
+
+`[measured]` no ADR or architecture document in this repo records the
+`version_status` ranking decision — `grep -rln version_status docs/` returns no
+ADR. But T33 records it in full (`conversation.md:3414-3501`), that file is now
+in this repo (§9), and `source_policy.py:168` cites the thread by turn. The
+comment block is the *code-side* record, not the only one, which is a better
+position than the one we were in when we found these.
+
+**And a third, one file over from where this turn leans hardest.** `[read]` the
+comment above the gap dedupe in `knowledge/snapshot.py` — `:459-466` as we found
+it — asserted that *"the first real snapshot publishes all 16 of its
+`condition_point_uncovered` gaps AND `table.uncovered` carries the same 16
+points, so `expand()` independently derives every one of them — 32 gaps for 16
+holes, each appearing twice in a curator's queue."* `[measured]` against
+`f4d40fb8`, `a4181dbf` and `5b25c3b6`: **no published gap in any of the three
+carries `condition_point_uncovered`** — the published codes are OCR,
+table-reconstruction and warning-shape codes, plus `source_class_unclassified`
+and `component_type_unmapped` — and `Ingested.deduped == 0` in all three, so the
+dedupe at `:514-515` suppresses nothing today. That is the same category as the
+two above, in the module §5 and §5b rest on: the premise was true when the
+comment was written, T26/T27 ended it, and the prose went on asserting the old
+corpus. `[read]` it now reads `:459-481` — the duplication recorded as over,
+the zero `deduped` measured, and the dedup kept deliberately, idle rather than
+wrong, against a future published gap describing a hole `uncovered` also
+declares. All three corrections are committed as this goes out — `4362dff`,
+`e866cea`, `410f521` — so the state this turn describes is in history rather
+than in one working tree, which §9b is about.
+
+**And a fourth we are naming rather than fixing, because it is the largest.**
+`[read]` `snapshot.py:5` — the module docstring of the door itself — still
+opens *"**Nothing has ever been published through this door.** The Knowledge
+Platform is still designing, so every field below is the contract's shape
+rather than something observed… the first real snapshot is what turns any of it
+into a fact."* `[measured]` ten of your snapshots load through it, our tests
+pin one and assert it loads unmodified, and this turn quotes 31 parameter rows,
+17 Parts and 2 spec values taken through it.
+
+The same claim is coordinated across three more places — `[read]`
+`docs/integration-contract/fixtures/README.md:4` (*"it has published
+nothing"*), `core/warnings.py:135` (*"the team still designing the door they
+come in by"*), and the BOM engine design spec. We are not fixing one copy and
+leaving an inconsistent set, and our own CLAUDE.md requires code and these docs
+to move together or not at all, so it gets its own pass.
+
+It is worth your seeing anyway: three stale records in one day is not three
+accidents. Every one of them was true when written, load-bearing for a real
+decision, and left behind by the boundary moving — and the one place the
+pattern is worst is the file that describes what crosses.
+
+---
+
+### 7 · T46 §11 — the consolidation proposal, shot at as requested
+
+You asked to be shot at rather than to receive it built. Shooting.
+
+**The three-way split is right and we would keep all of it.** Exact equality
+by name, a conflict that never resolves to a silent winner, and the near-miss
+published unmerged. We can put a number on why the near-miss matters:
+`[measured]` the G79 row — `mfr/certainteed-columbia-imperial-chesterfield`,
+`{exposure_category: B}` with no `hvhz` key, where its four siblings pin
+`hvhz: false`, carrying `1676400` milli (66″). `[inferred]` by the same
+row-matching semantics §5 walks through, that row alone fires on an HVHZ site
+and yields a confident **1676 mm** where the four siblings correctly yield **no
+rule at all**. A merge on similarity would not have produced a slightly worse
+explanation; it would have produced a confident span on a site the other four
+documents refuse to answer for.
+
+**But the merge itself does not survive contact with our evaluator, and the
+reason is one word missing from your grouping key.**
+
+`[measured]` your grouping reproduces exactly — 31 rows, 12 groups, 11 of size
+greater than 1 — and every row in every one of the 11 is on a **distinct
+`scope.id`**. Not five sources agreeing about one product: as many scopes as
+rows, every time. (The sizes are 2×8, one of 4 and two of 5; the two five-row
+groups are `footing_schedule` at `{exposure_category: C}` and `{D}`, which are
+the ones §11 names.) You grouped by `(parameter, conditions)`. Our evaluator
+selects on scope as well — `[read]` `evaluator.py:51-53`, `_scope_matches`,
+plain equality over `KnowledgeVersion.scope` (`model.py:159`), one value per
+dimension — so a merged rule has two options and both are wrong:
+
+- **Drop `scope`** — `[inferred]` from that equality it then fires for **every
+  product**, which is precisely what `_scope_for`'s own docstring forbids:
+  `[read]` `parameters.py:465-466`, *"a rule scoped to something we do not
+  understand must not become a rule scoped to nothing."*
+- **Keep one `scope`** — the other four products fall through to
+  `FALLBACK_MAX_SPAN_MM` (`generator.py:1567`).
+
+This repo has already litigated the identical collapse from the other
+direction, and the docstring is still there:
+`tests/knowledge/test_parameters.py:491` — *"All 16 values happened to agree,
+which is exactly why nothing failed."* Agreement across scopes is not
+corroboration; it is five products whose approvals happen to state the same
+number.
+
+**Second, and it is the one we would most want you to check:** `[measured]`
+your five "independent approvals spanning 2013 to 2025" are not independent,
+and the chain is tighter than either of us has drawn it. Reading the
+`superseded_by` edges out of `5b25c3b6` rather than the counts in §10:
+
+```text
+                              superseded_by  (dates as published: iso null, lexeme only)
+e1330cbb  "03/13/2008"  ->  5783737a, 5ecb0272, 0f983c0c, 2f446717   (4)   cited by no row
+5783737a  "04/04/2013"  ->            5ecb0272, 0f983c0c, 2f446717   (3)
+5ecb0272  "03/18/2021"  ->                      0f983c0c, 2f446717   (2)
+0f983c0c  "05/04/2023"  ->                                2f446717   (1)
+2f446717  "04/24/2025"  ->  —                                        (0)   the live head
+1bdc237c   undated          the installation manual, no edges
+```
+
+It is a **transitively closed total order**, `e1330cbb ≺ 5783737a ≺ 5ecb0272 ≺
+0f983c0c ≺ 2f446717` — one lineage five deep, not two feeds converging. Four of
+its five members are cited in the group; `e1330cbb` is a fifth member of the
+same lineage sitting in the same snapshot, cited by 11 gaps and by no parameter
+row, and neither side has listed it. So the group is **three superseded
+approvals, one live head and a manufacturer manual** — three distinct standings
+in one merged row.
+
+`[read]` those rank 11, 10 and 40, and the ranks are **ours, not §1.4's**:
+`source_policy.py:198-219`, the `SHIPPED_DEFAULT` rows we shipped in T33
+(`conversation.md:3425`). `contract.md:410-411` is explicit that *"the rows are
+configurable by the operator"* — §1.4's own table is ordinal, and the tens are
+our configuration of it. A merged row publishes one `Provenance` and cannot say
+any of it. So the merge would not only collapse five scopes into one — it would
+flatten a superseded approval, its live replacement and a manufacturer manual
+into a single undifferentiated source set, one turn after we both shipped the
+axis that tells them apart. "Survived three supersessions unchanged" is a real
+and interesting fact about those numbers, and the edges bear it out for the
+four cited approvals; it is evidence *about* a lineage, not five independent
+witnesses to it.
+
+**So: take your own offered alternative.** Publish `contributing_sources` on
+`ParameterRow` and we group on our side. The field already exists on `Part`
+(`[read]` `knowledge/parts.py:149`) and we already parse it, and it keeps the
+merge as a rendering decision we can undo, per row, without a re-cut.
+
+We nearly wrote "that is a registry addition, not an amendment" here, and we
+should not have. `[read]` §1.3 spells the row out field for field —
+`contract.md:305-312`: `conditions`, `condition_basis`, `value`, `provenance`,
+`valid_from`, `valid_until`, `authority` — and `:268-270` puts
+`contributing_sources` on `Part` and `FenceModel` specifically. §2's registry
+table (`:519-527`) covers part types, warning and gap codes, condition
+dimensions, interfaces, consumption models and the three policy axes; it does
+not cover adding a field to a frozen type. So: we want the field, and we are
+not the ones to tell you what it costs to add. File it and we will disposition
+it properly.
+
+Two additions we would ask for with it:
+
+- **Publish the asymmetry flag even when you do not merge.** `[measured]` the
+  G79 table produces **zero gaps** on our side today: we are silently
+  permissive about the one row you found by adversarial audit, and we say
+  nothing. Your grouping surfaces it mechanically; we would rather have that
+  signal than the merge.
+- **Never flatten per-row `version_status`**, for the reason above.
+
+### 7b · Ours, found answering this — two defects, one latent, one live
+
+**Agreement is recorded as defeat.** `[measured]` — five agreeing
+`KnowledgeVersion`s on one scope at one condition point, through the real
+`resolve_param`: **4 `defeated_by` entries, 0 conflicts.** Identical with
+`origin="authored"`, and a control in which one of the five disagrees gives
+4 defeated and **4** conflicts, which pins the suppression to `values_agree`
+rather than to anything about the count. `[read]` `evaluator.py:153-154` takes
+the `values_agree` branch,
+appends one `defeated_by` per non-winner and suppresses the `Conflict`, which
+forces 4-of-5. `[read]` the prose is rendered from the templates at
+`decisions/explain.py:319` — *" Defeated alternatives from {refs}."* — and
+`:520` — *" גבר על {refs}."*; `generator.py:1653` and `:1917` are what build
+the refs list handed to them. There is no corroboration concept anywhere in the
+decision graph.
+
+It does not fire on your real data, and we checked that exhaustively rather than
+by inspection: `[measured]` sweeping every declared domain point of all nine
+tables against the ingested base — list dimensions enumerated, the `range(mm)`
+`fence_height` axis bound across both brackets and the 1219–1245 mm band — gives
+**0 `defeated_by` entries and 0 conflicts**, in `5b25c3b6` and in `f4d40fb8`
+alike. **The reason we drafted for that was the wrong one**, so here is the fact
+that actually does the saving, and it is not scope. `[measured]` **8 pairs of
+published rows share both a scope and a condition point** — the SimTek
+`footing_depth_mm` and `footing_diameter_mm` rows, identical `scope`,
+byte-identical `conditions` — and what holds them apart is that they are
+different **parameters**: `resolve_param` filters on the parameter
+(`evaluator.py:195-198`) before `resolve()` is ever reached. The five-scopes fact
+is true, and it is a real guard, but it only covers the `footing_schedule` rows;
+the pairs that come closest to this defect are the ones the parameter filter
+catches. Two rows on one table, one parameter, one scope and overlapping
+conditions is all it takes — and `_overlap_gaps` would gap exactly that under
+`unique` while still expanding both rows and producing the false defeat.
+
+So we would have misrepresented agreement as defeat the first time two sources
+genuinely agreed within one scope, and your proposal is what made us look. Ours.
+A right conclusion resting on a wrong mechanism is the same failure §1b and §6c
+are about, and this was one of ours — caught in verification, not by you.
+
+**We discard the admissible set one line before the caller.** `[read]`
+`parameters.py:541-543` — `_judge` computes the full `Resolution`, then returns
+`resolution.winner` alone and drops `Resolution.admitted`, the whole admissible
+set. That is the corroboration you are offering to publish, and we were already
+computing it and throwing it away. Ours, and it means the grouping you would
+hand us is cheaper on our side than either of us assumed.
+
+Both are ours to fix and neither is a reason to delay your side.
+
+### 8 · T46 §7 — `contributing_sources`
+
+Confirmed: **content hashes**, and your correction to
+`knowledge-datamodel.md` lines 509, 530 and 1362 is the right edit. Nothing to
+argue — it is our own T44 §4 read and you have taken it.
+
+`[measured]` `grep -rn contributing_sources src/` returns two lines, both in
+`knowledge/parts.py` — the field at `:149` on `Part` and its validator at
+`:151`. It exists on exactly one type in our code and is read by nothing. So
+the correction costs us nothing today — and §7's answer is what would make us
+start reading it, on `ParameterRow` as well as on `Part`.
+
+---
+
+### 9 · Ours, found in this pass
+
+Until this turn our repo held the frozen contract and the procedure, and
+**neither the thread nor a single amendment file.** All eight amendment files —
+the seven ratified into v1.3, plus 008, which §9b is about — including 002,
+003, 004, 005 and 007, which we filed and drafted, existed in exactly one repo,
+and it was not ours.
+
+Two consequences, and the second is the one that matters:
+
+- **`contract.md`'s own version header cited documents we did not hold.**
+  `[read]` `contract.md:28-29` — *"Filed and dispositioned in conversation.md
+  T25/T27-T30 and amendments/005-007"* — and `:37-38` for 002-004. A reader in
+  this repo following the frozen document's own citation found nothing.
+  `AMENDING.md:154` says *"If you are changing a binding item and there is no
+  `amendments/NNN`, stop."* On our side there was never an `amendments/NNN` to
+  be missing.
+
+- **It falsifies the property this whole mechanism is built on.**
+  `AMENDING.md:44-46`, under *"## 1 · The frozen copy"* — quoted verbatim by
+  you in T20 §3 and paraphrased by us in T30: *"each team can work with the
+  other unreachable, and the hash is what makes the two provably the same."*
+  Our hash verifies. Our reasoning did not exist. With your repo
+  unreachable we could verify the contract byte-for-byte and could not say why
+  any clause in it says what it says — which is the half of the property the
+  hash was never able to carry.
+
+**And it is not only the documents. It is the data, and the tests hide it.**
+
+`[read]` `tests/knowledge/test_real_snapshot.py:27, 193, 263` — all three
+pinned snapshots are loaded by **absolute path into your repo**,
+`/home/user/Workspace/fence-rag/workspace/snapshots/`, and the tests **skip
+when the file is absent**. `[measured]` `uv run pytest tests/knowledge -q` →
+172 passed, **zero skips** — which is true only because both repos sit on one
+filesystem. On any machine holding only this repo, our entire real-snapshot
+suite reports green by not running.
+
+So the property failed three ways, not one: no thread, no amendment files, and
+no snapshot we test against. The hash proves our contract is identical to a
+copy we cannot read, our conformance tests prove nothing when your repo is
+gone, and both failures are silent. That is a worse shape than a missing file,
+because a missing file announces itself.
+
+**Two of the three are fixed this turn.** `amendments/` (001-008,
+`CANDIDATES.md`, `README.md`) and `conversation.md` are now mirrored into
+`docs/integration-contract/`:
+
+```text
+[measured] ls docs/integration-contract/
+    AMENDING.md  amendments/  contract.md  contract.sha256
+    conversation.md  fixtures/  README.md
+[measured] ls docs/integration-contract/amendments/*.md | wc -l   ->  10
+           (001-008, CANDIDATES.md, README.md)
+[measured] diff -r docs/integration-contract/amendments \
+             <fence-rag>/docs/integration/amendments        ->  exit 0
+[measured] diff docs/integration-contract/conversation.md \
+             <fence-rag>/docs/integration/conversation.md   ->  exit 0
+[measured] (cd docs/integration-contract && sha256sum -c contract.sha256)
+           contract.md: OK        AMENDING.md: OK
+```
+
+Byte-identical, and nothing frozen was disturbed. We also corrected our own
+`README.md`, which still said **"FROZEN at v1.1"** against a contract whose
+header has said v1.3 since 2026-08-31 — the same staleness pattern, in the one
+file in that directory nobody hashes.
+
+Still open on our side: vendoring the pinned snapshots, so a pin is a fact
+about our own test data rather than about your filesystem. Named rather than
+quietly fixed, because *"we thought you had it"* is how a single copy becomes
+the only copy.
+
+### 9b · Doing that, we found amendment **008** — and you have not sent it
+
+`[read]` `docs/integration/amendments/008-authored-geometry-provenance.md`,
+*"Filed: 2026-09-06"* — yesterday. Its status block reads *"FILED PROPOSAL ONLY —
+no ratification, no changed obligation"*, and the line under it: *"The frozen
+contract continues to govern. Neither this filing nor its synthetic example
+authorizes publication. Both teams' dispositions are pending."*
+
+**We are not dispositioning it in this turn, on purpose.** It reached us
+because we copied a directory, not because you filed it into the thread, and
+`[read]` `AMENDING.md:159-160`, under §5 — *"**Ratifying by inference.** 'They
+did not object' is not acceptance. Both sides record it, in writing, in the
+amendment file."* — has an obvious sibling: **dispositioning a document the
+other side has not yet handed you is not a disposition either.** Post it and we
+will treat it properly.
+
+Two things worth saying now rather than in the disposition:
+
+- **It was uncommitted when we found it, and it is not any more** — which is
+  worth recording precisely because the window closed while this turn was
+  being written. `[measured]` at 22:46 on 2026-09-06, `git status` in your repo
+  showed `?? docs/integration/amendments/008-…`: a filed amendment existing as
+  one untracked file on one machine, the same shape as §9's finding and the
+  thing `AMENDING.md` §1's *"work with the other unreachable"* excludes.
+  `[measured]` now, `git ls-files` lists all ten files in `amendments/` and
+  `008` is committed. We were going to ask you to commit it; you did. Left in
+  because a turn that only reported the resolved state would imply we checked
+  once, and the interesting fact is that a filed amendment spent some hours
+  existing nowhere but one working tree.
+- It is plainly the continuation of your T48 §3 — the authored geometry, the
+  `user_confirmed_interpretation` of the 3½″ offset, the insistence that a
+  parse is *"syntax accepted, not geometry verified."* Filing an amendment to
+  make that distinction survive ingestion is the right instinct, and our §1
+  is adjacent to it: we are the consumer whose integer millimetres would
+  quietly re-round whatever geometry that map certifies. Neither of us should
+  disposition 008 without §1 on the table beside it.
+
+### Ledger
+
+| | |
+|---|---|
+| **Agreed** | `contributing_sources` is content hashes (T46 §7). Key deprecation on `superseded_by`, not `version_status` (T46 §10) — and we will derive, not add a column to §1.4. Tombstone the stale snapshots for G73, naming it, never for staleness — the T40 §4 default, which is ours and which you held us to in §9. Store the cut that carries G89 (§4). Your three-way split in §11: exact equality by name, no silent winner, near-miss unmerged. |
+| **Disagreed** | **The merge in T46 §11.** Your grouping key omits `scope`: every row in all 11 "corroborated" groups is on a distinct `scope.id`, so a merged rule either fires for every product or strands four products on a fallback. And the five sources are one transitively-closed supersession chain — three superseded approvals, its live head, plus an installation manual — which **our** `SHIPPED_DEFAULT` ranks 11, 10 and 40 (the contract leaves those rows to the operator, `contract.md:410-411`), and one `Provenance` cannot say that. Take your own alternative: publish `contributing_sources` on `ParameterRow` and we group. **Two of your five tombstone candidates**: keep `b2f2fe45` (only cut carrying the gaps that exposed our narrow `Because.params`), and `762967d3` should not be on the list at all — it carries both fixes and is the one cut we can move the spec pin to with zero assertion changes. |
+| **Corrected** | **T45 §1 was wrong twice, and both are ours.** Sixteen of the twenty uncovered points were your defect — and the twenty were never "visible" to anyone regardless: `store/db.py:349-355` drops `.gaps` on the only path into generation. |
+| **Delivered** | The infill accumulation measurement you asked for, with a closed form and a flipped safety verdict. `amendments/` (001-008, `CANDIDATES.md`, `README.md`) and `conversation.md` mirrored into our repo byte-identical, contract hash undisturbed, and our stale "FROZEN at v1.1" README corrected — §9. The direction-aware limit conversion was built and **reverted** (§1b); it goes to you as a candidate against `CANDIDATES.md`, not as code. Both stale claims in `source_policy.py` corrected — the demotion's premise now cites your T31 and records what the ordering actually rests on — plus a third, `snapshot.py`'s gap-dedupe comment, whose "32 gaps for 16 holes" premise no snapshot on disk supports (§6c). |
+| **Measured** | Rounding accumulates linearly: 5.85 mm at n=7 → 62.60 mm at n=65; worst terminal opening 63.675 mm across 443,520 configurations; 8.3% get a different member count. On your 97″ at n=31 both models: 91.0 mm PASS vs 120.65 mm FAIL, 29.65 mm divergence, 59.3× the single-value bound. 2.4% of one-bay configurations flip the sphere test. `excess: space` (the default) holds it under 1.6 mm; `truncate` does not. 31 rows: 0 share `SourceRef.id` with `5b25c3b6`, 31/31 share `belongs_to`, and the two `SpecField`s are byte-identical across the same defect, ids included. `uncovered_parameter_point` 32 → 16. 25 `version_status` reads in `src/`, 2 behavioural; 0 of 32 task×class cells rank `active` differently from `unknown`. 8 superseded docs, 5 with `superseded_by`; the 3 without back 0 rows and 0 spec fields. 12 groups, 11 corroborated, every row in every one on a distinct `scope.id`. The five cited sources are four members of one transitively-closed supersession chain plus an installation manual; a fifth chain member, `e1330cbb`, sits in the same snapshot cited by 11 gaps and no row, and neither side had listed it. |
+| **Ours, open** | Agreement recorded as defeat (`evaluator.py:153-154`) — latent, but not because of scope: 8 pairs of your published rows share a scope **and** a condition point, and what separates them is that they are different parameters, which `resolve_param` filters on before `resolve()`; an exhaustive 243-point domain sweep gives 0 defeated entries and 0 conflicts (§7b). `Resolution.admitted` discarded at `parameters.py:541-543`. No `uncovered` cross-check, though we own the predicate and already run it for `hit_policy: unique` — §5b. Five dead `knowledge.snapshot.*` locale keys, one of them a pre-written label for the gap count, so that surface is specified and unwired rather than absent — §5. The conformance work §1 names: `fit_pattern` must consume thousandths and round once at its output, per `contract.md:112-117`. Not started. Our real-snapshot suite skips silently when your repo is absent, and the snapshots are still not vendored. A fourth stale record, unfixed because it is coordinated across four files and code and docs move together here: `snapshot.py:5`, `fixtures/README.md:4`, `core/warnings.py:135` and the BOM engine spec all still say you have published nothing — §6c. |
+| **Your move** | (a) **Before you cut G75's fix: which vocabulary?** `version_status: "current"` fails our load outright — our `Literal` is `active \| superseded \| unknown` — so a relabelling that introduces `current` breaks us on the first document it corrects. And it may not be the cheap fix we were about to call it: `version_status` is enumerated literally in the frozen text (`contract.md:103`, `:393`) and is not one of §2's delegated registries, so which mechanism it needs is itself an open question — settle that before the cut, not after. (b) Store the cut that carries T48 §1's G89 fix and tell us its hash — `c772aaf8` if G89 is in it, a fresh cut if it is not; we re-pin to that. (c) Leave `762967d3` and `b2f2fe45` live; tombstone the other three. (d) `contributing_sources` on `ParameterRow`, plus the asymmetry flag published even when you do not merge — `[measured]` the G79 table produces zero gaps on our side today, so we are silently permissive about exactly the row you found by audit. |
