@@ -456,14 +456,29 @@ def ingest(
             elif ref not in colliding:
                 admitted[ref] = verdict
 
-    # A hole the publisher already declared is not a second hole. The first real
-    # snapshot publishes all 16 of its `condition_point_uncovered` gaps AND
-    # `table.uncovered` carries the same 16 points, so `expand()` independently
-    # derives every one of them — 32 gaps for 16 holes, each appearing twice in a
-    # curator's queue. `GapSubject.key()` is what makes them recognisable as the
-    # same hole: parameter, scope and point together. That identity is exactly
-    # what v1.2's `ParamRef` added, which is the argument for having implemented
-    # it rather than widening `id` to a longer string.
+    # A hole the publisher already declared is not a second hole. The early
+    # snapshots published each of their 16 uncovered points twice: once as a
+    # top-level `condition_point_uncovered` gap, and again as the
+    # `table.uncovered` entry `expand()` derives its own
+    # `uncovered_parameter_point` from — 32 gaps for 16 holes, each hole
+    # appearing twice in a curator's queue, and the counts reading "16 published
+    # + 16 suppressed" for what is one piece of work.
+    #
+    # That duplication is over. The publisher stopped emitting the top-level gap
+    # and lets `uncovered` carry the point alone (`conversation.md` T26/T27,
+    # which is what §1.3 always said it meant), and the data agrees: no snapshot
+    # in their workspace today — `5b25c3b6…` included — publishes that code, and
+    # `deduped` measures 0 against every one of them. The 16 holes arrive once,
+    # as ours.
+    #
+    # The dedup stays anyway, and deliberately. It is idle rather than wrong, and
+    # what it guards against is a thing neither side can see coming: any future
+    # published gap that happens to describe a hole `uncovered` also declares.
+    # That arrives as two work items for one hole rather than as an error, so
+    # nothing else would catch it. `GapSubject.key()` is what makes the two
+    # recognisable as the same hole: parameter, scope and point together. That
+    # identity is exactly what v1.2's `ParamRef` added, which is the argument for
+    # having implemented it rather than widening `id` to a longer string.
     # What this run declined to trust, gathered from the refusals themselves so
     # there is no second channel and no chance of the two disagreeing.
     declined: dict[str, list[int]] = {}
