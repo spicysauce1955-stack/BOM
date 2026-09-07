@@ -50,7 +50,12 @@ export const SALES_ROAD = {
  *  salesperson's map would be worse than showing them none. */
 export const ROADS = { sales: SALES_ROAD };
 
-/** The road for a role, or `null` for a role that has no road. */
+/** The road for a role, or `null` for a role that has no road.
+ *
+ *  `Object.hasOwn`, not `ROADS[role] || null` — the latter resolves through
+ *  the prototype and hands back `Object` for `roadFor("constructor")`, a
+ *  truthy non-road whose `.steps` is undefined. `road()` guards gap codes the
+ *  same way, for the same reason: both keys come from data. */
 export function roadFor(role) {
-  return ROADS[role] || null;
+  return Object.hasOwn(ROADS, role) ? ROADS[role] : null;
 }

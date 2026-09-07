@@ -77,6 +77,8 @@ out.panel_of_nothing = panelFor(SALES_ROAD, "not_a_step");
 out.road_for_sales = roadFor("sales") === SALES_ROAD;
 out.road_for_office = roadFor("office");
 out.road_for_all = roadFor("all");
+out.road_for_inherited = ["constructor", "toString", "hasOwnProperty"]
+  .map((k) => roadFor(k));
 
 out.claimed_codes = SALES_ROAD.steps.map((s) => [...s.requires, ...s.wants]);
 
@@ -194,6 +196,12 @@ def test_a_role_with_no_road_gets_none(out):
     assert out["road_for_sales"] is True
     assert out["road_for_office"] is None
     assert out["road_for_all"] is None
+
+
+def test_a_role_named_like_an_object_key_is_not_a_road(out):
+    """`ROADS[role] || null` would hand back `Object` itself. `road()` guards
+    gap codes the same way; both keys come from data."""
+    assert out["road_for_inherited"] == [None, None, None]
 
 
 def test_the_engine_imports_nothing():
