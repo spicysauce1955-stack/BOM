@@ -20,7 +20,7 @@
 
 import { apiGet, esc } from "./api.js";
 import { t } from "./i18n.js";
-import { on, state } from "./state.js";
+import { emit, on, state } from "./state.js";
 import { money, tu } from "./units.js";
 
 // Three states, not two, and that is audit finding B01
@@ -118,6 +118,12 @@ async function refresh() {
     cache = null;
     status = FAILED;
   }
+  // `road.js` reads this SAME payload rather than issuing its own request —
+  // "one request is behind both the road and the estimate" (road-model.js).
+  // A failed check publishes `null`, same as this panel: the road must read
+  // `unknown` rather than inherit whatever gap list happened to load last.
+  state.handover = cache;
+  emit("handover-changed", cache);
   // The BOM is fetched only when a run exists — asking for a price before
   // anything has been generated would 404 on every keystroke, and "no run yet"
   // is a state with its own sentence rather than an error.

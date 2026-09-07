@@ -6,9 +6,10 @@
 // class, so the road and the strip can never disagree about which panel shows.
 
 import { esc } from "./api.js";
+import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { currentRole } from "./role.js";
-import { on, state } from "./state.js";
+import { on, saveStated, state } from "./state.js";
 import { setTab } from "./tabs.js";
 import { panelFor, road } from "./road-model.js";
 import { roadFor } from "./roads.js";
@@ -39,6 +40,16 @@ function build(host, def) {
     + `<span class="road-name">${esc(t(`road.${s.key}`))}</span>`
     + `<span class="road-state"></span></button>`).join("");
   host.addEventListener("click", (ev) => {
+    const skip = ev.target.closest(".road-skip");
+    if (skip) {
+      ev.stopPropagation();          // stating a fact is not navigating
+      const fact = skip.dataset.fact;
+      pushSnapshot("state-fact");     // as undoable as any other job edit
+      state.project.stated = { ...state.project.stated,
+                               [fact]: !state.project.stated?.[fact] };
+      saveStated();
+      return;
+    }
     const btn = ev.target.closest("[data-step]");
     if (!btn) return;
     current = btn.dataset.step;
@@ -86,6 +97,20 @@ export function render() {
       : step.state === "skipped" ? t("road.state.skipped")
       : step.gaps.length ? t("road.state.missing", { n: step.gaps.length })
       : t(`road.state.${step.state}`);
+
+    // Only a step nothing can check offers this, and the wording is a
+    // STATEMENT rather than a "skip": the office reads it as a fact the
+    // salesperson asserted, not as a step somebody bypassed.
+    if (step.skippable) {
+      let btn2 = btn.querySelector(".road-skip");
+      if (!btn2) {
+        btn2 = document.createElement("span");
+        btn2.className = "road-skip";
+        btn2.dataset.fact = def.steps.find((s) => s.key === step.key).satisfiedBy;
+        btn.appendChild(btn2);
+      }
+      btn2.textContent = t(step.skipped ? "road.unskip" : "road.skip");
+    }
   }
 }
 

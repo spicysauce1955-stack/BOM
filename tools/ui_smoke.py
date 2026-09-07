@@ -1337,11 +1337,133 @@ fetch('/api/projects/%s').then(r => r.json()).then((p) => {
           done["gaps"] == [] and done["ready"] == 1, done)
 
 
+def _smoke_road(c) -> None:
+    """The road band (Tasks 4-6) — the salesperson's ONLY navigation once
+    `#tabs` is hidden — had zero browser coverage before this case: nothing in
+    this file grepped for `#road`, `data-step` or `road.`. This drives the two
+    things only a browser can prove: that the band actually renders all eight
+    steps, in the eight-step order, and that clicking the skip control (Task
+    6) — the way a salesperson states "no gates on this job" — reaches the
+    server and comes back as a genuinely CHANGED badge, not just a changed
+    span nobody re-renders.
+
+    Forces English the way `_smoke_post_inspector` does: the suite reaches
+    this case with the app left in Hebrew ("back to Hebrew for what follows"),
+    and the assertions below read the control's own wording.
+    """
+    if c.js("document.documentElement.lang") != "en":
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.0)
+
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+    c.js("document.getElementById('new-project-name').value = 'road'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    pid = c.js("document.getElementById('project-select').value")
+
+    # A drawn fence, so the anchor step reads "started" — road-model.js pins
+    # "empty beats skip": every step short-circuits to `empty` until then, and
+    # that would leave the gates step's transition (below) unobservable.
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 5000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]}
+    c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+
+    # --- the road is a salesperson's surface -------------------------------
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  s.value = 'sales';
+  s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+
+    order = c.js(
+        "[...document.querySelectorAll('#road button')].map(b => b.dataset.step)")
+    check("the band renders all eight steps, in the eight-step order",
+          order == ["job", "property", "layout", "sideview", "model", "gates",
+                    "notes", "review"], order)
+
+    gates_sel = '#road [data-step="gates"]'
+    before_state = c.js(f"document.querySelector('{gates_sel}')?.dataset.state")
+    check("a drawn fence with no gate placed leaves the gates step clean",
+          before_state == "done", before_state)
+    before_label = c.js(f"document.querySelector('{gates_sel} .road-skip')?.textContent")
+    check("the skip control opens by offering to state the absence",
+          before_label == "There are none on this job", before_label)
+    c.shot("54-road-band.png")
+
+    # --- state the fact: the salesperson's control, not a raw PUT ----------
+    # `element_center` scrolls, and with the tab strip hidden the band is the
+    # only navigation on screen — reset scroll first, the same idiom the
+    # property-context case uses before its second canvas drag.
+    c.js("window.scrollTo(0, 0); 'ok'")
+    c.click(*c.element_center(f'{gates_sel} .road-skip'))
+    # `saveStated()` is fire-and-forget from the click handler, so the PUT is
+    # still in flight the instant the click returns — poll for the TARGET
+    # value, not merely for a fetch to succeed (any fetch is truthy).
+    stated = wait_for(c, "fetch(`/api/projects/%s`).then(r => r.json())"
+                         ".then(p => JSON.stringify(p.stated))"
+                         ".then(s => s === '{\"no_gates\":true,\"no_promises\":false}' && s)"
+                         % pid)
+    check("the stated fact reaches the server",
+          stated == '{"no_gates":true,"no_promises":false}', stated)
+
+    after_state = wait_for(
+        c, f"document.querySelector('{gates_sel}')?.dataset.state === 'skipped' "
+           "&& 'skipped'")
+    check("the badge changes once the fact is stated — a click did not just "
+          "toggle a span nobody re-renders", after_state == "skipped", after_state)
+    after_label = c.js(f"document.querySelector('{gates_sel} .road-skip')?.textContent")
+    check("the control's own wording flips to the statement",
+          after_label == "There are some after all", after_label)
+
+    current = c.js(
+        "document.querySelector('#road [aria-current=\"step\"]')?.dataset.step")
+    check("stating a fact did not navigate — stopPropagation held",
+          current == "job", current)
+    c.shot("55-road-stated.png")
+
+    # --- and back: the control is a toggle, not a one-way door -------------
+    c.click(*c.element_center(f'{gates_sel} .road-skip'))
+    reverted = wait_for(c, "fetch(`/api/projects/%s`).then(r => r.json())"
+                           ".then(p => JSON.stringify(p.stated))"
+                           ".then(s => s === '{\"no_gates\":false,\"no_promises\":false}' && s)"
+                           % pid)
+    check("un-stating it reaches the server too",
+          reverted == '{"no_gates":false,"no_promises":false}', reverted)
+    reverted_state = wait_for(
+        c, f"document.querySelector('{gates_sel}')?.dataset.state === 'done' "
+           "&& 'done'")
+    check("the badge returns to clean", reverted_state == "done", reverted_state)
+
+    # leave the ambient state the way the next case expects it
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  s.value = 'all';
+  s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""")
+    if c.js("document.documentElement.lang") != "he":
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.0)
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
     _smoke_property_context,
     _smoke_handover_sheet,
+    _smoke_road,
     _smoke_choices_panel,
     _smoke_post_inspector,
     _smoke_side_drag,
