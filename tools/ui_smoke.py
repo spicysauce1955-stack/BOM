@@ -868,6 +868,7 @@ def _smoke_sales_mode(c) -> None:
     generate: document.getElementById("btn-generate").textContent.trim(),
     tab1: document.querySelector('#tabs button[data-tab="canvas"]').textContent.trim(),
     height_label: document.querySelector("#tool-height .t-label").textContent.trim(),
+    canvas: vis("#canvas"),
   };
 })()"""
 
@@ -888,9 +889,31 @@ def _smoke_sales_mode(c) -> None:
     check("sales mode hides every surface that decides how the fence is BUILT",
           all(sales[k] == "hidden" for k in
               ("pin", "knowledge", "bom", "inspector", "gaps")), sales)
-    check("sales mode keeps every surface that records what was SOLD",
-          all(sales[k] == "shown" for k in
-              ("base", "height", "model_row", "profile")), sales)
+    # Read each surface IN THE STEP THAT OWNS IT. Two hide mechanisms now act
+    # on these same elements — `data-role` answers who is looking, `data-step`
+    # answers what they are doing now — and their LISTS are independent
+    # (`test_step_surfaces.py`) while their EFFECTS compose. Read blind, this
+    # check sat on step 1 and called four surfaces role-hidden that the STEP
+    # had scoped away, which is a browser-only failure: no unit test sees two
+    # stylesheets composing.
+    def _in_step(step_key):
+        c.js("document.querySelector('#road [data-step=\"%s\"]').click(); 'ok'"
+             % step_key)
+        time.sleep(0.4)
+        return c.js(shown)
+
+    on_sideview = _in_step("sideview")
+    check("sales keeps the surfaces that record what was SOLD — the side view's",
+          all(on_sideview[k] == "shown" for k in ("base", "height", "profile")),
+          on_sideview)
+    on_model = _in_step("model")
+    check("sales keeps the surfaces that record what was SOLD — the model row",
+          on_model["model_row"] == "shown", on_model)
+    # And the map is in steps 2-6 only: a form, a note and a summary do not
+    # get a drawing behind them.
+    check("the drawing is absent from step 1 and present in step 3",
+          _in_step("job")["canvas"] == "hidden"
+          and _in_step("layout")["canvas"] == "shown")
     # The rename is the half a hide-list cannot do. `sales.<key>` beats `<key>`
     # in `t()` only in this mode, so these strings prove the layer resolves —
     # and prove it on the STATIC pass, which runs over the whole page at once.

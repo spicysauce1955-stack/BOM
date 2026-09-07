@@ -944,13 +944,16 @@ html[data-step="review"] #run-events,
 html[data-step="review"] #profile,
 html[data-step="review"] #model-row { display: none; }
 
-/* A toolless step must not let the canvas edit — a canvas that accepts clicks
-   with no tool selected would make every rule above a lie. Read-only, not
-   hidden: the drawing is a salesperson's job identity in step 1 and their
-   proof of work in step 8, and it stays ON screen throughout (spec: "the
-   drawing stays on screen in every step"). */
+/* The drawing belongs to the steps whose work happens ON it — 2 to 6. Steps
+   1, 7 and 8 are a form, a note and a summary, and a map behind them is
+   furniture: it invites a click that does nothing and makes step 1 read as
+   "draw something" when the only thing to do is type an address. Hidden, not
+   merely inert: `pointer-events: none` left it on screen, which is the reading
+   the user overruled. `notes` is listed for list-equality only — that step
+   switches to the annotations TAB and never shows the canvas anyway. */
 html[data-step="job"] #canvas,
-html[data-step="review"] #canvas { pointer-events: none; }
+html[data-step="notes"] #canvas,
+html[data-step="review"] #canvas { display: none; }
 
 /* --- the job panel (slice 1): who bought this fence, where, who sold it --- */
 .job-fields { display: flex; flex-direction: column; gap: 6px; margin-block: 6px; }

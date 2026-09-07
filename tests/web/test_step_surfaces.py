@@ -152,12 +152,30 @@ def test_each_step_keeps_the_tools_it_needs(out):
             assert tool not in out["hidden"][step], f"{step} needs {tool}"
 
 
-def test_the_drawing_is_never_scoped_away(out):
-    """The place stays on screen in every step. A form on an empty screen is
-    the "project 7" problem one layer up."""
+MAP_STEPS = {"property", "layout", "sideview", "model", "gates"}
+
+
+def test_the_road_band_is_never_scoped_away(out):
+    """The band is the only navigation this mode has — `#tabs` is hidden for it
+    — so a step that hid the band would strand a keyboard user completely."""
     for step, selectors in out["hidden"].items():
-        assert "#canvas" not in selectors, step
         assert "#road" not in selectors, step
+
+
+def test_the_drawing_is_scoped_to_the_steps_whose_work_is_on_it(out):
+    """Steps 2-6, and nowhere else.
+
+    This REVERSES the earlier rule that the drawing stays on screen throughout,
+    on instruction: steps 1, 7 and 8 are a form, a note and a summary, and a
+    map behind them invites a click that does nothing while making step 1 read
+    as "draw something" when the only thing to do is type an address.
+
+    `notes` is in the hidden set for list-equality only — that step switches to
+    the annotations TAB, so the canvas was never on screen there either way.
+    """
+    shown = {s for s in out["hidden"] if "#canvas" not in out["hidden"][s]}
+    assert shown == MAP_STEPS, (
+        f"the map should be in {sorted(MAP_STEPS)}, it is in {sorted(shown)}")
 
 
 def test_step_and_role_lists_stay_independent(out):

@@ -59,6 +59,28 @@ const STEP_PANELS = {
   review: ["#handover-panel", "#warnings", "#site-conditions"],
 };
 
+// The drawing itself, scoped like any other surface and kept by exactly the
+// steps whose work happens ON it: the place, the fence, the ground under it,
+// the model it is built to, and where the gates go — steps 2 to 6.
+//
+// Steps 1, 7 and 8 are a form, a note and a summary. A map behind them is
+// furniture: it invites a click that does nothing, and it makes step 1 read as
+// "draw something" when the only thing to do is type an address. The user's
+// instruction is the authority here, and it OVERRULES the earlier reading that
+// the drawing must stay on screen throughout — kept in `notes` too so this
+// list and its stylesheet copy stay equal, though `notes` switches to the
+// annotations TAB and never shows the canvas anyway.
+const STEP_DRAWING = {
+  job: [],
+  property: ["#canvas"],
+  layout: ["#canvas"],
+  sideview: ["#canvas"],
+  model: ["#canvas"],
+  gates: ["#canvas"],
+  notes: [],
+  review: [],
+};
+
 const STEP_KEYS = Object.keys(STEP_TOOLS);
 
 // The union of everything ANY step scopes. Deriving each step's hidden list
@@ -66,14 +88,16 @@ const STEP_KEYS = Object.keys(STEP_TOOLS);
 // eight hidden lists — is what stops adding a tool to one step from silently
 // leaving it visible in the other seven: a new surface only ever needs to be
 // named once, as a KEEP.
-const ALL_SCOPED = [...new Set(
-  STEP_KEYS.flatMap((key) => [...STEP_TOOLS[key], ...STEP_PANELS[key]]))];
+const ALL_SCOPED = [...new Set(STEP_KEYS.flatMap(
+  (key) => [...STEP_TOOLS[key], ...STEP_PANELS[key], ...STEP_DRAWING[key]]))];
 
 /** `{step key: [selector, ...]}` — what each step hides, derived rather than
- *  hand-written. `#canvas` and `#road` are never in `ALL_SCOPED`, so they can
- *  never appear here: the drawing stays on screen in every step. */
+ *  hand-written. `#road` is never in `ALL_SCOPED`, so it can never appear
+ *  here: the band is the only navigation this mode has, and hiding it strands
+ *  a keyboard user completely. `#canvas` IS scoped — see `STEP_DRAWING`. */
 export const STEP_HIDDEN = Object.fromEntries(STEP_KEYS.map((key) => {
-  const keep = new Set([...STEP_TOOLS[key], ...STEP_PANELS[key]]);
+  const keep = new Set(
+    [...STEP_TOOLS[key], ...STEP_PANELS[key], ...STEP_DRAWING[key]]);
   return [key, ALL_SCOPED.filter((selector) => !keep.has(selector))];
 }));
 
