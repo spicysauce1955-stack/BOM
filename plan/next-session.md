@@ -6,6 +6,10 @@ Rewritten: same day, when the Knowledge team's state changed the plan.
 Rewritten again: 2026-08-27 — the Knowledge team reviewed item A's fixture,
           which cascaded into a real fix and a five-turn negotiation. See the
           two sections right under this box, newest first.
+Rewritten again: 2026-09-07 — the eight-step road shipped, and the road turned
+          out never to have shown a state at all. Newest section first, under
+          this box. READ ITS FIRST PARAGRAPH: a second session commits into
+          this repo concurrently, so never `git add -A` here.
 Rewritten again: 2026-08-30 — the Knowledge team published real
           curation-level-2 ParameterTable data for the first time
           (conversation.md T12). Item 6 is unblocked and its mechanism is
@@ -23,6 +27,116 @@ State:    Items 1-11 done and pushed. Item 6's mechanism (SourcePolicy,
           (Gap.subject not yet structured) — reported as conversation.md T14,
           fixed on their side by amendment 004 and now passing.
 ```
+
+## 2026-09-07 — the eight-step road shipped, and the road had never once shown a state
+
+**Read this first: another session works this repo at the same time.** It
+committed into the middle of this session's sequence (`22df48d`, `e6b289a`) and
+was still writing when this closed — `plan/current-status.md`, `api/app.py`,
+`knowledge/parts.py`, `app.js`, `index.html`, both locale bundles, and a new
+`published-parts` surface. Nothing was lost and no history was rewritten, but
+**never `git add -A` in this repo.** Stage your own files by name. Where a file
+is shared — `index.html`, `i18n/*.json` — check out HEAD, reapply only your
+lines, commit, then restore the combined file. That was done three times today
+and each time the diff shrank from ~13 lines to the 1-2 that were actually mine.
+
+### The find that matters most
+
+**The road had been completely stateless since the day it shipped.** `road.js`
+has listened for `handover-changed` since the six-step road landed, and nothing
+in the codebase ever emitted it or set `state.handover`:
+
+```
+git grep "state.handover *=" eab8d43 -- src/fenceai/web/static/   ->  nothing
+```
+
+So `road()` received `null` on every render and returned all-`unknown` by
+design — no badges, ever. Not the 3-of-6 check-mapping gap the eight-step spec
+was written about; the payload simply never arrived. Six lines in
+`handover.js` (commit `61097b7`) fixed it, and the road showed a state for the
+first time. **The lesson is the shape of the failure, not the fix:** the unit
+suite was green throughout, the browser smoke was 348/348, and neither could
+see it because no test in the release gate boots the real ES-module app.
+
+### What shipped
+
+| | |
+|---|---|
+| `9808083` | `Stated` on `Project` — named facts, unrevisioned |
+| `a8df0ba` | `gates_contradicted` / `promises_contradicted`, both bundles |
+| `fd8024b` | `PUT /projects/{id}/stated` |
+| `a7945e8` `0edde86` | the road engine over `(roadDef, gaps, stated)`, `roads.js` as data |
+| `eab8d43` | eight steps rendered; `road.details` retired |
+| `61097b7` | the skip control — and the handover finally published |
+| `44894a9` | the map scoped to steps 2-6 |
+| `245df1e` | a done control on every step; date defaults to today; the landmark-draft leak |
+| `88adbf7` | Clear takes the whole drawing |
+
+Spec `docs/superpowers/specs/2026-09-07-eight-step-road-design.md`, plan
+`docs/superpowers/plans/2026-09-07-eight-step-road.md`, SDD ledger
+`.superpowers/sdd/2026-09-07-eight-step-road/progress.md` (every ruling is in it).
+
+### Traps this session walked into, so the next one does not
+
+- **`pytest -q` runs two architecture fitness tests that the release gate does
+  not.** Task 3 added a route and the plan never said to update
+  `docs/architecture/04-backend.md`'s route table; it went unnoticed for three
+  tasks because per-task verification was `tests/scenarios` plus the task's own
+  tests. **Adding a route or a store table means running the FULL suite.**
+- **`str.replace` with no match is a silent no-op.** A self-review edit
+  anchored on "A road absent" where the text said "A ROLE absent" quietly did
+  nothing, and the plan ended up removing `roadFor` from one file and never
+  adding it to the other. Every patch script since asserts its anchor first. Do
+  that.
+- **`test_road_render.py` parses `road.js` as TEXT.** It finds the first
+  click-listener registration to check the skip control's invariants
+  (stopPropagation, snapshot-before-mutate). Registering a listener above it
+  steals the anchor and leaves both unchecked — and a COMMENT containing the
+  literal call string does too. Both happened today.
+- **Killing a browser smoke leaves an orphaned server on 8791 and Chrome on
+  9333.** The harness then refuses to start, correctly. Clear both ports.
+- **A stalled subagent with a Monitor relaunches what you kill.** Three smoke
+  runs in sequence, each rewriting tracked screenshots. `TaskStop` the agent,
+  not the process.
+
+### Open, and each one deliberate
+
+1. **The clear-drawing smoke never ran** (`88adbf7` says so in its own message).
+   Four checks are added and UNRUN. Run `tools/ui_smoke.py` first thing.
+2. **Three step-1 leftovers**, all visible in `tools/smoke-out/` and all
+   controls for work that is not that step's: the "how to start" checklist tells
+   you to click a map the step no longer has (the 09-06 spec already says
+   `checklist.js` should be DELETED, not left dormant); the Generate/Fit toolbar
+   floats above empty space; the segment picker offers `run1` while you type an
+   address. My read: all three belong in `step-surfaces.js`'s scoped list. The
+   user has been deciding these, so ask.
+3. **The pencil CTA lingering** — reported, not reproduced. Two strings carry a
+   pencil: `checklist.draw` (refreshes on `topology-changed`, fine) and
+   `editor.empty_cta`. One concrete suspicion: `renderCta` appends its text and
+   THEN calls `svg.getScreenCTM()`, which returns null on a `display:none` SVG
+   — newly reachable now the canvas is hidden on steps 1/7/8. That would drop
+   the arrow, not make text linger, so it may be a different bug. Needs a "when".
+4. **`road.state.blocked` is a dead string.** The badge order is
+   `unknown -> skipped -> gaps.length -> state`, and a blocked step always has a
+   blocking gap, so the count always wins. Same shape as the five dead
+   `knowledge.snapshot.*` keys.
+5. **The 2-4 map variant** — only arises if placing a gate and choosing its
+   model split into separate steps. A nine-step restructure; named as a seam,
+   not built.
+6. **The final whole-branch review never ran.** The SDD plan reached task 6 and
+   stopped for a human question. It should cover the concurrent session's
+   `step-surfaces.js` too, not this session's commits in isolation.
+
+### The knowledge boundary, separately
+
+T49 was sent (`e8cde15`) answering T46-T48's seven asks; both copies of
+`conversation.md` are byte-identical and now mirrored into this repo
+(`4362dff`). Their move: store a cut carrying G89, tell us its hash, leave
+`762967d3` and `b2f2fe45` live, tombstone the other three, and answer which
+vocabulary G75's fix will emit — `version_status: "current"` fails our loader
+outright, so a relabelling breaks us on the first document it corrects.
+
+
 
 ## 2026-08-30 — real curation-level-2 data landed; items 6 and 7 unblocked
 
