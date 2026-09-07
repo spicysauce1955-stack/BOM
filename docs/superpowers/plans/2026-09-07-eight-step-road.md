@@ -155,6 +155,7 @@ from __future__ import annotations
 from fenceai.project.model import Annotation, Project, Stated
 from fenceai.report.handover import HANDOVER_CODES, handover_gaps
 from fenceai.topology.model import GatePayload, Node, PointEvent, Run, Topology
+from fenceai.topology.station import make_anchor
 
 
 def _drawn() -> Topology:
@@ -167,9 +168,18 @@ def _drawn() -> Topology:
 
 
 def _with_gate() -> Topology:
+    """A gate is a `PointEvent` whose payload kind is `"gate"`.
+
+    `PointEvent` carries an `Anchor`, never a bare station — anchors are
+    segment-local so an event re-anchors proportionally when geometry is
+    edited (ADR-0003). Author it with `make_anchor`, exactly as the frontend
+    authors with `geom.anchorFor`; never hand-build the three fields.
+    """
     topo = _drawn()
-    topo.runs[0].point_events = [
-        PointEvent(id="pe1", station_mm=4000, payload=GatePayload(width_mm=1000))
+    run = topo.runs[0]
+    run.point_events = [
+        PointEvent(id="pe1", anchor=make_anchor(topo, run, 4000),
+                   payload=GatePayload(width_mm=1000))
     ]
     return topo
 
@@ -737,25 +747,26 @@ export function road(roadDef, gaps, stated) {
   });
   if (gaps == null) return roadDef.steps.map(blank);
 
-  const owner = {};
-  for (const step of roadDef.steps) {
-    owner[step.key] = [];
-    for (const code of [...step.requires, ...step.wants]) owner[code] = step.key;
-  }
-  const mine = Object.fromEntries(roadDef.steps.map((s) => [s.key, []]));
-  for (const gap of gaps) {
-    const key = Object.hasOwn(owner, gap.code) && typeof owner[gap.code] === "string"
-      ? owner[gap.code] : ORPHAN_STEP;
-    mine[key].push(gap);
-  }
+  // Two maps, deliberately: code -> step key, and step key -> its gaps. One
+  // map holding both would collide the day a code is spelled like a step key,
+  // and `Object.hasOwn` is what keeps a code named `constructor` from
+  // resolving through the prototype.
+  const ownerOf = {};
+  for (const step of roadDef.steps)
+    for (const code of [...step.requires, ...step.wants]) ownerOf[code] = step.key;
+
+  const held = Object.fromEntries(roadDef.steps.map((s) => [s.key, []]));
+  for (const gap of gaps)
+    held[Object.hasOwn(ownerOf, gap.code) ? ownerOf[gap.code] : ORPHAN_STEP]
+      .push(gap);
 
   const started = !gaps.some((g) => g.code === roadDef.anchor);
   const facts = stated || {};
 
   return roadDef.steps.map((step) => {
-    const held = mine[step.key];
+    const mine = held[step.key];
     const required = new Set(step.requires);
-    const open = held.filter((g) => required.has(g.code));
+    const open = mine.filter((g) => required.has(g.code));
     const skippable = step.satisfiedBy !== null;
     const claimed = skippable && facts[step.satisfiedBy] === true;
 
@@ -769,7 +780,7 @@ export function road(roadDef, gaps, stated) {
     else if (open.length) state = "missing";
     else state = "done";
 
-    return { key: step.key, panel: step.panel, state, gaps: held,
+    return { key: step.key, panel: step.panel, state, gaps: mine,
              skippable, skipped: claimed };
   });
 }
