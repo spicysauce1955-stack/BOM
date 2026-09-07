@@ -116,6 +116,52 @@ gap reports a missing gate, because a fence with no gate is a fence with no gate
 and not an incomplete job; no gap reports a missing note, because a promise
 nobody made is not an omission. Step 6 owns none because it IS the report.
 
+### A step SHOWS only its own work (decided 2026-09-07)
+
+Navigating to a step is not enough. Built as navigation alone, the road moves an
+underline while the screen underneath stays identical: in `sales` today every
+step shows all nine tools and every side panel at once — the job fields, house,
+street, ground, base, height, model, gates, site conditions, the side view and
+the handover sheet, simultaneously, whichever step you are on. A map over an
+undifferentiated screen is a label, not a workspace, and the user's verdict on
+seeing it was exactly that.
+
+**So a step owns a surface list, and the road applies it.** What each step shows:
+
+| Step | Tools | Panels | The drawing |
+|---|---|---|---|
+| 1 · The job | — | job identity | visible, **read-only** |
+| 2 · The layout | Select, Draw, House, Street | property context | editable |
+| 3 · The details | Select, Ground, Base, Height, Model | fence model, stretch events, side view | editable |
+| 4 · Gates | Select, Gate | stretch events | editable |
+| 5 · Notes | — | annotations | not shown (its own panel) |
+| 6 · Review | — | what the office still needs, warnings, the estimate | visible, read-only |
+
+**The drawing stays on screen in step 1** rather than being hidden with the
+tools. A salesperson entering a job is describing a place, and the place is the
+thing they are looking at on paper; a form floating on an empty screen is the
+"project 7" problem the job slice existed to fix, one layer up. It is read-only
+there because step 1 offers no drawing tools, and a canvas that edits without a
+tool selected would make the scoping a lie.
+
+**The mechanism is `role.js`'s, reused rather than reinvented.** A step list on
+`<html data-step>`, CSS obeying it, and the list owned in one module — the same
+shape as the role hide-list, and it inherits the same guard, which is the point:
+*a hide-list is the one kind of list that fails silently*. A selector that
+matches nothing hides nothing and looks fine, so every step's selectors are
+resolved against the real page, and the JS and CSS copies must be **equal**, not
+overlapping (`test_role_sync.py`'s rule, applied again).
+
+**Role and step compose, they do not merge.** `data-role` answers *who is
+looking*; `data-step` answers *what they are doing now*. A surface hidden from
+the salesperson by role must stay hidden in every step, so the two lists are
+independent and the role list always wins. Merging them would make "is the
+inspector visible?" a question with six answers.
+
+**Only `sales` has steps.** `office` and `all` have no road, so `data-step` is
+absent for them and every step rule is inert — the same way `data-role="all"`
+has no rules at all.
+
 ### Where it lives: the frontend, and why
 
 `js/road.js`, a pure function over `(project, handoverResponse)`, node-tested the

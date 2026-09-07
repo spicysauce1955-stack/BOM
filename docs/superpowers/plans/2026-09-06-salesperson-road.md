@@ -930,6 +930,122 @@ git commit -m "feat(web): the road is the salesperson's navigation, and the tab 
 
 ---
 
+### Task 4B: A step shows only its own work
+
+Added 2026-09-07 after the user saw Task 4 running. Their verdict: *"for each step I want it to be clear, simple and intuitive what the user should do in that step — not all the buttons and options should show up in each step."* Built as navigation alone, the road moves an underline while the screen underneath stays identical — all nine tools and every side panel, on every step. See the spec's new section, "A step SHOWS only its own work", which is the authority for the table below.
+
+**Files:**
+- Create: `src/fenceai/web/static/js/step-surfaces.js` (the list; imports nothing)
+- Modify: `src/fenceai/web/static/js/road.js` (set `<html data-step>`)
+- Modify: `src/fenceai/web/static/style.css` (the matching rules)
+- Test: `tests/web/test_step_surfaces.py` (create)
+
+**Interfaces:**
+- Consumes: `STEPS` from `road-model.js`.
+- Produces: `export const STEP_HIDDEN` — `{<step key>: [selector, …]}`; `export function hiddenForStep(key)` returning a copy, `[]` for an unknown key.
+
+**What each step hides** (everything NOT in its row, from the union of all scoped selectors):
+
+| Step | Tools it KEEPS | Panels it KEEPS |
+|---|---|---|
+| `job` | none | `#job-panel` |
+| `layout` | `#tool-select` `#tool-draw` `#tool-house` `#tool-street` | `#context-panel` |
+| `details` | `#tool-select` `#tool-ground` `#tool-base` `#tool-height` `#tool-model` | `#model-row` `#run-events` `#profile` |
+| `gates` | `#tool-select` `#tool-gate` | `#run-events` |
+| `notes` | none | none (the annotations panel is its own tab) |
+| `review` | none | `#handover-panel` `#warnings` `#site-conditions` |
+
+`#canvas` is shown in every step. `#road` itself, the header, undo/redo and Clear are never scoped.
+
+**Three properties this must not break, each already load-bearing elsewhere:**
+1. **Role wins over step.** A surface `role.js` hides from `sales` stays hidden in every step. The two lists are independent; never merge them.
+2. **The lists must be EQUAL in both copies** — JS and CSS — not overlapping. `test_role_sync.py` enforces this for the role list and this task adds the same check for steps.
+3. **Every selector must resolve against the real page.** A hide-list is the one kind of list that fails silently.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/web/test_step_surfaces.py`, mirroring `tests/web/test_role_module.py`'s node harness (`node --input-type=module -e SCRIPT` with `cwd=STATIC`) and reusing its `_live_ids()` approach. Assert:
+
+```python
+def test_every_step_has_a_surface_list(out):
+    """A step with no entry scopes nothing and silently shows the whole app —
+    which is the state the user rejected."""
+    assert set(out["step_keys"]) == set(out["hidden"])
+
+
+def test_every_scoped_selector_exists(out):
+    """The assertion that earns this file, and the same one
+    test_role_module.py makes: a selector matching nothing hides nothing,
+    breaks no test, and looks fine on screen."""
+    ids = _live_ids()
+    for step, selectors in out["hidden"].items():
+        for sel in selectors:
+            assert sel.startswith("#"), f"{step}: {sel!r} is not an id"
+            assert sel[1:] in ids, f"{step}: no element {sel}"
+
+
+def test_the_job_step_hides_every_tool(out):
+    """Step 1 offers no drawing tools, so the canvas must not edit — a canvas
+    that edits with no tool selected makes the scoping a lie."""
+    for tool in ("#tool-draw", "#tool-gate", "#tool-base", "#tool-ground",
+                 "#tool-height", "#tool-model", "#tool-house", "#tool-street"):
+        assert tool in out["hidden"]["job"], tool
+
+
+def test_each_step_keeps_the_tools_it_needs(out):
+    keeps = {"layout": ["#tool-draw", "#tool-house", "#tool-street"],
+             "details": ["#tool-ground", "#tool-base", "#tool-height",
+                         "#tool-model"],
+             "gates": ["#tool-gate"]}
+    for step, tools in keeps.items():
+        for tool in tools:
+            assert tool not in out["hidden"][step], f"{step} needs {tool}"
+
+
+def test_the_drawing_is_never_scoped_away(out):
+    """The place stays on screen in every step. A form on an empty screen is
+    the "project 7" problem one layer up."""
+    for step, selectors in out["hidden"].items():
+        assert "#canvas" not in selectors, step
+        assert "#road" not in selectors, step
+
+
+def test_step_and_role_lists_stay_independent(out):
+    """`data-role` answers who is looking; `data-step` answers what they are
+    doing now. Merged, "is the inspector visible?" would have six answers."""
+    src = (STATIC / "js" / "step-surfaces.js").read_text()
+    assert "role" not in src.lower().replace("role.js", ""), (
+        "step-surfaces.js must not reason about roles")
+
+
+def test_the_two_copies_are_equal():
+    """`test_role_sync.py`'s rule, applied to steps: CSS cannot read a JS
+    array, so the list exists twice and the copies must be EQUAL."""
+    # parse `html[data-step="<key>"] <selector>` out of style.css and compare
+    # per-step sets against hiddenForStep(key)
+```
+
+Write the last one out in full following `tests/web/test_role_sync.py:56-71`'s parsing shape.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `uv run pytest tests/web/test_step_surfaces.py -q`
+Expected: FAIL — node cannot resolve `./js/step-surfaces.js`.
+
+- [ ] **Step 3: Write `step-surfaces.js`** — imports nothing, for `road-model.js`'s reason. Derive each step's hidden list by subtracting its keeps from the union of all scoped selectors, so adding a tool to one step cannot silently leave it visible in the other five.
+
+- [ ] **Step 4: Set `data-step` in `road.js`** — in `render()`, `document.documentElement.dataset.step = current` when the role is `sales`; remove the attribute otherwise, so `office`/`all` have no step rules at all.
+
+- [ ] **Step 5: Write the CSS** — one `html[data-step="<key>"] <selector> { display: none; }` line per entry, matching the JS list exactly. Add `html[data-step="job"] #canvas, html[data-step="review"] #canvas { pointer-events: none; }` so a toolless step cannot edit. Logical properties only.
+
+- [ ] **Step 6: Verify**
+
+`uv run pytest tests/web/ -q`, then `uv run pytest -q`, then `uv run --with websocket-client python tools/ui_smoke.py` — all in the FOREGROUND. The smoke may fail where a case clicks a tool while a step hides it; if so, report which, do not edit `tools/ui_smoke.py` (Task 8 owns it) unless the failure is a sales-mode case that this task genuinely invalidates.
+
+- [ ] **Step 7: Commit**, then the human looks at it. This task ends at a checkpoint: each step must show only its own controls, with the drawing visible throughout.
+
+---
+
 ### Task 5: The "see the priced BOM" dead end
 
 `editor.js:1595-1605` renders a link that switches to the BOM panel by clicking the button. Only the *button* is on the sales hide-list; `#tab-bom` is not. Today the strip provides the way back. **With `#tabs` hidden it is a dead end with no visible navigation at all** — the app becomes unusable for the role until reload. This is audit observation 5, escalated from cosmetic to blocking by Task 4.
