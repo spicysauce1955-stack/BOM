@@ -801,6 +801,157 @@ html[data-role="sales"] #tabs button[data-tab="inventory"] { display: none; }
 html[data-role="office"] #tabs button[data-tab="knowledge"],
 html[data-role="office"] #tabs button[data-tab="review"] { display: none; }
 
+/* ============================================================================
+   Road steps — a step shows only its OWN work, for `sales` only.
+
+   `js/step-surfaces.js` owns the LIST; this file only obeys it. Keyed on
+   <html data-step>, which `road.js` sets only while the role is `sales` and
+   removes otherwise, so `office`/`all` are untouched by every rule below.
+
+   The eight keys are `js/roads.js: SALES_ROAD`'s real step keys, not the six
+   names in the design doc's surface table — see `step-surfaces.js`'s header
+   comment for the correspondence.
+
+   Duplicated from `step-surfaces.js` by necessity — CSS cannot read a JS
+   array — and `tests/web/test_step_surfaces.py` is what stops the two copies
+   from drifting.
+   ========================================================================= */
+
+/* --- 1 the job: no drawing tool offered, so keep only the job panel --- */
+html[data-step="job"] #tool-draw,
+html[data-step="job"] #tool-house,
+html[data-step="job"] #tool-street,
+html[data-step="job"] #tool-ground,
+html[data-step="job"] #tool-base,
+html[data-step="job"] #tool-height,
+html[data-step="job"] #tool-model,
+html[data-step="job"] #tool-gate,
+html[data-step="job"] #context-panel,
+html[data-step="job"] #run-events,
+html[data-step="job"] #profile,
+html[data-step="job"] #model-row,
+html[data-step="job"] #handover-panel,
+html[data-step="job"] #warnings,
+html[data-step="job"] #site-conditions { display: none; }
+
+/* --- 2 the property: everything on the plot that is NOT the fence --- */
+html[data-step="property"] #tool-draw,
+html[data-step="property"] #tool-ground,
+html[data-step="property"] #tool-base,
+html[data-step="property"] #tool-height,
+html[data-step="property"] #tool-model,
+html[data-step="property"] #tool-gate,
+html[data-step="property"] #job-panel,
+html[data-step="property"] #run-events,
+html[data-step="property"] #profile,
+html[data-step="property"] #model-row,
+html[data-step="property"] #handover-panel,
+html[data-step="property"] #warnings,
+html[data-step="property"] #site-conditions { display: none; }
+
+/* --- 3 the layout: the fence in plan, drawn to measured lengths --- */
+html[data-step="layout"] #tool-house,
+html[data-step="layout"] #tool-street,
+html[data-step="layout"] #tool-ground,
+html[data-step="layout"] #tool-base,
+html[data-step="layout"] #tool-height,
+html[data-step="layout"] #tool-model,
+html[data-step="layout"] #tool-gate,
+html[data-step="layout"] #job-panel,
+html[data-step="layout"] #context-panel,
+html[data-step="layout"] #run-events,
+html[data-step="layout"] #profile,
+html[data-step="layout"] #model-row,
+html[data-step="layout"] #handover-panel,
+html[data-step="layout"] #warnings,
+html[data-step="layout"] #site-conditions { display: none; }
+
+/* --- 4 the side view: ground, base and height along each stretch --- */
+html[data-step="sideview"] #tool-draw,
+html[data-step="sideview"] #tool-house,
+html[data-step="sideview"] #tool-street,
+html[data-step="sideview"] #tool-model,
+html[data-step="sideview"] #tool-gate,
+html[data-step="sideview"] #job-panel,
+html[data-step="sideview"] #context-panel,
+html[data-step="sideview"] #model-row,
+html[data-step="sideview"] #handover-panel,
+html[data-step="sideview"] #warnings,
+html[data-step="sideview"] #site-conditions { display: none; }
+
+/* --- 5 which fence: the model this fence is built to --- */
+html[data-step="model"] #tool-draw,
+html[data-step="model"] #tool-house,
+html[data-step="model"] #tool-street,
+html[data-step="model"] #tool-ground,
+html[data-step="model"] #tool-base,
+html[data-step="model"] #tool-height,
+html[data-step="model"] #tool-gate,
+html[data-step="model"] #job-panel,
+html[data-step="model"] #context-panel,
+html[data-step="model"] #run-events,
+html[data-step="model"] #profile,
+html[data-step="model"] #handover-panel,
+html[data-step="model"] #warnings,
+html[data-step="model"] #site-conditions { display: none; }
+
+/* --- 6 gates & openings: where, and how wide --- */
+html[data-step="gates"] #tool-draw,
+html[data-step="gates"] #tool-house,
+html[data-step="gates"] #tool-street,
+html[data-step="gates"] #tool-ground,
+html[data-step="gates"] #tool-base,
+html[data-step="gates"] #tool-height,
+html[data-step="gates"] #tool-model,
+html[data-step="gates"] #job-panel,
+html[data-step="gates"] #context-panel,
+html[data-step="gates"] #profile,
+html[data-step="gates"] #model-row,
+html[data-step="gates"] #handover-panel,
+html[data-step="gates"] #warnings,
+html[data-step="gates"] #site-conditions { display: none; }
+
+/* --- 7 notes & promises: its surface is a different TAB, not a panel here --- */
+html[data-step="notes"] #tool-draw,
+html[data-step="notes"] #tool-house,
+html[data-step="notes"] #tool-street,
+html[data-step="notes"] #tool-ground,
+html[data-step="notes"] #tool-base,
+html[data-step="notes"] #tool-height,
+html[data-step="notes"] #tool-model,
+html[data-step="notes"] #tool-gate,
+html[data-step="notes"] #job-panel,
+html[data-step="notes"] #context-panel,
+html[data-step="notes"] #run-events,
+html[data-step="notes"] #profile,
+html[data-step="notes"] #model-row,
+html[data-step="notes"] #handover-panel,
+html[data-step="notes"] #warnings,
+html[data-step="notes"] #site-conditions { display: none; }
+
+/* --- 8 review & handover: what the office still needs, and the ballpark --- */
+html[data-step="review"] #tool-draw,
+html[data-step="review"] #tool-house,
+html[data-step="review"] #tool-street,
+html[data-step="review"] #tool-ground,
+html[data-step="review"] #tool-base,
+html[data-step="review"] #tool-height,
+html[data-step="review"] #tool-model,
+html[data-step="review"] #tool-gate,
+html[data-step="review"] #job-panel,
+html[data-step="review"] #context-panel,
+html[data-step="review"] #run-events,
+html[data-step="review"] #profile,
+html[data-step="review"] #model-row { display: none; }
+
+/* A toolless step must not let the canvas edit — a canvas that accepts clicks
+   with no tool selected would make every rule above a lie. Read-only, not
+   hidden: the drawing is a salesperson's job identity in step 1 and their
+   proof of work in step 8, and it stays ON screen throughout (spec: "the
+   drawing stays on screen in every step"). */
+html[data-step="job"] #canvas,
+html[data-step="review"] #canvas { pointer-events: none; }
+
 /* --- the job panel (slice 1): who bought this fence, where, who sold it --- */
 .job-fields { display: flex; flex-direction: column; gap: 6px; margin-block: 6px; }
 .job-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }

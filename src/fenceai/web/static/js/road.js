@@ -56,6 +56,13 @@ export function render() {
   const host = document.getElementById("road");
   if (!host) return;
   const def = currentRoad();
+  // `data-step` exists only while `sales` has a step to show; every other
+  // role gets the attribute REMOVED rather than left stale, because an
+  // absent attribute matches no `html[data-step="X"]` rule in style.css — so
+  // `office`/`all` sit under no step rule at all (step-surfaces.js's header
+  // comment, "Only `sales` has steps").
+  if (currentRole() === "sales") document.documentElement.dataset.step = current;
+  else delete document.documentElement.dataset.step;
   // A role with no road shows none — and the tab strip is what it navigates by.
   host.hidden = def === null;
   if (def === null) return;
