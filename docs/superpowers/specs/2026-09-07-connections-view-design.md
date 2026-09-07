@@ -65,9 +65,12 @@ this session; re-verify line numbers before implementing, code moves).
 | **SourceDoc** | page | `content_hash` | none (a document doesn't reference anything) | Rule, Part, Gap, Warning — anything with a `cites`/`belongs_to` field naming it |
 | **Model** (a `PanelSpec` version) | diamond | `model_id@version` | each frame/infill slot's `requirement.part_id` → Part; each slot's `eligibility.members`/`predicate` → Product(s) | none today |
 | **Product** (catalog SKU) | square | `sku` | none (a catalog row doesn't reference anything) | Rule (named directly), Model (via eligibility — see below) |
+| **Warning** (`DocumentWarning`) | triangle | its own id | `cites: list[SourceRef]` → SourceDoc (`core/warnings.py:161`) — the identical shape Part/Rule/Gap already use | none — nothing points into a Warning |
 
-**Gap** and **AssemblyStep** are named but **out of v1 scope** — see
-"Deferred," below.
+**Gap, Project/Override, and generated read-model data** (structure sheet,
+BOM, elevation) are named but **out of v1 scope** — see "Deferred," below.
+**AssemblyStep was investigated, not deferred by default: it is not a
+graphable entity at all** — see the same section for why.
 
 ### The one non-trivial edge: Model → Product via eligibility
 
@@ -101,8 +104,8 @@ src/fenceai/api/app.py
   GET /api/connections/{kind}/{id}   -> {entity, references, referenced_by}
   GET /api/connections/orphans       -> [{severity, category, entity, detail}]
 
-  `kind` is one of the five closed values: `rule`, `part`, `sourcedoc`,
-  `model`, `product`. `id` is that kind's identity per the table below,
+  `kind` is one of the six closed values: `rule`, `part`, `sourcedoc`,
+  `model`, `product`, `warning`. `id` is that kind's identity per the table below,
   URL-encoded as one path segment — a Rule's `K-MAXSPAN@v3` and a Model's
   `M-SLAT@v2` both carry their version joined with `@`, so the frontend must
   `encodeURIComponent` it and the route must NOT try to split it into two
@@ -146,7 +149,7 @@ not a salesperson or the office.
 | Check | Cost | Mechanism |
 |---|---|---|
 | Dangling SKU reference (Rule names a SKU not in the catalog) | cheap | scan every Rule's `actions` for a `sku`/`role` field, set-difference against the catalog |
-| Unreferenced SourceDoc | cheap | reverse-index scan already built for step 3 above; report any SourceDoc with zero inbound edges |
+| Unreferenced SourceDoc | cheap | reverse-index scan across Rule, Part, Warning, **and Gap** — Gap is not itself a lookup-able entity in v1 (see "Deferred"), but its `cites` still counts toward whether a SourceDoc is referenced, or the check would report false orphans for a doc only a Gap cites |
 | Unreachable Product | cheap, reuses existing code | union `predicate_skus()`/`members` across every slot of every **active** Model version, union every SKU named by an **active** Rule; any catalog SKU absent from both unions is unreachable. Draft/proposed model versions are excluded — an unpublished draft naming no products yet is not a defect. |
 | Missing Part→Product link | not a check, a standing fact | report the count of published Parts (212 today) as one **informational** row, not per-part — this is a structural gap, not N separate defects |
 
@@ -199,9 +202,30 @@ every load, revisit — not a v1 concern.
   its own inbound edges — including it would mean designing a second kind of
   edge (aboutness vs. reference) this spec doesn't need yet. Revisit if a real
   use for "what points at this gap" shows up.
-- **AssemblyStep.** The relationship-mapping research couldn't confirm its
-  exact reference shape in the time available — needs a direct read of
-  `report/assembly.py` before it's added, not a guess.
+- **AssemblyStep — investigated, and it turns out not to be a new node at
+  all.** `report/assembly.py` and `model.py:634`: an authored `AssemblyStep`
+  names `slots` (this same Model's OWN frame/infill slot keys) and
+  `bay_parts` (post/cap/footing roles belonging to the RUN, not a specific
+  Product or Part). Every reference it carries is internal to the Model that
+  owns it — the same relationship a Rule's `actions` have to that Rule. It
+  folds into the Model node; no separate shape, no separate lookup.
+- **Project, and the Override layer it carries.** Real references exist —
+  `Project.fence_model` → Model, `ForcePostSku.sku` → Product
+  (`strategy/overrides.py:40`) — and "which live jobs actually use this
+  model" is a genuinely useful question. Deferred anyway: it's a different
+  LAYER (operational job data — a specific customer's fence) from the
+  knowledge/catalog layer this view audits, with a different audience (the
+  person tuning rules and models vs. someone asking about a specific job).
+  Folding it in would double the entity count and blur two questions that
+  deserve to stay separate. Worth its own pass if "which jobs does changing
+  this model affect" becomes a real ask.
+- **Generated read-model data** (the structure sheet, BOM, elevation).
+  Excluded on a harder principle than scope: these are pure functions of
+  `(topology, strategy, requirements, bom)`, recomputed on every read, with
+  no persisted identity of their own. "Orphan" and "dangling reference" are
+  questions about STORED things — a regenerated view has nothing to be
+  orphaned, and graphing it would mean inventing an identity for something
+  the rest of the codebase deliberately keeps from having one.
 - **Rule `scope` as a graph edge.** `scope` is a dimension match (a rule
   applies to Model X, Exposure C), not a foreign key to one Model instance —
   representing it as an edge would misrepresent a filter as a reference.
