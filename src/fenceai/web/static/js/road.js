@@ -1,5 +1,5 @@
-// The road, rendered. `road-model.js` decides WHAT the six steps are and which
-// is missing something; this file only draws it and switches panels — the
+// The road, rendered. `road-model.js` decides WHAT the eight steps are and
+// which is missing something; this file only draws it and switches panels — the
 // `base-top.js` / `profile.js` split, applied again.
 //
 // It reaches no panel's DOM. `setTab` is the one path that moves the `active`
@@ -10,12 +10,19 @@ import { t } from "./i18n.js";
 import { currentRole } from "./role.js";
 import { on, state } from "./state.js";
 import { setTab } from "./tabs.js";
-import { STEPS, panelFor, road } from "./road-model.js";
+import { panelFor, road } from "./road-model.js";
+import { roadFor } from "./roads.js";
 
 let current = "job";
 
+function currentRoad() {
+  return roadFor(currentRole());
+}
+
 function showStep(stepKey) {
-  const panel = panelFor(stepKey);
+  const def = currentRoad();
+  if (!def) return;
+  const panel = panelFor(def, stepKey);
   if (panel) setTab(panel);
 }
 
@@ -25,9 +32,9 @@ function showStep(stepKey) {
  *  with `#tabs` hidden this band is the only navigation on the screen, so
  *  losing focus here strands a keyboard user completely. The buttons are always
  *  enabled: the road is a map, not a wizard. */
-function build(host) {
+function build(host, def) {
   if (host.children.length) return;
-  host.innerHTML = STEPS.map((s, i) => `<button data-step="${esc(s.key)}">`
+  host.innerHTML = def.steps.map((s, i) => `<button data-step="${esc(s.key)}">`
     + `<span class="road-index">${String(i + 1).padStart(2, "0")}</span>`
     + `<span class="road-name">${esc(t(`road.${s.key}`))}</span>`
     + `<span class="road-state"></span></button>`).join("");
@@ -48,11 +55,13 @@ function build(host) {
 export function render() {
   const host = document.getElementById("road");
   if (!host) return;
-  const steps = road(state.project, state.handover, currentRole());
+  const def = currentRoad();
   // A role with no road shows none — and the tab strip is what it navigates by.
-  host.hidden = steps === null;
-  if (steps === null) return;
-  build(host);
+  host.hidden = def === null;
+  if (def === null) return;
+  const steps = road(def, state.handover?.gaps ?? null,
+                     state.project?.stated ?? {});
+  build(host, def);
   // Set every render, not in `build()`: `build()` runs once, so freezing the
   // label there would leave it in whatever locale was active on the FIRST
   // render — `i18n.js: applyStatic` has no aria walker, so this is the only
@@ -67,6 +76,7 @@ export function render() {
     else btn.removeAttribute("aria-current");
     btn.querySelector(".road-name").textContent = t(`road.${step.key}`);
     btn.querySelector(".road-state").textContent = step.state === "unknown" ? ""
+      : step.state === "skipped" ? t("road.state.skipped")
       : step.gaps.length ? t("road.state.missing", { n: step.gaps.length })
       : t(`road.state.${step.state}`);
   }
