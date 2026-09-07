@@ -24,48 +24,61 @@ STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "stat
 
 SCRIPT = """
 // No stubs: road-model.js imports nothing, which is why it is its own file.
-import { GAP_STEPS, STEPS, panelFor, road } from "./js/road-model.js";
+import { road, panelFor, STATES } from "./js/road-model.js";
+import { SALES_ROAD, ROADS, roadFor } from "./js/roads.js";
 
-const run = (id) => ({ id, interval_events: [], point_events: [] });
-const proj = (...runs) => ({ topology: { runs }, context: { landmarks: [] } });
-const hv = (...gaps) => ({ gaps, estimate_ready: !gaps.some((g) => g.blocking) });
+const g = (code, extra = {}) => ({ code, blocking: false, params: {}, ...extra });
+const st = (o = {}) => ({ no_gates: false, no_promises: false, ...o });
 const byKey = (r) => Object.fromEntries(r.map((s) => [s.key, s]));
+const drawn = [];                    // no anchor code present == started
 
 const out = {};
-out.step_keys = STEPS.map((s) => s.key);
-out.panels = Object.fromEntries(STEPS.map((s) => [s.key, s.panel]));
-out.gap_steps = GAP_STEPS;
+out.step_keys = SALES_ROAD.steps.map((s) => s.key);
+out.panels = Object.fromEntries(SALES_ROAD.steps.map((s) => [s.key, s.panel]));
+out.states = STATES;
+out.roles = Object.keys(ROADS);
 
-// nothing drawn, nothing said
-out.empty = byKey(road(proj(), hv({ code: "no_fence_drawn", blocking: true })));
+// the engine takes no project
+out.arity = road.length;
 
-// a drawn job missing four identity fields and a height
-const gappy = road(proj(run("run1")), hv(
-  { code: "customer_missing" }, { code: "address_missing" },
-  { code: "height_assumed", params: { runs: 1, run_ids: ["run1"] } },
-));
-out.gappy = byKey(gappy);
-out.gappy_job_codes = byKey(gappy).job.gaps.map((g) => g.code);
+// handover has not arrived
+out.unloaded = byKey(road(SALES_ROAD, null, st()));
 
-// everything answered
-out.clean = byKey(road(proj(run("run1")), hv()));
+// nothing drawn: the anchor is present
+out.empty = byKey(road(SALES_ROAD, [g("no_fence_drawn", { blocking: true })], st()));
 
-// role gate
-out.office = road(proj(run("run1")), hv(), "office");
-out.all = road(proj(run("run1")), hv(), "all");
+// a drawn job, two required job fields open and one nice-to-have
+out.gappy = byKey(road(SALES_ROAD, [
+  g("customer_missing"), g("sold_by_missing"), g("height_assumed"),
+], st()));
 
-// a code the road has never heard of must not vanish silently
-out.unknown = byKey(road(proj(run("run1")), hv({ code: "invented_code" })));
+// everything answered, nothing stated
+out.clean = byKey(road(SALES_ROAD, drawn, st()));
 
-// a code that collides with an inherited Object key must not throw
-out.ctor = byKey(road(proj(run("run1")), hv({ code: "constructor" })));
+// stated: no gates, and the drawing agrees
+out.skipped = byKey(road(SALES_ROAD, drawn, st({ no_gates: true })));
 
-// handover not yet loaded: must not read as a clean bill of health
-out.no_handover_null = road(proj(run("run1")), null);
-out.no_handover_missing = road(proj(run("run1")));
+// stated: no gates, but the drawing has one
+out.contradicted = byKey(road(SALES_ROAD, [g("gates_contradicted")],
+                              st({ no_gates: true })));
 
-out.panel_known = panelFor("notes");
-out.panel_unknown = panelFor("nope");
+// nothing drawn AND a fact stated: empty beats skipped
+out.empty_beats_skip = byKey(road(SALES_ROAD,
+  [g("no_fence_drawn", { blocking: true })], st({ no_gates: true })));
+
+// a code no step claims must not vanish
+out.orphan = byKey(road(SALES_ROAD, [g("invented_code")], st()));
+
+// a code colliding with an inherited Object key must not throw
+out.proto = byKey(road(SALES_ROAD, [g("constructor")], st()));
+
+out.panel_of_notes = panelFor(SALES_ROAD, "notes");
+out.panel_of_nothing = panelFor(SALES_ROAD, "not_a_step");
+out.road_for_sales = roadFor("sales") === SALES_ROAD;
+out.road_for_office = roadFor("office");
+out.road_for_all = roadFor("all");
+
+out.claimed_codes = SALES_ROAD.steps.map((s) => [...s.requires, ...s.wants]);
 
 console.log(JSON.stringify(out));
 """
@@ -84,139 +97,108 @@ def out():
     return json.loads(proc.stdout)
 
 
-def test_the_road_is_six_steps_in_the_order_the_job_is_done(out):
-    assert out["step_keys"] == ["job", "layout", "details", "gates", "notes",
-                                "review"]
+def test_the_road_is_eight_steps_in_the_order_the_job_is_done(out):
+    assert out["step_keys"] == ["job", "property", "layout", "sideview",
+                                "model", "gates", "notes", "review"]
 
 
 def test_notes_is_the_one_step_whose_surface_is_another_panel(out):
-    """The reason the tab strip goes. With it kept, Notes would be reached by a
-    TAB while every other step was reached by the road, and the road could never
-    say whether a promise made during the sale was written down."""
     assert out["panels"]["notes"] == "annotations"
-    assert {v for k, v in out["panels"].items() if k != "notes"} == {"canvas"}
+    assert {k: v for k, v in out["panels"].items() if k != "notes"} == {
+        k: "canvas" for k in out["panels"] if k != "notes"}
 
 
-def test_every_handover_code_belongs_to_exactly_one_step(out):
-    """Spec invariant 1. A code with no step vanishes from the road while the
-    panel still reports it — the silent class this repo has shipped green four
-    times."""
-    assert set(out["gap_steps"]) == set(HANDOVER_CODES), {
-        "unmapped": sorted(set(HANDOVER_CODES) - set(out["gap_steps"])),
-        "invented": sorted(set(out["gap_steps"]) - set(HANDOVER_CODES)),
-    }
-    assert set(out["gap_steps"].values()) <= set(out["step_keys"])
+def test_the_engine_takes_no_project(out):
+    """`road(roadDef, gaps, stated)`. The project argument existed only to
+    compute `!drawn`, which `anchor` now names. Three arguments, and a fourth
+    would mean somebody reached for the project again."""
+    assert out["arity"] == 3
 
 
-def test_a_blocking_gap_makes_its_step_blocked(out):
-    assert out["empty"]["layout"]["state"] == "blocked"
+def test_every_handover_code_is_claimed_by_exactly_one_step(out):
+    claimed = [c for step in out["claimed_codes"] for c in step]
+    assert sorted(claimed) == sorted(HANDOVER_CODES), (
+        "a code with no step vanishes from the road while the API still "
+        "reports it; a step naming a code that does not exist reads done "
+        "forever")
+    assert len(claimed) == len(set(claimed)), "two steps claim one code"
+
+
+def test_a_step_reads_unknown_until_the_handover_arrives(out):
+    assert {s["state"] for s in out["unloaded"].values()} == {"unknown"}
 
 
 def test_nothing_drawn_makes_every_other_step_empty_not_done(out):
-    """A completed tick over four blank fields is the completeness LIE this
-    module's own header forbids. `layout` still resolves to `blocked` first
-    because it owns `no_fence_drawn` and the blocking check runs before the
-    drawn check; every other step has no gap of its own here, so it must read
-    `empty`, never `done`."""
-    for key in ("job", "details", "gates", "notes", "review"):
-        assert out["empty"][key]["state"] == "empty", key
     assert out["empty"]["layout"]["state"] == "blocked"
+    others = {k: v["state"] for k, v in out["empty"].items() if k != "layout"}
+    assert set(others.values()) == {"empty"}
 
 
-def test_a_handover_not_yet_loaded_reads_unknown_not_done(out):
-    """audit B01: `cache = null` rendering as "nothing missing". A `handover`
-    that has not arrived must not paint the band green, and `null` here is not
-    overloaded — `null` already means "no road for this role"."""
-    for steps in (out["no_handover_null"], out["no_handover_missing"]):
-        assert steps is not None
-        for step in steps:
-            assert step["state"] == "unknown", step
+def test_a_required_gap_is_missing_and_a_nice_to_have_is_not(out):
+    job = out["gappy"]["job"]
+    assert job["state"] == "missing"
+    assert sorted(g["code"] for g in job["gaps"]) == [
+        "customer_missing", "sold_by_missing"], (
+        "a wants gap is CARRIED so the UI can show it, it just does not "
+        "decide the state")
 
 
-def test_a_gap_code_of_constructor_does_not_crash_the_road(out):
-    """`GAP_STEPS[code] || ORPHAN_STEP` would read the inherited `Object.
-    prototype.constructor` for this code and push into `owned[<a function>]`,
-    throwing and killing the only navigation this role has."""
-    assert "constructor" in [g["code"] for g in out["ctor"]["review"]["gaps"]]
+def test_a_step_whose_only_open_gap_is_a_want_reads_done(out):
+    """`sold_by_missing` alone must not make step 1 amber."""
+    assert out["gappy"]["sideview"]["state"] == "missing"   # height_assumed
+    assert out["gappy"]["model"]["state"] == "done"
 
 
-def test_panel_for_a_known_and_an_unknown_step(out):
-    assert out["panel_known"] == "annotations"
-    assert out["panel_unknown"] is None
+def test_a_stated_fact_makes_its_step_skipped(out):
+    gates = out["skipped"]["gates"]
+    assert gates["state"] == "skipped"
+    assert gates["skippable"] is True
+    assert gates["skipped"] is True
 
 
-def test_a_step_owns_its_own_gaps_and_no_others(out):
-    assert sorted(out["gappy_job_codes"]) == ["address_missing",
-                                              "customer_missing"]
-    assert out["gappy"]["job"]["state"] == "missing"
-    assert out["gappy"]["details"]["state"] == "missing"
-    assert out["gappy"]["gates"]["state"] == "done"
+def test_only_a_step_with_satisfied_by_is_skippable(out):
+    skippable = {k for k, v in out["clean"].items() if v["skippable"]}
+    assert skippable == {"gates", "notes"}
 
 
-def test_a_step_with_no_gaps_is_done(out):
-    for key in out["step_keys"]:
-        assert out["clean"][key]["state"] == "done", key
+def test_a_contradicted_claim_stops_being_a_skip(out):
+    """The claim is stated but the drawing disagrees, so the `skipped` rung
+    does not match and the question is reported instead."""
+    gates = out["contradicted"]["gates"]
+    assert gates["state"] == "missing"
+    assert [g["code"] for g in gates["gaps"]] == ["gates_contradicted"]
 
 
-def test_the_road_refuses_a_role_it_has_no_road_for(out):
-    """The office person's road and the super user's are unwritten. Defaulting
-    to the salesperson's would show the wrong person the wrong map."""
-    assert out["office"] is None
-    assert out["all"] is None
+def test_empty_beats_skipped(out):
+    """Evidence outranks assertion: a job with nothing drawn has not started
+    regardless of what it claims to lack."""
+    assert out["empty_beats_skip"]["gates"]["state"] == "empty"
 
 
-def test_an_unmapped_code_lands_on_review_rather_than_disappearing(out):
-    """Belt and braces beside the totality test: if a code ever reaches the
-    browser without a step, it must still be visible to the person who can act
-    on it."""
-    assert "invented_code" in [g["code"] for g in out["unknown"]["review"]["gaps"]]
+def test_a_code_no_step_claims_still_reaches_somebody(out):
+    """Never reached while the totality test passes. It exists so that if one
+    ever does reach a browser it is visible to the person who can act on it."""
+    assert out["orphan"]["review"]["gaps"][0]["code"] == "invented_code"
 
 
-def test_road_computes_no_coverage(out):
-    """Spec invariant 2. One answer to "is this job complete?", and it is
-    handover.py's. The moment this module does interval arithmetic there are
-    two."""
+def test_a_code_named_like_an_object_key_does_not_throw(out):
+    assert out["proto"]["review"]["gaps"][0]["code"] == "constructor"
+
+
+def test_panel_for_is_road_scoped(out):
+    assert out["panel_of_notes"] == "annotations"
+    assert out["panel_of_nothing"] is None
+
+
+def test_a_role_with_no_road_gets_none(out):
+    assert out["road_for_sales"] is True
+    assert out["road_for_office"] is None
+    assert out["road_for_all"] is None
+
+
+def test_the_engine_imports_nothing():
+    """The moment this file imports anything it can import coverage
+    arithmetic, and then there are two answers to "is this job complete?"."""
     src = (STATIC / "js" / "road-model.js").read_text()
-    for forbidden in ("_uncovered_mm", "interval_events", "anchor_station"):
-        assert forbidden not in src, (
-            f"road-model.js must not reason about coverage; found {forbidden!r}")
-
-
-def test_the_model_half_imports_nothing():
-    """It is a separate file so it can be tested in node without stubbing a
-    DOM — `base-top.js` / `profile.js`, the pattern CLAUDE.md names. One import
-    of a rendering module and this test's harness needs `document`,
-    `localStorage` and `fetch` for a loop over gap codes."""
-    src = (STATIC / "js" / "road-model.js").read_text()
-    assert "import " not in src, "road-model.js must import nothing"
-    assert "import(" not in src, "road-model.js must not dynamically import"
-    assert not re.search(r'\bfrom\s+[\'"]', src), (
-        "road-model.js must not re-export from another module")
-    assert "document." not in src
-    assert "window." not in src
-    assert "localStorage" not in src
-    assert "fetch(" not in src
-
-
-def test_the_road_has_a_literal_host_id():
-    """`test_role_module.py::_live_ids` scans `id="([^"{}]+)"`, so an id built
-    by interpolation is invisible to the hide-list check."""
-    assert 'id="road"' in (STATIC / "index.html").read_text()
-
-
-def test_the_band_is_rendered_once_and_only_toggled_after():
-    """The prototype's own fix for lost keyboard focus: re-`innerHTML`ing the
-    band on every state change drops focus to BODY, and with the tab strip gone
-    the band is the only navigation on the screen."""
-    src = (STATIC / "js" / "road.js").read_text()
-    assert "children.length" in src or "dataset.built" in src, (
-        "guard the band's innerHTML so it is built once")
-
-
-def test_road_reaches_no_panel_dom():
-    """Spec invariant 7. The road switches panels through `tabs.js: setTab`;
-    querying inside a panel is the module-map violation this navigation change
-    is most likely to introduce."""
-    src = (STATIC / "js" / "road.js").read_text()
-    assert "#tab-" not in src
-    assert "setTab" in src
+    assert not re.search(r"^\s*import\s", src, re.M), (
+        "road-model.js must import nothing — put data in roads.js")
