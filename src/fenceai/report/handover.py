@@ -104,6 +104,29 @@ def _job_gaps(project: Project) -> list[HandoverGap]:
     return out
 
 
+def _contradiction_gaps(project: Project) -> list[HandoverGap]:
+    """A stated absence the drawing disagrees with.
+
+    `Stated` exists so that "no gates on this job" is an answer rather than a
+    silence — and an answer can be wrong. A claim contradicted by the drawing
+    is precisely one of the questions the office would otherwise phone about,
+    which is what this module is for.
+
+    NOT blocking: the office can price a fence whose gate note is stale.
+    """
+    out: list[HandoverGap] = []
+    if project.stated.no_gates:
+        gates = sum(1 for r in project.topology.runs
+                    for e in r.point_events if e.payload.kind == "gate")
+        if gates:
+            out.append(HandoverGap(code="gates_contradicted",
+                                   params={"gates": gates}))
+    if project.stated.no_promises and project.annotations:
+        out.append(HandoverGap(code="promises_contradicted",
+                               params={"notes": len(project.annotations)}))
+    return out
+
+
 def handover_gaps(project: Project) -> list[HandoverGap]:
     """Everything the office still needs, most blocking first.
 
@@ -117,6 +140,7 @@ def handover_gaps(project: Project) -> list[HandoverGap]:
         return [HandoverGap(code="no_fence_drawn", blocking=True)]
 
     out: list[HandoverGap] = []
+    out.extend(_contradiction_gaps(project))
 
     # A project-level choice applies wherever no event says otherwise, so with a
     # default set, partial event coverage IS complete coverage. Without one,
@@ -182,4 +206,6 @@ HANDOVER_CODES = [
     "no_property_context",
     "height_assumed",
     "base_assumed",
+    "gates_contradicted",
+    "promises_contradicted",
 ]
