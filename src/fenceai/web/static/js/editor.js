@@ -90,7 +90,7 @@ function setupToolbar() {
   });
   document.getElementById("btn-fit").addEventListener("click", fitView);
   document.getElementById("chk-overlay").addEventListener("change", renderOverlay);
-  document.getElementById("btn-clear").addEventListener("click", clearTopology);
+  document.getElementById("btn-clear").addEventListener("click", clearDrawing);
   updateToolButtons();
 }
 
@@ -116,17 +116,32 @@ function updateStatus(cursor) {
   bar.textContent = text;
 }
 
-async function clearTopology() {
-  if (!confirm(t("confirm.clear_topology"))) return;
+async function clearDrawing() {
+  if (!confirm(t("confirm.clear_drawing"))) return;
+  // ONE snapshot for both halves: to the person pressing this, the fence and
+  // the house are one picture, so undoing it must bring back one picture and
+  // not the fence alone. Context rides the same history stack for exactly
+  // this reason (`history.js`).
   pushSnapshot("clear");
   state.draftNodes = [];
   clearGroup("g-draft");
   clearGroup("g-snap");
+  clearContextDraft();
   setSelection({});
   state.project.topology = {
     revision: state.project.topology.revision, nodes: [], runs: [],
   };
+  // The landmarks too. They are not `Topology` and must never be — a landmark
+  // changes no quantity, and in the topology it would bump the revision and
+  // 409 the structure sheet because somebody nudged a driveway. But that is a
+  // fact about the DATA MODEL, and this button is a promise to a salesperson:
+  // the label reads "Clear", the house and the street are things they drew,
+  // and leaving them behind read as the button being broken. The model keeps
+  // its separation; the button keeps its word.
+  const hadLandmarks = (state.project.context?.landmarks || []).length > 0;
+  if (hadLandmarks) state.project.context.landmarks = [];
   await saveTopology();
+  if (hadLandmarks) await saveContext();
 }
 
 // ---------- canvas input ----------

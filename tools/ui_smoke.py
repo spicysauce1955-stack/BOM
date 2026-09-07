@@ -1221,6 +1221,32 @@ def _smoke_property_context(c) -> None:
 
     drawn = c.js("document.querySelectorAll('#g-context path').length")
     check("both are drawn on the canvas", drawn == 2, drawn)
+
+    # --- and Clear means the whole picture ------------------------------
+    # The label reads "Clear" and the house and the street are things the
+    # salesperson drew, so leaving them behind read as the button being
+    # broken. The MODEL keeps its separation — a landmark is never in
+    # `Topology`, because there it would bump the revision and 409 the
+    # structure sheet over a nudged driveway — and the BUTTON keeps its word.
+    c.js("window.confirm = () => true; 'ok'")
+    c.click(*c.element_center("#btn-clear"))
+    time.sleep(2.0)
+    after = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                 ".then(p => ({runs: p.topology.runs.length,"
+                 " marks: (p.context.landmarks || []).length}))" % pid)
+    check("clear takes the fence AND everything on the property",
+          after["runs"] == 0 and after["marks"] == 0, after)
+    check("nothing is left drawn in either group",
+          c.js("document.querySelectorAll('#g-context path, #g-context-draft path')"
+               ".length") == 0)
+    # one picture in, one picture back: undo must not return the fence alone
+    c.click(*c.element_center("#btn-undo"))
+    time.sleep(2.0)
+    back = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                ".then(p => ({runs: p.topology.runs.length,"
+                " marks: (p.context.landmarks || []).length}))" % pid)
+    check("one undo brings back the whole picture, not just the fence",
+          back["runs"] > 0 and back["marks"] == 2, back)
     c.shot("52-property-context.png")
 
     # --- the property that keeps this slice cheap ------------------------
