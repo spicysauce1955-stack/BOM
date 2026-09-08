@@ -40,6 +40,9 @@ const ALL_TABS = ["canvas", "annotations", "knowledge", "review", "structure",
 //   #tool-pin          placing a post is not a thing that is sold
 //   #override-list     an override is a technical patch to a generated output
 //   #choices           bay widths: two right answers, neither of them a sale
+//   #agent-advice      the agent's suggestion is advice about HOW the fence is
+//                      built, and slice 1 has no keep/reverse for a salesperson
+//                      to act on anyway (advisory spec §11)
 //   #section-decisions the decision graph — the explanation, not the agreement
 //   #inspector         "Click a generated post, span, or gate"
 //   #gaps              NOT about this job at all: what the knowledge behind
@@ -64,6 +67,7 @@ const SALES_HIDDEN = [
   "#tool-pin",
   "#override-list",
   "#choices",
+  "#agent-advice",
   "#section-decisions",
   "#inspector",
   "#gaps",

@@ -774,6 +774,7 @@ html[data-role="sales"] #tabs,
 html[data-role="sales"] #tool-pin,
 html[data-role="sales"] #override-list,
 html[data-role="sales"] #choices,
+html[data-role="sales"] #agent-advice,
 html[data-role="sales"] #section-decisions,
 html[data-role="sales"] #inspector,
 html[data-role="sales"] #gaps,
@@ -993,6 +994,21 @@ html[data-step="review"] #generate-toolbar { display: none; }
 .handover-amount .num { font-size: 18px; font-variant-numeric: tabular-nums; }
 .handover-amount-label { text-transform: uppercase; letter-spacing: .06em;
   font-size: 11px; color: #64748b; }
+
+/* --- the agent's advice (advisory-agent slice 1): beside the question,
+       never instead of it — js/agent-advice.js owns #agent-advice. --- */
+.agent-empty { font-size: 12px; color: #64748b; }
+.agent-proposal { padding-block-start: 8px; margin-block-start: 8px;
+  border-block-start: 1px solid #e2e8f0; }
+.agent-proposal:first-child { padding-block-start: 0; margin-block-start: 0;
+  border-block-start: none; }
+.agent-proposal h4 { margin: 0 0 6px; font-size: 13px; }
+.agent-claims { list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 4px; }
+.agent-claim { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.agent-claim__marker { flex-shrink: 0; text-transform: uppercase; letter-spacing: .04em;
+  font-size: 10px; color: #64748b; }
+.agent-note { margin: 6px 0 0; font-size: 11px; font-style: italic; color: #94a3b8; }
 
 /* ---- Knowledge tab: sub-navigation and the rules pane ------------------- */
 /* Logical properties throughout (see CLAUDE.md): this strip sits inside the
