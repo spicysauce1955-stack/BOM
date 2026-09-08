@@ -34,16 +34,29 @@ globalThis.localStorage = {
   getItem: (k) => globalThis.localStorage.s[k] ?? null,
   setItem: (k, v) => { globalThis.localStorage.s[k] = String(v); },
 };
-globalThis.document = { getElementById: () => null, querySelectorAll: () => [],
-                        querySelector: () => null, documentElement: {} };
+// `liveHost` stands in for the real `#agent-advice` element through
+// `initAgentAdvice`'s own wiring (below) — `container()` reads it back via
+// `document.getElementById`, exactly as it would in a browser.
+const liveHost = { innerHTML: "" };
+globalThis.document = {
+  getElementById: (id) => (id === "agent-advice" ? liveHost : null),
+  querySelectorAll: () => [], querySelector: () => null, documentElement: {},
+};
 import { readFileSync } from "node:fs";
+const proposalAdviceBody = {
+  evaluated: true,
+  proposals: [{ claims: [{ marker: "read", text: "2500 · 2500 · 2400" }] }],
+};
 globalThis.fetch = async (url) => ({
-  ok: true, json: async () => JSON.parse(readFileSync(url, "utf8")),
+  ok: true,
+  json: async () => (url.includes("/advice") ? proposalAdviceBody
+    : JSON.parse(readFileSync(url, "utf8"))),
 });
 
-import { state } from "./js/state.js";
+import { emit, state } from "./js/state.js";
 import { initI18n, setLocale } from "./js/i18n.js";
-import { renderAdvice } from "./js/agent-advice.js";
+import { setUnits } from "./js/units.js";
+import { initAgentAdvice, renderAdvice } from "./js/agent-advice.js";
 
 await initI18n();
 // the app OPENS in Hebrew, so pin the language before anything reads a word
@@ -83,6 +96,24 @@ renderAdvice(proposalResult, inCm);
 await setLocale("he");
 const heDeclined = { innerHTML: "" };
 renderAdvice({ evaluated: false, proposals: [] }, heDeclined);
+await setLocale("en");
+state.units = "mm";
+
+// ---- initAgentAdvice's REAL wiring: the one path a pure renderAdvice()
+// call cannot reach, and where N1 (a missing units-changed subscription)
+// and N3 (the no-run state, decided in refresh(), never renderAdvice())
+// actually live.
+state.result = null;   // no run yet
+initAgentAdvice();     // registers listeners exactly once for this script
+const noRunHtml = liveHost.innerHTML;
+
+state.result = { run: { id: "run1" } };
+emit("result-changed", state.result);       // -> refresh() -> the stubbed fetch
+await new Promise((r) => setTimeout(r, 0)); // let the fetch's microtasks settle
+const liveMm = liveHost.innerHTML;
+
+setUnits("cm");    // the real units-button path -> emits units-changed
+const liveCm = liveHost.innerHTML;
 
 console.log(JSON.stringify({
   withProposal: withProposal.innerHTML,
@@ -90,6 +121,7 @@ console.log(JSON.stringify({
   nothing: nothing.innerHTML,
   inCm: inCm.innerHTML,
   heDeclined: heDeclined.innerHTML,
+  noRunHtml, liveMm, liveCm,
 }));
 """
 
@@ -148,6 +180,29 @@ def test_every_rendered_state_carries_the_sections_own_heading(out):
 def test_the_heading_and_the_empty_sentence_are_localized(out):
     assert out["heDeclined"] != out["declined"]
     assert "לא ניתן היה לבדוק" in out["heDeclined"]
+
+
+def test_no_run_yet_gets_its_own_state_not_i_did_not_look(out):
+    """Finding N3: `agent.no_run` lives in `refresh()`, not in `renderAdvice`
+    — the one state the pure-function tests above cannot reach, exercised
+    here through `initAgentAdvice`'s real wiring instead."""
+    assert "Generate a strategy" in out["noRunHtml"]
+    assert "Could not check" not in out["noRunHtml"]
+    assert "Nothing to suggest here" not in out["noRunHtml"]
+
+
+def test_a_units_toggle_re_renders_the_already_loaded_advice(out):
+    """Finding N1: I1's unit conversion is worthless if nothing re-renders
+    when the display-unit preference changes — the exact symptom (a stale
+    mm figure beside a cm one) reappearing through the missing
+    `units-changed` subscription rather than through the conversion itself.
+    Drives it through the REAL wiring (`initAgentAdvice` + `setUnits`,
+    which is what the units button actually calls), not a direct
+    `renderAdvice()` call, so removing `on("units-changed", render)` alone
+    is what this test is pinned against."""
+    assert "2500 · 2500 · 2400" in out["liveMm"]
+    assert "2500 · 2500 · 2400" not in out["liveCm"]
+    assert "250 · 250 · 240" in out["liveCm"]
 
 
 def test_the_module_never_touches_another_modules_dom():

@@ -167,6 +167,12 @@ export function initAgentAdvice() {
   // a run the drawing has since moved past.
   on("project-loaded", refresh);
   on("result-changed", refresh);
-  // Re-render the CACHED result in the new language; no need to re-fetch.
+  // Re-render the CACHED result in the new language/unit; no need to
+  // re-fetch. `units-changed` matters here because I1's fix gave this panel
+  // a real dependency on the display-unit preference (`choices.js` and ten
+  // other panels already subscribe for the same reason) — without it, one
+  // click of the units button leaves this panel's dimensions on the OLD
+  // unit while the choices panel beside it has already switched.
   on("locale-changed", render);
+  on("units-changed", render);
 }
