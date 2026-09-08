@@ -1,4 +1,4 @@
-# Next session — internal engine work, because the boundary cannot be checked yet
+# Next session — pending commits, two live design threads, silence owed to no one
 
 ```text
 Written:  2026-08-25, closing the implementation session that built items 1-5.
@@ -6,10 +6,17 @@ Rewritten: same day, when the Knowledge team's state changed the plan.
 Rewritten again: 2026-08-27 — the Knowledge team reviewed item A's fixture,
           which cascaded into a real fix and a five-turn negotiation. See the
           two sections right under this box, newest first.
+Rewritten again: 2026-09-08 — closed T49's five "Ours, open" ledger items, then
+          two design threads (Knowledge tab, a new standalone Connections
+          view) grew out of a UI complaint into an approved mockup and a
+          committed spec. NOTHING from this session is committed except two
+          narrow, docs-only spec commits — ~25 files sit uncommitted,
+          including four shared with the concurrent session, tangled
+          together. Read this section's FIRST paragraph before touching git.
 Rewritten again: 2026-09-07 — the eight-step road shipped, and the road turned
-          out never to have shown a state at all. Newest section first, under
-          this box. READ ITS FIRST PARAGRAPH: a second session commits into
-          this repo concurrently, so never `git add -A` here.
+          out never to have shown a state at all. READ ITS FIRST PARAGRAPH: a
+          second session commits into this repo concurrently, so never
+          `git add -A` here.
 Rewritten again: 2026-08-30 — the Knowledge team published real
           curation-level-2 ParameterTable data for the first time
           (conversation.md T12). Item 6 is unblocked and its mechanism is
@@ -27,6 +34,140 @@ State:    Items 1-11 done and pushed. Item 6's mechanism (SourcePolicy,
           (Gap.subject not yet structured) — reported as conversation.md T14,
           fixed on their side by amendment 004 and now passing.
 ```
+
+## 2026-09-08 — T49 closed, and two design threads in flight, nothing committed
+
+### Read this first: git state
+
+**Another session works this repo at the same time — same rule as below, sharper this
+time.** `git status` shows ~25 modified files plus a handful this session's own concurrent
+sibling created (`api/app.py`, `knowledge/parts.py`, `test_snapshot_routes.py`,
+`plan/current-status.md`, `docs/architecture/published-part-inspection.md`,
+`js/published-parts.js`, `tests/web/test_published_parts_module.py` — **do not touch these,
+they are not this session's**). **Nothing from this session is committed** except two narrow
+spec-doc commits (`docs/superpowers/specs/2026-09-07-connections-view-design.md`, written then
+amended). The user has not asked for the rest to be committed, so it wasn't — per this
+project's own rule, commits happen only when asked.
+
+Four files carry **both** sessions' changes interleaved in one working-tree diff:
+`app.js`, `i18n/en.json`, `i18n/he.json`, `index.html`. Before anyone commits any of this
+session's pieces, the same surgery the 2026-09-07 section below describes (`git checkout HEAD`,
+reapply only this session's lines, commit, restore the combined file) has to happen on all
+four — and there's more tangled in each of them now than there was last time.
+
+### Thread 1 — the three open items from 2026-09-07, closed
+
+1. **The clear-drawing smoke ran for the first time and found a real bug.** `clearDrawing()`
+   (`editor.js`) cleared landmarks locally, then `saveTopology()` replaced the WHOLE
+   `state.project` with the server's response — which still carried the pre-clear landmarks,
+   since that route never touches context — clobbering the local clear before `saveContext()`
+   ever ran. Fixed: re-set `landmarks = []` again after `saveTopology()` returns. A second,
+   independent bug in the same test: the "drawing doesn't touch topology revision" check was
+   asserting AFTER the Clear+Undo sequence, which are supposed to bump revision by design —
+   moved the assertion to where it actually belongs, right after the landmark drags.
+2. **Three step-1 leftovers, removed.** `checklist.js` deleted outright (per the 09-06 spec's
+   own invariant — "deleted, not left dormant"); the Generate/Fit toolbar and the "This
+   stretch" segment panel are now properly scoped out of step 1 via `step-surfaces.js`
+   (`#generate-toolbar`, `#run-editing-panel` ids added, both tables + their CSS mirror
+   updated).
+3. **The lingering pencil CTA turned out to be the same bug as #2**, not the suspected
+   `getScreenCTM`-on-a-hidden-SVG theory (which was checked and is a red herring — closed for
+   free by the checklist deletion). Separately, **the whole empty-canvas CTA (`editor.empty_cta`,
+   the arrow-pointing-at-the-pencil feature) was removed entirely**, on direct instruction —
+   `renderCta()`, its four call sites, the `g-cta` layer, and the locale keys are gone.
+
+**369/369 browser smoke, full suite green** after this thread (before thread 2 added more).
+
+**Still open from that list, untouched:** item 4 (`road.state.blocked` dead string), item 5
+(the 2-4 map variant, named as a seam), item 6 (**the whole-branch review still hasn't run** —
+now covering thread 2 below as well, which makes it more overdue, not less).
+
+### Thread 2 — `conversation.md` T49's five "Ours, open" items, all closed
+
+Read `conversation.md` T49 (both repos, byte-identical) before touching any of this — it's
+the actual negotiation record, this is just the punch list.
+
+| Item | What shipped |
+|---|---|
+| `fit_pattern` rounding conformance | New `fit_pattern_milli()` in `fencemodel/fit.py` — same exact algorithm, fed true thousandths instead of pre-rounded mm, rounding only the aggregate slack and each distinct gap value once. Wired into the one real caller (`resolve.py:701`), proven an EXACT no-op on today's whole-mm data (281/281 golden scenarios unmoved). Test reproduces the negotiation's own worked example: naive engine gave a false-PASS 91.0mm opening against a 100mm limit; the fix gives 121mm, correctly FAILing — the sphere-test-flip defect, closed. |
+| Uncovered-point cross-check | New gap code `uncovered_point_contradicted` (`knowledge/parameters.py`) fires when a table's own row (via an omitted-dimension match) actually covers a point the publisher claimed was uncovered — the exact mechanism that would have caught their 16-false-uncovered-points bug automatically. Locale keys in both bundles, `test_locale_bundles.py` guard extended. |
+| Agreement-recorded-as-defeat | New `corroborated_by` field/edge (`evaluator.py`, `decisions/graph.py`, `decisions/explain.py`, both locales) so N agreeing sources render as corroboration, not a suppressed contest. The other half of the ask (`Resolution.admitted` in `parameters.py:541-543`) was correctly DECLINED mid-flight — that's a different, unrelated `Resolution` type (source-policy citation admission, not evaluator rule-precedence) with no current consumer; building it now would be speculative. |
+| Vendored real-snapshot fixtures | Three pinned snapshots copied into `tests/knowledge/fixtures/real_snapshots/`; `test_real_snapshot.py` no longer loads by absolute path into the sibling repo and no longer skips silently — verified by actually renaming the sibling repo away and re-running (17/17 passed). |
+| Stale claims + dead keys + candidate filing | Four "Knowledge team has published nothing" claims corrected (`snapshot.py`, `core/warnings.py`, a spec doc, a fixtures README). Five dead `knowledge.snapshot.*` locale keys removed (nothing ever rendered them). Candidate **C17** filed in `CANDIDATES.md` (rounding a published LIMIT the same as a MEASUREMENT admits values the publisher excluded — trigger D, non-blocking). |
+
+**Full suite green after all five landed and after a deliberate cross-fork damage check**
+(four background agents shared this live working tree, not isolated worktrees — the transient
+failures they individually hit mid-flight were resource contention, resolved once everything
+landed; verified via a clean full run, not assumed).
+
+**Nothing was sent back to fence-rag.** T49 (ours) is still the last turn in the thread. These
+five fixes answer things T49 itself flagged as ours to do, not things they're waiting to hear
+about — but if a T50 ever goes out, it should mention this batch landed.
+
+### Thread 3 — Knowledge tab redesign: approved design, zero implementation
+
+Started as "the Knowledge tab gives me a headache." Real bug found along the way: the rules
+list renders **533 cards unconditionally** — 486 of them `status: proposed` candidates that
+the Review tab already owns via a separate, filtered endpoint; only 47 are real established
+rules. Approved design: sub-navigation (Published / Author / Rules) instead of one stacked
+page; the Rules pane excludes candidates by default, collapses retired rules, and renders
+`scope` as chips and `actions` as the same sentence-style text the rule builder already
+writes, instead of two `JSON.stringify(...)` dumps per card.
+
+**Mockup, approved, not yet built:** https://claude.ai/code/artifact/1e114f41-364e-4feb-ab6d-242e809c149a
+No spec file written for this one (it stayed "bounded" — reorganizing an existing tab, not new
+architecture) and no implementation plan exists yet either.
+
+### Thread 4 — the Connections view: escalated to architectural, spec committed, zero implementation
+
+The same complaint ("no visualization for structured data we understand") escalated once it
+became clear the real ask — see what references what across rules/parts/models/products, and
+find orphans/dangling references — has no existing flow to reorganize and touches no library
+this frontend is allowed to load (no framework, no CDN, per `CLAUDE.md`).
+
+Two real, previously-invisible findings justified building it: a published Part has **no link
+to a catalog Product anywhere** (`knowledge/parts.py:26-29`, a named permanent gap, 212 parts
+affected), and **nothing checks the reverse direction of any reference at any layer** — only
+the forward direction (`Snapshot.dangling_refs()`) is checked, and it's real, tested, and
+clean (0 dangling).
+
+Design chosen after researching real precedent (Notion/Obsidian backlinks panels, Knip-style
+orphan lists — NOT a global force-directed graph, which no surveyed tool hand-rolls without a
+layout library): pick one entity, see a radial diagram of its direct references/referenced-by
+plus a separate, always-distinct, filterable orphans list. Shape encodes entity kind
+(hexagon=Rule, square=Product, diamond=Model, circle=Part, page=SourceDoc, **triangle=Warning,
+added in a same-day spec revision**); color encodes relationship type.
+
+**Spec:** `docs/superpowers/specs/2026-09-07-connections-view-design.md`, committed, then
+amended same day after the user pushed on completeness ("what about assemblies, what other
+data models don't we see here"). That pass **investigated rather than guessed**:
+`AssemblyStep` (`report/assembly.py`, `model.py:634`) turned out to reference only its own
+Model's slots — not a new graphable node at all, folds into Model. `Warning`
+(`DocumentWarning.cites`) has the identical citation shape Part/Rule/Gap already use — added
+as a sixth entity. `Project`/`Override` are real (`fence_model` → Model, `ForcePostSku.sku` →
+Product) but explicitly named as a deliberately separate layer (operational job data, a
+different audience) rather than silently absent. One real inconsistency the Warning addition
+exposed and fixed: `Gap` stays out of v1 as a lookup-able entity, but its citations still have
+to count toward the Unreferenced-SourceDoc check, or that check would report false orphans.
+
+**Three published artifacts, all still just previews — nothing behind any of them is real:**
+- Interactive mockup (pick an entity, radial diagram + lists update): https://claude.ai/code/artifact/a0380b52-2778-4668-b6ab-5e3b0532327a
+- Design map (entity shapes, the reference diagram, the rejected-vs-chosen UI comparison, both workflows): https://claude.ai/code/artifact/60021d4a-1a2b-491b-85de-d9316754d5ee
+
+**Open at handoff, asked and not yet answered:** whether to update those two artifacts to add
+the sixth entity (Warning) the spec amendment introduced — offered, not done. Next concrete
+step once that's settled: invoke `writing-plans` for an actual implementation plan — nothing
+has been built, this is 100% still the design phase for both thread 3 and thread 4.
+
+### A trap worth naming for whoever picks up `fit_pattern_milli`
+
+The first instinct for "round the milli-precision result once at the end" was WRONG, not just
+imprecise: rounding each of `_spread()`'s already-distributed gap values independently (rather
+than rounding the aggregate slack once, THEN spreading it at mm precision) can make a real,
+non-zero slack vanish to zero across every gap — `_spread(3000, 7)` distributes as four 429s
+and three 428s milli, every one of which rounds to 0mm alone. Caught by tracing concrete
+numbers before trusting the intuition, not by a test that happened to fail. The fix and the
+reasoning are in the function's own docstring in `fit.py` — read it before changing that code.
 
 ## 2026-09-07 — the eight-step road shipped, and the road had never once shown a state
 
