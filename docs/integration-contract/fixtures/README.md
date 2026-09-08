@@ -1,9 +1,10 @@
 # Fixtures — what we expect to receive, not what anyone published
 
-**Nothing in this directory is real published data.** The Knowledge Platform is
-still designing; it has published nothing, and these files are this repo's
-statement of what it expects a snapshot to look like, written from
-`../contract.md` §1.2 and §1.3.
+**Nothing in this directory is real published data.** The Knowledge Platform has
+published real snapshots since 2026-08-30, but these files predate that and stay
+hand-authored on purpose: this repo's own statement of what it expects a
+snapshot to look like, written from `../contract.md` §1.2 and §1.3, kept
+obviously a fixture rather than reused as a stand-in for the real thing.
 
 They exist for three reasons, and the third is the point:
 

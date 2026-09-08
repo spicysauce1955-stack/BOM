@@ -130,11 +130,13 @@ class DocumentWarning(BaseModel):
     this side: contract §1.1 makes `SourceRef.id` opaque to Planning — "do not
     parse it, do not build one" — so a curator authoring a warning in the model
     editor has no way to mint one, and the Discovery surface that would hand them
-    a real one (`GET /source-refs/{id}`) is designed and unimplemented. So it is
+    a real one (`GET /source-refs/{id}`) is designed and unimplemented, even
+    though real snapshots now flow through the door it would resolve. So it is
     optional here, an UNATTRIBUTED warning is rendered as unattributed, and the
-    count of them is evidence for the team still designing the door they come in
-    by. Requiring the field would have been enforced by fabricating ids, which is
-    how a hypothesis becomes a fact nobody checked.
+    count of them is evidence for that still-unimplemented Discovery surface,
+    now the one piece of this door real data has outpaced. Requiring the field
+    would have been enforced by fabricating ids, which is how a hypothesis
+    becomes a fact nobody checked.
 
     `cites` is a LIST, not the single optional ref this side first modelled it
     as: a warning printed on fourteen pages of two documents genuinely cites

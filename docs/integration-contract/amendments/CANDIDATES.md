@@ -776,6 +776,65 @@ recommendation, not something shipped without your agreement.
 
 ---
 
+## C17 — rounding a published LIMIT the same way as a published MEASUREMENT admits values the publisher excluded
+
+| | |
+|---|---|
+| **Trigger** | **D** — the contract defines rounding for a multiplied measurement and says nothing about a read-once threshold |
+| **Raised** | 2026-09-07, `conversation.md` T49 §1b, while conforming `fit_pattern` to obligation 4's rounding clause |
+| **Blocking?** | **No.** `[measured]` no snapshot on disk publishes any of the threshold parameters this affects against real data yet — the only value in play is a seed integer that never passes through `to_mm` at all. Batches. |
+
+`contract.md:112-117` is BINDING that thousandths-of-a-millimetre conversion
+happens at one named point and **rounds**, worked example `max_span_mm`:
+flooring `2463.8 mm` to `2463` instead of rounding to `2464` buys an extra
+post, footing and pour on a 9.8 m run. That reasoning is entirely about a
+value that gets **multiplied** — the cost of rounding *inward* is an
+over-built fence. It says nothing about a value that is only ever **compared**
+once: a threshold a computed quantity must not exceed (or must not fall
+below).
+
+**The two are not the same problem, and standard rounding is wrong for a
+limit in both directions.** `[measured]` `to_mm(101600) = 102` — a published
+4″ clear-gap limit, `101.6 mm`, stored as `102` — now passes a `102 mm`
+opening the publisher's own number excluded. `[measured]` `to_mm(101400) =
+101` and `to_mm(99400) = 99` — a limit whose fraction is under .5 rounds
+*inward* instead, tightening a limit the publisher never meant tightened.
+Round-to-nearest is correct for a measurement (the true value is somewhere
+near the rounded one) and wrong for a limit either way it happens to fall,
+because a limit is not an estimate of some other number — it is the number,
+and the publisher's own thousandths already say exactly where it sits.
+
+**What it costs to leave.** Every threshold parameter this engine consumes
+by comparison inherits whichever direction `to_mm`'s ordinary rounding
+happens to fall, silently, per value: some admit a bay the publisher's limit
+excludes, some reject one the publisher's limit allows, and nothing in the
+codebase or the contract says which. Concretely, by file and line:
+`max_span_mm` (`generator.py:1829`, `:1861`, `:1906`, `:3694`, `:3732`),
+`max_clear_gap_mm` (`generator.py:3351`, `_panel_offence` at `:3905`/`:3918`
+— the sphere-test safety verdict itself), `min_rail_separation_mm` and
+`max_pattern_residual_mm` (`generator.py:3352-3353`), `max_panel_step_mm`,
+`max_panel_gap_mm` and `max_fence_height_mm` (`generator.py:2119-2127`) all
+read a published value once and compare it, never multiply it. One threshold,
+`footing_depth_mm`, is published today with no consuming comparison at all
+yet — named because it will need the same disposition the day one exists.
+
+**Not something this platform should decide unilaterally.** A first attempt —
+direction-aware rounding read off which side of the comparison consumes the
+value (floor an upper bound, ceil a lower bound) — was implemented, passed
+the whole suite, and was **reverted** before this candidate was filed: it
+broke `contract.md:112-117` by adding a second named rounding point beside
+`to_mm`, which the clause's own wording forbids regardless of which direction
+either point rounds. Fixing this needs the contract to say what a limit *is*
+first — whether it is `to_mm`'d like anything else and the exposure is
+accepted, whether thresholds get their own named conversion point, or whether
+a limit should arrive already expressed as a whole millimetre so there is
+nothing to round. That last option would make this moot for every case
+above, and only the publisher can say whether it holds — `[measured]` in one
+real snapshot, 88 of 110 dimensional values are not whole millimetres, so
+nothing in the payload today distinguishes a limit from a measurement.
+
+---
+
 ## Not candidates — recorded so they are not re-raised
 
 - **`retain_until` has no specified value.** The contract requires a snapshot

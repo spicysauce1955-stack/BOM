@@ -2,16 +2,19 @@
 
 Integration contract §1.2. The type is theirs; what we do with it is ours.
 
-**Nothing has ever been published through this door.** The Knowledge Platform is
-still designing, so every field below is the contract's shape rather than
-something observed, and `docs/integration-contract/fixtures/` holds a fixture
-that is deliberately obviously a fixture. Building against a design before it is
-implemented is not speculation — it is the fastest way to tell the designer
+**Real data has flowed through this door since 2026-08-30.** The Knowledge
+Platform published its first `ParameterTable`s that day and further cuts since,
+so the fields this engine actually consumes are shapes it has observed, not
+only the contract's words — `docs/integration-contract/fixtures/` still holds a
+fixture that is deliberately obviously a fixture, kept from before real data
+existed and still useful for exercising the loader against a whole document
+rather than unit fixtures alone. Building against a design before it is
+implemented was not speculation — it was the fastest way to tell the designer
 whether the design works, which is the argument `docs/superpowers/specs/
-2026-08-23-frontend-design.md` §8 already makes for its own step 1. What WOULD be
-speculation is treating what we learn here as settled: this file's shapes are a
-hypothesis with good tests behind it, and the first real snapshot is what turns
-any of it into a fact.
+2026-08-23-frontend-design.md` §8 already makes for its own step 1. What
+remains speculation is treating every field as checked: `models`, `procedures`,
+`combinations` and `rules` (below) are still accepted and unparsed, so those
+four are the contract's shape alone, not yet a fact this engine has observed.
 
 **Only the parts this engine can act on are modelled.** `parameters` becomes
 knowledge through `parameters.expand`; `gaps` are carried through as the
