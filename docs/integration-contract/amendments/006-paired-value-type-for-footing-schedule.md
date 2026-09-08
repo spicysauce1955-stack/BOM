@@ -9,7 +9,15 @@ Trigger      D — defect. §1.3's `value_type` cannot express a real corpus sha
              `hit_policy: collect_min`/`priority`) were already rejected by both
              sides in `conversation.md` T1→T2, 2026-08-27.
 Filed by     Knowledge, 2026-08-30
-Status       FILED. Governs nothing until ratified (AMENDING.md §3 step 2).
+Status       RATIFIED AS MODIFIED and in force. Cut as contract v1.3, 2026-08-31,
+             batched with 005 and 007 — `value_type` gains
+             `paired(<parameter>:<UnitCode>, <parameter>:<UnitCode>)`, with the
+             accepted modification that a pair NAMES its members rather than implying
+             them by position. Both copies byte-identical at `fdaf7462…` —
+             conversation.md T30 (cut) and T32 (ratified). Read "FILED. Governs
+             nothing until ratified (AMENDING.md §3 step 2)" until 2026-09-08, when
+             the ratification was backfilled (T50 §4). The disposition below was in
+             this file from 2026-08-31; the cut was not.
 Promotes     CANDIDATES.md C5, raised by Knowledge 2026-08-27, disposition
              flipped 2026-08-27 ("Agreed disposition: option (1), a
              paired/compound `value_type`. ... both sides are willing

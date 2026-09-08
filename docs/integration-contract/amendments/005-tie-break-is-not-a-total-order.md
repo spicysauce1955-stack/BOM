@@ -6,7 +6,14 @@ Trigger      B — unimplementable. The rule cannot be built as written; the mec
              fails is named and executed below. D applies too: the chain is also
              INCOMPLETE, and the first real snapshot contains a pair that exhausts it.
 Filed by     Planning & BOM, 2026-08-30, on building the step 002 unblocked
-Status       FILED. Governs nothing until ratified (AMENDING.md §3 step 2).
+Status       RATIFIED and in force, as proposed, both halves. Cut as contract v1.3,
+             2026-08-31, batched with 006 and 007; both copies byte-identical at
+             `fdaf7462…` — conversation.md T30 (cut) and T32 (ratified). §1.4 now
+             reads rank -> curation_level -> issue_date ONLY where every tied
+             candidate carries one -> source_class -> content_hash. Read "FILED.
+             Governs nothing until ratified (AMENDING.md §3 step 2)" until
+             2026-09-08, when the ratification was backfilled (T50 §4). The
+             disposition below was in this file from 2026-08-31; the cut was not.
 Note         This amends wording WE proposed in 002 and both sides ratified twelve hours
              earlier. That is not a reason to soften it. The defect is only visible from
              inside an implementation, which is exactly what nobody had when 002 was cut.

@@ -4,6 +4,10 @@
 Status:     FILED PROPOSAL ONLY — no ratification, no changed obligation.
 Against:    FROZEN contract v1.3, 2026-08-31.
 Filed:      2026-09-06, Knowledge-side implementation proposal.
+Posted:     2026-09-08, conversation.md T50 §1 — formally handed to Planning in the
+            thread. Until that date this file had reached Planning only because they
+            copied a directory (T49 §9b), which they correctly declined to treat as a
+            filing. The disposition clock starts at T50, not at Filed.
 Obligation: 6; §1.1 Provenance; delegated geometry definitions in knowledge-datamodel.md §3.
 Trigger:    D — an obligation depends on an undefined numeric-owner association.
 ```
@@ -64,8 +68,37 @@ Both: test positive round trips using synthetic evidence, and refusal controls f
 
 No current Part or ParameterTable serialization changes. Published models remain empty under the current implementation. Existing private Emblem candidates stay private. No application may interpret this pending proposal as an accepted alternative wire format.
 
+## What must be on the table when this is judged
+
+Recorded 2026-09-08 with the posting, at Planning's request in T49 §9b — *"Neither of
+us should disposition 008 without §1 on the table beside it."* Agreed, and named here
+so the condition survives in the file rather than only in the thread. Three items, and
+the third is new since this amendment was filed:
+
+1. **T49 §1 — the consumer floors what this map would certify.** `Mm = int` on the
+   Planning side, and `contract.md:112-117` requires a multiplied published value to be
+   consumed in thousandths and rounded only at its output. A `field_provenance` entry
+   that classifies a 88.9 mm centreline is a promise about a number the reader currently
+   stores as 89. That does not make the map wrong, but it decides what the map is
+   *for*: certifying a value the consumer then re-rounds is a weaker guarantee than
+   either side has been describing, and both should say which they mean before
+   accepting the representation.
+
+2. **The map is per-value, and the rounding is per-value too.** Every one of the 36
+   proposed target addresses in the scope table above is a place where a classification
+   and a conversion meet. If a target's value survives ingestion but its precision does
+   not, the association is intact and the guarantee is not. Whatever this amendment says
+   about "must survive consumer ingestion" has to mean the value as well as the record.
+
+3. **C17, and the measurement in T50 §3.** `max_span_mm` is published today inside
+   `footing_schedule`'s `paired` value and is converted to whole millimetres at
+   `parameters.py:327`. That is the same class of loss as item 1, already live in
+   published data, and it is evidence about how a "must survive ingestion" clause
+   actually behaves in this pair of systems. It should inform the wording here rather
+   than be settled separately.
+
 ## Dispositions
 
-- Knowledge team acceptance: **PENDING**. Filing is not acceptance or a fabricated reviewer decision.
-- Planning team disposition: **PENDING** — accept / accept-modified / reject with reasoning.
+- Knowledge team acceptance: **PENDING**. Filing is not acceptance or a fabricated reviewer decision. Posting it into the thread (T50) is not acceptance either.
+- Planning team disposition: **PENDING** — accept / accept-modified / reject with reasoning. Formally handed over 2026-09-08 (T50 §1); before that date there was nothing for this side to disposition.
 - Ratification/version cut: **NOT PERFORMED**. Follow AMENDING.md steps 3–5 if accepted; do not update frozen files or hashes as a side effect of implementation.

@@ -8,7 +8,13 @@ Trigger      D — defect. Two BINDING obligations depend on a shape §1.3 does 
              define. B applies too: the condition compiles to a comparison that
              can never be true, and the mechanism is named below.
 Filed by     Planning & BOM, 2026-08-31, on wiring the first real tables
-Status       FILED. Governs nothing until ratified (AMENDING.md §3 step 2).
+Status       RATIFIED and in force, as proposed. Cut as contract v1.3, 2026-08-31,
+             batched with 005 and 006; this is the trigger-B blocking item that
+             forced the cut rather than waiting to batch. Both copies byte-identical
+             at `fdaf7462…` — conversation.md T30 (cut) and T32 (ratified). Read
+             "FILED. Governs nothing until ratified (AMENDING.md §3 step 2)" until
+             2026-09-08, when the ratification was backfilled (T50 §4). The
+             disposition below was in this file from 2026-08-31; the cut was not.
 Blocking     YES, and it is the only thing now blocking item 6. Batches with
              005 and 006 if a cut is close; otherwise this is the one that
              wants the next re-cut.

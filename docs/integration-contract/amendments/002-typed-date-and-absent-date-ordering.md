@@ -8,7 +8,11 @@ Trigger      A — falsification. Measured evidence contradicts a binding item, 
              sides are building against it now. B applies too: the tie-break's third
              criterion could not be built and the mechanism is named below.
 Filed by     Planning & BOM, 2026-08-30, on consuming the first real snapshot
-Status       FILED. Governs nothing until ratified (AMENDING.md §3 step 2).
+Status       RATIFIED and in force. Cut as contract v1.2, 2026-08-30, batched with
+             003 and 004; both copies byte-identical at `947dc8fd…` — conversation.md
+             T24. Read "FILED. Governs nothing until ratified (AMENDING.md §3 step 2)"
+             until 2026-09-08, when the ratification was backfilled (T50 §4). The
+             disposition below was in this file from 2026-08-30; the cut was not.
 Promotes     CANDIDATES.md C6, raised by Knowledge 2026-08-30
 ```
 

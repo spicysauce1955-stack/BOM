@@ -7,7 +7,14 @@ Trigger      D — an obligation depends on something the contract does not defi
              built deterministically, because two of the three target shapes do not
              exist.
 Filed by     Planning & BOM, 2026-08-30, after a type sweep of contract.md
-Status       FILED. Governs nothing until ratified (AMENDING.md §3 step 2).
+Status       RATIFIED AS MODIFIED and in force. Cut as contract v1.2, 2026-08-30,
+             batched with 002 and 003 — `EntityRef.kind` delegation, `ParamRef` and
+             `TenantId` defined; `SlotRef` ratified as RESERVED, undefined and
+             unemittable. Both copies byte-identical at `947dc8fd…` — conversation.md
+             T24. Read "FILED. Governs nothing until ratified (AMENDING.md §3 step 2)"
+             until 2026-09-08, when the ratification was backfilled (T50 §4). The
+             disposition and the accept-modified ratification text below were in this
+             file from 2026-08-30; the cut was not.
 ```
 
 ## The gap

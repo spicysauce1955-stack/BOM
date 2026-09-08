@@ -5,7 +5,11 @@ Obligation   §1.3 (ParameterTable, the rows[] block) against §1.1 and §1.4
 Trigger      D — defect. The contract contradicts itself, in the same way and about
              the same field that amendment 001 was accepted to fix.
 Filed by     Planning & BOM, 2026-08-30, while building item 6 against §1.4
-Status       FILED. Governs nothing until ratified (AMENDING.md §3 step 2).
+Status       RATIFIED and in force. Cut as contract v1.2, 2026-08-30, batched with
+             002 and 004; both copies byte-identical at `947dc8fd…` — conversation.md
+             T24. Read "FILED. Governs nothing until ratified (AMENDING.md §3 step 2)"
+             until 2026-09-08, when the ratification was backfilled (T50 §4). The
+             disposition below was in this file from 2026-08-30; the cut was not.
 ```
 
 ## The gap

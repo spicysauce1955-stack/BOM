@@ -13,6 +13,33 @@ Discard:  an item that turns out to be a misreading is struck through with the
           point of keeping a log at all.
 ```
 
+## Which copy of this file you are reading
+
+```text
+Origin:   fence-rag/docs/integration/amendments/CANDIDATES.md. Both sides may write
+          to it. Every other copy — including the one in the Planning repo at
+          docs/integration-contract/ — is a mirror, and a mirror is only ever a
+          copy: write the origin, then re-copy, never the reverse.
+```
+
+`conversation.md` tolerates two writers because it is append-only and every turn is
+signed, so a divergence is both visible and mergeable. This file is neither. Both
+sides add entries, entries get struck through and annotated in place, and nothing in
+the text marks whose copy is current. It stayed consistent for sixteen candidates
+because one repo held it, and it broke the day two did: C17 was written into the
+mirror on 2026-09-07 and the origin never received it (`conversation.md` T50 §2) —
+the more dangerous direction, because the origin repo is where an amendment is filed
+from. The rule this replaces was that whoever last looked is right, and the failure
+it prevents is a candidate that one side has read, reasoned about and cited while the
+other side has no record it exists.
+
+**This is not an amendment and needs no ratification.** It governs how two mirrors of
+a working document stay in step, not anything that crosses the boundary, so
+`AMENDING.md` §2's exclusions cover it. Nothing in this file is filed and nothing in
+it governs anything; that has not changed.
+
+---
+
 ## How to add one
 
 Name the trigger, quote the text, say what it costs to leave it. If you cannot
@@ -782,7 +809,7 @@ recommendation, not something shipped without your agreement.
 |---|---|
 | **Trigger** | **D** — the contract defines rounding for a multiplied measurement and says nothing about a read-once threshold |
 | **Raised** | 2026-09-07, `conversation.md` T49 §1b, while conforming `fit_pattern` to obligation 4's rounding clause |
-| **Blocking?** | **No.** `[measured]` no snapshot on disk publishes any of the threshold parameters this affects against real data yet — the only value in play is a seed integer that never passes through `to_mm` at all. Batches. |
+| **Blocking?** | **Not for the compared-only thresholds; batches.** But `max_span_mm` is out of scope for this candidate and into obligation 4's existing clause: `[measured]` it is published today as a named member of `footing_schedule`'s `paired` value — 5 tables, 15 rows, 6 magnitudes, 5 of them not whole millimetres — and `contract.md:112-117` names a span limit explicitly. `parameters.py:327` converts it at expansion, so the thousandths never reach `ceil(length_mm / max_span_mm)`. That is the same conformance breach as `fit_pattern` (T49 §1), not a gap in the contract, and it is fixed by consuming the thousandths — `n` is a count, so nothing rounds. `conversation.md` T50 §3 has the divergence table. |
 
 `contract.md:112-117` is BINDING that thousandths-of-a-millimetre conversion
 happens at one named point and **rounds**, worked example `max_span_mm`:
