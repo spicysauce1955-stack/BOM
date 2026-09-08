@@ -6,7 +6,7 @@ and a single rounded gap would hide openings that exceed a safety limit.
 
 import pytest
 
-from fenceai.fencemodel.fit import fit_pattern
+from fenceai.fencemodel.fit import fit_pattern, fit_pattern_milli
 
 
 def _assert_accounts_for_axis(r, axis_len_mm, member_widths_mm):
@@ -180,3 +180,94 @@ def test_the_guard_does_not_fire_on_an_axis_too_short_to_hold_anything():
     r = fit_pattern(10, [100], [-100 + 1], justification="start",
                     excess="truncate", edge_margin_mm=0)
     assert r.count == 0
+
+
+# ---- fit_pattern_milli: contract.md:112-117, round once at the output -------
+#
+# `fit_pattern` itself needs no change (it is exact pure-integer arithmetic
+# regardless of what its integers count) — the defect this closes is entirely
+# about feeding it values that were already rounded to mm before being summed
+# `count` times. `fit_pattern_milli` takes the same shape of input in
+# thousandths of a millimetre instead.
+
+def test_fit_pattern_milli_matches_fit_pattern_exactly_for_whole_mm_inputs():
+    """When there is no sub-millimetre information at all (every input already
+    an exact multiple of 1000), running in milli must reproduce the mm result
+    byte for byte — this is what makes wiring real callers to the milli path
+    safe today, before any caller actually has finer-than-mm data."""
+    mm = fit_pattern(1737, [90, 40], [15, 15], justification="spread_to_fit",
+                      excess="space", edge_margin_mm=12)
+    milli = fit_pattern_milli(1737_000, [90_000, 40_000], [15_000, 15_000],
+                               justification="spread_to_fit", excess="space",
+                               edge_margin_milli=12_000)
+    assert milli == mm
+
+
+def test_fit_pattern_milli_matches_fit_pattern_for_truncate_too():
+    mm = fit_pattern(2000, [100], [20], justification="start",
+                      excess="truncate", edge_margin_mm=0)
+    milli = fit_pattern_milli(2_000_000, [100_000], [20_000],
+                               justification="start", excess="truncate",
+                               edge_margin_milli=0)
+    assert milli == mm
+
+
+def test_fit_pattern_milli_closes_the_sphere_test_flip():
+    """The exact real-world case the boundary negotiation measured: 2.5" pickets
+    (63.5 mm), a 3/8" gap (9.525 mm) and a 3.5" margin (88.9 mm) on a 97" axis
+    (2463.8 mm), `start`/`truncate`.
+
+    Rounding each value to mm BEFORE the fit (today's `to_mm`-then-multiply
+    order) gives a terminal opening of 91.0 mm — inside a 100 mm clear-gap
+    limit. The true (exact-fraction) geometry's terminal opening is 120.65 mm
+    — outside it. Feeding the true thousandths through `fit_pattern_milli` and
+    rounding once at the end must land close to the true answer (121 mm, the
+    0.35 mm gap being the ordinary cost of two independent single roundings —
+    margin and slack — against a fully exact reference), and specifically on
+    the correct side of a 100 mm limit, not the wrong one."""
+    naive = fit_pattern(2464, [64], [10], justification="start",
+                         excess="truncate", edge_margin_mm=89)
+    naive_terminal = naive.openings_mm[-1]
+    assert naive_terminal == 91  # the buggy engine's own number, for contrast
+
+    fixed = fit_pattern_milli(2_463_800, [63_500], [9_525],
+                               justification="start", excess="truncate",
+                               edge_margin_milli=88_900)
+    assert fixed.count == 31 == naive.count  # not a count artefact
+    fixed_terminal = fixed.openings_mm[-1]
+    assert fixed_terminal == 121
+    LIMIT_MM = 100
+    assert naive_terminal <= LIMIT_MM       # the false PASS this defect caused
+    assert fixed_terminal > LIMIT_MM        # the true verdict is FAIL
+
+
+def test_fit_pattern_milli_does_not_lose_the_spread_slack_to_early_rounding():
+    """A slack that is an exact whole number of millimetres but does not
+    divide evenly across the gaps must still land as whole extra millimetres
+    on SOME gaps (today's mm-precision `_spread` already guarantees this) —
+    rounding each gap's fractional milli share independently would send small
+    shares to zero and lose the slack outright: `_spread(3000, 7)` distributes
+    as [429, 429, 429, 429, 428, 428, 428] milli, every one of which rounds to
+    0 mm on its own, when the true total is 3 mm that has to land somewhere."""
+    # 5 members of 100mm with 4 gaps of 20mm = 580mm exactly, plus 3mm slack
+    # spread across the 4 gaps.
+    r = fit_pattern_milli(583_000, [100_000], [20_000],
+                           justification="spread_to_fit", excess="space",
+                           edge_margin_milli=0)
+    assert r.count == 5
+    assert sum(r.gaps_mm) == 4 * 20 + 3
+    assert max(r.gaps_mm) - min(r.gaps_mm) <= 1
+
+
+def test_fit_pattern_milli_rounding_matches_to_mm_exactly():
+    """The rounding rule duplicated into `fit.py` (kept local so the module
+    stays pure, no Pydantic, no other module) must never drift from the one
+    real named point, `knowledge.parameters.to_mm` — checked directly rather
+    than trusted, over values that exercise the half-away-from-zero tie rule
+    and negative amounts."""
+    from fenceai.fencemodel.fit import _round_milli
+    from fenceai.knowledge.parameters import Quantity, to_mm
+
+    for milli in (0, 1, 499, 500, 501, 999, 1000, 1500, 2500,
+                  -1, -499, -500, -501, -1500, -2500, 63_500, 9_525, 88_900):
+        assert _round_milli(milli) == to_mm(Quantity(unit="mm", amount_milli=milli))
