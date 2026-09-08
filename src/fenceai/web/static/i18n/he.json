@@ -41,6 +41,7 @@
   "agent.marker.inferred": "הסקה",
   "agent.marker.measured": "נמדד",
   "agent.marker.read": "מהכללים שלך",
+  "agent.no_run": "הפיקו אסטרטגיה כדי לראות מה הסוכן מציע.",
   "agent.none": "אין מה להציע כאן",
   "agent.not_evaluated": "לא ניתן היה לבדוק",
   "agent.stub_notice": "הצעה במצב לא־מקוון — אין מאחוריה שיפוט",

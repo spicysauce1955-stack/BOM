@@ -41,6 +41,7 @@
   "agent.marker.inferred": "reasoning",
   "agent.marker.measured": "measured",
   "agent.marker.read": "from your rules",
+  "agent.no_run": "Generate a strategy to see what the agent suggests.",
   "agent.none": "Nothing to suggest here",
   "agent.not_evaluated": "Could not check",
   "agent.stub_notice": "Offline suggestion — no judgement behind it",
