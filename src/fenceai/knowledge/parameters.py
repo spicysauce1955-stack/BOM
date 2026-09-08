@@ -804,6 +804,44 @@ def _display(value) -> str:
     return f"{sign}{whole}{fraction} {value.unit}"
 
 
+def _row_covers_point(row: ParameterRow, point: dict[str, str | int | bool]) -> bool:
+    """The same 'agree everywhere both speak' rule `_overlap_gaps` uses between
+    two rows (§1.3 BINDING, `unique`'s disjointness check), applied here
+    between a row and the table's own `uncovered` claim about it. A key the
+    row omits matches every value on that axis (`_condition_for`), so a row
+    silent on `hvhz` covers a point that names it — the same reason an
+    omitted dimension made 16 real published points falsely "uncovered"
+    (conversation.md T49 §5b). A fallback row asserts nothing about any point
+    and never covers one, matching `_overlap_gaps`'s own exclusion of it."""
+    if row.is_fallback():
+        return False
+    shared = set(row.conditions) & set(point)
+    return all(row.conditions[k] == point[k] for k in shared)
+
+
+def _uncovered_contradicted_gap(
+    table: ParameterTable, tenant: str, point: dict[str, str | int | bool],
+    row_index: int,
+) -> Gap:
+    """A publisher's `uncovered` claim a row on the same table actually
+    covers — a dispute about the table's own consistency, not a coverage
+    hole. Reporting the ordinary `uncovered_condition` gap here would be
+    actively wrong: it asks for a row that already exists."""
+    subject = _param_subject(table, tenant, point=point)
+    where = _point_label(point)
+    return Gap(
+        id=f"gap:uncovered_contradicted:{subject.key()}",
+        kind="disputed", on="conditions",
+        subject=subject,
+        because=Because(code="uncovered_point_contradicted",
+                         params={"parameter": table.parameter, "point": _plain(point),
+                                 "row": row_index}),
+        would_close=(f"a corrected uncovered list for {table.parameter}, or "
+                     f"conditions on row {row_index} that no longer cover {where}"),
+        closes_by="knowledge", severity="warns_line",
+    )
+
+
 def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
     """`uncovered` points, as gaps — never silently omitted (§1.3 BINDING).
 
@@ -814,6 +852,12 @@ def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
     """
     out = []
     for point in table.uncovered:
+        contradicting = next(
+            (i for i, row in enumerate(table.rows) if _row_covers_point(row, point)),
+            None)
+        if contradicting is not None:
+            out.append(_uncovered_contradicted_gap(table, tenant, point, contradicting))
+            continue
         where = _point_label(point)
         measured = table.domain_basis == "measured"
         subject = _param_subject(table, tenant, point=point)

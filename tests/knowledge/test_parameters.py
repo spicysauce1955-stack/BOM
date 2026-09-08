@@ -291,6 +291,52 @@ def test_uncovered_points_become_gaps_never_silence():
     assert gaps[0].subject.id == "max_span_mm"
 
 
+def test_an_uncovered_point_a_row_actually_covers_is_disputed_not_silently_trusted():
+    """conversation.md T49 §5b: `_overlap_gaps` already applies 'a row's own
+    keys, matched via `_condition_for`'s semantics — an omitted dimension
+    matches every value on that axis' to a `unique` table's disjointness
+    claim. `uncovered` is the same kind of publisher claim about the same
+    condition space, checked by nobody: a row conditioned only on
+    `exposure_category` covers EVERY `hvhz`, so a table cannot honestly call
+    `{exposure_category: C, hvhz: true}` uncovered while also carrying a row
+    for plain `{exposure_category: C}`. Reporting the ordinary
+    'please publish a row' gap here would be actively wrong — a row already
+    covers it — so this is `disputed`, not `uncovered_condition`."""
+    table = _span_table(
+        rows=[ParameterRow(conditions={"exposure_category": "C"},
+                           value=Quantity(amount_milli=1200000, unit="mm"))],
+        uncovered=[{"exposure_category": "C", "hvhz": True}],
+    )
+    _, gaps, _ = expand(table)
+    assert [g.because.code for g in gaps] == ["uncovered_point_contradicted"]
+    assert gaps[0].kind == "disputed"
+    assert gaps[0].on == "conditions"
+    assert gaps[0].because.params["row"] == 0
+    assert gaps[0].because.params["point"] == {"exposure_category": "C", "hvhz": True}
+
+
+def test_an_uncovered_point_no_row_covers_still_reports_as_uncovered():
+    """The contradiction check must not swallow a genuine hole: a point no row
+    speaks to at all is still `uncovered_parameter_point`."""
+    table = _span_table(uncovered=[{"exposure_category": "D"}])
+    _, gaps, _ = expand(table)
+    assert [g.because.code for g in gaps] == ["uncovered_parameter_point"]
+
+
+def test_a_fallback_row_does_not_launder_an_uncovered_claim():
+    """A fallback (`stated`, no conditions) asserts nothing about the points it
+    lands on — `_overlap_gaps`'s own reasoning for excluding it from the
+    disjointness check applies identically here. Treating it as covering
+    every point would mean no table with a fallback could ever honestly
+    declare anything uncovered."""
+    table = _span_table(
+        rows=[ParameterRow(value=Quantity(amount_milli=1200000, unit="mm"))],
+        uncovered=[{"exposure_category": "D"}],
+    )
+    _, gaps, _ = expand(table)
+    assert [g.because.code for g in gaps] == ["uncovered_parameter_point"]
+
+
 def test_every_gap_a_table_produces_names_the_tenant_it_expanded_under():
     """`GapSubject.tenant` is the field the Knowledge team's review added to match
     `EntityRef`. `expand()` accepts a `tenant` and it must reach every gap kind

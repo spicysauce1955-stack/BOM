@@ -77,6 +77,11 @@ WARNING_CODES = [
     # so that the surface which eventually reads them is not also the change that
     # has to invent their Hebrew.
     "uncovered_parameter_point",
+    # The same claim, caught lying about itself: a row on the SAME table
+    # already covers a point the table lists as uncovered (an omitted
+    # dimension matches every value on that axis) — `disputed`, not a
+    # coverage hole, so it is its own code rather than sharing the one above.
+    "uncovered_point_contradicted",
     "parameter_authority_lapsed",
     "parameter_value_nonconforming",
     # A table scoped to an entity kind this engine has no dimension for. Closes
@@ -189,11 +194,6 @@ KNOWLEDGE_SURFACE_UNTRANSLATED = [
     "error.snapshot_malformed",
     "error.snapshot_id_mismatch",
     "decisions.unjudged",
-    "knowledge.snapshot.none",
-    "knowledge.snapshot.active",
-    "knowledge.snapshot.admitted",
-    "knowledge.snapshot.declined",
-    "knowledge.snapshot.gaps",
 ]
 
 

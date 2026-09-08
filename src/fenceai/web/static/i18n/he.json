@@ -1215,6 +1215,7 @@
   "warning.tilted_stepped": "הקטע {run_id} משלב עמודים נטויים ({mode}) עם פאנלים מדורגים — פאנלים מדורגים מתאימים בדרך כלל לעמודים אנכיים; בדקו את התכנון",
   "warning.uncovered_max_span": "אין כלל הקובע מפתח מרבי עבור {model_ref} בקטע {run_id}; {n} מפתחים תוכננו לפי {value_mm} {u} — אשרו לפני הזמנה",
   "warning.uncovered_parameter_point": "ל-{parameter} אין ערך שפורסם עבור {point} — אשרו לפני הזמנה",
+  "warning.uncovered_point_contradicted": "{parameter} מציין את {point} כלא מכוסה, אך שורה {row} כבר מכסה אותו — הטבלה סותרת את עצמה",
   "warning.uncovered_rails_per_span": "אין כלל הקובע כמה קורות מקבל מפתח של {model_ref} בקטע {run_id}; {n} מפתחים נבנו עם {value} קורות כל אחד — אשרו לפני הזמנה",
   "warning.uncovered_screws_per_span": "אין כלל הקובע כמה ברגים מקבל מפתח של {model_ref} בקטע {run_id}; {n} מפתחים נבנו עם {value} ברגים כל אחד — אשרו לפני הזמנה",
   "warning.unknown_product": "ערכת השער {sku} אינה בקטלוג; בכתב הכמויות היא תתומחר באפס."

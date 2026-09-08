@@ -1215,6 +1215,7 @@
   "warning.tilted_stepped": "Section {run_id} combines tilted posts ({mode}) with stepped panels — stepped panels normally pair with plumb posts; check the design",
   "warning.uncovered_max_span": "No rule states the maximum span for {model_ref} in section {run_id}; {n} bay(s) laid out to {value_mm} {u} — confirm before ordering",
   "warning.uncovered_parameter_point": "{parameter} has no published value for {point} — confirm before ordering",
+  "warning.uncovered_point_contradicted": "{parameter} lists {point} as uncovered, but row {row} already covers it — the table disagrees with itself",
   "warning.uncovered_rails_per_span": "No rule states how many rails a bay of {model_ref} gets in section {run_id}; {n} bay(s) built with {value} rails each — confirm before ordering",
   "warning.uncovered_screws_per_span": "No rule states how many screws a bay of {model_ref} gets in section {run_id}; {n} bay(s) built with {value} screws each — confirm before ordering",
   "warning.unknown_product": "Gate kit '{sku}' is not in the catalog; BOM will price it at zero."
