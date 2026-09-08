@@ -1233,6 +1233,7 @@
   "warning.source_ref_missing": "A published {parameter} row from a {source_class} carries no source reference, so the number cannot be traced to a document",
   "warning.span_not_exact": "Section {run_id} does not divide into {exact_mm} {u} bays: {remainder_mm} {u} is left over as an odd bay — model {model_ref} is made in one size",
   "warning.span_placed_over_maximum": "In section {run_id}, {author} placed a bay {placed_mm} {u} wide — {over_mm} {u} over the {max_mm} {u} maximum. It is built as placed",
+  "warning.span_rounded_over_published_limit": "The published maximum span for {model_ref} is {limit_milli} {u}, which falls between whole millimetres. Section {run_id} is laid out in the {n} bays that limit allows, and because a bay is stored in whole millimetres one of them carries the leftover fraction: {widest_mm} {u}, over by {over_milli} {u}. Splitting it further would add a post and a footing to save a fraction of a millimetre",
   "warning.substitute_needs_approval": "{sku} is a suggested substitute for the {role}{slot} at {pegs} and needs approval before it can be used",
   "warning.tilted_stepped": "Section {run_id} combines tilted posts ({mode}) with stepped panels — stepped panels normally pair with plumb posts; check the design",
   "warning.uncovered_max_span": "No rule states the maximum span for {model_ref} in section {run_id}; {n} bay(s) laid out to {value_mm} {u} — confirm before ordering",

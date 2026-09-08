@@ -40,6 +40,13 @@ WARNING_CODES = [
     # the reader's OWN action, so it is translated — not Knowledge-Platform
     # vocabulary held back on KNOWLEDGE_SURFACE_UNTRANSLATED.
     "span_placed_over_maximum",
+    # The OTHER way a bay ends up over the maximum, and it is ours rather than a
+    # person's: a published limit that falls between whole millimetres (56" is
+    # 1422.4 mm) chooses the bay count, and ADR-0002 then stores the bays as
+    # integer millimetres — so the remainder spread leaves one bay a fraction
+    # over. Its own code, because `span_placed_over_maximum` attributes a bay to
+    # the person who placed it and this one has nobody to attribute it to.
+    "span_rounded_over_published_limit",
     "unknown_product",
     "knowledge_conflict",
     "node_surface_disagreement",

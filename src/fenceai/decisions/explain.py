@@ -62,6 +62,25 @@ def _display(value, units: str):
     return int(q) if q == int(q) else q
 
 
+def _display_milli(value, units: str):
+    """Thousandths -> the reader's unit, at their TRUE precision.
+
+    The one length in this file that is not an integer millimetre. A published
+    limit like 1422.4 mm keeps its thousandths all the way from the document
+    (`contract.md`:112-117), and `_display` would round it onto the millimetre
+    grid — printing `1422`, the exact number a reader must not be shown when the
+    sentence is about a 1423 mm bay standing a fraction over it. Read-only:
+    nothing types thousandths, so there is no inverse.
+
+    Mirrors `web/static/js/units.js::toDisplayMilli`; the division does the
+    trimming, so a whole value reads `1905` and not `1905.0`.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        return value
+    q = value / (10_000 if units == "cm" else 1000)
+    return int(q) if q == int(q) else q
+
+
 def _word(value, lang: str):
     return _ENUM_WORDS.get(lang, {}).get(value, value)
 
@@ -225,6 +244,16 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "exact_span_over_max": (
             "Model {model_ref} is made in {exact_mm} {u} bays, wider than the "
             "{max_mm} {u} maximum span; section {run_id} was laid out freely."
+        ),
+        # Our unit problem, stated as ours. The published limit is shown at the
+        # precision it was published in — `{limit_milli}`, never `{max_mm}` —
+        # because a bay of 1423 beside a limit printed as "1422" reads as a
+        # whole millimetre over a number nobody sealed.
+        "span_rounded_over_published_limit": (
+            "The published maximum span is {limit_milli} {u}, between whole "
+            "millimetres: section {run_id} is laid out in the {n} bays that "
+            "limit allows, and one bay carries the leftover fraction at "
+            "{widest_mm} {u} — over by {over_milli} {u}."
         ),
         "excessive_gap": (
             "Stepped span leaves a {gap_mm} {u} gap underneath (limit {max_mm} {u})."
@@ -445,6 +474,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "דגם {model_ref} מיוצר במפתחים של {exact_mm} {u}, רחבים מהמפתח המרבי "
             "{max_mm} {u}; קטע {run_id} נפרס באופן חופשי."
         ),
+        "span_rounded_over_published_limit": (
+            "המפתח המרבי שפורסם הוא {limit_milli} {u}, ערך שנופל בין "
+            "מילימטרים שלמים: הקטע {run_id} נפרס ל-{n} מפתחים כפי שאותה "
+            "מגבלה מתירה, ומפתח אחד נושא את השארית ברוחב {widest_mm} {u} — "
+            "חריגה של {over_milli} {u}."
+        ),
         "excessive_gap": (
             'הפאנל המדורג משאיר מרווח של {gap_mm} {u} מתחתיו (המגבלה {max_mm} {u}).'
         ),
@@ -533,8 +568,9 @@ def _refs(graph: DecisionGraph, node: DecisionNode, edge_type: str) -> list[str]
 
 def _fmt(t: dict[str, str], key: str, lang: str, units: str, **kw) -> str:
     """Render one template: `*_mm` values (and length lists) in the reader's unit,
-    enum values as words in the reader's language, `{u}` as the unit word. Ids,
-    SKUs, refs and raw payloads pass through untouched."""
+    `*_milli` values in the reader's unit at published precision, enum values as
+    words in the reader's language, `{u}` as the unit word. Ids, SKUs, refs and
+    raw payloads pass through untouched."""
     out = {}
     for k, v in kw.items():
         # the list branch comes FIRST: a length list may also end in `_mm`
@@ -542,6 +578,11 @@ def _fmt(t: dict[str, str], key: str, lang: str, units: str, **kw) -> str:
         # millimetres — which reads as centimetres beside a `{u}` saying cm
         if k in _LENGTH_LISTS and isinstance(v, (list, tuple)):
             out[k] = [_display(x, units) for x in v]
+        # `_milli` BEFORE `_mm`: a thousandths key does not end in `_mm`, but
+        # ordering them the other way invites the next reader to add a suffix
+        # that does
+        elif k.endswith("_milli"):
+            out[k] = _display_milli(v, units)
         elif k.endswith("_mm"):
             out[k] = _display(v, units)
         elif k in _ENUM_PARAMS:
@@ -742,6 +783,11 @@ def explain_node(
         case "span_not_exact":
             base = _fmt(t, "span_not_exact", lang, units, run_id=p.get("run_id"),
                 exact_mm=p.get("exact_mm"), remainder_mm=p.get("remainder_mm"))
+        case "span_rounded_over_published_limit":
+            base = _fmt(t, "span_rounded_over_published_limit", lang, units,
+                run_id=p.get("run_id"), n=p.get("n"),
+                limit_milli=p.get("limit_milli"), widest_mm=p.get("widest_mm"),
+                over_milli=p.get("over_milli"))
         case "clear_gap_exceeded" | "rail_separation_insufficient" | "pattern_residual_large":
             # one shape for the three panel-limit checks: they differ in which
             # measurement they take, not in what they have to say about it

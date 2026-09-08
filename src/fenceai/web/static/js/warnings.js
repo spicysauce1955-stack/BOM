@@ -21,7 +21,9 @@ import { fmtLen, roleWord, unitParams } from "./units.js";
 // Localize a warning/critique by code: t("<prefix>.<code>", params) with each
 // param bidi-isolated (<bdi>); falls back to the server's English text when no
 // key exists. Backend params are mm — unitParams converts every `*_mm` and
-// supplies {u}.
+// supplies {u}; a `*_milli` param is a PUBLISHED quantity and keeps its
+// thousandths (a span limit of 1422.4 mm is not an integer millimetre and must
+// not be printed as one).
 export function localizedByCode(prefix, code, params, fallback) {
   const key = `${prefix}.${code}`;
   const template = t(key);  // no params: placeholders stay intact for wrapped interpolation

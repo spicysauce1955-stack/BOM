@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from fenceai.core.units import Mm
+from fenceai.core.units import Mm, round_milli_to_mm
 
 
 @dataclass(frozen=True)
@@ -21,11 +21,71 @@ class LayoutResult:
 
 
 def equal_layout(length_mm: Mm, max_span_mm: Mm) -> list[Mm]:
-    """n = ceil(L/max), widths L//n with remainder spread one mm to the first spans."""
+    """n = ceil(L/max), widths L//n with remainder spread one mm to the first spans.
+
+    The all-millimetre form, for a maximum span with no finer precision behind it
+    — an authored rule, `FALLBACK_MAX_SPAN_MM`, a yield threshold this module
+    computed itself. Where the limit came from a PUBLISHED quantity, the caller
+    owes it `equal_layout_milli` instead: see that function for why.
+    """
     if length_mm <= 0:
         return []
     n = math.ceil(length_mm / max_span_mm)
     base, rem = divmod(length_mm, n)
+    return [base + 1 if i < rem else base for i in range(n)]
+
+
+def equal_layout_milli(length_milli: int, max_span_milli: int) -> list[Mm]:
+    """`equal_layout`, dividing by the PUBLISHED span limit rather than by a
+    limit already rounded to the nearest millimetre.
+
+    `contract.md:112-117` is BINDING that *"any arithmetic that MULTIPLIES a
+    published value — a count, a pitch, a span limit — consumes the thousandths
+    and rounds only its output."* `n = ceil(L / max_span)` is that arithmetic and
+    `max_span` is that published value, and the clause spells out this exact
+    division as its own worked example. Five of the six span magnitudes in the
+    real `footing_schedule` tables are not whole millimetres, and rounding before
+    the division moves the bay count on 2318 of the first 100 000 run lengths —
+    both ways, for two different harms:
+
+    * DOWN. `1422400` thousandths becomes `1422 mm`, and a 4267 mm run divides
+      into 4 bays instead of 3. The clause's own sentence: an extra post, an
+      extra footing, an extra pour — and it arrives THROUGH the rounding the
+      clause mandates, which is why rounding correctly at `to_mm` was never
+      enough on its own.
+    * UP. `2463800` becomes `2464 mm`, and a 2464 mm run becomes one bay of
+      2464.000 mm against a sealed maximum of 2463.8. Cheaper, and over the
+      limit a stamped engineering table set.
+
+    **Only `n` needs the thousandths, and that is not a compromise.** `n` is a
+    COUNT, so "rounds only its output" is satisfied for free — integer ceiling
+    division produces an exact integer with nothing left to round. The widths it
+    then splits are LENGTHS AT REST, and ADR-0002 puts those in integer
+    millimetres; `divmod(length_mm, n)` runs at mm exactly as it always has, so
+    `sum(widths) == length_mm` still holds by construction and every bay is still
+    a whole millimetre a person can measure. Carrying the split down to
+    thousandths would not be more accurate, it would be a fence dimensioned in
+    a unit nobody builds in.
+
+    `length_milli` is scaled `*1000` by every caller and that IS exact, unlike
+    the divisor: a run length is the user's drawing, integer mm at rest, with no
+    finer precision anywhere upstream to lose. It is rounded back once here for
+    the width split — a no-op on any value a caller can actually produce, and
+    written as a rounding rather than an integer division so the function cannot
+    floor a length if one ever arrives with a fraction. The parameter is milli
+    anyway, to match `fencemodel.fit.fit_pattern_milli` and keep one readable
+    convention: a `_milli` function takes thousandths throughout.
+    """
+    if length_milli <= 0 or max_span_milli <= 0:
+        return []
+    # Integer ceiling division — never `math.ceil(a / b)`, which converts both
+    # sides to float first. At thousandths a run length is a number like
+    # 100_000_000 and a span limit 2_463_800; float division of those is not
+    # exact, and the values that would land wrong are precisely the ones where
+    # the quotient sits a hair from an integer, which is the entire case this
+    # function exists for.
+    n = -(-length_milli // max_span_milli)
+    base, rem = divmod(round_milli_to_mm(length_milli), n)
     return [base + 1 if i < rem else base for i in range(n)]
 
 
@@ -72,6 +132,7 @@ def layout_segment(
     min_span_mm: Mm | None = None,
     nominal_mm: Mm | None = None,
     exact_mm: Mm | None = None,
+    max_span_milli: int | None = None,
 ) -> LayoutResult:
     """Lay out one free segment. Equal-width preferred layout, recording the nominal
     alternative when it differs (decision-graph alternatives, scenario S02).
@@ -79,7 +140,19 @@ def layout_segment(
 
     `exact_mm` is not a preference and does not compete with one: it says the bays
     are a manufactured size, so it wins outright and the free-layout alternative
-    is recorded as what was given up."""
+    is recorded as what was given up.
+
+    `max_span_milli` is the PUBLISHED thousandths of the same limit, where a
+    publisher sent them (`SetParam.value_milli`). It changes nothing else about
+    this function: it reaches only the bay-COUNT division, which `contract.md`
+    §1.1 requires to consume the thousandths, and `max_span_mm` remains the
+    limit every comparison and every clamp here is made against, because those
+    are millimetre facts about millimetre widths. Omitted, it defaults to
+    `max_span_mm * 1000`, which is exact for an authored rule and for the
+    fallback basis — so a caller that does not know about published precision
+    keeps the behaviour it had.
+    """
+    span_milli = max_span_mm * 1000 if max_span_milli is None else max_span_milli
     if exact_mm and exact_mm > max_span_mm:
         # A manufactured width wider than the hard maximum is a CONFLICT between
         # two things of different kinds, and the caller surfaces it as one.
@@ -87,19 +160,19 @@ def layout_segment(
         # report the width nobody used — S13's shape exactly, resolved by
         # arithmetic instead of by the conflict machinery.
         return LayoutResult(
-            widths=equal_layout(length_mm, max_span_mm),
+            widths=equal_layout_milli(length_mm * 1000, span_milli),
             rejected_alternative=None, exact_over_max=True,
         )
     if exact_mm:
         widths, remainder = exact_layout(length_mm, exact_mm)
-        free = equal_layout(length_mm, max_span_mm)
+        free = equal_layout_milli(length_mm * 1000, span_milli)
         return LayoutResult(
             widths=widths,
             rejected_alternative=free if free != widths else None,
             remainder_mm=remainder,
         )
     nominal_width = min(nominal_mm or max_span_mm, max_span_mm)
-    equal = equal_layout(length_mm, max_span_mm)
+    equal = equal_layout_milli(length_mm * 1000, span_milli)
     nominal = nominal_layout(length_mm, nominal_width)
     if prefer_equal:
         chosen, rejected = equal, (nominal if nominal != equal else None)

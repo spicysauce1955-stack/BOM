@@ -22,6 +22,24 @@ export function toDisplayValue(mm, unit = state.units) {
   return unit === "cm" ? r / 10 : r;
 }
 
+// THOUSANDTHS of a millimetre -> display number, at their true precision.
+//
+// The one length in this app that is not an integer millimetre. A published
+// quantity keeps its thousandths from the document all the way to here
+// (contract.md:112-117): 56" is 1422.4 mm and nothing rounds it away at the
+// source. `toDisplayValue` would put it back on the millimetre grid and print
+// "1422" — and a warning saying a bay of 1423 stands over a limit of "1422"
+// reports our own rounding as a whole millimetre over a number nobody
+// published, which is precisely the sentence it exists to avoid.
+//
+// One direction only, deliberately: nothing in this app TYPES thousandths, so
+// there is no `toMilli`. Mirrors decisions/explain.py::_display_milli.
+export function toDisplayMilli(milli, unit = state.units) {
+  const n = Number(milli);
+  if (!Number.isFinite(n)) return milli;
+  return n / (unit === "cm" ? 10000 : 1000);
+}
+
 // display number -> int mm. The ONLY direction that touches stored data.
 export function toMm(value, unit = state.units) {
   const n = typeof value === "number" ? value : parseFloat(value);
@@ -136,7 +154,10 @@ export function moneyDelta(cents) {
 export function unitParams(params = {}) {
   const out = { u: unitLabel(), c: currencySymbol() };
   for (const [k, v] of Object.entries(params)) {
-    if (k.endsWith("_mm")) out[k] = toDisplayValue(v);
+    // `_milli` first: a thousandths key does not end in `_mm`, but ordering it
+    // after would invite the next suffix that does
+    if (k.endsWith("_milli")) out[k] = toDisplayMilli(v);
+    else if (k.endsWith("_mm")) out[k] = toDisplayValue(v);
     // supply warnings put the role in the middle of a Hebrew sentence, so a raw
     // "rail" there is untranslated English in a Hebrew-first UI
     else if (k === "role") out[k] = roleWord(v);

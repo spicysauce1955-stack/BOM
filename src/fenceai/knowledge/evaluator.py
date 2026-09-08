@@ -197,13 +197,45 @@ def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> R
 
 
 def resolve_param(kb: KnowledgeBase, ctx: dict, param: str) -> Resolution:
-    """Resolve a SetParam value with full precedence + conflict surfacing."""
+    """Resolve a SetParam value with full precedence + conflict surfacing.
+
+    WHICH rule wins is unchanged — `resolve`'s precedence ladder decides that and
+    nothing here touches it. What changed is what counts as AGREEMENT, and the
+    two are different questions: precedence picks a winner, agreement decides
+    whether the losers were beaten (`defeated_by`, a Conflict, possibly a
+    `GenerationFailure`) or merely said the same thing (`corroborated_by`, DMN
+    ANY, no conflict at all).
+
+    Agreement is measured at `effective_milli()`, not at `value`, because the
+    millimetre is no longer the finest thing a consumer reads. Two published rows
+    stating `2463.8 mm` and `2464.2 mm` both round to `2464`, so at `value` they
+    were judged to agree: no conflict was surfaced, no defeat edge was drawn, one
+    of them was recorded as CORROBORATING the other — and `equal_layout_milli`
+    then divides by whichever one the precedence ladder happened to return, whose
+    last tie-break is `object_id`. That is the alphabet deciding a safety limit,
+    which is the very thing the generator's hard-tie handling exists to refuse
+    (*"renaming a row would otherwise flip a 1200 mm maximum to 2400 mm and quote
+    it"*). Two sources that sent different numbers did not corroborate each other,
+    and a graph saying they did is a claim about the sources that is false.
+
+    Tightening this costs nothing today and cannot cost anything for authored
+    knowledge: `effective_milli()` is `value * 1000` when nothing published a
+    finer number, so mm-agreement and milli-agreement are the same predicate for
+    every rule in `demo.py`, for every model `layout_policy` contribution, and
+    for any mixture of those with a published row. It can only diverge where two
+    contenders actually disagree BELOW the millimetre — which used to be silent
+    and is now a Conflict, a warned line and a review task, exactly as §3.2.4
+    asks for a disagreement nobody here can fix.
+
+    `resolve_token` keeps `value`: a token is a word from a closed set and has no
+    precision to lose.
+    """
     relevant: list[Firing] = []
     for f in applicable_firings(kb, ctx):
         acts = [a for a in f.actions if a.kind == "set_param" and a.param == param]
         if acts:
             relevant.append(Firing(version=f.version, actions=acts))
-    same_value = len({a.value for f in relevant for a in f.actions}) <= 1
+    same_value = len({a.effective_milli() for f in relevant for a in f.actions}) <= 1
     return resolve(relevant, param, values_agree=same_value)
 
 

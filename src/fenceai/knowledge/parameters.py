@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from fenceai.core.dates import Date, is_iso_date, precedes
 from fenceai.core.gaps import Because, EntityRef, Gap, GapSubject, SourceRef
+from fenceai.core.units import round_milli_to_mm
 from fenceai.knowledge.ast import And, Cmp, Expr, FieldRef, Lit
 from fenceai.knowledge.model import KnowledgeVersion, SetParam, SetToken
 from fenceai.knowledge.source_policy import (
@@ -253,19 +254,24 @@ def to_mm(q: Quantity) -> int:
     so `2463.8` floored to 2463 rather than rounded to 2464 buys an extra post, an
     extra footing and an extra pour on a 9.8 m run.
 
-    `round()` is banker's rounding in Python and would send 2500 thousandths to 2
-    rather than 3, so the rounding is written out. It is half-away-from-ZERO, not
-    half-up: `-2500` gives `-3`, where half-up gives `-2`. That is the right
-    behaviour — the magnitude rounds the same in both directions and neither
-    direction ever floors — and the word is corrected here because the two differ
-    only on negatives, which is precisely where nobody looks.
+    The rounding ARITHMETIC now lives in `core.units.round_milli_to_mm`, and this
+    is still the one named point: it is the only thing that checks the unit, and
+    the only place a published `Quantity` may become an `Mm`. The rule moved out
+    because `SetParam` must apply the same rule to check that a value at rest and
+    the thousandths riding beside it are the same number, and `knowledge.model`
+    cannot import this module — this module imports it. See that function for why
+    it is half-away-from-zero rather than `round()`.
+
+    **A caller that MULTIPLIES this value must not consume it.** The clause is
+    explicit — "any arithmetic that multiplies a published value... consumes the
+    thousandths and rounds only its output" — and the value returned here has
+    already lost them. `SetParam.value_milli` carries `q.amount_milli` alongside
+    for exactly those call sites; `strategy.layout.equal_layout_milli` is the one
+    that needed it first.
     """
     if q.unit != "mm":
         raise ValueError(f"{q.unit} is not a length this engine stores; expected mm")
-    whole, rem = divmod(abs(q.amount_milli), 1000)
-    if rem >= 500:
-        whole += 1
-    return -whole if q.amount_milli < 0 else whole
+    return round_milli_to_mm(q.amount_milli)
 
 
 def paired_columns(value_type: str) -> list[str]:
@@ -329,6 +335,16 @@ def paired_points(table: ParameterTable, row: ParameterRow) -> list[DesignPoint]
             bindings = {name: to_mm(q) for name, q in zip(columns, pair)}
         except ValueError:
             return []
+        # The PUBLISHED thousandths, kept beside the rounded millimetres for the
+        # same reason `lexemes` keeps the source's own words: `bindings` has
+        # already lost something the source sent, and one downstream reader needs
+        # it back. Five of the six span magnitudes in the real `footing_schedule`
+        # tables are not whole millimetres, and the span layout DIVIDES by them
+        # (contract §1.1 BINDING: arithmetic that multiplies a published value
+        # consumes the thousandths and rounds only its output). `lexemes` cannot
+        # serve — `97"` is a string for a human to check against the page, not a
+        # number — so this rides alongside as the machine-readable twin.
+        bindings_milli = {name: q.amount_milli for name, q in zip(columns, pair)}
         lexemes = {name: q.value_raw[0] for name, q in zip(columns, pair)
                    if q.value_raw}
         points.append(DesignPoint(
@@ -338,7 +354,7 @@ def paired_points(table: ParameterTable, row: ParameterRow) -> list[DesignPoint]
             # genuinely went away rather than for one that moved.
             id=f"{table.parameter}:" + "x".join(str(bindings[c]) for c in columns),
             label=" · ".join(lexemes.get(c) or str(bindings[c]) for c in columns),
-            bindings=bindings, lexemes=lexemes,
+            bindings=bindings, bindings_milli=bindings_milli, lexemes=lexemes,
         ))
     built = default_point(points)
     if built is not None:
@@ -756,7 +772,8 @@ def _actions_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | No
         built = default_point(paired_points(table, row))
         if built is None:
             return []
-        return [SetParam(param=name, value=value)
+        return [SetParam(param=name, value=value,
+                         value_milli=built.bindings_milli.get(name))
                 for name, value in built.bindings.items()]
     if tokens is not None:
         if not isinstance(row.value, Token) or row.value.key not in tokens:
@@ -765,7 +782,17 @@ def _actions_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | No
     if not isinstance(row.value, Quantity) or table.quantity_unit() != "mm":
         return []
     try:
-        return [SetParam(param=table.parameter, value=to_mm(row.value))]
+        # `value_milli` on the ordinary path too, and NOT because this shape
+        # broke: it is the same published `Quantity`, and the harm the clause
+        # names does not care which shape carried the number. The paired
+        # `footing_schedule` is simply where a non-whole span limit arrived
+        # first. A publisher who states `max_span_mm` as a plain `quantity(mm)`
+        # table of `2463.8` would breach the identical clause through the
+        # identical divider, and a fix that covered only the shape we happened to
+        # find by hand would leave that live and untested — which is precisely
+        # how this one stayed invisible.
+        return [SetParam(param=table.parameter, value=to_mm(row.value),
+                         value_milli=row.value.amount_milli)]
     except ValueError:
         return []
 
