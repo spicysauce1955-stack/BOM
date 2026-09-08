@@ -3,6 +3,115 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Session close — 2026-09-08: the agent is designed, and nothing is built
+
+**No code changed this session.** Two specs, one plan, four boundary turns, and
+one product decision. The next session implements
+`docs/superpowers/plans/2026-09-08-agent-framework-slice-1.md` and should read
+the two specs before it reads the plan.
+
+### What was decided, so it is not re-litigated
+
+The product owner answered every open question. In `advisory-agent-design.md`:
+the agent proposes into **input slots** and never reaches inside `generate()`,
+so advising on a rule and moving one post are the same mechanism at different
+altitudes; the **backend publishes the action registry** and the agent may only
+emit from it, which makes the ceiling enforce itself; **rejection has five
+types** and only two touch knowledge; knowledge is a **shared backbone plus a
+per-team view**, one company now but keyed from the start; **log always, sample
+later, score retrospectively**; and a recommendation is a graph node.
+
+Then `agent-framework-design.md` says how, and its load-bearing property falls
+out of a comment `ai/claude.py` already carried: structured outputs forbid a
+free-form dict, so a payload must be typed — and once it is, **a task's
+permission list can BE the output schema.** A task allowed to rank a choice set
+gets a grammar whose only verb is *pick point p2*. Narrow run stops being a
+policy and becomes a type.
+
+### The boundary moved, and the thread is what moved it
+
+`conversation.md` is at **T59**; our copy had stopped at T55 and we did not know
+until the product owner asked. Reading it properly — rather than grepping it,
+which is what this session did first and what cost the most — changed the design
+six times:
+
+- **A proposal id must be content-derived.** T46 §8: *"0 of 67 ids survive… The
+  gaps themselves did not all change; their identity did."* Random ids silently
+  break "a rejection suppresses re-proposal", because nothing can tell a
+  re-proposal is the same proposal.
+- **Reach is counted from the first task, not added later.** T52/T53/T54 measured
+  two correct systems, 6,563 runs and zero consultations, in silence for weeks.
+  *"A snapshot whose entire parameter corpus is unreachable looks, from either
+  side, exactly like a snapshot that is working."* An agent nobody keeps looks
+  the same way.
+- **A claim may only cite what the view handed it.** T57 §3 found that the
+  spec's *"re-executed against the view"* is impossible for a Knowledge
+  `ref_id` and forbidden by our own `core/gaps.py`. The rule taken is cheaper
+  than their first option and stricter than their second: an agent can echo a
+  citation, never invent one. **Accepted at T59 §2.**
+- **`no_standing` is not `needs`.** T54 §2 left an association table
+  deliberately empty rather than *"assert a product identity we do not hold"*.
+- **Never merge similar corrections.** T46 §11 / T49 §7, on real data where a
+  merge *"would have produced a confident span on a site the other four
+  documents refuse to answer for."*
+- **A goal says what a task is FOR, never what is TRUE** (T49 §6c), and the view
+  is never cached across runs (T53 §1).
+
+### Two things the product owner decided that cross the boundary
+
+**A customer's documents go to the Knowledge platform**; the products and prices
+read out of them stay here, with catalogue rows, import, column mapping and the
+price-list lifecycle. Our §8 described a store that was a description of theirs
+— 146 documents byte-exact, 82,282 elements, 25,961 citations with 0 dangling.
+Their tenancy work is now a **precondition**: all 146 documents are
+`owner_tenant = NULL`, and a customer's price list must not be shared. They will
+name the turn it first carries a row.
+
+**Both prices are kept**: a March quote prices at January's numbers. Half of it
+is already true — a `Quote` is a frozen document — so the build item narrows to
+catalogue products becoming append-only versions citing the document version
+they came from.
+
+`roles-and-boundaries.md` is **accepted with two notes**, both statements about
+what is built rather than modifications. Note (a) is the one that mattered: we
+have no person model at all, `author` is a caller-supplied string on eleven
+routes with no authentication anywhere, so every `WHO` from us is unattributed.
+**T59 §3 answered it and it does not block us** — `WHO` gates rank, not
+admissibility, on the precedent of their own unverifiable `reviewer`.
+
+### One live defect in this repo, found by reading their thread
+
+`knowledge/parameters.py:964` emits the `uncovered_point_contradicted` dispute
+**instead of** the ordinary coverage gap — it `continue`s past it. Both sides
+have now agreed it should accompany rather than replace, *"so a false dispute
+costs a curator a question rather than a record"* (T55 §7, accepted T59 §1). The
+`all([])` half of that finding is already fixed in the tree. Not scheduled; it
+is small and has a test-shaped fix.
+
+Also recorded: our three vendored snapshot fixtures are stale, which is why our
+alarm reports 48 disputes where every current cut reports 0.
+
+### Where to start
+
+Read `advisory-agent-design.md`, then `agent-framework-design.md`, then the
+plan. The first slice is **ranking a choice set** because it cannot produce a
+bad fence: `generate()` already enumerates the admissible points and `offered()`
+already drops the dominated ones, so the task was never handed the vocabulary to
+describe an inadmissible layout. It ends at a checkpoint the product owner walks
+in a browser — green tests are not the checkpoint.
+
+---
+
+## 2026-09-07: Published Emblem Parts available for inspection
+
+The persistent local BOM preview at `http://localhost:8000` now carries source
+snapshot `55bc6c76…`. Choose Everything → Knowledge → Published parts; search
+`noa22021705` for the three new draft drawing definitions. All 24 typed public
+Parts round-trip; draft visibility does not create assembly models. API and
+precision/locale checks passed. The saved s17 project has a separate null-point
+canvas overlay error. See [integration details](../docs/architecture/published-part-inspection.md)
+for evidence, backup, checks actually run, and limitations.
+
 ## Session close — 2026-09-06: the visualization package got a decision
 
 **2540 tests · browser smoke 344/344.**
