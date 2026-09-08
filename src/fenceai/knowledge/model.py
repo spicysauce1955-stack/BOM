@@ -6,7 +6,7 @@ import hashlib
 import json
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fenceai.core.units import Mm, round_milli_to_mm
 from fenceai.knowledge.ast import Expr, field_paths
@@ -58,7 +58,20 @@ class SetParam(BaseModel):
     rest that disagrees with the thousandths beside it is two different numbers
     wearing one name, and the resulting fence would depend on which field the
     reader happened to pick.
+
+    **FROZEN, because that check is worth nothing otherwise.** A validator runs
+    at construction and at JSON round-trip; it does not run on assignment, so
+    `s.value = 1200` on a well-formed `SetParam` leaves `value` at 1200 and
+    `effective_milli()` at 2463800 — the two-numbers-one-name state this class
+    exists to make unreachable, reached by the one route the check does not
+    cover. Nothing mutates one today, but `Action` instances are copied into
+    `Firing.actions` and carried through the evaluator, `resolve_param` and the
+    generator by reference, so a mutation anywhere would be a mutation
+    everywhere. `model_copy(update=...)` is the supported way to make a
+    different one, and it re-validates.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     kind: Literal["set_param"] = "set_param"
     param: str  # e.g. "max_span_mm", "screws_per_span", "rails_per_span"

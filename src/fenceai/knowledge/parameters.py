@@ -32,7 +32,7 @@ from pydantic import BaseModel
 
 from fenceai.core.dates import Date, is_iso_date, precedes
 from fenceai.core.gaps import Because, EntityRef, Gap, GapSubject, SourceRef
-from fenceai.core.units import round_milli_to_mm
+from fenceai.core.units import Mm, round_milli_to_mm
 from fenceai.knowledge.ast import And, Cmp, Expr, FieldRef, Lit
 from fenceai.knowledge.model import KnowledgeVersion, SetParam, SetToken
 from fenceai.knowledge.source_policy import (
@@ -301,6 +301,40 @@ def paired_columns(value_type: str) -> list[str]:
     return names if len(names) > 1 else []
 
 
+def _point_key(value_mm: Mm, value_milli: int | None) -> str:
+    """One binding's contribution to a `DesignPoint.id`.
+
+    Whole millimetres render EXACTLY as they always did — `610`, never `610.0`
+    and never `610000` — because a changed id for a point that did not change
+    is the orphaned-selection failure `paired_points` is guarding against, and
+    every rule this repo authored plus every whole-mm published value comes
+    through here unchanged. Only a value the publisher sent with real
+    thousandths gets a finer key, and only because at that point the rounded
+    millimetre is no longer an identity: it is a value two different design
+    points can share.
+
+    Rendered as decimal millimetres rather than as raw thousandths so the id
+    stays readable next to the source (`609.6` beside `24"`), and built from
+    integers throughout — a float here would be a float at rest (ADR-0002).
+    """
+    if value_milli is None or value_milli % 1000 == 0:
+        return str(value_mm)
+    whole, frac = divmod(abs(value_milli), 1000)
+    return f"{'-' if value_milli < 0 else ''}{whole}.{frac:03d}".rstrip("0")
+
+
+def _span_milli(point: DesignPoint) -> int:
+    """A point's `max_span_mm` at PUBLISHED precision, for comparing points.
+
+    `bindings` is the rounded millimetre, and comparing on it makes 2463.8 and
+    2464.2 equal — a tie that `min` breaks by publication order, which is the
+    same "the alphabet decides a safety limit" hazard `resolve_param` was fixed
+    for, wearing a different hat. `* 1000` where nothing published thousandths
+    is the exact no-op `SetParam.effective_milli` relies on.
+    """
+    return point.bindings_milli.get("max_span_mm", point.bindings["max_span_mm"] * 1000)
+
+
 def paired_points(table: ParameterTable, row: ParameterRow) -> list[DesignPoint]:
     """One `DesignPoint` per alternative in a `paired` row (amendment 006).
 
@@ -352,7 +386,18 @@ def paired_points(table: ParameterTable, row: ParameterRow) -> list[DesignPoint]
             # row's alternatives must not turn a stored selection into a
             # different fence, and `choice_unavailable` exists for a point that
             # genuinely went away rather than for one that moved.
-            id=f"{table.parameter}:" + "x".join(str(bindings[c]) for c in columns),
+            #
+            # The values it keys on are the PUBLISHED ones, not the rounded
+            # ones, because "the values" stopped meaning one thing the moment a
+            # publisher sent thousandths: alternatives at 2463.8 and 2464.2 mm
+            # are two different fences that share every rounded millimetre, and
+            # a key built from `bindings` gives them ONE id. A stored selection
+            # then binds to whichever the publisher happened to list first —
+            # exactly the "a re-cut must not move a selection" failure this
+            # comment was written to prevent, arriving through the value rather
+            # than through the position.
+            id=f"{table.parameter}:" + "x".join(
+                _point_key(bindings[c], bindings_milli.get(c)) for c in columns),
             label=" · ".join(lexemes.get(c) or str(bindings[c]) for c in columns),
             bindings=bindings, bindings_milli=bindings_milli, lexemes=lexemes,
         ))
@@ -371,8 +416,17 @@ def default_point(points: list[DesignPoint]) -> DesignPoint | None:
     cheaper point is offered with what it saves, and a person decides (spec §6,
     *"never money"*).
 
-    `min` is stable, so two alternatives stating the same span resolve to the
-    first the publisher listed rather than to whichever the sort felt like.
+    Shortest at PUBLISHED precision (`_span_milli`), not at the rounded
+    millimetre. Comparing `bindings` made 2463.8 and 2464.2 the same number, so
+    `min` fell through to publication order and the engine built whichever
+    alternative the publisher happened to type first — 0.4 mm past a sealed
+    maximum being the difference between the two. The choice propagates through
+    `bindings_milli` -> `SetParam.value_milli` -> `equal_layout_milli` and
+    decides the bay count, which is why it may not be decided by typing order.
+
+    `min` is still stable, so two alternatives stating the SAME span — the same
+    thousandths, genuinely one number — resolve to the first the publisher
+    listed rather than to whichever the sort felt like.
 
     A paired row that binds no span has no such rule, and inventing one from
     another column would be this function guessing which parameter buys
@@ -383,7 +437,7 @@ def default_point(points: list[DesignPoint]) -> DesignPoint | None:
         return None
     if not all("max_span_mm" in p.bindings for p in points):
         return points[0]
-    return min(points, key=lambda p: p.bindings["max_span_mm"])
+    return min(points, key=_span_milli)
 
 
 # A table's `scope` is an **EntityRef** — `{kind, id, tenant}`, naming which

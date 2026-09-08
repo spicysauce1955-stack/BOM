@@ -210,34 +210,22 @@ def test_corroborated_edge_is_drawn_and_reads_as_agreement_not_defeat():
     assert "Defeated" not in en and "גבר על" not in he
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="`values_agree` is a SET-level predicate: one dissenter turns every "
-           "agreeing row into a defeat. Needs a source change in "
-           "knowledge/evaluator.py — resolve_param computes agreement once over "
-           "ALL firings, so `resolve` cannot tell an agreeing row from a "
-           "disagreeing one.",
-)
 def test_rows_that_state_the_winners_value_exactly_are_never_defeated():
-    """Agreement is a PAIRWISE fact, and `resolve_param` measures it as a set.
+    """Agreement is a PAIRWISE fact, and it used to be measured as a set.
 
-    `same_value = len({a.effective_milli() ...}) <= 1` over every relevant firing,
-    passed to `resolve` as one boolean. Add one dissenting sheet to four that
-    state exactly the same limit and the flag goes false for all of them: the
-    three rows byte-identical to the winner get `defeated_by`, a `defeated` edge,
-    and a `hard=True` conflict each — "K-SHEET-B was defeated by K-MAXSPAN",
-    about two rows that state the same 1800 mm. That is a claim about the sources
-    which is false, and it is exactly the failure the `corroborated` edge was
-    added to stop; the same graph then carries error warnings for a contest that
-    never happened.
+    `resolve_param` computed `same_value = len({a.effective_milli() ...}) <= 1`
+    over every relevant firing and passed it to `resolve` as one boolean, which
+    then decided corroborate-vs-defeat for EVERY pair. Add one dissenting sheet
+    to four that state exactly the same limit and the flag went false for all of
+    them: the rows byte-identical to the winner each got `defeated_by`, a
+    `defeated` edge and a `hard=True` conflict — "K-SHEET-B was defeated by
+    K-MAXSPAN", about two rows stating the same 1800 mm. That is a claim about
+    the sources which is false, and it is exactly the failure the `corroborated`
+    edge was added to stop; the same graph then carried error warnings, shipped
+    to the publisher as review tasks, for a contest that never happened.
 
-    Verified at the evaluator level too: five published `hard_constraint` rows
-    (four at 1800, one at 1500) return four `defeated_by` and four `hard=True`
-    conflicts, zero `corroborated_by`.
-
-    The fix is in `resolve`, not here: compare each contender's value against the
-    CURRENT winner's when a tie is reached, rather than pre-computing one flag
-    for the whole set.
+    `resolve` now asks its `stated` reader per pair, against the current winner,
+    so only the row that really dissented loses.
     """
     from fenceai.knowledge.model import KnowledgeVersion, SetParam
 

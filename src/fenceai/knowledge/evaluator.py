@@ -136,12 +136,40 @@ def _beats(a: KnowledgeVersion, b: KnowledgeVersion) -> bool:
     return False
 
 
-def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> Resolution:
+# What a firing SAYS about the slot being resolved, as one comparable value.
+# `resolve` is generic over params, tokens and action kinds and cannot read a
+# value out of a `Firing` itself, so the caller that narrowed the firings to a
+# slot supplies the reader. `None` means "this slot has no comparable value" —
+# `resolve_actions` resolves shapes, not numbers — and then no pair can ever
+# agree, which is exactly the pre-existing behaviour for those kinds.
+Stated = Callable[[Firing], object]
+
+
+def resolve(
+    firings: list[Firing], key: str, *, stated: Stated | None = None
+) -> Resolution:
     """Pick a winner among firings that all target the same param/action slot.
 
     Ties are surfaced as Conflicts (never silent); a tie between hard-authority
     contenders with disagreeing outputs raises GenerationFailure (knowledge-system.md)
     — but only when both contenders are `authored`. See `KnowledgeVersion.origin`.
+
+    AGREEMENT IS PAIRWISE, and it has to be asked here rather than handed in.
+    This used to take one `values_agree: bool` computed by the caller over the
+    WHOLE set of firings, and that boolean then decided, for every pair, whether
+    the loser had been beaten or had merely said the same thing. One dissenting
+    row therefore turned every agreeing row into a defeat: five published rows,
+    four stating 1800 and one stating 1500, produced four `defeated_by` edges and
+    four `hard=True` conflicts — review tasks telling a publisher that two of
+    their byte-identical rows contradict each other. That is `e291d4b`'s
+    *"a contest that never happened"* reintroduced one level up, and `38a2c6b`'s
+    milli tightening made it strictly easier to reach: 0.2 mm between any two
+    rows now flips the flag for all of them.
+
+    So `stated` answers the question per pair, against the CURRENT winner. The
+    ladder above it is untouched: WHICH rule wins is `_beats` and only `_beats`,
+    and this decides nothing but corroborate-vs-defeat for a rule that already
+    tied.
     """
     if not firings:
         return Resolution(winner=None, firings=[], conflicts=[])
@@ -154,10 +182,12 @@ def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> R
         elif _beats(other.version, winner.version):
             winner.defeated_by.append(other.version.ref)
             winner = other
-        elif values_agree:
+        elif stated is not None and stated(other) == stated(winner):
             # DMN ANY: agreement, no conflict — and no defeat either. `other`
             # was never beaten by `winner`; it independently said the same
             # thing, and the graph must say so rather than call it a loser.
+            # Asked of THIS pair, not of the set: a third row disagreeing with
+            # both of them is a fact about that row, not about these two.
             other.corroborated_by.append(winner.version.ref)
         else:
             if (
@@ -196,6 +226,37 @@ def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> R
     return Resolution(winner=winner, firings=contenders, conflicts=conflicts)
 
 
+def _param_statement(f: Firing) -> tuple[int, ...]:
+    """What this rule states about the slot, in the publisher's thousandths.
+
+    A TUPLE, in the rule's own action order, rather than one number — because a
+    firing may carry more than one `set_param` for the same parameter and the
+    set-based predicate this replaced silently flattened that. It pooled every
+    action of every firing into one set, so a single rule stating both 1800 and
+    1500 was indistinguishable from two rules stating one each.
+
+    Ordered, and compared whole, for the reason that decides it: the consumer
+    reads the FIRST matching action (`next(a for a in res.winner.actions ...)` in
+    `strategy/generator.py`). A rule stating `(1800, 1500)` and one stating
+    `(1500, 1800)` therefore build different fences, and a rule stating
+    `(1800, 1500)` says something the rule stating `(1800,)` never said. Neither
+    pair corroborates: corroboration is the claim that a second source
+    independently said the SAME thing, and a source that also said something else
+    did not. Falling to `defeated_by` there is the conservative direction — it
+    surfaces a conflict for review rather than manufacturing agreement — and it
+    is unreachable for every rule in `demo.py`, which state one action per slot.
+
+    `effective_milli()` and not `value`, for `resolve_param`'s own reason: two
+    published rows at 2463.8 and 2464.2 both round to 2464 mm and did not agree.
+    """
+    return tuple(a.effective_milli() for a in f.actions)
+
+
+def _token_statement(f: Firing) -> tuple[str, ...]:
+    """The word form of `_param_statement` — a token has no precision to lose."""
+    return tuple(a.value for a in f.actions)
+
+
 def resolve_param(kb: KnowledgeBase, ctx: dict, param: str) -> Resolution:
     """Resolve a SetParam value with full precedence + conflict surfacing.
 
@@ -229,14 +290,17 @@ def resolve_param(kb: KnowledgeBase, ctx: dict, param: str) -> Resolution:
 
     `resolve_token` keeps `value`: a token is a word from a closed set and has no
     precision to lose.
+
+    And agreement is asked PAIRWISE — `resolve` calls `_param_statement` on the
+    two rules that actually tied. Measuring it over the whole set made one
+    dissenter erase the agreement between every other pair; see `resolve`.
     """
     relevant: list[Firing] = []
     for f in applicable_firings(kb, ctx):
         acts = [a for a in f.actions if a.kind == "set_param" and a.param == param]
         if acts:
             relevant.append(Firing(version=f.version, actions=acts))
-    same_value = len({a.effective_milli() for f in relevant for a in f.actions}) <= 1
-    return resolve(relevant, param, values_agree=same_value)
+    return resolve(relevant, param, stated=_param_statement)
 
 
 def resolve_token(kb: KnowledgeBase, ctx: dict, param: str) -> Resolution:
@@ -254,8 +318,7 @@ def resolve_token(kb: KnowledgeBase, ctx: dict, param: str) -> Resolution:
         acts = [a for a in f.actions if a.kind == "set_token" and a.param == param]
         if acts:
             relevant.append(Firing(version=f.version, actions=acts))
-    same_value = len({a.value for f in relevant for a in f.actions}) <= 1
-    return resolve(relevant, param, values_agree=same_value)
+    return resolve(relevant, param, stated=_token_statement)
 
 
 def resolve_actions(
@@ -274,6 +337,10 @@ def resolve_actions(
         acts = [a for a in f.actions if a.kind == kind and (match is None or match(a))]
         if acts:
             relevant.append(Firing(version=f.version, actions=acts))
+    # No `stated`, deliberately: a mounting requirement or a reinforcement is a
+    # shape, not a value, and "these two said the same thing" is not a question
+    # this function can answer for them. Nothing here corroborates — which is
+    # exactly what the set-level flag did for these kinds too.
     return resolve(relevant, kind)
 
 

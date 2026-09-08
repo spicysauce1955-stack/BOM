@@ -6,7 +6,7 @@ and a single rounded gap would hide openings that exceed a safety limit.
 
 import pytest
 
-from fenceai.fencemodel.fit import fit_pattern, fit_pattern_milli
+from fenceai.fencemodel.fit import _round_milli, fit_pattern, fit_pattern_milli
 
 
 def _assert_accounts_for_axis(r, axis_len_mm, member_widths_mm):
@@ -271,3 +271,56 @@ def test_fit_pattern_milli_rounding_matches_to_mm_exactly():
     for milli in (0, 1, 499, 500, 501, 999, 1000, 1500, 2500,
                   -1, -499, -500, -501, -1500, -2500, 63_500, 9_525, 88_900):
         assert _round_milli(milli) == to_mm(Quantity(unit="mm", amount_milli=milli))
+
+
+def test_fit_pattern_milli_space_tiles_the_axis_exactly_on_fractional_input():
+    """`excess: space` must CLOSE: margins + members + gaps + residual is the
+    axis, exactly, the way `fit_pattern` closes by construction.
+
+    Under `space` the gaps are not measurements of an authored value, they are
+    the leftover shared out — so the amount shared has to be what the outputs
+    already committed leave behind, derived after the per-gap rounding. Rounding
+    the true slack independently instead hands out the whole leftover on top of
+    gaps that were each rounded UP: 2.5" pickets (63.5 mm) at 3/8" (9.525 mm)
+    over a 2000 mm axis then tile to 2013 mm and the last picket stands 13 mm
+    past the frame. Whole-mm inputs cannot show this — every rounding is exact —
+    which is why it stayed invisible behind callers that scale by 1000.
+    """
+    AXIS, WIDTH, GAP = 2_000_000, 63_500, 9_525
+    r = fit_pattern_milli(AXIS, [WIDTH], [GAP], justification="spread_to_fit",
+                           excess="space", edge_margin_milli=0)
+    assert r.count == 27
+    # The aggregate member width rounded once — this module's own basis; it
+    # never rounds an individual member width.
+    widths_mm = _round_milli(WIDTH * r.count)
+    assert (r.edge_margin_start_mm + widths_mm + sum(r.gaps_mm)
+            + r.residual_mm + r.edge_margin_end_mm) == _round_milli(AXIS)
+    # ...and the tiling is still a spread, not a lump.
+    assert max(r.gaps_mm) - min(r.gaps_mm) <= 1
+
+
+def test_fit_pattern_milli_measuring_policies_keep_the_true_terminal_opening():
+    """The counterweight to the test above, and it is deliberately NOT closure.
+
+    Under `truncate` the residual is the terminal OPENING — the number the
+    sphere test compares against a clear-gap limit. It is the true leftover
+    rounded once (31.75 -> 32 mm), and it must not be re-derived as "whatever
+    the rounded gaps leave": that would pour the accumulated rounding of 30
+    gaps into the one safety-critical number, reporting 17 mm of leftover
+    instead of 32 and a terminal opening of 106 mm instead of 121 against a
+    true 120.65. Any clear-gap limit from 106 to 120 mm then reads PASS on a
+    fence that fails. n+1 independently rounded openings not adding up to the
+    axis is the price of every one of them being true to within half a
+    millimetre, and that is the trade this path makes on purpose.
+    """
+    r = fit_pattern_milli(2_463_800, [63_500], [9_525], justification="start",
+                           excess="truncate", edge_margin_milli=88_900)
+    assert r.residual_mm == 32
+    assert r.openings_mm[-1] == 121
+    closure_residual = (_round_milli(2_463_800) - 2 * r.edge_margin_start_mm
+                         - _round_milli(63_500 * r.count) - sum(r.gaps_mm))
+    assert closure_residual == 17          # what closing the sum would report
+    closed_terminal = r.edge_margin_end_mm + closure_residual
+    assert closed_terminal == 106
+    for limit_mm in (106, 113, 120):       # the band where the two disagree
+        assert r.openings_mm[-1] > limit_mm >= closed_terminal

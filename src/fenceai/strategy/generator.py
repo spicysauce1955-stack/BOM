@@ -40,6 +40,7 @@ from fenceai.fencemodel.resolve import (
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.ast import field_paths
 from fenceai.knowledge.evaluator import (
+    Firing,
     Resolution,
     preference_firings,
     resolve as evaluator_resolve,
@@ -1689,6 +1690,16 @@ def _segment_view(
                     "run": run_ctx, "site": site}
 
 
+def _vertical_statement(f: Firing) -> tuple[str, ...]:
+    """What one preference states about the vertical mode, for `resolve`.
+
+    Ordered and compared whole, like `evaluator._param_statement`: `_vertical_mode`
+    below reads the FIRST `prefer_vertical` action of the winner, so two rules
+    whose action lists differ anywhere do not state the same thing.
+    """
+    return tuple(a.mode for a in f.actions if a.kind == "prefer_vertical")
+
+
 def _vertical_mode(
     kb: KnowledgeBase, ctx: dict, slope_permille: int,
 ) -> tuple[str, list[str], list[str], Resolution]:
@@ -1701,9 +1712,12 @@ def _vertical_mode(
     there is exactly one of it.
     """
     vert_firings = preference_firings(kb, ctx, {"prefer_vertical"})
-    modes = {a.mode for f in vert_firings for a in f.actions if a.kind == "prefer_vertical"}
+    # Agreement is PAIRWISE (evaluator.resolve). This used to hand in one flag
+    # computed over the whole set of modes, so a third preference naming a
+    # different mode turned two rules that both said `raked` into a defeat and a
+    # conflict about each other.
     res: Resolution = evaluator_resolve(
-        vert_firings, "vertical_mode", values_agree=len(modes) <= 1
+        vert_firings, "vertical_mode", stated=_vertical_statement
     )
     if res.winner:
         mode = next(a.mode for a in res.winner.actions if a.kind == "prefer_vertical")
@@ -1972,6 +1986,21 @@ def _generate_run(
             )
             max_span_mm = tightest.value
             max_span_milli = tightest.effective_milli()
+            # KNOWN, UNFIXED, AND NOT A ROUNDING DETAIL: the node below cites
+            # `res.winner` as `governed_by` while the bays are laid out to THIS
+            # number, which is a different rule's. With four published rows at
+            # 1800 and one at 1500 the plan reads "Maximum span resolved to
+            # 1500 mm. Governed by K-MAXSPAN@v1" — and K-MAXSPAN states 1800.
+            # decision-model.md:35 is explicit that `governed_by` means *this
+            # rule decided this value* and that citing a rule for a value it did
+            # not choose makes the explanation state something untrue.
+            # Retagging the edges here is not the fix: the same node's
+            # `defeated`/`corroborated` edges describe the RESOLUTION (the rows
+            # that agreed with the winner really did agree with each other), and
+            # tests/decisions/test_explain_i18n.py pins that reading. The honest
+            # shape is a second node — the resolution stands at the winner's
+            # number, a `clamp` node holds this one and cites the row it came
+            # from — which needs an en/he TEMPLATES pair in decisions/explain.py.
         # a manufactured bay width, if this model's line has one. Resolved under
         # the same segment scope as the rest, so a model contributes it through
         # `layout_policy` rather than through a private channel. Resolved BEFORE
@@ -2019,7 +2048,7 @@ def _generate_run(
             # is any firing whose defeated_by is non-empty
             defeated=[f.version.ref for f in res.firings if f.defeated_by],
             # a corroborated edge cites a firing that agreed with the winner
-            # rather than losing to it — evaluator.py's `values_agree` branch
+            # rather than losing to it — evaluator.py's pairwise `stated` branch
             corroborated=[f.version.ref for f in res.firings if f.corroborated_by],
             confidence="uncertain" if assumed else "deterministic",
         )

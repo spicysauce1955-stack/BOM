@@ -193,26 +193,62 @@ def fit_pattern_milli(
     is correct the moment it runs on true milli-mm rather than values already
     rounded to the nearest millimetre.
 
-    Only TWO things are rounded, and each exactly once: the aggregate SLACK
-    (a single leftover length, like any other length this engine stores) and
-    each DISTINCT authored gap-after value (used directly as an output gap
-    under every `excess` policy but `space`). What must NOT be rounded
-    per-value is the *spread* remainder `_spread` distributes across gaps
-    once `excess: space` tops them up — that distribution already produces
-    exact integers summing to the true slack at whatever precision it runs
-    at, so it must run at mm, on the already-rounded `slack_mm`, exactly as
-    `fit_pattern`'s own path does. Rounding the finer-grained milli spread
-    independently per gap would not merely lose precision, it would be
-    WRONG: `_spread(3000, 7)` distributes as four 429s and three 428s milli,
-    every one of which rounds to 0 mm alone — losing 3 real millimetres of
-    slack outright. The aggregate must be rounded before it is split, never
-    after.
+    THREE kinds of value are rounded, each exactly once per distinct value:
+    the axis length, the edge margin, and each DISTINCT authored gap-after
+    value (used directly as an output gap under every `excess` policy but
+    `space`). What must NOT be rounded per-value is the *spread* remainder
+    `_spread` distributes across gaps once `excess: space` tops them up —
+    that distribution already produces exact integers summing to the true
+    slack at whatever precision it runs at, so it must run at mm, on an
+    already-rounded aggregate, exactly as `fit_pattern`'s own path does.
+    Rounding the finer-grained milli spread independently per gap would not
+    merely lose precision, it would be WRONG: `_spread(3000, 7)` distributes
+    as four 429s and three 428s milli, every one of which rounds to 0 mm
+    alone — losing 3 real millimetres of slack outright. The aggregate must
+    be rounded before it is split, never after.
+
+    **SLACK is derived, and how depends on what it MEANS under the policy.**
+    The two meanings cannot be served by one number, and picking the wrong
+    one for a policy is a real defect either way:
+
+    * Under `space` the slack is an ALLOCATION — the gaps ARE the leftover,
+      shared out. It must therefore be what the already-rounded outputs
+      leave: `usable_mm - widths_mm - sum(nominal_mm)`, so the tiling closes
+      by construction the way `fit_pattern`'s does. Rounding the true slack
+      independently instead adds the whole leftover on top of gaps that were
+      each rounded UP, and the members walk off the end of the frame: 2.5"
+      pickets at 3/8" over a 2000 mm axis tile to 2013 mm that way.
+    * Under every other policy the gaps are the authored gaps and the
+      residual is a MEASUREMENT — the terminal opening the sphere test
+      reads. It is the true leftover rounded once, and it must NOT absorb
+      the per-gap rounding of everything before it. Closing the sum there
+      would hand the accumulated rounding of `count - 1` gaps to the one
+      number a safety limit is compared against: on the 97" run in
+      `test_fit_pattern_milli_closes_the_sphere_test_flip` the terminal
+      opening would read 106 mm rather than its true 120.65 — 15 mm of other
+      openings' rounding, banked in the measurement, and enough to report a
+      PASS against any clear-gap limit from 106 to 120 mm. That is the exact
+      defect this whole function exists to close, re-entered from the other
+      side.
+
+    So under a measuring policy `sum(gaps) + residual` deliberately does NOT
+    equal the usable length once the inputs carry real thousandths: every
+    opening is its own true value rounded once, and n+1 independent roundings
+    do not add up. That is the trade this module chose, on purpose.
+
+    `widths_mm` above is the AGGREGATE member width rounded once, which is
+    this module's own basis — it never rounds an individual member width.
+    A consumer that lays members out one at a time from mm widths
+    (`report/elevation.py:_infill` walks `cycle_widths_mm`) does its own
+    per-member rounding that no result of this function can see; that
+    closure is the consumer's, and it is not fixable here by distorting a
+    gap.
     """
     usable = axis_len_milli - 2 * edge_margin_milli
     count = _count_members(usable, member_widths_milli, gaps_after_milli)
     edge_margin_mm = _round_milli(edge_margin_milli)
+    axis_len_mm = _round_milli(axis_len_milli)
     if count == 0:
-        axis_len_mm = _round_milli(axis_len_milli)
         start = end = min(edge_margin_mm, max(axis_len_mm, 0) // 2)
         return FitResult(0, [], start, end, axis_len_mm - start - end, None)
 
@@ -220,8 +256,15 @@ def fit_pattern_milli(
         member_widths_milli[i % len(member_widths_milli)] for i in range(count))
     nominal_milli = [
         gaps_after_milli[i % len(gaps_after_milli)] for i in range(count - 1)]
-    slack_milli = usable - widths_used - sum(nominal_milli)
     nominal_mm = [_round_milli(g) for g in nominal_milli]
-    slack_mm = _round_milli(slack_milli)
+    if excess == "space":
+        # Derived AFTER the per-gap rounding, and against the mm margins this
+        # result reports, so margins + members + gaps + residual == the mm
+        # axis exactly. Whole-mm inputs make this identical to rounding the
+        # true slack, so every caller scaling by 1000 is unaffected.
+        slack_mm = (axis_len_mm - 2 * edge_margin_mm
+                    - _round_milli(widths_used) - sum(nominal_mm))
+    else:
+        slack_mm = _round_milli(usable - widths_used - sum(nominal_milli))
     return _assemble(count, nominal_mm, slack_mm, edge_margin_mm,
                       justification=justification, excess=excess)
