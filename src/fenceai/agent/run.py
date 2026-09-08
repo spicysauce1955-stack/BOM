@@ -1,8 +1,14 @@
 """Dispatch: task + view + runner -> a checked TaskResult.
 
-Three checks stand between a runner's output and a person, and a proposal that
+Three checks stand between a runner's output and a person, and anything that
 fails one is DROPPED and counted as an agent defect rather than shown. A user
 must never be offered something impossible.
+
+**The checks apply to everything a `TaskResult` can hand to a person, not just
+`proposals`.** `declined[].claims`, `no_standing[].claims` and `measured` are
+`Claim`s exactly as a proposal's are, and a runner that put a fabricated
+citation in one of those instead of a proposal would otherwise slip it past
+check 2 entirely — the stub's restraint is not the framework's guarantee.
 
 Design: docs/superpowers/specs/2026-09-08-agent-framework-design.md §6, §8, §8b.
 """
@@ -11,10 +17,11 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 
-from fenceai.agent.proposal import Proposal, TaskResult
+from fenceai.agent.proposal import Claim, Declined, NoStanding, Proposal, TaskResult
 from fenceai.agent.registry import parse_payload
 from fenceai.agent.tasks import TaskSpec
 from fenceai.agent.view import AgentView
+from fenceai.strategy.choices import ChoiceSet, offered
 
 
 def run_task(task: TaskSpec, view: AgentView, runner, project_id: str) -> TaskResult:
@@ -30,53 +37,132 @@ def run_task(task: TaskSpec, view: AgentView, runner, project_id: str) -> TaskRe
 
     # Broad read: actually walk the declared slices so the view accumulates
     # what it handed over (`view.py`'s `_handed_over`) BEFORE the runner is
-    # asked to ground anything in it. `has()` above is a peek, not a read —
-    # only `open_choice_sets()` records refs, and check 2 below can only ever
-    # match what this call handed over on THIS run.
-    if "choice_sets" in task.reads:
-        view.open_choice_sets()
+    # asked to ground anything in it, and so THIS dispatch — not the runner —
+    # holds the authoritative list of sets still open. `has()` above is a
+    # peek, not a read: only `open_choice_sets()` records refs, and both check
+    # 2 and check 3 below can only ever match what this call returned.
+    open_sets: list[ChoiceSet] = view.open_choice_sets() if "choice_sets" in task.reads else []
 
     try:
         raw = runner.run(task, view, project_id)
     except Exception:  # an adapter failure is not a finding about the fence
         return TaskResult(task_id=task.id, evaluated=False)
 
-    kept, dropped = [], 0
+    # `evaluated` is the dispatcher's fact, not a claim to inherit uncritically.
+    # A runner cannot say "I did not look" and still hand over proposals it
+    # wants believed — if it is not standing behind having looked, nothing it
+    # attached is trustworthy either, so none of it reaches the checks below.
+    if not raw.evaluated:
+        return TaskResult(task_id=task.id, evaluated=False)
+
+    handed_over = view.refs_handed_over()
+    digest = view.digest(task.reads)
+
+    kept: list[Proposal] = []
+    dropped = 0
     for proposal in raw.proposals:
-        if _admissible(proposal, task, view):
-            kept.append(proposal)
+        if _admissible(proposal, task, open_sets, handed_over):
+            # `saw` is stamped here, from what THIS run's view actually
+            # resolved against — never trusted from the runner, for the same
+            # reason `evaluated` above is not: it is the dispatcher's fact.
+            kept.append(proposal.model_copy(update={"saw": digest}))
+        else:
+            dropped += 1
+
+    measured: list[Claim] = []
+    for claim in raw.measured:
+        if _claim_grounded(claim, handed_over):
+            measured.append(claim)
+        else:
+            dropped += 1
+
+    declined: list[Declined] = []
+    for entry in raw.declined:
+        if all(_claim_grounded(c, handed_over) for c in entry.claims):
+            declined.append(entry)
+        else:
+            dropped += 1
+
+    no_standing: list[NoStanding] = []
+    for entry in raw.no_standing:
+        if all(_claim_grounded(c, handed_over) for c in entry.claims):
+            no_standing.append(entry)
         else:
             dropped += 1
 
     return raw.model_copy(update={
+        # `produced` is what the task EMITTED, before any check ran — §8b's
+        # table, not the survivor count. Counting `len(kept)` instead made the
+        # all-dropped path report 0 produced for something the task plainly
+        # did emit, which is the exact "agent whose output nobody can see
+        # still looks idle" failure §8b exists to prevent.
         "proposals": kept[: task.max_proposals],
-        "produced": len(kept),
+        "measured": measured,
+        "declined": declined,
+        "no_standing": no_standing,
+        "produced": len(raw.proposals),
         "dropped": dropped,
     })
 
 
-def _admissible(proposal: Proposal, task: TaskSpec, view: AgentView) -> bool:
+def _claim_grounded(claim: Claim, handed_over: set[str]) -> bool:
+    """Check 2, for one claim. Each marker is grounded differently.
+
+    `inferred` carries no evidence and needs none — `proposal.py`'s validator
+    already forbids one. `read` cites something FOREIGN: a ref this run's view
+    actually returned, and it is admissible only if it is in `handed_over` — an
+    agent can echo a citation, never invent one (conversation.md T58 §2,
+    accepted at T59 §2).
+
+    `measured` is the marker for LOCAL evidence, re-executed against the view
+    and compared (spec §6) — and this slice has no re-execution surface to run
+    it against: `RANK_CHOICE_SET` reads only `choice_sets`, and
+    `open_choice_sets()` hands over choice-set refs, never a measured fact.
+    Rather than let a `measured` claim fall into the foreign-ref check it was
+    never trying to pass — which would refuse it for the wrong reason, and by
+    accident stop doing so the day a `point:` ref happened to match — it is
+    refused here, explicitly, with its own honest reason. Re-execution arrives
+    with the Claude adapter in slice 2.
+    """
+    if claim.marker == "inferred":
+        return True
+    if claim.marker == "measured":
+        return False
+    return claim.evidence in handed_over
+
+
+def _admissible(proposal: Proposal, task: TaskSpec,
+                open_sets: list[ChoiceSet], handed_over: set[str]) -> bool:
     # 1 — the permission list. Belt to the grammar's braces: a runner that
     # emitted an unpermitted kind is broken, not creative.
     if proposal.kind not in task.may_emit:
         return False
 
-    # 2 — grounding. Every non-inferred claim must cite something THIS run's
-    # view handed over. Not "does it resolve" — a real ref the agent produced
-    # from nowhere would resolve. The property is that a citation can only ever
-    # be echoed (conversation.md T58 §2, accepted at T59 §2).
-    handed_over = view.refs_handed_over()
+    # 2 — grounding, and the vacuous case first: no claims means nothing for
+    # this check to fail, which must not read as passing it. An unevidenced
+    # proposal is not a proposal.
+    if not proposal.claims:
+        return False
     for claim in proposal.claims:
-        if claim.marker != "inferred" and claim.evidence not in handed_over:
+        if not _claim_grounded(claim, handed_over):
             return False
 
-    # 3 — referential. The payload must parse into its typed model and name
-    # something that exists.
+    # 3 — referential. The payload must parse into its typed model, and the
+    # thing it names must actually exist — for a choice point, that means the
+    # set it answers is one THIS run still considers open (`open_sets`, not
+    # every set the result ever carried), and the point is actually in
+    # `offered()` of that set, exactly as spec §6 asks: "is that `DesignPoint`
+    # actually in `offered()`?" — not merely present somewhere in the result.
     try:
         payload = parse_payload(proposal.kind, proposal.payload)
     except (ValidationError, KeyError):
         return False
     if proposal.kind == "select_choice_point":
-        if payload.point_id not in view.point_ids(payload.choice_set, payload.scope):
+        matching = next((c for c in open_sets
+                         if c.id == payload.choice_set and c.scope == payload.scope),
+                        None)
+        if matching is None:
+            return False
+        if payload.point_id not in {p.id for p in offered(matching.points)}:
             return False
     return True

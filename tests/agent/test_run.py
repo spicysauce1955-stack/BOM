@@ -6,19 +6,25 @@ offered something impossible.
 """
 from __future__ import annotations
 
-from fenceai.agent.proposal import Claim, Proposal, TaskResult, proposal_id
+from fenceai.agent.proposal import Claim, Declined, NoStanding, Proposal, TaskResult, proposal_id
 from fenceai.agent.run import run_task
 from fenceai.agent.tasks import RANK_CHOICE_SET
 from fenceai.agent.view import AgentView
 from fenceai.decisions.graph import DecisionGraph
-from fenceai.project.model import Project
+from fenceai.project.model import Project, Selection
 from fenceai.strategy.choices import ChoiceSet, DesignPoint
 from fenceai.strategy.model import GenerationResult, GenerationRun, Strategy
 
+# `axes` trades off (fewer posts, more offcut) so NEITHER point dominates the
+# other under `strategy.choices.dominates` — both are genuinely `offered()`.
+# The original fixture gave ALT strictly worse axes than DEFAULT on every
+# shared axis, which `offered()` (correctly) excludes; that was never a
+# reachable "good proposal" in the real system, only in a test that never
+# called `offered()`.
 DEFAULT = DesignPoint(id="p1", label="2 x 2500", widths=[2500, 2500],
-                      axes={"posts": 3}, is_default=True)
+                      axes={"posts": 3, "offcut_mm": 800}, is_default=True)
 ALT = DesignPoint(id="p2", label="1800 + 1400 + 1800", widths=[1800, 1400, 1800],
-                  axes={"posts": 4})
+                  axes={"posts": 4, "offcut_mm": 100})
 
 
 def _view(*points: DesignPoint) -> AgentView:
@@ -41,6 +47,20 @@ class _Runner:
     def run(self, task, view, project_id) -> TaskResult:
         return TaskResult(task_id=task.id, evaluated=True,
                           proposals=self._proposals, produced=len(self._proposals))
+
+
+class _RawRunner:
+    """A runner that hands back an arbitrary `TaskResult` — for exercising
+    paths `_Runner` above cannot reach: `measured`, `declined`, `no_standing`,
+    and a runner's own (mis)reported `evaluated`."""
+
+    interpreter_id = "raw"
+
+    def __init__(self, result: TaskResult):
+        self._result = result
+
+    def run(self, task, view, project_id) -> TaskResult:
+        return self._result
 
 
 def _proposal(point_id="p2", kind="select_choice_point", claims=None,
@@ -68,6 +88,9 @@ def test_an_action_the_task_may_not_emit_is_dropped():
                    _Runner(_proposal(kind="pin_post")), project_id="pr_1")
     assert out.proposals == []
     assert out.dropped == 1
+    # `produced` counts what the task EMITTED (spec §8b), not survivors — on
+    # the all-dropped path it must still be 1, never 0.
+    assert out.produced == 1
 
 
 def test_a_claim_citing_something_the_view_never_handed_over_is_dropped():
@@ -133,5 +156,129 @@ def test_a_runner_that_raises_reports_not_evaluated_rather_than_nothing_found():
             raise RuntimeError("adapter exploded")
 
     out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _Broken(), project_id="pr_1")
+    assert out.evaluated is False
+    assert out.proposals == []
+
+
+# -- fix round 1: C1, I1-I6 -----------------------------------------------
+
+
+def test_a_fabricated_citation_in_measured_is_dropped_not_shown():
+    """C1. `measured` reaches a person exactly as `proposals` do (spec §8);
+    check 2 must not be proposal-only, or a runner fabricates a citation
+    simply by not putting it in a proposal."""
+    bad = Claim(marker="read", text="a fact",
+               evidence="ref:sha256-nobody-handed-this-over")
+    raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True, measured=[bad])
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
+    assert out.measured == []
+    assert out.dropped == 1
+
+
+def test_a_grounded_measured_claim_survives():
+    good = Claim(marker="read", text="a fact", evidence="point:p2")
+    raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True, measured=[good])
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
+    assert out.measured == [good]
+    assert out.dropped == 0
+
+
+def test_a_fabricated_citation_in_declined_is_dropped_not_shown():
+    """C1. `Declined.claims` is the same `Claim` type as a proposal's."""
+    bad = Claim(marker="read", text="a fact",
+               evidence="ref:sha256-nobody-handed-this-over")
+    raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True,
+                     declined=[Declined(kind="select_choice_point", claims=[bad])])
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
+    assert out.declined == []
+    assert out.dropped == 1
+
+
+def test_a_fabricated_citation_in_no_standing_is_dropped_not_shown():
+    """C1. `NoStanding.claims` too — every path that reaches a person."""
+    bad = Claim(marker="read", text="a fact",
+               evidence="ref:sha256-nobody-handed-this-over")
+    raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True,
+                     no_standing=[NoStanding(about="x", whose="them", claims=[bad])])
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
+    assert out.no_standing == []
+    assert out.dropped == 1
+
+
+def test_a_point_from_an_already_answered_set_is_dropped():
+    """I1. Check 3 asks whether the point is in `offered()` of a set THIS
+    run's view still considers open — a set the project already answered must
+    not let its points back in through membership in the result alone."""
+    project = Project(id="pr_1", name="t",
+                      choices=[Selection(choice_set="bay_layout", scope="gap:run1:0")])
+    result = GenerationResult(
+        run=GenerationRun(id="run_1", project_id="pr_1", topology_revision=1,
+                          snapshot_hash="kh"),
+        strategy=Strategy(id="st_1"), graph=DecisionGraph(),
+        choice_sets=[ChoiceSet(id="bay_layout", scope="gap:run1:0", question="q",
+                               points=[DEFAULT, ALT])])
+    view = AgentView(project, result)
+    out = run_task(RANK_CHOICE_SET, view, _Runner(_proposal()), project_id="pr_1")
+    assert out.proposals == []
+    assert out.dropped == 1
+
+
+def test_a_dominated_point_is_not_offered_and_is_dropped():
+    """I1. `offered()`, not raw membership: a point strictly worse than the
+    default on every shared axis is dropped even though it is a real point in
+    a genuinely open set."""
+    strictly_worse = DesignPoint(id="d2", label="worse everywhere",
+                                 widths=[1800, 1400, 1800], axes={"posts": 4})
+    strictly_better_default = DesignPoint(id="d1", label="fewer everything",
+                                          widths=[2500, 2500], axes={"posts": 3},
+                                          is_default=True)
+    view = _view(strictly_better_default, strictly_worse)
+    out = run_task(RANK_CHOICE_SET, view, _Runner(_proposal(point_id="d2")),
+                   project_id="pr_1")
+    assert out.proposals == []
+    assert out.dropped == 1
+
+
+def test_a_measured_claim_is_refused_because_this_slice_has_nothing_measurable():
+    """I2. `RANK_CHOICE_SET`'s view only ever hands over choice-set refs —
+    there is no local re-execution surface yet (it arrives with the Claude
+    adapter in slice 2) — so a `measured` claim is refused outright, even one
+    citing a ref this very run handed over, rather than passing by accident or
+    failing the wrong check for the wrong reason."""
+    claim = Claim(marker="measured", text="observed", evidence="point:p2")
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT),
+                   _Runner(_proposal(claims=[claim])), project_id="pr_1")
+    assert out.proposals == []
+    assert out.dropped == 1
+
+
+def test_saw_is_stamped_from_the_view_actually_read_not_the_runner():
+    """I4. `Proposal.saw` is the dispatcher's fact, stamped from
+    `view.digest()` — the test runner never sets it, and the proposal
+    fixture's default is an empty `ViewDigest`."""
+    view = _view(DEFAULT, ALT)
+    out = run_task(RANK_CHOICE_SET, view, _Runner(_proposal()), project_id="pr_1")
+    [proposal] = out.proposals
+    assert proposal.saw == view.digest(RANK_CHOICE_SET.reads)
+    assert proposal.saw.run_id == "run_1"
+
+
+def test_a_proposal_with_no_claims_is_not_a_proposal():
+    """I5. Vacuous grounding: no claims to fail check 2 must not read as
+    having passed it."""
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT),
+                   _Runner(_proposal(claims=[])), project_id="pr_1")
+    assert out.proposals == []
+    assert out.dropped == 1
+
+
+def test_a_runner_that_claims_it_did_not_look_is_taken_at_its_word():
+    """I6. `evaluated: false` must mean nothing else on the result can be
+    trusted either — a runner cannot say it did not look while still handing
+    over proposals it wants believed."""
+    smuggled = _proposal()
+    raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=False,
+                     proposals=[smuggled], produced=1)
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
     assert out.evaluated is False
     assert out.proposals == []
