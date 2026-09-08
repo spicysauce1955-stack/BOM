@@ -3,6 +3,61 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-09-09: the agent is built, and it advises on the screen
+
+Slice 1 of `docs/superpowers/plans/2026-09-08-agent-framework-slice-1.md` is
+done: ten tasks, all reviewed, on branch `feat/agent-framework-slice-1` in the
+worktree `../BOM-agent-slice1`. **Not merged** — the checkpoint is the product
+owner seeing it run, not the tests being green.
+
+Full suite 2813 passed. `tests/scenarios` 299, unmoved — this slice adds no
+behaviour to `generate()`. UI smoke 386/386. The frozen contract is untouched
+(`sha256sum -c` OK); nothing here crosses the boundary.
+
+### What exists now
+
+`fenceai/agent/` is five modules and a route. `proposal.py` carries `Claim`,
+content-derived `proposal_id`, `ViewDigest`, `Declined`, `NoStanding`,
+`Proposal` and `TaskResult`. `registry.py` is the closed table of what may be
+proposed — one kind so far, `select_choice_point`. `tasks.py` declares the one
+task, `RANK_CHOICE_SET`. `view.py` is the read interface, broad and with no
+mutators, that records what it handed over. `run.py` is the dispatcher and the
+three checks. `ai/stub.py` gains `StubAgent` behind a `TaskRunner` port, so the
+whole thing works offline. `GET /api/runs/{run_id}/advice` puts it on the wire
+and `js/agent-advice.js` puts it beside the question.
+
+### The three properties, honestly
+
+**A permission list becomes the grammar** — *partial, and deliberately so.*
+`may_emit` is the single vocabulary and `run.py` is its enforcement, but in this
+slice that enforcement is a runtime belt, not a schema an agent is handed. The
+schema half needs a model to be a grammar for, and the Claude adapter is slice
+2. `registry.py` says this in the present tense of what it is, not of what it
+will be.
+
+**A claim may only cite what the view handed it** — *delivered, and the
+strongest work in the slice.* The broad read lives in the dispatcher, all four
+claim-carrying paths are gated by the same predicate, and it holds against a
+hostile runner rather than a polite one. The whole-branch review found the two
+holes that were left — an unevidenced rejection surviving `all([])`, and a
+referential check hardcoded to one kind — and both are closed: an `ActionSpec`
+now cannot be registered without a referential check.
+
+**`evaluated: false` is never an empty result** — *delivered, backend and UI.*
+The screen has four states, not two: never looked, nothing to suggest, had
+suggestions and refused them all, and no run yet. The third of those existed on
+the wire for a whole task before anything read it, which is exactly the silent
+failure §8b was written about.
+
+### What is deferred, and where it is written
+
+`.superpowers/sdd/2026-09-08-agent-framework-slice-1/progress.md` is the ledger:
+every ruling made during the run, with what it costs if wrong, and every minor
+deferred rather than fixed. Two of those must close before slice 2 rather than
+before merge: the `ActionSpec.referential` signature wants a small context
+object when the first non-choice-set kind lands, and claim text crosses the wire
+untagged, so the UI sniffs whether it is a dimension instead of being told.
+
 ## Session close — 2026-09-08: the agent is designed, and nothing is built
 
 **No code changed this session.** Two specs, one plan, four boundary turns, and
