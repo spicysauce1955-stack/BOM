@@ -28,7 +28,13 @@ NodeKind = Literal[
     # decision. specs/2026-09-03-design-choices-and-placement-design.md §3.
     "choice",
 ]
-EdgeType = Literal["derived_from", "governed_by", "defeated", "input_from", "assumption_of"]
+EdgeType = Literal[
+    "derived_from", "governed_by", "defeated", "input_from", "assumption_of",
+    # Distinct from `defeated`: the cited version was never beaten, it
+    # independently said the same thing (evaluator.py's `values_agree`
+    # branch). A `defeated` edge misrepresents agreement as a contest.
+    "corroborated",
+]
 
 
 class DecisionNode(BaseModel):
@@ -153,13 +159,15 @@ class GraphBuilder:
         status: str = "proposed",
         governed_by: list[str] | None = None,  # knowledge refs "OBJ@vN"
         defeated: list[str] | None = None,
+        corroborated: list[str] | None = None,
         inputs: list[str] | None = None,  # earlier node ids
         assumptions: list[str] | None = None,
     ) -> DecisionNode:
         # materialize knowledge input nodes FIRST so every edge points from an
         # earlier ordinal to a later one — acyclicity by construction, no exceptions
         knowledge_srcs = {
-            ref: self._knowledge_node(ref) for ref in [*(governed_by or []), *(defeated or [])]
+            ref: self._knowledge_node(ref)
+            for ref in [*(governed_by or []), *(defeated or []), *(corroborated or [])]
         }
         self._n += 1
         node = DecisionNode(
@@ -179,6 +187,8 @@ class GraphBuilder:
             self._edge(knowledge_srcs[ref], node.id, "governed_by", knowledge_ref=ref)
         for ref in defeated or []:
             self._edge(knowledge_srcs[ref], node.id, "defeated", knowledge_ref=ref)
+        for ref in corroborated or []:
+            self._edge(knowledge_srcs[ref], node.id, "corroborated", knowledge_ref=ref)
         for src in assumptions or []:
             self._edge(src, node.id, "assumption_of")
         return node

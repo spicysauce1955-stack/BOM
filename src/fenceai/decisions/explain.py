@@ -67,7 +67,7 @@ def _word(value, lang: str):
 
 # One template per decision-graph action, per language. `_alt` / `_wall` / `_step`
 # are optional sentence fragments appended when the payload carries those fields;
-# `_governed` / `_defeated` / `_pinned` are the provenance suffixes.
+# `_governed` / `_defeated` / `_corroborated` / `_pinned` are the provenance suffixes.
 TEMPLATES: dict[str, dict[str, str]] = {
     "en": {
         "place_post": (
@@ -317,6 +317,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "generic": "{action}: {payload}",
         "_governed": " Governed by {refs}.",
         "_defeated": " Defeated alternatives from {refs}.",
+        "_corroborated": " Corroborated by {refs}.",
         "_pinned": " This decision is pinned by a user override.",
     },
     "he": {
@@ -518,6 +519,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "generic": "{action}: {payload}",
         "_governed": " נקבע לפי {refs}.",
         "_defeated": " גבר על {refs}.",
+        "_corroborated": " מאושש על ידי {refs}.",
         "_pinned": " החלטה זו ננעצה על ידי המשתמש.",
     },
 }
@@ -568,6 +570,7 @@ def explain_node(
     t = TEMPLATES.get(lang, TEMPLATES["en"])
     governed = _refs(graph, node, "governed_by")
     defeated = _refs(graph, node, "defeated")
+    corroborated = _refs(graph, node, "corroborated")
     p = node.payload
     match node.action:
         case "place_post":
@@ -845,6 +848,8 @@ def explain_node(
         base += _fmt(t, "_governed", lang, units, refs=", ".join(governed))
     if defeated:
         base += _fmt(t, "_defeated", lang, units, refs=", ".join(defeated))
+    if corroborated:
+        base += _fmt(t, "_corroborated", lang, units, refs=", ".join(corroborated))
     if node.status == "pinned":
         base += t["_pinned"]
     return base

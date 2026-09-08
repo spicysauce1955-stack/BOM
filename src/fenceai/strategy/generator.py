@@ -1915,6 +1915,9 @@ def _generate_run(
             # a defeated edge cites the LOSING version (decision-model.md); the loser
             # is any firing whose defeated_by is non-empty
             defeated=[f.version.ref for f in res.firings if f.defeated_by],
+            # a corroborated edge cites a firing that agreed with the winner
+            # rather than losing to it — evaluator.py's `values_agree` branch
+            corroborated=[f.version.ref for f in res.firings if f.corroborated_by],
             confidence="uncertain" if assumed else "deterministic",
         )
         sink.extend(res.conflicts)
@@ -2338,6 +2341,7 @@ def _generate_run(
         inputs=[run_fact.id],
         governed_by=vertical_refs,
         defeated=vertical_defeated,
+        corroborated=[f.version.ref for f in vert_res.firings if f.corroborated_by],
     )
 
     tilt_ev_check, _, _ = _interval_at(topo, run, length // 2, "post_tilt")

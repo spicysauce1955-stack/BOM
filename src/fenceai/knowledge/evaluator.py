@@ -23,7 +23,11 @@ HARD_AUTHORITY_MAX = 3
 class Firing:
     version: KnowledgeVersion
     actions: list[Action]
-    defeated_by: list[str] = field(default_factory=list)  # refs of winners
+    defeated_by: list[str] = field(default_factory=list)      # refs of winners
+    # Distinct from `defeated_by`: this firing agreed with the winner, it was
+    # never beaten. Conflating the two rendered five identical sources as
+    # "4 defeated, 0 conflicts" — a contest that never happened.
+    corroborated_by: list[str] = field(default_factory=list)  # refs it agrees with
 
 
 @dataclass
@@ -151,7 +155,10 @@ def resolve(firings: list[Firing], key: str, *, values_agree: bool = False) -> R
             winner.defeated_by.append(other.version.ref)
             winner = other
         elif values_agree:
-            other.defeated_by.append(winner.version.ref)  # DMN ANY: agreement, no conflict
+            # DMN ANY: agreement, no conflict — and no defeat either. `other`
+            # was never beaten by `winner`; it independently said the same
+            # thing, and the graph must say so rather than call it a loser.
+            other.corroborated_by.append(winner.version.ref)
         else:
             if (
                 winner.version.effective_authority() <= HARD_AUTHORITY_MAX

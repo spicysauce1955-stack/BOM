@@ -87,6 +87,19 @@ def test_agreeing_values_are_not_a_conflict():
     assert res.conflicts == []  # DMN ANY semantics
 
 
+def test_agreeing_values_are_corroboration_not_defeat():
+    kb = KnowledgeBase(versions=[
+        kv("R1", type_="company_rule", value=1800),
+        kv("R2", type_="company_rule", value=1800),
+        kv("R3", type_="company_rule", value=1800),
+    ])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    assert res.conflicts == []
+    for loser in (f for f in res.firings if f is not res.winner):
+        assert loser.defeated_by == []  # nothing here was beaten
+        assert loser.corroborated_by == [res.winner.version.ref]
+
+
 def test_newer_version_wins_same_object():
     kb = KnowledgeBase(versions=[
         kv("R", version=1, value=1800, status="retired"),
