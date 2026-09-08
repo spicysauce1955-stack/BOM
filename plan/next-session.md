@@ -6,6 +6,11 @@ Rewritten: same day, when the Knowledge team's state changed the plan.
 Rewritten again: 2026-08-27 — the Knowledge team reviewed item A's fixture,
           which cascaded into a real fix and a five-turn negotiation. See the
           two sections right under this box, newest first.
+Rewritten again: 2026-09-08 (later session) — the ~25 uncommitted files are
+          COMMITTED and the four shared files are isolated: seven commits,
+          `bfabb52`..`12ad731`. The Knowledge tab redesign is BUILT and driven
+          in a browser. Both Connections artifacts carry the sixth entity. The
+          Connections view itself is still 100% design — see the first section.
 Rewritten again: 2026-09-08 — closed T49's five "Ours, open" ledger items, then
           two design threads (Knowledge tab, a new standalone Connections
           view) grew out of a UI complaint into an approved mockup and a
@@ -34,6 +39,116 @@ State:    Items 1-11 done and pushed. Item 6's mechanism (SourcePolicy,
           (Gap.subject not yet structured) — reported as conversation.md T14,
           fixed on their side by amendment 004 and now passing.
 ```
+
+## 2026-09-08 (later) — the backlog is committed, the Knowledge tab is built
+
+### Git: no longer tangled
+
+Seven commits. Every one of this session's and the previous session's files is now in
+history, and what remains uncommitted is **purely the concurrent session's**
+published-parts work (8 modified files + 3 untracked, all additions).
+
+| | Commit |
+|---|---|
+| `bfabb52` | `feat(web)`: step 1 shows only step 1's work, and Clear really clears |
+| `b04579d` | `fix(fencemodel)`: fit_pattern rounds the aggregate, not each gap |
+| `618b125` | `feat(knowledge)`: a table that lists a point as uncovered, and covers it |
+| `e291d4b` | `feat(decisions)`: sources that agree are corroboration, not a defeat |
+| `b004af1` | `test(knowledge)`: vendor the real snapshots instead of reaching next door |
+| `8cfdd53` | `docs(knowledge)`: the Knowledge team has published, so stop saying they haven't |
+| `12ad731` | `feat(web)`: the Knowledge tab stops showing you what nobody decided yet |
+
+**The surgery on the four shared files was easier than the section below predicted, and
+the reason is worth keeping.** Every hunk was cleanly attributable and no single line was
+contested — so `index.html` and both locale bundles split at *hunk* granularity
+(`git add -p`), and only `app.js` needed hand work, because its two changes sat on
+adjacent import lines inside one hunk. The documented `git checkout HEAD` → reapply →
+restore dance is the fallback, not the first move: **diff the file and check whether the
+hunks actually overlap before reconstructing anything.**
+
+The locale bundles were split **three ways** (1219 → 1220 → 1215 keys, parity verified at
+each step) so each commit stands alone: `618b125` carries the warning key its own new gap
+code needs, and `8cfdd53` carries the dead-key removal. A commit that needs a bundle entry
+it does not contain is red at that commit and green only at the tip.
+
+### Thread 3 (Knowledge tab): BUILT — this is the part that changed
+
+`12ad731`. The tab is three panes behind a sub-strip: Rules, Author, Published.
+
+- **New module `js/knowledge-rules.js`** owns `#pane-k-rules` — the list, the filter bar,
+  the retired group. `renderKnowledge()` is gone from `tabs.js` (988 → ~1000 lines with
+  the strip added, and ~60 lines lighter in the list).
+- **`tabs.js` owns the strip**, via `setKnowledgePane()` — the same one-path-moves-`.active`
+  property `setTab` holds, one level down, and `test_tabs_module.py`'s existing guard
+  already enforces that all `classList.add("active")` lines live in that module.
+- **`actionSentence()` / `scopeChips()` live in `builder-ui.js`**, beside the builder whose
+  sentences they mirror. **The review queue still renders `JSON.stringify(c.actions)` and
+  `JSON.stringify(c.scope)` on a candidate** — that is the obvious next caller, and the
+  single-owner test is already in place so it cannot grow a second copy.
+- 27 new locale keys in both bundles, `action.sentence.<kind>` per action kind plus two
+  literals (`with_sku`, `unknown`), all guarded by
+  `tests/web/test_knowledge_panes_module.py` (15 tests).
+
+**Two bugs only the browser could find, and it found both.** "1 proposed candidates" — fixed
+with the `_one` partner keys this app already uses everywhere else. And
+`Set max span (mm) to 1200 mm`: `action.param.max_span_mm` carries `({u})` because that is
+right beside a bare number input in a *form*, and wrong in a *sentence* where the unit rides
+the value. `paramWord()` drops the trailing parenthetical; the shape holds in both bundles
+and a test pins that it does.
+
+**A new smoke case, `_smoke_knowledge_panes` (17 checks), in English and in Hebrew RTL** —
+because the lesson from the road shipping stateless is that no test in the gate boots the
+real ES-module app. It also caught the three existing failures the redesign caused: the
+rule-builder checks drove `#k-object` without selecting the Author pane, and a click on a
+control inside an inactive pane does nothing at all.
+
+**Gate: 2639 unit tests, 386/386 browser checks** (from 2624 and 369).
+
+**One cross-session dependency, named rather than hidden:** the Published pane's *content*
+is the concurrent session's `#published-parts` card, which is still uncommitted. So at
+`12ad731` alone that pane is an empty wrapper. The smoke check is written to pass whether
+the card is absent or visible, and to fail only if the card exists and the pane hides it —
+so the commit is self-consistent and the real property is still guarded once their work
+lands.
+
+### Thread 4 (Connections view): still 100% design, artifacts now current
+
+**Both published artifacts were updated for the sixth entity (Warning), at the same URLs:**
+
+- Interactive mockup: https://claude.ai/code/artifact/a0380b52-2778-4668-b6ab-5e3b0532327a
+  — `Warning: "triangle"` in `SHAPE_OF`, a triangle branch in `shapeEl`, a fourth
+  switcher pill you can actually pick, and its `text_raw` shown verbatim with the
+  publisher's own severity lexeme. A `LABEL_DROP` table pushes the center node's labels
+  down into the triangle, because a triangle is narrow exactly where a circle is widest.
+- Design map: https://claude.ai/code/artifact/60021d4a-1a2b-491b-85de-d9316754d5ee
+  — six entity cards, six real edges in the reference diagram (both arrows into Source doc
+  are the same `SourceRef` field, which is the whole reason Warning cost nothing), and the
+  Gap-citation nuance stated on the workflows figure.
+
+**Nothing is built. `writing-plans` has NOT been invoked for this one** — that was the
+call at the end of this session: the Knowledge tab was one slice and shipped without a
+plan; Connections needs one, because it is two new routes, a reverse index that does not
+exist anywhere in the backend today, a new `#tab-connections` owned by a new
+`connections.js`, a `role.js` hide-list entry, and hand-rolled radial layout with no
+library allowed. **That plan is the next concrete step.**
+
+### Still open, and now more overdue than it was
+
+- **The whole-branch review has STILL not run** — `architecture-critic` and
+  `test-reviewer`. It now covers thread 2's five backend changes AND the Knowledge tab
+  slice. It was flagged as overdue two sessions ago; each session since has added to what
+  it would cover.
+- `plan/current-status.md` was deliberately **not** touched: it currently holds the
+  concurrent session's uncommitted published-parts entry, and adding to it would re-tangle
+  a file that is cleanly theirs right now. Add this session's entry after their commit
+  lands.
+- Item 4 (`road.state.blocked` dead string) and item 5 (the 2-4 map variant seam) from
+  2026-09-07 are still untouched.
+- Two things spotted in the concurrent session's work, theirs to judge, not touched:
+  `index.html` ships `value="Emblem"` hardcoded in the parts search input, and
+  `knowledge/parts.py` widens `Part.version` to `int | str` — a field-type change on a
+  published-part schema, which sits closer to the frozen contract than a registry
+  addition does.
 
 ## 2026-09-08 — T49 closed, and two design threads in flight, nothing committed
 
