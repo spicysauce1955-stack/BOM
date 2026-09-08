@@ -228,3 +228,38 @@ def test_every_ai_port_has_a_stub():
         f"no stub implements these ports: {unstubbed}. "
         f"The stubs that exist are {sorted(stubs)} — a name is not an "
         f"implementation.")
+
+
+def test_only_the_api_layer_imports_the_agent():
+    """A framework the pipeline CAN import is one that eventually WILL be, and
+    an AI call reachable from `generate()` ends the traceability of every
+    number downstream of it (ADR-0009). `agent` is a delivery-side package like
+    `api` and `web`: it may depend on the domain, and nothing in the domain may
+    depend on it."""
+    offenders = [
+        f"{path.relative_to(SRC)} imports {bad}"
+        for package in DOMAIN for path in _modules(package)
+        for bad in sorted(m for m in _imports(path) if m.startswith("fenceai.agent"))
+    ]
+    assert not offenders, offenders
+
+
+def test_the_agent_never_reaches_the_store_or_the_generator():
+    """The view takes what it is given. An agent module that imported
+    `generate` could re-decide rather than re-read, which is the same defect
+    `test_a_read_model_never_reaches_for_the_things_that_decide` prevents in
+    `report`."""
+    offenders = [
+        f"{path.relative_to(SRC)} imports fenceai.{bad}"
+        for path in _modules("agent")
+        for bad in sorted(_packages(path) & {"api", "store"})
+    ]
+    assert not offenders, offenders
+
+    generator_offenders = [
+        f"{path.relative_to(SRC)} imports {bad}"
+        for path in _modules("agent")
+        for bad in sorted(m for m in _imports(path)
+                           if m.startswith("fenceai.strategy.generator"))
+    ]
+    assert not generator_offenders, generator_offenders
