@@ -78,6 +78,15 @@ propose a knowledge version.
 only the inputs it actually had. This is the seam the calibration's D1 defers
 to: *"for now it is ok, it will be extended in the future."*
 
+**When a finding fits no entry, the default is a measurement — not a new
+entry.** T54 §2 is the worked example: the Knowledge team wanted a ninth `Gap`
+kind for *"published to an identity no consumer can resolve"*, checked the eight
+binding kinds, found none fit, and declined to add one — *"we are not filing one
+for something we can measure on our own side without changing what crosses."*
+An agent finding with nowhere to go becomes a counter in §8b before it becomes a
+row here. Without that rule the registry accumulates one-off kinds, and the
+grammar in §1 is only as good as the restraint of whoever last extended it.
+
 **`materialize` is the generalisation of an existing function.**
 `project/intents.py::confirm_intent` already does exactly this for three intent
 kinds — takes a proposal, produces the first-class object, chains provenance
@@ -114,6 +123,21 @@ Generation itself stays behind its explicit button and never auto-fires. A task
 that runs while somebody is still drawing is answering a question about a fence
 that does not exist yet.
 
+**Two authoring rules, both against the same failure.**
+
+**A `goal` says what the task is FOR; it must never say what is TRUE.** Domain
+facts in prose go stale, and they go stale in the direction that keeps sounding
+right. `conversation.md` T49 §6c found three such claims in one day and drew the
+conclusion: *"three stale records in one day is not three accidents. Every one of
+them was true when written, load-bearing for a real decision, and left behind by
+the boundary moving."* What is true comes from the view, at run time.
+
+**The view is queried per run and never carried across runs.** T53 §1 is the
+worst form of the same bug — a team telling the other side twice that a cut was
+blocked, for a reason false when written: *"Ours was worse than a stale comment —
+we asserted the stale state as a current reason."* A cached view is an agent
+doing exactly that.
+
 ---
 
 ## 4. The view — broad read, narrow run
@@ -146,7 +170,7 @@ failure somebody has already had.
 
 ```
 Proposal {
-  id              str
+  id              str            CONTENT-DERIVED — see 5.0
   task_id         str
   project_id      str
   run_id          str | None
@@ -161,6 +185,28 @@ Proposal {
   created_at      str
 }
 ```
+
+### 5.0 A proposal id is content-derived, or D4 does not work
+
+`Proposal.id` is `sha256` over `(task_id, kind, payload, scope)` — never
+`new_id()`. `core/ids.py` already draws this distinction and gives the reason:
+generated things get content-derived ids *"so identical regeneration yields
+identical ids."*
+
+Random ids break two separate things, and the second is not obvious:
+
+* Re-running a task shows a person "all new suggestions" when nothing changed.
+* **`advisory-agent-design.md` §3 stops functioning.** *"A rejection suppresses
+  re-proposal"* requires the system to recognise a re-proposal as **the same
+  proposal**. With a random id it cannot, so the agent offers on Tuesday exactly
+  what was refused on Monday — the failure the rejection record exists to
+  prevent.
+
+`conversation.md` T46 §8 is the measured case, from the other side of the
+boundary: *"0 of 67 ids survive; a consumer diffing by id sees 67 removed and
+403 added… The gaps themselves did not all change; **their identity did.**"* And
+T53 §2 is what good looks like — *"All 403 gap ids carry over… Nothing about the
+identity scheme changed this time, so the diff is the diff."*
 
 ### 5.1 A rationale is a list of tagged claims, never prose
 
@@ -259,7 +305,33 @@ TaskResult {
   declined    list[Declined]     what it considered and did not propose, and why
   measured    list[Claim]        what it established, whether or not it proposed
   needs       list[str]          what it would need from a person to go further
+  no_standing list[NoStanding]   what it could assert and may not (below)
   evaluated   bool               whether it examined anything at all (§8)
+}
+```
+
+**`no_standing` is not a variant of `needs`, and the distinction is borrowed
+from the sharpest thing in the thread.** `needs` means *I lack information*.
+`no_standing` means *I have the answer and it is not mine to state.*
+
+`conversation.md` T54 §2 is the case. The Knowledge team holds `mfr/*` product
+family identities; we hold `M-VINYL`. Somebody has to say which is which, and
+they left the table **deliberately empty**:
+
+> We are not writing `mfr/certainteed-columbia-imperial-chesterfield → M-VINYL`
+> on our own authority: that asserts a product identity we do not hold.
+
+A human would find that mapping obvious. They declined it on principle, citing
+a prior instance caught before it shipped. **An agent's most natural failure is
+asserting a mapping it has no standing for** — it will always be able to produce
+a plausible one — so the framework gives it somewhere to put the answer that is
+not a proposal:
+
+```
+NoStanding {
+  about   str            what it would have asserted
+  claims  list[Claim]    the evidence, tagged as always
+  whose   str            who does have the standing
 }
 ```
 
@@ -281,9 +353,33 @@ situation rather than a similar one.
 
 1. **Schema** — free, from §1. The output cannot be malformed or name an action
    the task may not emit.
-2. **Grounding** — every `measured` and `read` claim is re-executed against the
-   view and compared. This generalises the check `ai/claude.py` already makes
+2. **Grounding** — every `measured` and `read` claim is checked against **what
+   the view handed this task run**, and a claim citing anything else is refused.
+   This generalises the check `ai/claude.py` already makes
    (`if c.source_text in annotation.text` — the span must be verbatim).
+
+   **Re-execution is the mechanism for our own data and cannot be the rule.**
+   `conversation.md` T57 §3 found this against the first draft, which said
+   *"re-executed against the view and compared"* without qualification: a
+   Knowledge `ref_id` is **not re-executable on this side**, and `core/gaps.py`
+   forbids trying — *"`id` is opaque and stays opaque: do not parse it, do not
+   build one, do not infer a page number from it."*
+
+   They offered two ways out: the check reaches across the boundary (a third
+   surface nobody has proposed), or a `ref_id` is admissible without checking.
+   **Both are worse than the rule above.** The property that matters is not that
+   evidence be recomputable — it is that evidence be **traceable to what the
+   agent was given**, so a citation cannot be fabricated. A ref the view
+   supplied satisfies that without a network call and without parsing anything
+   opaque; a ref the view did not supply is refused whether or not it would have
+   resolved.
+
+   So the check is uniform and the implementation differs by evidence kind:
+   local evidence is re-executed and compared, a foreign `ref_id` is matched
+   against the refs this run's view actually returned. The agent can only ever
+   echo a citation, never invent one — which is the same reason G73 is
+   survivable here: their citation defect moved every `SourceRef.id` and moved
+   nothing we assert, because we read `belongs_to` and never the pointer.
 3. **Referential** — does the anchor resolve, does the SKU exist, is that
    `DesignPoint` actually in `offered()`? A proposal that fails is **dropped and
    logged as an agent defect, never shown.** A user must never be offered
@@ -335,6 +431,48 @@ A task whose view slice was empty, or whose adapter failed, reports
 
 ---
 
+## 8b. Reach — counted from the first day, not added later
+
+**An agent whose proposals nobody keeps looks exactly like an agent that is
+working.** This is not a hypothesis. It is the failure the Knowledge thread
+spent three turns on, measured from both ends:
+
+> A snapshot whose entire parameter corpus is unreachable looks, from either
+> side, exactly like a snapshot that is working. — T52 §2
+
+> we spent a session publishing more into the space your measurement showed is
+> empty, and **we noticed only while writing the commit message**… neither
+> system told us. — T53 §4
+
+> the pair of systems would have said out loud, on 2026-09-07, both *"we
+> published 18 objects nothing can reach"* and *"6,563 runs consulted none of
+> them"*. **Neither said either.** — T54 §3
+
+Two correct systems, 6,563 generation runs, nine published tables, **zero**
+consultations, for weeks, in silence. Nothing was broken and nothing said
+anything.
+
+The agent version arrives the same way and is worse, because a suggestion nobody
+keeps still *looks* like output. So `run.py` counts, from the first task it ever
+runs:
+
+| Counted | Because |
+|---|---|
+| produced | the task emitted it |
+| dropped | it failed a §6 check — an agent defect, never shown |
+| shown | it reached a screen |
+| kept / reversed | with the rejection type, per `advisory-agent-design.md` §3 |
+| never rendered | shown is not the same as looked at |
+
+**This is a guard, not analytics**, and the distinction decides where it lives:
+it ships with the first task rather than with the first dashboard. Their answer
+to the same problem — `cli reach` in T54 — was built **before** the association
+table it measures, which is the ordering to copy.
+
+`advisory-agent-design.md` §6's retrospective scoring stays where it is and
+answers a different, later question. *Is the agent right?* is worth asking only
+once *is anything happening?* has an answer.
+
 ## 9. The stub
 
 Every `TaskSpec` carries a deterministic stub or offline development breaks —
@@ -345,6 +483,13 @@ falls through to the stub on any failure to construct a client.
 second rule engine. For the choice-ranking task it picks the first non-default
 point in `offered()` and emits one `inferred` claim saying exactly that. Honest,
 tiny, and it exercises the entire framework without pretending to judgement.
+
+**And the stub's tests must assert that a proposal was actually produced.** A
+framework test whose stub returns nothing passes and proves nothing — the same
+family as §8's vacuous green, and the thread has the sharpest instance of it:
+`conversation.md` T49 §9, where an entire real-snapshot suite *"reports green by
+not running"* because the fixtures it loads live outside the repo and the tests
+skip when absent. Green by not running is the cheapest lie a suite can tell.
 
 ---
 

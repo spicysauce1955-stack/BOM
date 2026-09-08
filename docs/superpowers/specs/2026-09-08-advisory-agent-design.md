@@ -287,8 +287,53 @@ every `SourceRef.belongs_to` joins to".
   file, no column mapping, no UI.
 * **Documents** — a provenance record type, and **no ingestion of any kind.**
 
-This is the largest unbuilt piece of the product goal. **It is its own track**
-and must not be folded into the agent work.
+### Who stores a customer's documents — DECIDED 2026-09-08
+
+**The knowledge base does.** Product owner's decision, taken against
+`conversation.md` T57 §1 and recorded in `roles-and-boundaries.md`.
+
+The paragraph above — *stored verbatim, versioned, never edited, only cited* —
+was written here as a specification for something we would build, and the
+Knowledge team read it as a description of what they already are.
+`[measured]`, their T57: **146 source documents stored byte-exact and
+content-addressed, read-only enforced in code; 82,282 canonical elements;
+25,961 published citations resolving with 0 dangling.**
+
+So the split is the boundary rule of this section, applied to the two teams
+rather than to two tables:
+
+| | Where it lives |
+|---|---|
+| The document | The Knowledge platform. Ingested, versioned, immutable, cited. |
+| Anything read out of it | Here. Catalogue rows, prices, jobs — operational data that cites the document. |
+
+**What is still ours, and it is not small:** catalogue rows, the import
+experience, column mapping, the price-list lifecycle, and the citation from a
+product version back to the document version it was read from. The Knowledge
+team explicitly does not want any of it.
+
+**Two dependencies this creates, stated rather than discovered.** Both are
+theirs, both are measured in T57, and neither is a reason to reverse the
+decision:
+
+* **Tenancy is built and exercised by nothing.** All 146 documents are
+  `owner_tenant = NULL`, which means *shared*. A customer's own price list must
+  not be shared, so **`owner_tenant` has to work before one customer document is
+  stored** — the first real row it would ever carry.
+* **Their ingestion is tuned for engineering PDFs**, not for arbitrary customer
+  uploads. `extract_html` was added five days before this decision, for exactly
+  two retained web pages. A price-list spreadsheet is a different animal.
+
+**And one property gets weaker, which is worth saying plainly.** This repo's
+offline story is that a run is a pure function over a pinned snapshot, so a plan
+from last March renders the same numbers with the Knowledge platform
+unreachable. That is unchanged for *published* facts. It does not extend to a
+customer **uploading** a document, which now needs them reachable. The
+degradation is confined to ingestion and does not touch generation.
+
+The **price-list decision below is unaffected and gets stronger**: a product
+version citing an immutable, content-addressed document version is a firmer
+anchor than one citing a file we stored ourselves.
 
 ### The price-list decision
 
@@ -389,8 +434,23 @@ Named rather than omitted, each with the trigger that should revisit it.
   `docs/visualizations/salesperson-mvp/` as item D, and explicitly warned
   against being derived from the salesperson storyboard. It is a prerequisite
   for this design and is not specified here.
-* **Company data import.** §8's own track: document ingestion, catalogue import,
-  column mapping. *Trigger: a real company's real price list.*
+* **Company data import.** §8's own track, and §8's decision narrows it: the
+  document half is the Knowledge platform's, so what is deferred here is
+  catalogue import, column mapping, the import experience and the price-list
+  lifecycle. *Trigger: a real company's real price list.*
+* **Suggesting a rule from repeated corrections — and it must never merge on
+  similarity.** The product owner asked that corrections be tracked so trends
+  can eventually propose rules. The obvious implementation is the one to refuse.
+  `conversation.md` T46 §11 and T49 §7 argue it at length, on real data: a
+  published row conditioned `{exposure_category: B}` sat beside four siblings
+  conditioned `{exposure_category: B, hvhz: false}`, and merging them *"would
+  not have produced a slightly worse explanation; it would have produced a
+  confident span on a site the other four documents refuse to answer for."*
+  **The near-miss is the finding, not noise.** And grouping must use the whole
+  key: *"Agreement across scopes is not corroboration; it is five products whose
+  approvals happen to state the same number."* So the capability, when built,
+  surfaces the **group and its asymmetries** and proposes nothing merged.
+  *Trigger: enough corrections that a person cannot see the group by eye.*
 * **Cross-team knowledge sharing.** Out of scope by decision. *Trigger: a
   customer with two teams who want to share, at which point HOW is a design.*
 * **Registry entries beyond the current six directives.** *Trigger: the first
