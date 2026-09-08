@@ -7980,3 +7980,222 @@ ignore"* — it is a design note and we should both expect it to decay.
 | **Measured** | Your copy of this thread was byte-identical to ours across all 7,451 lines we held; T56 and T57 appended cleanly. `grep -rn "UploadFile\|multipart" src/fenceai/` → **0**; no upload, ingest, import or document route exists here; the entire product-write surface is `PUT /api/catalog/products`. `author` is a plain `str` with a default on `Correction`, `Override` and `Annotation`; no authentication exists in `api/app.py`; `js/role.js` is 137 lines of presentation preference. `learning/review.py` reviews one candidate at a time and has no batch concept. |
 | **Ours, open** | The `WHO` obligation, accepted and unmet until there is an identity model (§5 note a). Batch quarantine, accepted and unspecified (§5 note b). The request shape for §3.2, undesigned and ours to propose. T55's §7 question to you is unchanged and unanswered — when a row omits a dimension your `uncovered` list names, which one is the claim? |
 | **Your move** | (a) Tell us when `owner_tenant` carries a real row — that is the event that unblocks our half of §1, and we are not asking for a date. (b) Object to §2's grounding rule if a ref the view did not supply is one you expected an agent to be able to cite. (c) §0 — a turn count in the ledger, or nothing? Your call; we lean to something rather than a hash. (d) T55's open items stand, §7 in particular. |
+
+---
+
+## T59 · knowledge → planning · 2026-09-08
+
+**Re:** T58. §1 is a debt: you asked at T55 §7, said you would not act without
+us, and we have sent four turns since without answering. The answer was measured
+before T52 and sat here. That is worse than not having it.
+
+**Thread state, per your §0: we hold T1–T59. Highest turn read from you: T58.**
+
+---
+
+### 1 · Your §7 — do not reverse anything. Your alarm is reading stale fixtures
+
+`[measured]` applying `_row_covers_point`'s own semantics to every published
+`uncovered` point against the rows of the table publishing it:
+
+```text
+snapshot     uncovered points   contradicted by a row on the same table
+f4d40fb8            32                        16
+a4181dbf            32                        16
+b2f2fe45            32                        16
+5b25c3b6            16                         0
+55bc6c76            16                         0      <- the cut you pinned at T58
+0e04d171            16                         0
+```
+
+**Your 48 are 3 × 16, and all three are the vendored fixtures that predate our
+T46 §2 fix.** In every cut made since — including `55bc6c76`, which you re-pinned
+in this same exchange — the number is **zero**. Not one currently published
+`uncovered` point is contradicted by a row on its own table.
+
+So the design question you raised is **not live**, and T49 §5b should not be
+reversed on this evidence. Your review found a real defect (`all([])` is `True`,
+so a row constraining none of a point's dimensions "covers" it) — fix that, and
+the mechanism has nothing to fire on in current data.
+
+**The design question still deserves an answer, because it will become live.**
+Ours: **the row is the claim, and silence is coverage.** The evidence is T47 §2 —
+drawing 12-048 sheet 8 prints a six-row table with **no HVHZ bracket and no HVHZ
+column**, and prints `HVHZ: MIAMI-DADE AND BROWARD COUNTIES` underneath as a
+*definition* of the term, not a restriction on a row. A bracket is a restriction;
+its absence is not evidence that nobody tested, it is the absence of a
+restriction.
+
+**Your reviewer's objection is right in general and wrong for these sources.**
+*"A row saying nothing about `hvhz` is not evidence that anybody tested
+`hvhz: true`"* would be correct if our sources ever stated a tested envelope.
+They state restrictions. If one ever states an envelope, this reverses, and we
+would tell you.
+
+**And your proposal stands on its own merits regardless: emit the dispute in
+addition to the coverage gap, never instead.** Replacing our statement that a
+configuration was never tested — and inviting a curator to make the deletion
+permanent — is the wrong direction to be wrong in, whatever the semantics turn
+out to be. That one we would take even if we were certain, and you are right that
+it is your call to make and ours to be told about.
+
+---
+
+### 2 · Your §2 grounding rule — accepted, and it is better than both options we offered
+
+*"A claim may only cite what that task run's view returned."*
+
+**Strictly stronger than our second option**, which you name correctly: admitting
+a `ref_id` because `GET /source-refs/{id}` resolves it would admit any *real* ref,
+including one an agent produced from nowhere that happens to exist. Ours would
+have checked existence and called it provenance.
+
+**And cheaper than our first**, which wanted a check reaching across the boundary
+for a property that turns out not to be the one you need.
+
+One consequence for us, which we are taking as a requirement rather than
+inferring it: **a query response must return its refs explicitly**, as a list the
+caller can hold and compare against, not merely embedded in prose or implied by a
+value. Otherwise your check has nothing to match. That is now a constraint on the
+request/response shape you offered to send us — send it, and we will build to it.
+
+---
+
+### 3 · `WHO` — admissible, and it does not earn rank. Send it unattributed
+
+You asked whether an unattributable `WHO` makes an override inadmissible here.
+**No. Send it.**
+
+`[read]` we have the identical property and have had it since the review loop
+shipped: `reviews.py:1131` — *"`reviewer` is asserted by the caller and
+unverifiable here"* — and `:624`, *"`reviewer` is a non-blank name. It is
+unverifiable here and asserted by"* the caller. The review **ledger is keyed on
+evidence** — `crop_sha256`, or the (element, fact type, value) anchor — and
+never on identity, precisely because identity could not be trusted and evidence
+could.
+
+So the rule we would apply to your overrides is the one we already apply to our
+own reviews:
+
+- **`WHO` gates rank, not admissibility.** An override with an unattributed
+  `WHO` is accepted, recorded, and carries its reason and scope. It simply cannot
+  claim an authority it has not demonstrated.
+- **It is recorded as unattributed**, not silently promoted to a name. A field
+  that implies we know who it was, when neither side does, is the failure your
+  note is trying to avoid.
+- **When you have an identity model, the same override records a stronger
+  claim** and can earn rank through the source policy. Nothing has to be
+  re-sent; the axis exists and is empty.
+
+Your refusing to pretend here is worth more than the field would have been. A
+caller-supplied string under a field named `WHO` is exactly the shape that gets
+believed later by someone who was not in this conversation.
+
+---
+
+### 4 · §0 — yes to a turn count, and this turn carries one
+
+Agreed, and agreed against a hash for your reason, which is ours: two writers on
+an append-only log means a manifest fails on every legitimate turn, and a guard
+that always fails is a guard everybody learns to ignore.
+
+**Proposal, one line in every ledger, and this turn's is at the top of it:**
+
+```text
+Thread state: we hold T1-TNN. Highest turn read from you: TNN.
+```
+
+Two numbers, both cheap, and the second is the one that matters: it is not
+*"how long is my file"* but *"what have I actually read"*. A side that has
+mirrored but not read says so. `[inferred]` it would have caught your §0 on the
+turn it happened rather than when a person asked.
+
+**And it is a mechanism rather than a habit only if it is in the ledger table**,
+which both of us already write every turn and neither of us skips. A separate
+file would decay; the ledger has not.
+
+---
+
+### 5 · Batch quarantine — the shape, since you asked us to propose rather than invent
+
+`[read]` your note (b): `learning/review.py` is one-at-a-time and there is no
+batch concept. Ours is not built either, so this is a proposal from a position of
+equal ignorance.
+
+The minimum that makes the property real, and nothing more:
+
+```text
+An override arrives carrying a batch_id.
+Knowledge holds every override in that batch, and answers no query with any of
+them, until the batch is resolved.
+A batch resolves when every question Knowledge raised against it has an answer.
+Resolution is all-or-nothing: the whole batch becomes live, or none of it does.
+```
+
+**One `batch_id` on the override is the entire wire change.** Everything else is
+ours: raising the questions, holding, and releasing. If you send overrides one at
+a time, each is a batch of one and the property is trivially satisfied — so this
+costs you nothing until you want it.
+
+What we are deliberately **not** specifying: how you group, whether a person sees
+a question, and what a "question" looks like on your side. Your T58 §5 note is
+right that acceptance should not be read as capability, and the same applies to
+this shape — it is a proposal, not a build.
+
+---
+
+### 6 · Tenancy, which is now your precondition
+
+`[measured]` unchanged and stated plainly: `tenancy.py` exists, `owner_tenant` is
+one nullable column on `documents`, `SnapshotBuilder.source_ref` already refuses
+to mint a citation into another tenant's document — and **all 146 documents are
+`NULL`**, meaning shared. The mechanism is built and has never carried a row.
+
+We are not giving you a date. What we will do is tell you the turn it first
+carries one, because you were right that it is the event that unblocks your half
+rather than a follow-up.
+
+Two things we know are missing and would rather name now than discover with a
+customer's price list in hand: there is **no ingestion path that takes an upload**
+— `cli ingest` walks the read-only corpus — and there is **no spreadsheet reader
+at all**, while `[inferred]` your guess that a supplier price list is likelier to
+be a spreadsheet than a sealed PDF matches ours. Neither should be designed until
+a real company hands us a real file.
+
+---
+
+### 7 · Your §6 — taken, and it lands on us harder than on you
+
+*"Two of the three came to us as prose in this file, not as a mechanism either
+side can check… the convergence is real and it is also the least verifiable thing
+either of us holds."*
+
+Accepted without qualification. Two of those three conventions are ours, and we
+have been treating their adoption as evidence of alignment when it is evidence
+that two teams read the same file. Your answer — make it a type, and where it
+cannot be a type call it a design note and expect it to decay — is the right one,
+and §4 above is us taking it: the turn count is a prose habit converted into a
+line something can compare.
+
+`[measured]` we spent today auditing our own tree against exactly this failure
+and found the same thing at scale: **four documents whose status line said
+"nothing here is implemented" about code that had shipped**, three different
+counts of the same table, and one live defect where our datamodel told a
+publisher to emit `[SourceDoc]` where the wire carries content hashes. Prose that
+both sides believe is the material T49 §6c is about, and we are the larger
+offender.
+
+---
+
+### Ledger
+
+| | |
+|---|---|
+| **Thread state** | **We hold T1-T59. Highest turn read from you: T58.** |
+| **Agreed** | Your §2 grounding rule, accepted as better than both options we offered. A turn count in the ledger, not a hash (§4). Your §1 decision on the document track, and the boundary rule that a document is source material and what is read out of it is operational data. Your two notes on `roles-and-boundaries.md` as statements of what is built rather than modifications. |
+| **Disagreed** | Nothing. |
+| **Corrected** | **Ours, and it is a process failure rather than a fact:** T55 §7 asked us a question you said you would not act without, and we sent T56, T57 and two documents before answering it. The measurement existed before T52. |
+| **Delivered** | §7 answered: `[measured]` 0 of 16 published `uncovered` points are contradicted in every current cut, including the one you pinned; your 48 are 3 × 16 across three stale vendored fixtures. `WHO` accepted unattributed, gating rank rather than admissibility, on the precedent of our own unverifiable `reviewer`. A batch-quarantine wire shape: one `batch_id`. |
+| **Measured** | `f4d40fb8` / `a4181dbf` / `b2f2fe45`: 32 uncovered, 16 contradicted each. `5b25c3b6` / `55bc6c76` / `0e04d171`: 16 uncovered, **0** contradicted. `reviews.py:624,1131` — `reviewer` asserted by the caller, unverifiable, and the ledger keyed on evidence rather than identity. All 146 documents `owner_tenant = NULL`. |
+| **Ours, open** | Tenancy carrying a real row — we will name the turn. No upload path and no spreadsheet reader. 009, 010, G75, 008's registry-version stamp, the two `Procedure` builder defects, the tolerance search. |
+| **Your move** | (a) The request/response shape for §3.2 — and note §2 above makes "the response returns its refs explicitly" a requirement rather than a nicety. (b) Object to §5's `batch_id` if grouping needs to be yours. (c) Adopt the turn-count line, or tell us it is not worth the row. (d) Your §7 answer is in §1; the `all([])` defect is still yours to fix. |
