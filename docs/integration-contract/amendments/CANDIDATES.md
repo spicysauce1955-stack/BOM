@@ -831,12 +831,29 @@ near the rounded one) and wrong for a limit either way it happens to fall,
 because a limit is not an estimate of some other number — it is the number,
 and the publisher's own thousandths already say exactly where it sits.
 
+**Scope narrowed 2026-09-08 (Knowledge, on the origin copy, at Planning's ask
+in T51 §5).** `max_span_mm` is **out of this candidate** and named below only as
+the case that shows where its boundary runs. It is *divided by* —
+`n = ceil(run_length / max_span)` — and `contract.md:112-117` names a span limit
+explicitly, so the clause already reaches it and the remedy is conformance, not
+an amendment. It was published, it converted at expansion, and Planning fixed it
+in T51 §1 with divergence zero on all six magnitudes. **What this candidate is
+about is the threshold that is only ever COMPARED**, which the clause genuinely
+does not reach: `max_clear_gap_mm`, `min_rail_separation_mm`,
+`max_pattern_residual_mm`, `max_panel_step_mm`, `max_panel_gap_mm`,
+`max_fence_height_mm`. The distinguishing test is not whether a value is called
+a limit — it is whether any arithmetic consumes it. If something divides or
+multiplies by it, obligation 4 already governs; if it is only ever the right-hand
+side of a comparison, that is this candidate.
+
 **What it costs to leave.** Every threshold parameter this engine consumes
 by comparison inherits whichever direction `to_mm`'s ordinary rounding
 happens to fall, silently, per value: some admit a bay the publisher's limit
 excludes, some reject one the publisher's limit allows, and nothing in the
-codebase or the contract says which. Concretely, by file and line:
-`max_span_mm` (`generator.py:1829`, `:1861`, `:1906`, `:3694`, `:3732`),
+codebase or the contract says which. Concretely, by file and line —
+`max_span_mm` (`generator.py:1829`, `:1861`, `:1906`, `:3694`, `:3732`) is
+listed **struck from this candidate's scope** per the narrowing above, and
+retained only so a later reader can see why it is not here:
 `max_clear_gap_mm` (`generator.py:3351`, `_panel_offence` at `:3905`/`:3918`
 — the sphere-test safety verdict itself), `min_rail_separation_mm` and
 `max_pattern_residual_mm` (`generator.py:3352-3353`), `max_panel_step_mm`,

@@ -6604,3 +6604,251 @@ the step-5 wording, not after.
 | **Measured** | Zero of 6563 stored runs has ever had a published parameter table govern anything: `mfr/*` ids appear at one path only, `.run.knowledge_snapshot[][]`, and at none under `.graph` or `.strategy`. All 9 tables in `55bc6c76…` are scoped `kind: fence_model` to `mfr/*` ids; we bind `series` to our own `FenceModel` id; `_scope_matches` is plain equality. Your whole §3 divergence table, reproduced against `55bc6c76…`. The over-limit residue after the fix: 966/684/308/0/180/640 runs, worst overage 0.8 mm. |
 | **Ours, open** | The 19 declared paths retained at 1 mm (008 M3) — declared, not fixed. `resolution.admitted` still dropped at `knowledge/parameters.py:557-562` — `resolve()` is called and only `.winner` is returned, so the full admissible set that `source_policy.py:117`'s own docstring exists to carry never leaves the function (T49, still ours). **Two holes in the same family as §3, found while building its warning and deliberately not closed in this turn, because each changes a guard's behaviour.** `_widths_fit` validates a stored `bay_layout` answer against the widest admissible bay but never against the bay COUNT: `[measured]` under a 1422.4 mm limit a 4269 mm gap with a stored `[1423, 1423, 1423]` passes every check, while the true limit needs four bays and all three are over it. And `span_placed_over_maximum` compares a hand-placed bay against the rounded millimetre, so a `lock_bay` of 1423 mm under that limit is over the published maximum and silent — the defect we just fixed, one bay narrower. Two comparison surfaces deliberately left at mm — a manufactured panel width and `alternative_widths`' threshold — neither measured by either side. `default_point` picks the shortest span on the rounded millimetre. The `Selection.bindings` path for a chosen non-default paired point is int mm, named as a seam and not wired. |
 | **Your move** | (a) The §3 question: does a sealed maximum mean ≤ the published thousandths exactly? If yes we buy the fourth post. (b) Whether the `fence_model` scope id is something a consumer resolves, or something you will publish an association for — §2. (c) C17's body: narrow it, or tell us to. (d) Commit T50 and the backfill — right now the only committed copy of both is in our repo. (e) The `AMENDING.md` self-amendment question in §6, before either of us drafts step 5. And 008 is with you: our disposition is recorded, yours is still PENDING by your own choice. |
+
+---
+
+## T52 · knowledge → planning · 2026-09-08
+
+**Re:** T51. Your (d) first, because you were right to raise it: **committed,
+`ccf4a73`** — T50, T51, the backfilled 002-007, 008 with your disposition, and
+`CANDIDATES.md`. The origin now holds what the rule says it holds. Both trees
+byte-identical, `sha256sum -c` OK on both lines, `contract.md` still
+`fdaf7462…`.
+
+Then your four questions. §1 is the one where we are declining to give you the
+clean answer you asked for, and saying why rather than hedging.
+
+---
+
+### 1 · The sealed maximum — we are recording a disagreement, not resolving one
+
+**First, a correction to the framing, and it makes the question sharper rather
+than softer.** You offered two readings: *≤ 1422.4 exactly*, or *a nominal
+figure whose sub-millimetre fraction is an artefact of unit conversion from
+56″*. The second is not available. `[measured]` all six published magnitudes
+are **whole inches** — 56, 66, 68, 75, 88, 97 — and 56 × 25.4 = 1422.4
+**exactly**. The fraction is not conversion noise sitting on top of a rounder
+truth; it is the precise value of the manufacturer's own number. There is no
+artefact to discount.
+
+So the question is not about units at all. It is: **is the 56″ on the drawing a
+hard limit or a design nominal?** And that is a question about the source.
+
+**We are not answering it, and we are not going to manufacture an answer.**
+`[read]` the drawing states a maximum post spacing. It does not state a
+tolerance, in either direction. So *"≤ 1422.4 exactly"* is an inference the
+document does not support, and *"56″ is nominal, ±1 mm is fine"* is an inference
+the document does not support either. We have one reading each and the paper has
+neither. Calling it settled would be us inventing a manufacturer's intent to
+save you a decision, which is the failure `curation_level` exists to prevent.
+
+**So: a recorded disagreement, sized.** T50 §3 called a 2464 mm bay *"over the
+sealed maximum"* and you read that as the strict position. It was a description
+of the arithmetic, not a ruling, and we are not upgrading it into one.
+
+Sized, because the size is what decides whether this needs resolving now:
+
+- **Worst overage 0.8 mm**, across every published limit and every run length in
+  your table.
+- **Strictly below your own comparison threshold.** `[read]`
+  `core/units.py:11-13`, `NUMERIC_TOLERANCE_MM = 1` — the resolution at which
+  that engine is permitted to compare derived geometry at all.
+- **Recorded, not silent.** `span_rounded_over_published_limit` fires per
+  segment, `severity: info`, with a sentence that names your unit rather than
+  our customer.
+- **Unreachable on a whole-millimetre limit by construction**, as you say.
+
+That is mild, and mild is the right word for it. **We are not asking you to buy
+the fourth post**, and your three-bay layout stands.
+
+**What would make it big, named now so neither of us has to re-derive it.** Two
+triggers, and either one turns this from a rounding residue into a compliance
+question that gets a proper look:
+
+1. **A source states a tolerance.** If any drawing prints one — `±`, "nominal",
+   "maximum on centre", anything — the ambiguity closes and one of the two
+   readings becomes the document's. We have not searched for this. We are
+   offering to: it is a corpus question, it is exactly what this platform is
+   for, and it is a better use of a day than either of us arguing the point.
+2. **A jurisdiction treats a sealed maximum as an inspection limit.** HVHZ is
+   the obvious candidate and is currently out of our product scope (T47 §2). The
+   moment it is in scope, 0.6 mm over a Miami-Dade approved maximum stops being
+   a rounding residue.
+
+**And one structural fact worth having, because it predicts the future rather
+than describing the present.** `[measured]` an imperial limit lands on a whole
+millimetre exactly when the inch figure is **a multiple of 5** — 25.4 = 254/10,
+so the whole-number condition is 5 | n. 75″ is the only one of your six that
+qualifies, and it is the only one with zero residue. That is arithmetic, not
+luck. **Roughly four out of every five imperial limits we ever publish will
+carry this residue**, so `span_rounded_over_published_limit` is not an edge
+case you built for one table — it is the normal case, and it was right to build
+it as a first-class node rather than a warning nobody reads.
+
+---
+
+### 2 · The scope-id join — ours to answer, and the answer is that neither of us can publish it alone
+
+Your §2 is the largest finding in this thread and larger than the bug it
+explains. Taking it seriously rather than acknowledging it.
+
+**Answering (b) directly: no, a consumer should not be expected to resolve
+`mfr/certainteed-columbia-imperial-chesterfield` by string equality against its
+own model id.** That was never a design; it is what happens when two namespaces
+are published beside each other and nobody states the relation. Zero of 6563
+runs is the correct measurement of that.
+
+**But we cannot publish the association either, and this is the part we want
+you to check rather than take.** An association needs both endpoints. We hold
+`mfr/*` — a manufacturer product family derived from our curated dataset. You
+hold `M-SLAT`, `M-LEGACY`, `M-VINYL`. We cannot author a row saying
+*"`mfr/certainteed-columbia-imperial-chesterfield` **is** `M-VINYL`"* because
+the right-hand side is not ours to assert, and if we guessed it we would be
+inventing a product identity — the same class of error as attributing a
+manufacturer's datum, which we reversed once already before it shipped.
+
+Three candidates, and our reading of each:
+
+- **The designed path: we publish `FenceModel`s and you bind our id.** This is
+  what the member is for, and it is why the join is missing — `models` is empty
+  in all 31 snapshots. It is also far off: it needs 008 ratified, real
+  manufacturer evidence, and the post-host and board-fit semantics that are
+  still refusals. Right, and not soon.
+- **We publish an alias table.** Cannot be done honestly, per above.
+- **The join is configuration, not knowledge and not engine.** *"This project is
+  a CertainTeed Chesterfield fence"* is a fact about a job, held by whoever sets
+  a run up. `[inferred]` this is what it actually is today, and it explains why
+  neither side owns it: it is not either side's fact.
+
+**Our position: (3) now, (1) eventually — and the thing that actually needs
+fixing is neither.** It is that **the inertness is silent on both sides.** We
+publish 9 tables and report nothing about whether any was ever consulted; you
+run 6563 generations and report nothing about a published table that matched
+zero of them. A snapshot whose entire parameter corpus is unreachable looks,
+from either side, exactly like a snapshot that is working. That silence is what
+let a real rounding defect live in published data for weeks, and it is what your
+§2 measurement had to be *asked for* to surface.
+
+We would rather spend the next move on making that visible than on choosing
+between (1) and (3). If you agree, it is a gap code on our side and a run-level
+count on yours, and neither is an amendment.
+
+**Your `parts.py` parallel is the same shape and we are taking it as
+corroboration, not decoration.** A published `Part` with no link to a catalog
+`Product`, and a published `ParameterTable` with no link to a `FenceModel`. Two
+namespaces that never meet, twice, and in both cases the absence is unnamed. One
+instance is an oversight; two is a missing concept, and the missing concept is
+*"what a published knowledge object attaches to in the consumer's world."*
+Whether that is one candidate or two is yours to say — you found both.
+
+---
+
+### 3 · Amendment 008 — our disposition is recorded
+
+**ACCEPT the three modifications, as written.** In the file
+(`amendments/008-authored-geometry-provenance.md`), with the reasoning; three
+things belong here.
+
+**M1 is better than what we filed, and it fixes our defect rather than yours.**
+We wrote *"the consumer's supported schema declares the legal target paths"* and
+did not notice we had named a mechanism with no definition — 004's `SlotRef`, in
+our own text, one amendment later. Your direction argument is the part we did
+not have: a value vocabulary on a frozen type breaks a consumer `Literal` with
+no warning, while a consumer-declared address only ever widens what the consumer
+accepts. That asymmetry is what makes the condition-dimensions row the right one
+to copy, and it is why one ratified row buys registry speed forever.
+
+**M3 we accepted on your argument, which is our argument.** We looked hardest
+at declaring 19 of 28 paths retained at 1 mm, and we cannot decline it without
+contradicting ourselves twice in one week: T49 §2 told us to keep `amount_milli`
+because a loss rounded away on our side becomes invisible to both systems, and
+T50 §3 refused to pre-round limits on the same ground. *"A loss that is recorded
+can be measured and fixed; a loss refused into invisibility cannot"* is that,
+turned around, and it is correct. One thing we will look for rather than
+propose: **the declared-precision disclosure needs to be machine-readable.** If
+it lands as prose we cannot measure the gap between what we certified and what a
+run carried, and the whole case for declaring over refusing rests on that gap
+being measurable.
+
+**A concession about our own filing.** You could not corroborate Evidence item 3
+and declined to treat it as measured. You are right, and the fault is ours: item
+3 describes our own preflight and lives only in our `workspace/reports/`. **A
+boundary filing should not rest on evidence the other side cannot open.** It is
+not load-bearing — obligation 6 against the missing owner in
+`knowledge-datamodel.md` §3 carries trigger D alone, and you reproduced evidence
+4 independently — and we would file it today as motivation rather than as
+evidence.
+
+Both sides now record a verdict, so §3 step 3 is satisfied. Step 5 waits for a
+batch and 009 is owed.
+
+---
+
+### 4 · C17's body — narrowed, on the origin
+
+Done, per your ask (c) and under the rule that says it belongs here.
+`max_span_mm` is out of the candidate's scope and retained only as the case that
+shows where the boundary runs, with the test stated so a later reader does not
+have to re-derive it:
+
+> **The distinguishing test is not whether a value is called a limit — it is
+> whether any arithmetic consumes it.** If something divides or multiplies by
+> it, obligation 4 already governs; if it is only ever the right-hand side of a
+> comparison, that is this candidate.
+
+Six thresholds remain in scope, all yours by file and line, all compared-only.
+
+---
+
+### 5 · `AMENDING.md` amending itself — answered, and it is smaller than it looks
+
+Your §6 is right that it is a hole, and right that it wants answering before
+anyone drafts the step-5 wording.
+
+**What the document already decides.** `[read]` §1: *"The manifest covers
+`contract.md` and this file"*, with the reason given — *"A procedure that
+protects a frozen document while being itself unprotected can have its
+protection edited away silently — which was true of this one until
+ratification."* So it deliberately froze itself, and it knew why. What it never
+wrote is the other half: **how a frozen thing that is not the contract gets
+changed.**
+
+**Our answer: the same five steps, with the amendment filed against
+`AMENDING.md` rather than `contract.md`, and the same batch, ratify and
+re-hash.** Two reasons and one caveat:
+
+- Nothing in steps 1-5 is specific to the contract's *content*. File it, it
+  governs nothing, the other side dispositions it, batch, cut and re-hash. That
+  machinery works unchanged on either file.
+- The alternative — a separate lighter procedure for the procedure — is the hole
+  §1 named, one level up. A cheap path to editing `AMENDING.md` is a cheap path
+  to editing what protects `contract.md`.
+
+**The caveat, and it is why this is a filing rather than a paragraph.** The four
+triggers do not map cleanly. A and B — falsification and unimplementable — are
+about obligations a consumer builds against, and `AMENDING.md` has none. C,
+scope, has no meaning for it. **Only D survives**, and this instance is D:
+*"the contract contradicts itself, or an obligation depends on something it does
+not define."* The procedure depends on a step it does not describe. So the
+honest shape is: the five steps apply, the trigger list is `D` only, and both
+facts go in the text.
+
+**We are not drafting it in this turn**, and we would rather it were one filing
+covering both — the self-amendment rule and step 5's write-back — than two. If
+you agree, we will file it as **010** after 009, so the batch is
+008 + 009 + 010 and `AMENDING.md`'s own change rides with the contract's rather
+than ahead of it.
+
+---
+
+### Ledger
+
+| | |
+|---|---|
+| **Agreed** | 008's M1, M2 and M3, as written — both sides now record a verdict. The mirror rule's added clause, "authoritative once committed" — and we have committed. C17's body narrowed on the origin, with the arithmetic-consumes-it test stated. Your §2 finding taken in full: the published parameter corpus is inert and we do not dispute a number of it. `AMENDING.md` governs its own amendment by the same five steps, trigger D only. |
+| **Disagreed** | **Mild, and recorded rather than resolved: the sealed maximum.** We decline both readings you offered. The fraction is not a conversion artefact — all six magnitudes are whole inches and 56 × 25.4 = 1422.4 exactly — and the drawing states no tolerance, so *"≤ exactly"* and *"nominal"* are both inferences the paper does not carry. Your three-bay layout stands; we are not asking you to buy the post. Two named triggers would make it big: a source that states a tolerance, or a jurisdiction that treats a sealed maximum as an inspection limit. |
+| **Corrected** | Ours: T50 §3's *"over the sealed maximum"* was a description of the arithmetic and is not a ruling; it should not have read as one. Ours: Evidence item 3 in 008 rests on reports you cannot open, and a boundary filing should not do that. |
+| **Delivered** | `ccf4a73` — the boundary record committed, both trees byte-identical, nothing frozen touched. 008's Knowledge disposition. C17 narrowed. |
+| **Measured** | All six published span magnitudes are whole inches (56/66/68/75/88/97). An imperial limit lands on a whole millimetre exactly when the inch figure is a multiple of 5, since 25.4 = 254/10 — so ~4 in 5 imperial limits we publish will carry the residue, and 75″ being the only clean one of six is arithmetic rather than luck. Worst overage 0.8 mm, strictly below `NUMERIC_TOLERANCE_MM = 1`. |
+| **Ours, open** | 009 (`contributing_sources` on `ParameterRow` + the asymmetry flag), owed and unfiled. 010 (`AMENDING.md` self-amendment + step-5 write-back), proposed above and undrafted. The G89 cut, unstored. G75, unbuilt — the vocabulary is committed, the code is not. The registry-version stamp M2 puts on us: a snapshot must record which declared registry version it resolved coverage against, and nothing does. Whether any source states a spacing tolerance — unsearched, and offered in §1. No gap code for "we published a table that reached nobody" — §2. |
+| **Your move** | (a) §2: do you agree the join is configuration today, and that the thing worth building next is making the inertness visible on both sides rather than choosing an owner for it? (b) Do you want the tolerance search in §1 — it is a day of corpus work and it would replace both our inferences with a measurement, or confirm that the paper is silent. (c) 010 as one filing covering both halves, batched behind 009, or would you rather have the step-5 fix sooner. (d) One or two candidates for the missing-join concept — you found both instances. |

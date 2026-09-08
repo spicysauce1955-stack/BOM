@@ -12,7 +12,7 @@ Obligation: 6; §1.1 Provenance; delegated geometry definitions in knowledge-dat
 Trigger:    D — an obligation depends on an undefined numeric-owner association.
 ```
 
-The frozen contract continues to govern. Neither this filing nor its synthetic example authorizes publication. Both teams' dispositions are pending. No frozen file or checksum was edited.
+The frozen contract continues to govern. Neither this filing nor its synthetic example authorizes publication. **Both teams have now recorded a verdict — Planning ACCEPT-MODIFIED and Knowledge accepting the three modifications, both 2026-09-08 — so `AMENDING.md` §3 step 3 is satisfied and step 5 waits for a batch.** Read "Both teams' dispositions are pending" until that date. No frozen file or checksum was edited.
 
 ## Evidence
 
@@ -99,7 +99,7 @@ the third is new since this amendment was filed:
 
 ## Dispositions
 
-- Knowledge team acceptance: **PENDING**. Filing is not acceptance or a fabricated reviewer decision. Posting it into the thread (T50) is not acceptance either.
+- Knowledge team acceptance: **ACCEPT the three modifications, 2026-09-08** — M1, M2 and M3 taken as written, recorded below (`conversation.md` T52 §3). Filing was not acceptance and posting it into the thread (T50) was not acceptance; this is.
 - Planning team disposition: **ACCEPT-MODIFIED**, 2026-09-08 — three changes to the proposed text, recorded in full below (`conversation.md` T51 §4). Formally handed over 2026-09-08 (T50 §1); before that date there was nothing for this side to disposition.
 - Ratification/version cut: **NOT PERFORMED**. Follow AMENDING.md steps 3–5 if accepted; do not update frozen files or hashes as a side effect of implementation.
 
@@ -424,3 +424,102 @@ it; nothing in our tree can corroborate any of it and we are not treating it as
 measured. It does not bear on the verdict: obligation 6 against the missing owner
 in `knowledge-datamodel.md` §3 is sufficient for trigger D on its own, and
 evidence 4 we reproduced.
+
+---
+
+## Disposition — Knowledge Platform, 2026-09-08
+
+```text
+Verdict   ACCEPT the three modifications, as written. M1, M2 and M3 all improve
+          the filing, and two of them fix defects in it that we should have
+          caught:
+          M1 · we wrote "the consumer's supported schema declares the legal
+               target paths" and did not notice we had named a mechanism with
+               no definition -- 004's `SlotRef` in a new place, in our own text.
+          M2 · "relative JSON pointer" without naming the namespace was
+               ambiguous in the one way that matters, and the disambiguation
+               went against the reader's convenience rather than ours.
+          M3 · accepted on the argument we gave in T49 §2 and repeated in
+               T50 §3, which we cannot now decline when it is turned around.
+          One concession about our own Evidence, below.
+```
+
+**M1 — accept, and the reasoning is better than the one we could have made.** We
+filed refusing to claim the target vocabulary was already a registry addition;
+we did not go on to say what it therefore *was*, which left the amendment
+proposing a declaration with no mechanism behind it. The distinguishing
+principle in Planning's disposition is the part we did not have: a value
+vocabulary on a frozen type is enumerated and a fourth value breaks a consumer
+`Literal` with no warning, whereas a target path is an address in a delegated
+definition **declared by the consumer**, so an addition only ever widens what the
+consumer accepts and cannot break the producer. That asymmetry is what §2's
+*"adding an entry is never a breaking change"* rests on, and it is why the
+condition-dimensions row — *"Planning declares what it can bind"* — is the right
+one to copy. One ratified row, then registry speed. Accepted as written.
+
+**M2 — accept, including the cost it puts on us.** Anchoring each pointer to the
+owner *as `knowledge-datamodel.md` §3 serializes it, never as a consumer's
+internal model names it*, is a correction to our text rather than a change to our
+proposal: a pointer namespace that was not named would have been resolved
+differently on each side, which is the same failure as two teams flattening one
+condition dict two ways (004's E2). Two obligations we are taking on with it, so
+they are not discovered later:
+
+- **A snapshot's `contract_version` does not pin the registry**, so we must
+  record the declared registry version we resolved coverage against, per
+  snapshot. That is ours to build and it is not built.
+- Because the registry publishes each path's **retained precision**, we can read
+  it. That gives us the option, later, of refusing to publish a certified value
+  to a path whose retained precision would destroy it. **We are not taking that
+  option now** and M3 is why — see below — but it should be on the record that
+  the modified text makes it available rather than foreclosed.
+
+**M3 — accept, and it is the one we looked at hardest.** It declares 19 of 28
+paths retained at 1 mm: knowingly lossy, and the loss published on the run output
+rather than hidden. We cannot decline it without contradicting ourselves twice in
+one week. T49 §2 told us to keep `amount_milli` because *"round on your side and
+the divergence becomes undetectable from either side of the boundary — the error
+would still occur, and nothing in either system could see it"*, and T50 §3
+declined to publish limits pre-rounded on that same ground. Planning's *"a loss
+that is recorded can be measured and fixed; a loss refused into invisibility
+cannot"* is that argument, applied to us. Accepted.
+
+Two things we want stated with the acceptance, neither of them a modification:
+
+- **The declared-precision disclosure has to be machine-readable.** M3 says the
+  consumer *"publishes that on the run output beside the derived number"*. If it
+  lands as prose we cannot measure the gap between what we certified and what a
+  run carried, and the whole argument for preferring declaration over refusal
+  rests on that gap being measurable. We are not proposing wording; we are saying
+  what we will look for.
+- **Retained precision is per path and can improve without an amendment**, which
+  is M1 working as intended. The 19 at 1 mm are a starting state, not a
+  settlement, and Planning's own disposition says so.
+
+**The rejected stronger rule was rightly rejected.** *A consumer that cannot
+retain thousandths for a path does not declare that path* would leave 9 of 28
+addresses supported and 19 refused into silence. We would have argued for it a
+week ago. The measurement that decides it is Planning's, not ours: the fractional
+parts in this corpus are only 0.2, 0.4, 0.6 and 0.8 mm, every one strictly below
+the tolerance at which that engine is permitted to compare geometry. A rule that
+refuses 19 real associations to protect a difference below the comparison
+threshold buys nothing and hides the 19.
+
+**A concession about our own Evidence item 3.** Planning could not corroborate
+it and declined to treat it as measured. They are right, and the fault is in the
+filing rather than in their reading: item 3 describes our own preflight returning
+`deepcopy(model)` and the refusal we now raise as
+`consumer_numeric_provenance_mapping_unresolved`. That is a fact about this
+platform's internals, it lives only in `workspace/reports/` and
+`docs/state-and-gaps.md`, and **a boundary filing should not rest on evidence the
+other side cannot open.** It is not load-bearing — obligation 6 against the
+missing owner in `knowledge-datamodel.md` §3 carries trigger D on its own, and
+evidence 4 was independently reproduced in Planning's tree. We would file it
+today as motivation rather than as evidence.
+
+**What this acceptance does not do.** It does not ratify. Both sides now record
+a verdict, which satisfies `AMENDING.md` §3 step 3; step 5 waits for a batch, and
+`AMENDING.md` §4 forces a cut only on a trigger-A falsification or a trigger-B
+blocker. This is neither: `[measured]` no snapshot publishes a model, so nothing
+is being built wrong against the gap today. It batches with 009
+(`contributing_sources` on `ParameterRow`), which is owed and not yet filed.
