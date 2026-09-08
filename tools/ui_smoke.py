@@ -1572,6 +1572,143 @@ def _smoke_road(c) -> None:
         time.sleep(1.0)
 
 
+def _smoke_knowledge_panes(c) -> None:
+    """The Knowledge tab's three panes, and the exclusion that is the whole fix.
+
+    The unit suite can prove `knowledge-rules.js` FILTERS on
+    `status === "proposed"`; it cannot prove the tab a person opens shows the
+    result. That gap is exactly how the road shipped stateless for a week — the
+    payload never arrived, every unit test was green, and no test in the gate
+    booted the real ES-module app.
+
+    So this case asserts against the rendered DOM: that Rules is the pane the
+    tab opens on, that no proposed candidate has a card in it while candidates
+    exist to be excluded, that the exclusion says so with a number, that a
+    rule's actions read as a sentence rather than as JSON, and that the strip
+    actually moves between all three panes.
+
+    Runs in English, like `_smoke_road`, because the assertions below read the
+    surface's own wording.
+    """
+    if c.js("document.documentElement.lang") != "en":
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.0)
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+
+    c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
+    time.sleep(1.2)
+
+    check("the Knowledge tab opens on the Rules pane",
+          c.js("document.getElementById('pane-k-rules').classList.contains('active')"))
+    check("the other two panes are not also showing",
+          c.js("""[...document.querySelectorAll('.k-pane.active')].length""") == 1)
+
+    # `GET /api/knowledge` is the unfiltered list the old renderer drew whole.
+    # Comparing it against what the pane drew is the actual claim.
+    served = c.js("""fetch('/api/knowledge').then(r => r.json())
+  .then(vs => JSON.stringify({
+    total: vs.length,
+    proposed: vs.filter(v => v.status === 'proposed').length,
+    active: vs.filter(v => v.status === 'active').length,
+    retired: vs.filter(v => v.status === 'retired').length,
+  }))""")
+    counts = json.loads(served) if served else {}
+    drawn = c.js("document.querySelectorAll('#knowledge-list .rule-card').length")
+    check("the rules list draws the rules in force, not every version",
+          drawn == counts.get("active"), f"drew {drawn}, active {counts.get('active')}")
+    check("no proposed candidate has a card in the rules list",
+          drawn + 0 == counts.get("active") and drawn != counts.get("total")
+          if counts.get("proposed") else True,
+          f"total {counts.get('total')}, proposed {counts.get('proposed')}")
+
+    # ...and the exclusion is STATED. A filter the reader cannot see is
+    # indistinguishable from data that was never published.
+    note = c.js("""(() => {
+  const n = document.getElementById('k-excluded-note');
+  return n.hidden ? '' : n.textContent.trim();
+})()""")
+    if counts.get("proposed"):
+        check("the excluded candidates are counted on screen",
+              str(counts["proposed"]) in (note or ""), note)
+        check("...and the note points at where they are decided",
+              "Review" in (note or ""), note)
+    else:
+        check("no candidates, so nothing claims any were excluded", not note, note)
+
+    # the JSON dumps the redesign removed
+    first = c.js("""(() => {
+  const card = document.querySelector('#knowledge-list .rule-card');
+  if (!card) return '';
+  return JSON.stringify({
+    actions: [...card.querySelectorAll('.actions-list li')].map(li => li.textContent.trim()),
+    chips: [...card.querySelectorAll('.rule-scope .chip')].map(ch => ch.textContent.trim()),
+  });
+})()""")
+    card = json.loads(first) if first else {}
+    check("a rule's actions read as sentences", bool(card.get("actions")), first)
+    check("...and not as a JSON dump",
+          not any(a.startswith("[{") or '"kind"' in a for a in card.get("actions", [])),
+          card.get("actions"))
+    check("a rule's scope reads as chips, or says it applies everywhere",
+          bool(card.get("chips")), card.get("chips"))
+
+    # retired rules are reachable rather than read first
+    check("retired rules are collapsed, not listed among the active ones",
+          c.js("""(() => {
+  const g = document.getElementById('k-retired-group');
+  return g.hidden || !g.open;
+})()"""))
+
+    c.shot("60-knowledge-rules.png")
+
+    # --- the strip moves ---------------------------------------------------
+    c.click(*c.element_center('#k-subnav button[data-kpane="published"]'))
+    time.sleep(0.6)
+    check("the strip switches to the Published pane",
+          c.js("document.getElementById('pane-k-published').classList.contains('active')"))
+    published_card = c.js("""(() => {
+  const el = document.getElementById('published-parts');
+  return el ? (el.offsetParent !== null ? 'visible' : 'hidden') : 'absent';
+})()""")
+    check("...and the parts inspector is visible there, if it is built yet",
+          published_card in ("visible", "absent"), published_card)
+
+    c.click(*c.element_center('#k-subnav button[data-kpane="author"]'))
+    time.sleep(0.6)
+    check("the strip switches to the Author pane",
+          c.js("document.getElementById('pane-k-author').classList.contains('active')"))
+    check("...and the rule builder is reachable there",
+          c.js("""(() => {
+  const el = document.getElementById('k-action-rows');
+  return el.offsetParent !== null;
+})()"""))
+    check("the rules pane stopped showing when the author pane started",
+          not c.js("document.getElementById('pane-k-rules').classList.contains('active')"))
+
+    c.shot("61-knowledge-author.png")
+
+    # Hebrew is the language this app opens in: the pane strip and the rule
+    # sentences are both new surfaces, and neither has ever been seen in RTL.
+    c.click(*c.element_center("#btn-locale"))
+    time.sleep(1.2)
+    c.click(*c.element_center('#k-subnav button[data-kpane="rules"]'))
+    time.sleep(0.8)
+    labels = c.js("""[...document.querySelectorAll('#k-subnav button span:not(.count)')]
+  .map(s => s.textContent.trim()).join('|')""")
+    check("the pane strip is translated, not left in English",
+          bool(labels) and "Rules" not in (labels or ""), labels)
+    check("the tab is laid out right-to-left",
+          c.js("document.documentElement.dir") == "rtl")
+    c.shot("62-knowledge-rtl.png")
+    # back to English for whatever follows
+    c.click(*c.element_center("#btn-locale"))
+    time.sleep(1.0)
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
@@ -1582,6 +1719,7 @@ _CHOICE_CASES: list = [
     _smoke_post_inspector,
     _smoke_side_drag,
     _smoke_plan_drag,
+    _smoke_knowledge_panes,
 ]
 
 
@@ -3376,6 +3514,7 @@ fetch('/api/projects/{project_id}').then(r => r.json())
 
         # --- rule impact preview (knowledge tab) ------------------------------
         c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
+        c.js("document.querySelector('#k-subnav button[data-kpane=\"author\"]').click(); 'ok'")
         time.sleep(0.5)
         # the actions JSON textarea became a rule builder — drive its default
         # set_param row (max_span_mm) through the real number input
@@ -3568,6 +3707,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               "300" in (stock or "") and "3000" not in (stock or ""))
         # the raw-JSON editors are the STORAGE view: they must stay in mm
         c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
+        c.js("document.querySelector('#k-subnav button[data-kpane=\"author\"]').click(); 'ok'")
         time.sleep(0.8)
         c.click(*c.element_center("#btn-k-advanced"))
         time.sleep(0.5)

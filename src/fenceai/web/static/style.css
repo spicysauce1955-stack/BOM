@@ -989,3 +989,60 @@ html[data-step="review"] #generate-toolbar { display: none; }
 .handover-amount .num { font-size: 18px; font-variant-numeric: tabular-nums; }
 .handover-amount-label { text-transform: uppercase; letter-spacing: .06em;
   font-size: 11px; color: #64748b; }
+
+/* ---- Knowledge tab: sub-navigation and the rules pane ------------------- */
+/* Logical properties throughout (see CLAUDE.md): this strip sits inside the
+   RTL document flow and must mirror with it, unlike the plan canvas. */
+.subnav { display: flex; gap: 6px; margin-block-end: 14px;
+  border-block-end: 1px solid #d4dae2; }
+.subnav button { font: inherit; font-size: 13.5px; font-weight: 600; background: none;
+  border: none; padding: 9px 6px; margin-inline-end: 18px; color: #64748b;
+  cursor: pointer; border-block-end: 2px solid transparent;
+  display: flex; align-items: center; gap: 7px; }
+.subnav button:hover { color: #1d2733; }
+.subnav button.active { color: #1d2733; border-block-end-color: #2563eb; }
+.subnav button .count { font-weight: 500; font-size: 11.5px; color: #64748b;
+  background: #f4f5f7; border: 1px solid #d4dae2; border-radius: 9px;
+  padding: 0 7px; font-variant-numeric: tabular-nums; }
+.subnav button .count:empty { display: none; }
+.subnav button.active .count { background: #dbeafe; border-color: #2563eb; color: #1e3a8a; }
+
+.k-pane { display: none; }
+.k-pane.active { display: block; }
+
+.filterbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  background: #fff; border: 1px solid #d4dae2; border-radius: 8px;
+  padding: 10px 12px; margin-block-end: 12px; }
+.filterbar input[type="search"] { min-inline-size: 200px; }
+.filterbar #k-filter-count { margin-inline-start: auto;
+  font-variant-numeric: tabular-nums; }
+.filterbar .toggle { display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; user-select: none; }
+
+/* The candidates this pane deliberately does NOT list. A filter the reader
+   cannot see is indistinguishable from missing data. */
+.excluded-note { font-size: 12px; color: #64748b; background: #f4f5f7;
+  border: 1px dashed #d4dae2; border-radius: 6px; padding: 6px 10px;
+  margin-block: 0 12px; }
+
+.rule-card .rule-row1 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rule-card .rule-id { font-size: 13.5px; }
+.rule-card.is-retired { background: #f4f5f7; }
+.rule-card .rule-scope { margin-block-start: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { background: #f4f5f7; border: 1px solid #d4dae2; border-radius: 6px;
+  padding: 2px 8px; font-size: 11.5px; color: #334155; }
+.chip.empty { color: #64748b; font-style: italic; border-style: dashed; }
+.actions-list { margin: 8px 0 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 4px; }
+/* the marker is a logical arrow: it points with the text, not with the page */
+.actions-list li { padding-inline-start: 16px; position: relative; }
+.actions-list li::before { content: "→"; position: absolute; inset-inline-start: 0;
+  color: #2563eb; }
+html[dir="rtl"] .actions-list li::before { content: "←"; }
+.rule-card .rule-footer { margin-block-start: 8px; display: flex; align-items: center;
+  gap: 10px; padding-block-start: 8px; border-block-start: 1px solid #d4dae2; }
+.rule-card .rule-footer .meta { flex: 1; }
+
+#k-retired-group summary { cursor: pointer; font-size: 12.5px; font-weight: 600;
+  color: #64748b; padding: 6px 2px; }
+#k-retired-group[open] summary { color: #1d2733; }

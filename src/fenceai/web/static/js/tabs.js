@@ -2,9 +2,11 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import {
-  el, field, loadCatalogProducts, option, skuSelect, updateAdvancedUi,
+  ACTION_KINDS, el, field, loadCatalogProducts, option, skuSelect,
+  updateAdvancedUi,
 } from "./builder-ui.js";
 import { initChoices } from "./choices.js";
+import { initKnowledgeRules, renderKnowledgeRules } from "./knowledge-rules.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
 import { emit, on, reloadProject, state } from "./state.js";
@@ -39,15 +41,41 @@ export function setTab(name) {
   btn.classList.add("active");
   panel.classList.add("active");
   // These three render lazily, on first sight of their tab.
-  if (name === "knowledge") renderKnowledge();
+  if (name === "knowledge") renderKnowledgeRules();
   if (name === "review") renderCandidates();
   if (name === "bom") renderBom();
   emit("tab-changed", name);
 }
 
+/** Switch Knowledge sub-panes. The strip's counterpart to `setTab`, and here
+ *  for the same reason: one path moves the `active` class.
+ *
+ *  Only the wrappers are touched — never a pane's contents, which belong to
+ *  three different modules. Nothing renders lazily here either: the rules pane
+ *  is the default pane, so it is already drawn by the time the strip is usable,
+ *  and the other two are static forms.
+ */
+export function setKnowledgePane(name) {
+  const btn = document.querySelector(`#k-subnav button[data-kpane="${name}"]`);
+  const pane = document.getElementById(`pane-k-${name}`);
+  if (!btn || !pane) return;
+  document.querySelectorAll("#k-subnav button").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".k-pane").forEach((p) => p.classList.remove("active"));
+  btn.classList.add("active");
+  pane.classList.add("active");
+}
+
 export function initTabs() {
   document.querySelectorAll("#tabs button").forEach((btn) =>
     btn.addEventListener("click", () => setTab(btn.dataset.tab)));
+  document.querySelectorAll("#k-subnav button").forEach((btn) =>
+    btn.addEventListener("click", () => setKnowledgePane(btn.dataset.kpane)));
+  initKnowledgeRules();
+  // the pane counts what it drew; the strip only displays it. Reading the list
+  // from here would be this module reaching into a subtree it does not own.
+  on("knowledge-counts", ({ rules }) => {
+    document.getElementById("k-count-rules").textContent = rules;
+  });
 
   document.getElementById("btn-add-ann").addEventListener("click", async () => {
     const text = document.getElementById("ann-text").value.trim();
@@ -121,7 +149,7 @@ export function initTabs() {
     const body = knowledgeBody();
     if (!body) return;
     await apiSend("POST", "/api/knowledge", body);
-    renderKnowledge();
+    renderKnowledgeRules();
   });
   document.getElementById("btn-knowledge-impact").addEventListener("click", async () => {
     const body = knowledgeBody();
@@ -164,7 +192,7 @@ export function initTabs() {
     renderAnnTargets(); renderAnnotations(); maybeRenderBom();
     if (builderActions) renderBuilderRows();
     if (inventoryObj) drawInventoryTable();
-    if (document.getElementById("tab-knowledge").classList.contains("active")) renderKnowledge();
+    if (document.getElementById("tab-knowledge").classList.contains("active")) renderKnowledgeRules();
     if (document.getElementById("tab-review").classList.contains("active")) renderCandidates();
   };
   on("locale-changed", relocalize);
@@ -644,31 +672,6 @@ async function renderAnnotations() {
   }
 }
 
-// ---------- knowledge ----------
-async function renderKnowledge() {
-  const versions = await apiGet("/api/knowledge");
-  const div = document.getElementById("knowledge-list");
-  div.innerHTML = "";
-  for (const v of versions) {
-    const card = document.createElement("div");
-    card.className = "card";
-    let html = `<span class="tag ${v.type}">${t("type." + v.type)}</span>
-      <span class="tag ${v.status}">${t("status." + v.status)}</span>
-      <b><bdi>${esc(v.object_id)}@v${v.version}</bdi></b> — <span dir="auto">${esc(v.title_i18n?.[currentLocale()] || v.title)}</span>
-      <div class="meta">${t("knowledge.scope")} <bdi>${esc(JSON.stringify(v.scope))}</bdi> · ${esc(v.attributed_to)}
-        ${v.derived_from?.length ? "· " + t("knowledge.derived_from") + " <bdi>" + esc(v.derived_from.join(", ")) + "</bdi>" : ""}</div>`;
-    if (v.source_text) html += `<div class="verbatim" dir="auto">“${esc(v.source_text)}”</div>`;
-    html += `<div class="meta">${t("knowledge.actions")}: <bdi>${esc(JSON.stringify(v.actions))}</bdi></div>`;
-    if (v.status === "active") html += `<button data-retire="1">${t("knowledge.retire")}</button>`;
-    card.innerHTML = html;
-    card.querySelector("[data-retire]")?.addEventListener("click", async () => {
-      await apiSend("POST", `/api/knowledge/${v.object_id}/${v.version}/retire`);
-      renderKnowledge();
-    });
-    div.appendChild(card);
-  }
-}
-
 // ---------- knowledge rule builder (sentence-style action rows) ----------
 // Builder state is the plain actions array — exactly what POST /api/knowledge takes.
 // The Advanced (JSON) textarea is a two-way escape hatch (kAdvancedOpen switches
@@ -678,11 +681,6 @@ let kAdvancedOpen = false;
 let inventoryObj = null;
 let invAdvancedOpen = false;
 
-const ACTION_KINDS = [
-  "set_param", "default_component", "require_mounting", "require_post_reinforcement",
-  "prefer_equal_spans", "prefer_min_span_width", "prefer_span_width", "prefer_vertical",
-  "add_note", "flag_for_review",
-];
 const KNOWN_PARAMS = [
   "max_span_mm", "rails_per_span", "screws_per_span", "base_top_step_boundary_mm",
 ];
@@ -878,7 +876,7 @@ async function renderCandidates() {
     const submitReview = async (body) => {
       await apiSend("POST", `/api/candidates/${c.object_id}/${c.version}/review`,
         { reviewer: "expert-admin", ...body });
-      renderCandidates(); renderKnowledge();
+      renderCandidates(); renderKnowledgeRules();
     };
     const rejectForm = card.querySelector('[data-form="reject"]');
     const scopeForm = card.querySelector('[data-form="scope"]');
