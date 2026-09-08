@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import re
 
+from fenceai.agent.proposal import Claim, Proposal, TaskResult, proposal_id
+from fenceai.agent.tasks import TaskSpec
+from fenceai.agent.view import AgentView
 from fenceai.ai.records import CandidateIntent, CritiqueNote, InterpretationRecord
 from fenceai.knowledge.model import AddNote, KnowledgeVersion
 from fenceai.learning.model import Correction
@@ -168,3 +171,46 @@ class StubCritic:
                     )
                 )
         return notes
+
+
+class StubAgent:
+    """Deterministic agent for offline development and every unit test.
+
+    Capped on purpose and must not grow: it picks the first non-default point
+    the engine offered and says, as an `inferred` claim, that this is exactly
+    what it did. It has no judgement, so it claims none — which still exercises
+    the whole framework: registry, permission list, claims, the grounding
+    check, the ledger and the counters.
+    """
+
+    interpreter_id = "stub"
+
+    def run(self, task: TaskSpec, view: AgentView, project_id: str) -> TaskResult:
+        if task.id != "rank_choice_set":
+            return TaskResult(task_id=task.id, evaluated=False)
+
+        proposals = []
+        for choice_set in view.open_choice_sets():
+            if len(proposals) >= task.max_proposals:
+                break
+            alternative = next((p for p in choice_set.points if not p.is_default), None)
+            if alternative is None:
+                continue  # one admissible answer is not a question
+            payload = {"choice_set": choice_set.id, "scope": choice_set.scope,
+                       "point_id": alternative.id}
+            proposals.append(Proposal(
+                id=proposal_id(task.id, "select_choice_point", payload, choice_set.scope),
+                task_id=task.id, project_id=project_id,
+                kind="select_choice_point", payload=payload, scope=choice_set.scope,
+                claims=[
+                    Claim(marker="read", text=alternative.label,
+                          evidence=f"point:{alternative.id}"),
+                    Claim(marker="inferred",
+                          text="the stub picks the first alternative the engine "
+                               "offered; it is not a judgement about this fence"),
+                ],
+                saw=view.digest(task.reads),
+                agent_id=self.interpreter_id,
+            ))
+        return TaskResult(task_id=task.id, evaluated=True, proposals=proposals,
+                          produced=len(proposals))

@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Protocol
 from fenceai.ai.records import CritiqueNote, InterpretationRecord
 
 if TYPE_CHECKING:
+    from fenceai.agent.proposal import TaskResult
+    from fenceai.agent.tasks import TaskSpec
+    from fenceai.agent.view import AgentView
     from fenceai.knowledge.model import KnowledgeVersion
     from fenceai.learning.model import Correction
     from fenceai.project.model import Annotation
@@ -32,3 +35,12 @@ class StrategyCritic(Protocol):
     interpreter_id: str
 
     def critique(self, result: "GenerationResult") -> list[CritiqueNote]: ...
+
+
+class TaskRunner(Protocol):
+    """Runs ONE goal-scoped agent task. Broad read via the view, narrow run via
+    the task's own permission list (ADR-0009, agent-framework-design §4)."""
+
+    interpreter_id: str
+
+    def run(self, task: "TaskSpec", view: "AgentView", project_id: str) -> "TaskResult": ...
