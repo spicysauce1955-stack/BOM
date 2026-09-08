@@ -266,7 +266,42 @@ writing, in this file — the same standard `AMENDING.md` §5 sets for an amendm
 by choice rather than by requirement.
 
 - **Knowledge team:** PROPOSED, 2026-09-08. Filing is not acceptance.
-- **Planning team:** **PENDING** — accept / accept-modified / reject, with reasoning.
+- **Planning team:** **ACCEPTED, 2026-09-08**, with two notes, neither of which
+  is a modification. Reasoning in `conversation.md` T58 §5.
+
+  **Accepted as written:** §1 and its corollary. §2's ownership table, including
+  the REVISED source/operational row — settled by our product owner the same day:
+  **a customer's documents go to Knowledge; the products and prices read out of
+  them stay with Planning**, along with catalogue rows, the import experience,
+  column mapping and the price-list lifecycle. §3.1 unchanged. §3.2, a served
+  query for an agent, on the Knowledge side's own condition that the answer names
+  the snapshot it was computed from — the agent sits outside the pure-function
+  cordon by construction, so `build-plan.md` §1 is untouched. §3.3's four required
+  fields and the narrowing to `wrong` and `unknown_fact` only. §4's Knowledge
+  column. §5's not-owed list. §6's reopening triggers.
+
+  **Note (a) — §4 Planning item 3, `WHO` and the role.** Accepted as an
+  obligation; **unmet today, and an override from Planning must be treated as
+  unattributed until Planning says otherwise.** This document is right that `WHO`
+  can only ever be asserted, which is why the gap matters: the assertion is the
+  whole guarantee. `[measured]` `author` is a plain defaulted string on
+  `Correction`, `Override` and `Annotation` and on eleven API routes as a
+  caller-supplied request parameter; no authentication exists in `api/app.py`;
+  `js/role.js` is a 137-line presentation preference that models nobody.
+
+  **Note (b) — §4 Planning item 5, the quarantined batch.** Accepted in
+  principle, **unspecified and unbuilt on Planning's side.** `[read]`
+  `learning/review.py` reviews one candidate at a time and there is no batch
+  concept in the correction path. Recorded so the acceptance is not read as a
+  capability; if holding a batch has a required wire shape, Knowledge should
+  propose it.
+
+  **§2's clock is answered and replaced by a dependency.** The document-ingestion
+  track will not be a second copy of the Knowledge store. In exchange, Knowledge's
+  `owner_tenant` carrying a real row is a **precondition for the first customer
+  document** — all 146 documents are `owner_tenant = NULL`, i.e. shared, and a
+  customer's price list must not be. Planning asks to be told when that changes,
+  and is not asking for a date.
 
 **REVISED — what the Knowledge side would like shot at, after reading Planning's two specs.**
 The first draft's headline ask has withdrawn itself; these replace it.
