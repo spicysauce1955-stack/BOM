@@ -141,7 +141,14 @@ async function clearDrawing() {
   const hadLandmarks = (state.project.context?.landmarks || []).length > 0;
   if (hadLandmarks) state.project.context.landmarks = [];
   await saveTopology();
-  if (hadLandmarks) await saveContext();
+  // `saveTopology()` just replaced the whole `state.project` with the
+  // server's response, which still carries the PRE-clear landmarks (that
+  // route never touches context) — clear them again or `saveContext()`
+  // below re-persists the ones we meant to remove.
+  if (hadLandmarks) {
+    state.project.context.landmarks = [];
+    await saveContext();
+  }
 }
 
 // ---------- canvas input ----------
@@ -176,9 +183,6 @@ function runHitAt(ev) {
 
 function setupCanvas() {
   const svg = document.getElementById("canvas");
-  // empty-canvas CTA layer (created here, not in index.html: editor-owned DOM);
-  // separate from g-draft so clearing the draft layer never leaves CTA remnants
-  el("g", { id: "g-cta", "pointer-events": "none" }, svg);
   // The post drag's preview layer, and the reason `pointermove` can promise to
   // touch nothing else: a preview drawn HERE cannot be mistaken for state,
   // because nothing but the drag ever writes to it and the drag clears it on
@@ -1208,7 +1212,6 @@ function cancelDraft() {
   // fence draft and left a street-shaped line nothing could select or remove.
   clearContextDraft();
   updateDraftButtons();
-  renderCta();
 }
 
 function finishDraft() {
@@ -1244,7 +1247,6 @@ function renderDraft() {
   for (const p of pts)
     el("circle", { cx: p[0], cy: p[1], r: 4, fill: "#94a3b8" }, g);
   updateDraftButtons();
-  renderCta(); // a draft dot hides the empty-canvas CTA
 }
 
 function renderRubberBand(mx, my, alt) {
@@ -1308,8 +1310,7 @@ function applyViewBox() {
   document.getElementById("canvas")
     .setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
   renderGrid();
-  renderCta();          // keep the CTA centered in the new view
-  positionLengthChip(); // and the typed-length chip glued to its anchor
+  positionLengthChip(); // the typed-length chip glued to its anchor
 }
 
 function svgViewPoint(ev) {
@@ -1350,49 +1351,9 @@ function fitView() {
   applyViewBox();
 }
 
-// ---------- empty-canvas CTA (g-cta; disappears once a run or draft dot exists) --
-function renderCta() {
-  const g = document.getElementById("g-cta");
-  if (!g) return;
-  while (g.firstChild) g.removeChild(g.firstChild);
-  if (!state.project) return;
-  if (state.project.topology.runs.length || state.draftNodes.length) return;
-  const scale = viewBox.w / 900;
-  const cx = viewBox.x + viewBox.w / 2, cy = viewBox.y + viewBox.h / 2;
-  el("text", { x: cx, y: cy, "text-anchor": "middle", "font-size": 22 * scale,
-    fill: "#94a3b8" }, g).textContent = t("editor.empty_cta");
-  // subtle arrow from the message toward the Draw tool button — computed from the
-  // button's actual screen position, so it points correctly in LTR and RTL while
-  // the canvas itself stays unmirrored
-  const btn = document.getElementById("tool-draw");
-  const svg = document.getElementById("canvas");
-  const ctm = svg.getScreenCTM();
-  if (!btn || !ctm) return;
-  const r = btn.getBoundingClientRect();
-  const pt = svg.createSVGPoint();
-  pt.x = r.left + r.width / 2; pt.y = r.top + r.height / 2;
-  const q = pt.matrixTransform(ctm.inverse());
-  const start = [cx, cy - 40 * scale];
-  let dx = q.x - start[0], dy = q.y - start[1];
-  const h = Math.hypot(dx, dy) || 1;
-  dx /= h; dy /= h;
-  const len = Math.min(h * 0.55, viewBox.w * 0.3);
-  const end = [start[0] + dx * len, start[1] + dy * len];
-  el("line", { x1: start[0], y1: start[1], x2: end[0], y2: end[1],
-    stroke: "#cbd5e1", "stroke-width": 2 * scale,
-    "stroke-dasharray": `${6 * scale} ${5 * scale}` }, g);
-  const a = 9 * scale;
-  el("polygon", { fill: "#cbd5e1", points: [
-    [end[0] + dx * a, end[1] + dy * a],
-    [end[0] - dy * a * 0.5, end[1] + dx * a * 0.5],
-    [end[0] + dy * a * 0.5, end[1] - dx * a * 0.5],
-  ].map((p) => p.join(",")).join(" ") }, g);
-}
-
 function renderTopology() {
   const g = clearGroup("g-topology");
   renderGrid();
-  renderCta();
   if (!state.project) return;
   const topo = state.project.topology;
   for (const run of topo.runs) {

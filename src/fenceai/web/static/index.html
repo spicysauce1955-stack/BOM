@@ -65,7 +65,7 @@
           <button id="btn-clear" data-i18n-title="tool.clear_drawing" title="Clear the drawing"><span class="t-icon">🗑</span><span class="t-label" data-i18n="toolbar.clear">Clear</span></button>
         </div>
         <div class="canvas-col">
-          <div class="toolbar">
+          <div class="toolbar" id="generate-toolbar">
             <button id="btn-generate" class="primary" data-i18n="editor.generate">⚙ Generate strategy</button>
             <button id="btn-fit" data-i18n-title="editor.fit" title="Fit view">⤢</button>
             <!-- id so a role can hide the CONTROL while leaving the checkbox
@@ -77,13 +77,6 @@
               <button id="btn-finish-draft" class="primary" data-i18n="editor.finish_run">Finish run</button>
               <button id="btn-cancel-draft" data-i18n="editor.cancel_run">Cancel</button>
             </div>
-          </div>
-          <div id="checklist" style="display:none">
-            <div class="checklist-header">
-              <span data-i18n="checklist.title">Getting started</span>
-              <button id="checklist-dismiss" data-i18n-title="checklist.dismiss" title="Dismiss">✕</button>
-            </div>
-            <div id="checklist-items"></div>
           </div>
           <svg id="canvas" viewBox="0 0 900 500" preserveAspectRatio="xMidYMid meet">
             <g id="g-grid"></g>
@@ -131,7 +124,7 @@
           <!-- what KIND OF SITE this is: the prerequisite for every conditional
                rule, and the only surface that can state one. Owned by js/site.js. -->
           <div class="panel" id="site-conditions"></div>
-          <div class="panel">
+          <div class="panel" id="run-editing-panel">
             <h3 data-i18n="inspect.run_editing">Run editing</h3>
             <select id="run-select"></select>
             <div id="run-events"></div>

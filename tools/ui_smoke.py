@@ -1222,6 +1222,16 @@ def _smoke_property_context(c) -> None:
     drawn = c.js("document.querySelectorAll('#g-context path').length")
     check("both are drawn on the canvas", drawn == 2, drawn)
 
+    # --- the property that keeps this slice cheap ------------------------
+    # Measured HERE, before Clear/undo touch the topology on purpose (a
+    # nonempty-to-empty run list and back is a real topology change either
+    # way) — this check is only about the house/street drags above, which
+    # must go through `saveContext()` alone and never bump the revision.
+    rev_after = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                     ".then(p => p.topology.revision)" % pid)
+    check("drawing the property does NOT touch the topology revision",
+          rev_after == rev_before, {"before": rev_before, "after": rev_after})
+
     # --- and Clear means the whole picture ------------------------------
     # The label reads "Clear" and the house and the street are things the
     # salesperson drew, so leaving them behind read as the button being
@@ -1248,12 +1258,6 @@ def _smoke_property_context(c) -> None:
     check("one undo brings back the whole picture, not just the fence",
           back["runs"] > 0 and back["marks"] == 2, back)
     c.shot("52-property-context.png")
-
-    # --- the property that keeps this slice cheap ------------------------
-    rev_after = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
-                     ".then(p => p.topology.revision)" % pid)
-    check("drawing the property does NOT touch the topology revision",
-          rev_after == rev_before, {"before": rev_before, "after": rev_after})
 
     # --- the backdrop must not eat the fence -----------------------------
     # The house was drawn straddling the run. With the select tool, a click on

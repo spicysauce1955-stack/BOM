@@ -224,7 +224,7 @@ def test_the_page_read_collects_only_the_feedback_channels():
 
     js = outline.FEEDBACK_JS
 
-    assert "statusbar" in js and "warnings" in js and "checklist" in js
+    assert "statusbar" in js and "warnings" in js
     assert "popover" in js
     for greedy in ("document.body.innerText", "querySelectorAll('h1", "'*'"):
         assert greedy not in js

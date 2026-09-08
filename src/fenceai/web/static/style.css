@@ -217,7 +217,6 @@ th { background: #eef2f6; }
 #g-draft { pointer-events: none; }
 .mm-input { inline-size: 84px; font-size: 12px; padding: 2px 4px;
   border: 1px solid #2563eb; border-radius: 4px; direction: ltr; }
-#g-cta { pointer-events: none; }
 
 /* SketchUp-style typed-length chip: follows the rubber-band end while drawing */
 #length-chip { position: fixed; z-index: 35; pointer-events: none; direction: ltr;
@@ -454,16 +453,6 @@ input.derived { border: 1px dashed #94a3b8; background: #f8fafc; color: #475569;
 .model-row select, .model-row button { margin-inline-end: 4px; }
 #model-json { inline-size: 100%; }
 
-/* getting-started checklist */
-#checklist { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px;
-  padding: 8px 12px; margin-block-end: 6px; font-size: 13px; }
-#checklist.all-done { background: #f0fdf4; border-color: #86efac; }
-.checklist-header { display: flex; justify-content: space-between; align-items: center;
-  font-weight: 600; margin-block-end: 4px; }
-.checklist-header button { border: none; background: none; padding: 0 4px; }
-.checklist-item { padding-block: 2px; color: #1e40af; }
-#checklist.all-done .checklist-item { color: #166534; }
-.checklist-item.done { opacity: 0.7; text-decoration: line-through; }
 
 /* base-top segments carrying a standing rule (horizontal / vertical) */
 .profile-top-locked { fill: none; stroke-width: 3.5; opacity: 0.9; }
@@ -678,7 +667,7 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
 @media print {
   @page { size: A4 landscape; margin: 10mm; }
   body { background: #fff; }
-  header, nav#tabs, #toolbar, .side-col, #statusbar, #warnings, #checklist,
+  header, nav#tabs, #toolbar, .side-col, #statusbar, #warnings,
   #draft-actions, .profile-header, .profile-base-bar, #structure-head .toolbar,
   #strategy-summary a, .canvas-col > .toolbar { display: none !important; }
   /* the sheet is the drawings AND the schedules, whichever tab is on screen */
@@ -827,7 +816,7 @@ html[data-step="job"] #tool-height,
 html[data-step="job"] #tool-model,
 html[data-step="job"] #tool-gate,
 html[data-step="job"] #context-panel,
-html[data-step="job"] #run-events,
+html[data-step="job"] #run-editing-panel,
 html[data-step="job"] #profile,
 html[data-step="job"] #model-row,
 html[data-step="job"] #handover-panel,
@@ -842,7 +831,7 @@ html[data-step="property"] #tool-height,
 html[data-step="property"] #tool-model,
 html[data-step="property"] #tool-gate,
 html[data-step="property"] #job-panel,
-html[data-step="property"] #run-events,
+html[data-step="property"] #run-editing-panel,
 html[data-step="property"] #profile,
 html[data-step="property"] #model-row,
 html[data-step="property"] #handover-panel,
@@ -859,7 +848,7 @@ html[data-step="layout"] #tool-model,
 html[data-step="layout"] #tool-gate,
 html[data-step="layout"] #job-panel,
 html[data-step="layout"] #context-panel,
-html[data-step="layout"] #run-events,
+html[data-step="layout"] #run-editing-panel,
 html[data-step="layout"] #profile,
 html[data-step="layout"] #model-row,
 html[data-step="layout"] #handover-panel,
@@ -889,7 +878,7 @@ html[data-step="model"] #tool-height,
 html[data-step="model"] #tool-gate,
 html[data-step="model"] #job-panel,
 html[data-step="model"] #context-panel,
-html[data-step="model"] #run-events,
+html[data-step="model"] #run-editing-panel,
 html[data-step="model"] #profile,
 html[data-step="model"] #handover-panel,
 html[data-step="model"] #warnings,
@@ -922,7 +911,7 @@ html[data-step="notes"] #tool-model,
 html[data-step="notes"] #tool-gate,
 html[data-step="notes"] #job-panel,
 html[data-step="notes"] #context-panel,
-html[data-step="notes"] #run-events,
+html[data-step="notes"] #run-editing-panel,
 html[data-step="notes"] #profile,
 html[data-step="notes"] #model-row,
 html[data-step="notes"] #handover-panel,
@@ -940,7 +929,7 @@ html[data-step="review"] #tool-model,
 html[data-step="review"] #tool-gate,
 html[data-step="review"] #job-panel,
 html[data-step="review"] #context-panel,
-html[data-step="review"] #run-events,
+html[data-step="review"] #run-editing-panel,
 html[data-step="review"] #profile,
 html[data-step="review"] #model-row { display: none; }
 
@@ -952,8 +941,11 @@ html[data-step="review"] #model-row { display: none; }
    the user overruled. `notes` is listed for list-equality only — that step
    switches to the annotations TAB and never shows the canvas anyway. */
 html[data-step="job"] #canvas,
+html[data-step="job"] #generate-toolbar,
 html[data-step="notes"] #canvas,
-html[data-step="review"] #canvas { display: none; }
+html[data-step="notes"] #generate-toolbar,
+html[data-step="review"] #canvas,
+html[data-step="review"] #generate-toolbar { display: none; }
 
 /* The "I have finished this step" control. Its own row under the drawing so
    it reads as the end of the step's work rather than as another toolbar

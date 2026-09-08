@@ -3,7 +3,6 @@
 
 import { apiGet } from "./js/api.js";
 import { initAssembly } from "./js/assembly.js";
-import { initChecklist } from "./js/checklist.js";
 import { initEditor } from "./js/editor.js";
 import { initEvidence } from "./js/evidence.js";
 import { currentLocale, initI18n, setLocale, t } from "./js/i18n.js";
@@ -97,7 +96,6 @@ async function main() {
   initStructure();
   initAssembly();
   initProfile();
-  initChecklist();
   initJob();
   initContext();
   initHandover();

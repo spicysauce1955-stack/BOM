@@ -52,9 +52,9 @@ const STEP_PANELS = {
   job: ["#job-panel"],
   property: ["#context-panel"],
   layout: [],
-  sideview: ["#run-events", "#profile"],
+  sideview: ["#run-editing-panel", "#profile"],
   model: ["#model-row"],
-  gates: ["#run-events"],
+  gates: ["#run-editing-panel"],
   notes: [],
   review: ["#handover-panel", "#warnings", "#site-conditions"],
 };
@@ -72,11 +72,11 @@ const STEP_PANELS = {
 // annotations TAB and never shows the canvas anyway.
 const STEP_DRAWING = {
   job: [],
-  property: ["#canvas"],
-  layout: ["#canvas"],
-  sideview: ["#canvas"],
-  model: ["#canvas"],
-  gates: ["#canvas"],
+  property: ["#canvas", "#generate-toolbar"],
+  layout: ["#canvas", "#generate-toolbar"],
+  sideview: ["#canvas", "#generate-toolbar"],
+  model: ["#canvas", "#generate-toolbar"],
+  gates: ["#canvas", "#generate-toolbar"],
   notes: [],
   review: [],
 };
