@@ -69,26 +69,35 @@ def run_task(task: TaskSpec, view: AgentView, runner, project_id: str) -> TaskRe
         else:
             dropped += 1
 
+    # `claims_refused` is a SEPARATE counter from `dropped` on purpose.
+    # `produced`/`dropped` are proposal counters — §8b's table is proposal-
+    # shaped throughout (`shown`, `kept / reversed`, `never rendered`), so
+    # `produced - dropped` must stay the proposal survivor count. A claim
+    # refused here is a real agent defect too (the same guard, not analytics),
+    # but it is not a proposal, so it is counted under its own name instead of
+    # eroding that pairing.
+    claims_refused = 0
+
     measured: list[Claim] = []
     for claim in raw.measured:
         if _claim_grounded(claim, handed_over):
             measured.append(claim)
         else:
-            dropped += 1
+            claims_refused += 1
 
     declined: list[Declined] = []
     for entry in raw.declined:
         if all(_claim_grounded(c, handed_over) for c in entry.claims):
             declined.append(entry)
         else:
-            dropped += 1
+            claims_refused += 1
 
     no_standing: list[NoStanding] = []
     for entry in raw.no_standing:
         if all(_claim_grounded(c, handed_over) for c in entry.claims):
             no_standing.append(entry)
         else:
-            dropped += 1
+            claims_refused += 1
 
     return raw.model_copy(update={
         # `produced` is what the task EMITTED, before any check ran — §8b's
@@ -102,6 +111,7 @@ def run_task(task: TaskSpec, view: AgentView, runner, project_id: str) -> TaskRe
         "no_standing": no_standing,
         "produced": len(raw.proposals),
         "dropped": dropped,
+        "claims_refused": claims_refused,
     })
 
 

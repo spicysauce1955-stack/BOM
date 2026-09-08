@@ -146,5 +146,16 @@ class TaskResult(BaseModel):
     no_standing: list[NoStanding] = []
     # Counted from the first run, never added later (spec §8b): an agent whose
     # proposals nobody keeps looks exactly like an agent that is working.
+    # `produced`/`dropped` share ONE denominator — proposals — exactly as
+    # §8b's table does (`shown`, `kept / reversed`, `never rendered` are all
+    # proposal-shaped too), so `produced - dropped` is always the survivor
+    # count. A claim refused on `measured`, `declined[]` or `no_standing[]` is
+    # a real agent defect and gets counted too (§8b's guard applies there as
+    # much as here), but under its OWN name below rather than folded into
+    # `dropped`, which would make the two proposal counters stop agreeing
+    # with each other.
     produced: int = 0
     dropped: int = 0
+    # A `Claim` refused by check 2 on `measured`, `declined[]` or
+    # `no_standing[]` — never a proposal, which is what `dropped` counts.
+    claims_refused: int = 0

@@ -163,16 +163,18 @@ def test_a_runner_that_raises_reports_not_evaluated_rather_than_nothing_found():
 # -- fix round 1: C1, I1-I6 -----------------------------------------------
 
 
-def test_a_fabricated_citation_in_measured_is_dropped_not_shown():
+def test_a_fabricated_citation_in_measured_is_refused_not_shown():
     """C1. `measured` reaches a person exactly as `proposals` do (spec §8);
     check 2 must not be proposal-only, or a runner fabricates a citation
-    simply by not putting it in a proposal."""
+    simply by not putting it in a proposal. Counted under `claims_refused`,
+    not `dropped` — `dropped` is a proposal counter (N1)."""
     bad = Claim(marker="read", text="a fact",
                evidence="ref:sha256-nobody-handed-this-over")
     raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True, measured=[bad])
     out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
     assert out.measured == []
-    assert out.dropped == 1
+    assert out.claims_refused == 1
+    assert out.dropped == 0
 
 
 def test_a_grounded_measured_claim_survives():
@@ -180,10 +182,11 @@ def test_a_grounded_measured_claim_survives():
     raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True, measured=[good])
     out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
     assert out.measured == [good]
+    assert out.claims_refused == 0
     assert out.dropped == 0
 
 
-def test_a_fabricated_citation_in_declined_is_dropped_not_shown():
+def test_a_fabricated_citation_in_declined_is_refused_not_shown():
     """C1. `Declined.claims` is the same `Claim` type as a proposal's."""
     bad = Claim(marker="read", text="a fact",
                evidence="ref:sha256-nobody-handed-this-over")
@@ -191,10 +194,11 @@ def test_a_fabricated_citation_in_declined_is_dropped_not_shown():
                      declined=[Declined(kind="select_choice_point", claims=[bad])])
     out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
     assert out.declined == []
-    assert out.dropped == 1
+    assert out.claims_refused == 1
+    assert out.dropped == 0
 
 
-def test_a_fabricated_citation_in_no_standing_is_dropped_not_shown():
+def test_a_fabricated_citation_in_no_standing_is_refused_not_shown():
     """C1. `NoStanding.claims` too — every path that reaches a person."""
     bad = Claim(marker="read", text="a fact",
                evidence="ref:sha256-nobody-handed-this-over")
@@ -202,13 +206,36 @@ def test_a_fabricated_citation_in_no_standing_is_dropped_not_shown():
                      no_standing=[NoStanding(about="x", whose="them", claims=[bad])])
     out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
     assert out.no_standing == []
-    assert out.dropped == 1
+    assert out.claims_refused == 1
+    assert out.dropped == 0
 
 
-def test_a_point_from_an_already_answered_set_is_dropped():
+def test_produced_and_dropped_stay_a_coherent_proposal_pair():
+    """N1. `produced - dropped` must stay the proposal survivor count even
+    when claims are ALSO being refused elsewhere on the same result — the two
+    counters must not share a denominator with `claims_refused`."""
+    bad = Claim(marker="read", text="a fact",
+               evidence="ref:sha256-nobody-handed-this-over")
+    raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True,
+                     proposals=[_proposal()], produced=1, measured=[bad])
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
+    assert len(out.proposals) == 1
+    assert out.produced == 1 and out.dropped == 0
+    assert out.produced - out.dropped == len(out.proposals)
+    assert out.claims_refused == 1
+
+
+def test_a_point_from_an_already_answered_set_fails_check_3_not_check_2():
     """I1. Check 3 asks whether the point is in `offered()` of a set THIS
     run's view still considers open — a set the project already answered must
-    not let its points back in through membership in the result alone."""
+    not let its points back in through membership in the result alone.
+
+    Uses an `inferred` claim, which needs no evidence and so always passes
+    check 2 regardless of what was handed over — an answered set hands over
+    no refs, so a `read`/`measured` claim here would be killed by check 2
+    first and this test would pass for the wrong reason (N3). The `inferred`
+    claim isolates check 3: reverting it to `point_ids()` over every set the
+    result ever carried makes this test fail."""
     project = Project(id="pr_1", name="t",
                       choices=[Selection(choice_set="bay_layout", scope="gap:run1:0")])
     result = GenerationResult(
@@ -218,7 +245,8 @@ def test_a_point_from_an_already_answered_set_is_dropped():
         choice_sets=[ChoiceSet(id="bay_layout", scope="gap:run1:0", question="q",
                                points=[DEFAULT, ALT])])
     view = AgentView(project, result)
-    out = run_task(RANK_CHOICE_SET, view, _Runner(_proposal()), project_id="pr_1")
+    proposal = _proposal(claims=[Claim(marker="inferred", text="picks p2 anyway")])
+    out = run_task(RANK_CHOICE_SET, view, _Runner(proposal), project_id="pr_1")
     assert out.proposals == []
     assert out.dropped == 1
 
