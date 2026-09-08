@@ -8,8 +8,10 @@ from fenceai.agent.tasks import RANK_CHOICE_SET, task_for
 
 
 def test_the_task_may_only_emit_registered_kinds():
-    """The permission list becomes the output schema, so a kind that is not in
-    the registry has no word in the grammar the agent is handed."""
+    """Spec §1's grammar is built FROM this list — by the Claude adapter in
+    slice 2, which is where the output schema half lands (`registry.py` says
+    so). Until then `run.py::_admissible` enforces it as a runtime belt, and
+    either way a kind absent from the registry must have no word to say."""
     assert set(RANK_CHOICE_SET.may_emit) <= set(KINDS)
 
 

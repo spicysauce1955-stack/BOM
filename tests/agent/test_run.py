@@ -6,7 +6,10 @@ offered something impossible.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fenceai.agent.proposal import Claim, Declined, NoStanding, Proposal, TaskResult, proposal_id
+from fenceai.agent.registry import _REGISTRY, ActionSpec, SelectChoicePoint, register
 from fenceai.agent.run import run_task
 from fenceai.agent.tasks import RANK_CHOICE_SET
 from fenceai.agent.view import AgentView
@@ -310,3 +313,68 @@ def test_a_runner_that_claims_it_did_not_look_is_taken_at_its_word():
     out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
     assert out.evaluated is False
     assert out.proposals == []
+
+
+# -- final-branch review: I1, I2 ------------------------------------------
+
+
+def test_an_unevidenced_decline_is_refused_and_counted():
+    """I2. `all([])` is True, so an empty `claims` list passed a check it
+    never faced — while the identical case was explicitly closed for
+    proposals sixty lines above. An unevidenced refusal is not a reason
+    (`proposal.py`: "a rejection nobody can check is not a reason")."""
+    raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True,
+                     declined=[Declined(kind="select_choice_point")])
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
+    assert out.declined == []
+    assert out.claims_refused == 1
+    assert out.dropped == 0
+
+
+def test_an_unevidenced_no_standing_is_refused_and_counted():
+    """I2, the other branch. Same rule, same counter."""
+    raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True,
+                     no_standing=[NoStanding(about="x", whose="them")])
+    out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
+    assert out.no_standing == []
+    assert out.claims_refused == 1
+    assert out.dropped == 0
+
+
+def test_check_3_comes_off_the_registry_row_not_a_branch_on_kind():
+    """I1. A kind the task may emit whose row's referential check refuses is
+    dropped — and the dispatcher never names a kind to decide that. Registers
+    a throwaway kind (a stand-in for slice 2's `pin_post`) with a check that
+    denies: before this fix the dispatcher's `if kind == "select_choice_point"`
+    fell through to `return True` for exactly this shape and the proposal was
+    SHOWN."""
+    kind = "test_only_action"
+    seen: list = []
+
+    def _never(payload, open_sets) -> bool:
+        seen.append(payload)
+        return False
+
+    spec = register(ActionSpec(kind=kind, payload_model=SelectChoicePoint,
+                               rung="directive", i18n_key="agent.action.test_only",
+                               referential=_never))
+    try:
+        task = replace(RANK_CHOICE_SET, may_emit=[kind])
+        out = run_task(task, _view(DEFAULT, ALT),
+                       _Runner(_proposal(kind=kind)), project_id="pr_1")
+        assert out.proposals == []
+        assert out.dropped == 1
+        assert seen, "the row's own check must be the thing that was consulted"
+    finally:
+        _REGISTRY.pop(kind, None)
+    assert spec.kind == kind
+
+
+def test_a_kind_with_no_registry_row_at_all_is_dropped_not_admitted():
+    """The other half of "default to deny": nothing to look the check up on
+    means the proposal does not survive."""
+    task = replace(RANK_CHOICE_SET, may_emit=["never_registered"])
+    out = run_task(task, _view(DEFAULT, ALT),
+                   _Runner(_proposal(kind="never_registered")), project_id="pr_1")
+    assert out.proposals == []
+    assert out.dropped == 1

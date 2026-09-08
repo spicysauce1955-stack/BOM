@@ -18,10 +18,10 @@ from __future__ import annotations
 from pydantic import ValidationError
 
 from fenceai.agent.proposal import Claim, Declined, NoStanding, Proposal, TaskResult
-from fenceai.agent.registry import parse_payload
+from fenceai.agent.registry import spec_for
 from fenceai.agent.tasks import TaskSpec
 from fenceai.agent.view import AgentView
-from fenceai.strategy.choices import ChoiceSet, offered
+from fenceai.strategy.choices import ChoiceSet
 
 
 def run_task(task: TaskSpec, view: AgentView, runner, project_id: str) -> TaskResult:
@@ -87,14 +87,14 @@ def run_task(task: TaskSpec, view: AgentView, runner, project_id: str) -> TaskRe
 
     declined: list[Declined] = []
     for entry in raw.declined:
-        if all(_claim_grounded(c, handed_over) for c in entry.claims):
+        if _claims_grounded(entry.claims, handed_over):
             declined.append(entry)
         else:
             claims_refused += 1
 
     no_standing: list[NoStanding] = []
     for entry in raw.no_standing:
-        if all(_claim_grounded(c, handed_over) for c in entry.claims):
+        if _claims_grounded(entry.claims, handed_over):
             no_standing.append(entry)
         else:
             claims_refused += 1
@@ -141,6 +141,19 @@ def _claim_grounded(claim: Claim, handed_over: set[str]) -> bool:
     return claim.evidence in handed_over
 
 
+def _claims_grounded(claims: list[Claim], handed_over: set[str]) -> bool:
+    """Check 2 for a whole list, and the vacuous case FIRST.
+
+    `all([])` is True, so an empty list would pass a check it never faced: no
+    claims means nothing for this check to fail, which must not read as passing
+    it. An unevidenced proposal is not a proposal, and `proposal.py` makes the
+    identical commitment for the other two — "a rejection nobody can check is
+    not a reason". One function so the three callers cannot drift apart again;
+    they did, and the difference was two words.
+    """
+    return bool(claims) and all(_claim_grounded(c, handed_over) for c in claims)
+
+
 def _admissible(proposal: Proposal, task: TaskSpec,
                 open_sets: list[ChoiceSet], handed_over: set[str]) -> bool:
     # 1 — the permission list. Belt to the grammar's braces: a runner that
@@ -148,31 +161,19 @@ def _admissible(proposal: Proposal, task: TaskSpec,
     if proposal.kind not in task.may_emit:
         return False
 
-    # 2 — grounding, and the vacuous case first: no claims means nothing for
-    # this check to fail, which must not read as passing it. An unevidenced
-    # proposal is not a proposal.
-    if not proposal.claims:
+    # 2 — grounding, vacuous case included (see `_claims_grounded`).
+    if not _claims_grounded(proposal.claims, handed_over):
         return False
-    for claim in proposal.claims:
-        if not _claim_grounded(claim, handed_over):
-            return False
 
     # 3 — referential. The payload must parse into its typed model, and the
-    # thing it names must actually exist — for a choice point, that means the
-    # set it answers is one THIS run still considers open (`open_sets`, not
-    # every set the result ever carried), and the point is actually in
-    # `offered()` of that set, exactly as spec §6 asks: "is that `DesignPoint`
-    # actually in `offered()`?" — not merely present somewhere in the result.
+    # thing it names must actually exist. Both halves come off the REGISTRY
+    # ROW: `ActionSpec.referential` is required, so every registered kind has
+    # a check and a kind added tomorrow cannot quietly skip one. Asking
+    # `if proposal.kind == ...` here is what made this fail open — check 3 is
+    # not optional per kind, and an unknown kind denies rather than passes.
     try:
-        payload = parse_payload(proposal.kind, proposal.payload)
+        spec = spec_for(proposal.kind)
+        payload = spec.payload_model.model_validate(proposal.payload)
     except (ValidationError, KeyError):
         return False
-    if proposal.kind == "select_choice_point":
-        matching = next((c for c in open_sets
-                         if c.id == payload.choice_set and c.scope == payload.scope),
-                        None)
-        if matching is None:
-            return False
-        if payload.point_id not in {p.id for p in offered(matching.points)}:
-            return False
-    return True
+    return spec.referential(payload, open_sets)
