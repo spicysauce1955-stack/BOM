@@ -14,7 +14,10 @@
 // The distinction this whole slice exists to protect: `evaluated: false`
 // ("I did not look") must never render as an empty proposal list ("nothing to
 // report") — they are different sentences to a person, so they get different
-// locale keys (`agent.not_evaluated` vs `agent.none`). The section carries a
+// locale keys (`agent.not_evaluated` vs `agent.none`). There is a THIRD
+// sentence between them and it is the one that goes missing quietly: "I
+// looked, I produced, and everything I produced was refused" —
+// `agent.all_refused`, read off the counters (spec §8b). The section carries a
 // PERSISTENT heading (`agent.title`) in every state, including both of those:
 // a sentence with no subject reads as a stray fragment, not as an answer.
 import { apiGet, esc } from "./api.js";
@@ -89,7 +92,16 @@ export function renderAdvice(result, host) {
   }
   const proposals = result.proposals || [];
   if (!proposals.length) {
-    host.innerHTML = emptyHtml("agent.none");
+    // The THIRD state, and spec §8b is the reason it needs its own sentence:
+    // "an agent whose proposals nobody keeps looks exactly like an agent that
+    // is working." The agent looked, it produced, and every one of them was
+    // refused by a §6 check as an agent defect — which is not "nothing to
+    // suggest here". `dropped` and `claims_refused` cross the wire from
+    // `run.py` precisely so this surface can tell the two apart; a panel that
+    // reads neither turns `produced: 3, dropped: 3` into "all clear", which is
+    // the silent failure the counters were built on day one to prevent.
+    const refused = (result.dropped || 0) + (result.claims_refused || 0);
+    host.innerHTML = emptyHtml(refused ? "agent.all_refused" : "agent.none");
     return;
   }
   host.innerHTML = sectionHtml(proposals.map(proposalCard).join(""));
@@ -139,9 +151,11 @@ async function refresh() {
   cache = null;
   failKey = null;
   if (!runId) {
-    // Its own sentence (finding I2) — distinct from `evaluated: false` (the
-    // agent looked and declined) and from a failed fetch (couldn't ask at
-    // all): here there is nothing yet to ask about.
+    // Its own sentence (finding I2), distinct from the other two it is easily
+    // confused with: `evaluated: false` means the agent NEVER LOOKED (an empty
+    // view slice, or the adapter failed) — never "it looked and found nothing",
+    // which is `evaluated: true` with no proposals; and a failed fetch means we
+    // could not ask. Here there is nothing yet to ask about.
     failKey = "agent.no_run";
     render();
     return;

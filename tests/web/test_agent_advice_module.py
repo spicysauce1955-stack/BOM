@@ -80,11 +80,23 @@ const proposalResult = {
 const withProposal = { innerHTML: "" };
 renderAdvice(proposalResult, withProposal);
 
-const declined = { innerHTML: "" };
-renderAdvice({ evaluated: false, proposals: [] }, declined);
+// `evaluated: false` is "I NEVER LOOKED" — not "I looked and declined",
+// which is `evaluated: true` with no proposals, and not `TaskResult.declined`,
+// which is a third thing again (an action considered and not proposed).
+const neverLooked = { innerHTML: "" };
+renderAdvice({ evaluated: false, proposals: [] }, neverLooked);
 
 const nothing = { innerHTML: "" };
 renderAdvice({ evaluated: true, proposals: [] }, nothing);
+
+// The third state: it looked, it produced three, all three were refused as
+// agent defects. `agent.none` here would tell the reader "all clear".
+const allRefused = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [], produced: 3, dropped: 3 }, allRefused);
+
+const claimsRefused = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [], produced: 0, dropped: 0,
+               claims_refused: 2 }, claimsRefused);
 
 // must not throw when there is nowhere to render (a real early-return path)
 renderAdvice(proposalResult, null);
@@ -94,8 +106,10 @@ const inCm = { innerHTML: "" };
 renderAdvice(proposalResult, inCm);
 
 await setLocale("he");
-const heDeclined = { innerHTML: "" };
-renderAdvice({ evaluated: false, proposals: [] }, heDeclined);
+const heNeverLooked = { innerHTML: "" };
+renderAdvice({ evaluated: false, proposals: [] }, heNeverLooked);
+const heAllRefused = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [], produced: 3, dropped: 3 }, heAllRefused);
 await setLocale("en");
 state.units = "mm";
 
@@ -117,10 +131,13 @@ const liveCm = liveHost.innerHTML;
 
 console.log(JSON.stringify({
   withProposal: withProposal.innerHTML,
-  declined: declined.innerHTML,
+  neverLooked: neverLooked.innerHTML,
   nothing: nothing.innerHTML,
+  allRefused: allRefused.innerHTML,
+  claimsRefused: claimsRefused.innerHTML,
   inCm: inCm.innerHTML,
-  heDeclined: heDeclined.innerHTML,
+  heNeverLooked: heNeverLooked.innerHTML,
+  heAllRefused: heAllRefused.innerHTML,
   noRunHtml, liveMm, liveCm,
 }));
 """
@@ -163,23 +180,44 @@ def test_a_dimension_claim_is_unit_converted_and_isolated(out):
 def test_evaluated_false_and_empty_proposals_render_differently(out):
     """"I did not look" is never "nothing to report" — audit B01 in
     miniature, and the reason this slice exists."""
-    assert out["declined"] != out["nothing"]
-    assert "Could not check" in out["declined"]
-    assert "Nothing to suggest here" not in out["declined"]
+    assert out["neverLooked"] != out["nothing"]
+    assert "Could not check" in out["neverLooked"]
+    assert "Nothing to suggest here" not in out["neverLooked"]
     assert "Nothing to suggest here" in out["nothing"]
     assert "Could not check" not in out["nothing"]
+
+
+def test_everything_refused_is_not_nothing_to_suggest(out):
+    """Final-review I3. `produced: 3, dropped: 3` rendered as the same five
+    words as `produced: 0` — "an agent whose proposals nobody keeps looks
+    exactly like an agent that is working" (spec §8b) at the ONLY surface a
+    person ever looks at. The counters cross the wire so this panel can tell
+    the two apart; before this it read neither."""
+    assert "Nothing to suggest here" not in out["allRefused"]
+    assert "Could not check" not in out["allRefused"]
+    assert out["allRefused"] != out["nothing"]
+    assert "failed a check" in out["allRefused"]
+    # a refused CLAIM is an agent defect too, and gets the same sentence
+    assert out["claimsRefused"] == out["allRefused"]
+    assert "<h3>" in out["allRefused"]
+
+
+def test_the_all_refused_sentence_is_localized(out):
+    assert out["heAllRefused"] != out["allRefused"]
+    assert "נכשלה בבדיקה" in out["heAllRefused"]
 
 
 def test_every_rendered_state_carries_the_sections_own_heading(out):
     """Finding I2: a bare "Could not check" has no subject. `<h3>` names the
     section in every state `renderAdvice` produces."""
-    for rendered in (out["withProposal"], out["declined"], out["nothing"]):
+    for rendered in (out["withProposal"], out["neverLooked"], out["nothing"],
+                     out["allRefused"]):
         assert "<h3>" in rendered
 
 
 def test_the_heading_and_the_empty_sentence_are_localized(out):
-    assert out["heDeclined"] != out["declined"]
-    assert "לא ניתן היה לבדוק" in out["heDeclined"]
+    assert out["heNeverLooked"] != out["neverLooked"]
+    assert "לא ניתן היה לבדוק" in out["heNeverLooked"]
 
 
 def test_no_run_yet_gets_its_own_state_not_i_did_not_look(out):
