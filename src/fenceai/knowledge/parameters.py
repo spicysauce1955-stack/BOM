@@ -839,10 +839,34 @@ def _row_covers_point(row: ParameterRow, point: dict[str, str | int | bool]) -> 
     silent on `hvhz` covers a point that names it — the same reason an
     omitted dimension made 16 real published points falsely "uncovered"
     (conversation.md T49 §5b). A fallback row asserts nothing about any point
-    and never covers one, matching `_overlap_gaps`'s own exclusion of it."""
+    and never covers one, matching `_overlap_gaps`'s own exclusion of it.
+
+    But a row that speaks to NONE of the point's dimensions does not cover it,
+    and this is the one place the row/point rule must part company with the
+    row/row one. `_overlap_gaps` deliberately treats an empty `shared` as an
+    overlap, and it is right to: two rows are each quantified over the whole
+    condition space, so "is there a point matching both?" is answered yes by
+    the union of their conditions — a point that exists whether or not the two
+    rows name a dimension in common. Here the point is not existential. It is a
+    SPECIFIC point the publisher named, and a row constraining only axes that
+    point is silent about has said nothing about it — there is no axis on which
+    it could be found to agree. `all([])` answered that question True, so a row
+    conditioned on `series` alone "covered" `{hvhz: true}` and turned a real
+    coverage hole into a dispute about a row that does not speak to it.
+
+    Requiring `shared` to be non-empty is `is_fallback()`'s own exclusion
+    carried one step further, for the identical reason: a fallback constrains
+    nothing at all, and such a row constrains nothing THIS POINT names — it is
+    a fallback with respect to these axes. The stronger rule (the row must
+    constrain every dimension the point names) was rejected because it is not
+    this bug: it would make a row silent on `hvhz` stop covering
+    `{exposure_category: C, hvhz: true}`, which is exactly the omitted-dimension
+    semantics T49 §5b settled, not the vacuous-truth defect."""
     if row.is_fallback():
         return False
     shared = set(row.conditions) & set(point)
+    if not shared:
+        return False
     return all(row.conditions[k] == point[k] for k in shared)
 
 

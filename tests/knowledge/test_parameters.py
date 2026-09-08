@@ -337,6 +337,64 @@ def test_a_fallback_row_does_not_launder_an_uncovered_claim():
     assert [g.because.code for g in gaps] == ["uncovered_parameter_point"]
 
 
+def test_a_row_that_shares_no_dimension_with_the_point_does_not_cover_it():
+    """`all([])` is True, so a row whose conditions and the point have NO key in
+    common used to "cover" it — a `series` row swallowing an `hvhz` hole and
+    reporting a dispute about a row that does not speak to the point.
+
+    This is where the row/point rule parts company with the row/row one in
+    `_overlap_gaps`, which treats an empty `shared` as an overlap on purpose:
+    two rows are each quantified over the condition space, so a point matching
+    both exists regardless. A published `uncovered` entry is not existential —
+    it is one named point, and a row silent on every axis it names has said
+    nothing about it, exactly as a fallback row says nothing.
+
+    Only 48 real cases hold this back today, and only because every one of them
+    happens to share `exposure_category`.
+    """
+    table = _span_table(
+        domain={"series": ["M-VINYL"], "hvhz": [True, False]},
+        condition_scope={"series": "param", "hvhz": "site"},
+        rows=[ParameterRow(conditions={"series": "M-VINYL"},
+                           value=Quantity(amount_milli=1800000, unit="mm"))],
+        uncovered=[{"hvhz": True}],
+    )
+    _, gaps, _ = expand(table)
+    assert [g.because.code for g in gaps] == ["uncovered_parameter_point"], (
+        "a row constraining only dimensions the point is silent about covers "
+        "nothing, so this is a real hole and not a dispute")
+
+
+def test_the_omitted_dimension_rule_survives_the_empty_shared_fix():
+    """The half that must NOT move. A row sharing at least one dimension and
+    agreeing on it still covers a point that names MORE — `_condition_for`
+    makes an omitted key match every value on that axis, and 16 published
+    points were falsely uncovered for want of it (T49 §5b). The fix above
+    excludes only the row that shares nothing at all.
+    """
+    shares_one = _span_table(
+        domain={"exposure_category": ["C"], "hvhz": [True, False]},
+        condition_scope={"exposure_category": "site", "hvhz": "site"},
+        rows=[ParameterRow(conditions={"exposure_category": "C"},
+                           value=Quantity(amount_milli=1200000, unit="mm"))],
+        uncovered=[{"exposure_category": "C", "hvhz": True}],
+    )
+    assert [g.because.code for g in expand(shares_one)[1]] == [
+        "uncovered_point_contradicted"]
+
+    # ...and a row that shares a dimension but DISAGREES on it still covers
+    # nothing, which is the ordinary agreement rule and not the empty case.
+    disagrees = _span_table(
+        domain={"exposure_category": ["B", "C"], "hvhz": [True, False]},
+        condition_scope={"exposure_category": "site", "hvhz": "site"},
+        rows=[ParameterRow(conditions={"exposure_category": "B"},
+                           value=Quantity(amount_milli=1800000, unit="mm"))],
+        uncovered=[{"exposure_category": "C", "hvhz": True}],
+    )
+    assert [g.because.code for g in expand(disagrees)[1]] == [
+        "uncovered_parameter_point"]
+
+
 def test_every_gap_a_table_produces_names_the_tenant_it_expanded_under():
     """`GapSubject.tenant` is the field the Knowledge team's review added to match
     `EntityRef`. `expand()` accepts a `tenant` and it must reach every gap kind

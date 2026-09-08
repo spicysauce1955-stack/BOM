@@ -89,6 +89,116 @@ def equal_layout_milli(length_milli: int, max_span_milli: int) -> list[Mm]:
     return [base + 1 if i < rem else base for i in range(n)]
 
 
+def min_bay_count(length_mm: Mm, max_span_milli: int) -> int:
+    """`n = ceil(L / max_span)` at the PUBLISHED precision — the bay count
+    `equal_layout_milli` lays this length out in, named once so nothing has to
+    recompute it and drift.
+
+    It is half of `admits_widths` below, and the half that makes the other half
+    honest: the ceiling a remainder spread reaches is only defensible for a
+    layout that could not have been split one more time.
+    """
+    if length_mm <= 0 or max_span_milli <= 0:
+        return 0
+    return -(-length_mm * 1000 // max_span_milli)
+
+
+def remainder_ceiling_mm(max_span_milli: int) -> Mm:
+    """`ceil(max_span_milli / 1000)` — the widest whole millimetre the remainder
+    spread of a minimum-count layout can reach.
+
+    **This is not a bound and must never be used as one on its own.** It was, and
+    the failure is worth writing down: a published limit of 1422.4 mm has this
+    return 1423, and a 1423 mm bay then looks admissible to anything that
+    compares against it — including a stored answer of THREE 1423 mm bays on a
+    4269 mm run, which is a post and a footing removed from a stamped schedule
+    with nothing to show for it. The argument that made the ceiling safe ("with
+    `n = ceil(L/max)` the widest bay is `floor(L/n)+1` at most") is an argument
+    about layouts THIS ENGINE computes, and a bound cannot carry a premise its
+    caller does not have to satisfy.
+
+    So the premise is now a condition. Read this only through `admits_widths`,
+    which pairs it with `min_bay_count` — together they say the thing the
+    argument actually said.
+    """
+    return -(-max_span_milli // 1000)
+
+
+def earns_remainder_ceiling(
+    widths: list[Mm], length_mm: Mm, max_span_milli: int,
+) -> bool:
+    """Is this width list the minimum-count layout whose integer-millimetre
+    remainder the ceiling excuses?
+
+    The conjunction, in one place: no bay above `ceil(limit)`, and exactly the
+    bay count the true limit forces. `contract.md`:112-117 chooses the count
+    computed from the published thousandths, and ADR-0002 stores the widths as
+    whole millimetres; where those two disagree by a fraction, one bay carries
+    it. That bay is admissible because the only alternative is an extra post,
+    footing and pour bought to recover six tenths of a millimetre — an argument
+    that holds for THIS layout and evaporates for a layout with a spare bay in
+    it, where the same fraction could simply have been spread differently.
+
+    `==` on the count and not `<=`. Fewer bays than the minimum means a bay
+    over the limit that a split would have fixed; more bays means the fraction
+    was never forced.
+    """
+    if not widths or max_span_milli <= 0:
+        return False
+    return (max(widths) <= remainder_ceiling_mm(max_span_milli)
+            and len(widths) == min_bay_count(length_mm, max_span_milli))
+
+
+def admits_widths(
+    widths: list[Mm],
+    length_mm: Mm,
+    max_span_mm: Mm,
+    *,
+    max_span_milli: int | None = None,
+) -> bool:
+    """The ONE admissibility rule for a bay layout: may this segment be built
+    with these widths?
+
+    Every site that asks the question asks it here — what the generator offers
+    as an alternative, what it accepts back as a person's stored answer, what it
+    lets a `lock_bay` depart from, and what makes it stop the run. They were four
+    comparisons before, and they disagreed in both directions: the offer side
+    filtered against the rounded millimetre limit while the accept side compared
+    against `ceil(published)`, so the engine would never OFFER a 1423 mm bay and
+    would happily ACCEPT one.
+
+    Three clauses:
+
+    * the widths tile the segment exactly, and every bay is positive;
+    * no bay exceeds `max_span_mm`, the resolved limit AT REST (ADR-0002) — the
+      number every clamp, warning and payload in the generator is written in.
+      This is the whole rule for the authored data in this repo, where the limit
+      is a whole millimetre and `max_span_milli` is exactly `max_span_mm * 1000`;
+    * above that, and only there, the published fraction gets its say through
+      `earns_remainder_ceiling`.
+
+    `min_span_mm` is deliberately NOT here. `layout_segment` only warns about a
+    sliver and a person may want a 400 mm bay against a wall, so a selected
+    sliver is built and reported through `sliver_span` rather than refused —
+    refusing it would make an answered question stricter than an unanswered one.
+
+    Admissibility rather than membership of a candidate set, for a reason worth
+    keeping: what a person chose is the WIDTHS. If they are still buildable they
+    are still the answer, even where a changed `max_span` means a different
+    generator would now propose them. It also avoids needing the candidate set
+    before a choice can be honoured, which would be circular — candidates are
+    measured from the baseline the choice helps produce.
+    """
+    if not widths or any(w <= 0 for w in widths):
+        return False
+    if sum(widths) != length_mm:
+        return False
+    if max(widths) <= max_span_mm:
+        return True
+    milli = max_span_mm * 1000 if max_span_milli is None else max_span_milli
+    return earns_remainder_ceiling(widths, length_mm, milli)
+
+
 def nominal_layout(length_mm: Mm, nominal_mm: Mm) -> list[Mm]:
     """Full nominal-width spans plus one remainder span (the rejected S02 alternative)."""
     if length_mm <= 0:
@@ -227,6 +337,7 @@ def alternative_widths(
     piece_stock_mm: Mm | None = None,
     kerf_mm: Mm = 3,
     piece_shorter_by_mm: Mm = 0,
+    max_span_milli: int | None = None,
 ) -> list[tuple[str, list[Mm]]]:
     """Width lists worth offering BESIDE the one already built.
 
@@ -244,6 +355,13 @@ def alternative_widths(
 
     Every returned list already honours the resolved maximum and minimum span, so
     an offered point never needs a person to be told it was inadmissible.
+
+    "Honours the resolved maximum" is `admits_widths` and nothing else, which is
+    the point of `max_span_milli` reaching here: this function is the OFFER side
+    of the same question the generator answers on the ACCEPT side when the answer
+    comes back, and the two used to be different comparisons. Filtering here
+    against the rounded millimetre while accepting against `ceil(published)` left
+    one choice set with two admissibility bounds pointing opposite ways.
     """
     out: list[tuple[str, list[Mm]]] = []
     seen = {tuple(default)}
@@ -251,7 +369,8 @@ def alternative_widths(
     def offer(name: str, widths: list[Mm]) -> None:
         if not widths or tuple(widths) in seen:
             return
-        if max(widths) > max_span_mm:
+        if not admits_widths(widths, length_mm, max_span_mm,
+                             max_span_milli=max_span_milli):
             return
         if min_span_mm and min(widths) < min_span_mm:
             return

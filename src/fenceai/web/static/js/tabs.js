@@ -2,8 +2,8 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import {
-  ACTION_KINDS, el, field, loadCatalogProducts, option, skuSelect,
-  updateAdvancedUi,
+  ACTION_KINDS, actionSentence, el, field, loadCatalogProducts, option,
+  scopeChips, skuSelect, updateAdvancedUi,
 } from "./builder-ui.js";
 import { initChoices } from "./choices.js";
 import { initKnowledgeRules, renderKnowledgeRules } from "./knowledge-rules.js";
@@ -831,17 +831,29 @@ function builderRow(a, idx, products) {
 // ---------- review queue ----------
 async function renderCandidates() {
   const candidates = await apiGet("/api/candidates");
+  // the same catalog cache the rules pane reads, for the same reason: a SKU in
+  // an action sentence must read as the builder writes it. `loadCatalogProducts`
+  // caches the PROMISE, so awaiting it here costs one fetch for the session
+  // however many surfaces ask.
+  const products = await loadCatalogProducts();
   const div = document.getElementById("candidate-list");
   div.innerHTML = candidates.length ? "" : `<em>${t("review.empty")}</em>`;
   for (const c of candidates) {
     const card = document.createElement("div");
-    card.className = "card";
+    // `rule-card` too: a candidate IS a rule, and this pane must describe it in
+    // the words the Knowledge tab uses. The two lists drew the same version
+    // differently for as long as this one dumped `JSON.stringify` — a reviewer
+    // approving `{"kind":"set_param","param":"max_span_mm","value":1800}` and a
+    // reader seeing "Set max span to 1800 mm" are not looking at one rule.
+    card.className = "card rule-card";
     card.innerHTML = `<span class="tag candidate">${t("status.proposed")}</span>
       <b><bdi>${esc(c.object_id)}@v${c.version}</bdi></b> — <span dir="auto">${esc(c.title_i18n?.[currentLocale()] || c.title)}</span>
-      <div class="meta">${t("knowledge.scope")} <bdi>${esc(JSON.stringify(c.scope))}</bdi> ·
-        ${t("knowledge.derived_from")} <bdi>${esc(c.derived_from.join(", "))}</bdi></div>
+      <div class="meta">${t("knowledge.derived_from")} <bdi>${esc(c.derived_from.join(", "))}</bdi></div>
+      <div class="rule-scope">${scopeChips(c.scope)}</div>
       ${c.source_text ? `<div class="verbatim" dir="auto">“${esc(c.source_text)}”</div>` : ""}
-      <div class="meta">${t("knowledge.actions")}: <bdi>${esc(JSON.stringify(c.actions))}</bdi></div>
+      <ul class="actions-list">${
+        (c.actions || []).map((a) => `<li>${actionSentence(a, products)}</li>`).join("")
+      }</ul>
       <button data-preview="1">${t("impact.preview")}</button>
       <button data-a="approve">${t("review.approve")}</button>
       <button data-a="scope_restrict">${t("review.approve_narrower")}</button>

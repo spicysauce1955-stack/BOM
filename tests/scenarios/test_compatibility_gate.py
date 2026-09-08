@@ -72,9 +72,14 @@ def _spine(name: str) -> dict:
     # must not put its two rail stocks into the shared catalog
     catalog = rest[2] if len(rest) > 2 and rest[2] is not None else demo_catalog()
     library = rest[3] if len(rest) > 3 and rest[3] is not None else LIBRARY
-    result = generate(topo, EXPOSURE_KB if site is not None else demo_knowledge(),
-                      catalog, overrides=overrides, models=library, parts=PARTS,
-                      default_model=choice, site=site)
+    # ...and its own knowledge, for the same reason: the published-limit fixture
+    # (S20) resolves its maximum from thousandths no authored rule can carry, and
+    # pricing it against `demo_knowledge()` would pin a four-bay fence this
+    # fixture does not build.
+    knowledge = rest[4] if len(rest) > 4 and rest[4] is not None else (
+        EXPOSURE_KB if site is not None else demo_knowledge())
+    result = generate(topo, knowledge, catalog, overrides=overrides,
+                      models=library, parts=PARTS, default_model=choice, site=site)
     priced = price_strategy(result.strategy, catalog, inventory,
                             demand_skus=result.run.demand_skus,
                             preset=result.run.objective_preset)

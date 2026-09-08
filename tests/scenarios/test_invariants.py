@@ -35,6 +35,9 @@ from tests.conftest import add_interval_event, add_point_event, straight_topolog
 from tests.scenarios.continuity_fixture import (
     MAX_SPAN_MM, RUN_MM, board_library, catalog_with_two_colours, white_choice,
 )
+from tests.scenarios.published_limit_fixture import (
+    PUBLISHED_KB, PUBLISHED_MAX_MM, ROUNDED, RUN_MM as PUBLISHED_RUN_MM,
+)
 
 KIT = FenceModelChoice(model_id="M-KIT")
 # --- the containment shape, so the batteries below can see one ------------------
@@ -222,6 +225,22 @@ def _fixtures():
                          SiteConditions(hvhz=True), None, site_variant_library()),
         "through_rail": (through_rail, [], None, white_choice(), None,
                          catalog_with_two_colours(), board_library()),
+        # A fence whose maximum was PUBLISHED between whole millimetres (S20):
+        # 4267 mm under a sealed 56 in (1422.4 mm) limit, laid out in the three
+        # bays that limit allows, one of them 0.6 mm over it because bays are
+        # integer millimetres at rest.
+        #
+        # It is the ONLY run in this battery whose bay is wider than its own
+        # resolved maximum with no override behind it — the second authorized
+        # exception below — so without it that half of the hard-max invariant is
+        # vacuous, which is exactly how it went twelve commits undocumented. It
+        # also brings the first knowledge base here built from a published
+        # `paired(...)` row, so `test_knowledge_refs_resolve_to_snapshot` and the
+        # determinism check walk a run whose governing version was expanded
+        # rather than authored.
+        "published_limit": (straight_topology(PUBLISHED_RUN_MM), [], None, None,
+                            SiteConditions(exposure_category="B"), None, None,
+                            PUBLISHED_KB),
     }
 
 
@@ -272,7 +291,11 @@ def spine(request):
     # records the same constraint for the same reason).
     catalog = rest[2] if len(rest) > 2 and rest[2] is not None else demo_catalog()
     library = rest[3] if len(rest) > 3 and rest[3] is not None else LIBRARY
-    knowledge = EXPOSURE_KB if site is not None else demo_knowledge()
+    # ...and its own KNOWLEDGE. Only the published-limit one does: its maximum
+    # cannot be authored (every rule this repo writes is integer millimetres),
+    # and handing it `EXPOSURE_KB` would leave `K-MAXSPAN` in front of it.
+    knowledge = rest[4] if len(rest) > 4 and rest[4] is not None else (
+        EXPOSURE_KB if site is not None else demo_knowledge())
     result = generate(topo, knowledge, catalog, overrides=overrides,
                       models=library, parts=PARTS, default_model=choice, site=site)
     reqs = derive_requirements(result.strategy, catalog)
@@ -296,8 +319,8 @@ def rerun(spine):
 
 
 def _over_max_authorizations(result) -> tuple[set[str], set[str]]:
-    """The two halves of the conjunction: which bays a lock placed, and which
-    bays the run reports as placed over the maximum."""
+    """The two halves of the FIRST exception's conjunction: which bays a lock
+    placed, and which bays the run reports as placed over the maximum."""
     locked = {ref
               for n in result.graph.nodes
               if n.kind == "override_applied" and n.action == "lock_bay"
@@ -309,31 +332,68 @@ def _over_max_authorizations(result) -> tuple[set[str], set[str]]:
     return locked, warned
 
 
+def _rounded_reports(result) -> dict[int, dict]:
+    """`widest_mm -> params` for every segment the run reports as rounded over a
+    published limit — the second exception's half of the same idea.
+
+    Keyed by WIDTH, not by span id: the code is emitted once per segment (a
+    sixty-bay fence under one fractional limit is one fact about the layout), so
+    its node scopes a segment interval and no span id appears on it.
+    """
+    return {w.params["widest_mm"]: w.params
+            for w in result.strategy.warnings if w.code == ROUNDED}
+
+
 def test_span_width_within_hard_max_unless_a_lock_placed_it(spine):
-    """The invariant in its post-`lock_bay` form (golden-scenarios.md, "The hard
-    maximum's one authorized exception").
+    """The invariant in its post-`lock_bay`, post-published-precision form
+    (golden-scenarios.md, "The hard maximum's first/second authorized
+    exception").
 
-    A CONJUNCTION, deliberately. Until 2026-09-03 a bay over the resolved maximum
-    meant no plan at all, and `lock_bay` makes that conditional. The risk is not
-    the locked bay: it is that an accidental over-wide bay stops failing loudly
+    TWO exceptions now, each a CONJUNCTION and neither a tolerance. Until
+    2026-09-03 a bay over the resolved maximum meant no plan at all; `lock_bay`
+    made that conditional on a person, and the published-precision fix made it
+    conditional on arithmetic. The risk is unchanged and it is not the locked or
+    the rounded bay: it is that an ACCIDENTAL over-wide bay stops failing loudly
     and passes as somebody's decision. So an over-maximum bay is admissible here
-    only when a `lock_bay` node placed THAT bay and the run says so — and the
-    messages below name which half is missing rather than reporting a width.
+    only when a `lock_bay` node placed THAT bay and the run says so, or when the
+    run reports THAT width as the forced remainder of a limit that falls between
+    whole millimetres — and the messages below name which half is missing rather
+    than reporting a width.
 
-    No fixture in this suite carries a lock, so every bay must be within the
-    limit; 1800 mm for every fixture built to the demo knowledge base, while the
-    continuity fixture carries its own maximum as a `layout_policy` contribution
-    (97 in), which is the point of that fixture and not an exception to this rule.
+    The limits: 1800 mm for every fixture built to the demo knowledge base; the
+    continuity fixture carries its own as a `layout_policy` contribution (97 in);
+    and the published-limit fixture resolves 1422 from `1422400` thousandths,
+    which is the one fixture here that exercises the second exception. No fixture
+    in this suite carries a lock, so the first branch stays proved by
+    `test_a_lock_is_the_only_thing_that_authorizes_an_over_max_bay` below.
     """
     result, _, _, _, rest = spine
-    limit = MAX_SPAN_MM if rest[4] is not None and rest[4].model_id == "M-BOARD" else 1800
+    if rest[3] is PUBLISHED_KB:
+        limit = PUBLISHED_MAX_MM
+    elif rest[4] is not None and rest[4].model_id == "M-BOARD":
+        limit = MAX_SPAN_MM
+    else:
+        limit = 1800
     locked, warned = _over_max_authorizations(result)
+    rounded = _rounded_reports(result)
     for sp in result.strategy.spans:
         if sp.width_mm <= limit:
             continue
-        assert sp.id in locked, (
-            f"{sp.id} is {sp.width_mm} mm against a {limit} mm maximum and no "
-            "lock_bay override placed it — that is an accident, not an exception")
+        if sp.id not in locked:
+            params = rounded.get(sp.width_mm)
+            assert params is not None, (
+                f"{sp.id} is {sp.width_mm} mm against a {limit} mm maximum, no "
+                "lock_bay override placed it and the run does not report it as "
+                f"{ROUNDED} — that is an accident, not an exception")
+            # ...and the arithmetic of the report has to be the bay's own: a
+            # fraction of a millimetre over the PUBLISHED limit, never a whole
+            # one, or this branch would excuse a wrong rule as a rounding.
+            assert sp.width_mm * 1000 - params["limit_milli"] == params["over_milli"]
+            assert 0 < params["over_milli"] < 1000, (
+                f"{sp.id} is {params['over_milli']} thousandths over the "
+                "published limit — a whole millimetre is not a rounding")
+            assert params["max_mm"] == limit
+            continue
         assert sp.id in warned, (
             f"{sp.id} was placed over the {limit} mm maximum and the run does "
             "not carry span_placed_over_maximum for it")
@@ -456,6 +516,15 @@ def test_knowledge_refs_resolve_to_snapshot(spine):
     this battery to carry a `layout_policy` at all, and the assertion as written
     read a by-design ref as a dangling one. The narrower version was not
     protecting anything the wider one gives up — an unpinned ref still fails.
+
+    Widened AGAIN when the `published_limit` fixture arrived, and for the mirror
+    image of the same mistake: "#" was being read as "this is a model policy
+    contribution", but a knowledge version EXPANDED from a published parameter
+    row is `footing_schedule#0` — the table's name and the row's index — and it
+    is pinned in the knowledge snapshot like any other version. So the snapshot
+    is asked first and the model reading is the fallback, which is the order the
+    two kinds actually rank in: a version this run stored, else a policy the
+    model contributed. A dangling ref still fails either way.
     """
     result, _, _, _, _ = spine
     snapshot = {f"{oid}@v{ver}" for oid, ver in result.run.knowledge_snapshot}
@@ -464,12 +533,14 @@ def test_knowledge_refs_resolve_to_snapshot(spine):
         if e.knowledge_ref is None:
             continue
         ref = e.knowledge_ref
-        if "#" in ref:      # a model policy contribution, pinned by its MODEL
-            model_id, _, param_and_version = ref.partition("#")
-            version = param_and_version.split("@")[-1]
-            assert f"{model_id}@{version}" in models, ref
-        else:
-            assert ref in snapshot, ref
+        if ref in snapshot:
+            continue
+        # not a version the run stored, so it must be a model policy
+        # contribution, pinned by its MODEL
+        assert "#" in ref, ref
+        model_id, _, param_and_version = ref.partition("#")
+        version = param_and_version.split("@")[-1]
+        assert f"{model_id}@{version}" in models, ref
 
 
 def test_no_panel_slot_asks_for_a_negative_quantity(spine):

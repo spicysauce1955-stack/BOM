@@ -35,7 +35,8 @@ WARNING_CODES = [
     "continuity_override_unbuildable",
     "continuity_stock_length_unknown",
     "sliver_span",
-    # the hard maximum's one authorized exception: a `lock_bay` override placed
+    # the hard maximum's FIRST authorized exception (S20 added a second, a
+    # limit between whole millimetres): a `lock_bay` override placed
     # this bay, so it is built as placed, marked and attributed. A sentence about
     # the reader's OWN action, so it is translated — not Knowledge-Platform
     # vocabulary held back on KNOWLEDGE_SURFACE_UNTRANSLATED.
@@ -344,6 +345,52 @@ def test_bundle_key_parity():
         "only_en": sorted(set(en) - set(he)),
         "only_he": sorted(set(he) - set(en)),
     }
+
+
+# Keys whose two languages legitimately interpolate DIFFERENT params. A real
+# exemption is a grammatical fact about one language — e.g. a construction that
+# has to name a gender or a count the other language leaves implicit — and never
+# "the Hebrew phrasing came out shorter". There are none today, and an entry here
+# is a claim someone has to defend in review, which is why the test below also
+# fails a STALE one: an exemption that no longer mismatches is a check that
+# quietly stopped checking.
+PLACEHOLDER_PARITY_EXEMPT: dict[str, str] = {
+    # "some.key": "why this language genuinely needs a param the other does not",
+}
+
+
+def test_both_bundles_take_the_same_placeholders():
+    """Key parity is not enough: a bundle string interpolates `{name}`, and a
+    translation that drops one still READS as a sentence — it just stops saying
+    the thing it was written to say, in the language this app opens in.
+
+    Proved by mutation: replacing the Hebrew `warning.span_rounded_over_published_limit`
+    body with a fixed phrase that names no number left `tests/web` and
+    `tests/decisions` fully green, because `test_bundle_key_parity` compares key
+    SETS and `test_gap_warning_placeholders_match_the_params_a_real_run_emits`
+    drives an empty-KB run that only ever reaches two codes. The Hebrew reader
+    silently lost the millimetres that are the entire point of the warning.
+
+    This is `test_knowledge_panes_module.py`'s
+    `test_both_bundles_take_the_same_sentence_placeholders` with the
+    `action.sentence.*` restriction lifted — that check was right, it was just
+    scoped to one family of keys.
+    """
+    en, he = _bundles()
+    mismatched = {}
+    for key in sorted(set(en) & set(he)):
+        ours = set(re.findall(r"\{(\w+)\}", str(en[key])))
+        theirs = set(re.findall(r"\{(\w+)\}", str(he[key])))
+        if ours != theirs:
+            mismatched[key] = {"en_only": sorted(ours - theirs),
+                               "he_only": sorted(theirs - ours)}
+    stale = sorted(set(PLACEHOLDER_PARITY_EXEMPT) - set(mismatched))
+    assert not stale, (
+        f"{stale} are exempted from placeholder parity but no longer differ — "
+        "drop the exemption rather than leaving a check that checks nothing")
+    unexplained = {k: v for k, v in mismatched.items()
+                   if k not in PLACEHOLDER_PARITY_EXEMPT}
+    assert not unexplained, unexplained
 
 
 def test_every_tool_on_the_rail_has_a_hint_in_both_bundles():

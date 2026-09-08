@@ -52,7 +52,8 @@ from fenceai.project.model import Selection, SiteConditions
 from fenceai.parts.resolve import resolve_model_parts
 from fenceai.strategy.continuity import BayFacts, SlotFacts, derive_member_runs
 from fenceai.strategy.layout import (
-    LayoutResult, alternative_widths, boundaries, layout_segment,
+    LayoutResult, admits_widths, alternative_widths, boundaries,
+    earns_remainder_ceiling, layout_segment,
 )
 from fenceai.strategy.model import (
     Gate,
@@ -395,6 +396,10 @@ def generate(
             gap["seg_len"], gap["max_span"],
             default=gap["widths"], exact_mm=gap["exact_span"],
             min_span_mm=gap["min_span"],
+            # The published thousandths travel with the millimetre limit, so an
+            # offer is filtered by the same `admits_widths` that will judge it
+            # when it comes back as a `Selection`.
+            max_span_milli=gap["max_span_milli"],
         ))
         if not candidates:
             continue
@@ -1548,37 +1553,45 @@ class _SegmentModel:
     max_span_basis: Literal[
         "rule", "fallback", "manufactured_width", "declined_bound"] = "rule"
 
-    def max_bay_mm(self) -> Mm:
-        """The widest WHOLE-MILLIMETRE bay this limit admits.
+    def admits(self, widths: list[Mm], seg_len: Mm) -> bool:
+        """May this segment be built with these bay widths? The ONE answer.
 
-        `ceil(max_span_milli / 1000)`, and the ceiling is not a loophole — it is
-        what ADR-0002 costs. A published limit of 1422.4 mm divides a 4267 mm run
-        into three bays of 1422.333 mm, every one of them comfortably inside the
-        limit; but bays are stored as integer millimetres, three of them must sum
-        to 4267, and `1422 + 1422 + 1422` is 4266. So the layout spreads the odd
-        millimetre — `[1423, 1422, 1422]` — and one bay sits 0.6 mm over a number
-        no tape measure resolves.
+        A predicate over the whole layout, never a bound on one bay, and that
+        distinction is the fix for a real defect. This used to be `max_bay_mm()`
+        — `ceil(max_span_milli / 1000)`, the widest whole millimetre a
+        sub-millimetre limit admits — justified by an argument about the layouts
+        THIS ENGINE computes: with `n = ceil(L / max)` the widest bay is
+        `floor(L/n) + 1` at most, so the spread can reach the ceiling and nothing
+        can pass it. True, and true only under that premise. Three of the four
+        sites comparing against it had no such premise, and the worst of them was
+        a person's STORED answer: `[1423, 1423, 1423]` on a 4269 mm run under a
+        published 1422.4 mm maximum passed a per-bay ceiling of 1423 and built
+        three bays over a sealed maximum, one post and one footing short, with no
+        warning and no gap.
 
-        The alternative is not "no bay over the limit". It is FOUR bays, which is
-        the extra post, footing and pour `contract.md`:112-117 was written to
-        stop, incurred to buy back six tenths of a millimetre. The clause chooses
-        the count computed from the true limit, so this is the comparison that
-        goes with it.
+        So the premise travels with the bound. `layout.admits_widths` is the
+        rule; it says the widths tile the segment, no bay passes `max_span` —
+        the limit AT REST (ADR-0002), which is what every clamp, warning and
+        payload in this module is written in — and above that only a
+        MINIMUM-COUNT layout may carry the fraction ADR-0002 cannot store.
 
-        Tight in both directions rather than a blanket tolerance. Where the limit
-        IS a whole millimetre this is exactly `max_span` and every existing check
-        is unchanged — which is also the arithmetic reason nothing here could
-        move a golden scenario. And it is reachable only by the spread: with
-        `n = ceil(L / max)` the widest bay is `floor(L/n) + 1` at most, and
-        `L/n <= max`, so no admissible layout ever lands ABOVE this bound. A bay
-        wider than it is what the guard is looking for — a layout bug, or a rule
-        carrying a wrong number — and still stops the run.
+        That fraction is not a loophole, it is what integer millimetres cost. A
+        1422.4 mm maximum divides a 4267 mm run into three bays of 1422.333 mm,
+        all comfortably inside it; stored as whole millimetres they must sum to
+        4267 and `1422 * 3` is 4266, so the spread produces `[1423, 1422, 1422]`
+        and one bay stands 0.6 mm over a number no tape measure resolves. The
+        alternative is a FOURTH bay — the extra post, footing and pour
+        `contract.md`:112-117 was written to stop, bought to recover six tenths
+        of a millimetre. A layout that already has a spare bay in it cannot make
+        that argument, which is exactly what the count clause checks.
 
-        `max_span` remains the number shown to people. A warning that said a bay
-        was "1423 mm against the 1422.4 mm maximum" would be reporting our unit
-        problem as the customer's.
+        Where the limit is a whole millimetre — every rule this repo authored —
+        `max_span_milli` is `max_span * 1000`, the ceiling IS `max_span`, and
+        this reduces to `max(widths) <= max_span`. That is the arithmetic reason
+        nothing here can move a golden scenario.
         """
-        return -(-self.max_span_milli // 1000)
+        return admits_widths(widths, seg_len, self.max_span,
+                             max_span_milli=self.max_span_milli)
     # The per-span COUNTS nobody stated: `param -> the gap node that says so`.
     # Keyed by the parameter because the param name IS the field name above, so
     # the reporter reads the value with `getattr` and cannot drift from it. Same
@@ -2580,9 +2593,17 @@ def _generate_run(
                 # layout point — whose loser is a width list with no version
                 # behind it, and which therefore rides in a payload — this is a
                 # real knowledge ref, so the edge cannot invent a fact.
+                # `admits`, not a bare per-bay ceiling: a lock builds ONE bay of
+                # the whole gap, and a gap wider than the limit is never a
+                # minimum-count layout — so a deliberate over-limit placement
+                # keeps its attribution even where its width happens to land on
+                # `ceil(published limit)`. Comparing against that ceiling alone
+                # silently dropped this edge for a 1423 mm lock under a 1422.4 mm
+                # maximum: the departure was real and read as the engine's own.
                 defeated=([sm.max_span_ref]
-                          if sm.max_span_ref and locked_ov.directive.width_mm
-                          > sm.max_bay_mm() else []),
+                          if sm.max_span_ref and not sm.admits(
+                              [locked_ov.directive.width_mm], seg_len)
+                          else []),
                 payload={"override_id": locked_ov.id, "run_id": run.id,
                          "station_mm": seg_start, "width_mm": seg_len,
                          "author": locked_ov.author},
@@ -2609,7 +2630,12 @@ def _generate_run(
              and c.scope == gap_scope), None)
         if picked is not None:
             default_widths = list(layout.widths)
-            if _widths_fit(picked.widths, seg_len, sm.max_bay_mm()):
+            # The ACCEPT side of the question `alternative_widths` answers on the
+            # OFFER side, and now literally the same predicate. A stored answer
+            # is admissible on its own terms — it never needs the candidate set,
+            # which would be circular — but it is held to the bound the engine
+            # would have offered under, not to a looser one.
+            if sm.admits(picked.widths, seg_len):
                 layout = LayoutResult(
                     widths=list(picked.widths),
                     rejected_alternative=layout.rejected_alternative,
@@ -2649,7 +2675,8 @@ def _generate_run(
                 "widths": list(layout.widths),
                 "displaced": (list(layout.rejected_alternative)
                               if layout.rejected_alternative else None),
-                "max_span": sm.max_span, "min_span": min_span,
+                "max_span": sm.max_span, "max_span_milli": sm.max_span_milli,
+                "min_span": min_span,
                 "exact_span": sm.exact_span,
             })
         governed = [r for r in (sm.max_span_ref, layout_pref_ref) if r]
@@ -2931,13 +2958,20 @@ def _generate_run(
                          "slots": _panel_slots_payload(span.panel)},
                 scope_refs=[span.id], inputs=panel_inputs,
             )
-            if width > sm.max_bay_mm():
-                # `max_bay_mm()`, not `max_span`: where the published limit is
-                # not a whole millimetre, the layout's own remainder spread puts
-                # one bay a fraction of a millimetre over it, and rejecting that
-                # would reject the very layout `contract.md`:112-117 requires —
-                # see that method. Identical to `max_span` for every whole
-                # millimetre limit, which is all of ours.
+            if width > sm.max_span and not sm.admits(layout.widths, seg_len):
+                # Two halves of one question, and the order matters. `max_span`
+                # is the limit at rest and names the offending BAY — so the
+                # failure below and the warning after it are about the bay a
+                # reader can measure. `admits` then decides whether this LAYOUT
+                # earned the fraction: where the published limit is not a whole
+                # millimetre, the minimum-count layout's own remainder spread
+                # puts one bay a fraction over it, and rejecting that would
+                # reject the very layout `contract.md`:112-117 requires. It is
+                # not a per-bay ceiling — a ceiling with no count behind it
+                # admits three 1423 mm bays where the limit allows four bays or
+                # one 1423 mm one, which is a post short of a stamped schedule.
+                # For every whole-millimetre limit, which is all of ours, this
+                # is exactly `width > max_span` and nothing has moved.
                 #
                 # NARROWER than it was, not absent. A bay may exceed the resolved
                 # maximum ONLY where a `lock_bay` override put it there — allow
@@ -3451,7 +3485,7 @@ def _report_rounded_over_published_limit(
     """The published limit fell between whole millimetres, so one bay carries the
     fraction ADR-0002 cannot store — said out loud, once per segment.
 
-    `_SegmentModel.max_bay_mm()` decided this is tolerable and it is right: three
+    `_SegmentModel.admits()` decided this is tolerable and it is right: three
     bays of a 4267 mm run under a published 1422.4 mm maximum are 1422.333 mm
     each and every one of them fits, but bays are integer millimetres at rest and
     three of them must sum to 4267, so the remainder spread produces
@@ -3479,17 +3513,21 @@ def _report_rounded_over_published_limit(
       where a limit is a whole millimetre, as every rule this repo authored is,
       `max_span_milli` is `max_span * 1000` and no admissible layout can reach
       this, so nothing authored and no golden scenario can produce it;
-    * it is within `max_bay_mm()` — above that bound is not the rounding but a
+    * it is within `ceil(published limit)` — above that is not the rounding but a
       layout bug or a rule carrying a wrong number, and the guard at the span
       loop still stops the run for it;
     * the bay COUNT is the one the true limit gives. That is what makes the
-      sentence's middle clause true, and it is also what keeps a hand-placed bay
-      out of here for free: a `lock_bay` builds ONE bay of the whole gap, which
-      is not `ceil(L / max_span)` whenever the gap is over the limit at all.
-      `_widths_fit` admits a person's chosen widths against `max_bay_mm()`
-      without checking their count, so a stale answer CAN carry a deficient one;
-      it is reported as their choice by `choice_unavailable`/`resolve_choice_set`
-      and must not be re-narrated here as arithmetic of ours.
+      sentence's middle clause true — *"laid out in the N bays that limit
+      allows"* — and it is also what keeps a hand-placed bay out of here for
+      free: a `lock_bay` builds ONE bay of the whole gap, which is not
+      `ceil(L / max_span)` whenever the gap is over the limit at all. A bay a
+      person placed is reported by `span_placed_over_maximum`, with their name on
+      it, and must not be re-narrated here as arithmetic of ours.
+
+    The last two ARE `layout.earns_remainder_ceiling`, called rather than
+    restated: they are the same conjunction that decides admissibility at the
+    span guard, and a disclosure that could describe a layout the engine refuses
+    to build — or stay silent about one it builds — is worse than no disclosure.
 
     `severity="info"`: nothing here is wrong and nothing can be fixed. It is a
     disclosure of a decision, which is why it carries a decision node rather
@@ -3507,10 +3545,16 @@ def _report_rounded_over_published_limit(
         return
     widest = max(layout.widths)
     over_milli = widest * 1000 - sm.max_span_milli
-    if over_milli <= 0 or widest > sm.max_bay_mm():
+    if over_milli <= 0:
         return
     seg_len = seg_end - seg_start
-    if len(layout.widths) != -(-seg_len * 1000 // sm.max_span_milli):
+    # The second and third clauses, as ONE call — the same conjunction
+    # `_SegmentModel.admits` is built on, so this sentence cannot come to
+    # describe a layout the engine would not build. Not `admits` itself: that
+    # one lets any bay within `max_span` through before it ever looks at the
+    # count, and a limit that ROUNDS UP (2463.8 rests at 2464) would then let a
+    # hand-placed bay in here through the front door.
+    if not earns_remainder_ceiling(layout.widths, seg_len, sm.max_span_milli):
         return
     params: dict[str, str | int] = {
         "element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
@@ -3522,6 +3566,26 @@ def _report_rounded_over_published_limit(
         "max_mm": sm.max_span, "limit_milli": sm.max_span_milli,
         "over_milli": over_milli,
     }
+    # The BAYS that carry the fraction, by the ids they are about to be created
+    # with — every bay actually over the published limit, which under a remainder
+    # spread is every bay at the ceiling. `span@run1:0-4267` was written here and
+    # it is not a span at all: the format names one, the arguments are the
+    # SEGMENT's bounds, and `n >= 2` whenever this node fires, so the id could
+    # never match a bay that exists. `nodes_for_element` returned nothing for
+    # every bay in the segment — a reader clicking the 1423 mm bay to ask why it
+    # is 1423 landed on nothing, for the one decision this disclosure exists to
+    # make. The stations are `boundaries(seg_start, layout.widths)`, exactly as
+    # the span loop computes them a few lines later.
+    #
+    # Those bays and not the whole segment: a 1422 mm bay beside them is inside
+    # the published maximum and has nothing to answer for here, and scoping the
+    # node to it would tell a reader it was over a limit it is not. The
+    # segment-wide decision — why three bays — is `layout_spans`, which this
+    # node hangs off as an input.
+    stations = boundaries(seg_start, layout.widths)
+    carrying = [f"span@{run.id}:{s0}-{s1}"
+                for (s0, s1), w in zip(zip(stations, stations[1:]), layout.widths)
+                if w * 1000 > sm.max_span_milli]
     node = builder.add(
         "conflict", "span_rounded_over_published_limit", payload=dict(params),
         # `governed_by`, never `defeated`. The published limit was not beaten: it
@@ -3530,7 +3594,7 @@ def _report_rounded_over_published_limit(
         # rule lost, and CLAUDE.md reserves that edge for the version that
         # actually did.
         governed_by=[sm.max_span_ref] if sm.max_span_ref else [],
-        scope_refs=[f"span@{run.id}:{seg_start}-{seg_end}"],
+        scope_refs=carrying,
         inputs=[layout_node_id],
     )
     strategy.warnings.append(StrategyWarning(
@@ -3803,31 +3867,11 @@ def _countable_axes(result: GenerationResult) -> dict[str, int]:
     return axes
 
 
-def _widths_fit(widths: list[Mm], seg_len: Mm, max_span: Mm) -> bool:
-    """Is this width list still buildable in this gap?
-
-    Two checks, and deliberately not a third. The widths must fill the gap
-    exactly, and no bay may exceed the RESOLVED maximum span — which is what
-    stops a stale answer building an over-maximum fence because somebody chose it
-    under a laxer rule.
-
-    `min_span` is NOT checked, and that is the design being consistent with
-    itself: `layout_segment` only warns about a sliver, and a person may want a
-    400 mm bay against a wall. A selected sliver is built and reported through
-    the `sliver_span` warning the span loop already emits, rather than refused
-    here — refusing it would make an answered question stricter than an
-    unanswered one.
-
-    Admissibility rather than membership of a candidate set, for a reason worth
-    keeping: what a person chose is the WIDTHS. If they are still buildable they
-    are still the answer, even where a changed `max_span` means a different
-    generator would now propose them. It also avoids needing the candidate set
-    before a choice can be honoured, which would be circular — candidates are
-    measured from the baseline this choice helps produce.
-    """
-    if not widths or any(w <= 0 for w in widths):
-        return False
-    return sum(widths) == seg_len and max(widths) <= max_span
+# `_widths_fit` lived here and is gone: it took a bare `max_span` millimetre and
+# was handed `max_bay_mm()`, which is how a stored answer of three over-limit
+# bays came to be accepted. The question it asked is `layout.admits_widths`,
+# reached through `_SegmentModel.admits` — one predicate, so the bound the
+# generator OFFERS under and the bound it ACCEPTS under cannot drift apart.
 
 
 def _choice_unavailable_gap(

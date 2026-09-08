@@ -24,10 +24,195 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 JS = STATIC / "js"
+
+
+# --------------------------------------------------- the pane, actually drawn
+#
+# Four of the assertions below used to be regexes over the module's source, and
+# a reviewer proved each of them blind: `if (v.status === "proposed") { proposed++;
+# active.push(v); }` — a filter that excludes NOTHING, which is the entire point
+# of the redesign — left `assert 'status === "proposed"' in src` green and the
+# whole web suite passing. A source that mentions the right token is not a pane
+# that drew the right cards.
+#
+# So the pane is RUN, in node, against a DOM stub and the real locale bundle:
+# the same idiom `test_gaps_module.py` and `test_panel_inspector_module.py` use.
+# What node cannot see is stated where it matters — `<details>` collapses in a
+# browser and nowhere else — and points at the browser case that does
+# (`_smoke_knowledge_panes` in tools/ui_smoke.py).
+
+SCRIPT = r"""
+import { readFileSync } from "node:fs";
+
+// A DOM stub, not a DOM. This pane reaches for elements BY ID (it owns
+// `#pane-k-rules`), so the stub carries a registry of exactly the six ids
+// index.html gives it and THROWS on any other — which makes "the pane touches
+// no DOM but its own" an assertion rather than a comment.
+class El {
+  constructor(tag) {
+    this.tagName = tag.toUpperCase();
+    this.children = [];
+    this.attrs = {};
+    this.dataset = {};
+    this.style = {};
+    this.className = "";
+    this.hidden = false;
+    this.open = false;
+    this._text = "";
+    this._html = "";
+    this.parent = null;
+    this.classList = {
+      add: (c) => { this.className = `${this.className} ${c}`.trim(); },
+      remove: () => {},
+      contains: (c) => this.className.split(" ").includes(c),
+    };
+  }
+  get options() { return this.children.filter((c) => c.tagName === "OPTION"); }
+  get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
+  set textContent(v) { this._text = String(v); this.children = []; }
+  get innerHTML() { return this._html; }
+  set innerHTML(v) { this._html = String(v); if (v === "") this.children = []; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  getAttribute(k) { return this.attrs[k] ?? null; }
+  appendChild(c) { c.parent = this; this.children.push(c); return c; }
+  append(...cs) { for (const c of cs) if (c) this.appendChild(c); }
+  remove() {
+    const i = this.parent?.children.indexOf(this) ?? -1;
+    if (i >= 0) this.parent.children.splice(i, 1);
+  }
+  addEventListener(ev, fn) { (this._on ??= {})[ev] = fn; }
+  querySelector(sel) {
+    // tag names only: the one lookup the pane makes inside a node it built is
+    // <summary>. The retire button lives in an innerHTML string this stub does
+    // not parse, and `?.` already makes that path a no-op.
+    for (const c of this.children) {
+      if (c.tagName === sel.toUpperCase()) return c;
+      const found = c.querySelector(sel);
+      if (found) return found;
+    }
+    return null;
+  }
+  querySelectorAll() { return []; }
+  get value() { return this._value ?? ""; }
+  set value(v) { this._value = v; }
+}
+
+globalThis.Option = class extends El {
+  constructor(text, value) { super("option"); this._text = String(text); this.value = value; }
+};
+
+const byId = {};
+const make = (id, tag) => (byId[id] = new El(tag));
+function freshDom() {
+  for (const k of Object.keys(byId)) delete byId[k];
+  const sel = make("k-filter-type", "select");
+  sel.appendChild(new Option("All types", ""));   // the literal index.html carries
+  make("knowledge-list", "div");
+  make("k-retired-list", "div");
+  make("k-excluded-note", "div");
+  make("k-filter-count", "span");
+  make("k-retired-group", "details").appendChild(new El("summary"));
+}
+
+globalThis.localStorage = {
+  s: {}, getItem: (k) => globalThis.localStorage.s[k] ?? null,
+  setItem: (k, v) => { globalThis.localStorage.s[k] = String(v); },
+};
+globalThis.document = {
+  createElement: (tag) => new El(tag),
+  createElementNS: (_ns, tag) => new El(tag),
+  getElementById: (id) => {
+    if (!(id in byId)) throw new Error("the pane reached for an unknown id: " + id);
+    return byId[id];
+  },
+  querySelectorAll: (sel) => {
+    if (sel !== "#knowledge-list .rule-card")
+      throw new Error("unexpected global selector: " + sel);
+    return byId["knowledge-list"].children.filter((c) => c.classList.contains("rule-card"));
+  },
+  documentElement: new El("html"),
+};
+
+let versions = [];
+globalThis.fetch = async (url) => {
+  if (url === "/api/knowledge") return { ok: true, json: async () => versions };
+  if (url === "/api/catalog") return { ok: true, json: async () => ({ products: {} }) };
+  return { ok: true, json: async () => JSON.parse(readFileSync(url, "utf8")) };
+};
+
+const { loadLocale, t } = await import("./js/i18n.js");
+await loadLocale("en");
+const { renderKnowledgeRules } = await import("./js/knowledge-rules.js");
+
+const version = (object_id, status) => ({
+  object_id, version: 1, status, type: "company_rule",
+  title: object_id + " title", title_i18n: {},
+  scope: { model: "Emblem" },
+  actions: [{ kind: "set_param", param: "max_span_mm", value: 1800 }],
+  attributed_to: "expert", derived_from: [],
+});
+
+async function draw(vs) {
+  freshDom();
+  versions = vs;
+  await renderKnowledgeRules();
+  const cards = (host) => byId[host].children.map((c) => ({
+    id: (c.dataset.search || "").split(" ")[0], html: c.innerHTML,
+  }));
+  return {
+    active: cards("knowledge-list"),
+    retired: cards("k-retired-list"),
+    note: byId["k-excluded-note"].innerHTML,
+    note_hidden: byId["k-excluded-note"].hidden,
+    summary: byId["k-retired-group"].querySelector("summary").textContent,
+    group_hidden: byId["k-retired-group"].hidden,
+    group_open: byId["k-retired-group"].open,
+    count: byId["k-filter-count"].textContent,
+  };
+}
+
+const out = {};
+out.many = await draw([
+  version("K-A", "active"), version("K-B", "active"),
+  version("K-P1", "proposed"), version("K-P2", "proposed"), version("K-P3", "proposed"),
+  version("K-R1", "retired"), version("K-R2", "retired"),
+]);
+out.one_each = await draw([
+  version("K-A", "active"), version("K-P1", "proposed"), version("K-R1", "retired"),
+]);
+out.nothing_excluded = await draw([version("K-A", "active")]);
+out.words = {
+  excluded_one: t("knowledge.excluded_note_one"),
+  excluded_n1: t("knowledge.excluded_note", { n: 1 }),
+  excluded_n3: t("knowledge.excluded_note", { n: 3 }),
+  retired_one: t("knowledge.retired_one"),
+  retired_n1: t("knowledge.retired_n", { n: 1 }),
+  retired_n2: t("knowledge.retired_n", { n: 2 }),
+};
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="module")
+def drawn() -> dict:
+    """`renderKnowledgeRules()` run three times over three version lists."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", SCRIPT],
+        cwd=STATIC, capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
 
 
 def _bundles() -> tuple[dict, dict]:
@@ -124,15 +309,65 @@ def test_the_renderer_supplies_every_placeholder_its_templates_declare():
 # ------------------------------------------------------------- the single owner
 
 
-def test_one_module_owns_the_rule_phrasing():
-    """`actionSentence` and `scopeChips` answer "what does this rule say" for
-    the rules list, and the review queue renders the same two fields on a
-    candidate. A second definition is a second answer."""
-    sources = {p.name: p.read_text() for p in [*JS.glob("*.js"), STATIC / "app.js"]}
+def _sources() -> dict[str, str]:
+    return {p.name: p.read_text() for p in [*JS.glob("*.js"), STATIC / "app.js"]}
+
+
+def test_one_module_defines_the_rule_phrasing():
+    """`actionSentence` and `scopeChips` answer "what does this rule say". A
+    second DEFINITION is a second answer — but see the test below for the
+    second answer this one cannot see."""
+    sources = _sources()
     for fn in ("actionSentence", "scopeChips", "ACTION_KINDS"):
         pattern = re.compile(r"\b(?:function|const)\s+" + fn + r"\b")
         definers = [name for name, src in sources.items() if pattern.search(src)]
         assert definers == ["builder-ui.js"], (fn, definers)
+
+
+def test_every_surface_that_shows_a_rule_uses_that_one_phrasing():
+    """The test above justified itself by the review queue and then could not
+    see it. A second answer does not have to be a second `function
+    actionSentence` — tabs.js's was `esc(JSON.stringify(c.actions))`, no
+    same-named definition anywhere, so the same rule read "Set max span to
+    1800 mm" in the Knowledge tab and
+    `{"kind":"set_param","param":"max_span_mm","value":1800}` in Review.
+
+    Two properties, both about the SHAPE the second answer actually took:
+
+      * nothing anywhere renders a `scope` or an `actions` as a JSON dump; and
+      * every module that READS the two endpoints returning rule-shaped objects
+        imports both renderers from builder-ui.js.
+
+    The second is the one with teeth — a module that fetches candidates and
+    does not import the phrasing has to be phrasing them itself.
+    """
+    dumps = {}
+    for name, src in _sources().items():
+        # whole-line comments stripped, the same way the JSON guard above does
+        # it: builder-ui.js's own header NAMES the two dumps it replaced, and a
+        # scan that read prose would forbid explaining the fix
+        code = re.sub(r"^\s*//.*$", "", src, flags=re.M)
+        hits = re.findall(r"JSON\.stringify\(\s*\w+\.(?:scope|actions)\b", code)
+        if hits:
+            dumps[name] = hits
+    assert not dumps, (
+        "a rule's scope or actions rendered as JSON — that is the second "
+        "answer, whatever it is spelled", dumps)
+
+    RULE_READS = ('apiGet("/api/knowledge")', 'apiGet("/api/candidates")')
+    readers = {name for name, src in _sources().items()
+               if any(call in src for call in RULE_READS)}
+    assert readers == {"knowledge-rules.js", "tabs.js"}, (
+        "a new surface reads the rule endpoints — it needs the same phrasing, "
+        "and this list needs to say so", readers)
+    for name in sorted(readers):
+        src = (JS / name).read_text()
+        imports = re.search(r"import \{(.*?)\} from \"\./builder-ui\.js\";",
+                            src, re.S)
+        assert imports, (name, "reads rules but imports nothing from builder-ui.js")
+        named = set(re.findall(r"\w+", imports.group(1)))
+        assert {"actionSentence", "scopeChips"} <= named, (
+            name, "must describe a rule in the shared words", sorted(named))
 
 
 def test_the_rules_list_no_longer_dumps_json_at_the_reader():
@@ -151,31 +386,73 @@ def test_the_rules_list_no_longer_dumps_json_at_the_reader():
 # ------------------------------------------------------- excluded, and stated
 
 
-def test_proposed_candidates_are_excluded_from_the_rules_pane():
-    src = (JS / "knowledge-rules.js").read_text()
-    assert 'status === "proposed"' in src, (
-        "the pane must exclude review-pending candidates — they are the 90% "
-        "that made this tab unreadable")
+def test_proposed_candidates_are_excluded_from_the_rules_pane(drawn):
+    """Observed by DRAWING the pane, not by reading it. The regex this replaces
+    (`assert 'status === "proposed"' in src`) survived the mutation that is the
+    exact opposite of the pane's contract — a branch that counts a candidate and
+    then pushes it into the active list anyway — because the token it looked for
+    is still there in the mutant."""
+    for case, expect_active in (("many", ["K-A", "K-B"]), ("one_each", ["K-A"])):
+        d = drawn[case]
+        assert [c["id"] for c in d["active"]] == [i.lower() for i in expect_active], case
+        drawn_ids = " ".join(c["html"] for c in d["active"] + d["retired"])
+        assert "K-P1" not in drawn_ids, (
+            case, "a proposed candidate has a card in the rules pane")
+        assert "K-P2" not in drawn_ids and "K-P3" not in drawn_ids, case
 
 
-def test_the_exclusion_is_counted_and_shown():
+def test_the_exclusion_is_counted_and_shown(drawn):
     """A silent filter moves the confusion rather than fixing it: the reader
-    cannot tell an excluded candidate from a rule that was never published."""
-    src = (JS / "knowledge-rules.js").read_text()
-    assert "proposed++" in src, "the excluded candidates must be counted"
-    assert "k-excluded-note" in src, "...and the count must reach the screen"
+    cannot tell an excluded candidate from a rule that was never published.
+
+    Read off the rendered note, so the NUMBER is checked and not merely the
+    presence of a `proposed++` token: three excluded candidates must produce a
+    note that says three, and none must produce no note at all."""
+    words = drawn["words"]
+    assert drawn["many"]["note"] == words["excluded_n3"]
+    assert drawn["many"]["note_hidden"] is False
+    assert "3" in drawn["many"]["note"]
+    assert drawn["nothing_excluded"]["note_hidden"] is True, (
+        "nothing was excluded, so nothing may claim anything was")
+    assert drawn["nothing_excluded"]["note"] == ""
     en, he = _bundles()
     for table in (en, he):
         assert "{n}" in table["knowledge.excluded_note"], (
             "the note states a number, so its template must take one")
 
 
-def test_retired_rules_are_reachable_but_collapsed():
-    src = (JS / "knowledge-rules.js").read_text()
+def test_retired_rules_go_to_their_own_group_and_start_closed(drawn):
+    """Retired rules are history: kept reachable, not read first.
+
+    The old assertion was `'id="k-retired-group"' in html and "<details" in
+    html` — two independent facts about one file, and index.html carries
+    another `<details>` (`#model-axes-box`), so replacing
+    `<details id="k-retired-group">` with `<div id="k-retired-group">` passed.
+    That swap silently breaks `group.open = ...`, which is a no-op on a div:
+    every retired rule would then be listed open beside the rules in force.
+
+    Two halves, and only one of them is observable here. Node can see the
+    ROUTING — which host each version lands in, and that `open` is false and
+    `hidden` true when there is nothing to show. Whether a closed `<details>`
+    actually hides its children is a browser behaviour with no equivalent in a
+    stub, so the element's TAG is asserted against index.html and the visible
+    collapse is left to `_smoke_knowledge_panes` in tools/ui_smoke.py, which
+    reads `#k-retired-group` out of a real page.
+    """
     html = (STATIC / "index.html").read_text()
-    assert 'status === "retired"' in src
-    assert 'id="k-retired-group"' in html and "<details" in html, (
-        "retired rules are history: kept reachable, not read first")
+    assert re.search(r'<details\b[^>]*\bid="k-retired-group"', html), (
+        "the retired group must BE a <details> — `group.open` is how the pane "
+        "collapses it, and that property does nothing on any other element")
+
+    many, one, none = drawn["many"], drawn["one_each"], drawn["nothing_excluded"]
+    assert [c["id"] for c in many["retired"]] == ["k-r1", "k-r2"]
+    assert "K-R1" not in " ".join(c["html"] for c in many["active"]), (
+        "a retired rule must not sit among the rules in force")
+    assert many["group_hidden"] is False and many["group_open"] is False, (
+        "reachable, and closed until the reader asks")
+    assert one["group_hidden"] is False
+    assert none["group_hidden"] is True and none["retired"] == [], (
+        "no retired rules, so no group")
 
 
 # ------------------------------------------------------------ the strip itself
@@ -210,7 +487,13 @@ def test_the_panes_do_not_reach_into_each_other():
     slice put three modules inside a single tab."""
     rules = (JS / "knowledge-rules.js").read_text()
     tabs = (JS / "tabs.js").read_text()
-    published = (JS / "published-parts.js").read_text()
+    # The Published pane's module is a CONCURRENT session's work and is not
+    # committed on this branch. Reading it unconditionally made this file — the
+    # one that asserts module boundaries — depend on a file outside the
+    # repository, so the branch was red on a clean checkout and green only in a
+    # working tree that happened to hold somebody else's untracked module.
+    published_js = JS / "published-parts.js"
+    published = published_js.read_text() if published_js.exists() else None
 
     assert "k-subnav" not in rules and "k-count" not in rules, (
         "the pane counts what it drew and emits it; the strip is not its DOM")
@@ -219,7 +502,8 @@ def test_the_panes_do_not_reach_into_each_other():
         "have to each other")
     assert "knowledge-list" not in tabs, (
         "the rules list belongs to knowledge-rules.js now")
-    assert "knowledge-list" not in published and "k-filter" not in published
+    if published is not None:
+        assert "knowledge-list" not in published and "k-filter" not in published
 
 
 # --------------------------------------------------------------- the whole tab
@@ -260,16 +544,32 @@ def test_a_length_parameter_does_not_state_its_unit_twice():
                 assert str(value).rstrip().endswith("({u})"), (lang, key, value)
 
 
-def test_counted_strings_have_a_singular():
+def test_counted_strings_render_their_singular_on_a_count_of_one(drawn):
     """"1 proposed candidates" — the plural the screenshot caught. This app
     already carries `_one` partners for every other counted string
-    (`structure.height_one`, `strategy.warnings_count_one`)."""
+    (`structure.height_one`, `strategy.warnings_count_one`).
+
+    The old assertion was `"=== 1" in src`, which is FILE-GLOBAL: this module
+    has two such comparisons, so deleting either singular branch left the other
+    one satisfying the check and the test green. Here each string is read back
+    off a render that has exactly one of the thing being counted, and compared
+    against the two candidate phrasings — so a deleted branch shows up as the
+    plural arriving where the singular belongs.
+    """
     en, he = _bundles()
-    src = (JS / "knowledge-rules.js").read_text()
     for plural, singular in (("knowledge.excluded_note", "knowledge.excluded_note_one"),
                              ("knowledge.retired_n", "knowledge.retired_one")):
         for lang, table in (("en", en), ("he", he)):
             assert plural in table, f"{lang}:{plural}"
             assert singular in table, f"{lang}:{singular}"
-        assert singular in src, f"{singular} exists but nothing renders it"
-        assert "=== 1" in src, "the singular must be selected on a count of one"
+
+    words, one, many = drawn["words"], drawn["one_each"], drawn["many"]
+    # the fixture would be vacuous if the two phrasings coincided
+    assert words["excluded_one"] != words["excluded_n1"]
+    assert words["retired_one"] != words["retired_n1"]
+
+    assert one["note"] == words["excluded_one"], "one candidate, one sentence"
+    assert one["summary"] == words["retired_one"], "one retired rule, one summary"
+    # ...and the plural is still chosen when there is more than one
+    assert many["note"] == words["excluded_n3"]
+    assert many["summary"] == words["retired_n2"]

@@ -41,12 +41,19 @@ from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
 from fenceai.knowledge.parameters import (
     ParameterRow, ParameterTable, Provenance, Quantity, expand, paired_columns, to_mm,
 )
+from fenceai.core.errors import GenerationFailure
 from fenceai.core.gaps import SourceRef
+from fenceai.core.units import round_milli_to_mm
 from fenceai.knowledge.snapshot import load
 from fenceai.knowledge.source_policy import SHIPPED_DEFAULT
-from fenceai.project.model import SiteConditions
-from fenceai.strategy.layout import equal_layout, equal_layout_milli, layout_segment
+from fenceai.project.model import Selection, SiteConditions
+from fenceai.strategy.layout import (
+    LayoutResult, admits_widths, alternative_widths, equal_layout,
+    equal_layout_milli, layout_segment, min_bay_count, remainder_ceiling_mm,
+)
 from fenceai.strategy.generator import generate
+from fenceai.strategy.overrides import LockBay, Override
+from fenceai.topology.station import make_anchor
 from tests.conftest import demo_catalog, straight_topology
 
 FIXTURES = Path(__file__).parent / "fixtures" / "real_snapshots"
@@ -243,7 +250,7 @@ def test_the_true_bay_width_fits_and_the_stored_one_is_over_by_under_a_millimetr
     alternative is a fourth post, which is the whole harm the clause names. So
     the property is stated as it actually holds, on both sides of the rounding:
     the TRUE bay width always fits, and the STORED one is never a whole
-    millimetre over. `_SegmentModel.max_bay_mm()` is the same bound at the
+    millimetre over. `_SegmentModel.admits()` is the same bound at the
     generator's guard.
     """
     for length_mm in range(1, 20_001):
@@ -424,7 +431,7 @@ def test_an_authored_row_and_a_published_row_stating_the_same_mm_agree():
 
 # -- the residue is reported, not merely tolerated ----------------------------
 #
-# `_SegmentModel.max_bay_mm()` decided the three-bay layout is right and it is:
+# `_SegmentModel.admits()` decided the three-bay layout is right and it is:
 # a fourth bay is the extra post, footing and pour the clause exists to prevent,
 # bought to recover six tenths of a millimetre. What was missing is that the
 # trade was SILENT — no code, no locale entry, no decision node — so a fence
@@ -434,14 +441,22 @@ def test_an_authored_row_and_a_published_row_stating_the_same_mm_agree():
 ROUNDED = "span_rounded_over_published_limit"
 
 
-def _generated_with_limit(milli: int, lexeme: str, length_mm: int):
+def _kb_with_limit(milli: int, lexeme: str) -> KnowledgeBase:
+    """The demo knowledge with its authored span rule replaced by a published
+    row at this magnitude — the only way to get a sub-millimetre limit into a
+    run, since every rule this repo authored is whole millimetres."""
     kb = demo_knowledge()
     kb.versions = [v for v in kb.versions if v.object_id != "K-MAXSPAN"]
     versions, gaps, _ = expand(_real_span_table(milli, lexeme), policy=SHIPPED_DEFAULT)
     assert gaps == []
     kb.versions.extend(versions)
-    return generate(straight_topology(length_mm), kb, demo_catalog(),
-                    site=SiteConditions(exposure_category="B"))
+    return kb
+
+
+def _generated_with_limit(milli: int, lexeme: str, length_mm: int, **kw):
+    return generate(straight_topology(length_mm), _kb_with_limit(milli, lexeme),
+                    demo_catalog(), site=SiteConditions(exposure_category="B"),
+                    **kw)
 
 
 def test_the_rounded_bay_is_reported_by_its_real_numbers():
@@ -527,7 +542,7 @@ def test_a_whole_millimetre_limit_says_nothing_ever():
     """75" is 1905.000 mm and there is no fraction to carry.
 
     Every rule this repo authored is int millimetres, so `max_span_milli` is
-    `max_span * 1000` and `max_bay_mm()` is exactly `max_span` — which is the
+    `max_span * 1000` and the remainder ceiling is exactly `max_span` — which is the
     arithmetic reason this warning cannot reach a golden scenario. Asserted on
     the one published magnitude of the six that is whole, so the claim is made
     against real data rather than against an authored rule alone.
@@ -581,5 +596,275 @@ def test_how_much_residue_there_is_to_report(max_span_milli, runs, worst_milli):
     assert sum(1 for o in over if o > 0) == runs
     assert max(over) == worst_milli
     # ...and never a whole millimetre over, which is what makes it reportable
-    # rather than a refusal: above `max_bay_mm()` the generator still stops.
+    # rather than a refusal: above the ceiling the generator still stops.
     assert max(over) < 1000
+
+
+# -- the bound is a predicate over a LAYOUT, never a ceiling on a bay ----------
+#
+# `ceil(published limit)` was a free-standing per-bay maximum for one release and
+# it was unsound. The argument that made it safe — with `n = ceil(L/max)` the
+# widest bay is `floor(L/n)+1` at most, so nothing can land above the ceiling —
+# is an argument about layouts THIS ENGINE computes, and three of the four sites
+# comparing against it were not given layouts this engine computed: a person's
+# stored answer, a hand-placed bay, and the offer side, which was meanwhile
+# filtering against the ROUNDED millimetre and so refused to propose the very
+# widths the accept side would take.
+#
+# `layout.admits_widths` carries the premise as a condition, and this section is
+# what makes the bound falsifiable in the loosening direction — the direction
+# that had no test at all. Widening the ceiling by a single millimetre, or the
+# guard by one, left the whole suite green.
+
+_MAGNITUDES = [1422400, 1676400, 1727200, 1905000, 2235200, 2463800]
+
+
+@pytest.mark.parametrize("max_span_milli", _MAGNITUDES)
+def test_every_layout_this_engine_computes_is_admitted(max_span_milli):
+    """The premise the old ceiling assumed, now asserted rather than assumed.
+
+    A predicate that refused one of these would not be conservative, it would be
+    a `GenerationFailure` on a fence the clause requires — so this is the guard
+    against tightening, and the sweep below is the guard against loosening. Both
+    directions, on the real published magnitudes, because a bound with a test on
+    only one side is the bound that drifted.
+    """
+    max_span_mm = round_milli_to_mm(max_span_milli)
+    for length_mm in range(1, 20_001):
+        widths = equal_layout_milli(length_mm * 1000, max_span_milli)
+        assert admits_widths(widths, length_mm, max_span_mm,
+                             max_span_milli=max_span_milli), (length_mm, widths)
+
+
+def test_the_ceiling_belongs_to_the_layout_that_could_not_be_split_again():
+    """The whole fix in one place: the same 1423 mm bay, admitted and refused.
+
+    Under a published 1422.4 mm maximum a 4267 mm run is three bays that all fit
+    at 1422.333 mm; stored as whole millimetres they must sum to 4267, so one of
+    them carries the odd millimetre and stands 0.6 mm over. That bay is
+    admissible because the alternative is a fourth post to recover six tenths of
+    a millimetre.
+
+    On a 4269 mm run the same limit allows FOUR bays, and three bays of 1423
+    are not a rounding artefact — they are a post and a footing removed from a
+    stamped schedule. A per-bay ceiling cannot tell those apart, because the
+    difference is not in the bay.
+    """
+    assert admits_widths([1423, 1422, 1422], 4267, 1422, max_span_milli=1422400)
+    assert not admits_widths([1423, 1423, 1423], 4269, 1422, max_span_milli=1422400)
+    # a spare bay: the fraction was never forced, so nothing excuses it
+    assert not admits_widths([1423, 1422, 1421, 1], 4267, 1422,
+                             max_span_milli=1422400)
+    # one millimetre above the ceiling, at the right count: a layout bug or a
+    # rule carrying a wrong number, and still refused
+    assert not admits_widths([1424, 1421, 1422], 4267, 1422, max_span_milli=1422400)
+    # ...and the widths must still tile the gap
+    assert not admits_widths([1422, 1422], 4267, 1422, max_span_milli=1422400)
+
+    # a whole-millimetre limit — every rule this repo authored — reduces to
+    # `max(widths) <= max_span` exactly, which is why nothing here can move a
+    # golden scenario
+    assert remainder_ceiling_mm(1905000) == 1905
+    assert min_bay_count(5715, 1905000) == 3
+    assert admits_widths([1905, 1905, 1905], 5715, 1905, max_span_milli=1905000)
+    assert not admits_widths([1906, 1905, 1904], 5715, 1905, max_span_milli=1905000)
+    # and with no thousandths at all, which is what `overrides.py` and every
+    # pre-existing caller pass
+    assert admits_widths([1800, 1800, 1800], 5400, 1800)
+    assert not admits_widths([1801, 1800, 1799], 5400, 1800)
+
+
+@pytest.mark.parametrize("milli,lexeme,length_mm,at_maximum,one_over", [
+    # whole millimetre: the ceiling IS the maximum
+    (1905000, '75"', 5715, [1905, 1905, 1905], [1906, 1905, 1904]),
+    # fractional: the ceiling is one millimetre above the maximum at rest, and
+    # the bay one millimetre above THAT is still fatal
+    (1422400, '56"', 4267, [1423, 1422, 1422], [1424, 1421, 1422]),
+])
+def test_a_bay_at_the_maximum_builds_and_one_millimetre_over_stops_the_run(
+    monkeypatch, milli, lexeme, length_mm, at_maximum, one_over,
+):
+    """The top invariant in `docs/scenarios/golden-scenarios.md`, "Invariants
+    checked across all scenarios" — *no span
+    exceeds the resolved maximum* — pinned at its boundary, in the direction that
+    had no test.
+
+    Widening the bound by one millimetre used to leave 2682 tests green: only a
+    five-metre loosening tripped anything, because every existing assertion is
+    about a layout comfortably inside the limit. So this asserts the two adjacent
+    cases and nothing in between: the widest admissible layout is BUILT, and the
+    same layout with one more millimetre in the widest bay stops the run.
+
+    The over-wide layout is injected, because there is no data that produces one
+    — which is the point. Every route in is now guarded by the same predicate, so
+    the guard at the span loop is defending against a layout bug or a rule
+    carrying a wrong number, and that is exactly what is simulated: the accident
+    itself, the way `tests/strategy/test_lock_bay.py` simulates it.
+    """
+    from fenceai.strategy import generator as gen
+
+    result = _generated_with_limit(milli, lexeme, length_mm)
+    assert [s.width_mm for s in result.strategy.spans] == at_maximum
+
+    monkeypatch.setattr(
+        gen, "layout_segment",
+        lambda length_mm, max_span_mm, **kw: LayoutResult(
+            widths=list(one_over), rejected_alternative=None),
+    )
+    with pytest.raises(GenerationFailure) as exc:
+        _generated_with_limit(milli, lexeme, length_mm, offer_alternatives=False)
+    assert "exceeds hard max" in str(exc.value)
+
+
+def test_the_offer_bound_and_the_accept_bound_are_the_same_bound():
+    """One choice set, one admissibility rule — and it used to be two, pointing
+    opposite ways.
+
+    `alternative_widths` filtered offers against the rounded millimetre limit
+    while the accept side compared a returning answer against `ceil(published)`,
+    so the engine would never OFFER a 1423 mm bay and would happily ACCEPT one.
+    Neither half is what the other assumed, and a person could only reach the
+    lax half by holding an answer from before.
+    """
+    limit_mm, milli = 1422, 1422400
+    for length_mm in range(1, 3_001):
+        default = equal_layout_milli(length_mm * 1000, milli)
+        for name, widths in alternative_widths(
+            length_mm, limit_mm, default=default, max_span_milli=milli,
+            piece_stock_mm=2000,
+        ):
+            assert admits_widths(widths, length_mm, limit_mm,
+                                 max_span_milli=milli), (length_mm, name, widths)
+
+    # the concrete pair: a tiling at the ceiling on a run the limit allows four
+    # bays for. Not offered, and not accepted either — the two bounds now agree
+    # about the case that showed they disagreed.
+    assert alternative_widths(4269, limit_mm, default=[1068, 1067, 1067, 1067],
+                              exact_mm=1423, max_span_milli=milli) == []
+    assert not admits_widths([1423, 1423, 1423], 4269, limit_mm,
+                             max_span_milli=milli)
+
+
+def test_a_stored_answer_of_over_limit_bays_is_refused_and_says_whose_it_was():
+    """The regression the per-bay ceiling introduced, end to end.
+
+    `Selection(bay_layout, gap:run1:0, [1423, 1423, 1423])` on a 4269 mm run
+    under a published 1422.4 mm maximum: three bays over a sealed limit, one post
+    and one footing short of the stamped schedule, and before the ceiling existed
+    this input was REFUSED. It came back honoured, with no warning, no gap and no
+    node — a stale answer building an over-maximum fence because somebody once
+    chose it under a laxer rule, which is the exact sentence
+    `_choice_unavailable_gap` was written for.
+    """
+    result = _generated_with_limit(
+        1422400, '56"', 4269, offer_alternatives=False,
+        choices=[Selection(choice_set="bay_layout", scope="gap:run1:0",
+                           widths=[1423, 1423, 1423], author="bob")])
+    assert [s.width_mm for s in result.strategy.spans] \
+        == equal_layout_milli(4269 * 1000, 1422400)
+    assert max(s.width_mm for s in result.strategy.spans) <= 1422
+
+    gap = next(g for g in result.strategy.gaps
+               if g.because and g.because.code == "choice_unavailable")
+    # the artefact a person gets: their widths, their name, and the gap they no
+    # longer fit — a work item, not "an answer was lost"
+    assert gap.because.params["widths"] == [1423, 1423, 1423]
+    assert gap.because.params["author"] == "bob"
+    assert gap.because.params["gap_mm"] == 4269
+    assert gap.closes_by == "planning"
+    assert ROUNDED not in [w.code for w in result.strategy.warnings]
+
+
+def test_a_stored_answer_carrying_the_forced_rounding_is_still_honoured():
+    """The other half, and the reason the accept side cannot simply compare
+    against `max_span`.
+
+    `[1423, 1422, 1422]` on 4267 IS the layout the clause requires — the engine
+    computes it unprompted — so refusing it as a person's stored answer would
+    mean the engine building a fence it will not accept back, and a
+    `choice_unavailable` gap accusing them of an answer nobody could give.
+    """
+    result = _generated_with_limit(
+        1422400, '56"', 4267, offer_alternatives=False,
+        choices=[Selection(choice_set="bay_layout", scope="gap:run1:0",
+                           widths=[1423, 1422, 1422], author="bob")])
+    assert [s.width_mm for s in result.strategy.spans] == [1423, 1422, 1422]
+    assert not [g for g in result.strategy.gaps
+                if g.because and g.because.code == "choice_unavailable"]
+    node = next(n for n in result.graph.nodes if n.action == "resolve_choice_set")
+    assert node.payload["widths"] == [1423, 1422, 1422]
+    assert node.payload["chosen_by"] == "bob"
+
+
+def test_a_hand_placed_bay_at_the_ceiling_is_attributed_not_narrated_as_ours():
+    """A `lock_bay` of exactly `ceil(published limit)` — the width where the two
+    reports could be confused, and each one must do its own job.
+
+    1423 mm placed by hand in a 1423 mm gap under a 1422.4 mm maximum. Compared
+    against a per-bay ceiling this bay was inside the bound, so the placement
+    lost BOTH its artefacts at once: no `defeated` edge, so a deliberate
+    departure read as the engine's own choice, and no `span_placed_over_maximum`,
+    so it was unwarned as well as unattributed.
+
+    And the rounding disclosure must stay silent. `span_rounded_over_published_limit`
+    names OUR unit problem; firing it here would tell a reader that an engineer's
+    placement was an arithmetic artefact of ours. What keeps it out is the bay
+    COUNT clause — a lock builds ONE bay of the whole gap, and this limit allows
+    two — so this is the test that pins that clause: drop it and the lock is
+    re-narrated as our rounding.
+    """
+    topo = straight_topology(1423)
+    at = make_anchor(topo, topo.run("run1"), 0).model_copy(
+        update={"reanchor": "rigid"})
+    result = generate(
+        topo, _kb_with_limit(1422400, '56"'), demo_catalog(),
+        site=SiteConditions(exposure_category="B"),
+        overrides=[Override(id="o1", run_id="run1", author="dana",
+                            directive=LockBay(at=at, width_mm=1423))])
+
+    assert [s.width_mm for s in result.strategy.spans] == [1423]
+    placed = next(w for w in result.strategy.warnings
+                  if w.code == "span_placed_over_maximum")
+    assert placed.params == {"run_id": "run1", "placed_mm": 1423, "max_mm": 1422,
+                             "over_mm": 1, "author": "dana"}
+    # our rounding is NOT their placement
+    assert ROUNDED not in [w.code for w in result.strategy.warnings]
+    assert ROUNDED not in [n.action for n in result.graph.nodes]
+    # the span limit is cited as the version the placement beat
+    lock = next(n for n in result.graph.nodes if n.action == "lock_bay")
+    assert [e.knowledge_ref for e in result.graph.in_edges(lock.id)
+            if e.type == "defeated"] == ["footing_schedule#0@v1"]
+    # the control: unlocked, this run is two bays and nothing is over anything
+    free = _generated_with_limit(1422400, '56"', 1423)
+    assert [s.width_mm for s in free.strategy.spans] == [712, 711]
+    assert [w.code for w in free.strategy.warnings] == []
+
+
+def test_the_node_is_reachable_from_the_bay_that_carries_the_fraction():
+    """*"The decision graph is the explanation"* — of the bay, by the bay's id.
+
+    `scope_refs` read `span@run1:0-4267`: the SEGMENT's bounds in a span id's
+    format. `n >= 2` whenever this node fires, so that id can never name a bay
+    that exists, and `nodes_for_element` returned nothing for every bay in the
+    segment. A reader clicking the 1423 mm bay to ask why it is 1423 landed on
+    nothing — for the one decision this disclosure exists to make.
+
+    Scoped to the bays actually over the published limit and not to the whole
+    segment: a 1422 mm bay beside them is inside the maximum, and hanging the
+    sentence on it would tell a reader it was over a limit it is not.
+    """
+    result = _generated_with_limit(1422400, '56"', 4267)
+    spans = result.strategy.spans
+    node = next(n for n in result.graph.nodes if n.action == ROUNDED)
+
+    widest = max(spans, key=lambda s: s.width_mm)
+    assert widest.width_mm == 1423
+    assert node.id in [n.id for n in result.graph.nodes_for_element(widest.id)]
+    # every scope_ref names a bay that exists — the property the old id broke
+    assert set(node.scope_refs) <= {s.id for s in spans}
+    assert node.scope_refs == [widest.id]
+    assert f"span@run1:0-4267" not in {s.id for s in spans}
+    for span in spans:
+        if span.width_mm * 1000 <= 1422400:
+            assert node.id not in [
+                n.id for n in result.graph.nodes_for_element(span.id)]

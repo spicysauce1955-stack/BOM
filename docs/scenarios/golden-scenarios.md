@@ -412,10 +412,83 @@ because at render time a target that is not in the plan is indistinguishable fro
 another document's warning, and the author is the only person who can tell those
 apart.
 
+### S20 — A published span limit that falls between whole millimetres
+`contract.md`:112-117 is BINDING twice over. It says conversion from thousandths
+happens at one named point and ROUNDS there — and then it says something the
+first half does not imply: *"any arithmetic that MULTIPLIES a published value — a
+count, a pitch, a span limit — consumes the thousandths and rounds only its
+output."* The second half was breached in production. Five of the ACTIVE
+snapshot's six span magnitudes are not whole millimetres, and the span layout
+DIVIDES by the limit to get a bay count, so a limit rounded on arrival moved the
+count on 2318 of the first hundred thousand run lengths.
+
+**4267 mm straight run on soil**, exposure B, shared demo catalog and model —
+with one substitution: `K-MAXSPAN` is removed and the maximum comes from a
+published `paired(footing_depth_mm:mm, max_span_mm:mm)` row at
+`sealed_approval`, carrying **`1422400` thousandths**. That is 56 in × 25.4 — a
+whole inch, not a conversion artefact, which is why no reasonable publisher will
+stop sending numbers like it.
+
+Expect:
+
+1. **Three bays — `[1423, 1422, 1422]` — and four posts.** `ceil(4267000 /
+   1422400)` is 3. Spending the thousandths on arrival gives a 1422 mm maximum
+   and `ceil(4267 / 1422) = 4`: the same run under a limit stated as a whole
+   1422 mm lays out `[1067, 1067, 1067, 1066]` on **five** posts. The
+   millimetre spent early buys an extra post, an extra cap, an extra footing and
+   an extra rail bar: 24500 cents against 19100 — 5400 cents, 28% of the bill,
+   on a four-metre fence.
+2. **One bay carries the residue, and the residue is forced.** Three integer
+   bays summing to 4267 cannot all be ≤ 1422 (3 × 1422 = 4266), so the spread
+   puts one bay at 1423: 0.6 mm over a sealed number, and 0.6 mm is what the
+   fourth bay would have bought back. It is within `ceil(limit)` — the widest
+   whole millimetre the published limit admits — and no admissible layout ever
+   lands above that bound, which is why the guard that stops an accidental
+   over-wide bay is unchanged.
+3. **Said out loud, once per segment.** Exactly one warning,
+   `span_rounded_over_published_limit`, `severity: info` — nothing here is wrong
+   and nothing can be fixed — carrying `limit_milli: 1422400`, `max_mm: 1422`,
+   `widest_mm: 1423`, `over_milli: 600`, `n: 3`. One per SEGMENT, not one per
+   bay: a sixty-bay fence under this limit is one fact about the layout. The two
+   sub-millimetre figures ride as `_milli` params because a `*_mm` param is
+   rounded to the grid by the display layer and would print `1422` — a 1423 mm
+   bay against that reads as a whole millimetre over a limit nobody published,
+   which is our unit problem reported as the customer's.
+4. **The rule governed; it was not defeated.** The decision node is
+   `governed_by` the published row (`footing_schedule#0@v1`) and takes
+   `input_from` the `layout_spans` node, with **no `defeated` edge**: the limit
+   is the number that CHOSE the bay count and was honoured everywhere a whole
+   millimetre can honour it, and a `defeated` edge would tell a reader the
+   manufacturer's maximum was overridden. It is a decision node and **not a
+   `Gap`** — a gap names a row a curator could author, and no row anybody could
+   write makes 4267 divide into three whole millimetres.
+5. **The disclosure costs nothing.** 4 × POST-S, 4 × POST-CAP, 2 × CONC-25 (4
+   applications), 3 × RAIL-3000 (6 cuts), 2 × SCREW-S10 (24 screws) — and every
+   BOM line still pegs to a requirement, every requirement to an element, every
+   element to a decision. A warning is a note on an answer, not an input to one.
+6. **The trigger is the residue, not the fraction.** 4266 mm under the same
+   published limit is `[1422, 1422, 1422]` and says **nothing** — three bays,
+   four posts, the same purchased quantities and the same 19100 cents, no
+   warning and no node; the only thing the millimetre moves is the cut list, by
+   one millimetre on two of the six rail cuts. A limit that IS a whole
+   millimetre says nothing ever: 9000 mm under a published 75 in (`1905000`) is
+   five 1800 mm bays and silence. The difference between a report and a silence
+   must be the leftover fraction; a fractional limit alone is not news.
+
+The census behind the reporting surface — how many run lengths carry a residue
+(about one in a hundred) and the worst case (0.8 mm) — is measured on the layout
+function in `tests/knowledge/test_published_precision.py`, because a hundred
+thousand generations is not a test. This scenario is what ties the predicate to
+the warning through the whole spine.
+
 ## Invariants checked across all scenarios
 
-- span width ≤ applicable hard maximum, **or** a `lock_bay` override placed that bay
-  and the run carries `span_placed_over_maximum` naming it (see below)
+- span width ≤ applicable hard maximum, **or** one of exactly two authorized
+  exceptions holds, both stated below: a `lock_bay` override placed that bay and the
+  run carries `span_placed_over_maximum` naming it; **or** the published limit falls
+  between whole millimetres and this is the bay carrying the forced remainder — at
+  most `ceil(limit)`, never a whole millimetre over, no override behind it — and the
+  run carries `span_rounded_over_published_limit` for that segment (S20)
 - Σ(cuts + kerf) ≤ stock length for every stock bar in a cut plan
 - package purchases ≥ engineering demand
 - every BOM line traces to ≥ 1 requirement line, every requirement to ≥ 1 strategy element, every element to ≥ 1 decision
@@ -478,7 +551,7 @@ The audit of all thirteen refusal sites, with the verdict and the reasoning on e
 is `docs/reviews/generation-failure-audit-2026-08-25.md`. Asserted by
 `tests/strategy/test_never_block.py` and by the invariant suite.
 
-### The hard maximum's one authorized exception — a bay somebody placed
+### The hard maximum's first authorized exception — a bay somebody placed
 
 *Added 2026-09-03 with `lock_bay` (design §11). Until that day the hard-max
 invariant read "unless authorized exception exists — none in demo KB", and there
@@ -487,15 +560,20 @@ were none: a bay wider than the resolved maximum meant no plan at all.*
 The engine used to win this argument in silence. Pin two posts 3 m apart under a
 1.8 m maximum and `layout_segment` put a post back in the middle — the person
 measured one thing and the drawing showed another. So a bay a person placed by
-hand is now built **as placed**. The exception is exactly one, and it is stated as
-a conjunction so that the guard got *narrower* rather than absent:
+hand is now built **as placed**. The exception this section adds is exactly one,
+and it is stated as a conjunction so that the guard got *narrower* rather than
+absent:
 
-- **A bay may exceed the resolved maximum only when a `lock_bay` override put it
-  there.** Anything else — a layout bug, a knowledge rule with a wrong number, a
-  boundary the layout mishandled — still raises `GenerationFailure`. That is the
-  whole point of the restatement: the danger was never the locked bay, it was an
-  *accidental* over-wide bay quietly ceasing to fail and shipping as a warned line
-  that looks like somebody meant it.
+- **A bay may exceed the resolved maximum by a whole millimetre or more only when
+  a `lock_bay` override put it there.** Anything else — a layout bug, a knowledge
+  rule with a wrong number, a boundary the layout mishandled — still raises
+  `GenerationFailure`, measured against `layout.admits_widths`: the widest whole
+  millimetre the published limit admits, which is exactly the resolved maximum
+  wherever that limit is a whole millimetre, and one more where it is not (the
+  second exception, below). That is the whole point of the restatement: the
+  danger was never the locked bay, it was an *accidental* over-wide bay quietly
+  ceasing to fail and shipping as a warned line that looks like somebody meant
+  it.
 - **Allowed, marked, attributed.** The run carries
   `span_placed_over_maximum` — `{run_id, placed_mm, max_mm, over_mm, author}`, so
   every surface that draws the bay has the approved figure, the placed figure and
@@ -517,3 +595,54 @@ a conjunction so that the guard got *narrower* rather than absent:
 
 Asserted by `tests/strategy/test_lock_bay.py` and by the invariant suite
 (`test_span_width_within_hard_max_unless_a_lock_placed_it`).
+
+*Amended 2026-09-08: this is no longer the only exception — the second one is
+below. It remains the only exception a PERSON can create, the only one carrying an
+`author`, and the only one that admits a bay wider than `ceil` of the published
+limit.*
+
+### The hard maximum's second authorized exception — a limit between whole millimetres
+
+*Added 2026-09-08 with S20. The published-precision fix (`38a2c6b`) created this
+exception and left this document saying there was one; the disagreement stood for
+twelve commits, which is the failure `docs/scenarios/` ⇄ `tests/scenarios/` exists
+to prevent.*
+
+Nothing here is authorized by anybody. A publisher sent `1422400` thousandths, the
+bay count is computed from that number, and ADR-0002 stores bays as integer
+millimetres — so on a 4267 mm run one of the three bays the limit allows must be
+1423 mm. The alternative is a fourth bay, which is the extra post, footing and pour
+`contract.md`:112-117 exists to prevent, bought to recover six tenths of a
+millimetre.
+
+- **The bound is `layout.admits_widths` — `ceil(max_span_milli / 1000)` AND the
+  minimum bay count — not a tolerance.** The ceiling alone was unsound: it is a
+  per-bay number, and a per-bay number cannot tell a layout that could not be
+  split again from a stored answer that simply has too few bays. Both conjuncts
+  are required, which is why the ceiling is earned by a layout rather than
+  granted to a bay.
+  With `n = ceil(L / max)` the widest bay is at most `floor(L / n) + 1` while
+  `L / n ≤ max`, so no admissible layout ever lands above that bound and the excess
+  is always strictly under one millimetre. A bay above it is a layout bug or a rule
+  carrying a wrong number, and still raises `GenerationFailure`.
+- **Marked, never attributed.** `span_rounded_over_published_limit` is `info` and
+  carries no `author`; `span_placed_over_maximum` is `warning` and names the person
+  who placed the bay. Two codes because they are two different claims: filing this
+  one under that one reports our unit problem as somebody's decision, and filing a
+  lock under this one tells a reader an engineer's placement was a rounding
+  artefact.
+- **Once per segment, and it moves nothing.** Not once per bay — a sixty-bay fence
+  under this limit is one fact about the layout — and not a `Gap`, because no row a
+  curator could author makes 4267 divide into three whole millimetres. The BOM, the
+  requirement lines and every other decision are what they were.
+- **Reachable only from published thousandths.** Every rule this repo authored is
+  integer millimetres, so `max_span_milli` is `max_span * 1000`, the remainder
+  ceiling is exactly `max_span`, and no authored rule — and no other scenario in this file —
+  can produce it. S20 substitutes a published row for `K-MAXSPAN` precisely so the
+  release gate observes the exception it documents.
+
+Asserted by `tests/scenarios/test_s20_published_precision.py`, by the invariant
+suite (`test_span_width_within_hard_max_unless_a_lock_placed_it`, whose
+`published_limit` fixture is the only run in the battery with a bay over its own
+resolved maximum and no override behind it), and — for the census and the
+rendering — by `tests/knowledge/test_published_precision.py`.
