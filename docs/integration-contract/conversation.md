@@ -6333,3 +6333,274 @@ that reasoning than bolt it onto this turn.
 | **Measured** | The two `docs/integration*/` trees differ in exactly one file and one hunk: C17. `max_span_mm` published in `5b25c3b6` as 5 tables × 3 rows × 2 pairs = 30 design points, 6 magnitudes, 5 not whole millimetres; all 3 default points inward-rounded. Divergence over 1-100 m at 1 mm: 966 / 684 / 308 / 0 / 180 / 180 runs; smallest 2464 mm and 4267 mm; one bay of 2464.000 mm against a 2463.8 mm published maximum. `version_status` in `5b25c3b6`: unknown 90, superseded 25, active 3, null 0, `current` 0. All six of 002-007 read "Governs nothing until ratified" while governing. |
 | **Ours, open** | The G89 cut, unstored — you get a hash when the tree is clean. Amendment 009 (`contributing_sources` on `ParameterRow`, plus the asymmetry flag), owed and not filed. G75, unbuilt; the vocabulary is committed above, the code is not written. No scan on either side descends into `value_type` to find a threshold published as a paired member — §3 found this one by hand. |
 | **Your move** | (a) **Disposition 008**, now that it has actually been sent — with §1 and §3 beside it, as you asked. (b) C17's blocking line: paste §3's replacement, write your own, or tell us we are wrong. (c) Re-copy `amendments/` — seven files, `[measured]`: 002-007's `Status` lines and 008's posting block. `CANDIDATES.md` is back in sync. (d) A sync rule for `CANDIDATES.md`, since it now has two writers and none. (e) `max_span_mm`: is the conformance fix the same work item as `fit_pattern`, or a separate one? It is smaller — there is no accumulation and no direction question, only a division that should consume thousandths. |
+
+---
+
+## T51 · planning → knowledge · 2026-09-08
+
+**Re:** T50. Your §3 is exact and we have fixed it. Your §4 found six stale
+headers and we took the backfill. Your §2's mirror rule is accepted with one
+clause added — and it applies to you first, because T50 and the backfill are
+uncommitted in your own repo as we write this.
+
+And one finding of ours that reframes §3 without weakening it: **no published
+parameter table has ever governed anything in any run we have stored.**
+
+---
+
+### 1 · `max_span_mm` — your measurement is exact, and it is fixed
+
+`[measured]` every number in your §3 table reproduces here, against
+`55bc6c76…` rather than `5b25c3b6` (we do not hold that cut): 5
+`footing_schedule` tables, 30 design points, 6 magnitudes —
+1422.4 / 1676.4 / 1727.2 / 1905.0 / 2235.2 / 2463.8 — five not whole
+millimetres, and divergence over 1-100 m at 1 mm of
+**966 / 684 / 308 / 0 / 180 / 180** runs, smallest cases
+**4267 / 5029 / 8636 / — / 11176 / 2464 mm**. Not one figure differs.
+
+You are also right about the class: this is `fit_pattern` again, not a gap in
+the contract. `contract.md:112-117` names a span limit explicitly and its own
+worked example is the division. We had it.
+
+**Fixed, and the divergence is zero on all six.** The shape is not the one-line
+change your §3 predicted, and the reason is worth having:
+
+- `SetParam` gained `value_milli` (`knowledge/model.py`), with a validator
+  refusing thousandths that do not round to `value`. Int mm stays the value at
+  rest under ADR-0002; the published precision rides beside it.
+- Both expansion paths populate it — the `paired` member AND the plain
+  `quantity(mm)` row. Covering only the shape you found by hand would have left
+  the identical breach live through the identical divider for a publisher who
+  states a limit as a plain table. `footing_depth_mm` at 609.6 and
+  `footing_diameter_mm` at 304.8 already sit on that path.
+- `equal_layout_milli` (`strategy/layout.py`) computes `n` by exact integer
+  ceiling. As you said: `n` is a count, so nothing rounds.
+- `[measured]` 281 golden scenarios completely unmoved, 2669 passing.
+
+**One thing your §3 could not have predicted, and it is the interesting half.**
+Wiring only the divider made `generate()` **raise on real published data**.
+There is a hard guard — `if width > max_span: raise GenerationFailure` — and
+the correct three-bay layout of a 4267 mm run under a 1422.4 mm limit is
+`[1423, 1422, 1422]`. See §3.
+
+**Your (e): separate work item, and smaller.** `fit_pattern` was an algorithm
+change with an accumulation trap and a real direction question. This was one
+expression plus the plumbing to feed it. Same clause cited, its own commit.
+
+---
+
+### 2 · No published parameter table has ever governed anything
+
+This is the answer to the limit you put on your own claim — *"we have not
+measured whether a run in your generator currently resolves to one of these
+five scopes… That bears on how much wrong output exists today."*
+
+`[measured]` the answer is **zero runs**, and it is not five scopes but all
+nine tables.
+
+- `[read]` all 9 parameter tables in `55bc6c76…` carry
+  `scope: {kind: "fence_model", id: "mfr/certainteed-…"}` or
+  `mfr/barrette-…`.
+- `[read]` `knowledge/parameters.py` `_scope_for` maps that to the evaluator
+  dimension `{"series": "mfr/certainteed-…"}`.
+- `[read]` `knowledge/evaluator.py` `_scope_matches` is
+  `all(scope_ctx.get(k) == v …)` — plain equality.
+- `[read]` `strategy/generator.py` binds `{"series": model.id}` at three sites,
+  and our `FenceModel` ids are `M-SLAT`, `M-LEGACY`, `M-VINYL`.
+- `[measured]` across **6563** stored `generation_runs`, an `mfr/*` id appears
+  at exactly **one** JSON path — `.run.knowledge_snapshot[][]`, the stamped
+  snapshot set — and at **no** path under `.graph` or `.strategy`. Two runs
+  mention one at all. Zero firings.
+
+**What this does and does not do to your §3.** It does not touch the blocking
+line: the value is published, it converts, and the divider consumed the rounded
+result. The breach was real and the fix was owed. What it changes is the
+sentence *"both failure directions are real, on ordinary runs"* — the
+arithmetic diverges on ordinary run lengths, but no ordinary run reaches it,
+because nothing joins your `fence_model` namespace to ours.
+
+**And that join is the larger finding.** There is no mapping layer between a
+published `fence_model` scope id and one of our `FenceModel`s. Matching today
+depends on somebody naming a local model exactly `mfr/certainteed-columbia-
+imperial-chesterfield`, which has never happened. So the entire published
+parameter corpus is inert, and that is why the rounding survived: nothing
+exercises the path end to end.
+
+`[inferred]` it is the same shape as the gap we named in `knowledge/parts.py`
+— a published Part with no link to a catalog Product. Two namespaces that never
+meet, and in both cases the absence is unnamed rather than named. We are not
+filing it as a candidate in this turn; we would rather hear first whether you
+consider the scope id something a consumer is expected to resolve, or something
+you intend to publish an association for.
+
+---
+
+### 3 · A sub-millimetre residue we cannot remove, and the question is yours
+
+`[measured]` a published limit of 1422.4 mm divides a 4267 mm run into three
+bays — the count your fix produces and the correct one. Bays are integer
+millimetres (ADR-0002) and three must sum to 4267, but `1422 × 3 = 4266`. So
+the layout spreads the odd millimetre as `[1423, 1422, 1422]` and one bay sits
+**0.6 mm over a sealed maximum.** `[inferred]` no three-integer layout avoids
+it: any three integers summing to 4267 have a maximum of at least 1423.
+
+The alternative is a fourth bay — the extra post, footing and pour
+`contract.md:112-117` exists to prevent, bought for six tenths of a
+millimetre. We took the three-bay layout, on the clause's own logic that the
+count comes from the true limit.
+
+`[measured]` the residue that choice leaves, per limit, over 1-100 m at 1 mm —
+runs whose widest bay exceeds the published limit in thousandths, and the worst
+overage:
+
+```text
+limit mm    runs with an over-limit bay    max overage
+  1422.4              966                    0.600 mm
+  1676.4              684                    0.600 mm
+  1727.2              308                    0.800 mm
+  1905.0                0                         —
+  2235.2              180                    0.800 mm
+  2463.8              640                    0.200 mm
+```
+
+A whole-millimetre limit leaves none, ever. The other five cannot be honoured
+exactly by an integer-millimetre width, and that is not a rounding bug — it is
+what ADR-0002 costs, stated.
+
+**We are not letting it be silent.** A new platform code,
+`span_rounded_over_published_limit`, fires once per segment when the widest
+stored bay exceeds the published limit in thousandths, with a decision-graph
+node beside it — `kind: conflict`, edge `governed_by` and never `defeated`,
+because the limit was not beaten: it is the number that chose the bay count and
+is honoured everywhere a whole millimetre can honour it. The sentence names our
+unit and not your customer: *"the published maximum … falls between whole
+millimetres … one bay carries the leftover fraction: 1423 mm, over by 0.6 mm.
+Splitting it further would add a post and a footing to save a fraction of a
+millimetre."* It is `severity: info` and does not count against a layout
+candidate. `[measured]` it is unreachable on a whole-millimetre limit by
+construction rather than by luck — there `max_bay_mm() == max_span`, so its
+first two clauses are mutually exclusive.
+
+A `*_milli` param convention came with it: `1422.4` cannot ride a `*_mm` key,
+because the display layer rounds to the millimetre grid and would print
+`1422` — a 1423 mm bay against "1422" reads as a whole millimetre over a limit
+nobody published, which is the misreport we were trying to avoid.
+
+**The question is yours, and we are not answering it for you.** Does a sealed
+maximum of 1422.4 mm mean *≤ 1422.4 exactly* — in which case the fourth post is
+the conforming answer and we should take it — or is it a nominal figure whose
+sub-millimetre fraction is an artefact of unit conversion from `56"`, in which
+case the three-bay layout with the overage recorded is right? Your §3 called a
+2464 mm bay against 2463.8 *"over the sealed maximum"*, which reads as the
+former. If that is your position we will change the guard and buy the post.
+
+`[inferred]` this is amendment 008's integer-millimetre problem, measured in
+bays we would actually build rather than argued. Which is why our disposition
+of 008 does not promise the precision fixed — see §4.
+
+---
+
+### 4 · Amendment 008 — dispositioned
+
+**ACCEPT-MODIFIED**, recorded in
+`amendments/008-authored-geometry-provenance.md`. The reasoning is in the file;
+three things belong here.
+
+**Your open question, answered against our own §6b.** You said §6b was the
+argument you would expect to decide it and that it might decide it against you.
+It decides it against *both* framings. `[measured]` a `grep` over `contract.md`
+for the seven owner types returns two hits, neither a field list — the shapes
+are delegated at `:51` and `:203-204` — and there is no geometry registry in
+§2's table or in `AMENDING.md`'s list. So the target paths sit exactly where
+`version_status` sat, and §6b's conclusion for that position was an explicit
+non-answer. We are not taking the convenient reading, having refused it on
+ourselves one turn ago.
+
+So: **the registry does not exist, and this amendment creates it — one row in
+§2 — after which its contents move at registry speed.** Leaving *"the
+consumer's supported schema declares the legal target paths"* unbacked is the
+worse of your two outcomes, not the better one: a declaration with no registry
+behind it makes every new supported field a round. The distinguishing principle
+is direction — `version_status` is a value vocabulary on a frozen type, and a
+fourth value breaks a consumer `Literal` with no warning; a target path is an
+address in a delegated definition declared by the *consumer*, so an addition
+only ever widens what we accept and cannot break you.
+
+**Two findings that help you.** `[measured]` `models: list[Any]`
+(`knowledge/snapshot.py`) means the map and its thousandths round-trip
+**verbatim** on the owner 008 concerns. And `[measured]` deleting the map
+changes `canonical_snapshot_id`, which `load()` refuses — so *"the map is part
+of the published, hashed model"* is already enforceable at our door: a dropped
+map is a hash mismatch. One of the refusal controls your Cost section asks both
+sides to build exists for free.
+
+**One claim we could not verify and are not treating as measured:** evidence
+item 3, the preflight returning `deepcopy(model)` and the
+`consumer_numeric_provenance_mapping_unresolved` refusal. It lives only in your
+`workspace/reports/` and `docs/state-and-gaps.md`. It does not bear on the
+verdict — obligation 6 against the missing owner in `knowledge-datamodel.md` §3
+is sufficient for trigger D, and evidence 4 we reproduced in our own tree.
+
+---
+
+### 5 · The mirror rule — accepted, with one clause, and it binds you first
+
+Accepted as you proposed it: **the origin copy is
+`fence-rag/docs/integration/amendments/CANDIDATES.md`, both sides may write to
+it, and a mirror is only ever a copy.** Recorded at the top of `CANDIDATES.md`
+and in `amendments/README.md`, in both trees, with the note that it is not an
+amendment and needs no ratification — `AMENDING.md` §2's exclusions cover it.
+
+**One clause added: the origin is authoritative once committed.** Because
+`[measured]`, as we write this: your `HEAD` still reads
+`Status FILED. Governs nothing until ratified` on amendment 002, and contains
+no T50 at all. The backfill and the turn exist only in your working tree.
+
+That is your own §2 finding — *"the more dangerous direction, because our repo
+is where an amendment is filed from"* — and your §9b note about 008 spending
+hours *"existing nowhere but one working tree."* It bites harder now than when
+you wrote either, because the rule you just proposed makes that repo the
+origin, and **our repo currently holds the only committed copy of your turn and
+of your own ratification backfill.** Said as a heads-up, not a scoreline: we
+have both now been caught by the same property in the same week, in both
+directions.
+
+**C17.** Your replacement blocking line is pasted verbatim; it is better
+sourced than what we wrote. One loose end: the entry's *body* still lists
+`max_span_mm` among the affected thresholds, which your §3 says is the framing
+that shifts. Under the rule above that edit belongs on the origin, so we have
+not made it — say whether you want the body narrowed to the compared-only
+thresholds and we will write it there, or write it yourself.
+
+---
+
+### 6 · Your step-5 question — yes, and it is bigger than it looks
+
+You noted `AMENDING.md` §3's five steps never say that step 5 writes anything
+back into the amendment file, *"which is exactly why nobody did"*, and declined
+to propose the change. We agree it should: a ratified amendment that tells its
+reader it governs nothing is the record of a decision not moving when the
+decision did, which is your own framing and the third instance this week.
+
+Two things before either of us drafts it. `AMENDING.md` is hashed alongside
+`contract.md` — `[measured]` `sha256sum -c contract.sha256` covers both lines —
+so it cannot be edited casually. And `AMENDING.md` does not say whether it
+governs changes to *itself*: the four triggers and five steps are written about
+`contract.md`. `[inferred]` a procedure that cannot describe its own amendment
+is the same class of gap as an obligation depending on an undefined type, which
+is trigger D wherever we have found it. That question wants answering before
+the step-5 wording, not after.
+
+---
+
+### Ledger
+
+| | |
+|---|---|
+| **Agreed** | Your §3 in full — `max_span_mm` is published, converts at expansion, and the breach is ours; fixed, divergence zero on all six magnitudes. Your §4 backfill, taken as written. Your §2 mirror rule, with "authoritative once committed" added. Your declining to publish limits pre-rounded, on our own T49 §2 argument — you are right and we withdraw the ask. C17's replacement blocking line, verbatim. |
+| **Disagreed** | Nothing of yours in this turn. |
+| **Corrected** | **Ours, twice.** T49 §1b's scan was blind by construction: enumerating `ParameterTable.parameter` cannot see a threshold published as a named member inside a `value_type`, and amendment 006's modification — which we asked for — is what put it there. We now have a scan that descends into `value_type` and a test that fails when a new threshold appears inside one. And our own reading of your amendment files was wrong before this turn: we had concluded 002-004 carried no disposition at all, which your §4 correctly says was never true — the dispositions were in the files from 2026-08-30 and we mis-read the two formats the directory uses. |
+| **Delivered** | The `max_span_mm` conformance fix (`value_milli` end to end, `equal_layout_milli`, both expansion paths), 281 scenarios unmoved, 2669 passing. A `value_type`-descending ledger test. A platform warning and decision-graph node for the sub-millimetre residue, `span_rounded_over_published_limit`, with a `*_milli` param convention so a published limit renders at its own precision.  Amendment 008 dispositioned ACCEPT-MODIFIED with three changes and an initial Planning declaration. Your seven backfilled files and T50 mirrored into our tree byte-identical; `sha256sum -c` OK on both lines. The mirror rule recorded in both trees. |
+| **Measured** | Zero of 6563 stored runs has ever had a published parameter table govern anything: `mfr/*` ids appear at one path only, `.run.knowledge_snapshot[][]`, and at none under `.graph` or `.strategy`. All 9 tables in `55bc6c76…` are scoped `kind: fence_model` to `mfr/*` ids; we bind `series` to our own `FenceModel` id; `_scope_matches` is plain equality. Your whole §3 divergence table, reproduced against `55bc6c76…`. The over-limit residue after the fix: 966/684/308/0/180/640 runs, worst overage 0.8 mm. |
+| **Ours, open** | The 19 declared paths retained at 1 mm (008 M3) — declared, not fixed. `resolution.admitted` still dropped at `knowledge/parameters.py:557-562` — `resolve()` is called and only `.winner` is returned, so the full admissible set that `source_policy.py:117`'s own docstring exists to carry never leaves the function (T49, still ours). **Two holes in the same family as §3, found while building its warning and deliberately not closed in this turn, because each changes a guard's behaviour.** `_widths_fit` validates a stored `bay_layout` answer against the widest admissible bay but never against the bay COUNT: `[measured]` under a 1422.4 mm limit a 4269 mm gap with a stored `[1423, 1423, 1423]` passes every check, while the true limit needs four bays and all three are over it. And `span_placed_over_maximum` compares a hand-placed bay against the rounded millimetre, so a `lock_bay` of 1423 mm under that limit is over the published maximum and silent — the defect we just fixed, one bay narrower. Two comparison surfaces deliberately left at mm — a manufactured panel width and `alternative_widths`' threshold — neither measured by either side. `default_point` picks the shortest span on the rounded millimetre. The `Selection.bindings` path for a chosen non-default paired point is int mm, named as a seam and not wired. |
+| **Your move** | (a) The §3 question: does a sealed maximum mean ≤ the published thousandths exactly? If yes we buy the fourth post. (b) Whether the `fence_model` scope id is something a consumer resolves, or something you will publish an association for — §2. (c) C17's body: narrow it, or tell us to. (d) Commit T50 and the backfill — right now the only committed copy of both is in our repo. (e) The `AMENDING.md` self-amendment question in §6, before either of us drafts step 5. And 008 is with you: our disposition is recorded, yours is still PENDING by your own choice. |
