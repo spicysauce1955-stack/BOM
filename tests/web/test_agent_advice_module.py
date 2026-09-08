@@ -98,12 +98,25 @@ const claimsRefused = { innerHTML: "" };
 renderAdvice({ evaluated: true, proposals: [], produced: 0, dropped: 0,
                claims_refused: 2 }, claimsRefused);
 
+// A claim whose text is a bare number is NOT a widths label: a post count, a
+// year or a station reads the same, and 0.4 cm would be a wrong number rather
+// than an unconverted one.
+const scalarClaim = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [{ claims: [
+  { marker: "inferred", text: "4" }] }] }, scalarClaim);
+
 // must not throw when there is nowhere to render (a real early-return path)
 renderAdvice(proposalResult, null);
 
 state.units = "cm";
 const inCm = { innerHTML: "" };
 renderAdvice(proposalResult, inCm);
+
+// the same bare number under the OTHER display unit: converting it would
+// visibly divide it by ten, which is the symptom I6 names.
+const scalarClaimCm = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [{ claims: [
+  { marker: "inferred", text: "4" }] }] }, scalarClaimCm);
 
 await setLocale("he");
 const heNeverLooked = { innerHTML: "" };
@@ -135,6 +148,8 @@ console.log(JSON.stringify({
   nothing: nothing.innerHTML,
   allRefused: allRefused.innerHTML,
   claimsRefused: claimsRefused.innerHTML,
+  scalarClaim: scalarClaim.innerHTML,
+  scalarClaimCm: scalarClaimCm.innerHTML,
   inCm: inCm.innerHTML,
   heNeverLooked: heNeverLooked.innerHTML,
   heAllRefused: heAllRefused.innerHTML,
@@ -241,6 +256,33 @@ def test_a_units_toggle_re_renders_the_already_loaded_advice(out):
     assert "2500 · 2500 · 2400" in out["liveMm"]
     assert "2500 · 2500 · 2400" not in out["liveCm"]
     assert "250 · 250 · 240" in out["liveCm"]
+
+
+def test_a_bare_number_is_never_read_as_a_millimetre_dimension(out):
+    """Final-review I6. The sniff that decides "this is a widths label" saw a
+    bare `"4"` and rendered `0.4 cm`. Until the API TAGS what a claim's text
+    is (the seam named in `proposal.py` and at the sniff), the rule is that
+    only two-or-more numbers joined by `·` are unambiguous — a wrong number
+    on screen is worse than an unconverted one."""
+    # the number survives untouched, and is NOT wrapped as a converted
+    # dimension — `<bdi class="num">` is what `claimTextHtml` emits only when
+    # it decided the text was a millimetre list.
+    assert ">4<" in out["scalarClaim"]
+    assert '<bdi class="num">' not in out["scalarClaim"]
+    assert "0.4" not in out["scalarClaimCm"]
+    assert ">4<" in out["scalarClaimCm"]
+
+
+def test_the_panel_is_wired_into_the_page_and_the_bootstrap():
+    """The node harness stubs `document.getElementById`, so every test above
+    would stay green with the host element deleted from the page — the whole
+    feature vanishing at 2801/2801. This branch merges into one whose
+    in-flight work touches `index.html`, which is the exact way that line goes
+    missing. Same idiom as `test_site_module.py`."""
+    assert '<section id="agent-advice" class="panel agent-advice"' in (
+        STATIC / "index.html").read_text()
+    app = (STATIC / "app.js").read_text()
+    assert 'from "./js/agent-advice.js"' in app and "initAgentAdvice();" in app
 
 
 def test_the_module_never_touches_another_modules_dom():

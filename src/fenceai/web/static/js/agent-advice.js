@@ -31,13 +31,23 @@ const MARKER_KEY = {
   inferred: "agent.marker.inferred",
 };
 
-// A `read` claim's `text` here is `DesignPoint.label` (`generator.py`'s
-// `" · ".join(str(w) for w in widths)`) — the SAME raw-millimetre dimension
-// string `choices.js`'s `widthsLabel` converts, unit-suffixes and isolates,
-// for the panel sitting directly beside this one. Anything else (every
-// `inferred` claim, always prose) is left as plain escaped text — converting
-// a sentence through a millimetre-to-centimetre table would mangle it.
-const WIDTHS_LABEL = /^\d+(?:\s*·\s*\d+)*$/;
+// SEAM (slice 2): the API should TAG what a claim's text is — a
+// `Claim.value_kind` of `"prose" | "mm" | "mm_list"` decided by the side that
+// authored the number — and this renderer should switch on the tag. It does
+// not exist yet, so what follows is an interim SNIFF, and a sniff is only
+// admissible while it cannot be wrong: a `read` claim's `text` here is
+// `DesignPoint.label` (`generator.py`'s `" · ".join(str(w) for w in widths)`),
+// the SAME raw-millimetre dimension string `choices.js`'s `widthsLabel`
+// converts, unit-suffixes and isolates for the panel sitting directly beside
+// this one.
+//
+// Hence TWO or more numbers joined by `·` — never one. A bare `"4"` is the
+// shape of a post count, a year or a station as easily as a millimetre, and
+// the old `*` quantifier matched it and rendered it as "0.4 cm": a wrong
+// number on screen is worse than an unconverted one, so anything not
+// unambiguously the widths shape (every `inferred` claim, always prose, and
+// every scalar) is left exactly as the backend wrote it.
+const WIDTHS_LABEL = /^\d+(?:\s*·\s*\d+)+$/;
 
 function claimTextHtml(claim) {
   const text = String(claim.text ?? "");

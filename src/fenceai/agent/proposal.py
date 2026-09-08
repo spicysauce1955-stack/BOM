@@ -38,6 +38,14 @@ class Claim(BaseModel):
     marker: Marker
     text: str
     evidence: str | None = None
+    # SEAM (slice 2): `text` says nothing about WHAT it is, so the renderer
+    # cannot know whether "2500 · 2500" is a millimetre list to convert into
+    # the reader's display units or a string to leave alone — today
+    # `js/agent-advice.js` sniffs the shape and deliberately converts nothing
+    # ambiguous. The field that closes it belongs here, authored by whoever
+    # authored the number: `value_kind: Literal["prose", "mm", "mm_list"]`.
+    # It arrives with the Claude adapter, because that is when a claim's text
+    # stops being one deterministic string the stub wrote.
 
     @model_validator(mode="after")
     def _evidence_matches_marker(self) -> "Claim":
