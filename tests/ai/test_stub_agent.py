@@ -49,11 +49,21 @@ def test_every_claim_the_stub_makes_cites_a_point_it_was_handed():
             assert claim.evidence.startswith("point:")
 
 
-def test_the_stub_is_honest_about_being_a_stub():
-    """It has no judgement and must not pretend to. Every claim it makes about
-    WHY is `inferred`."""
+def test_the_stub_argues_nothing_and_only_states_what_it_was_shown():
+    """It has no judgement, so it makes no claim about WHY — not even one
+    admitting it has none.
+
+    The earlier version of this test required an `inferred` claim saying the
+    stub was only picking the first alternative. That sentence was true and it
+    was still wrong to print: it taught the reader to discount the panel weeks
+    before a real model arrived, and the panel would still be discounted when
+    the advice became good (checkpoint, 2026-09-09). Silence about reasoning
+    the stub does not have is the honest form."""
     result = StubAgent().run(RANK_CHOICE_SET, _view(DEFAULT, ALT), project_id="pr_1")
-    assert any(c.marker == "inferred" for c in result.proposals[0].claims)
+    claims = result.proposals[0].claims
+    assert claims, "the proposal must still be evidenced"
+    assert all(c.marker == "read" for c in claims), [c.marker for c in claims]
+    assert all(c.evidence for c in claims), "a read claim without evidence is not grounded"
 
 
 def test_one_admissible_answer_is_not_a_question():

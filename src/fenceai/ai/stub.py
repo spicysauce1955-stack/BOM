@@ -202,12 +202,15 @@ class StubAgent:
                 id=proposal_id(task.id, "select_choice_point", payload, choice_set.scope),
                 task_id=task.id, project_id=project_id,
                 kind="select_choice_point", payload=payload, scope=choice_set.scope,
+                # ONE claim, and it is a `read`: the layout, and the point it
+                # came from. The stub used to add an `inferred` claim saying it
+                # had no judgement — true, but printing it taught readers to
+                # ignore the panel before a real model ever arrived (checkpoint,
+                # 2026-09-09). A stub that states what it was shown and argues
+                # nothing is honest without saying so.
                 claims=[
                     Claim(marker="read", text=alternative.label,
                           evidence=f"point:{alternative.id}"),
-                    Claim(marker="inferred",
-                          text="the stub picks the first alternative the engine "
-                               "offered; it is not a judgement about this fence"),
                 ],
                 saw=view.digest(task.reads),
                 agent_id=self.interpreter_id,
