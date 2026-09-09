@@ -19,6 +19,16 @@
 // DOM ownership: `#panel-picker` and `#panel-preview` (the Panel tab) and
 // `#model-row` (in the canvas tab's aside). No other module writes those three,
 // and this module writes nothing else.
+//
+// What was still missing after all that: the surface above answers "which
+// fence?" only for somebody who can reach the Panel tab. The salesperson's road
+// has a step keyed `model`, labelled *Which fence*, and `step-surfaces.js`
+// scopes it to `#model-row` alone — a row that until now only REPORTED, and
+// whose one instruction ("change it on the Panel tab") is hidden from that very
+// role because the tab is. So the step whose entire job is *which fence did you
+// sell* said "No model chosen" and offered no way to choose one. The row now
+// carries the choice as well as the report; both are below, and they answer
+// different questions.
 
 import { apiSend, esc } from "./api.js";
 import { gapLine, hasNominal, highlightSlot, renderElevation } from "./elevation.js";
@@ -497,9 +507,86 @@ function warningsHtml() {
 
 // ---------- the canvas aside's model row ----------
 
+/** The options of the row's chooser, from the ONE listing `fence-models.js`
+ *  caches. A second fetch here would let two surfaces disagree about which
+ *  models exist, which is the reason that cache is shared in the first place.
+ *
+ *  A draft-only or retired model stays listed and disabled with the reason
+ *  spelled out — `isSelectable`'s rule, followed rather than restated: hiding it
+ *  makes it look deleted, and "why is my model gone" is a worse question than
+ *  "why can I not pick it". */
+function modelRowOptionsHtml() {
+  // An empty library is a library with nothing in it, not a broken control: one
+  // option that says so, on a select the caller disables.
+  if (!listing.length)
+    return `<option value="" selected>${esc(t("panel.no_models"))}</option>`;
+  const chosen = state.project?.fence_model?.model_id || "";
+  // "Nothing chosen" is a real answer and has to be reachable, or the default
+  // can be set from here and never cleared from here. It opens selected exactly
+  // when nothing is chosen: a picker that opens on the wrong row is a picker
+  // that reports the wrong sale.
+  let html = `<option value=""${chosen ? "" : " selected"}>`
+    + `${esc(t("panel.no_default_option"))}</option>`;
+  for (const row of listing)
+    html += `<option value="${esc(row.id)}" dir="auto"`
+      + `${row.id === chosen ? " selected" : ""}`
+      + `${isSelectable(row) ? "" : " disabled"}>${esc(modelOptionLabel(row))}</option>`;
+  // A default naming a model the listing no longer carries would leave NO option
+  // selected, so the browser would open on "none chosen" while the report
+  // underneath named the model — the two halves of one row contradicting each
+  // other. It is carried as its own disabled row instead: selected, so the row
+  // is honest, and unpickable, because it is not a thing that can be chosen.
+  if (chosen && !rowFor(listing, chosen))
+    html += `<option value="${esc(chosen)}" dir="auto" selected disabled>`
+      + `${esc(chosen)} — ${esc(t("panel.not_selectable"))}</option>`;
+  return html;
+}
+
 function renderModelRow() {
   const host = document.getElementById("model-row");
   if (!host) return;
+
+  // BUILD ONCE, THEN ONLY UPDATE — the discipline `road.js: build()` keeps, and
+  // here it is load-bearing rather than tidy. This row is now an interactive
+  // control, and choosing a model runs `setProjectModel` -> `reloadProject` ->
+  // `project-loaded` -> back into this function: the re-render lands while the
+  // user's focus is still inside the select. Re-`innerHTML`ing the host destroys
+  // that element, and focus falls to BODY mid-gesture — a keyboard user picking
+  // with the arrow keys would lose the picker on their first choice. Restoring
+  // focus afterwards would fight the same race on every one of the three events
+  // that re-render this row. Replacing the OPTIONS of a select that itself stays
+  // in the DOM does not move focus at all, so the element (and its one listener)
+  // is built once and everything below it is rewritten in place.
+  let select = host.querySelector("#model-row-select");
+  if (!select) {
+    host.innerHTML = `<h3 id="model-row-title"></h3>
+      <label class="builder-field" id="model-row-choose">
+        <span class="meta" id="model-row-choose-label"></span>
+        <select id="model-row-select"></select></label>
+      <div id="model-row-report"></div>`;
+    select = host.querySelector("#model-row-select");
+    // `setProjectModel` is the ONE write path for this decision (PUT
+    // .../fence-model, or no body to clear) and it already does the right thing:
+    // no history snapshot, and `reloadProject` rather than `openProject` so
+    // choosing a model does not wipe the user's undo stack. Left alone.
+    select.addEventListener("change", (ev) => setProjectModel(ev.target.value || null));
+  }
+  // Written every render, not baked in at build time: `locale-changed` re-renders
+  // this row, and a heading fixed at build time would stay in the language the
+  // page opened in.
+  host.querySelector("#model-row-title").textContent = t("panel.project_model");
+  host.querySelector("#model-row-choose-label").textContent = t("panel.choose_model");
+  select.innerHTML = modelRowOptionsHtml();
+  select.disabled = !listing.length;
+
+  // The report below the select is NOT made redundant by the select, and
+  // deleting it is audit B03 coming back. They answer two different questions:
+  // the select says what the DEFAULT is, and the report says what was actually
+  // SOLD across the whole fence — including stretches sold against the default,
+  // which no picker of a single value can express. A fence whose two stretches
+  // were each sold as M-SLAT has no default at all, and the select must read
+  // "none chosen" while the report names the two models.
+  //
   // The models actually SOLD, not the project default alone — audit B03. The
   // rule is `projectModelState` in fence-models.js, beside the rest of "which
   // models exist", so this row and any other surface that asks get one answer.
@@ -524,10 +611,13 @@ function renderModelRow() {
       { models: list })}</div>`;
   }
 
-  host.innerHTML = `<h3>${esc(t("panel.project_model"))}</h3>` + body
+  host.querySelector("#model-row-report").innerHTML = body
     // Hidden from sales by `#model-row-hint` on role.js's list: sending somebody
     // to a tab their own role hides is worse than saying nothing. It is an id on
     // the hide-list rather than a `sales.` locale override because `applyStatic`
-    // walks `data-i18n` attributes, and this string is rendered by JS.
+    // walks `data-i18n` attributes, and this string is rendered by JS. Hiding is
+    // CSS on `html[data-role]`, so it keeps working across this re-render — and
+    // the hint is still true for the roles that can see it: the Panel tab is
+    // where the same choice is made beside a priced preview of it.
     + `<div class="meta" id="model-row-hint">${esc(t("panel.see_panel_tab"))}</div>`;
 }

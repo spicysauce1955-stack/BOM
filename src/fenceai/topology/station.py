@@ -11,7 +11,7 @@ import math
 from fenceai.core.errors import InvalidTopology
 from fenceai.core.units import NUMERIC_TOLERANCE_MM, Mm, dist_mm
 from fenceai.fencemodel.selection import FenceModelChoice
-from fenceai.topology.model import Anchor, Run, Topology
+from fenceai.topology.model import Anchor, GateSpan, Run, Topology
 
 CORNER_ANGLE_DEG = 15.0  # turn angle above which a vertex is a structural corner
 
@@ -31,6 +31,20 @@ def segment_lengths(points: list[tuple[Mm, Mm]]) -> list[Mm]:
 
 def run_length(topo: Topology, run: Run) -> Mm:
     return sum(segment_lengths(run_points(topo, run)))
+
+
+def gate_opening_mm(topo: Topology, gate: GateSpan) -> Mm:
+    """The opening a gate span leaves, read from its two nodes.
+
+    THE answer, and the only one: `GateSpan` stores no width, so nothing can
+    disagree with this. It is the same measurement `run_length` makes of a
+    straight run — a gate is a straight thing between two points — and it lives
+    here, beside it, so both are read from the geometry rather than from a copy
+    that drifts the moment somebody drags a node.
+    """
+    start = topo.node(gate.start_node_id)
+    end = topo.node(gate.end_node_id)
+    return dist_mm((start.x_mm, start.y_mm), (end.x_mm, end.y_mm))
 
 
 def cumulative_stations(points: list[tuple[Mm, Mm]]) -> list[Mm]:

@@ -5017,3 +5017,178 @@ during mutation cannot revert an uncommitted fix — which it did twice in this 
 before the habit stuck.
 
 1866 pytest · 213 golden scenarios · compatibility gate unmoved.
+
+---
+
+## The salesperson's screen, corrected (2026-09-09) — COMPLETE
+
+Five corrections from the user, on the road they had just walked. Each one is a
+place where the step existed, the navigation worked, and the screen underneath
+had nothing on it worth doing.
+
+**1 — the job.** `#job-panel` was in the side column while step 1 hides the
+drawing, so the whole main column was blank and the only thing to do on the
+screen was tucked into the margin. It is the first child of `.canvas-col` now.
+Two buttons did one thing — the panel's Save and the road's *Done — next: The
+property* — and Save already advanced the road through `job-changed`. A step may
+now declare `commits: true` in `roads.js`, and `road.js` suppresses its own Done
+there; step 1 is the only one that has an explicit commit to make. And
+`strategy.none` ("No strategy yet — press ⚙ Generate strategy") is gone: it sat
+directly under the button it described, on every step including those with no
+canvas at all. `#statusbar` and `#strategy-summary` are now scoped WITH the
+drawing in `step-surfaces.js`, so a caption cannot outlive its picture.
+
+**2 — the property.** The header of `context.js` used to defend "one gesture,
+one shape: press, drag, release". The user overruled it and the reasons were
+better than ours: a house is not a rectangle, and a street with no width has
+nothing to edit. So the geometry moved into a new pure module,
+`js/landmark-shape.js` (node-tested beside `base-top.js`), which owns the
+gesture per kind — a house is built click by click, a street and a sidewalk are
+dragged BANDS, a pool/boundary/other is a bbox, a tree is a 16-gon. Because a
+band is a rectangle, `rectMetrics`/`rectFromMetrics` make angle, length and
+width typeable in the property panel; a click-built house is offered none,
+because inventing an angle for a free polygon squares off a shape somebody
+traced. `LANDMARK_KINDS` grew `sidewalk`, `pool`, `tree` — a registry addition,
+not an amendment, and the seam cost exactly what it was written to cost. Only
+the house and the street are toolbar buttons; the rest live behind one
+`#tool-other` picker.
+
+**3 and 4 — which fence, and gates.** Both steps showed a report and gave
+nothing to press. `#model-row` now carries a real picker over the same listing
+and the same `PUT /projects/{id}/fence-model` the Panel tab uses, with the
+report kept underneath — the select answers *what is the default*, the report
+answers *what was actually sold across the whole fence*, and collapsing them is
+audit B03 returning. A new `js/gates.js` owns `#gates-panel`: which gate, from
+the catalog, before any click on the fence — the gate popover now seeds from
+that standing choice — plus the gates already placed, removable. `editor.js`'s
+private `gateKitProducts`/`declaredOpening` moved there, so the filter that
+decides what counts as a gate has one home.
+
+**5 — notes.** The Annotations tab asked a salesperson to pick "r2" from a list
+of run ids. A note is attached by clicking the thing it is about now:
+`editor.js` resolves point event → corner node → run → landmark → the job, and
+`js/notes.js` opens the popover, posts the verbatim text, lists the promises
+back and marks them on the drawing. `target_ref` gained `landmark:<id>`. There
+is no delete, because there is no delete endpoint, because a promise a person
+made is not ours to withdraw — and a note outlives its referent, so an
+unresolvable ref reads as "something no longer on the drawing" rather than
+throwing.
+
+Three tests asserted the behaviour the user overruled and were rewritten to say
+what changed and why (`notes` is no longer the step whose surface is another
+panel; the map belongs to steps 2–7; the registry is seven kinds). The browser
+smoke gained `_smoke_sales_step_surfaces`, one check per sentence of the
+instruction, and its property case now proves the click-built house, the band's
+typeable width, that only two property tools are buttons, and that a tree chosen
+under "Other" is drawn and recorded.
+
+2758 pytest · 404 browser checks · compatibility gate unmoved.
+
+---
+
+## Five more corrections, and the gate design (2026-09-09) — COMPLETE
+
+The user walked the road again. Four defects and one design conversation.
+
+**The "Other" picker recorded everything as "Other".** `#tool-other` is a
+`<select>` whose id matches the `other` KIND, so the toolbar's own click wiring
+gave it a listener arming `other` — and a native select fires `change` when an
+option is chosen and `click` when the dropdown closes, in that order. Every
+tree, pool and sidewalk was armed correctly and then overwritten a millisecond
+later. Only `<button>` elements get click wiring now. The browser smoke had
+missed it by driving the picker with `change` alone, which is precisely the half
+that worked; it drives both, in order, and would now fail.
+
+**The street's fixed width.** A band has two gestures: drag the BOX the road
+occupies and both numbers come out of the one drag, or drag a LINE along it and
+get a default-width band as before. The box is wound long-side-first so
+`rectMetrics` reads "length" and "width" the way the person who dragged it
+would — a street running up the page is 18 m long and 3 m wide, not the reverse.
+
+**"Finish run" walking to the next step.** Enter means *that is the whole run*
+to the drawing and is also the browser's activation key for the focused button
+— which, after arriving by pressing *Done — next: …*, is that very button,
+because clicking an SVG moves focus nowhere. One keystroke, two commits. The
+canvas has `tabindex="-1"` and takes focus on a press, and the Enter that
+finishes a draft calls `preventDefault`.
+
+**Tools surviving their step.** Hiding a control never disarmed it, so the gate
+tool armed on step 6 was still armed on step 7, where clicking the house to
+attach a note placed a gate instead. `step-surfaces.js: defaultToolForStep`
+derives the answer from the tools a step KEEPS — one kept tool means the step is
+that tool (draw, gate, note); several or none gets `select` — and the invariant
+asserted is that no step can arm a tool its own rail hides.
+
+**Gates, discussed then built.** They sell single-swing, double-swing and
+sliding gates; the direction is stated by pointing at a side; it must reach the
+drawing and the setting-out sheet but must not pick hardware yet. So
+`GatePayload`/`Gate`/`GateRow` carry `leaf`, `opens_to`, `hinge`, `slides_to`;
+`js/gate-geom.js` (pure, node-tested) computes the opening, the swing arc and
+the slide arrow; `js/gates.js` draws them from the topology event before any
+generation and names the side from the landmarks actually on it — *"opens
+toward the house"*, not *"opens left"*. A side nobody stated is drawn as a
+question mark rather than as a default, and the payload validator refuses the
+contradictions. The opening is now CENTRED on the click, because the generator
+reads the anchor as the leading edge and a click used to put the hole beyond
+where the person pointed. Nothing reaches generation: an invariance test
+compares posts, spans, warnings, the BOM and every decision-graph node between
+a plain gate and a swung one.
+
+2813 pytest · 299 golden scenarios · 417 browser checks · compatibility gate
+unmoved.
+
+---
+
+## A gate is not a piece of fence (2026-09-09) — COMPLETE
+
+Two corrections, in the user's words: *"i want it placed at the end of the fence
+ie `o-----o gate` (it can combine 2 unconnected runs) but it doesnt change the
+layout of already placed runs"*, and then, on being told a gate was its own
+short stretch: *"no, a run and a gate are different things. the gate is placed
+next to a run, not on it!"*
+
+Both readings before that were wrong and both were backed out. The model that
+holds is a second, first-class kind: **`GateSpan` on `topology.gates`**, two
+nodes and a kit, standing beside the runs and on none of them.
+
+- **No stored width.** The opening is the distance between its nodes, as a run's
+  length is between its own — `topology/station.py: gate_opening_mm`. A stored
+  width would disagree with the geometry the instant somebody dragged a node,
+  and from then on the drawing and the price would be about different gates.
+- **It joins two runs by sharing their end nodes**, which is what "combines 2
+  unconnected runs" means and why nodes rather than a position.
+- **It changes the layout of neither.** `_generate_gate_spans` runs after the
+  whole run loop, so nothing a run produces can observe a gate — by
+  construction rather than by care. The test generates the same topology twice,
+  with and without the gates, and compares posts, spans, warnings, BOM lines and
+  every decision-graph node.
+- **It gets its own post** at a node no run touches (the far side of a gate
+  hanging off a single stretch), reinforced — it exists only because the gate
+  does. A SHARED node post keeps whatever the runs decided, because changing its
+  sku would change the BOM of a fence the gate is supposed to leave alone.
+- **Its kit is its own BOM group**, not the unassigned bucket: the kit is asked
+  for by the gate, and "nobody's part" is a different statement. Sections, nodes
+  and gates partition the demand exactly once.
+- **The setting-out sheet** gives it a block of its own — it belongs to no
+  section — read as "between A/P4 and G1/P2, 1200 mm, opens toward the house".
+
+The in-run gate (`GatePayload`) stays exactly as it was: stored projects have
+them and every golden scenario builds one. Nothing in the UI authors one any
+more, so `gate` left `EVENT_TOOLS` — an event tool writes onto a run, and this
+does not.
+
+Alongside it, and the same shape: **a stretch's length and angle are numbers you
+can type**. A street landmark had those fields and the fence did not, so
+somebody who had measured a run could only drag until the label read about
+right. `run-metrics.js` is pure and node-tested; the start stays anchored, and a
+stretch with a corner gets one row per leg rather than one angle that would
+silently straighten what was drawn.
+
+Three latent faults surfaced and were fixed on the way: `toPx(pointAtStation(…))`
+dereferenced before its own null check, so one unresolvable element abandoned
+the whole overlay mid-draw; the strategy summary measured gate length from
+stations, which a standalone gate does not have; and the gate tool swallowed
+presses on a gate's own controls, so they worked on every step except the one
+that shows them.
+
+2875 pytest · 299 golden scenarios · 421 browser checks · contract hashes verify.

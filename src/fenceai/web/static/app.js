@@ -2,9 +2,11 @@
 // All behavior lives in js/* modules communicating via state.js events.
 
 import { apiGet } from "./js/api.js";
+import { initPublishedParts } from "./js/published-parts.js";
 import { initAssembly } from "./js/assembly.js";
 import { initEditor } from "./js/editor.js";
 import { initEvidence } from "./js/evidence.js";
+import { initGates } from "./js/gates.js";
 import { currentLocale, initI18n, setLocale, t } from "./js/i18n.js";
 import { canRedo, canUndo, redo, undo } from "./js/history.js";
 import { initInspector } from "./js/inspector.js";
@@ -12,6 +14,7 @@ import { initContext } from "./js/context.js";
 import { initHandover } from "./js/handover.js";
 import { initJob } from "./js/job.js";
 import { initModelEditor } from "./js/model-editor.js";
+import { initNotes } from "./js/notes.js";
 import { initPanel } from "./js/panel.js";
 import { initProfile } from "./js/profile.js";
 import { initRoad } from "./js/road.js";
@@ -88,6 +91,7 @@ async function main() {
   initEditor();
   initInspector();
   initTabs();
+  initPublishedParts();
   initPanel();
   initModelEditor();
   initSectionDecisions();
@@ -98,6 +102,12 @@ async function main() {
   initProfile();
   initJob();
   initContext();
+  // Which gate, and what was promised about what. Both own a panel in the side
+  // column and a surface the road's gates and notes steps scope to; both are
+  // read-only until a project has loaded, so their place in this list only has
+  // to be before the first `openProject` below.
+  initGates();
+  initNotes();
   initHandover();
   initEvidence();
   setupHeader();

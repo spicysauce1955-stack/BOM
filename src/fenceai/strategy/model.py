@@ -12,6 +12,7 @@ from fenceai.core.units import Mm
 from fenceai.decisions.graph import DecisionGraph
 from fenceai.fencemodel.resolve import ResolvedPanel
 from fenceai.strategy.continuity import MemberRunPlan
+from fenceai.topology.model import GateEdge, GateLeaf, GateSide
 
 
 class Post(BaseModel):
@@ -114,11 +115,41 @@ class MemberRun(MemberRunPlan):
 
 
 class Gate(BaseModel):
+    """One gate, from either of the two ways a gate can be authored.
+
+    `run_ref is None` IS the standalone gate — the `GateSpan` that stands beside
+    the runs, joining two nodes and lying on no run at all. It therefore has no
+    station: `start_station_mm`/`end_station_mm` stay 0 for it and mean nothing,
+    and `start_node_id`/`end_node_id` are where its ends actually are.
+
+    `width_mm` is the one field EVERY consumer can rely on, whichever kind this
+    is: `end - start` for a gate inside a run, the distance between the two nodes
+    for one beside them. It is written once, here, during generation — a reader
+    that subtracted the stations itself would get 0 for every standalone gate,
+    and a reader that measured the nodes itself would be a second derivation of a
+    number the run was already built to.
+    """
+
     id: str
-    run_ref: str
-    start_station_mm: Mm
-    end_station_mm: Mm
+    run_ref: str | None = None
+    start_station_mm: Mm = 0
+    end_station_mm: Mm = 0
+    # only set when `run_ref is None` — the two nodes a standalone gate hangs
+    # between, so a renderer and the setting-out sheet can find its ends
+    start_node_id: str | None = None
+    end_node_id: str | None = None
+    width_mm: Mm = 0
     kit_sku: str
+    # CARRIED VERBATIM from the topology's `GatePayload` — never derived,
+    # inferred or defaulted here. A swing nobody stated is a swing nobody is
+    # responsible for, so `None` travels through as `None` and the drawing says
+    # nothing rather than guessing. These reach the drawing and the setting-out
+    # sheet and nothing else: they pick no hardware and change no quantity,
+    # because the catalog does not yet declare handedness.
+    leaf: GateLeaf = "single"
+    opens_to: GateSide | None = None
+    hinge: GateEdge | None = None
+    slides_to: GateEdge | None = None
 
 
 class StrategyWarning(BaseModel):

@@ -41,6 +41,70 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ---
 
+## Two kinds of gate, and the invariant between them
+
+A gate can be authored two ways, and they are different physical claims.
+
+* **In a run** — `GatePayload`, a point event at a station. The fence is
+  interrupted: part of that run's layout is consumed by the opening. This is the
+  original kind, it is what every stored project and every golden scenario uses,
+  and it is unchanged.
+* **Beside the runs** — `GateSpan` in `Topology.gates`, joining two nodes and
+  lying on no run at all:
+
+  ```
+  o------------o  [====gate====]  o------------o
+      run rA       the GateSpan       run rB
+                   n2          n3
+  ```
+
+  *"a run and a gate are different things. the gate is placed next to a run, not
+  on it"* — so it combines two runs drawn unconnected and **changes the layout of
+  neither**.
+
+Three properties hold this together.
+
+* **A `GateSpan` stores no width.** The opening is the distance between its two
+  nodes (`topology.station.gate_opening_mm`), exactly as a run's length is the
+  distance between its own. A stored width would disagree with the geometry the
+  moment somebody drags a node, and from then on the drawing and the price would
+  be about different gates. The four swing facts are validated by the same
+  function `GatePayload` uses (`check_swing_coherence`) — one implementation, or
+  one of the two ways of drawing a gate quietly starts accepting the nonsense the
+  other refuses.
+* **One `Gate` element, two origins.** `Gate.run_ref is None` **is** the
+  standalone gate: it has no station, its ends are `start_node_id`/`end_node_id`,
+  and `width_mm` — populated for both kinds — is the field every consumer reads.
+  A reader that subtracted the stations itself would get 0 for every standalone
+  gate. In the read models a `None` means *belongs to no section*: `bom_groups`
+  leaves it out of the section partition and reports its kit under `unassigned`
+  (a group kind of its own is the follow-up and needs a `bom.group_*` locale
+  entry in both bundles), `section_decisions` gives it an empty section set, and
+  `structure.py` lays it out in `StructureReport.gates` at the top level, between
+  the tags of the two posts it hangs from.
+* **`_generate_gate_spans` runs after every run is generated, and that placement
+  is the design.** Nothing about a run can observe a gate span — every post, bay,
+  warning and decision node a run produces is already built and its ordinals are
+  already fixed. `tests/strategy/test_gate_span_generation.py` asserts this by
+  generating the same topology twice, with and without its gate spans: remove the
+  gate's own decision nodes from the first and the two graphs, posts, bays,
+  warnings and BOM lines are identical. What the pass *does* add is its own — the
+  gate, its kit (through the same `_resolve_gate_kit` / `_check_gate_kit_width`
+  path an in-run gate uses) and a post at each of its two nodes, because a gate
+  with a post on one side only is unbuildable. A node a run already stands at
+  keeps the post the runs decided: the gate-adjacency reinforcement rule in
+  `_generate_node_posts` is deliberately **not** extended to a gate span's shared
+  nodes, because it would change that post's sku and therefore the BOM of a fence
+  the gate was supposed to leave alone.
+
+Not yet extended to gate spans, and named here rather than left to be
+rediscovered: the `gate_on_slope` check (it resolves `gate_max_slope_permille`
+from a run-scoped context that a standalone gate has none of), and force/suppress
+overrides addressed at a gate-only node post (they are addressed by
+`(run_id, station)`, and such a post is on no run).
+
+---
+
 ## The API surface
 
 63 routes. Grouped by what they are for rather than by path:

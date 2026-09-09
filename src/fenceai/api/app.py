@@ -1049,15 +1049,15 @@ def published_parts():
     marketing-grade OCR or PE-sealed depending which of eleven documents it came
     from).
 
-    Nothing renders this yet. It exists anyway, for the reason the frontend
-    design gives for its own step 1: building the surface is what tells us
-    whether the data is what a reviewer needs. `defects` is authoring text for
+    The Knowledge tab renders definitions including draft and retired parts.
+    Definition visibility does not imply admission for generation. `defects` is authoring text for
     whoever holds the payload, so it is returned as-is and rendered escaped and
     LTR — never through the warning registry.
     """
     snapshot = state.store.active_snapshot()
     if snapshot is None:
-        return {"loaded": False, "specs": [], "defects": [], "inactive": []}
+        return {"loaded": False, "specs": [], "defects": [], "inactive": [],
+                "definitions": [], "source_docs": []}
     ingested = ingest(snapshot)
     return {
         "loaded": True,
@@ -1065,6 +1065,10 @@ def published_parts():
         "specs": ingested.part_specs,
         "defects": ingested.part_defects,
         "inactive": ingested.inactive_parts,
+        # Inspection carries inactive definitions too; consumption still judges
+        # active specs separately. Storage may materialize schema defaults.
+        "definitions": [p.model_dump(mode="json", exclude_unset=True) for p in snapshot.parts],
+        "source_docs": [d.model_dump(mode="json", exclude_unset=True) for d in snapshot.source_docs],
     }
 
 

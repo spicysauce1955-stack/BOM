@@ -71,11 +71,22 @@ def test_an_unknown_kind_is_refused_at_the_boundary():
 
 
 def test_the_registry_covers_what_a_salesperson_actually_names():
-    """They said it in this order: relative to the house, the street, the road.
-    `other` carries the rest with a label, so an unnamed thing on the sketch is
-    recordable rather than lost."""
+    """They said it in this order: relative to the house, the street, the road —
+    and then, on seeing it, "the user should be able to add trees, sidewalk,
+    pool, ...". The seam was written for exactly that ("a salesperson will
+    eventually want a driveway, a pool or a neighbour's fence") and cost one
+    line, three locale entries and a draw style each when it arrived.
+
+    `other` still carries the rest with a label, so an unnamed thing on the
+    sketch is recordable rather than lost — which is why this list can stay
+    short instead of growing a kind per noun.
+
+    The kinds beyond `house` and `street` are deliberately NOT toolbar buttons:
+    `index.html` puts them behind one "Other…" control. This registry says what
+    is RECORDABLE; how prominently each is offered is the screen's business."""
     from fenceai.project.model import LANDMARK_KINDS
-    assert set(LANDMARK_KINDS) == {"house", "street", "boundary", "other"}
+    assert set(LANDMARK_KINDS) == {"house", "street", "sidewalk", "pool",
+                                   "tree", "boundary", "other"}
 
 
 def test_coordinates_are_integer_millimetres_like_everything_else():

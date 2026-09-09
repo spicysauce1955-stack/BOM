@@ -94,7 +94,15 @@ def _sections_of_element(strategy: Strategy, topology: Topology) -> dict[str, se
     out: dict[str, set[str]] = {}
     for element in [*strategy.posts, *strategy.spans, *strategy.gates]:
         ref = element.run_ref
-        if ref.startswith("node:"):
+        if ref is None:
+            # A standalone gate (`Gate.run_ref is None`) stands beside the runs
+            # and belongs to NO section — it is not a stretch of fence. An empty
+            # set is the true answer: its decisions are its own, reachable
+            # through `/explain/{element}`, and attaching them to a neighbouring
+            # section would put a gate nobody placed there into that section's
+            # story.
+            out[element.id] = set()
+        elif ref.startswith("node:"):
             out[element.id] = set(touching.get(ref.split(":", 1)[1], set()))
         else:
             out[element.id] = {ref}

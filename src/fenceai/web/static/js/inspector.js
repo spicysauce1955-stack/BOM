@@ -3,23 +3,39 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import { el, loadCatalogProducts, option, skuSelect } from "./builder-ui.js";
-import { runLength, stationOfAnchor } from "./geom.js";
+import { nodeById, runLength, runPoints, stationOfAnchor } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
 import { on, reloadProject, saveTopology, setSelection, state } from "./state.js";
-import { currentUnit, enumWord, fmt, fmtLen, tu } from "./units.js";
+import {
+  currentUnit, enumWord, fmt, fmtLen, inputStep, toDisplayValue, toMm, tu,
+} from "./units.js";
+import {
+  POLYLINE, runFromMetrics, runMetrics, segmentFromMetrics, segmentMetrics,
+  shapeOf, STRAIGHT,
+} from "./run-metrics.js";
 
 export function initInspector() {
   const sel = document.getElementById("run-select");
   sel.addEventListener("change", () => setSelection({ runId: sel.value }));
   on("project-loaded", () => {
     renderRunSelectors(); syncRunSelect(); renderOverrides(); renderRunEvents();
+    renderRunMeasure();
   });
   on("result-changed", renderOverrides);
-  on("selection-changed", () => { syncRunSelect(); renderRunEvents(); });
-  on("locale-changed", () => { renderOverrides(); renderRunEvents(); replay(); });
+  on("selection-changed", () => {
+    syncRunSelect(); renderRunEvents(); renderRunMeasure();
+  });
+  // Dragging a dot changes the very numbers this panel prints, and a drag emits
+  // this and nothing else — without it the fields go on showing the length the
+  // stretch had before it was moved, which is the one way a measurement can lie.
+  on("topology-changed", renderRunMeasure);
+  on("locale-changed", () => {
+    renderOverrides(); renderRunEvents(); renderRunMeasure(); replay();
+  });
   on("units-changed", () => {
-    renderRunSelectors(); syncRunSelect(); renderOverrides(); renderRunEvents(); replay();
+    renderRunSelectors(); syncRunSelect(); renderOverrides(); renderRunEvents();
+    renderRunMeasure(); replay();
   });
   // a regenerated run invalidates the element ids the last explanation referenced
   on("result-changed", () => { lastInspect = null; });
@@ -461,4 +477,125 @@ function renderRunEvents() {
     });
     div.appendChild(d);
   }
+}
+
+
+// ---------- what this stretch measures, as numbers you can type -------------
+//
+// "The user should also be able to change the angle of the fence and
+// everything." A street landmark has had angle, length and width fields since
+// the property panel was built; the fence had none, so a salesperson who
+// measured a run — 12.4 m, turning 30 degrees — could only drag until the label
+// read about right and hope.
+//
+// The arithmetic is `js/run-metrics.js`: pure, node-tested, no DOM, the same
+// split `base-top.js`/`profile.js` and `landmark-shape.js`/`context.js` keep.
+// This function only wires it to fields.
+//
+// A run WITH CORNERS gets one row per leg and no single answer, for
+// `landmark-shape.js: metricsKind`'s reason: there is no one angle for an
+// L-shaped stretch, and offering one would silently straighten a shape somebody
+// drew.
+
+function selectedRun() {
+  const id = state.selection.runId
+    || document.getElementById("run-select")?.value;
+  return state.project?.topology.runs.find((r) => r.id === id) || null;
+}
+
+function measureField(kind, index, label, value, step) {
+  return `<label class="measure-field">
+    <span class="meta">${esc(label)}</span>
+    <input class="run-measure-input num" type="number" step="${esc(String(step))}"
+           data-kind="${esc(kind)}" data-leg="${esc(String(index))}"
+           value="${esc(String(value))}"></label>`;
+}
+
+function measureRow(metrics, index, label) {
+  return `<div class="measure-row" data-leg="${esc(String(index))}">
+    ${label ? `<span class="meta measure-leg">${esc(label)}</span>` : ""}
+    ${measureField("length", index, tu("inspect.length"),
+                   toDisplayValue(metrics.length_mm), inputStep())}
+    ${measureField("angle", index, t("inspect.angle"),
+                   Math.round(metrics.angle_deg), "1")}
+  </div>`;
+}
+
+function renderRunMeasure() {
+  const host = document.getElementById("run-measure");
+  if (!host) return;
+  const run = selectedRun();
+  host.innerHTML = "";
+  if (!run) return;
+  const points = runPoints(run);
+  const shape = shapeOf(points);
+  let body = "";
+  if (shape === STRAIGHT) {
+    const m = runMetrics(points);
+    if (!m) return;
+    body = measureRow(m, 0, "");
+  } else if (shape === POLYLINE) {
+    body = `<div class="meta">${esc(t("inspect.measure_corners"))}</div>`;
+    for (let i = 0; i + 1 < points.length; i++) {
+      const m = segmentMetrics(points, i);
+      if (m) body += measureRow(m, i, t("inspect.leg", { n: i + 1 }));
+    }
+  } else return;
+  host.innerHTML = `<h4>${esc(t("inspect.measure"))}</h4>${body}`;
+  for (const input of host.querySelectorAll(".run-measure-input"))
+    input.addEventListener("change", () => applyMeasure(run.id, +input.dataset.leg));
+}
+
+/** Read one row back and rebuild the geometry from it.
+ *
+ *  Read by ROW rather than from the event target, so one change always applies a
+ *  complete, consistent pair instead of mixing a fresh angle with a stale
+ *  length — the same rule `context.js` follows for a landmark's three fields.
+ *
+ *  A blank or unparseable length is REFUSED: the panel re-renders and the true
+ *  figure comes back to the field. Never write a null into a point list. */
+async function applyMeasure(runId, leg) {
+  const run = state.project?.topology.runs.find((r) => r.id === runId);
+  if (!run) return;
+  const host = document.getElementById("run-measure");
+  const row = host?.querySelector(`.measure-row[data-leg="${leg}"]`);
+  if (!row) return;
+  const lengthMm = toMm(row.querySelector('[data-kind="length"]').value);
+  const angleDeg = Number(row.querySelector('[data-kind="angle"]').value);
+  if (lengthMm === null || lengthMm <= 0 || !Number.isFinite(angleDeg)) {
+    renderRunMeasure();
+    return;
+  }
+  const points = runPoints(run);
+  const metrics = { length_mm: lengthMm, angle_deg: angleDeg };
+  let next;
+  if (shapeOf(points) === STRAIGHT) {
+    const out = runFromMetrics(points, metrics);
+    next = out && [out.start, out.end];
+  } else {
+    next = segmentFromMetrics(points, leg, metrics);
+  }
+  if (!next) { renderRunMeasure(); return; }
+  // Snapshot BEFORE the mutation, then save — the one order every topology edit
+  // in this app keeps.
+  pushSnapshot("measure-run");
+  applyPoints(run, next);
+  await saveTopology();
+}
+
+/** Write a point list back onto a run.
+ *
+ *  The START never moves — `run-metrics.js` anchors there, because a person
+ *  typing a length means "this stretch is 12.4 m" and not "slide it off the
+ *  corner it was drawn from". Moving the END moves the NODE, so a run sharing
+ *  that node follows: that is what connected means, and it is the same thing
+ *  dragging the dot has always done. */
+function applyPoints(run, points) {
+  const last = points.length - 1;
+  const startNode = nodeById(run.start_node_id);
+  const endNode = nodeById(run.end_node_id);
+  if (!startNode || !endNode) return;
+  [startNode.x_mm, startNode.y_mm] = points[0];
+  [endNode.x_mm, endNode.y_mm] = points[last];
+  run.interior_vertices = points.slice(1, last).map(([x, y]) => [x, y]);
 }
