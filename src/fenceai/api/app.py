@@ -64,7 +64,7 @@ from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.report.handover import handover_gaps
 from fenceai.project.model import (
-    Annotation, Job, Project, Selection, SiteConditions, SiteContext,
+    Annotation, Job, Project, Selection, SiteConditions, SiteContext, Stated,
 )
 from fenceai.report.annexe import WarningPlacement, place_for_plan
 from fenceai.report.bom_groups import group_bom
@@ -354,6 +354,25 @@ def put_job(project_id: str, job: Job) -> Project:
     """
     project = _project(project_id)
     project.job = job
+    state.store.save_project(project)
+    return project
+
+
+@app.put("/api/projects/{project_id}/stated")
+def put_stated(project_id: str, stated: Stated) -> Project:
+    """Say what this job does not have.
+
+    Unrevisioned, like `/job` and unlike `/site` and `/topology`. Those are
+    INPUTS to generation, so a derived view must be able to tell whether it is
+    stale against them; a claim that there are no gates changes no quantity.
+
+    The claim is stored as given and never validated against the drawing —
+    `handover_gaps` reports the disagreement instead. Refusing the claim here
+    would mean the salesperson could not record what they believe, which is
+    the one thing this field exists to capture.
+    """
+    project = _project(project_id)
+    project.stated = stated
     state.store.save_project(project)
     return project
 
@@ -1030,15 +1049,15 @@ def published_parts():
     marketing-grade OCR or PE-sealed depending which of eleven documents it came
     from).
 
-    Nothing renders this yet. It exists anyway, for the reason the frontend
-    design gives for its own step 1: building the surface is what tells us
-    whether the data is what a reviewer needs. `defects` is authoring text for
+    The Knowledge tab renders definitions including draft and retired parts.
+    Definition visibility does not imply admission for generation. `defects` is authoring text for
     whoever holds the payload, so it is returned as-is and rendered escaped and
     LTR — never through the warning registry.
     """
     snapshot = state.store.active_snapshot()
     if snapshot is None:
-        return {"loaded": False, "specs": [], "defects": [], "inactive": []}
+        return {"loaded": False, "specs": [], "defects": [], "inactive": [],
+                "definitions": [], "source_docs": []}
     ingested = ingest(snapshot)
     return {
         "loaded": True,
@@ -1046,6 +1065,10 @@ def published_parts():
         "specs": ingested.part_specs,
         "defects": ingested.part_defects,
         "inactive": ingested.inactive_parts,
+        # Inspection carries inactive definitions too; consumption still judges
+        # active specs separately. Storage may materialize schema defaults.
+        "definitions": [p.model_dump(mode="json", exclude_unset=True) for p in snapshot.parts],
+        "source_docs": [d.model_dump(mode="json", exclude_unset=True) for d in snapshot.source_docs],
     }
 
 

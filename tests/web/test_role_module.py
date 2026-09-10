@@ -79,6 +79,15 @@ def _live_ids() -> set[str]:
         ids |= set(re.findall(r'\.id\s*=\s*"([^"]+)"', src))
         ids |= set(re.findall(r'"id":\s*"([^"]+)"', src))
         ids |= set(re.findall(r'\bid:\s*"([^"]+)"', src))
+        # ...and the form the rest of this frontend actually uses: an id written
+        # into an HTML template string and assigned with `innerHTML`. Without
+        # this the scan misses the majority of ids modules create, so a real
+        # element (`#model-row-hint`, audit B03) fails a check whose whole
+        # purpose is to prove the element exists. Matching a template id is the
+        # same trade the three patterns above already make: an id that is
+        # written but never rendered would pass, which is why this check proves
+        # a selector is REAL and the browser smoke proves it is reached.
+        ids |= set(re.findall(r'id="([^"{}]+)"', src))
     return ids
 
 
@@ -130,9 +139,14 @@ def test_sales_keeps_every_surface_that_records_what_was_SOLD(out):
 
 
 def test_a_promise_made_during_the_sale_keeps_a_home(out):
-    """Annotations stay. `Annotation.target_ref` already accepts `run:<id>`, so
-    *"a post clear of that window"* — a real thing to promise a customer — can be
-    recorded as a note without giving a salesperson post placement.
+    """Annotations stay reachable — but READ THIS, because what makes it true
+    changed. `#tabs` is now hidden for sales, so "not on the hide-list" no
+    longer means "reachable by a tab": the road's step 5 is what reaches the
+    annotations panel, through `tabs.js: setTab`.
+
+    `SALES_TABS` is therefore no longer a navigation list. It is the set of
+    panels the road may activate, and `annotations` being in it is what stops
+    step 5 from being a dead end.
 
     It is a NOTE and not an override on purpose: an override is a technical
     instruction that survives into generation, and a promise is a sentence the

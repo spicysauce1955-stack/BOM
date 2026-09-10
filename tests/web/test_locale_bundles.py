@@ -35,11 +35,19 @@ WARNING_CODES = [
     "continuity_override_unbuildable",
     "continuity_stock_length_unknown",
     "sliver_span",
-    # the hard maximum's one authorized exception: a `lock_bay` override placed
+    # the hard maximum's FIRST authorized exception (S20 added a second, a
+    # limit between whole millimetres): a `lock_bay` override placed
     # this bay, so it is built as placed, marked and attributed. A sentence about
     # the reader's OWN action, so it is translated — not Knowledge-Platform
     # vocabulary held back on KNOWLEDGE_SURFACE_UNTRANSLATED.
     "span_placed_over_maximum",
+    # The OTHER way a bay ends up over the maximum, and it is ours rather than a
+    # person's: a published limit that falls between whole millimetres (56" is
+    # 1422.4 mm) chooses the bay count, and ADR-0002 then stores the bays as
+    # integer millimetres — so the remainder spread leaves one bay a fraction
+    # over. Its own code, because `span_placed_over_maximum` attributes a bay to
+    # the person who placed it and this one has nobody to attribute it to.
+    "span_rounded_over_published_limit",
     "unknown_product",
     "knowledge_conflict",
     "node_surface_disagreement",
@@ -77,6 +85,11 @@ WARNING_CODES = [
     # so that the surface which eventually reads them is not also the change that
     # has to invent their Hebrew.
     "uncovered_parameter_point",
+    # The same claim, caught lying about itself: a row on the SAME table
+    # already covers a point the table lists as uncovered (an omitted
+    # dimension matches every value on that axis) — `disputed`, not a
+    # coverage hole, so it is its own code rather than sharing the one above.
+    "uncovered_point_contradicted",
     "parameter_authority_lapsed",
     "parameter_value_nonconforming",
     # A table scoped to an entity kind this engine has no dimension for. Closes
@@ -189,11 +202,6 @@ KNOWLEDGE_SURFACE_UNTRANSLATED = [
     "error.snapshot_malformed",
     "error.snapshot_id_mismatch",
     "decisions.unjudged",
-    "knowledge.snapshot.none",
-    "knowledge.snapshot.active",
-    "knowledge.snapshot.admitted",
-    "knowledge.snapshot.declined",
-    "knowledge.snapshot.gaps",
 ]
 
 
@@ -337,6 +345,72 @@ def test_bundle_key_parity():
         "only_en": sorted(set(en) - set(he)),
         "only_he": sorted(set(he) - set(en)),
     }
+
+
+# Keys whose two languages legitimately interpolate DIFFERENT params. A real
+# exemption is a grammatical fact about one language — e.g. a construction that
+# has to name a gender or a count the other language leaves implicit — and never
+# "the Hebrew phrasing came out shorter". There are none today, and an entry here
+# is a claim someone has to defend in review, which is why the test below also
+# fails a STALE one: an exemption that no longer mismatches is a check that
+# quietly stopped checking.
+PLACEHOLDER_PARITY_EXEMPT: dict[str, str] = {
+    # "some.key": "why this language genuinely needs a param the other does not",
+}
+
+
+def test_both_bundles_take_the_same_placeholders():
+    """Key parity is not enough: a bundle string interpolates `{name}`, and a
+    translation that drops one still READS as a sentence — it just stops saying
+    the thing it was written to say, in the language this app opens in.
+
+    Proved by mutation: replacing the Hebrew `warning.span_rounded_over_published_limit`
+    body with a fixed phrase that names no number left `tests/web` and
+    `tests/decisions` fully green, because `test_bundle_key_parity` compares key
+    SETS and `test_gap_warning_placeholders_match_the_params_a_real_run_emits`
+    drives an empty-KB run that only ever reaches two codes. The Hebrew reader
+    silently lost the millimetres that are the entire point of the warning.
+
+    This is `test_knowledge_panes_module.py`'s
+    `test_both_bundles_take_the_same_sentence_placeholders` with the
+    `action.sentence.*` restriction lifted — that check was right, it was just
+    scoped to one family of keys.
+    """
+    en, he = _bundles()
+    mismatched = {}
+    for key in sorted(set(en) & set(he)):
+        ours = set(re.findall(r"\{(\w+)\}", str(en[key])))
+        theirs = set(re.findall(r"\{(\w+)\}", str(he[key])))
+        if ours != theirs:
+            mismatched[key] = {"en_only": sorted(ours - theirs),
+                               "he_only": sorted(theirs - ours)}
+    stale = sorted(set(PLACEHOLDER_PARITY_EXEMPT) - set(mismatched))
+    assert not stale, (
+        f"{stale} are exempted from placeholder parity but no longer differ — "
+        "drop the exemption rather than leaving a check that checks nothing")
+    unexplained = {k: v for k, v in mismatched.items()
+                   if k not in PLACEHOLDER_PARITY_EXEMPT}
+    assert not unexplained, unexplained
+
+
+def test_every_tool_on_the_rail_has_a_hint_in_both_bundles():
+    """`editor.js` builds the hint key as `hint.${state.tool}` — a DYNAMIC key,
+    which is the one shape `test_bundle_key_parity` cannot see: both bundles
+    agreed with each other and neither had the entry.
+
+    Found in the browser smoke's own screenshot (`21-model-event.png`), not by a
+    test: selecting *What was sold*, *House* or *Street* printed the literal
+    string `hint.model` under the canvas, in Hebrew and in English. All three are
+    tools a SALESPERSON keeps, so every one of them was on the one road the MVP
+    claims to have cut.
+    """
+    en, he = _bundles()
+    tools = sorted(set(re.findall(r'id="tool-([a-z_]+)"',
+                                  (STATIC / "index.html").read_text())))
+    assert tools, "no tools found on the rail — this check just stopped checking"
+    missing = [f"hint.{tool}" for tool in tools
+               if f"hint.{tool}" not in en or f"hint.{tool}" not in he]
+    assert not missing, missing
 
 
 def test_every_backend_code_has_locale_entries():

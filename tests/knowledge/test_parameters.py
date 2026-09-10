@@ -29,7 +29,8 @@ from fenceai.knowledge.evaluator import resolve_param, resolve_token
 from fenceai.knowledge.model import KnowledgeBase
 from fenceai.knowledge.source_policy import SHIPPED_DEFAULT
 from fenceai.knowledge.parameters import (
-    ParameterRow, ParameterTable, Provenance, Quantity, Token, expand, to_mm,
+    ParameterRow, ParameterTable, Provenance, Quantity, Token, default_point,
+    expand, paired_points, to_mm,
 )
 from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
@@ -289,6 +290,110 @@ def test_uncovered_points_become_gaps_never_silence():
     _, gaps, _ = expand(table)
     assert [g.because.code for g in gaps] == ["uncovered_parameter_point"]
     assert gaps[0].subject.id == "max_span_mm"
+
+
+def test_an_uncovered_point_a_row_actually_covers_is_disputed_not_silently_trusted():
+    """conversation.md T49 §5b: `_overlap_gaps` already applies 'a row's own
+    keys, matched via `_condition_for`'s semantics — an omitted dimension
+    matches every value on that axis' to a `unique` table's disjointness
+    claim. `uncovered` is the same kind of publisher claim about the same
+    condition space, checked by nobody: a row conditioned only on
+    `exposure_category` covers EVERY `hvhz`, so a table cannot honestly call
+    `{exposure_category: C, hvhz: true}` uncovered while also carrying a row
+    for plain `{exposure_category: C}`. Reporting the ordinary
+    'please publish a row' gap here would be actively wrong — a row already
+    covers it — so this is `disputed`, not `uncovered_condition`."""
+    table = _span_table(
+        rows=[ParameterRow(conditions={"exposure_category": "C"},
+                           value=Quantity(amount_milli=1200000, unit="mm"))],
+        uncovered=[{"exposure_category": "C", "hvhz": True}],
+    )
+    _, gaps, _ = expand(table)
+    assert [g.because.code for g in gaps] == ["uncovered_point_contradicted"]
+    assert gaps[0].kind == "disputed"
+    assert gaps[0].on == "conditions"
+    assert gaps[0].because.params["row"] == 0
+    assert gaps[0].because.params["point"] == {"exposure_category": "C", "hvhz": True}
+
+
+def test_an_uncovered_point_no_row_covers_still_reports_as_uncovered():
+    """The contradiction check must not swallow a genuine hole: a point no row
+    speaks to at all is still `uncovered_parameter_point`."""
+    table = _span_table(uncovered=[{"exposure_category": "D"}])
+    _, gaps, _ = expand(table)
+    assert [g.because.code for g in gaps] == ["uncovered_parameter_point"]
+
+
+def test_a_fallback_row_does_not_launder_an_uncovered_claim():
+    """A fallback (`stated`, no conditions) asserts nothing about the points it
+    lands on — `_overlap_gaps`'s own reasoning for excluding it from the
+    disjointness check applies identically here. Treating it as covering
+    every point would mean no table with a fallback could ever honestly
+    declare anything uncovered."""
+    table = _span_table(
+        rows=[ParameterRow(value=Quantity(amount_milli=1200000, unit="mm"))],
+        uncovered=[{"exposure_category": "D"}],
+    )
+    _, gaps, _ = expand(table)
+    assert [g.because.code for g in gaps] == ["uncovered_parameter_point"]
+
+
+def test_a_row_that_shares_no_dimension_with_the_point_does_not_cover_it():
+    """`all([])` is True, so a row whose conditions and the point have NO key in
+    common used to "cover" it — a `series` row swallowing an `hvhz` hole and
+    reporting a dispute about a row that does not speak to the point.
+
+    This is where the row/point rule parts company with the row/row one in
+    `_overlap_gaps`, which treats an empty `shared` as an overlap on purpose:
+    two rows are each quantified over the condition space, so a point matching
+    both exists regardless. A published `uncovered` entry is not existential —
+    it is one named point, and a row silent on every axis it names has said
+    nothing about it, exactly as a fallback row says nothing.
+
+    Only 48 real cases hold this back today, and only because every one of them
+    happens to share `exposure_category`.
+    """
+    table = _span_table(
+        domain={"series": ["M-VINYL"], "hvhz": [True, False]},
+        condition_scope={"series": "param", "hvhz": "site"},
+        rows=[ParameterRow(conditions={"series": "M-VINYL"},
+                           value=Quantity(amount_milli=1800000, unit="mm"))],
+        uncovered=[{"hvhz": True}],
+    )
+    _, gaps, _ = expand(table)
+    assert [g.because.code for g in gaps] == ["uncovered_parameter_point"], (
+        "a row constraining only dimensions the point is silent about covers "
+        "nothing, so this is a real hole and not a dispute")
+
+
+def test_the_omitted_dimension_rule_survives_the_empty_shared_fix():
+    """The half that must NOT move. A row sharing at least one dimension and
+    agreeing on it still covers a point that names MORE — `_condition_for`
+    makes an omitted key match every value on that axis, and 16 published
+    points were falsely uncovered for want of it (T49 §5b). The fix above
+    excludes only the row that shares nothing at all.
+    """
+    shares_one = _span_table(
+        domain={"exposure_category": ["C"], "hvhz": [True, False]},
+        condition_scope={"exposure_category": "site", "hvhz": "site"},
+        rows=[ParameterRow(conditions={"exposure_category": "C"},
+                           value=Quantity(amount_milli=1200000, unit="mm"))],
+        uncovered=[{"exposure_category": "C", "hvhz": True}],
+    )
+    assert [g.because.code for g in expand(shares_one)[1]] == [
+        "uncovered_point_contradicted"]
+
+    # ...and a row that shares a dimension but DISAGREES on it still covers
+    # nothing, which is the ordinary agreement rule and not the empty case.
+    disagrees = _span_table(
+        domain={"exposure_category": ["B", "C"], "hvhz": [True, False]},
+        condition_scope={"exposure_category": "site", "hvhz": "site"},
+        rows=[ParameterRow(conditions={"exposure_category": "B"},
+                           value=Quantity(amount_milli=1800000, unit="mm"))],
+        uncovered=[{"exposure_category": "C", "hvhz": True}],
+    )
+    assert [g.because.code for g in expand(disagrees)[1]] == [
+        "uncovered_parameter_point"]
 
 
 def test_every_gap_a_table_produces_names_the_tenant_it_expanded_under():
@@ -767,3 +872,120 @@ def test_a_paired_table_lands_the_point_it_builds_and_is_judged_like_any_row():
         ("footing_depth_mm", 610), ("max_span_mm", 1676)}
     assert versions[0].title == 'footing_schedule = 24" · 66"'
     assert set(admitted) == {versions[0].ref}, "a paired row is judged, not exempt"
+
+
+# -- a design point is identified and chosen at PUBLISHED precision ------------
+
+def _paired_row(*pairs: tuple[int, int]) -> ParameterTable:
+    """A `footing_schedule` row whose alternatives are (depth, span) thousandths."""
+    return ParameterTable(
+        parameter="footing_schedule", task="structural_parameter",
+        value_type="paired(footing_depth_mm:mm, max_span_mm:mm)",
+        rows=[ParameterRow(
+            conditions={"exposure_category": "C"},
+            provenance=Provenance(
+                cites=[SourceRef(id="doc-1", belongs_to="doc-1")],
+                source_class="sealed_approval", curation_level=2),
+            value=[[Quantity(amount_milli=d, unit="mm"),
+                    Quantity(amount_milli=s, unit="mm")] for d, s in pairs])])
+
+
+def test_two_alternatives_that_round_to_one_millimetre_are_two_design_points():
+    """`DesignPoint.id` used to be built from the ROUNDED bindings, so a pair of
+    alternatives at 2463.8 mm and 2464.2 mm got one id between them.
+
+    The comment over that id says identity is the values, so a re-cut that
+    reorders a row cannot turn a stored selection into a different fence. That
+    was true while every published span was a whole millimetre and false the
+    moment one was not: a `Selection` naming the shared id resolves to whichever
+    alternative the publisher happened to list first, and the two are 0.4 mm
+    apart at a sealed maximum — different bay counts on a long enough run.
+    """
+    table = _paired_row((609_600, 2_463_800), (609_600, 2_464_200))
+    points = paired_points(table, table.rows[0])
+    assert len(points) == 2
+    assert points[0].id != points[1].id
+    assert [p.id for p in points] == ["footing_schedule:609.6x2463.8",
+                                       "footing_schedule:609.6x2464.2"]
+    # ...and they still round to the same millimetre at rest, which is why the
+    # rounded key could not tell them apart.
+    assert points[0].bindings == points[1].bindings == {
+        "footing_depth_mm": 610, "max_span_mm": 2464}
+
+
+def test_the_point_key_is_byte_identical_for_whole_millimetre_values():
+    """The other half, and the one that must not move: a changed id for a point
+    that did not change orphans every stored `Selection` naming it — the very
+    failure the identity comment is about. Every rule this repo authors and
+    every published value that is a whole number of millimetres keys exactly as
+    it always did, `610` and never `610.0` or `610000`."""
+    table = _paired_row((610_000, 1_800_000), (762_000, 2_400_000))
+    assert [p.id for p in paired_points(table, table.rows[0])] == [
+        "footing_schedule:610x1800", "footing_schedule:762x2400"]
+
+
+def test_the_default_is_the_shortest_span_at_published_precision():
+    """`default_point` compared the ROUNDED span, so 2463.8 and 2464.2 tied and
+    `min` fell through to publication order — the engine building whichever
+    alternative was typed first, and 2464.2 is 0.4 mm past a sealed maximum.
+
+    Listed with the wider span FIRST, so publication order and the correct
+    answer disagree: the test fails if either is used.
+    """
+    table = _paired_row((762_000, 2_464_200), (609_600, 2_463_800))
+    points = paired_points(table, table.rows[0])
+    built = default_point(points)
+    assert built is not None
+    assert built.bindings_milli["max_span_mm"] == 2_463_800
+    assert built is points[1]
+    assert [p.is_default for p in points] == [False, True]
+
+
+def test_alternatives_stating_the_same_thousandths_still_resolve_to_the_first():
+    """A tie on the PUBLISHED number is a real tie — one span stated twice — and
+    publication order is the honest tiebreak there, exactly as before."""
+    table = _paired_row((609_600, 1_676_400), (914_400, 1_676_400))
+    points = paired_points(table, table.rows[0])
+    assert default_point(points) is points[0]
+
+
+# -- a SetParam cannot drift apart from its own thousandths after construction --
+
+def test_a_set_param_cannot_be_mutated_out_of_agreement_with_its_thousandths():
+    """`SetParam`'s docstring says `value` and `value_milli` are "checked against
+    each other rather than trusted". The check is a validator, and a validator
+    runs at construction and at JSON round-trip — never on assignment. So the
+    one state the class exists to forbid was reachable by writing to the field:
+    `value` 1200 with `effective_milli()` still 2463800, two different numbers
+    wearing one name, and which fence gets built decided by which field the
+    reader happened to pick.
+
+    Frozen closes it. Nothing in this repo mutates one today, and that is the
+    argument FOR freezing now: `Action` instances are carried by reference into
+    `Firing.actions` and through the evaluator, so the first mutation would be a
+    mutation everywhere, at a distance, in a value a sealed span limit rides on.
+    """
+    from fenceai.knowledge.model import SetParam
+
+    s = SetParam(param="max_span_mm", value=2464, value_milli=2463800)
+    with pytest.raises(ValidationError) as caught:
+        s.value = 1200
+    assert caught.value.errors()[0]["type"] == "frozen_instance"
+    assert s.value == 2464 and s.effective_milli() == 2463800
+
+
+def test_a_frozen_set_param_still_copies_re_validates_and_round_trips():
+    """The three things freezing must not cost: `model_copy(update=...)` as the
+    supported way to make a different one, the construction check that is the
+    whole point, and the JSON round-trip every stored `KnowledgeVersion` takes."""
+    from fenceai.knowledge.model import SetParam
+
+    s = SetParam(param="max_span_mm", value=2464, value_milli=2463800)
+    assert s.model_copy(update={"param": "exact_span_mm"}).effective_milli() == 2463800
+    assert SetParam.model_validate(s.model_dump()) == s
+    with pytest.raises(ValidationError):
+        SetParam(param="max_span_mm", value=2463, value_milli=2463800)
+    # Frozen makes it hashable, which nothing relied on before and nothing may
+    # be broken by: equal actions hash equal.
+    assert hash(s) == hash(SetParam(param="max_span_mm", value=2464,
+                                     value_milli=2463800))

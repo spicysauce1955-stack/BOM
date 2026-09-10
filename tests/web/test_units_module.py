@@ -41,8 +41,8 @@ import { on, state } from "./js/state.js";
 import { initI18n, setLocale } from "./js/i18n.js";
 import {
   UNITS, currencySymbol, initUnits, inputStep, money, moneyDelta,
-  parseTypedLength, setUnits, snapStep, toDisplayValue, toMm, toggleUnits,
-  unitParams,
+  parseTypedLength, setUnits, snapStep, toDisplayMilli, toDisplayValue, toMm,
+  toggleUnits, unitParams,
 } from "./js/units.js";
 
 await initI18n();
@@ -71,6 +71,19 @@ out.params_mm = unitParams({ width_mm: 1234, min_mm: 900, mode: "level",
 state.units = "cm";
 out.params = unitParams({ width_mm: 1234, min_mm: 900, mode: "level",
                           span_id: "s1", posts: 7, tilt_deg: 12 });
+
+// PUBLISHED thousandths: the one length that is not an integer millimetre. The
+// six real span magnitudes plus the fraction a warning names.
+out.milli_mm = [1422400, 1905000, 600, 2463800].map((v) => toDisplayMilli(v, "mm"));
+out.milli_cm = [1422400, 1905000, 600, 2463800].map((v) => toDisplayMilli(v, "cm"));
+out.milli_bad = [toDisplayMilli(null, "mm"), toDisplayMilli("x", "mm")];
+state.units = "mm";
+out.params_milli_mm = unitParams({ limit_milli: 1422400, over_milli: 600,
+                                   widest_mm: 1423 });
+state.units = "cm";
+out.params_milli_cm = unitParams({ limit_milli: 1422400, over_milli: 600,
+                                   widest_mm: 1423 });
+state.units = "cm";
 
 // stateful half: stored preference, rejection of unknown units, one event per change
 let events = [];
@@ -242,6 +255,36 @@ def test_money_groups_thousands_and_always_shows_two_decimals(units):
 
 def test_money_rounds_to_the_cent_rather_than_printing_a_fraction(units):
     assert units["money_rounded"] == ["₪12.34", "₪12.35"]
+
+
+def test_published_thousandths_keep_their_precision(units):
+    """`toDisplayMilli` is the one conversion that must NOT land on the mm grid.
+
+    A published span limit keeps its thousandths from the document
+    (contract.md:112-117): 56" is 1422.4 mm. Rounding it to 1422 for display is
+    how a warning about a 1423 mm bay comes to read as a whole millimetre over a
+    limit nobody sealed — the customer's error, when it is our unit's. A whole
+    magnitude still reads whole (1905, not "1905.0").
+    """
+    assert units["milli_mm"] == [1422.4, 1905, 0.6, 2463.8]
+    assert units["milli_cm"] == [142.24, 190.5, 0.06, 246.38]
+    # non-numbers behave exactly as `toDisplayValue` does — `null` is 0 the way
+    # Number() reads it, and unreadable text comes back as itself rather than as
+    # "NaN" in the middle of a sentence
+    assert units["milli_bad"] == [0, "x"]
+
+
+def test_milli_params_convert_beside_mm_params(units):
+    """Both suffixes in one bag, which is exactly what a warning sends: the bay
+    is an integer millimetre at rest, the limit it is measured against is not."""
+    assert units["params_milli_mm"] == {
+        "u": "mm", "c": "₪",
+        "limit_milli": 1422.4, "over_milli": 0.6, "widest_mm": 1423,
+    }
+    assert units["params_milli_cm"] == {
+        "u": "cm", "c": "₪",
+        "limit_milli": 142.24, "over_milli": 0.06, "widest_mm": 142.3,
+    }
 
 
 def test_money_delta_signs_a_saving_and_a_cost_differently(units):

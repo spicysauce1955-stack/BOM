@@ -87,6 +87,19 @@ def test_agreeing_values_are_not_a_conflict():
     assert res.conflicts == []  # DMN ANY semantics
 
 
+def test_agreeing_values_are_corroboration_not_defeat():
+    kb = KnowledgeBase(versions=[
+        kv("R1", type_="company_rule", value=1800),
+        kv("R2", type_="company_rule", value=1800),
+        kv("R3", type_="company_rule", value=1800),
+    ])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    assert res.conflicts == []
+    for loser in (f for f in res.firings if f is not res.winner):
+        assert loser.defeated_by == []  # nothing here was beaten
+        assert loser.corroborated_by == [res.winner.version.ref]
+
+
 def test_newer_version_wins_same_object():
     kb = KnowledgeBase(versions=[
         kv("R", version=1, value=1800, status="retired"),
@@ -129,3 +142,200 @@ def test_condition_false_means_not_applicable():
 def test_scope_mismatch_means_not_applicable():
     kb = KnowledgeBase(versions=[kv("R", scope={"project_id": "other"})])
     assert applicable_firings(kb, {**CTX, "scope": {"project_id": "p1"}}) == []
+
+
+def published(obj_id: str, *values: int, param: str = "max_span_mm") -> KnowledgeVersion:
+    """A `hard_constraint` row from a Knowledge Platform snapshot.
+
+    Published rather than authored because these tests are about a tie that
+    SURVIVES: two authored rules tying with disagreeing outputs raise
+    (`test_hard_tier_tie_with_disagreement_is_generation_failure`), and the whole
+    point here is what the graph and the review tasks say afterwards.
+    """
+    return KnowledgeVersion.from_published(
+        object_id=obj_id, version=1, type="hard_constraint",
+        actions=[SetParam(param=param, value=v) for v in values])
+
+
+def test_one_dissenter_does_not_defeat_the_rows_that_agree():
+    """Agreement is PAIRWISE. It used to be one boolean over the whole set.
+
+    `resolve_param` computed `len({a.effective_milli() ...}) <= 1` across every
+    relevant firing and handed it to `resolve`, which then applied that one
+    answer to every pair. Add a single dissenting row to four that state the same
+    limit and all four became losers: four `defeated_by` edges and four
+    `hard=True` conflicts — conflicts BETWEEN ROWS THAT STATE THE SAME NUMBER,
+    shipped to the publisher as review tasks saying two of their byte-identical
+    rows contradict each other.
+
+    One row dissented. Exactly one contest happened.
+    """
+    kb = KnowledgeBase(versions=[
+        published("A", 1800), published("B", 1800), published("C", 1800),
+        published("D", 1800), published("E", 1500),
+    ])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    by_id = {f.version.object_id: f for f in res.firings}
+    winner = res.winner.version.object_id
+    agreeing = [o for o in "ABCD" if o != winner]
+
+    assert [by_id[o].corroborated_by for o in agreeing] == [[f"{winner}@v1"]] * 3
+    assert all(by_id[o].defeated_by == [] for o in agreeing)
+    assert by_id["E"].defeated_by == [f"{winner}@v1"]  # the only row that lost
+    assert by_id["E"].corroborated_by == []
+
+    assert [c.contenders for c in res.conflicts] == [[f"{winner}@v1", "E@v1"]]
+    assert [c.hard for c in res.conflicts] == [True]
+
+
+def test_a_row_stating_two_numbers_does_not_corroborate_one_stating_one():
+    """What "the value of a firing" means when it carries several actions for
+    one slot: everything it states, in its own order, compared whole.
+
+    The set-based predicate pooled every action of every firing, so a single row
+    stating both 1800 and 1500 was indistinguishable from two rows stating one
+    each. It is not the same thing, and the difference is load-bearing: the
+    consumer reads the FIRST matching action, so a row stating `(1800, 1500)`
+    and a row stating `(1500, 1800)` build different fences.
+
+    Corroboration is the claim that a second source independently said the SAME
+    thing. A source that also said something else did not, so it falls through
+    to the conflict branch — the conservative direction, and a review task about
+    a row that genuinely needs one.
+    """
+    kb = KnowledgeBase(versions=[published("A", 1800), published("B", 1800, 1500)])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    loser = next(f for f in res.firings if f is not res.winner)
+    assert loser.corroborated_by == []
+    assert loser.defeated_by == [res.winner.version.ref]
+    assert [c.hard for c in res.conflicts] == [True]
+
+    # ...and order is part of the statement, for the same reason.
+    kb = KnowledgeBase(versions=[published("A", 1800, 1500),
+                                 published("B", 1500, 1800)])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    assert next(f for f in res.firings if f is not res.winner).corroborated_by == []
+
+    # two rows that state the same pair, in the same order, DID say the same thing
+    kb = KnowledgeBase(versions=[published("A", 1800, 1500),
+                                 published("B", 1800, 1500)])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    assert next(f for f in res.firings if f is not res.winner).corroborated_by == [
+        res.winner.version.ref]
+    assert res.conflicts == []
+
+
+def test_pairwise_agreement_holds_for_tokens_too():
+    """`resolve_token` had the same set-level flag and the same defect."""
+    from fenceai.knowledge.evaluator import resolve_token
+    from fenceai.knowledge.model import SetToken
+
+    def tok(obj_id: str, value: str) -> KnowledgeVersion:
+        return KnowledgeVersion.from_published(
+            object_id=obj_id, version=1, type="hard_constraint",
+            actions=[SetToken(param="slope_method", value=value)])
+
+    kb = KnowledgeBase(versions=[tok("A", "stepped_only"), tok("B", "stepped_only"),
+                                 tok("C", "raked")])
+    res = resolve_token(kb, CTX, "slope_method")
+    by_id = {f.version.object_id: f for f in res.firings}
+    other = next(o for o in "AB" if o != res.winner.version.object_id)
+    assert by_id[other].corroborated_by == [res.winner.version.ref]
+    assert by_id["C"].defeated_by == [res.winner.version.ref]
+    assert len(res.conflicts) == 1
+
+
+def test_a_row_that_agrees_below_the_millimetre_still_corroborates():
+    """The pairwise fix does not loosen `38a2c6b`: agreement is still measured at
+    `effective_milli()`, so two rows that round to the same millimetre from
+    DIFFERENT thousandths are still a conflict, not corroboration."""
+    from fenceai.knowledge.model import SetParam as SP
+
+    def milli(obj_id: str, value: int, value_milli: int) -> KnowledgeVersion:
+        return KnowledgeVersion.from_published(
+            object_id=obj_id, version=1, type="hard_constraint",
+            actions=[SP(param="max_span_mm", value=value, value_milli=value_milli)])
+
+    kb = KnowledgeBase(versions=[milli("A", 2464, 2463800), milli("B", 2464, 2464200)])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    loser = next(f for f in res.firings if f is not res.winner)
+    assert loser.corroborated_by == []
+    assert [c.hard for c in res.conflicts] == [True]
+
+    kb = KnowledgeBase(versions=[milli("A", 2464, 2463800), milli("B", 2464, 2463800)])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    assert next(f for f in res.firings
+                if f is not res.winner).corroborated_by == [res.winner.version.ref]
+    assert res.conflicts == []
+
+
+def _overriding_published(obj_id: str, value: int, overrides: list[str]) -> KnowledgeVersion:
+    """A published row that beats a peer through an explicit `overrides` LINK.
+
+    The link is the point. `applicable_firings` pre-sorts by authority,
+    specificity and version, so a winner that wins on any of those is already
+    first and the fold never reclassifies anybody. `_beats` has a fourth clause
+    the sort key does not carry — `b.object_id in a.overrides_objects` — and that
+    is the one way a contender can take the seat AFTER its peers have been
+    classified against the row it unseats.
+    """
+    return KnowledgeVersion.from_published(
+        object_id=obj_id, version=1, type="hard_constraint",
+        overrides_objects=overrides,
+        actions=[SetParam(param="max_span_mm", value=value)])
+
+
+def test_agreement_is_judged_against_the_winner_that_actually_won():
+    """A corroboration recorded against a winner that later LOSES is a lie.
+
+    `resolve` folds over the firings with a running winner and classifies each
+    contender against whoever holds the seat at that moment. B ties with A and
+    states the same 1800, so it is recorded as corroborating. Then C — which
+    carries an explicit `overrides` link to A — takes the seat with 1500.
+
+    The graph afterwards drew a `corroborated` edge from B onto the
+    `resolve_max_span` node whose payload says 1500. Foundation §15: the decision
+    graph IS the explanation, and it was asserting that a source agreed with a
+    number it contradicts. Worse, B against C — a real disagreement between two
+    published rows — produced no `Conflict`, so nobody was ever asked to look at
+    it. The module's own *"ties never resolve silently"* had stopped holding: the
+    previous fix traded a FALSE conflict for a SILENT one.
+    """
+    kb = KnowledgeBase(versions=[
+        published("A", 1800),
+        published("B", 1800),
+        _overriding_published("C", 1500, ["A"]),
+    ])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    by_id = {f.version.object_id: f for f in res.firings}
+
+    assert res.winner.version.object_id == "C"
+    assert by_id["A"].defeated_by == ["C@v1"]      # genuinely beaten, by the link
+    # B states 1800 and the winner states 1500. Whatever else is true, B did not
+    # corroborate it...
+    assert by_id["B"].corroborated_by == []
+    # ...and the disagreement it hid is surfaced for review rather than swallowed.
+    assert ["B@v1", "C@v1"] == sorted(res.conflicts[-1].contenders)
+
+
+def test_a_row_that_agrees_with_the_LATER_winner_corroborates_it_instead():
+    """The other direction of the same reconciliation, so the fix cannot be a
+    blanket "clear every corroboration".
+
+    Same shape, but C states 1800 as well. B independently said what the winner
+    says, so it is still corroboration — re-pointed at the row that actually
+    won, rather than at the deposed one. This is the property `e291d4b` bought
+    and it has to survive the repair.
+    """
+    kb = KnowledgeBase(versions=[
+        published("A", 1800),
+        published("B", 1800),
+        _overriding_published("C", 1800, ["A"]),
+    ])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    by_id = {f.version.object_id: f for f in res.firings}
+
+    assert res.winner.version.object_id == "C"
+    assert by_id["B"].corroborated_by == ["C@v1"]
+    assert by_id["B"].defeated_by == []
+    assert res.conflicts == []

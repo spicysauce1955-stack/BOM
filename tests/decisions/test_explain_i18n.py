@@ -11,8 +11,23 @@ from fenceai.decisions.explain import explain_element, explain_node
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.strategy.generator import generate
 from fenceai.strategy.overrides import Override, PinPost
-from fenceai.topology.model import GatePayload
+from fenceai.topology.model import GatePayload, GateSpan, Node
 from tests.conftest import add_point_event, straight_topology
+
+
+def _with_a_standalone_gate(topo):
+    """Hang a `GateSpan` off the end of a drawn run.
+
+    The battery below walks whatever nodes the demo graph produces, so a node
+    kind it never produces is a node kind it never checks. Every fixture here
+    drew its gate as a `GatePayload` point event, so `gate_span` — and the
+    `select_gate_kit` payload that names a gate rather than an event — never
+    reached the assertions, and both shipped unrendered."""
+    last = topo.nodes[-1]
+    topo.nodes.append(Node(id="n_gate_far", x_mm=last.x_mm + 1000, y_mm=last.y_mm))
+    topo.gates = [GateSpan(id="g_span", start_node_id=last.id,
+                           end_node_id="n_gate_far")]
+    return topo
 
 
 def test_explanations_localize():
@@ -43,6 +58,8 @@ def test_every_graph_node_has_hebrew_and_english_templates():
     knowledge, catalog = demo_knowledge(), demo_catalog()
     topo = straight_topology(6000)
     add_point_event(topo, "run1", "ev_gate", 2000, GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    # ...and a gate of the OTHER kind, so the battery covers both
+    _with_a_standalone_gate(topo)
     ov = Override(id="ov1", run_id="run1", directive=PinPost(station_mm=1000))
     result = generate(topo, knowledge, catalog, overrides=[ov])
     # `knowledge_version` is the one node whose payload IS its content — a
@@ -62,6 +79,12 @@ def test_every_graph_node_has_hebrew_and_english_templates():
             # a raw payload DICT specifically; prose legitimately quotes a value
             # ("Vertical mode 'level' chosen"), so the marker is `{'`
             assert "{'" not in en and "{'" not in he, (node.action, en, he)
+            # ...and no unresolved value rendered as the word None. A template
+            # interpolating a key its payload does not carry does not raise —
+            # it publishes "opening of gate event None" as the explanation, in
+            # both languages, which is how `select_gate_kit` came to describe a
+            # standalone gate by the event it does not have.
+            assert "None" not in en and "None" not in he, (node.action, en, he)
 
 
 def test_template_key_parity():
@@ -72,10 +95,32 @@ def test_template_key_parity():
     assert set(TEMPLATES["en"]) == set(TEMPLATES["he"])
 
 
+def _corroborating_knowledge():
+    """Demo knowledge plus a SECOND manufacturer sheet stating the same 1800 mm.
+
+    Two `hard_constraint` rows, same authority, same (empty) scope, different
+    object ids and the same value: neither `_beats` the other and their values
+    agree, which is the one shape that reaches `evaluator.py`'s `values_agree`
+    branch — the loser was never beaten, it independently said the same thing.
+    """
+    from fenceai.knowledge.model import KnowledgeVersion, SetParam
+
+    kb = demo_knowledge()
+    kb.versions.append(KnowledgeVersion(
+        object_id="K-MAXSPAN-B", version=1, type="hard_constraint",
+        title="Second manufacturer sheet, same 1800 mm max span",
+        title_i18n={"he": 'גיליון יצרן שני, אותו מפתח מרבי 1800 מ"מ'},
+        actions=[SetParam(param="max_span_mm", value=1800)],
+        attributed_to="manufacturer",
+    ))
+    return kb
+
+
 def _branch_fixtures():
     """Graphs that exercise the template branches the demo graph never reaches:
     sliver_span, knowledge_conflict, node_surface_disagreement, wall/step span
-    fragments, and defeated edges (test-review finding 1b)."""
+    fragments, defeated edges, and the `corroborated` edge two agreeing sources
+    draw (test-review finding 1b)."""
     import pytest
 
     from fenceai.knowledge.model import KnowledgeVersion, PreferSpanWidth, SetParam
@@ -126,6 +171,10 @@ def _branch_fixtures():
     add_point_event(slope, "run1", "z1", 6000, ElevationSamplePayload(z_mm=1000))
     yield pytest.param(generate(slope, demo_knowledge(), catalog), "create_span", id="stepped-span")
 
+    # corroborated edges (two sources state the same maximum span)
+    yield pytest.param(generate(straight_topology(5000), _corroborating_knowledge(), catalog),
+                       "resolve_max_span", id="corroborated")
+
 
 import pytest  # noqa: E402
 
@@ -154,6 +203,73 @@ def test_defeated_suffix_renders_in_both_languages():
     assert any(e.type == "defeated" for e in result.graph.in_edges(firing.id))
     assert "K-SOFT-MAX@v1" in explain_node(result.graph, firing, lang="en")
     assert "K-SOFT-MAX@v1" in explain_node(result.graph, firing, lang="he")
+
+
+def test_corroborated_edge_is_drawn_and_reads_as_agreement_not_defeat():
+    """Two sources stating the same limit is agreement, and the graph has to say
+    so: a `corroborated` edge, no `defeated` edge anywhere, and a sentence that
+    credits the second source rather than reporting a contest it lost.
+
+    The `defeated`/`corroborated` distinction was untestable from the evaluator
+    alone — `Firing.corroborated_by` is the cheap half. Forcing both
+    `corroborated=[...]` arguments in `strategy/generator.py` to `[]` left the
+    whole suite green, so the `EdgeType` member, the edge-drawing branch in
+    `decisions/graph.py` and both `_corroborated` templates were dead. This is
+    the test that dies with them.
+    """
+    result = generate(straight_topology(5000), _corroborating_knowledge(), demo_catalog())
+    firing = next(n for n in result.graph.nodes if n.action == "resolve_max_span")
+    in_edges = result.graph.in_edges(firing.id)
+    assert [e.knowledge_ref for e in in_edges if e.type == "corroborated"] == ["K-MAXSPAN-B@v1"]
+    assert [e.knowledge_ref for e in in_edges if e.type == "governed_by"] == ["K-MAXSPAN@v1"]
+    # nothing here was beaten — not on this node, and not anywhere in the graph
+    assert not any(e.type == "defeated" for e in result.graph.edges)
+    assert not result.strategy.warnings  # ...and agreement is not a conflict
+
+    en = explain_node(result.graph, firing, lang="en")
+    he = explain_node(result.graph, firing, lang="he")
+    assert "Corroborated by K-MAXSPAN-B@v1" in en
+    assert "מאושש על ידי" in he and "K-MAXSPAN-B@v1" in he  # ref verbatim in Hebrew
+    assert "Defeated" not in en and "גבר על" not in he
+
+
+def test_rows_that_state_the_winners_value_exactly_are_never_defeated():
+    """Agreement is a PAIRWISE fact, and it used to be measured as a set.
+
+    `resolve_param` computed `same_value = len({a.effective_milli() ...}) <= 1`
+    over every relevant firing and passed it to `resolve` as one boolean, which
+    then decided corroborate-vs-defeat for EVERY pair. Add one dissenting sheet
+    to four that state exactly the same limit and the flag went false for all of
+    them: the rows byte-identical to the winner each got `defeated_by`, a
+    `defeated` edge and a `hard=True` conflict — "K-SHEET-B was defeated by
+    K-MAXSPAN", about two rows stating the same 1800 mm. That is a claim about
+    the sources which is false, and it is exactly the failure the `corroborated`
+    edge was added to stop; the same graph then carried error warnings, shipped
+    to the publisher as review tasks, for a contest that never happened.
+
+    `resolve` now asks its `stated` reader per pair, against the current winner,
+    so only the row that really dissented loses.
+    """
+    from fenceai.knowledge.model import KnowledgeVersion, SetParam
+
+    def published(object_id: str, value: int) -> KnowledgeVersion:
+        return KnowledgeVersion.from_published(
+            object_id=object_id, version=1, type="hard_constraint",
+            actions=[SetParam(param="max_span_mm", value=value)])
+
+    kb = demo_knowledge()  # K-MAXSPAN@v1 states 1800 and wins the tie-break
+    kb.versions += [published("K-SHEET-B", 1800),   # says exactly what the winner says
+                    published("K-SHEET-C", 1800),   # ...so does this one
+                    published("K-SHEET-D", 1500)]   # the only real dissenter
+    result = generate(straight_topology(5000), kb, demo_catalog())
+    firing = next(n for n in result.graph.nodes if n.action == "resolve_max_span")
+    edges = {e.knowledge_ref: e.type for e in result.graph.in_edges(firing.id)}
+    assert edges["K-SHEET-B@v1"] == "corroborated"
+    assert edges["K-SHEET-C@v1"] == "corroborated"
+    assert edges["K-SHEET-D@v1"] == "defeated"  # this one really did lose
+    contested = {ref for w in result.strategy.warnings if w.code == "knowledge_conflict"
+                 for ref in w.params["contenders"].split(", ")}
+    assert "K-SHEET-B@v1" not in contested and "K-SHEET-C@v1" not in contested
 
 
 def test_pinned_suffix_localizes():
@@ -226,3 +342,30 @@ def test_every_enum_value_has_a_hebrew_word():
         values |= set(get_args(model.model_fields[field].annotation))
     missing = sorted(v for v in values if v not in _ENUM_WORDS["he"])
     assert not missing, missing
+
+
+def test_a_standalone_gate_explains_itself_in_both_languages():
+    """`gate_span` and its kit are SENTENCES, not payload dicts.
+
+    A gate that stands beside the runs is a new node kind and a second payload
+    shape for an existing one, and neither had a template: `gate_span` rendered
+    its raw Python dict identically in Hebrew and English — the decision graph is
+    the explanation (foundation §15), so an untranslated dict is the explanation
+    missing — and `select_gate_kit` interpolated an `event_id` that a standalone
+    gate does not carry, publishing "opening of gate event None" in both.
+    """
+    knowledge, catalog = demo_knowledge(), demo_catalog()
+    result = generate(_with_a_standalone_gate(straight_topology(6000)),
+                      knowledge, catalog)
+
+    fact = next(n for n in result.graph.nodes if n.action == "gate_span")
+    en, he = (explain_node(result.graph, fact, lang=l) for l in ("en", "he"))
+    assert "g_span" in en and "g_span" in he      # the id stays verbatim
+    assert en != he, "a dict is not a translation"
+    assert "{" not in en and "{" not in he
+
+    kit = next(n for n in result.graph.nodes if n.action == "select_gate_kit")
+    en, he = (explain_node(result.graph, kit, lang=l) for l in ("en", "he"))
+    assert "None" not in en and "None" not in he
+    assert "g_span" in en and "g_span" in he
+    assert en != he

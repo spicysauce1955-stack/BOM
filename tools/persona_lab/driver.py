@@ -125,8 +125,8 @@ class Driver:
         data = self._cmd("Page.captureScreenshot", format="jpeg", quality=60)["data"]
         path = shots / shot_name
         path.write_bytes(base64.b64decode(data))
-        # the status bar, warnings, an open popover and the getting-started
-        # checklist are read without deciding to; they are not "extra" DOM
+        # the status bar, warnings and an open popover are read without
+        # deciding to; they are not "extra" DOM
         feedback = self._eval(outline_mod.FEEDBACK_JS) or []
         text = outline_mod.render(items, feedback)
         for message in self.take_dialogs():

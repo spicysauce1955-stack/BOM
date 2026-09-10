@@ -13,9 +13,9 @@
 // No DOM of its own: every function here builds detached nodes, or acts on ids
 // its CALLER owns. Same contract as fence-models.js.
 
-import { apiGet } from "./api.js";
+import { apiGet, esc } from "./api.js";
 import { currentLocale, t } from "./i18n.js";
-import { tu } from "./units.js";
+import { fmtLen, sentence, tu } from "./units.js";
 
 export function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -133,4 +133,137 @@ export function updateAdvancedUi(editorId, textareaId, btnId, open, backKey = "k
   const btn = document.getElementById(btnId);
   btn.dataset.i18n = open ? backKey : "knowledge.builder.advanced";
   btn.textContent = t(btn.dataset.i18n);
+}
+
+// ---------- read-only phrasing of what the builder above writes ----------
+//
+// The rules list used to render `JSON.stringify(v.actions)` and
+// `JSON.stringify(v.scope)`, which is why the Knowledge tab was unreadable: a
+// rule's actual content was two raw dumps per card, in a language the reader
+// does not necessarily write. These two turn the same data into the sentence
+// the builder already composes from its selects.
+//
+// They live HERE, beside the editor they mirror, for the reason the file header
+// gives: the review queue renders the same two fields on a candidate, and a
+// second copy of the phrasing is how the two tabs come to describe one rule
+// differently. Both return HTML — every interpolated value goes through
+// `sentence()`, which escapes the template and bidi-isolates each param, so a
+// Latin SKU inside a Hebrew phrase does not reorder on screen.
+
+// The action kinds the builder offers, and therefore the kinds a phrasing must
+// exist for. Closed on purpose: adding one is a release either way, and
+// `tests/web/test_knowledge_panes_module.py` fails until both bundles carry its
+// sentence.
+export const ACTION_KINDS = [
+  "set_param", "default_component", "require_mounting", "require_post_reinforcement",
+  "prefer_equal_spans", "prefer_min_span_width", "prefer_span_width", "prefer_vertical",
+  "add_note", "flag_for_review",
+];
+
+/** One action as a sentence, e.g. "Set max span to 1800 mm".
+ *
+ *  `products` is the catalog cache, so a SKU reads as the builder shows it.
+ *  An unknown kind degrades to its own token — never to a raw i18n key, for
+ *  the reason `vocabWord` exists in the inspector: a backend newer than these
+ *  bundles must not put `action.sentence.set_gizmo` inside a Hebrew card.
+ */
+export function actionSentence(action, products = {}) {
+  const kind = action?.kind;
+  if (!ACTION_KINDS.includes(kind))
+    return sentence("action.sentence.unknown", { kind: kind || "?" });
+
+  // a `*_mm` action field is a length and follows the display unit; a weight or
+  // a count is a plain number in every unit. Same split the builder's `num()`
+  // makes, and for the same reason.
+  const len = (mm) => fmtLen(mm ?? 0);
+
+  let html;
+  switch (kind) {
+    case "set_param": {
+      const isLength = String(action.param || "").endsWith("_mm");
+      const key = "action.param." + action.param;
+      const known = t(key) !== key;
+      html = sentence("action.sentence.set_param", {
+        // an unregistered parameter is shown verbatim — it is a real, saveable
+        // value of this field (the builder's "other…" box writes one)
+        param: known ? paramWord(key) : action.param,
+        value: isLength ? len(action.value) : action.value,
+      });
+      break;
+    }
+    case "default_component":
+      html = sentence("action.sentence.default_component", {
+        role: t("action.role." + action.role),
+        sku: productLabel(products, action.sku),
+      });
+      break;
+    case "require_mounting":
+      html = sentence("action.sentence.require_mounting", {
+        mounting: t("action.mounting." + action.mounting),
+        surface: t("surface." + action.surface),
+      });
+      break;
+    case "require_post_reinforcement":
+      html = sentence("action.sentence.require_post_reinforcement", {
+        context: t("action.context." + action.context),
+      });
+      break;
+    case "prefer_equal_spans":
+      html = sentence("action.sentence.prefer_equal_spans", { weight: action.weight ?? 1 });
+      break;
+    case "prefer_min_span_width":
+      html = sentence("action.sentence.prefer_min_span_width",
+        { min: len(action.min_mm), weight: action.weight ?? 1 });
+      break;
+    case "prefer_span_width":
+      html = sentence("action.sentence.prefer_span_width",
+        { width: len(action.width_mm), weight: action.weight ?? 1 });
+      break;
+    case "prefer_vertical":
+      html = sentence("action.sentence.prefer_vertical",
+        { mode: t("action.mode." + action.mode), weight: action.weight ?? 1 });
+      break;
+    case "add_note":
+      html = sentence("action.sentence.add_note", { text: action.text || "" });
+      break;
+    default:  // flag_for_review
+      html = sentence("action.sentence.flag_for_review", { reason: action.reason || "" });
+  }
+
+  // the optional SKU on the two actions that take one: a suffix rather than a
+  // second template per kind, so every kind keeps exactly one phrasing
+  if ((kind === "require_mounting" || kind === "require_post_reinforcement") && action.sku)
+    html += " " + sentence("action.sentence.with_sku",
+      { sku: productLabel(products, action.sku) });
+  return html;
+}
+
+/** A length parameter's label without its unit.
+ *
+ *  `action.param.max_span_mm` is "max span ({u})", which is right for the
+ *  builder — the unit belongs in a form label, beside a bare number input. In a
+ *  sentence the unit rides the VALUE, so the form's label reads "Set max span
+ *  (mm) to 1200 mm" and says it twice. The trailing parenthetical is dropped
+ *  rather than a second bundle key added: two labels per parameter is two
+ *  things to keep in step, and this shape holds in both languages because both
+ *  bundles put the placeholder in the same place.
+ */
+function paramWord(key) {
+  return tu(key).replace(/\s*\([^)]*\)\s*$/, "");
+}
+
+/** A rule's scope as chips — `{model: "Emblem"}` reads as "model: Emblem".
+ *
+ *  Dimension names stay verbatim: condition dimensions are a registry that
+ *  grows without a contract amendment, so a scope key can legitimately be one
+ *  no bundle has a word for, and inventing one here would be worse than
+ *  showing the publisher's own token.
+ */
+export function scopeChips(scope) {
+  const keys = Object.keys(scope || {});
+  if (!keys.length)
+    return `<span class="chip empty">${esc(t("knowledge.scope_any"))}</span>`;
+  return keys.sort().map((k) =>
+    `<span class="chip"><b><bdi>${esc(k)}</bdi></b>: <bdi>${esc(String(scope[k]))}</bdi></span>`
+  ).join("");
 }

@@ -7,14 +7,38 @@
 //
 // It owns its own host, like `choices.js`: index.html is not this module's file,
 // and reaching into another module's subtree is what the frontend map forbids.
-// It sits at the TOP of the side column, above what the fence is built from,
-// because whose fence it is comes before what it is made of.
+//
+// It sits at the top of the CANVAS column, not the side column. It was on the
+// side, and on the road's first step that was the whole screen wrong: the step's
+// own surface list hides the drawing (`step-surfaces.js: STEP_DRAWING.job` is
+// empty — step 1 is a form, and a map behind it invites a click that does
+// nothing), so the main column was blank and the only thing to do on the screen
+// was tucked into the margin beside it. A side column is where you put what is
+// BESIDE the work; on step 1 the job IS the work.
 
 import { apiSend, esc } from "./api.js";
 import { t } from "./i18n.js";
 import { emit, on, reloadProject, state } from "./state.js";
 
 const FIELDS = ["customer", "address", "sold_by", "sold_on"];
+
+/** Today, in `<input type="date">`'s format.
+ *
+ *  A salesperson enters a job the evening of the visit far more often than any
+ *  other day, so an empty box is a keystroke tax on the common case.
+ *
+ *  Built from the LOCAL parts rather than `toISOString().slice(0, 10)`, which
+ *  is UTC: at 01:00 in Israel that returns yesterday, and a sale dated a day
+ *  early is exactly the kind of quiet wrongness the office cannot see.
+ *
+ *  It is a FORM default, not a stored value — `sold_on_missing` stays in the
+ *  handover until save is pressed, so the panel's own "still missing" line goes
+ *  on telling the truth while the box shows a date. */
+function todayForInput() {
+  const d = new Date();
+  const two = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
 
 /** The job as a person would say it: customer first, because that is how a
  *  salesperson refers to a job out loud, with the address to tell two fences for
@@ -49,7 +73,7 @@ function render() {
     <label class="job-field">
       <span>${esc(t(`job.${f}`))}</span>
       <input id="job-${f}" type="${f === "sold_on" ? "date" : "text"}"
-             value="${esc(job?.[f] || "")}"
+             value="${esc(job?.[f] || (f === "sold_on" ? todayForInput() : ""))}"
              ${f === "sold_on" ? "" :
                `placeholder="${esc(t(`job.${f}.placeholder`))}"`}>
     </label>`).join("");
@@ -57,7 +81,7 @@ function render() {
     <h3>${esc(t("job.title"))}</h3>
     <div class="job-fields">${rows}</div>
     <div class="job-actions">
-      <button id="job-save">${esc(t("job.save"))}</button>
+      <button id="job-save" class="primary">${esc(t("job.save"))}</button>
       <span id="job-status" class="meta"></span>
     </div>
     ${missing.length ? `<div class="job-missing meta">${
@@ -99,12 +123,14 @@ function ensureHost() {
   if (typeof document === "undefined") return null;
   let host = document.getElementById("job-panel");
   if (host) return host;
-  const side = document.querySelector(".side-col");
-  if (!side) return null;
+  const col = document.querySelector(".canvas-col");
+  if (!col) return null;
   host = document.createElement("div");
   host.className = "panel";
   host.id = "job-panel";
-  side.insertBefore(host, side.firstChild);
+  // First child: on step 1 it is the only thing in this column, and on every
+  // other step it is hidden, so nothing below it ever has to move around it.
+  col.insertBefore(host, col.firstChild);
   return host;
 }
 

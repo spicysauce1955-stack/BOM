@@ -289,13 +289,17 @@ def test_two_decisions_about_the_same_slot_are_ordered_by_the_lines_they_answere
 
 
 def _assert_balances(grouped, bom):
-    """Per (sku, unit): what the sections and nodes asked for, plus what nothing
-    asked for, less what stock covered, is exactly what the BOM accounts for."""
+    """Per (sku, unit): what the sections, nodes and gates asked for, plus what
+    nothing asked for, less what stock covered, is exactly what the BOM accounts
+    for."""
     asked: dict[tuple[str, str], int] = {}
     for group in grouped.groups:
-        if group.kind not in ("section", "node"):
-            continue   # sections and nodes partition it; bays are a subset of
-                       # sections and decisions cut across both
+        if group.kind not in ("section", "node", "gate"):
+            continue   # sections, nodes and gates partition it; bays are a
+                       # subset of sections and decisions cut across both. A
+                       # GATE that stands beside the runs is on no section and
+                       # is asked for by nothing else, so it is a third part of
+                       # the partition rather than an overlap with either.
         for line in group.lines:
             asked[(line.sku, line.unit)] = asked.get((line.sku, line.unit), 0) + line.qty
     for total in grouped.unassigned:
@@ -439,3 +443,54 @@ def test_a_gate_is_part_of_the_section_it_stands_in():
                         priced.decisions)
     section = next(g for g in grouped.groups if g.element_id == "run1")
     assert "GATE-KIT-1000" in {x.sku for x in section.lines}
+
+
+def test_a_gate_that_stands_beside_the_runs_is_reported_rather_than_dropped():
+    """A standalone gate (`Gate.run_ref is None`) belongs to NO section — the
+    section view partitions the runs, and it is on none of them.
+
+    The failure this guards is silence, not a crash: its kit is asked for and
+    purchased, so leaving it out of every group would balance perfectly while
+    the estimator's section totals quietly lost a gate.
+
+    It gets a group OF ITS OWN rather than the unassigned bucket, which is what
+    that bucket is for the absence of: the kit is asked for BY THE GATE, and a
+    reader wanting to know what a gate costs should find it under that gate.
+    "Nobody's part" is a different statement and a gate on the drawing is not
+    nobody's. Sections, nodes and gates partition the demand exactly once, which
+    is what the balance at the end asserts.
+    """
+    from fenceai.topology.model import GateSpan, Node, Run, Topology
+
+    catalog = demo_catalog()
+    topo = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=5000, y_mm=0),
+               Node(id="n3", x_mm=6000, y_mm=0), Node(id="n4", x_mm=11000, y_mm=0)],
+        runs=[Run(id="rA", start_node_id="n1", end_node_id="n2"),
+              Run(id="rB", start_node_id="n3", end_node_id="n4")],
+        gates=[GateSpan(id="g1", start_node_id="n2", end_node_id="n3")],
+    )
+    result = generate(topo, demo_knowledge(), catalog, parts=PARTS,
+                      models=FenceModelLibrary(models=[M_SLAT]),
+                      default_model=FenceModelChoice(model_id="M-SLAT"))
+    gate = next(g for g in result.strategy.gates if g.run_ref is None)
+    assert gate.kit_sku == "GATE-KIT-1000"
+
+    priced = price_strategy(result.strategy, catalog,
+                            demand_skus=result.run.demand_skus)
+    grouped = group_bom(result.strategy, priced.requirements, priced.bom,
+                        priced.decisions)
+
+    assert gate.kit_sku not in {
+        x.sku for g in grouped.groups if g.kind == "section" for x in g.lines
+    }, "no section owns a gate that stands beside the runs"
+
+    gate_groups = [g for g in grouped.groups if g.kind == "gate"]
+    assert [g.element_id for g in gate_groups] == [gate.id], (
+        "the gate is its own group, named by the element it is")
+    assert [(x.sku, x.qty) for x in gate_groups[0].lines] == [("GATE-KIT-1000", 1)]
+
+    # ...and NOT also in the bucket for demand nobody claimed. Counted twice it
+    # would read as two gates; counted in neither it would vanish.
+    assert gate.kit_sku not in {u.sku for u in grouped.unassigned}
+    _assert_balances(grouped, priced.bom)

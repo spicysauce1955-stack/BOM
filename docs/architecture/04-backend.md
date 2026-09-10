@@ -41,13 +41,101 @@ domain testable without a database and what keeps `generate()` reproducible.
 
 ---
 
+## Two kinds of gate, and the invariant between them
+
+A gate can be authored two ways, and they are different physical claims.
+
+* **In a run** — `GatePayload`, a point event at a station. The fence is
+  interrupted: part of that run's layout is consumed by the opening. This is the
+  original kind, it is what every stored project and every golden scenario uses,
+  and it is unchanged.
+* **Beside the runs** — `GateSpan` in `Topology.gates`, joining two nodes and
+  lying on no run at all:
+
+  ```
+  o------------o  [====gate====]  o------------o
+      run rA       the GateSpan       run rB
+                   n2          n3
+  ```
+
+  *"a run and a gate are different things. the gate is placed next to a run, not
+  on it"* — so it combines two runs drawn unconnected and **changes the layout of
+  neither**.
+
+Three properties hold this together.
+
+* **A `GateSpan` stores no width.** The opening is the distance between its two
+  nodes (`topology.station.gate_opening_mm`), exactly as a run's length is the
+  distance between its own. A stored width would disagree with the geometry the
+  moment somebody drags a node, and from then on the drawing and the price would
+  be about different gates. The four swing facts are validated by the same
+  function `GatePayload` uses (`check_swing_coherence`) — one implementation, or
+  one of the two ways of drawing a gate quietly starts accepting the nonsense the
+  other refuses.
+* **One `Gate` element, two origins.** `Gate.run_ref is None` **is** the
+  standalone gate: it has no station, its ends are `start_node_id`/`end_node_id`,
+  and `width_mm` — populated for both kinds — is the field every consumer reads.
+  A reader that subtracted the stations itself would get 0 for every standalone
+  gate. In the read models a `None` means *belongs to no section*: `bom_groups`
+  leaves it out of the section partition and reports its kit under `unassigned`
+  (a group kind of its own is the follow-up and needs a `bom.group_*` locale
+  entry in both bundles), `section_decisions` gives it an empty section set, and
+  `structure.py` lays it out in `StructureReport.gates` at the top level, between
+  the tags of the two posts it hangs from.
+* **`_generate_gate_spans` runs after every run is generated, and that placement
+  is the design.** Nothing about a run can observe a gate span — every post, bay,
+  warning and decision node a run produces is already built and its ordinals are
+  already fixed. `tests/strategy/test_gate_span_generation.py` asserts this by
+  generating the same topology twice, with and without its gate spans: remove the
+  gate's own decision nodes from the first and the two graphs, posts, bays,
+  warnings and BOM lines are identical. What the pass *does* add is its own — the
+  gate, its kit (through the same `_resolve_gate_kit` / `_check_gate_kit_width`
+  path an in-run gate uses) and a post at each of its two nodes, because a gate
+  with a post on one side only is unbuildable. A node a run already stands at
+  keeps the post the runs decided: the gate-adjacency reinforcement rule in
+  `_generate_node_posts` is deliberately **not** extended to a gate span's shared
+  nodes, because it would change that post's sku and therefore the BOM of a fence
+  the gate was supposed to leave alone.
+
+Both gaps this section used to name are now closed, and both by sharing rather
+than by copying.
+
+**`gate_on_slope` reaches a standalone gate.** The limit comes from
+`_resolve_gate_max_slope` and the verdict from `_check_gate_slope` — one
+resolution and one emission, called by both kinds of gate, so the graph cites the
+same winning version and the warning carries the same `code + params` whichever
+way the gate was drawn. Only the MEASUREMENT differs, because only the caller
+knows where its ground is: an in-run gate reads the run's ground profile at the
+opening's two stations, a gate span reads the elevations of its own two nodes.
+The span's context is the run path's minus the `run` facts it genuinely has none
+of — omitted, so a rule conditioned on one is *not applicable* rather than
+false. An unstated elevation is not a slope: `Node.z_mm` defaults to 0 and the
+run path reads that same defaulted field through `ground_samples`, so a gate
+whose nodes were never given a height warns about nothing, exactly like the run
+beside it.
+
+**A force override reaches a gate's own post.** The post `_generate_gate_spans`
+emits at a node no run stands at is bought and drawn, and nothing could address
+it: the pass never consulted overrides, so a forced sku did nothing and was then
+reported back as `orphaned_override`. It now consults `_matched_force_overrides`
+— the run path's own matcher — for the posts it CREATES, and records what it
+honours in the same `applied` set. No new addressing scheme was needed: such a
+post's `run_ref` is `node:<id>` at station 0, which is what the matcher already
+compares. The consultation sits after the *"a run already stands here"*
+`continue`, so an override cannot become a way around the invariance above —
+`tests/strategy/test_gate_span_generation.py` asserts that the same directive
+aimed at a shared node leaves that post byte-identical and is reported orphaned.
+Suppression stays out: a gate with a post on one side only is unbuildable.
+
+---
+
 ## The API surface
 
-62 routes. Grouped by what they are for rather than by path:
+63 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
-| Projects & topology | `GET/POST /projects`, `GET /projects/{id}`, `PUT /projects/{id}/topology`, `PUT /projects/{id}/site`, `PUT /projects/{id}/job`, `PUT /projects/{id}/context` | The two revisioned PUTs bump their own `revision` server-side — a client that forgot to would make a stale document look current. `/job` is deliberately NOT revisioned: who bought the fence, where, who sold it and when changes no quantity and invalidates no derived view. It is a separate route from creation because a salesperson enters this after the visit from paper — they start with a customer name, draw for twenty minutes, and only then find the address on the sketch, which must not cost them the drawing. `GET /projects` carries `label` beside `name` for the same person: the picker said *"project 7"*. `/context` carries the house, the street and the boundary — everything on the property that is NOT the fence. It is on the PROJECT and never in `Topology`, because a landmark changes no quantity: in the topology it would bump the revision and 409 the structure sheet because somebody nudged a driveway |
+| Projects & topology | `GET/POST /projects`, `GET /projects/{id}`, `PUT /projects/{id}/topology`, `PUT /projects/{id}/site`, `PUT /projects/{id}/job`, `PUT /projects/{id}/context`, `PUT /projects/{id}/stated` | The two revisioned PUTs bump their own `revision` server-side — a client that forgot to would make a stale document look current. `/job` is deliberately NOT revisioned: who bought the fence, where, who sold it and when changes no quantity and invalidates no derived view. It is a separate route from creation because a salesperson enters this after the visit from paper — they start with a customer name, draw for twenty minutes, and only then find the address on the sketch, which must not cost them the drawing. `GET /projects` carries `label` beside `name` for the same person: the picker said *"project 7"*. `/context` carries the house, the street and the boundary — everything on the property that is NOT the fence. It is on the PROJECT and never in `Topology`, because a landmark changes no quantity: in the topology it would bump the revision and 409 the structure sheet because somebody nudged a driveway. `/stated` is unrevisioned for `/job`'s reason and carries what the salesperson says this job does NOT have — `no_gates`, `no_promises`. Named facts rather than step keys, so a screen's structure stays out of the project record and `handover_gaps` can contradict a claim the drawing disagrees with without knowing that a road or a step exists. The claim is stored as GIVEN and never validated here: refusing it would mean a salesperson could not record what they believe, which is the one thing the field exists to capture |
 | Generation | `POST /projects/{id}/generate`, `GET /projects/{id}/runs`, `GET /runs/{id}` | The only write that decides a fence |
 | Explanation | `GET /runs/{id}/explain/{element_id}`, `GET /runs/{id}/sections/{section_id}/decisions`, `GET /runs/{id}/impact/{object_id}` | Takes `lang` **and** `units`. The section view 409s on a moved topology and the element view does not — see below |
 | Read models | `GET /runs/{id}/structure`, `GET /runs/{id}/bom`, `GET /projects/{id}/handover` | 409 on stale topology or catalog. `/bom` also carries `grouped` — the same demand by section, panel and decision, and it does NOT 409 on topology. Both are read models that WRITE: `/bom` returns the `supply` run it stored and `/structure` stamps its `supply_id`, through one construction so the sheet and the BOM can never name different yards. Idempotent by digest (ADR-0011). `/handover` is the salesperson MVP's read model and the odd one out: it is derived from the PROJECT rather than from a run, deliberately, because by the time a `Strategy` exists the silent defaults (1800 mm height, `soil` base) have been applied and look decided — catching them before that is its whole point. Both run-scoped ones also carry `quoted_warnings` — every warning the fence models QUOTE from their documents, each placed where §3.3.5 says it renders (`report/annexe.py`): the setting-out sheet draws the annexe, `/bom` draws the product notices on the line group, and each carries the buckets it does not draw so nothing is lost at the edge of a surface |

@@ -121,7 +121,7 @@ _A_RAIL = {
 
 def _with_a_part(raw: dict) -> dict:
     payload = json.loads(json.dumps(raw))
-    payload["parts"] = [_A_RAIL]
+    payload["parts"] = [json.loads(json.dumps(_A_RAIL))]
     payload["source_docs"] = payload["source_docs"] + [{
         "content_hash": "FIXTURE-doc-1",
         "source_class": "manufacturer_installation_instruction",
@@ -171,3 +171,27 @@ def test_the_parts_route_reports_no_snapshot_as_a_state(raw):
         body = client.get("/api/knowledge/parts").json()
         assert body["loaded"] is False
         assert body["specs"] == []
+
+
+def test_draft_hash_version_remains_inspectable_without_consumption(raw):
+    payload = _with_a_part(raw)
+    part = payload["parts"][0]
+    part.update(status="draft", version="sha256:opaque-published-identity")
+    part["spec"][0]["value"] = {"amount_milli": 22225, "unit": "mm", "value_raw": ["0.875 in."]}
+    with TestClient(app) as client:
+        response = client.post("/api/knowledge/snapshot", json=payload)
+        assert response.status_code == 200, response.text
+        body = client.get("/api/knowledge/parts").json()
+        from fenceai.knowledge.parts import Part
+        assert body["definitions"] == [Part.model_validate(part).model_dump(mode="json")]
+        assert body["specs"] == []
+        assert part["id"] in body["inactive"]
+        assert any(d["content_hash"] == "FIXTURE-doc-1" for d in body["source_docs"])
+
+
+@pytest.mark.parametrize("version", [True, 0, -1, 1.5, "", "   "])
+def test_invalid_public_part_versions_are_refused(raw, version):
+    payload = _with_a_part(raw)
+    payload["parts"][0]["version"] = version
+    with TestClient(app) as client:
+        assert client.post("/api/knowledge/snapshot", json=payload).status_code == 400

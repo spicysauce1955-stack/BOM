@@ -125,7 +125,6 @@ FEEDBACK_JS = """
   // canvas events are edited in an on-canvas .popover, not a <dialog>
   for (const el of document.querySelectorAll('.popover, dialog[open], [role=dialog]'))
     add('dialog', el);
-  add('getting started', document.getElementById('checklist'));
   return out;
 })()
 """

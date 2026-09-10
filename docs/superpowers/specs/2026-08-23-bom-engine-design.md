@@ -438,13 +438,14 @@ values, which is true of **3 of the 226**.
 > **Corrected when this was built (2026-08-26, build-order item 8): `cites` is
 > OPTIONAL on this side, not required.** Contract §1.1 makes `SourceRef.id` opaque
 > to Planning — *"do not parse it, do not build one"* — and the Discovery surface
-> that resolves one (`GET /source-refs/{id}`) is designed and unimplemented. So a
-> curator authoring a warning in the model editor has no way to mint a citation,
-> and requiring the field would have been satisfied by fabricating ids, which is
-> precisely how a hypothesis becomes a fact nobody checked. The implementation
-> renders an unattributed warning AS unattributed and counts them, because that
-> count is the useful thing to send back to a team still designing this door. See
-> `core/warnings.py`.
+> that resolves one (`GET /source-refs/{id}`) is designed and unimplemented,
+> even though real snapshots have flowed through this door since 2026-08-30. So
+> a curator authoring a warning in the model editor has no way to mint a
+> citation, and requiring the field would have been satisfied by fabricating
+> ids, which is precisely how a hypothesis becomes a fact nobody checked. The
+> implementation renders an unattributed warning AS unattributed and counts
+> them, because that count is the useful thing to send back about the one piece
+> of this door real data has outpaced. See `core/warnings.py`.
 
 **This splits our own warning registry, and changes a rule in CLAUDE.md.**
 Platform codes — engine warnings, gap codes, the `SOURCE_*` set — stay closed and

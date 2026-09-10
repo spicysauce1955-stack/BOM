@@ -5,10 +5,14 @@ a real snapshot with its remaining publisher-side work simulated locally. This
 one takes the document exactly as the Knowledge Platform produced it and asserts
 that nothing has to be done to it first.
 
-It is skipped rather than failed when the file is absent: the snapshot lives in
-the other team's repository and this suite must pass for someone who has only
-this one checked out. A skip says "not verifiable here"; a failure would say
-"broken", and they are different facts.
+These three snapshots are vendored into `fixtures/real_snapshots/` — a
+point-in-time copy of what the Knowledge Platform actually published, kept
+here so this suite runs the same way on a checkout that never had their repo
+beside it. They are PINNED on purpose (see each fixture's own docstring for
+why that id specifically): a test that followed "whatever is newest" would
+silently start asserting about a different document. When the Knowledge
+Platform re-cuts, update the constant AND the vendored file deliberately —
+this repo owns no mechanism that keeps the copy in sync on its own.
 """
 
 from __future__ import annotations
@@ -23,19 +27,14 @@ from fenceai.knowledge.snapshot import (
     SnapshotRefused, canonical_snapshot_id, ingest, load, snapshot_id_matches,
 )
 
-SNAPSHOT = Path(
-    "/home/user/Workspace/fence-rag/workspace/snapshots"
-    "/a4181dbf2e781b25017399a0b89632b81d5f14d433d99393bffa28f7e0a7a706.json")
+FIXTURES = Path(__file__).parent / "fixtures" / "real_snapshots"
+
+SNAPSHOT = (
+    FIXTURES / "a4181dbf2e781b25017399a0b89632b81d5f14d433d99393bffa28f7e0a7a706.json")
 
 
 @pytest.fixture()
 def raw() -> dict:
-    if not SNAPSHOT.exists():
-        pytest.skip(
-            f"published snapshot not available at {SNAPSHOT}. The id is PINNED "
-            f"on purpose — a test that followed 'whatever is newest' would "
-            f"silently start asserting about a different document. When the "
-            f"Knowledge Platform re-cuts, update the constant deliberately.")
     return json.loads(SNAPSHOT.read_text())
 
 
@@ -127,12 +126,19 @@ def test_ingesting_it_produces_usable_knowledge_and_names_what_it_cannot(raw):
     those five tables' three rows each.
 
     What REPLACED the refusal is `uncovered_parameter_point`, and the count is
-    the interesting part: 12 before, 32 now. Refusing a table returned before
-    `_uncovered_gaps` ran, so the twenty condition points these schedules
-    themselves declare uncovered — exposure D under HVHZ, and the rest — were
-    invisible for as long as the table was refused. One gap that said *"we
-    cannot use this"* was standing in front of twenty that say *"nobody has
-    published this"*, which are a curator's work rather than ours.
+    the interesting part: 12 before, 16 now — not 32. Refusing a table
+    returned before `_uncovered_gaps` ran, so the twenty condition points
+    these schedules themselves declare uncovered — exposure D under HVHZ, and
+    the rest — were invisible for as long as the table was refused. One gap
+    that said *"we cannot use this"* was standing in front of what turned out
+    to be TWO kinds of gap, not one, and the fixture itself was wrong about
+    which was which (conversation.md T49 §5b): 16 of the 32 claimed-uncovered
+    points are actually covered by a row on the same table that omits the
+    `hvhz` dimension — omitted means "matches every value on that axis," the
+    same rule `_overlap_gaps` already applies to a `unique` table's
+    disjointness claim. Those 16 are `uncovered_point_contradicted` — a
+    dispute about the table's own consistency, not a curator's coverage hole.
+    Only the remaining 16 are genuinely *"nobody has published this."*
     """
     snapshot, defects = load(raw)
     out = ingest(snapshot, as_of="2026-08-31", gap_defects=defects)
@@ -144,7 +150,8 @@ def test_ingesting_it_produces_usable_knowledge_and_names_what_it_cannot(raw):
 
     codes = [g.because.code for g in out.gaps]
     assert "parameter_paired_unsupported" not in codes
-    assert codes.count("uncovered_parameter_point") == 32
+    assert codes.count("uncovered_parameter_point") == 16
+    assert codes.count("uncovered_point_contradicted") == 16
     assert out.warning_defects == []
 
 
@@ -189,16 +196,12 @@ def test_the_paired_schedules_land_the_alternative_they_build(raw):
 
 # -- the parts snapshot (`b2f2fe45…`, obligation 5's first vertical slice) ------
 
-PARTS_SNAPSHOT = Path(
-    "/home/user/Workspace/fence-rag/workspace/snapshots"
-    "/b2f2fe45326f42dac10d0d0203337b917b6613e1c8d04f0c6dd39806f54beb03.json")
+PARTS_SNAPSHOT = (
+    FIXTURES / "b2f2fe45326f42dac10d0d0203337b917b6613e1c8d04f0c6dd39806f54beb03.json")
 
 
 @pytest.fixture()
 def parts_raw() -> dict:
-    if not PARTS_SNAPSHOT.exists():
-        pytest.skip(f"parts snapshot not available at {PARTS_SNAPSHOT} — pinned "
-                    f"deliberately, see the note on the fixture above")
     return json.loads(PARTS_SNAPSHOT.read_text())
 
 
@@ -259,19 +262,15 @@ def test_a_because_param_may_be_a_list(parts_raw):
 
 # -- the spec-values snapshot (`f4d40fb8…`, item 7's first real data) -----------
 
-SPEC_SNAPSHOT = Path(
-    "/home/user/Workspace/fence-rag/workspace/snapshots"
-    "/f4d40fb886c4d3c764058f53344239ee94a244b2f95230b26a1cf12cad785773.json")
+SPEC_SNAPSHOT = (
+    FIXTURES / "f4d40fb886c4d3c764058f53344239ee94a244b2f95230b26a1cf12cad785773.json")
 
 
 @pytest.fixture()
 def spec_raw() -> dict:
-    if not SPEC_SNAPSHOT.exists():
-        pytest.skip(f"spec-values snapshot not available at {SPEC_SNAPSHOT} — "
-                    f"pinned deliberately, see the note on the first fixture. "
-                    f"This is the cut that closed C15 (`conversation.md` T43): "
-                    f"`SpecField.value: Quantity | Token`, with the two real "
-                    f"stock lengths published.")
+    """This is the cut that closed C15 (`conversation.md` T43):
+    `SpecField.value: Quantity | Token`, with the two real stock lengths
+    published."""
     return json.loads(SPEC_SNAPSHOT.read_text())
 
 

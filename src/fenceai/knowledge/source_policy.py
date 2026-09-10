@@ -165,12 +165,26 @@ SHIPPED_DEFAULT: list[SourcePolicyRow] = [
     # the decision recorded here: **a superseded document loses to its own
     # replacement, and to nothing else.**
     #
-    # The Knowledge team recommended this axis and supplied the corpus fact that
-    # makes it right (`conversation.md` T31): in this corpus `superseded` means a
-    # NAMED, citable replacement exists — `superseded_by` is populated — where
-    # `unknown` means nobody has established anything. So "this document says a
-    # specific other document replaced it" is stronger negative evidence than
-    # "unrated", and `unknown` deserves to outrank `superseded`.
+    # The Knowledge team recommended this axis (`conversation.md` T31) on a corpus
+    # fact that no longer holds: that in this corpus `superseded` means a NAMED,
+    # citable replacement exists — `superseded_by` populated — where `unknown`
+    # means nobody has established anything. Measured against the partner's
+    # current published snapshot (`5b25c3b6…`), that is false for 3 of the 8
+    # superseded documents: they are superseded on a title/filename keyword alone,
+    # with no successor recorded anywhere. Nothing is currently ranked wrongly
+    # because of it — those three back 0 parameter rows and 0 spec fields, and
+    # appear only in `gaps` — but the premise is no longer the reason to believe
+    # the ordering, so record what the ordering does rest on.
+    #
+    # It rests on the SIZE of the demotion rather than on the strength of the
+    # evidence behind the status. One step, inside one class, is the most a wrong
+    # `superseded` can cost: a document marked in error loses only to a same-class
+    # document not so marked, which is where "somebody said this was replaced"
+    # should lose anyway. `unknown` still outranks `superseded` on the weaker
+    # reading that survives the measurement — a document someone marked replaced,
+    # on whatever basis, is worse evidence than one nobody has rated — and that
+    # reading is worth less than the original one, which is exactly why the
+    # demotion is one rank and not a class.
     #
     # They also proposed a stronger reading: that a superseded structural value
     # should lose to *anything* not known to be superseded, including a lower
@@ -453,6 +467,12 @@ def resolve(
     # has tied, this can rank a superseded document ahead of its replacement —
     # deterministically, on both sides, but still the older one. Keeping that
     # pairing from tying in the first place is `version_status`'s job, and
-    # `SHIPPED_DEFAULT` does not currently use it (see its own note).
+    # `SHIPPED_DEFAULT` does that on `structural_parameter` only: four rows seat a
+    # superseded document one rank below its own class (sealed_approval 10/11,
+    # tested_report 20/21, industry_standard 30/31,
+    # manufacturer_installation_instruction 40/41), so on that task a same-class
+    # pair cannot reach this line still tied. On the other three tasks no row
+    # names the axis (see `SHIPPED_DEFAULT`'s own note for why that is scoping and
+    # not oversight), so there this can still seat the older document first.
     winner = min(tied, key=lambda ab: (ab.source_class, ab.content_hash, ab.label))
     return Resolution(admitted=admitted, winner=winner)

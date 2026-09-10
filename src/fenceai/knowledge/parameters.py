@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from fenceai.core.dates import Date, is_iso_date, precedes
 from fenceai.core.gaps import Because, EntityRef, Gap, GapSubject, SourceRef
+from fenceai.core.units import Mm, round_milli_to_mm
 from fenceai.knowledge.ast import And, Cmp, Expr, FieldRef, Lit
 from fenceai.knowledge.model import KnowledgeVersion, SetParam, SetToken
 from fenceai.knowledge.source_policy import (
@@ -253,19 +254,24 @@ def to_mm(q: Quantity) -> int:
     so `2463.8` floored to 2463 rather than rounded to 2464 buys an extra post, an
     extra footing and an extra pour on a 9.8 m run.
 
-    `round()` is banker's rounding in Python and would send 2500 thousandths to 2
-    rather than 3, so the rounding is written out. It is half-away-from-ZERO, not
-    half-up: `-2500` gives `-3`, where half-up gives `-2`. That is the right
-    behaviour — the magnitude rounds the same in both directions and neither
-    direction ever floors — and the word is corrected here because the two differ
-    only on negatives, which is precisely where nobody looks.
+    The rounding ARITHMETIC now lives in `core.units.round_milli_to_mm`, and this
+    is still the one named point: it is the only thing that checks the unit, and
+    the only place a published `Quantity` may become an `Mm`. The rule moved out
+    because `SetParam` must apply the same rule to check that a value at rest and
+    the thousandths riding beside it are the same number, and `knowledge.model`
+    cannot import this module — this module imports it. See that function for why
+    it is half-away-from-zero rather than `round()`.
+
+    **A caller that MULTIPLIES this value must not consume it.** The clause is
+    explicit — "any arithmetic that multiplies a published value... consumes the
+    thousandths and rounds only its output" — and the value returned here has
+    already lost them. `SetParam.value_milli` carries `q.amount_milli` alongside
+    for exactly those call sites; `strategy.layout.equal_layout_milli` is the one
+    that needed it first.
     """
     if q.unit != "mm":
         raise ValueError(f"{q.unit} is not a length this engine stores; expected mm")
-    whole, rem = divmod(abs(q.amount_milli), 1000)
-    if rem >= 500:
-        whole += 1
-    return -whole if q.amount_milli < 0 else whole
+    return round_milli_to_mm(q.amount_milli)
 
 
 def paired_columns(value_type: str) -> list[str]:
@@ -293,6 +299,40 @@ def paired_columns(value_type: str) -> list[str]:
     # ordinary quantity: a table declaring itself paired and holding one member
     # is a table disagreeing with itself, and coercing it invents the agreement.
     return names if len(names) > 1 else []
+
+
+def _point_key(value_mm: Mm, value_milli: int | None) -> str:
+    """One binding's contribution to a `DesignPoint.id`.
+
+    Whole millimetres render EXACTLY as they always did — `610`, never `610.0`
+    and never `610000` — because a changed id for a point that did not change
+    is the orphaned-selection failure `paired_points` is guarding against, and
+    every rule this repo authored plus every whole-mm published value comes
+    through here unchanged. Only a value the publisher sent with real
+    thousandths gets a finer key, and only because at that point the rounded
+    millimetre is no longer an identity: it is a value two different design
+    points can share.
+
+    Rendered as decimal millimetres rather than as raw thousandths so the id
+    stays readable next to the source (`609.6` beside `24"`), and built from
+    integers throughout — a float here would be a float at rest (ADR-0002).
+    """
+    if value_milli is None or value_milli % 1000 == 0:
+        return str(value_mm)
+    whole, frac = divmod(abs(value_milli), 1000)
+    return f"{'-' if value_milli < 0 else ''}{whole}.{frac:03d}".rstrip("0")
+
+
+def _span_milli(point: DesignPoint) -> int:
+    """A point's `max_span_mm` at PUBLISHED precision, for comparing points.
+
+    `bindings` is the rounded millimetre, and comparing on it makes 2463.8 and
+    2464.2 equal — a tie that `min` breaks by publication order, which is the
+    same "the alphabet decides a safety limit" hazard `resolve_param` was fixed
+    for, wearing a different hat. `* 1000` where nothing published thousandths
+    is the exact no-op `SetParam.effective_milli` relies on.
+    """
+    return point.bindings_milli.get("max_span_mm", point.bindings["max_span_mm"] * 1000)
 
 
 def paired_points(table: ParameterTable, row: ParameterRow) -> list[DesignPoint]:
@@ -329,6 +369,16 @@ def paired_points(table: ParameterTable, row: ParameterRow) -> list[DesignPoint]
             bindings = {name: to_mm(q) for name, q in zip(columns, pair)}
         except ValueError:
             return []
+        # The PUBLISHED thousandths, kept beside the rounded millimetres for the
+        # same reason `lexemes` keeps the source's own words: `bindings` has
+        # already lost something the source sent, and one downstream reader needs
+        # it back. Five of the six span magnitudes in the real `footing_schedule`
+        # tables are not whole millimetres, and the span layout DIVIDES by them
+        # (contract §1.1 BINDING: arithmetic that multiplies a published value
+        # consumes the thousandths and rounds only its output). `lexemes` cannot
+        # serve — `97"` is a string for a human to check against the page, not a
+        # number — so this rides alongside as the machine-readable twin.
+        bindings_milli = {name: q.amount_milli for name, q in zip(columns, pair)}
         lexemes = {name: q.value_raw[0] for name, q in zip(columns, pair)
                    if q.value_raw}
         points.append(DesignPoint(
@@ -336,9 +386,20 @@ def paired_points(table: ParameterTable, row: ParameterRow) -> list[DesignPoint]
             # row's alternatives must not turn a stored selection into a
             # different fence, and `choice_unavailable` exists for a point that
             # genuinely went away rather than for one that moved.
-            id=f"{table.parameter}:" + "x".join(str(bindings[c]) for c in columns),
+            #
+            # The values it keys on are the PUBLISHED ones, not the rounded
+            # ones, because "the values" stopped meaning one thing the moment a
+            # publisher sent thousandths: alternatives at 2463.8 and 2464.2 mm
+            # are two different fences that share every rounded millimetre, and
+            # a key built from `bindings` gives them ONE id. A stored selection
+            # then binds to whichever the publisher happened to list first —
+            # exactly the "a re-cut must not move a selection" failure this
+            # comment was written to prevent, arriving through the value rather
+            # than through the position.
+            id=f"{table.parameter}:" + "x".join(
+                _point_key(bindings[c], bindings_milli.get(c)) for c in columns),
             label=" · ".join(lexemes.get(c) or str(bindings[c]) for c in columns),
-            bindings=bindings, lexemes=lexemes,
+            bindings=bindings, bindings_milli=bindings_milli, lexemes=lexemes,
         ))
     built = default_point(points)
     if built is not None:
@@ -355,8 +416,17 @@ def default_point(points: list[DesignPoint]) -> DesignPoint | None:
     cheaper point is offered with what it saves, and a person decides (spec §6,
     *"never money"*).
 
-    `min` is stable, so two alternatives stating the same span resolve to the
-    first the publisher listed rather than to whichever the sort felt like.
+    Shortest at PUBLISHED precision (`_span_milli`), not at the rounded
+    millimetre. Comparing `bindings` made 2463.8 and 2464.2 the same number, so
+    `min` fell through to publication order and the engine built whichever
+    alternative the publisher happened to type first — 0.4 mm past a sealed
+    maximum being the difference between the two. The choice propagates through
+    `bindings_milli` -> `SetParam.value_milli` -> `equal_layout_milli` and
+    decides the bay count, which is why it may not be decided by typing order.
+
+    `min` is still stable, so two alternatives stating the SAME span — the same
+    thousandths, genuinely one number — resolve to the first the publisher
+    listed rather than to whichever the sort felt like.
 
     A paired row that binds no span has no such rule, and inventing one from
     another column would be this function guessing which parameter buys
@@ -367,7 +437,7 @@ def default_point(points: list[DesignPoint]) -> DesignPoint | None:
         return None
     if not all("max_span_mm" in p.bindings for p in points):
         return points[0]
-    return min(points, key=lambda p: p.bindings["max_span_mm"])
+    return min(points, key=_span_milli)
 
 
 # A table's `scope` is an **EntityRef** — `{kind, id, tenant}`, naming which
@@ -756,7 +826,8 @@ def _actions_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | No
         built = default_point(paired_points(table, row))
         if built is None:
             return []
-        return [SetParam(param=name, value=value)
+        return [SetParam(param=name, value=value,
+                         value_milli=built.bindings_milli.get(name))
                 for name, value in built.bindings.items()]
     if tokens is not None:
         if not isinstance(row.value, Token) or row.value.key not in tokens:
@@ -765,7 +836,17 @@ def _actions_for(table: ParameterTable, row: ParameterRow, tokens: set[str] | No
     if not isinstance(row.value, Quantity) or table.quantity_unit() != "mm":
         return []
     try:
-        return [SetParam(param=table.parameter, value=to_mm(row.value))]
+        # `value_milli` on the ordinary path too, and NOT because this shape
+        # broke: it is the same published `Quantity`, and the harm the clause
+        # names does not care which shape carried the number. The paired
+        # `footing_schedule` is simply where a non-whole span limit arrived
+        # first. A publisher who states `max_span_mm` as a plain `quantity(mm)`
+        # table of `2463.8` would breach the identical clause through the
+        # identical divider, and a fix that covered only the shape we happened to
+        # find by hand would leave that live and untested — which is precisely
+        # how this one stayed invisible.
+        return [SetParam(param=table.parameter, value=to_mm(row.value),
+                         value_milli=row.value.amount_milli)]
     except ValueError:
         return []
 
@@ -804,6 +885,68 @@ def _display(value) -> str:
     return f"{sign}{whole}{fraction} {value.unit}"
 
 
+def _row_covers_point(row: ParameterRow, point: dict[str, str | int | bool]) -> bool:
+    """The same 'agree everywhere both speak' rule `_overlap_gaps` uses between
+    two rows (§1.3 BINDING, `unique`'s disjointness check), applied here
+    between a row and the table's own `uncovered` claim about it. A key the
+    row omits matches every value on that axis (`_condition_for`), so a row
+    silent on `hvhz` covers a point that names it — the same reason an
+    omitted dimension made 16 real published points falsely "uncovered"
+    (conversation.md T49 §5b). A fallback row asserts nothing about any point
+    and never covers one, matching `_overlap_gaps`'s own exclusion of it.
+
+    But a row that speaks to NONE of the point's dimensions does not cover it,
+    and this is the one place the row/point rule must part company with the
+    row/row one. `_overlap_gaps` deliberately treats an empty `shared` as an
+    overlap, and it is right to: two rows are each quantified over the whole
+    condition space, so "is there a point matching both?" is answered yes by
+    the union of their conditions — a point that exists whether or not the two
+    rows name a dimension in common. Here the point is not existential. It is a
+    SPECIFIC point the publisher named, and a row constraining only axes that
+    point is silent about has said nothing about it — there is no axis on which
+    it could be found to agree. `all([])` answered that question True, so a row
+    conditioned on `series` alone "covered" `{hvhz: true}` and turned a real
+    coverage hole into a dispute about a row that does not speak to it.
+
+    Requiring `shared` to be non-empty is `is_fallback()`'s own exclusion
+    carried one step further, for the identical reason: a fallback constrains
+    nothing at all, and such a row constrains nothing THIS POINT names — it is
+    a fallback with respect to these axes. The stronger rule (the row must
+    constrain every dimension the point names) was rejected because it is not
+    this bug: it would make a row silent on `hvhz` stop covering
+    `{exposure_category: C, hvhz: true}`, which is exactly the omitted-dimension
+    semantics T49 §5b settled, not the vacuous-truth defect."""
+    if row.is_fallback():
+        return False
+    shared = set(row.conditions) & set(point)
+    if not shared:
+        return False
+    return all(row.conditions[k] == point[k] for k in shared)
+
+
+def _uncovered_contradicted_gap(
+    table: ParameterTable, tenant: str, point: dict[str, str | int | bool],
+    row_index: int,
+) -> Gap:
+    """A publisher's `uncovered` claim a row on the same table actually
+    covers — a dispute about the table's own consistency, not a coverage
+    hole. Reporting the ordinary `uncovered_condition` gap here would be
+    actively wrong: it asks for a row that already exists."""
+    subject = _param_subject(table, tenant, point=point)
+    where = _point_label(point)
+    return Gap(
+        id=f"gap:uncovered_contradicted:{subject.key()}",
+        kind="disputed", on="conditions",
+        subject=subject,
+        because=Because(code="uncovered_point_contradicted",
+                         params={"parameter": table.parameter, "point": _plain(point),
+                                 "row": row_index}),
+        would_close=(f"a corrected uncovered list for {table.parameter}, or "
+                     f"conditions on row {row_index} that no longer cover {where}"),
+        closes_by="knowledge", severity="warns_line",
+    )
+
+
 def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
     """`uncovered` points, as gaps — never silently omitted (§1.3 BINDING).
 
@@ -814,6 +957,12 @@ def _uncovered_gaps(table: ParameterTable, tenant: str) -> list[Gap]:
     """
     out = []
     for point in table.uncovered:
+        contradicting = next(
+            (i for i, row in enumerate(table.rows) if _row_covers_point(row, point)),
+            None)
+        if contradicting is not None:
+            out.append(_uncovered_contradicted_gap(table, tenant, point, contradicting))
+            continue
         where = _point_label(point)
         measured = table.domain_basis == "measured"
         subject = _param_subject(table, tenant, point=point)

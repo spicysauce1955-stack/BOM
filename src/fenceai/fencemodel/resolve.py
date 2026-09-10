@@ -15,7 +15,7 @@ from fenceai.core.errors import GenerationFailure, RequestRefused
 from fenceai.core.units import Mm
 from fenceai.fencemodel.bases import FIXING_BASES, PanelCounts
 from fenceai.fencemodel.lengths import LENGTH_RULES
-from fenceai.fencemodel.fit import FitResult, fit_pattern
+from fenceai.fencemodel.fit import FitResult, fit_pattern_milli
 from fenceai.fencemodel.model import (
     Distributed, Eligibility, FenceModel, Fraction, FromBottom, FromTop,
     HeightSupport, Member, PanelSpec, PartRequirement, spec_requirements,
@@ -698,13 +698,21 @@ def resolve_panel(
     if spec.infill and spec.infill.pattern:
         axis = (ctx.clear_width_mm if spec.infill.orientation == "vertical"
                 else ctx.height_mm)
-        fit = fit_pattern(
-            axis,
-            [m.width_mm for m in spec.infill.pattern],
-            [m.gap_after_mm for m in spec.infill.pattern],
+        # `_milli`, not `_mm`: `contract.md:112-117` requires the packing
+        # decision and the two quantities summed `count` times (width,
+        # gap-after) never see a rounded value before that multiplication.
+        # Today's `Member.width_mm` etc. are already whole mm (authored, not
+        # yet sourced from a published thousandths quantity), so scaling by
+        # 1000 here is an exact no-op — it is what makes this the conformant
+        # call the moment a caller upstream DOES have finer precision, with
+        # nothing here left to change.
+        fit = fit_pattern_milli(
+            axis * 1000,
+            [m.width_mm * 1000 for m in spec.infill.pattern],
+            [m.gap_after_mm * 1000 for m in spec.infill.pattern],
             justification=spec.infill.justification,
             excess=spec.infill.excess,
-            edge_margin_mm=spec.infill.edge_margin_mm,
+            edge_margin_milli=spec.infill.edge_margin_mm * 1000,
         )
         for offset, member in enumerate(spec.infill.pattern):
             # how many of THIS member of the repeating sequence were placed

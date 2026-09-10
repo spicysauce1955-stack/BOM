@@ -39,6 +39,7 @@
     <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
     <button data-tab="inventory" data-i18n="tabs.inventory">Inventory</button>
   </nav>
+  <nav id="road" aria-label="Job steps"></nav>
 
   <main>
     <!-- ============ canvas tab ============ -->
@@ -53,18 +54,39 @@
           <button id="tool-height" class="tool" data-i18n-title="tool.height" title="Height intent"><span class="t-icon">📏</span><span class="t-label" data-i18n="toolbar.height">Height</span></button>
           <button id="tool-model" class="tool" data-i18n-title="tool.model" title="Fence model"><span class="t-icon">🧩</span><span class="t-label" data-i18n="toolbar.model">Model</span></button>
           <button id="tool-pin" class="tool" data-i18n-title="tool.pin" title="Pin post"><span class="t-icon">📍</span><span class="t-label" data-i18n="toolbar.pin">Pin</span></button>
-          <!-- The property, not the fence: drag a rectangle for the house, a
-               line for the street. Below the fence tools because they are the
-               backdrop, and a salesperson draws the fence first. -->
+          <!-- The property, not the fence. Click the corners of the house and
+               click the first one again to close it; drag the street and get a
+               band with a width you can then type. Below the fence tools
+               because they are the backdrop, and a salesperson draws the fence
+               first. -->
           <button id="tool-house" class="tool" data-i18n-title="tool.house" title="House"><span class="t-icon">🏠</span><span class="t-label" data-i18n="toolbar.house">House</span></button>
           <button id="tool-street" class="tool" data-i18n-title="tool.street" title="Street"><span class="t-icon">🛣️</span><span class="t-label" data-i18n="toolbar.street">Street</span></button>
+          <!-- Everything else on the property, behind ONE control. A tree, a
+               pool, a sidewalk and a boundary each deserve to be drawable and
+               none of them deserves a permanent button on the rail: the screen
+               a salesperson opens has to stay simple, and seven equal buttons is
+               the opposite of that. It is a select rather than a popup menu
+               because it is keyboard- and touch-native for free, and its options
+               localize through the same static pass as every other label.
+               js/editor.js arms the matching tool on change. -->
+          <select id="tool-other" class="tool" data-i18n-title="tool.other" title="Something else on the property">
+            <option value="" data-i18n="toolbar.other">Other…</option>
+            <option value="tree" data-i18n="context.kind.tree">Tree</option>
+            <option value="pool" data-i18n="context.kind.pool">Pool</option>
+            <option value="sidewalk" data-i18n="context.kind.sidewalk">Sidewalk</option>
+            <option value="boundary" data-i18n="context.kind.boundary">Boundary</option>
+            <option value="other" data-i18n="context.kind.other">Other</option>
+          </select>
+          <!-- A promise, attached to the thing it is about. Click the house, a
+               stretch, the ground by the gate — js/notes.js takes it from there. -->
+          <button id="tool-note" class="tool" data-i18n-title="tool.note" title="Attach a note"><span class="t-icon">📝</span><span class="t-label" data-i18n="toolbar.note">Note</span></button>
           <div class="toolbar-spacer"></div>
           <button id="btn-undo" data-i18n-title="tool.undo" title="Undo (Ctrl+Z)"><span class="t-icon">↶</span><span class="t-label" data-i18n="toolbar.undo">Undo</span></button>
           <button id="btn-redo" data-i18n-title="tool.redo" title="Redo (Ctrl+Shift+Z)"><span class="t-icon">↷</span><span class="t-label" data-i18n="toolbar.redo">Redo</span></button>
-          <button id="btn-clear" data-i18n-title="tool.clear" title="Clear topology"><span class="t-icon">🗑</span><span class="t-label" data-i18n="toolbar.clear">Clear</span></button>
+          <button id="btn-clear" data-i18n-title="tool.clear_drawing" title="Clear the drawing"><span class="t-icon">🗑</span><span class="t-label" data-i18n="toolbar.clear">Clear</span></button>
         </div>
         <div class="canvas-col">
-          <div class="toolbar">
+          <div class="toolbar" id="generate-toolbar">
             <button id="btn-generate" class="primary" data-i18n="editor.generate">⚙ Generate strategy</button>
             <button id="btn-fit" data-i18n-title="editor.fit" title="Fit view">⤢</button>
             <!-- id so a role can hide the CONTROL while leaving the checkbox
@@ -77,14 +99,12 @@
               <button id="btn-cancel-draft" data-i18n="editor.cancel_run">Cancel</button>
             </div>
           </div>
-          <div id="checklist" style="display:none">
-            <div class="checklist-header">
-              <span data-i18n="checklist.title">Getting started</span>
-              <button id="checklist-dismiss" data-i18n-title="checklist.dismiss" title="Dismiss">✕</button>
-            </div>
-            <div id="checklist-items"></div>
-          </div>
-          <svg id="canvas" viewBox="0 0 900 500" preserveAspectRatio="xMidYMid meet">
+          <!-- `tabindex="-1"` so the drawing can HOLD focus without entering the
+               tab order. Enter and Escape mean something to a half-drawn fence,
+               and an SVG that cannot be focused leaves them with the last button
+               pressed — which is how finishing a run with the keyboard also
+               pressed "Done — next: ..." and walked to the next step. -->
+          <svg id="canvas" tabindex="-1" viewBox="0 0 900 500" preserveAspectRatio="xMidYMid meet">
             <g id="g-grid"></g>
             <!-- The house, the street, the boundary. FIRST, so the property is
                  the backdrop the fence is drawn on rather than something drawn
@@ -97,6 +117,20 @@
             <g id="g-overlay"></g>
             <g id="g-handles"></g>
             <g id="g-draft"></g>
+            <!-- Where a promise was attached. Owned entirely by js/notes.js and
+                 pointer-events:none throughout, for the reason g-context gives:
+                 a marker that swallowed a click meant for the fence in front of
+                 it would make the drawing harder to edit than it was before
+                 there was a note. -->
+            <!-- Gates as they will actually be built: the opening at its real
+                 width, and the way it opens. Owned by js/gates.js, drawn from
+                 the topology EVENT rather than from a generated strategy, so a
+                 salesperson sees the hole and the swing before pressing
+                 Generate — "the placement is not sufficient for an opening
+                 fence". After g-topology so it sits on the fence line, and
+                 before g-notes so a note marker is never hidden under a leaf. -->
+            <g id="g-gates"></g>
+            <g id="g-notes"></g>
             <g id="g-snap"></g>
           </svg>
           <div id="statusbar"></div>
@@ -130,9 +164,22 @@
           <!-- what KIND OF SITE this is: the prerequisite for every conditional
                rule, and the only surface that can state one. Owned by js/site.js. -->
           <div class="panel" id="site-conditions"></div>
-          <div class="panel">
+          <!-- Which gate, before where it goes. Owned by js/gates.js: the only
+               place a gate product was ever named used to be inside the popover
+               that opens AFTER you have clicked a spot on the fence, so the
+               road's gates step showed no gate and no way to choose one. -->
+          <div class="panel" id="gates-panel"></div>
+          <!-- The promises made during the sale, read back. Owned by
+               js/notes.js; the writing happens on the drawing itself. -->
+          <div class="panel" id="notes-panel"></div>
+          <div class="panel" id="run-editing-panel">
             <h3 data-i18n="inspect.run_editing">Run editing</h3>
             <select id="run-select"></select>
+            <!-- What this stretch MEASURES, as numbers you can type. A street
+                 landmark could be typed and the fence could not, so a person who
+                 measured a run could only drag until the label read about right.
+                 Owned by js/inspector.js over js/run-metrics.js. -->
+            <div id="run-measure"></div>
             <div id="run-events"></div>
             <div id="override-list"></div>
           </div>
@@ -199,31 +246,88 @@
 
     <!-- ============ knowledge tab ============ -->
     <section id="tab-knowledge" class="tab">
-      <div class="panel">
-        <h3 data-i18n="knowledge.new_version">New knowledge rule</h3>
-        <input id="k-object" data-i18n-placeholder="knowledge.object_placeholder" placeholder="object id e.g. K-MAXSPAN">
-        <select id="k-type">
-          <option value="hard_constraint" data-i18n="type.hard_constraint">hard_constraint</option>
-          <option value="company_rule" data-i18n="type.company_rule">company_rule</option>
-          <option value="preference" data-i18n="type.preference">preference</option>
-          <option value="heuristic" data-i18n="type.heuristic">heuristic</option>
-          <option value="fact" data-i18n="type.fact">fact</option>
-        </select>
-        <input id="k-title" dir="auto" data-i18n-placeholder="knowledge.title_placeholder" placeholder="title" size="40">
-        <div id="k-builder">
-          <div id="k-action-rows"></div>
-          <button id="btn-k-add-action" type="button" data-i18n="knowledge.builder.add_action">+ Add action</button>
-          <div class="meta" data-i18n="knowledge.builder.conditions_hint">Rule conditions can only be edited in Advanced (JSON).</div>
-        </div>
-        <textarea id="k-actions" dir="ltr" rows="6" cols="70" hidden>[{"kind": "set_param", "param": "max_span_mm", "value": 1800}]</textarea>
-        <div>
-          <button id="btn-k-advanced" type="button" data-i18n="knowledge.builder.advanced">Advanced (JSON)</button>
-          <button id="btn-knowledge-impact" data-i18n="impact.preview">Preview impact</button>
-          <button id="btn-add-knowledge" data-i18n="knowledge.save_version">Save new version</button>
-        </div>
-        <div id="knowledge-impact-out"></div>
+      <!-- Three separate surfaces instead of one stacked page. The strip is
+           owned by tabs.js — the module whose job is already "switch between
+           panels" — and the panes below it by three different modules, which is
+           why nothing here reaches into another pane's body. The badge numbers
+           arrive on the `knowledge-counts` event. -->
+      <div class="subnav" id="k-subnav" role="tablist">
+        <button data-kpane="rules" class="active" role="tab">
+          <span data-i18n="knowledge.pane.rules">Rules</span><span class="count" id="k-count-rules"></span>
+        </button>
+        <button data-kpane="author" role="tab">
+          <span data-i18n="knowledge.pane.author">Author</span>
+        </button>
+        <button data-kpane="published" role="tab">
+          <span data-i18n="knowledge.pane.published">Published</span>
+        </button>
       </div>
-      <div id="knowledge-list"></div>
+
+      <!-- rules pane. Owned by js/knowledge-rules.js. -->
+      <div class="k-pane active" id="pane-k-rules">
+        <h3 data-i18n="knowledge.pane.rules_title">Established knowledge</h3>
+        <p class="meta" data-i18n="knowledge.pane.rules_sub">Every rule this engine actually applies. Proposed rules awaiting a decision live in Review, not here.</p>
+        <p class="excluded-note" id="k-excluded-note" hidden></p>
+        <div class="filterbar">
+          <label><span class="meta" data-i18n="knowledge.filter.type">Type</span>
+            <select id="k-filter-type">
+              <option value="" data-i18n="knowledge.filter.all_types">All types</option>
+            </select>
+          </label>
+          <input id="k-filter-search" type="search" dir="auto"
+                 data-i18n-placeholder="knowledge.filter.search" placeholder="Search object id or title">
+          <label class="toggle"><input id="k-filter-retired" type="checkbox">
+            <span class="meta" data-i18n="knowledge.filter.show_retired">Show retired</span></label>
+          <span class="meta" id="k-filter-count"></span>
+        </div>
+        <div id="knowledge-list"></div>
+        <details id="k-retired-group" hidden>
+          <summary></summary>
+          <div id="k-retired-list"></div>
+        </details>
+      </div>
+
+      <!-- author pane: the rule builder, unchanged, given its own pane -->
+      <div class="k-pane" id="pane-k-author">
+        <div class="panel">
+          <h3 data-i18n="knowledge.new_version">New knowledge rule</h3>
+          <input id="k-object" data-i18n-placeholder="knowledge.object_placeholder" placeholder="object id e.g. K-MAXSPAN">
+          <select id="k-type">
+            <option value="hard_constraint" data-i18n="type.hard_constraint">hard_constraint</option>
+            <option value="company_rule" data-i18n="type.company_rule">company_rule</option>
+            <option value="preference" data-i18n="type.preference">preference</option>
+            <option value="heuristic" data-i18n="type.heuristic">heuristic</option>
+            <option value="fact" data-i18n="type.fact">fact</option>
+          </select>
+          <input id="k-title" dir="auto" data-i18n-placeholder="knowledge.title_placeholder" placeholder="title" size="40">
+          <div id="k-builder">
+            <div id="k-action-rows"></div>
+            <button id="btn-k-add-action" type="button" data-i18n="knowledge.builder.add_action">+ Add action</button>
+            <div class="meta" data-i18n="knowledge.builder.conditions_hint">Rule conditions can only be edited in Advanced (JSON).</div>
+          </div>
+          <textarea id="k-actions" dir="ltr" rows="6" cols="70" hidden>[{"kind": "set_param", "param": "max_span_mm", "value": 1800}]</textarea>
+          <div>
+            <button id="btn-k-advanced" type="button" data-i18n="knowledge.builder.advanced">Advanced (JSON)</button>
+            <button id="btn-knowledge-impact" data-i18n="impact.preview">Preview impact</button>
+            <button id="btn-add-knowledge" data-i18n="knowledge.save_version">Save new version</button>
+          </div>
+          <div id="knowledge-impact-out"></div>
+        </div>
+      </div>
+
+      <!-- published pane: the parts inspector, unchanged, given its own pane -->
+      <div class="k-pane" id="pane-k-published">
+        <div id="published-parts" class="card">
+          <h3 data-i18n="published.title">Published parts</h3>
+          <p data-i18n="published.scope">Source knowledge for inspection. Draft parts are not assembly-ready models.</p>
+          <label><span data-i18n="published.search">Search parts</span>
+            <input id="published-parts-search" type="search" value="Emblem" dir="auto">
+          </label>
+          <button id="published-parts-refresh" type="button" data-i18n="published.refresh">Refresh</button>
+          <p id="published-parts-status" role="status"></p>
+          <div id="published-parts-list"></div>
+        </div>
+      </div>
     </section>
 
     <!-- ============ review tab ============ -->

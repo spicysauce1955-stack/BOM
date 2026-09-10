@@ -62,12 +62,31 @@ def _display(value, units: str):
     return int(q) if q == int(q) else q
 
 
+def _display_milli(value, units: str):
+    """Thousandths -> the reader's unit, at their TRUE precision.
+
+    The one length in this file that is not an integer millimetre. A published
+    limit like 1422.4 mm keeps its thousandths all the way from the document
+    (`contract.md`:112-117), and `_display` would round it onto the millimetre
+    grid — printing `1422`, the exact number a reader must not be shown when the
+    sentence is about a 1423 mm bay standing a fraction over it. Read-only:
+    nothing types thousandths, so there is no inverse.
+
+    Mirrors `web/static/js/units.js::toDisplayMilli`; the division does the
+    trimming, so a whole value reads `1905` and not `1905.0`.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        return value
+    q = value / (10_000 if units == "cm" else 1000)
+    return int(q) if q == int(q) else q
+
+
 def _word(value, lang: str):
     return _ENUM_WORDS.get(lang, {}).get(value, value)
 
 # One template per decision-graph action, per language. `_alt` / `_wall` / `_step`
 # are optional sentence fragments appended when the payload carries those fields;
-# `_governed` / `_defeated` / `_pinned` are the provenance suffixes.
+# `_governed` / `_defeated` / `_corroborated` / `_pinned` are the provenance suffixes.
 TEMPLATES: dict[str, dict[str, str]] = {
     "en": {
         "place_post": (
@@ -151,10 +170,32 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "concrete {concrete_sku}, caps {cap_sku}."
         ),
         "place_gate": "Gate opening from {start_mm} to {end_mm} {u}.",
+        # ...and the standalone gate, which has no stations to be "from" and
+        # "to": it filed `start_mm`/`end_mm` nowhere, so the key above rendered
+        # "Gate opening from None to None mm." in both languages.
+        "place_gate_span": (
+            "Gate {gate_id} placed between nodes {start_node_id} and "
+            "{end_node_id} — an opening of {opening_mm} {u}."
+        ),
         "select_gate_kit": "Gate kit {kit_sku} taken from gate event {event_id} as entered.",
         "select_gate_kit_catalog": (
             "Gate kit {kit_sku} selected from the catalog: it declares a fit for the "
             "{opening_width_mm} {u} opening of gate event {event_id}."
+        ),
+        # A gate that stands BESIDE the runs has no event to be taken from — its
+        # payload names the gate element instead. Rendering it through the two
+        # keys above interpolated a missing `event_id` and published the sentence
+        # "…opening of gate event None" in both languages. One key per
+        # provenance, exactly as `select_model_*` above: a standalone gate is a
+        # different sentence, not a word slotted into the in-run one.
+        "select_gate_kit_span": "Gate kit {kit_sku} taken from gate {gate_id} as entered.",
+        "select_gate_kit_span_catalog": (
+            "Gate kit {kit_sku} selected from the catalog: it declares a fit for the "
+            "{opening_width_mm} {u} opening of gate {gate_id}."
+        ),
+        "gate_span": (
+            "Gate {gate_id} stands beside the runs, between nodes {start_node_id} "
+            "and {end_node_id} — an opening of {opening_mm} {u}."
         ),
         "knowledge_conflict": (
             "Conflict on '{slot}' between {contenders} — surfaced for review."
@@ -225,6 +266,16 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "exact_span_over_max": (
             "Model {model_ref} is made in {exact_mm} {u} bays, wider than the "
             "{max_mm} {u} maximum span; section {run_id} was laid out freely."
+        ),
+        # Our unit problem, stated as ours. The published limit is shown at the
+        # precision it was published in — `{limit_milli}`, never `{max_mm}` —
+        # because a bay of 1423 beside a limit printed as "1422" reads as a
+        # whole millimetre over a number nobody sealed.
+        "span_rounded_over_published_limit": (
+            "The published maximum span is {limit_milli} {u}, between whole "
+            "millimetres: section {run_id} is laid out in the {n} bays that "
+            "limit allows, and one bay carries the leftover fraction at "
+            "{widest_mm} {u} — over by {over_milli} {u}."
         ),
         "excessive_gap": (
             "Stepped span leaves a {gap_mm} {u} gap underneath (limit {max_mm} {u})."
@@ -317,6 +368,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "generic": "{action}: {payload}",
         "_governed": " Governed by {refs}.",
         "_defeated": " Defeated alternatives from {refs}.",
+        "_corroborated": " Corroborated by {refs}.",
         "_pinned": " This decision is pinned by a user override.",
     },
     "he": {
@@ -382,10 +434,23 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "בטון {concrete_sku}, כיפות {cap_sku}."
         ),
         "place_gate": "פתח שער מתחנה {start_mm} עד {end_mm} {u}.",
+        "place_gate_span": (
+            "השער {gate_id} הוצב בין הצמתים {start_node_id} ו-{end_node_id} — "
+            "פתח של {opening_mm} {u}."
+        ),
         "select_gate_kit": "ערכת השער {kit_sku} נלקחה מאירוע השער {event_id} כפי שהוזנה.",
         "select_gate_kit_catalog": (
             "ערכת השער {kit_sku} נבחרה מהקטלוג: היא מוצהרת כמתאימה לפתח של "
             "{opening_width_mm} {u} באירוע השער {event_id}."
+        ),
+        "select_gate_kit_span": "ערכת השער {kit_sku} נלקחה מהשער {gate_id} כפי שהוזנה.",
+        "select_gate_kit_span_catalog": (
+            "ערכת השער {kit_sku} נבחרה מהקטלוג: היא מוצהרת כמתאימה לפתח של "
+            "{opening_width_mm} {u} של השער {gate_id}."
+        ),
+        "gate_span": (
+            "השער {gate_id} עומד לצד המקטעים, בין הצמתים {start_node_id} "
+            "ו-{end_node_id} — פתח של {opening_mm} {u}."
         ),
         "knowledge_conflict": "סתירה על '{slot}' בין {contenders} — הוצפה לבדיקה.",
         "uncovered_param": (
@@ -443,6 +508,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "exact_span_over_max": (
             "דגם {model_ref} מיוצר במפתחים של {exact_mm} {u}, רחבים מהמפתח המרבי "
             "{max_mm} {u}; קטע {run_id} נפרס באופן חופשי."
+        ),
+        "span_rounded_over_published_limit": (
+            "המפתח המרבי שפורסם הוא {limit_milli} {u}, ערך שנופל בין "
+            "מילימטרים שלמים: הקטע {run_id} נפרס ל-{n} מפתחים כפי שאותה "
+            "מגבלה מתירה, ומפתח אחד נושא את השארית ברוחב {widest_mm} {u} — "
+            "חריגה של {over_milli} {u}."
         ),
         "excessive_gap": (
             'הפאנל המדורג משאיר מרווח של {gap_mm} {u} מתחתיו (המגבלה {max_mm} {u}).'
@@ -518,6 +589,7 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "generic": "{action}: {payload}",
         "_governed": " נקבע לפי {refs}.",
         "_defeated": " גבר על {refs}.",
+        "_corroborated": " מאושש על ידי {refs}.",
         "_pinned": " החלטה זו ננעצה על ידי המשתמש.",
     },
 }
@@ -531,8 +603,9 @@ def _refs(graph: DecisionGraph, node: DecisionNode, edge_type: str) -> list[str]
 
 def _fmt(t: dict[str, str], key: str, lang: str, units: str, **kw) -> str:
     """Render one template: `*_mm` values (and length lists) in the reader's unit,
-    enum values as words in the reader's language, `{u}` as the unit word. Ids,
-    SKUs, refs and raw payloads pass through untouched."""
+    `*_milli` values in the reader's unit at published precision, enum values as
+    words in the reader's language, `{u}` as the unit word. Ids, SKUs, refs and
+    raw payloads pass through untouched."""
     out = {}
     for k, v in kw.items():
         # the list branch comes FIRST: a length list may also end in `_mm`
@@ -540,6 +613,11 @@ def _fmt(t: dict[str, str], key: str, lang: str, units: str, **kw) -> str:
         # millimetres — which reads as centimetres beside a `{u}` saying cm
         if k in _LENGTH_LISTS and isinstance(v, (list, tuple)):
             out[k] = [_display(x, units) for x in v]
+        # `_milli` BEFORE `_mm`: a thousandths key does not end in `_mm`, but
+        # ordering them the other way invites the next reader to add a suffix
+        # that does
+        elif k.endswith("_milli"):
+            out[k] = _display_milli(v, units)
         elif k.endswith("_mm"):
             out[k] = _display(v, units)
         elif k in _ENUM_PARAMS:
@@ -568,6 +646,7 @@ def explain_node(
     t = TEMPLATES.get(lang, TEMPLATES["en"])
     governed = _refs(graph, node, "governed_by")
     defeated = _refs(graph, node, "defeated")
+    corroborated = _refs(graph, node, "corroborated")
     p = node.payload
     match node.action:
         case "place_post":
@@ -691,12 +770,29 @@ def explain_node(
                 concrete_sku=p.get("concrete_sku"), cap_sku=p.get("cap_sku"),
             )
         case "place_gate":
-            base = _fmt(t, "place_gate", lang, units, start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))
+            # stations for an in-run gate, nodes for one standing beside the runs
+            if p.get("start_mm") is None:
+                base = _fmt(t, "place_gate_span", lang, units,
+                    gate_id=p.get("gate_id"), start_node_id=p.get("start_node_id"),
+                    end_node_id=p.get("end_node_id"), opening_mm=p.get("opening_mm"))
+            else:
+                base = _fmt(t, "place_gate", lang, units,
+                    start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))
         case "select_gate_kit":
-            key = ("select_gate_kit_catalog" if p.get("source") == "catalog"
-                   else "select_gate_kit")
+            # WHICH gate this kit is for is the branch, and it is decided by the
+            # payload rather than by a flag: an in-run gate files `event_id`, a
+            # standalone `GateSpan` files `gate_id`, and neither files both.
+            span = p.get("event_id") is None
+            key = "select_gate_kit_span" if span else "select_gate_kit"
+            if p.get("source") == "catalog":
+                key += "_catalog"
             base = _fmt(t, key, lang, units, kit_sku=p.get("kit_sku"),
-                event_id=p.get("event_id"), opening_width_mm=p.get("opening_width_mm"))
+                event_id=p.get("event_id"), gate_id=p.get("gate_id"),
+                opening_width_mm=p.get("opening_width_mm"))
+        case "gate_span":
+            base = _fmt(t, "gate_span", lang, units, gate_id=p.get("gate_id"),
+                start_node_id=p.get("start_node_id"),
+                end_node_id=p.get("end_node_id"), opening_mm=p.get("opening_mm"))
         case "knowledge_conflict":
             base = _fmt(t, "knowledge_conflict", lang, units,
                 slot=p.get("slot"), contenders=", ".join(p.get("contenders", []))
@@ -739,6 +835,11 @@ def explain_node(
         case "span_not_exact":
             base = _fmt(t, "span_not_exact", lang, units, run_id=p.get("run_id"),
                 exact_mm=p.get("exact_mm"), remainder_mm=p.get("remainder_mm"))
+        case "span_rounded_over_published_limit":
+            base = _fmt(t, "span_rounded_over_published_limit", lang, units,
+                run_id=p.get("run_id"), n=p.get("n"),
+                limit_milli=p.get("limit_milli"), widest_mm=p.get("widest_mm"),
+                over_milli=p.get("over_milli"))
         case "clear_gap_exceeded" | "rail_separation_insufficient" | "pattern_residual_large":
             # one shape for the three panel-limit checks: they differ in which
             # measurement they take, not in what they have to say about it
@@ -845,6 +946,8 @@ def explain_node(
         base += _fmt(t, "_governed", lang, units, refs=", ".join(governed))
     if defeated:
         base += _fmt(t, "_defeated", lang, units, refs=", ".join(defeated))
+    if corroborated:
+        base += _fmt(t, "_corroborated", lang, units, refs=", ".join(corroborated))
     if node.status == "pinned":
         base += t["_pinned"]
     return base

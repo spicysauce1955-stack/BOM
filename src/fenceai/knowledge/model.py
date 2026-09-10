@@ -6,9 +6,9 @@ import hashlib
 import json
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from fenceai.core.units import Mm
+from fenceai.core.units import Mm, round_milli_to_mm
 from fenceai.knowledge.ast import Expr, field_paths
 from fenceai.knowledge.source_policy import AdmittedBy
 
@@ -31,9 +31,78 @@ DEFAULT_AUTHORITY: dict[str, int] = {
 # --- typed actions ---------------------------------------------------------
 
 class SetParam(BaseModel):
+    """A parameter bound to a number.
+
+    `value` is the value AT REST, integer millimetres for a length (ADR-0002) and
+    a plain count otherwise. `value_milli` is the PUBLISHED PRECISION riding
+    alongside: the source's own thousandths, present only where this action was
+    expanded from a published `Quantity`, `None` for every rule we authored.
+
+    It exists because of one BINDING sentence (contract §1.1): *"any arithmetic
+    that MULTIPLIES a published value — a count, a pitch, a span limit — consumes
+    the thousandths and rounds only its output."* `value` cannot satisfy that,
+    because the thousandths are already gone by the time it exists. The published
+    `footing_schedule` tables state five span limits that are not whole
+    millimetres, and the span layout divides by them: `n = ceil(L / max_span)`
+    against `1422400` thousandths rounded to `1422 mm` orders an extra post,
+    footing and pour on 966 of the first hundred metres of run length, and
+    against `2463800` rounded UP to `2464 mm` it lays a bay 0.2 mm WIDER than the
+    sealed maximum. Neither is a rounding error; each is a different fence.
+
+    So this is not a duplicate of `value` and must never be read as one. A site
+    that stores or displays a length reads `value`; a site that MULTIPLIES or
+    DIVIDES by one reads `effective_milli()` and rounds its own output once.
+    `strategy.layout.equal_layout_milli` is the first such site.
+
+    The two are checked against each other below rather than trusted: a value at
+    rest that disagrees with the thousandths beside it is two different numbers
+    wearing one name, and the resulting fence would depend on which field the
+    reader happened to pick.
+
+    **FROZEN, because that check is worth nothing otherwise.** A validator runs
+    at construction and at JSON round-trip; it does not run on assignment, so
+    `s.value = 1200` on a well-formed `SetParam` leaves `value` at 1200 and
+    `effective_milli()` at 2463800 — the two-numbers-one-name state this class
+    exists to make unreachable, reached by the one route the check does not
+    cover. Nothing mutates one today, but `Action` instances are copied into
+    `Firing.actions` and carried through the evaluator, `resolve_param` and the
+    generator by reference, so a mutation anywhere would be a mutation
+    everywhere. `model_copy(update=...)` is the supported way to make a
+    different one, and it re-validates.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
     kind: Literal["set_param"] = "set_param"
     param: str  # e.g. "max_span_mm", "screws_per_span", "rails_per_span"
     value: int
+    value_milli: int | None = None
+
+    @model_validator(mode="after")
+    def _milli_agrees(self) -> "SetParam":
+        if self.value_milli is not None and round_milli_to_mm(self.value_milli) != self.value:
+            raise ValueError(
+                f"SetParam({self.param}) value {self.value} is not "
+                f"{self.value_milli} thousandths rounded to mm "
+                f"({round_milli_to_mm(self.value_milli)})"
+            )
+        return self
+
+    def effective_milli(self) -> int:
+        """The value in thousandths, for arithmetic that multiplies or divides it.
+
+        `value * 1000` where nothing published a finer number, which is an EXACT
+        no-op: an authored rule saying 1800 mm has no precision below the
+        millimetre to lose, so a caller that scales up gets the same answer it
+        got before this field existed. That is what makes wiring a divider
+        through here safe for every rule in `demo.py` and for every golden
+        scenario — the fence only moves where a publisher actually sent
+        thousandths.
+
+        Named like `KnowledgeVersion.effective_authority()`: the stored field is
+        the exception, and the method is what a caller should ask.
+        """
+        return self.value * 1000 if self.value_milli is None else self.value_milli
 
 
 class SetToken(BaseModel):

@@ -47,7 +47,20 @@ const ALL_TABS = ["canvas", "annotations", "knowledge", "review", "structure",
 //                      fault in the sale they just made.
 //   #chk-overlay-label whether to draw generated posts is not their decision
 //   #profile-exag      vertical exaggeration is a drafting control
+//   #model-row-hint    "Change it on the Panel tab" — and the Panel tab is on
+//                      this very list. Audit B03: the row sent a salesperson to
+//                      a surface their own role hides. What was sold is set from
+//                      the canvas, so with the hint gone the row still tells
+//                      them what the fence is built to.
 const SALES_HIDDEN = [
+  //   #tabs             the strip itself. The road is the navigation for this
+  //                     role (spec, "The road IS the navigation"), and two
+  //                     navigations on one screen is the smaller version of the
+  //                     fault the road exists to fix. The eight per-tab entries
+  //                     below STAY: they are what keeps the strip correct if it
+  //                     is ever shown, and `test_sales_tabs_and_the_hidden_tabs_
+  //                     partition_the_page` requires them.
+  "#tabs",
   "#tool-pin",
   "#override-list",
   "#choices",
@@ -56,6 +69,7 @@ const SALES_HIDDEN = [
   "#gaps",
   "#chk-overlay-label",
   "#profile-exag",
+  "#model-row-hint",
   ...ALL_TABS.filter((t) => !SALES_TABS.includes(t)).map((t) => `[data-tab="${t}"]`),
 ];
 

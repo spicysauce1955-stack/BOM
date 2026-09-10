@@ -2,11 +2,14 @@
 
 import { apiGet, apiSend, esc } from "./api.js";
 import {
-  el, field, loadCatalogProducts, option, skuSelect, updateAdvancedUi,
+  ACTION_KINDS, actionSentence, el, field, loadCatalogProducts, option,
+  scopeChips, skuSelect, updateAdvancedUi,
 } from "./builder-ui.js";
 import { initChoices } from "./choices.js";
+import { initKnowledgeRules, renderKnowledgeRules } from "./knowledge-rules.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
+import { targetLabel } from "./notes.js";
 import { emit, on, reloadProject, state } from "./state.js";
 import {
   fmt, fmtLen, inputStep, money, roleWord, sentence, toDisplayValue, toMm, tu,
@@ -19,18 +22,61 @@ import {
 } from "./doc-warnings.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
+/** Switch to a tab by name — the ONE path that moves the `active` class.
+ *
+ *  Extracted from the click handler because `road.js` must be able to show the
+ *  annotations panel without touching it: once `#tabs` is hidden for sales, a
+ *  `.click()` on the button is a module poking an invisible element in a
+ *  subtree it does not own.
+ *
+ *  An unknown name is INERT rather than a throw. The road resolves a step to a
+ *  panel name, and a typo there must cost one dead step, not the whole
+ *  navigation — which, with the strip hidden, is the entire way around the app.
+ */
+export function setTab(name) {
+  const btn = document.querySelector(`#tabs button[data-tab="${name}"]`);
+  const panel = document.getElementById(`tab-${name}`);
+  if (!btn || !panel) return;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
+  btn.classList.add("active");
+  panel.classList.add("active");
+  // These three render lazily, on first sight of their tab.
+  if (name === "knowledge") renderKnowledgeRules();
+  if (name === "review") renderCandidates();
+  if (name === "bom") renderBom();
+  emit("tab-changed", name);
+}
+
+/** Switch Knowledge sub-panes. The strip's counterpart to `setTab`, and here
+ *  for the same reason: one path moves the `active` class.
+ *
+ *  Only the wrappers are touched — never a pane's contents, which belong to
+ *  three different modules. Nothing renders lazily here either: the rules pane
+ *  is the default pane, so it is already drawn by the time the strip is usable,
+ *  and the other two are static forms.
+ */
+export function setKnowledgePane(name) {
+  const btn = document.querySelector(`#k-subnav button[data-kpane="${name}"]`);
+  const pane = document.getElementById(`pane-k-${name}`);
+  if (!btn || !pane) return;
+  document.querySelectorAll("#k-subnav button").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".k-pane").forEach((p) => p.classList.remove("active"));
+  btn.classList.add("active");
+  pane.classList.add("active");
+}
+
 export function initTabs() {
   document.querySelectorAll("#tabs button").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#tabs button").forEach((b) => b.classList.remove("active"));
-      document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
-      btn.classList.add("active");
-      document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
-      if (btn.dataset.tab === "knowledge") renderKnowledge();
-      if (btn.dataset.tab === "review") renderCandidates();
-      if (btn.dataset.tab === "bom") renderBom();
-      emit("tab-changed", btn.dataset.tab);   // other tabs own their own rendering
-    }));
+    btn.addEventListener("click", () => setTab(btn.dataset.tab)));
+  document.querySelectorAll("#k-subnav button").forEach((btn) =>
+    btn.addEventListener("click", () => setKnowledgePane(btn.dataset.kpane)));
+  initKnowledgeRules();
+  // the pane counts what it drew; the strip only displays it. Reading the list
+  // from here would be this module reaching into a subtree it does not own.
+  on("knowledge-counts", ({ rules }) => {
+    document.getElementById("k-count-rules").textContent = rules;
+  });
 
   document.getElementById("btn-add-ann").addEventListener("click", async () => {
     const text = document.getElementById("ann-text").value.trim();
@@ -104,7 +150,7 @@ export function initTabs() {
     const body = knowledgeBody();
     if (!body) return;
     await apiSend("POST", "/api/knowledge", body);
-    renderKnowledge();
+    renderKnowledgeRules();
   });
   document.getElementById("btn-knowledge-impact").addEventListener("click", async () => {
     const body = knowledgeBody();
@@ -147,7 +193,7 @@ export function initTabs() {
     renderAnnTargets(); renderAnnotations(); maybeRenderBom();
     if (builderActions) renderBuilderRows();
     if (inventoryObj) drawInventoryTable();
-    if (document.getElementById("tab-knowledge").classList.contains("active")) renderKnowledge();
+    if (document.getElementById("tab-knowledge").classList.contains("active")) renderKnowledgeRules();
     if (document.getElementById("tab-review").classList.contains("active")) renderCandidates();
   };
   on("locale-changed", relocalize);
@@ -171,19 +217,24 @@ function parseInventory(text) {
   } catch { return null; }
 }
 
+/** The tab's own target picker — the office person's way in, and no longer the
+ *  only one: a salesperson attaches a note by clicking the thing on the drawing
+ *  (`js/notes.js`), which is what "r2" never told them.
+ *
+ *  Landmarks are offered here too, named the way `notes.js` names them, so the
+ *  two surfaces cannot disagree about what a target is called. */
 function renderAnnTargets() {
   const sel = document.getElementById("ann-target");
   sel.innerHTML = "";
-  const o = document.createElement("option");
-  o.value = "project";
-  o.textContent = t("annotations.whole_project");
-  sel.appendChild(o);
-  for (const r of state.project?.topology.runs || []) {
+  const add = (value) => {
     const opt = document.createElement("option");
-    opt.value = `run:${r.id}`;
-    opt.textContent = r.id;
+    opt.value = value;
+    opt.textContent = targetLabel(value);
     sel.appendChild(opt);
-  }
+  };
+  add("project");
+  for (const r of state.project?.topology.runs || []) add(`run:${r.id}`);
+  for (const lm of state.project?.context?.landmarks || []) add(`landmark:${lm.id}`);
 }
 
 function maybeRenderBom() {
@@ -372,7 +423,7 @@ function qtyCells(qty, unit) {
 export function groupedBomHtml(grouped, products) {
   const groups = grouped?.groups || [];
   if (!groups.length) return "";
-  const KINDS = ["section", "node", "bay", "decision"];
+  const KINDS = ["section", "node", "bay", "gate", "decision"];
   // Three different ids, one tag source. A BAY's key IS an element id; a
   // SECTION's is a run id, which `tagOf` does not index (it maps elements); and
   // a NODE's names the post standing there, whose element id is `post@<node>`.
@@ -419,7 +470,12 @@ export function groupedBomHtml(grouped, products) {
   }
   const bucket = (rows, key) => {
     if (!rows?.length) return "";
-    let out = `<div class="group-row"><div class="group-head"><strong>${t(key)}</strong></div><table>`;
+    // `data-kind="bucket"`: these two rows name a BUCKET and not an element, so
+    // they carry no `data-group` — and a reader (the browser suite among them)
+    // that walks `.group-row` needs to be able to tell them apart from a row
+    // that should have had one and did not.
+    let out = `<div class="group-row" data-kind="bucket">
+      <div class="group-head"><strong>${t(key)}</strong></div><table>`;
     for (const r of rows)
       out += `<tr><td class="sku">${esc(r.sku)}</td><td></td>
         ${qtyCells(r.qty, r.unit)}<td></td></tr>`;
@@ -570,7 +626,10 @@ async function renderAnnotations() {
   for (const ann of state.project?.annotations || []) {
     const card = document.createElement("div");
     card.className = "card";
-    let html = `<div class="meta"><bdi>${esc(ann.id)}</bdi> · ${esc(ann.target_ref)} · ${esc(ann.author)}</div>
+    // The target in words, not as a ref. "r2" is an id this app made up; the
+    // person reading the note has to know it means the stretch along the street.
+    let html = `<div class="meta"><bdi>${esc(ann.id)}</bdi> · <bdi>${
+      esc(targetLabel(ann.target_ref))}</bdi> · ${esc(ann.author)}</div>
       <div class="verbatim" dir="auto">“${esc(ann.text)}”</div>
       <button data-act="interpret">${t("annotations.interpret")}</button>`;
     for (const rec of ann.interpretations) {
@@ -627,31 +686,6 @@ async function renderAnnotations() {
   }
 }
 
-// ---------- knowledge ----------
-async function renderKnowledge() {
-  const versions = await apiGet("/api/knowledge");
-  const div = document.getElementById("knowledge-list");
-  div.innerHTML = "";
-  for (const v of versions) {
-    const card = document.createElement("div");
-    card.className = "card";
-    let html = `<span class="tag ${v.type}">${t("type." + v.type)}</span>
-      <span class="tag ${v.status}">${t("status." + v.status)}</span>
-      <b><bdi>${esc(v.object_id)}@v${v.version}</bdi></b> — <span dir="auto">${esc(v.title_i18n?.[currentLocale()] || v.title)}</span>
-      <div class="meta">${t("knowledge.scope")} <bdi>${esc(JSON.stringify(v.scope))}</bdi> · ${esc(v.attributed_to)}
-        ${v.derived_from?.length ? "· " + t("knowledge.derived_from") + " <bdi>" + esc(v.derived_from.join(", ")) + "</bdi>" : ""}</div>`;
-    if (v.source_text) html += `<div class="verbatim" dir="auto">“${esc(v.source_text)}”</div>`;
-    html += `<div class="meta">${t("knowledge.actions")}: <bdi>${esc(JSON.stringify(v.actions))}</bdi></div>`;
-    if (v.status === "active") html += `<button data-retire="1">${t("knowledge.retire")}</button>`;
-    card.innerHTML = html;
-    card.querySelector("[data-retire]")?.addEventListener("click", async () => {
-      await apiSend("POST", `/api/knowledge/${v.object_id}/${v.version}/retire`);
-      renderKnowledge();
-    });
-    div.appendChild(card);
-  }
-}
-
 // ---------- knowledge rule builder (sentence-style action rows) ----------
 // Builder state is the plain actions array — exactly what POST /api/knowledge takes.
 // The Advanced (JSON) textarea is a two-way escape hatch (kAdvancedOpen switches
@@ -661,11 +695,6 @@ let kAdvancedOpen = false;
 let inventoryObj = null;
 let invAdvancedOpen = false;
 
-const ACTION_KINDS = [
-  "set_param", "default_component", "require_mounting", "require_post_reinforcement",
-  "prefer_equal_spans", "prefer_min_span_width", "prefer_span_width", "prefer_vertical",
-  "add_note", "flag_for_review",
-];
 const KNOWN_PARAMS = [
   "max_span_mm", "rails_per_span", "screws_per_span", "base_top_step_boundary_mm",
 ];
@@ -816,17 +845,29 @@ function builderRow(a, idx, products) {
 // ---------- review queue ----------
 async function renderCandidates() {
   const candidates = await apiGet("/api/candidates");
+  // the same catalog cache the rules pane reads, for the same reason: a SKU in
+  // an action sentence must read as the builder writes it. `loadCatalogProducts`
+  // caches the PROMISE, so awaiting it here costs one fetch for the session
+  // however many surfaces ask.
+  const products = await loadCatalogProducts();
   const div = document.getElementById("candidate-list");
   div.innerHTML = candidates.length ? "" : `<em>${t("review.empty")}</em>`;
   for (const c of candidates) {
     const card = document.createElement("div");
-    card.className = "card";
+    // `rule-card` too: a candidate IS a rule, and this pane must describe it in
+    // the words the Knowledge tab uses. The two lists drew the same version
+    // differently for as long as this one dumped `JSON.stringify` — a reviewer
+    // approving `{"kind":"set_param","param":"max_span_mm","value":1800}` and a
+    // reader seeing "Set max span to 1800 mm" are not looking at one rule.
+    card.className = "card rule-card";
     card.innerHTML = `<span class="tag candidate">${t("status.proposed")}</span>
       <b><bdi>${esc(c.object_id)}@v${c.version}</bdi></b> — <span dir="auto">${esc(c.title_i18n?.[currentLocale()] || c.title)}</span>
-      <div class="meta">${t("knowledge.scope")} <bdi>${esc(JSON.stringify(c.scope))}</bdi> ·
-        ${t("knowledge.derived_from")} <bdi>${esc(c.derived_from.join(", "))}</bdi></div>
+      <div class="meta">${t("knowledge.derived_from")} <bdi>${esc(c.derived_from.join(", "))}</bdi></div>
+      <div class="rule-scope">${scopeChips(c.scope)}</div>
       ${c.source_text ? `<div class="verbatim" dir="auto">“${esc(c.source_text)}”</div>` : ""}
-      <div class="meta">${t("knowledge.actions")}: <bdi>${esc(JSON.stringify(c.actions))}</bdi></div>
+      <ul class="actions-list">${
+        (c.actions || []).map((a) => `<li>${actionSentence(a, products)}</li>`).join("")
+      }</ul>
       <button data-preview="1">${t("impact.preview")}</button>
       <button data-a="approve">${t("review.approve")}</button>
       <button data-a="scope_restrict">${t("review.approve_narrower")}</button>
@@ -861,7 +902,7 @@ async function renderCandidates() {
     const submitReview = async (body) => {
       await apiSend("POST", `/api/candidates/${c.object_id}/${c.version}/review`,
         { reviewer: "expert-admin", ...body });
-      renderCandidates(); renderKnowledge();
+      renderCandidates(); renderKnowledgeRules();
     };
     const rejectForm = card.querySelector('[data-form="reject"]');
     const scopeForm = card.querySelector('[data-form="scope"]');

@@ -28,7 +28,7 @@ from fenceai.fulfillment.fulfill import Bom
 from fenceai.report.annexe import WarningPlacement
 from fenceai.report.elevation import PanelElevation, panel_elevation
 from fenceai.strategy.model import Strategy, StrategyWarning
-from fenceai.topology.model import Topology
+from fenceai.topology.model import GateEdge, GateLeaf, GateSide, Topology
 from fenceai.topology.station import ground_samples, run_length
 
 
@@ -149,6 +149,24 @@ class GateRow(BaseModel):
     end_station_mm: Mm
     opening_mm: Mm
     kit_sku: str | None = None
+    # How the gate opens, carried from the strategy's `Gate` (which carried it
+    # from the topology): the placement alone does not tell a crew which way the
+    # leaf goes. `hinge` earns its place right next to `from_tag`/`to_tag`
+    # because those two ARE its edges — "hinge: start" is a post tag on this
+    # row, not an abstract edge, and that is the form the crew hangs from.
+    # Nothing here is rendered: the words ("opens toward the house") are the
+    # frontend's, built from the landmarks on that side.
+    leaf: GateLeaf = "single"
+    opens_to: GateSide | None = None
+    hinge: GateEdge | None = None
+    slides_to: GateEdge | None = None
+    # The two nodes a STANDALONE gate stands between, carried so a reader that
+    # has the drawing can turn `opens_to` — which is `left`/`right` of the
+    # gate's own direction, and useless on its own — into the sentence a person
+    # reads: "opens toward the house". `None` for an in-run gate, which lies on
+    # a run and takes its direction from that instead.
+    start_node_id: str | None = None
+    end_node_id: str | None = None
     parts: list[Part] = []
 
 
@@ -201,6 +219,13 @@ class Totals(BaseModel):
 class StructureReport(BaseModel):
     run_id: str
     sections: list[Section] = []
+    # Gates that belong to NO section — the ones authored as `GateSpan`, standing
+    # beside the runs rather than inside one. A `Section.gates` row is a hole in
+    # a stretch of fence and is set out along it by station; these have no
+    # station and no section to be set out along, so they are read the only way
+    # they are true: BETWEEN two posts, which is how a hanging crew reads a gate
+    # anyway. The per-section list is untouched and still holds the in-run gates.
+    gates: list[GateRow] = []
     totals: Totals = Totals()
     # which inventory snapshot the cut-piece provenance was read against; the
     # layout never depends on it, the `from_bars` of a part does
@@ -475,14 +500,20 @@ def build_structure(
         for n, gate in enumerate(
             sorted((g for g in strategy.gates if g.run_ref == run.id),
                    key=lambda g: g.start_station_mm), start=1):
+            # (a standalone gate has `run_ref is None` and matches no run here —
+            # it is laid out below, between its two posts)
             section.gates.append(GateRow(
                 tag=f"{section.tag}/G{n}", element_id=gate.id,
                 from_tag=station_tag.get(gate.start_station_mm),
                 to_tag=station_tag.get(gate.end_station_mm),
                 start_station_mm=gate.start_station_mm,
                 end_station_mm=gate.end_station_mm,
-                opening_mm=gate.end_station_mm - gate.start_station_mm,
+                # the strategy's own number, never re-derived here — a read
+                # model recomputes no quantity
+                opening_mm=gate.width_mm,
                 kit_sku=gate.kit_sku,
+                leaf=gate.leaf, opens_to=gate.opens_to,
+                hinge=gate.hinge, slides_to=gate.slides_to,
                 parts=_merge_parts(parts.get(gate.id, [])),
             ))
 
@@ -491,14 +522,66 @@ def build_structure(
             section.height_mm = section_heights.pop()
         report.sections.append(section)
 
+    # -- the gates that belong to no section ----------------------------------
+    # A standalone gate hangs between two node posts. One or both may already be
+    # set out by a section (the usual case: the gate joins the ends of two drawn
+    # runs), and then it keeps THAT tag — a post has one name across the whole
+    # sheet or the tables disagree about which post is which. A node nothing else
+    # stands at is named here, in the gate's own namespace ("G1/P1"), because
+    # there is no section to name it after.
+    standalone = sorted(
+        (g for g in strategy.gates if g.run_ref is None), key=lambda g: g.id
+    )
+    gate_post_ids: set[str] = set()
+    for n, gate in enumerate(standalone, start=1):
+        tag = f"G{n}"
+        ends: list[str | None] = []
+        for node_id in (gate.start_node_id, gate.end_node_id):
+            post_id = f"post@node:{node_id}"
+            if not any(p.id == post_id for p in strategy.posts):
+                # no post there at all — say nothing rather than name one that
+                # is not on the sheet
+                ends.append(None)
+                continue
+            gate_post_ids.add(post_id)
+            existing = element_tag.get(post_id)
+            if existing is None:
+                # P1 is the gate's start end and P2 its end end — the index names
+                # WHICH end, so a gate whose other post a section already tagged
+                # still reads unambiguously ("G1 hangs between A/P4 and G1/P2").
+                existing = f"{tag}/P{len(ends) + 1}"
+                element_tag[post_id] = existing
+                tag_owner[post_id] = tag
+            ends.append(existing)
+        report.gates.append(GateRow(
+            tag=tag, element_id=gate.id,
+            from_tag=ends[0], to_tag=ends[1],
+            # A standalone gate lies on no run, so it has no station: 0/0 is
+            # what the strategy carries and what this row states, rather than a
+            # distance along a section it is not part of.
+            start_station_mm=gate.start_station_mm,
+            end_station_mm=gate.end_station_mm,
+            opening_mm=gate.width_mm,
+            kit_sku=gate.kit_sku,
+            leaf=gate.leaf, opens_to=gate.opens_to,
+            hinge=gate.hinge, slides_to=gate.slides_to,
+            start_node_id=gate.start_node_id, end_node_id=gate.end_node_id,
+            parts=_merge_parts(parts.get(gate.id, [])),
+        ))
+
     # counted over ELEMENTS, not over rows: a shared corner post is set out by
     # two sections and bought once
     distinct_posts = {st.element_id for s in report.sections for st in s.setting_out}
+    # ...and the posts a standalone gate hangs from, which no section sets out
+    # but which are bought exactly like any other post. Leaving them out would
+    # make the sheet's post count disagree with the BOM.
+    distinct_posts |= gate_post_ids
     report.totals = Totals(
         fence_length_mm=sum(s.length_mm for s in report.sections),
         posts=len(distinct_posts),
         bays=sum(len(s.bays) for s in report.sections),
-        gates=sum(len(s.gates) for s in report.sections),
+        # both kinds — the ones inside sections and the ones beside them
+        gates=sum(len(s.gates) for s in report.sections) + len(report.gates),
         height_min_mm=min(heights) if heights else None,
         height_max_mm=max(heights) if heights else None,
         per_sku=ledger.per_sku,          # from the requirements, one basis for all totals

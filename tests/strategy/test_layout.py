@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fenceai.strategy.layout import boundaries, equal_layout, layout_segment, nominal_layout
+from fenceai.strategy.layout import (
+    boundaries, equal_layout, equal_layout_milli, layout_segment, nominal_layout,
+)
 
 
 def test_exact_multiple_of_max_span():
@@ -28,6 +30,23 @@ def test_all_widths_respect_hard_max():
         widths = equal_layout(length, 1800)
         assert all(w <= 1800 for w in widths), length
         assert sum(widths) == length
+
+
+def test_equal_layout_milli_degenerates_the_same_way():
+    """The boundary cases, at thousandths. A zero or negative divisor is refused
+    rather than raising a ZeroDivisionError inside `generate()` — the mm form has
+    no such guard because `max_span_mm` reaches it from a resolved rule, and this
+    one can be handed a `value_milli` from a published row we did not write.
+
+    Behaviour on real data lives in `tests/knowledge/test_published_precision.py`,
+    against the published magnitudes it exists for.
+    """
+    assert equal_layout_milli(0, 1_800_000) == []
+    assert equal_layout_milli(-5000, 1_800_000) == []
+    assert equal_layout_milli(3_600_000, 0) == []
+    assert equal_layout_milli(3_600_000, -1) == []
+    # ...and the whole-millimetre path is the mm form exactly
+    assert equal_layout_milli(4_000_000, 1_800_000) == equal_layout(4000, 1800)
 
 
 def test_nominal_layout():

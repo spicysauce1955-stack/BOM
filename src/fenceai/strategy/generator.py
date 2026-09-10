@@ -40,6 +40,7 @@ from fenceai.fencemodel.resolve import (
 from fenceai.fencemodel.selection import FenceModelChoice
 from fenceai.knowledge.ast import field_paths
 from fenceai.knowledge.evaluator import (
+    Firing,
     Resolution,
     preference_firings,
     resolve as evaluator_resolve,
@@ -52,7 +53,8 @@ from fenceai.project.model import Selection, SiteConditions
 from fenceai.parts.resolve import resolve_model_parts
 from fenceai.strategy.continuity import BayFacts, SlotFacts, derive_member_runs
 from fenceai.strategy.layout import (
-    LayoutResult, alternative_widths, boundaries, layout_segment,
+    LayoutResult, admits_widths, alternative_widths, boundaries,
+    earns_remainder_ceiling, layout_segment,
 )
 from fenceai.strategy.model import (
     Gate,
@@ -67,7 +69,13 @@ from fenceai.strategy.model import (
     StrategyWarning,
 )
 from fenceai.strategy.overrides import Override, override_station
-from fenceai.topology.model import Run, Topology
+from fenceai.topology.model import (
+    GateEdge,
+    GateLeaf,
+    GateSide,
+    Run,
+    Topology,
+)
 from fenceai.topology.station import (
     anchor_station,
     base_surface_at,
@@ -76,6 +84,7 @@ from fenceai.topology.station import (
     base_transition_stations,
     fence_model_at,
     fence_model_transition_stations,
+    gate_opening_mm,
     ground_step_stations,
     local_slope_permille,
     corner_stations,
@@ -85,6 +94,10 @@ from fenceai.topology.station import (
     run_length,
 )
 from fenceai.topology.station import CORNER_ANGLE_DEG
+
+# The four gate facts as authored, moved as one opaque value so nothing in the
+# layout can reach into them: `(leaf, opens_to, hinge, slides_to)`.
+GateSwing = tuple[GateLeaf, GateSide | None, GateEdge | None, GateEdge | None]
 
 # "fewest_new_stock" here (pre-ADR-0007) predates fulfillment/supply.py's Preset
 # vocabulary (`Literal["least_cost", "honour_priority"]`, added later in
@@ -182,6 +195,158 @@ def _kit_for_opening(catalog: Catalog, opening_mm: Mm) -> str:
     return fits[0] if fits else ""
 
 
+def _resolve_gate_kit(
+    catalog: Catalog,
+    authored_sku: str | None,
+    opening: Mm,
+    gate_ref: str,
+    strategy: Strategy,
+) -> tuple[str, str]:
+    """The kit for an opening, and where it came from — for BOTH kinds of gate.
+
+    ONE implementation, called from the in-run gate loop and from the gate spans
+    beside the runs, because a gate is a gate: the payload's kit wins (it is the
+    user's choice), otherwise the catalog is asked BY DECLARED WIDTH, and the two
+    ways of failing are reported in the same words. A second copy of this is how
+    one of the two kinds of gate would quietly stop warning that nothing fits.
+    """
+    kit = authored_sku or _kit_for_opening(catalog, opening)
+    source = "payload" if authored_sku else "catalog"
+    if not kit:
+        strategy.warnings.append(
+            StrategyWarning(
+                code="no_gate_kit", severity="error",
+                message=f"No product in the catalog declares that it fits a "
+                        f"{opening} mm gate opening; this gate cannot be priced.",
+                params={"element": gate_ref, "opening_width_mm": opening},
+                element_refs=[gate_ref],
+            )
+        )
+    elif kit not in catalog.products:
+        strategy.warnings.append(
+            StrategyWarning(
+                code="unknown_product", severity="error",
+                message=f"Gate kit '{kit}' is not in the catalog; BOM will "
+                        "price it at zero.",
+                params={"sku": kit},
+                element_refs=[gate_ref],
+            )
+        )
+    return kit, source
+
+
+def _check_gate_kit_width(
+    builder: GraphBuilder,
+    strategy: Strategy,
+    catalog: Catalog,
+    gate_id: str,
+    kit: str,
+    opening: Mm,
+) -> None:
+    """The kit must fit the opening that will EXIST on site — for both kinds.
+
+    The caller passes the REAL opening (an in-run gate clamped to its section
+    end asks for less than it was authored with), because the setting-out sheet
+    must never hand "opening 600 · GATE-KIT-1000" to a crew.
+    """
+    kit_width = _declared_opening(catalog, kit)
+    if kit_width is None or kit_width == opening:
+        return
+    k_node = builder.add(
+        "conflict", "gate_kit_width_mismatch",
+        payload={"element": gate_id, "sku": kit,
+                 "kit_width_mm": kit_width, "opening_width_mm": opening},
+        scope_refs=[gate_id],
+    )
+    strategy.warnings.append(
+        StrategyWarning(
+            code="gate_kit_width_mismatch", severity="error",
+            message=f"Gate kit {kit} fits a {kit_width} mm opening but the "
+                    f"opening is {opening} mm — the BOM would price the wrong "
+                    "gate.",
+            element_refs=[gate_id], decision_ref=k_node.id,
+            params={"element": gate_id, "sku": kit,
+                    "kit_width_mm": kit_width, "opening_width_mm": opening},
+        )
+    )
+
+
+def _resolve_gate_max_slope(
+    kb: KnowledgeBase, ctx: dict, sink: ConflictSink
+) -> tuple[int | None, list[str]]:
+    """(max slope permitted across a gate opening, governed refs), or (None, []).
+
+    ONE resolution, two callers, and that is the whole point. An in-run gate asks
+    under its run-scoped context; a gate span lies on no run and asks under the
+    same scope with the `run` facts absent — which is not the same as those facts
+    being false: an omitted dimension makes a rule conditioned on it *not
+    applicable* rather than failing it.
+
+    A second copy of these four lines would be a second place for the two kinds
+    of gate to disagree about one rule, and because this resolution carries the
+    WINNING VERSION'S REF into the decision graph, they would then also disagree
+    about who said so. `(None, [])` means no rule states a limit at all, and the
+    check does not run — silence, not a default.
+    """
+    res = resolve_param(kb, ctx, "gate_max_slope_permille")
+    sink.extend(res.conflicts)
+    if res.winner is None:
+        return None, []
+    value = next(a.value for a in res.winner.actions if a.kind == "set_param")
+    return value, [res.winner.version.ref]
+
+
+def _check_gate_slope(
+    builder: GraphBuilder,
+    strategy: Strategy,
+    gate_id: str,
+    drop_mm: Mm,
+    opening_mm: Mm,
+    max_slope: int | None,
+    refs: list[str],
+) -> None:
+    """The ground across a gate opening must be near level — for both kinds.
+
+    The CALLER measures the drop, because the two kinds of gate measure it in
+    different places and only they know where: an in-run gate reads its run's
+    ground profile at the opening's two stations, a gate span reads the
+    elevations of its own two nodes. What must not differ is everything after
+    that — the permille arithmetic, the threshold, the graph node and the
+    warning's code and params — so it lives here once, exactly as
+    `_check_gate_kit_width` is the one answer to "does the kit fit".
+    """
+    if max_slope is None or opening_mm <= 0:
+        return
+    # Integer arithmetic, half-away-from-zero — NOT `round()` on a float.
+    # `core/units.round_milli_to_mm` exists in this repo precisely because
+    # `round()` is banker's and sends 2500 thousandths to 2 rather than 3; a
+    # 105 mm drop across a 2000 mm opening is 52.5 permille and rounded to an
+    # EVEN 52, so a gate exactly on the boundary of a 52 permille limit passed
+    # the check instead of warning. Rounding toward not-warning is the wrong
+    # direction for a safety comparison. Both call sites pass `abs(...)`, so
+    # half-up and half-away-from-zero coincide here.
+    slope = (drop_mm * 2000 + opening_mm) // (2 * opening_mm)
+    if slope <= max_slope:
+        return
+    params = {"element": gate_id, "slope_permille": slope, "max_permille": max_slope}
+    node = builder.add(
+        "conflict", "gate_on_slope", payload=dict(params), governed_by=refs,
+    )
+    strategy.warnings.append(
+        StrategyWarning(
+            code="gate_on_slope", severity="warning",
+            # English fallback only: `warning.gate_on_slope` renders this from
+            # `params` in each locale (CLAUDE.md, the platform half of the split
+            # warning registry). The element id carries the stations an in-run
+            # gate used to name here, so nothing is lost by saying it once.
+            message=f"Gate {gate_id} sits on a {slope / 10:.1f}% slope "
+                    f"(limit {max_slope / 10:.1f}%) — the ground needs leveling "
+                    "for the gate to swing.",
+            element_refs=[gate_id], decision_ref=node.id, params=dict(params),
+        )
+    )
+
+
 def generate(
     topology: Topology,
     knowledge: KnowledgeBase,
@@ -261,6 +426,14 @@ def generate(
             models, default_model, parts, parts_used, resolved_posts,
             selections, gap_log,
         )
+
+    # AFTER every run, so nothing a run produced can observe a gate span — see
+    # `_generate_gate_spans`. BEFORE the checks below, so a post this pass adds
+    # is length-checked and reported exactly like any other.
+    _generate_gate_spans(
+        topology, knowledge, scope, site_facts, sink, catalog, overrides,
+        builder, strategy, applied,
+    )
 
     _check_post_lengths(topology, knowledge, scope, site_facts, sink, catalog, builder, strategy)
     _report_unfilled_posts(strategy, builder)
@@ -395,6 +568,10 @@ def generate(
             gap["seg_len"], gap["max_span"],
             default=gap["widths"], exact_mm=gap["exact_span"],
             min_span_mm=gap["min_span"],
+            # The published thousandths travel with the millimetre limit, so an
+            # offer is filtered by the same `admits_widths` that will judge it
+            # when it comes back as a `Selection`.
+            max_span_milli=gap["max_span_milli"],
         ))
         if not candidates:
             continue
@@ -1391,6 +1568,191 @@ def _generate_node_posts(
         strategy.posts.append(post)
 
 
+# --- gate spans: the gates that stand BESIDE the runs ---------------------------
+
+def _generate_gate_spans(
+    topology: Topology,
+    kb: KnowledgeBase,
+    scope: dict[str, str],
+    site: dict,
+    sink: ConflictSink,
+    catalog: Catalog,
+    overrides: list[Override],
+    builder: GraphBuilder,
+    strategy: Strategy,
+    applied: set[str],
+) -> None:
+    """`Topology.gates` -> one `Gate` each, plus a post at any node that has none.
+
+    **Called AFTER every run is generated, and that placement is the design.**
+    A gate span is placed next to a run and not on it, so it must change the
+    layout of no run — and the strongest form of "must not" available here is
+    that nothing about a run can even observe this pass. Every post, bay,
+    warning and decision node a run produces is already built and its ordinals
+    are already fixed by the time the first gate span is read.
+    (`tests/strategy/test_gate_span_generation.py` asserts exactly that, by generating the
+    same topology twice with and without its gate spans.)
+
+    What this DOES add is its own: the gate element, its kit, its slope check,
+    and a post at each of its two nodes. A gate span between the ends of two
+    drawn runs already has both — they are the runs' own node posts, and they
+    are left untouched. A gate hanging off one run's end has a node nothing else
+    stands at, and a gate with a post on one side only is unbuildable, so that
+    one is emitted here.
+
+    **The posts this pass CREATES are the only ones it may override.** A forced
+    sku or mounting addressed at a gate-only node post used to reach nothing and
+    was then reported back as `orphaned_override` — a control that silently does
+    nothing and blames the user's drawing for it. It is honoured here, through
+    `_matched_force_overrides`, the same matcher the run path uses. The address
+    needed no invention: such a post's `run_ref` is `node:<id>` at station 0,
+    which is exactly what the matcher compares. Consulting overrides stops at
+    the `continue` above — a post a run already stands at stays as the runs
+    decided it, because an override is not a way around the invariance.
+    """
+    if not topology.gates:
+        return
+    # Sorted by id, so the graph reads the same way whatever order the frontend
+    # happened to append them in — `generate()` is deterministic (ADR-0004).
+    gates = sorted(topology.gates, key=lambda g: g.id)
+    reinf_sku, reinf_refs = _resolve_reinforcement(kb, scope, site, sink)
+
+    # The gate facts come first and are cited by everything below — the same
+    # ordering the in-run gate keeps, and for the same reason: a post forced by
+    # a gate must be able to cite the gate that forced it.
+    openings = {gate.id: gate_opening_mm(topology, gate) for gate in gates}
+    gate_facts = {
+        gate.id: builder.add(
+            "input_fact", "gate_span",
+            payload={"gate_id": gate.id, "start_node_id": gate.start_node_id,
+                     "end_node_id": gate.end_node_id,
+                     "opening_mm": openings[gate.id]},
+        ).id
+        for gate in gates
+    }
+
+    # -- posts next, exactly as `_generate_node_posts` runs before any run -----
+    standing = {p.run_ref for p in strategy.posts}
+    for gate in gates:
+        for node_id in (gate.start_node_id, gate.end_node_id):
+            run_ref = f"node:{node_id}"
+            if run_ref in standing:
+                # A run already stands here. It is NOT re-specified by a gate
+                # that hangs beside it — that is what "it doesn't change the
+                # layout of already placed runs" means, and the gate adjacency
+                # rule in `_generate_node_posts` (which reinforces a node post
+                # for an IN-RUN gate at a run terminus) is deliberately not
+                # extended to reach this far: it would change the sku, and
+                # therefore the BOM, of a post the runs alone decided.
+                continue
+            standing.add(run_ref)
+            node = topology.node(node_id)
+            fact = builder.add(
+                "input_fact", "topology_node",
+                # the same shape `_generate_node_posts` files, so a reader does
+                # not have to know which pass built the post; `runs: 0` is the
+                # honest answer and the thing that makes this node legible
+                payload={"node_id": node.id, "x_mm": node.x_mm, "y_mm": node.y_mm,
+                         "runs": 0},
+            )
+            # This post exists nowhere else, so this is the ONLY pass that can
+            # honour a directive aimed at it. `run_ref` (`node:<id>`) and
+            # station 0 are the address it already carries, and the run path's
+            # own matcher takes both as given — no second addressing scheme.
+            forced_sku, forced_mounting, matched = _matched_force_overrides(
+                overrides, run_ref, 0
+            )
+            override_nodes: list[str] = []
+            for ov in matched:
+                # Recorded as applied through the same set the run path uses, so
+                # a directive this pass honours stops being reported orphaned.
+                applied.add(ov.id)
+                override_nodes.append(
+                    builder.add(
+                        "override_applied", ov.directive.kind,
+                        payload={"override_id": ov.id, "node_id": node.id},
+                    ).id
+                )
+            post, cap_gap = _make_post(
+                builder, kb, scope, site, sink,
+                post_id=f"post@node:{node.id}", run_ref=run_ref,
+                station=0, kind="end",
+                # No run stands here, so there is no base event to read and no
+                # fence model claiming the post: the surface is the default
+                # ground and the sku comes from knowledge's own default, which
+                # is the same answer `_make_post` gives any post no model owns.
+                surface="soil",
+                ground_z_mm=node.z_mm, base_z_mm=None,
+                inputs=[fact.id, gate_facts[gate.id]],
+                # This post exists ONLY because the gate does, so the gate's
+                # context governs it outright — unlike a shared node post, which
+                # a run decided first.
+                reinforced=True,
+                reinforcement_refs=reinf_refs,
+                reinforced_sku=reinf_sku,
+                forced_sku=forced_sku, forced_mounting=forced_mounting,
+                override_nodes=override_nodes,
+            )
+            _cap_unsupplied(strategy, cap_gap, post.id, 0)
+            strategy.posts.append(post)
+
+    # -- then the gates themselves --------------------------------------------
+    # The slope limit, resolved ONCE for this pass and by the same function the
+    # run path uses. The context is the run path's minus its `run` facts, which
+    # a gate standing beside the runs genuinely does not have.
+    max_gate_slope, gate_slope_refs = _resolve_gate_max_slope(
+        kb, {"scope": bind_scope(scope), "site": site}, sink
+    )
+    for gate in gates:
+        opening = openings[gate.id]
+        gate_ref = f"gate@{gate.id}"
+        fact_id = gate_facts[gate.id]
+        kit, kit_source = _resolve_gate_kit(
+            catalog, gate.kit_sku, opening, gate_ref, strategy)
+        element = Gate(
+            id=gate_ref,
+            # `None` IS the standalone gate: it lies on no run, so it has no
+            # station, and its ends are nodes rather than distances.
+            run_ref=None,
+            start_node_id=gate.start_node_id, end_node_id=gate.end_node_id,
+            width_mm=opening, kit_sku=kit,
+            leaf=gate.leaf, opens_to=gate.opens_to,
+            hinge=gate.hinge, slides_to=gate.slides_to,
+        )
+        strategy.gates.append(element)
+        _check_gate_kit_width(builder, strategy, catalog, element.id, kit, opening)
+        # The drop across the opening is between the gate's own two NODES: it
+        # lies on no run, so there is no ground profile to sample and the node
+        # elevations are the only ones it has.
+        #
+        # An UNSTATED elevation is not a slope. `Node.z_mm` is not optional —
+        # it defaults to 0 — and the run path reads that same defaulted field
+        # through `ground_samples`, where it anchors the ends of a run whose
+        # ground nobody described: unstated means FLAT there, not unknown. Two
+        # unstated nodes are therefore a drop of 0 and warn about nothing,
+        # which is the run path's own silence; `or 0` keeps that the answer if
+        # the field ever becomes nullable, rather than crashing on a subtraction.
+        z_start = topology.node(gate.start_node_id).z_mm or 0
+        z_end = topology.node(gate.end_node_id).z_mm or 0
+        _check_gate_slope(builder, strategy, element.id, abs(z_end - z_start),
+                          opening, max_gate_slope, gate_slope_refs)
+        placed = builder.add(
+            "structural", "place_gate",
+            payload={"gate_id": gate.id, "start_node_id": gate.start_node_id,
+                     "end_node_id": gate.end_node_id, "opening_mm": opening},
+            scope_refs=[element.id],
+            inputs=[fact_id],
+        )
+        if kit:
+            builder.add(
+                "selection", "select_gate_kit",
+                payload={"kit_sku": kit, "source": kit_source,
+                         "gate_id": gate.id, "opening_width_mm": opening},
+                scope_refs=[element.id],
+                inputs=[placed.id, fact_id],
+            )
+
+
 # --- per-run generation --------------------------------------------------------
 
 def _with_parts(
@@ -1507,6 +1869,19 @@ class _SegmentModel:
     options: dict[str, str | int]
     select_node_id: str
     max_span: Mm
+    # The same limit in the PUBLISHER's thousandths — `max_span * 1000` wherever
+    # nothing published a finer number, which is exact for an authored rule, for
+    # a model's manufactured width and for `FALLBACK_MAX_SPAN_MM`.
+    #
+    # Not a duplicate of `max_span` and never a substitute for it. `max_span` is
+    # the value at rest (ADR-0002) and is what every comparison, clamp, warning
+    # and decision-node payload here is written in. This one exists for the bay
+    # COUNT alone: `contract.md` §1.1 is BINDING that arithmetic multiplying a
+    # published value consumes the thousandths and rounds only its output, and
+    # `n = ceil(L / max_span)` is the clause's own worked example. It has no
+    # default, so a new construction site cannot forget it and silently reinstate
+    # the breach.
+    max_span_milli: int
     # "" when no rule covered it and `max_span` is the fallback basis below —
     # an empty ref rather than an invented one, because every `governed_by` edge
     # citing it would otherwise name a rule nobody wrote.
@@ -1534,6 +1909,46 @@ class _SegmentModel:
     # differently to anyone deciding whether the number is safe to build to.
     max_span_basis: Literal[
         "rule", "fallback", "manufactured_width", "declined_bound"] = "rule"
+
+    def admits(self, widths: list[Mm], seg_len: Mm) -> bool:
+        """May this segment be built with these bay widths? The ONE answer.
+
+        A predicate over the whole layout, never a bound on one bay, and that
+        distinction is the fix for a real defect. This used to be `max_bay_mm()`
+        — `ceil(max_span_milli / 1000)`, the widest whole millimetre a
+        sub-millimetre limit admits — justified by an argument about the layouts
+        THIS ENGINE computes: with `n = ceil(L / max)` the widest bay is
+        `floor(L/n) + 1` at most, so the spread can reach the ceiling and nothing
+        can pass it. True, and true only under that premise. Three of the four
+        sites comparing against it had no such premise, and the worst of them was
+        a person's STORED answer: `[1423, 1423, 1423]` on a 4269 mm run under a
+        published 1422.4 mm maximum passed a per-bay ceiling of 1423 and built
+        three bays over a sealed maximum, one post and one footing short, with no
+        warning and no gap.
+
+        So the premise travels with the bound. `layout.admits_widths` is the
+        rule; it says the widths tile the segment, no bay passes `max_span` —
+        the limit AT REST (ADR-0002), which is what every clamp, warning and
+        payload in this module is written in — and above that only a
+        MINIMUM-COUNT layout may carry the fraction ADR-0002 cannot store.
+
+        That fraction is not a loophole, it is what integer millimetres cost. A
+        1422.4 mm maximum divides a 4267 mm run into three bays of 1422.333 mm,
+        all comfortably inside it; stored as whole millimetres they must sum to
+        4267 and `1422 * 3` is 4266, so the spread produces `[1423, 1422, 1422]`
+        and one bay stands 0.6 mm over a number no tape measure resolves. The
+        alternative is a FOURTH bay — the extra post, footing and pour
+        `contract.md`:112-117 was written to stop, bought to recover six tenths
+        of a millimetre. A layout that already has a spare bay in it cannot make
+        that argument, which is exactly what the count clause checks.
+
+        Where the limit is a whole millimetre — every rule this repo authored —
+        `max_span_milli` is `max_span * 1000`, the ceiling IS `max_span`, and
+        this reduces to `max(widths) <= max_span`. That is the arithmetic reason
+        nothing here can move a golden scenario.
+        """
+        return admits_widths(widths, seg_len, self.max_span,
+                             max_span_milli=self.max_span_milli)
     # The per-span COUNTS nobody stated: `param -> the gap node that says so`.
     # Keyed by the parameter because the param name IS the field name above, so
     # the reporter reads the value with `getattr` and cannot drift from it. Same
@@ -1631,6 +2046,16 @@ def _segment_view(
                     "run": run_ctx, "site": site}
 
 
+def _vertical_statement(f: Firing) -> tuple[str, ...]:
+    """What one preference states about the vertical mode, for `resolve`.
+
+    Ordered and compared whole, like `evaluator._param_statement`: `_vertical_mode`
+    below reads the FIRST `prefer_vertical` action of the winner, so two rules
+    whose action lists differ anywhere do not state the same thing.
+    """
+    return tuple(a.mode for a in f.actions if a.kind == "prefer_vertical")
+
+
 def _vertical_mode(
     kb: KnowledgeBase, ctx: dict, slope_permille: int,
 ) -> tuple[str, list[str], list[str], Resolution]:
@@ -1643,9 +2068,12 @@ def _vertical_mode(
     there is exactly one of it.
     """
     vert_firings = preference_firings(kb, ctx, {"prefer_vertical"})
-    modes = {a.mode for f in vert_firings for a in f.actions if a.kind == "prefer_vertical"}
+    # Agreement is PAIRWISE (evaluator.resolve). This used to hand in one flag
+    # computed over the whole set of modes, so a third preference naming a
+    # different mode turned two rules that both said `raked` into a defeat and a
+    # conflict about each other.
     res: Resolution = evaluator_resolve(
-        vert_firings, "vertical_mode", values_agree=len(modes) <= 1
+        vert_firings, "vertical_mode", stated=_vertical_statement
     )
     if res.winner:
         mode = next(a.mode for a in res.winner.actions if a.kind == "prefer_vertical")
@@ -1834,9 +2262,34 @@ def _generate_run(
         # node here instead of a rule firing, and one warning per section naming
         # every bay laid out to it (`_report_uncovered_max_span`).
         assumed = res.winner is None
+        winning_span = (
+            None if assumed
+            else next(a for a in res.winner.actions if a.kind == "set_param")
+        )
         max_span_mm: Mm = (
-            FALLBACK_MAX_SPAN_MM if assumed
-            else next(a.value for a in res.winner.actions if a.kind == "set_param")
+            FALLBACK_MAX_SPAN_MM if winning_span is None else winning_span.value
+        )
+        # The limit in the PUBLISHER's thousandths, for the one consumer that
+        # divides by it. `contract.md` §1.1 is BINDING that arithmetic
+        # multiplying a published value consumes the thousandths and rounds only
+        # its output, and `n = ceil(L / max_span)` is the clause's own worked
+        # example. Five of the six span magnitudes in the real
+        # `footing_schedule` tables are not whole millimetres, so this is not
+        # theoretical: without it a 4267 mm run gets a fourth post it does not
+        # need, and a 2464 mm run gets one bay 0.2 mm over a sealed maximum.
+        #
+        # Tracked BESIDE `max_span_mm` rather than replacing it, because they
+        # answer different questions. `max_span_mm` is the value at rest
+        # (ADR-0002) and stays the number every comparison, warning, payload and
+        # decision node is written in — a graph node quoting `2463800` would be
+        # explaining the fence in a unit nobody builds in. This one reaches
+        # `equal_layout_milli` and nothing else.
+        #
+        # `* 1000` for the fallback is exact and means it: `FALLBACK_MAX_SPAN_MM`
+        # is a number this file invented and has no finer precision to carry.
+        max_span_milli: int = (
+            max_span_mm * 1000 if winning_span is None
+            else winning_span.effective_milli()
         )
         # A DECLINED source is not silence, and the fallback is only conservative
         # relative to silence. When the source policy refuses an unverified
@@ -1862,6 +2315,11 @@ def _generate_run(
             if declined:
                 declined_bound = min(declined)
                 max_span_mm = min(max_span_mm, declined_bound)
+                # `kb.declined` is recorded in millimetres, so a bound taken from
+                # it has no thousandths — and inventing some would be worse than
+                # having none: it would state a precision for a number we
+                # explicitly refused to trust.
+                max_span_milli = max_span_mm * 1000
         # A DISAGREEING TIE inside the hard band, survivable only because one
         # contender is published (`evaluator.resolve`). Never let the alphabet
         # decide a safety limit: the tie-break that picks a winner is
@@ -1871,8 +2329,34 @@ def _generate_run(
         # general — `min_rail_separation_mm` is the opposite — which is why this
         # is at the site that knows its parameter and not in the evaluator.
         if any(c.hard for c in res.conflicts):
-            max_span_mm = min(a.value for f in res.firings for a in f.actions
-                              if a.kind == "set_param")
+            # Most restrictive at the FINEST precision anyone stated. Rounding to
+            # mm is monotone, so the contender with the smallest thousandths also
+            # has the smallest millimetre value and `max_span_mm` is exactly what
+            # it always was — but taking both off the SAME action is what keeps
+            # the pair honest. Reading `min` over each field independently would
+            # let a 2463.8 limit be quoted as 2464 mm beside another row's
+            # thousandths, which is a limit nobody published.
+            tightest = min(
+                (a for f in res.firings for a in f.actions if a.kind == "set_param"),
+                key=lambda a: a.effective_milli(),
+            )
+            max_span_mm = tightest.value
+            max_span_milli = tightest.effective_milli()
+            # KNOWN, UNFIXED, AND NOT A ROUNDING DETAIL: the node below cites
+            # `res.winner` as `governed_by` while the bays are laid out to THIS
+            # number, which is a different rule's. With four published rows at
+            # 1800 and one at 1500 the plan reads "Maximum span resolved to
+            # 1500 mm. Governed by K-MAXSPAN@v1" — and K-MAXSPAN states 1800.
+            # decision-model.md:35 is explicit that `governed_by` means *this
+            # rule decided this value* and that citing a rule for a value it did
+            # not choose makes the explanation state something untrue.
+            # Retagging the edges here is not the fix: the same node's
+            # `defeated`/`corroborated` edges describe the RESOLUTION (the rows
+            # that agreed with the winner really did agree with each other), and
+            # tests/decisions/test_explain_i18n.py pins that reading. The honest
+            # shape is a second node — the resolution stands at the winner's
+            # number, a `clamp` node holds this one and cites the row it came
+            # from — which needs an en/he TEMPLATES pair in decisions/explain.py.
         # a manufactured bay width, if this model's line has one. Resolved under
         # the same segment scope as the rest, so a model contributes it through
         # `layout_policy` rather than through a private channel. Resolved BEFORE
@@ -1899,6 +2383,10 @@ def _generate_run(
                                 and exact_span > max_span_mm)
         if yielded_to_exact:
             max_span_mm = exact_span
+            # A manufactured width comes from a model's `layout_policy`, which is
+            # authored int mm — there are no thousandths behind it, and `* 1000`
+            # is the exact statement of that.
+            max_span_milli = exact_span * 1000
 
         firing = builder.add(
             "gap" if assumed else "rule_firing",
@@ -1915,6 +2403,9 @@ def _generate_run(
             # a defeated edge cites the LOSING version (decision-model.md); the loser
             # is any firing whose defeated_by is non-empty
             defeated=[f.version.ref for f in res.firings if f.defeated_by],
+            # a corroborated edge cites a firing that agreed with the winner
+            # rather than losing to it — evaluator.py's pairwise `stated` branch
+            corroborated=[f.version.ref for f in res.firings if f.corroborated_by],
             confidence="uncertain" if assumed else "deterministic",
         )
         sink.extend(res.conflicts)
@@ -1960,6 +2451,7 @@ def _generate_run(
             options=options,
             select_node_id=select_node.id,
             max_span=max_span_mm,
+            max_span_milli=max_span_milli,
             max_span_ref="" if assumed else res.winner.version.ref,
             max_span_assumed=assumed,
             max_span_basis=("manufactured_width" if yielded_to_exact
@@ -1986,7 +2478,10 @@ def _generate_run(
         return sm
 
     # -- gates -----------------------------------------------------------------
-    gates: list[tuple[Mm, Mm, str, str]] = []
+    # (start, end, kit, event id, swing) — `swing` is the topology's four gate
+    # facts carried through UNTOUCHED: the generator states no swing it was not
+    # given, and none of them reaches a post, a span, a kit or the graph.
+    gates: list[tuple[Mm, Mm, str, str, GateSwing]] = []
     openings: dict[str, Mm] = {}  # event id -> the opening the USER asked for
     kit_sources: dict[str, str] = {}  # event id -> "payload" | "catalog"
     for ev in run.point_events:
@@ -2019,36 +2514,18 @@ def _generate_run(
                 )
             # the payload's kit wins (it is the user's choice); otherwise the kit is
             # selected from the catalog BY DECLARED WIDTH — never by a SKU pattern
-            kit = ev.payload.kit_sku or _kit_for_opening(catalog, opening)
-            kit_sources[ev.id] = "payload" if ev.payload.kit_sku else "catalog"
-            if not kit:
-                strategy.warnings.append(
-                    StrategyWarning(
-                        code="no_gate_kit", severity="error",
-                        message=f"No product in the catalog declares that it fits a "
-                                f"{opening} mm gate opening; this gate cannot be priced.",
-                        params={"element": gate_ref, "opening_width_mm": opening},
-                        element_refs=[gate_ref],
-                    )
-                )
-            elif kit not in catalog.products:
-                strategy.warnings.append(
-                    StrategyWarning(
-                        code="unknown_product", severity="error",
-                        message=f"Gate kit '{kit}' is not in the catalog; BOM will "
-                                "price it at zero.",
-                        params={"sku": kit},
-                        element_refs=[gate_ref],
-                    )
-                )
-            gates.append((gs, ge, kit, ev.id))
+            kit, kit_sources[ev.id] = _resolve_gate_kit(
+                catalog, ev.payload.kit_sku, opening, gate_ref, strategy)
+            gates.append((gs, ge, kit, ev.id,
+                          (ev.payload.leaf, ev.payload.opens_to,
+                           ev.payload.hinge, ev.payload.slides_to)))
     gates.sort()
-    gate_edges = {s for gs, ge, _, _ in gates for s in (gs, ge)}
+    gate_edges = {s for gs, ge, _, _, _ in gates for s in (gs, ge)}
     # gate fact nodes exist before any post so flanking-post decisions cite the
     # gate topology event (golden-scenarios S10)
     gate_fact_ids: dict[str, str] = {}
     gate_edge_facts: dict[Mm, list[str]] = {}
-    for gs, ge, _, ev_id in gates:
+    for gs, ge, _, ev_id, _ in gates:
         fact = builder.add(
             "input_fact", "gate_event",
             # `run_id` is how a run-level node names its SECTION
@@ -2126,11 +2603,9 @@ def _generate_run(
     sink.extend(height_res.conflicts)
     max_height = (next(a.value for a in height_res.winner.actions if a.kind == "set_param")
                   if height_res.winner else None)
-    gate_slope_res = resolve_param(kb, ctx, "gate_max_slope_permille")
-    sink.extend(gate_slope_res.conflicts)
-    max_gate_slope = (
-        next(a.value for a in gate_slope_res.winner.actions if a.kind == "set_param")
-        if gate_slope_res.winner else None)
+    # Shared with the standalone gate pass (`_generate_gate_spans`) — one rule,
+    # one resolution, one governing ref in the graph.
+    max_gate_slope, gate_slope_refs = _resolve_gate_max_slope(kb, ctx, sink)
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
     fixed |= gate_edges | step_stations
     # BOTH ends of a locked bay are structural boundaries, for the plainest
@@ -2250,11 +2725,17 @@ def _generate_run(
         strategy.posts.append(post)
 
     # -- gate elements ---------------------------------------------------------
-    for gs, ge, kit, ev_id in gates:
+    for gs, ge, kit, ev_id, swing in gates:
         gate_fact_id = gate_fact_ids[ev_id]
+        leaf, opens_to, hinge, slides_to = swing
         gate = Gate(
             id=f"gate@{run.id}:{gs}-{ge}", run_ref=run.id,
-            start_station_mm=gs, end_station_mm=ge, kit_sku=kit,
+            start_station_mm=gs, end_station_mm=ge,
+            # the opening that will EXIST — a gate clamped to the section end is
+            # narrower than it was authored, and `width_mm` is the field every
+            # consumer reads, so it must be the real one
+            width_mm=ge - gs, kit_sku=kit,
+            leaf=leaf, opens_to=opens_to, hinge=hinge, slides_to=slides_to,
         )
         strategy.gates.append(gate)
         # The kit must fit the opening that will EXIST on site. Checking the
@@ -2262,47 +2743,15 @@ def _generate_run(
         # its section) keep a kit that cannot fit the remaining gap — and the
         # setting-out sheet then hands "opening 600 · GATE-KIT-1000" to a crew.
         opening = min(openings[ev_id], ge - gs)
-        kit_width = _declared_opening(catalog, kit)
-        if kit_width is not None and kit_width != opening:
-            k_node = builder.add(
-                "conflict", "gate_kit_width_mismatch",
-                payload={"element": gate.id, "sku": kit,
-                         "kit_width_mm": kit_width, "opening_width_mm": opening},
-                scope_refs=[gate.id],
-            )
-            strategy.warnings.append(
-                StrategyWarning(
-                    code="gate_kit_width_mismatch", severity="error",
-                    message=f"Gate kit {kit} fits a {kit_width} mm opening but the "
-                            f"opening is {opening} mm — the BOM would price the wrong "
-                            "gate.",
-                    element_refs=[gate.id], decision_ref=k_node.id,
-                    params={"element": gate.id, "sku": kit,
-                            "kit_width_mm": kit_width, "opening_width_mm": opening},
-                )
-            )
-        if max_gate_slope is not None and ge > gs:
-            drop = abs(ground_z(topo, run, ge) - ground_z(topo, run, gs))
-            gate_slope = round(drop * 1000 / (ge - gs))
-            if gate_slope > max_gate_slope:
-                g_node = builder.add(
-                    "conflict", "gate_on_slope",
-                    payload={"element": f"gate@{run.id}:{gs}-{ge}",
-                             "slope_permille": gate_slope, "max_permille": max_gate_slope},
-                    governed_by=[gate_slope_res.winner.version.ref],
-                )
-                strategy.warnings.append(
-                    StrategyWarning(
-                        code="gate_on_slope", severity="warning",
-                        message=f"Gate opening at {gs}-{ge} sits on a "
-                                f"{gate_slope / 10:.1f}% slope — the ground needs "
-                                "leveling for the gate to swing.",
-                        element_refs=[f"gate@{run.id}:{gs}-{ge}"], decision_ref=g_node.id,
-                        params={"element": f"gate@{run.id}:{gs}-{ge}",
-                                "slope_permille": gate_slope,
-                                "max_permille": max_gate_slope},
-                    )
-                )
+        _check_gate_kit_width(builder, strategy, catalog, gate.id, kit, opening)
+        # The drop across the opening, read from the run's own ground profile —
+        # the measurement only this caller can make. Everything after it is
+        # `_check_gate_slope`, which the standalone gate calls too.
+        _check_gate_slope(
+            builder, strategy, gate.id,
+            abs(ground_z(topo, run, ge) - ground_z(topo, run, gs)), ge - gs,
+            max_gate_slope, gate_slope_refs,
+        )
         placed = builder.add(
             "structural", "place_gate",
             payload={"start_mm": gs, "end_mm": ge},
@@ -2338,6 +2787,7 @@ def _generate_run(
         inputs=[run_fact.id],
         governed_by=vertical_refs,
         defeated=vertical_defeated,
+        corroborated=[f.version.ref for f in vert_res.firings if f.corroborated_by],
     )
 
     tilt_ev_check, _, _ = _interval_at(topo, run, length // 2, "post_tilt")
@@ -2412,7 +2862,7 @@ def _generate_run(
         prefer_equal = False
         layout_pref_ref = width_firing.version.ref
 
-    gate_intervals = [(gs, ge) for gs, ge, _, _ in gates]
+    gate_intervals = [(gs, ge) for gs, ge, _, _, _ in gates]
     span_ids: list[str] = []
     # spans grouped by the model they were built to, so resolve_span_quantities
     # scopes to the bays its numbers actually governed
@@ -2485,9 +2935,17 @@ def _generate_run(
                 # layout point — whose loser is a width list with no version
                 # behind it, and which therefore rides in a payload — this is a
                 # real knowledge ref, so the edge cannot invent a fact.
+                # `admits`, not a bare per-bay ceiling: a lock builds ONE bay of
+                # the whole gap, and a gap wider than the limit is never a
+                # minimum-count layout — so a deliberate over-limit placement
+                # keeps its attribution even where its width happens to land on
+                # `ceil(published limit)`. Comparing against that ceiling alone
+                # silently dropped this edge for a 1423 mm lock under a 1422.4 mm
+                # maximum: the departure was real and read as the engine's own.
                 defeated=([sm.max_span_ref]
-                          if sm.max_span_ref and locked_ov.directive.width_mm
-                          > sm.max_span else []),
+                          if sm.max_span_ref and not sm.admits(
+                              [locked_ov.directive.width_mm], seg_len)
+                          else []),
                 payload={"override_id": locked_ov.id, "run_id": run.id,
                          "station_mm": seg_start, "width_mm": seg_len,
                          "author": locked_ov.author},
@@ -2498,7 +2956,7 @@ def _generate_run(
             layout = layout_segment(
                 seg_len, sm.max_span,
                 prefer_equal=prefer_equal, min_span_mm=min_span, nominal_mm=width_pref,
-                exact_mm=sm.exact_span,
+                exact_mm=sm.exact_span, max_span_milli=sm.max_span_milli,
             )
         # A person's answer for THIS GAP, if they gave one. The scope is the gap
         # between fixed stations and not the section, because a corner, a gate, a
@@ -2514,7 +2972,12 @@ def _generate_run(
              and c.scope == gap_scope), None)
         if picked is not None:
             default_widths = list(layout.widths)
-            if _widths_fit(picked.widths, seg_len, sm.max_span):
+            # The ACCEPT side of the question `alternative_widths` answers on the
+            # OFFER side, and now literally the same predicate. A stored answer
+            # is admissible on its own terms — it never needs the candidate set,
+            # which would be circular — but it is held to the bound the engine
+            # would have offered under, not to a looser one.
+            if sm.admits(picked.widths, seg_len):
                 layout = LayoutResult(
                     widths=list(picked.widths),
                     rejected_alternative=layout.rejected_alternative,
@@ -2554,7 +3017,8 @@ def _generate_run(
                 "widths": list(layout.widths),
                 "displaced": (list(layout.rejected_alternative)
                               if layout.rejected_alternative else None),
-                "max_span": sm.max_span, "min_span": min_span,
+                "max_span": sm.max_span, "max_span_milli": sm.max_span_milli,
+                "min_span": min_span,
                 "exact_span": sm.exact_span,
             })
         governed = [r for r in (sm.max_span_ref, layout_pref_ref) if r]
@@ -2577,6 +3041,8 @@ def _generate_run(
             inputs=[run_fact.id, sm.firing_node_id, vertical_node.id],
             governed_by=governed,
         )
+        _report_rounded_over_published_limit(
+            builder, strategy, run, seg_start, seg_end, sm, layout, layout_node.id)
         stations = boundaries(seg_start, layout.widths)
         # The bays this segment is about to lay out, NAMED before they exist so
         # the quantities that govern them are recorded first. `rails_per_span`
@@ -2834,7 +3300,21 @@ def _generate_run(
                          "slots": _panel_slots_payload(span.panel)},
                 scope_refs=[span.id], inputs=panel_inputs,
             )
-            if width > sm.max_span:
+            if width > sm.max_span and not sm.admits(layout.widths, seg_len):
+                # Two halves of one question, and the order matters. `max_span`
+                # is the limit at rest and names the offending BAY — so the
+                # failure below and the warning after it are about the bay a
+                # reader can measure. `admits` then decides whether this LAYOUT
+                # earned the fraction: where the published limit is not a whole
+                # millimetre, the minimum-count layout's own remainder spread
+                # puts one bay a fraction over it, and rejecting that would
+                # reject the very layout `contract.md`:112-117 requires. It is
+                # not a per-bay ceiling — a ceiling with no count behind it
+                # admits three 1423 mm bays where the limit allows four bays or
+                # one 1423 mm one, which is a post short of a stamped schedule.
+                # For every whole-millimetre limit, which is all of ours, this
+                # is exactly `width > max_span` and nothing has moved.
+                #
                 # NARROWER than it was, not absent. A bay may exceed the resolved
                 # maximum ONLY where a `lock_bay` override put it there — allow
                 # it, mark it, attribute it (§11). Everything else still stops the
@@ -3341,6 +3821,138 @@ def _span_not_exact(builder, strategy, run, seg_start, seg_end, sm, layout) -> N
     ))
 
 
+def _report_rounded_over_published_limit(
+    builder, strategy, run, seg_start, seg_end, sm, layout, layout_node_id,
+) -> None:
+    """The published limit fell between whole millimetres, so one bay carries the
+    fraction ADR-0002 cannot store — said out loud, once per segment.
+
+    `_SegmentModel.admits()` decided this is tolerable and it is right: three
+    bays of a 4267 mm run under a published 1422.4 mm maximum are 1422.333 mm
+    each and every one of them fits, but bays are integer millimetres at rest and
+    three of them must sum to 4267, so the remainder spread produces
+    `[1423, 1422, 1422]` and one bay stands 0.6 mm over a sealed number. The only
+    alternative is a fourth bay — the extra post, footing and pour
+    `contract.md`:112-117 exists to prevent — bought to recover six tenths of a
+    millimetre. The count stays; what changes here is that the trade is RECORDED.
+
+    Silence was the actual defect. "The decision graph is the explanation" is not
+    satisfied by a tolerance living in a docstring: a fence was being built a
+    fraction outside a tested configuration and no artefact said so, so nobody
+    downstream — the installer holding a tape, an inspector holding the
+    manufacturer's page — could tell a deliberate rounding from a wrong rule.
+
+    **Its own reporting, not a reuse of `span_placed_over_maximum`.** That code
+    names a PERSON who placed a bay over the maximum and attributes it to them;
+    this one names our unit. Filing this under it would report our precision
+    problem as somebody's decision, and filing a lock under this one would tell a
+    reader an engineer's placement was a rounding artefact.
+
+    Three conditions, and each one is a clause of the sentence rather than a
+    guard bolted on:
+
+    * the widest STORED bay is over the published limit (`over_milli > 0`) —
+      where a limit is a whole millimetre, as every rule this repo authored is,
+      `max_span_milli` is `max_span * 1000` and no admissible layout can reach
+      this, so nothing authored and no golden scenario can produce it;
+    * it is within `ceil(published limit)` — above that is not the rounding but a
+      layout bug or a rule carrying a wrong number, and the guard at the span
+      loop still stops the run for it;
+    * the bay COUNT is the one the true limit gives. That is what makes the
+      sentence's middle clause true — *"laid out in the N bays that limit
+      allows"* — and it is also what keeps a hand-placed bay out of here for
+      free: a `lock_bay` builds ONE bay of the whole gap, which is not
+      `ceil(L / max_span)` whenever the gap is over the limit at all. A bay a
+      person placed is reported by `span_placed_over_maximum`, with their name on
+      it, and must not be re-narrated here as arithmetic of ours.
+
+    The last two ARE `layout.earns_remainder_ceiling`, called rather than
+    restated: they are the same conjunction that decides admissibility at the
+    span guard, and a disclosure that could describe a layout the engine refuses
+    to build — or stay silent about one it builds — is worse than no disclosure.
+
+    `severity="info"`: nothing here is wrong and nothing can be fixed. It is a
+    disclosure of a decision, which is why it carries a decision node rather
+    than a `Gap` — a gap names a row a curator could author, and no row anybody
+    could write makes 4267 divide into three whole millimetres.
+
+    The two sub-millimetre figures ride as `_milli` params, thousandths at rest
+    like every other published quantity. A `*_mm` param would be rounded to the
+    grid by the display layer and print `1422` — the very number the reader must
+    NOT be shown, because a 1423 mm bay against it reads as a whole millimetre
+    over a limit nobody published. `decisions/explain.py` and
+    `web/static/js/units.js` render the suffix at its true precision.
+    """
+    if sm.max_span_milli <= 0 or not layout.widths:
+        return
+    widest = max(layout.widths)
+    over_milli = widest * 1000 - sm.max_span_milli
+    if over_milli <= 0:
+        return
+    seg_len = seg_end - seg_start
+    # The second and third clauses, as ONE call — the same conjunction
+    # `_SegmentModel.admits` is built on, so this sentence cannot come to
+    # describe a layout the engine would not build. Not `admits` itself: that
+    # one lets any bay within `max_span` through before it ever looks at the
+    # count, and a limit that ROUNDS UP (2463.8 rests at 2464) would then let a
+    # hand-placed bay in here through the front door.
+    if not earns_remainder_ceiling(layout.widths, seg_len, sm.max_span_milli):
+        return
+    params: dict[str, str | int] = {
+        "element": run.id, "run_id": run.id, "model_ref": sm.model.ref,
+        "segment_mm": seg_len, "n": len(layout.widths),
+        "widest_mm": widest,
+        # the limit at rest AND as published: the first is what every clamp and
+        # comparison in this module is made against, the second is what the
+        # sentence has to show
+        "max_mm": sm.max_span, "limit_milli": sm.max_span_milli,
+        "over_milli": over_milli,
+    }
+    # The BAYS that carry the fraction, by the ids they are about to be created
+    # with — every bay actually over the published limit, which under a remainder
+    # spread is every bay at the ceiling. `span@run1:0-4267` was written here and
+    # it is not a span at all: the format names one, the arguments are the
+    # SEGMENT's bounds, and `n >= 2` whenever this node fires, so the id could
+    # never match a bay that exists. `nodes_for_element` returned nothing for
+    # every bay in the segment — a reader clicking the 1423 mm bay to ask why it
+    # is 1423 landed on nothing, for the one decision this disclosure exists to
+    # make. The stations are `boundaries(seg_start, layout.widths)`, exactly as
+    # the span loop computes them a few lines later.
+    #
+    # Those bays and not the whole segment: a 1422 mm bay beside them is inside
+    # the published maximum and has nothing to answer for here, and scoping the
+    # node to it would tell a reader it was over a limit it is not. The
+    # segment-wide decision — why three bays — is `layout_spans`, which this
+    # node hangs off as an input.
+    stations = boundaries(seg_start, layout.widths)
+    carrying = [f"span@{run.id}:{s0}-{s1}"
+                for (s0, s1), w in zip(zip(stations, stations[1:]), layout.widths)
+                if w * 1000 > sm.max_span_milli]
+    node = builder.add(
+        "conflict", "span_rounded_over_published_limit", payload=dict(params),
+        # `governed_by`, never `defeated`. The published limit was not beaten: it
+        # is the number that chose the bay count, and it is honoured everywhere a
+        # whole millimetre can honour it. A `defeated` edge here would claim the
+        # rule lost, and CLAUDE.md reserves that edge for the version that
+        # actually did.
+        governed_by=[sm.max_span_ref] if sm.max_span_ref else [],
+        scope_refs=carrying,
+        inputs=[layout_node_id],
+    )
+    strategy.warnings.append(StrategyWarning(
+        code="span_rounded_over_published_limit", severity="info",
+        message=(
+            f"The published maximum span for {sm.model.ref} is "
+            f"{sm.max_span_milli / 1000:g} mm, which falls between whole "
+            f"millimetres. Section {run.id} is laid out in the "
+            f"{len(layout.widths)} bays that limit allows, and because a bay is "
+            f"stored in whole millimetres one of them carries the leftover "
+            f"fraction: {widest} mm, over by {over_milli / 1000:g} mm."
+        ),
+        decision_ref=node.id, params=params,
+    ))
+
+
 @dataclass(frozen=True)
 class _PanelLimit:
     code: str
@@ -3597,31 +4209,11 @@ def _countable_axes(result: GenerationResult) -> dict[str, int]:
     return axes
 
 
-def _widths_fit(widths: list[Mm], seg_len: Mm, max_span: Mm) -> bool:
-    """Is this width list still buildable in this gap?
-
-    Two checks, and deliberately not a third. The widths must fill the gap
-    exactly, and no bay may exceed the RESOLVED maximum span — which is what
-    stops a stale answer building an over-maximum fence because somebody chose it
-    under a laxer rule.
-
-    `min_span` is NOT checked, and that is the design being consistent with
-    itself: `layout_segment` only warns about a sliver, and a person may want a
-    400 mm bay against a wall. A selected sliver is built and reported through
-    the `sliver_span` warning the span loop already emits, rather than refused
-    here — refusing it would make an answered question stricter than an
-    unanswered one.
-
-    Admissibility rather than membership of a candidate set, for a reason worth
-    keeping: what a person chose is the WIDTHS. If they are still buildable they
-    are still the answer, even where a changed `max_span` means a different
-    generator would now propose them. It also avoids needing the candidate set
-    before a choice can be honoured, which would be circular — candidates are
-    measured from the baseline this choice helps produce.
-    """
-    if not widths or any(w <= 0 for w in widths):
-        return False
-    return sum(widths) == seg_len and max(widths) <= max_span
+# `_widths_fit` lived here and is gone: it took a bare `max_span` millimetre and
+# was handed `max_bay_mm()`, which is how a stored answer of three over-limit
+# bays came to be accepted. The question it asked is `layout.admits_widths`,
+# reached through `_SegmentModel.admits` — one predicate, so the bound the
+# generator OFFERS under and the bound it ACCEPTS under cannot drift apart.
 
 
 def _choice_unavailable_gap(

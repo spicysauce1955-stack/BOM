@@ -868,6 +868,7 @@ def _smoke_sales_mode(c) -> None:
     generate: document.getElementById("btn-generate").textContent.trim(),
     tab1: document.querySelector('#tabs button[data-tab="canvas"]').textContent.trim(),
     height_label: document.querySelector("#tool-height .t-label").textContent.trim(),
+    canvas: vis("#canvas"),
   };
 })()"""
 
@@ -888,9 +889,92 @@ def _smoke_sales_mode(c) -> None:
     check("sales mode hides every surface that decides how the fence is BUILT",
           all(sales[k] == "hidden" for k in
               ("pin", "knowledge", "bom", "inspector", "gaps")), sales)
-    check("sales mode keeps every surface that records what was SOLD",
-          all(sales[k] == "shown" for k in
-              ("base", "height", "model_row", "profile")), sales)
+    # Read each surface IN THE STEP THAT OWNS IT. Two hide mechanisms now act
+    # on these same elements — `data-role` answers who is looking, `data-step`
+    # answers what they are doing now — and their LISTS are independent
+    # (`test_step_surfaces.py`) while their EFFECTS compose. Read blind, this
+    # check sat on step 1 and called four surfaces role-hidden that the STEP
+    # had scoped away, which is a browser-only failure: no unit test sees two
+    # stylesheets composing.
+    def _in_step(step_key):
+        c.js("document.querySelector('#road [data-step=\"%s\"]').click(); 'ok'"
+             % step_key)
+        time.sleep(0.4)
+        return c.js(shown)
+
+    on_sideview = _in_step("sideview")
+    check("sales keeps the surfaces that record what was SOLD — the side view's",
+          all(on_sideview[k] == "shown" for k in ("base", "height", "profile")),
+          on_sideview)
+    on_model = _in_step("model")
+    check("sales keeps the surfaces that record what was SOLD — the model row",
+          on_model["model_row"] == "shown", on_model)
+    # And the map is in steps 2-6 only: a form, a note and a summary do not
+    # get a drawing behind them.
+    # Saving the job moves the salesperson on. NOT a wizard — every step stays
+    # clickable — but a completed gesture should not leave them parked on a form
+    # they have finished. Step 1 is the only step with an explicit commit to
+    # hang this on; the other seven are canvas gestures with no done button.
+    _in_step("job")
+    c.js("""(() => {
+  document.getElementById('job-customer').value = 'Cohen';
+  document.getElementById('job-address').value = '14 Herzl';
+  document.getElementById('job-save').click();
+  return 'ok';
+})()""")
+    time.sleep(2.0)
+    check("saving the job moves on to step 2, without blocking anything",
+          c.js("document.documentElement.dataset.step") == "property",
+          c.js("document.documentElement.dataset.step"))
+    check("and every step is still reachable by a click — a map, not a wizard",
+          (lambda: (c.js("document.querySelector('#road [data-step=\"review\"]').click(); 'ok'"),
+                    time.sleep(0.4),
+                    c.js("document.documentElement.dataset.step"))[2])() == "review")
+    # Every step has an explicit "I have finished this" gesture, and it is the
+    # SAME control on each — the seven canvas steps have no save button of
+    # their own, which is why step 1 advancing off its save was not enough.
+    _in_step("property")
+    label = c.js("document.getElementById('step-done-btn')?.textContent || ''")
+    check("every step offers a done control that names where it goes next",
+          label != "" and "{next}" not in label, label)
+    c.js("document.getElementById('step-done-btn').click(); 'ok'")
+    time.sleep(0.8)
+    check("pressing done on step 2 moves to step 3",
+          c.js("document.documentElement.dataset.step") == "layout",
+          c.js("document.documentElement.dataset.step"))
+    # It advances a step with work still OUTSTANDING rather than refusing. A
+    # step that could not be left is a wizard, and a wizard gets defeated by
+    # typing junk to get past it — which turns the completeness report the
+    # office relies on into a lie. The badge keeps saying what is missing.
+    _in_step("sideview")
+    before_badge = c.js("document.querySelector('#road [data-step=\"sideview\"] "
+                        ".road-state').textContent")
+    c.js("document.getElementById('step-done-btn').click(); 'ok'")
+    time.sleep(0.8)
+    check("done advances even with work outstanding, and still reports it",
+          c.js("document.documentElement.dataset.step") == "model"
+          and before_badge.strip() != "",
+          {"moved_to": c.js("document.documentElement.dataset.step"),
+           "badge_was": before_badge})
+    # and the last step has nowhere to go, so it offers no dead control
+    _in_step("review")
+    check("the last step offers no done control rather than a dead one",
+          c.js("(()=>{const h=document.getElementById('step-done');"
+               "return !h || h.hidden;})()"))
+
+    # the date box is filled in for the common case: a job entered the evening
+    # of the visit. LOCAL date, not UTC — at 01:00 in Israel the UTC slice
+    # returns yesterday, and a sale dated a day early is invisible to the office.
+    _in_step("job")
+    check("the sold-on date defaults to today, in local time",
+          c.js("document.getElementById('job-sold_on').value")
+          == c.js("(()=>{const d=new Date(),p=n=>String(n).padStart(2,'0');"
+                  "return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;})()"),
+          c.js("document.getElementById('job-sold_on').value"))
+
+    check("the drawing is absent from step 1 and present in step 3",
+          _in_step("job")["canvas"] == "hidden"
+          and _in_step("layout")["canvas"] == "shown")
     # The rename is the half a hide-list cannot do. `sales.<key>` beats `<key>`
     # in `t()` only in this mode, so these strings prove the layer resolves —
     # and prove it on the STATIC pass, which runs over the whole page at once.
@@ -1040,13 +1124,20 @@ def _smoke_property_context(c) -> None:
 
     A salesperson describes a layout relative to the house and the road, and the
     office person cannot read an abstract coordinate plane as a PLACE. What only
-    a browser can say here: that a press-drag-release actually reaches
-    `shapeFor` and persists, that the backdrop does NOT eat clicks meant for the
-    fence in front of it, and — the property that keeps this slice cheap — that
-    drawing a house does not touch the topology revision.
+    a browser can say here: that the gestures actually reach the geometry and
+    persist, that the backdrop does NOT eat clicks meant for the fence in front
+    of it, and — the property that keeps this slice cheap — that drawing a house
+    does not touch the topology revision.
 
-    The geometry itself is pinned in `tests/web/test_context_module.py`, so this
-    case asserts the wiring rather than re-deriving the rectangle.
+    The gestures are no longer one gesture. On instruction, a house is a closed
+    shape of connected straight lines built CLICK BY CLICK (an L-shaped building
+    approximated by a dragged box is something the office then has to ring up
+    and ask about) and a street is a dragged BAND rather than a bare line, so
+    that it has a width to type. Both are asserted below, because "the drag
+    still works" would have passed for a house that silently records nothing.
+
+    The geometry itself is pinned in `tests/web/test_landmark_shape_module.py`,
+    so this case asserts the wiring rather than re-deriving the rectangle.
     """
     c.js("""(() => {
   const s = document.getElementById('role-select');
@@ -1070,39 +1161,255 @@ def _smoke_property_context(c) -> None:
     rev_before = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
                       ".then(p => p.topology.revision)" % pid)
 
-    # --- drag a house ----------------------------------------------------
+    # --- click the corners of a house ------------------------------------
+    # Five corners, not four: an L. The point of clicking rather than dragging
+    # is precisely that the shape is whatever the building is, and a case that
+    # only ever drew a box would pass against a builder that quietly squared
+    # everything off. The last click lands back on the first corner, which is
+    # how a person closes a shape they are drawing.
     c.click(*c.element_center("#tool-house"))
     time.sleep(0.3)
-    c.drag(*c.canvas_px(1000, 3000), *c.canvas_px(7000, 8000))
+    # Every corner inside the canvas's own 900x500 box (world y=8000 is 100 px
+    # ABOVE it, and CDP delivers no click to a point the element does not
+    # cover — a dropped corner would read as a builder that lost it).
+    corners = [(1000, 1000), (7000, 1000), (7000, 3000), (4000, 3000), (4000, 5000),
+               (1000, 5000)]
+    for corner in corners:
+        c.click(*c.canvas_px(*corner))
+        time.sleep(0.1)
+    c.click(*c.canvas_px(*corners[0]))          # back on the first: close it
     time.sleep(1.2)
     ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
     marks = (ctx or {}).get("landmarks", [])
-    check("dragging with the house tool records a closed outline",
+    check("clicking corner to corner records a closed outline with all of them",
           len(marks) == 1 and marks[0]["kind"] == "house"
-          and marks[0]["closed"] is True and len(marks[0]["points"]) == 4, ctx)
+          and marks[0]["closed"] is True
+          and len(marks[0]["points"]) == len(corners), ctx)
 
-    # --- and a street ----------------------------------------------------
+    # --- undo/redo cover the house, the same stack as every fence edit ---
+    # Placement, rename and delete all now push onto history.js's ONE stack
+    # (context is unrevisioned, so it can ride the topology's stack without
+    # sharing its revision counter) — a house must be as undoable as a moved
+    # fence dot, not a second gesture system with its own rules.
+    c.click(*c.element_center("#btn-undo"))
+    time.sleep(2.0)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    check("undo removes a just-placed house", len(marks) == 0, ctx)
+
+    c.click(*c.element_center("#btn-redo"))
+    time.sleep(2.0)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    check("redo brings the house back",
+          len(marks) == 1 and marks[0]["kind"] == "house", ctx)
+    house_before = marks[0] if marks else {"points": []}
+
+    # `element_center` scrolls each button into view; two of them in a row
+    # walk the canvas straight off the top of the viewport, and a drag aimed
+    # at coordinates outside it hits nothing at all (`canvas_px` computes a
+    # real point, but CDP cannot deliver a pointer event to a point the
+    # viewport doesn't contain). Reset scroll before touching the canvas
+    # again, the same idiom the annexe screenshot uses above.
+    c.js("window.scrollTo(0, 0); 'ok'")
+
+    # --- an existing house is MOVED, not re-created -----------------------
+    # A press inside the house's own outline (the hit-test in context.js,
+    # PURE and node-tested) starts a move instead of a new placement — the
+    # count below is the proof: two overlapping drags, still one landmark.
+    c.drag(*c.canvas_px(2000, 2000), *c.canvas_px(3000, 2600))
+    time.sleep(1.2)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    check("dragging an existing house moves it rather than spawning a second",
+          len(marks) == 1, ctx)
+    check("the moved house's coordinates actually changed",
+          marks[0]["points"] != house_before["points"],
+          {"before": house_before["points"], "after": marks[0]["points"]})
+
+    # --- and a street, which is a BAND ------------------------------------
+    # "The street should be rectangle, and editable (angle, ...)" is one
+    # requirement, not two: a bare line has no width to type, so the band is
+    # what makes the editing possible at all. Four closed corners, and the
+    # panel's own width field is checked further down.
     c.click(*c.element_center("#tool-street"))
     time.sleep(0.3)
     c.drag(*c.canvas_px(-1000, -2000), *c.canvas_px(10000, -2000))
     time.sleep(1.2)
     ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
     marks = (ctx or {}).get("landmarks", [])
-    check("dragging with the street tool records an open line",
+    check("dragging with the street tool records a band, not a bare line",
           len(marks) == 2 and marks[1]["kind"] == "street"
-          and marks[1]["closed"] is False and len(marks[1]["points"]) == 2, ctx)
+          and marks[1]["closed"] is True and len(marks[1]["points"]) == 4, ctx)
+
+    # --- the width of that band is typeable -------------------------------
+    # The whole reason the street stopped being a line. The panel converts at
+    # the field boundary (units.js) and rebuilds the four corners from
+    # angle/length/width, so a typed 6 m must come back as 6000 mm at rest.
+    street_id = marks[1]["id"]
+
+    def band_width(landmarks):
+        band = [m for m in landmarks or [] if m["id"] == street_id]
+        if not band or len(band[0]["points"]) != 4:
+            return None
+        (x0, y0), (x1, y1) = band[0]["points"][1], band[0]["points"][2]
+        return round(((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5)
+
+    was = band_width(marks)
+    # DOUBLED rather than typed as an absolute figure, so the check says the
+    # same thing whichever display unit the run happens to be in by now: the
+    # field carries display units and the storage is millimetres, and a case
+    # that hard-coded 6000 would fail in cm for a conversion working correctly.
+    typed = c.js("""(() => {
+  const row = document.querySelector(`#context-panel li[data-lm="%s"]`);
+  if (!row) return 'no row';
+  const w = row.querySelector('input[data-metric="width"]');
+  if (!w) return 'no width field';
+  w.value = String(Number(w.value) * 2);
+  w.dispatchEvent(new Event('change', {bubbles: true}));
+  return 'typed';
+})()""" % street_id)
+    time.sleep(1.5)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    now = band_width((ctx or {}).get("landmarks", []))
+    check("typing a width in the property panel resizes the street band",
+          typed == "typed" and was and now and abs(now - was * 2) <= 2,
+          {"typed": typed, "before": was, "after": now})
+
+    # --- a street can also be dragged as a BOX, width and all ---------------
+    # "The street has a fixed width and is not easy to place." Dragging the box
+    # the road occupies states both numbers in one gesture; the line gesture
+    # above still works and still supplies a default. Drawn clear of the first
+    # street so this is a second landmark rather than a move of the first.
+    c.click(*c.element_center("#tool-street"))
+    time.sleep(0.3)
+    c.js("window.scrollTo(0, 0); 'ok'")
+    # Clear of the house and of the first street, and every corner inside the
+    # canvas's own 900x500 box — a gesture aimed outside it reaches the page
+    # behind the drawing and records nothing.
+    c.drag(*c.canvas_px(9000, 3000), *c.canvas_px(15000, 5000))
+    time.sleep(1.2)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    boxed = [m for m in marks if m["kind"] == "street" and m["id"] != street_id]
+    dims = None
+    if boxed and len(boxed[0]["points"]) == 4:
+        pts = boxed[0]["points"]
+        side = lambda a, b: round(((pts[b][0] - pts[a][0]) ** 2
+                                   + (pts[b][1] - pts[a][1]) ** 2) ** 0.5)
+        dims = (side(0, 1), side(1, 2))
+    check("a street dragged as a box takes BOTH its length and its width "
+          "from the drag, long side first",
+          dims is not None and abs(dims[0] - 6000) <= 30
+          and abs(dims[1] - 2000) <= 30, {"dims": dims, "marks": len(marks)})
+    # remove it again: the checks below describe a drawing of two landmarks
+    if boxed:
+        c.js("""(() => {
+  const b = document.querySelector('#context-panel [data-lm="%s"].context-remove');
+  if (b) b.click();
+  return 'removed';
+})()""" % boxed[0]["id"])
+        time.sleep(1.5)
+
+    # --- an object under "other" is placeable, and is NOT a default button --
+    # "the other selection of objects other than street and house should be
+    # under 'other' and not presented as default". Both halves: the rail offers
+    # exactly two property BUTTONS, and the picker beside them can still place
+    # a tree.
+    rail = c.js("""(() => {
+  const ids = [...document.querySelectorAll('#toolbar button')].map(b => b.id);
+  return {property_buttons: ids.filter(i => ['tool-house','tool-street','tool-tree',
+    'tool-pool','tool-sidewalk','tool-boundary','tool-other'].includes(i)),
+    other_options: [...document.querySelectorAll('#tool-other option')]
+      .map(o => o.value).filter(Boolean)};
+})()""")
+    check("only the house and the street are buttons; the rest live under Other",
+          rail["property_buttons"] == ["tool-house", "tool-street"]
+          and set(rail["other_options"])
+              == {"tree", "pool", "sidewalk", "boundary", "other"}, rail)
+    # `change` AND THEN `click` — which is the order a native select fires them
+    # in when a person picks an option, and the half that was missing here let a
+    # real bug through: `#tool-other` shares its id shape with the tool buttons,
+    # so the toolbar's click wiring armed the `other` KIND on the dropdown's own
+    # click, immediately after `change` had armed `tree`. Every tree, pool and
+    # sidewalk was recorded as "Other". Driving only `change` passed.
+    armed = c.js("""(() => {
+  const s = document.getElementById('tool-other');
+  s.value = 'tree';
+  s.dispatchEvent(new Event('change', {bubbles: true}));
+  const afterChange = document.getElementById('canvas').dataset.tool;
+  s.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+  return {afterChange, afterClick: document.getElementById('canvas').dataset.tool};
+})()""")
+    check("picking a kind under Other arms that kind, and dismissing the "
+          "dropdown does not turn it back into 'other'",
+          armed == {"afterChange": "tree", "afterClick": "tree"}, armed)
+    time.sleep(0.3)
+    c.js("window.scrollTo(0, 0); 'ok'")
+    c.drag(*c.canvas_px(12000, -1000), *c.canvas_px(13000, -1000))
+    time.sleep(1.2)
+    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
+    marks = (ctx or {}).get("landmarks", [])
+    trees = [m for m in marks if m["kind"] == "tree"]
+    check("a tree chosen under Other is drawn and recorded",
+          len(trees) == 1 and trees[0]["closed"] is True
+          and len(trees[0]["points"]) >= 8, marks)
+    # ...and then taken off again from the panel, so the checks below — written
+    # against a drawing of exactly two landmarks — still describe this one. The
+    # removal is itself the assertion that the panel's ✕ reaches the drawing.
+    if trees:
+        c.js("""(() => {
+  const b = document.querySelector('#context-panel [data-lm="%s"].context-remove');
+  if (b) b.click();
+  return 'removed';
+})()""" % trees[0]["id"])
+    time.sleep(1.5)
+    marks = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                 ".then(p => p.context.landmarks)" % pid)
+    check("removing it from the panel takes it off the drawing too",
+          len(marks) == 2, marks)
     check("the two landmarks do not share an id",
           len({m["id"] for m in marks}) == len(marks), marks)
 
     drawn = c.js("document.querySelectorAll('#g-context path').length")
     check("both are drawn on the canvas", drawn == 2, drawn)
-    c.shot("52-property-context.png")
 
     # --- the property that keeps this slice cheap ------------------------
+    # Measured HERE, before Clear/undo touch the topology on purpose (a
+    # nonempty-to-empty run list and back is a real topology change either
+    # way) — this check is only about the house/street drags above, which
+    # must go through `saveContext()` alone and never bump the revision.
     rev_after = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
                      ".then(p => p.topology.revision)" % pid)
     check("drawing the property does NOT touch the topology revision",
           rev_after == rev_before, {"before": rev_before, "after": rev_after})
+
+    # --- and Clear means the whole picture ------------------------------
+    # The label reads "Clear" and the house and the street are things the
+    # salesperson drew, so leaving them behind read as the button being
+    # broken. The MODEL keeps its separation — a landmark is never in
+    # `Topology`, because there it would bump the revision and 409 the
+    # structure sheet over a nudged driveway — and the BUTTON keeps its word.
+    c.js("window.confirm = () => true; 'ok'")
+    c.click(*c.element_center("#btn-clear"))
+    time.sleep(2.0)
+    after = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                 ".then(p => ({runs: p.topology.runs.length,"
+                 " marks: (p.context.landmarks || []).length}))" % pid)
+    check("clear takes the fence AND everything on the property",
+          after["runs"] == 0 and after["marks"] == 0, after)
+    check("nothing is left drawn in either group",
+          c.js("document.querySelectorAll('#g-context path, #g-context-draft path')"
+               ".length") == 0)
+    # one picture in, one picture back: undo must not return the fence alone
+    c.click(*c.element_center("#btn-undo"))
+    time.sleep(2.0)
+    back = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                ".then(p => ({runs: p.topology.runs.length,"
+                " marks: (p.context.landmarks || []).length}))" % pid)
+    check("one undo brings back the whole picture, not just the fence",
+          back["runs"] > 0 and back["marks"] == 2, back)
+    c.shot("52-property-context.png")
 
     # --- the backdrop must not eat the fence -----------------------------
     # The house was drawn straddling the run. With the select tool, a click on
@@ -1296,15 +1603,835 @@ fetch('/api/projects/%s').then(r => r.json()).then((p) => {
           done["gaps"] == [] and done["ready"] == 1, done)
 
 
+def _smoke_road(c) -> None:
+    """The road band (Tasks 4-6) — the salesperson's ONLY navigation once
+    `#tabs` is hidden — had zero browser coverage before this case: nothing in
+    this file grepped for `#road`, `data-step` or `road.`. This drives the two
+    things only a browser can prove: that the band actually renders all eight
+    steps, in the eight-step order, and that clicking the skip control (Task
+    6) — the way a salesperson states "no gates on this job" — reaches the
+    server and comes back as a genuinely CHANGED badge, not just a changed
+    span nobody re-renders.
+
+    Forces English the way `_smoke_post_inspector` does: the suite reaches
+    this case with the app left in Hebrew ("back to Hebrew for what follows"),
+    and the assertions below read the control's own wording.
+    """
+    if c.js("document.documentElement.lang") != "en":
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.0)
+
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+    c.js("document.getElementById('new-project-name').value = 'road'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    pid = c.js("document.getElementById('project-select').value")
+
+    # A drawn fence, so the anchor step reads "started" — road-model.js pins
+    # "empty beats skip": every step short-circuits to `empty` until then, and
+    # that would leave the gates step's transition (below) unobservable.
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 5000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]}
+    c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+
+    # --- the road is a salesperson's surface -------------------------------
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  s.value = 'sales';
+  s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+
+    order = c.js(
+        "[...document.querySelectorAll('#road button')].map(b => b.dataset.step)")
+    check("the band renders all eight steps, in the eight-step order",
+          order == ["job", "property", "layout", "sideview", "model", "gates",
+                    "notes", "review"], order)
+
+    gates_sel = '#road [data-step="gates"]'
+    before_state = c.js(f"document.querySelector('{gates_sel}')?.dataset.state")
+    check("a drawn fence with no gate placed leaves the gates step clean",
+          before_state == "done", before_state)
+    before_label = c.js(f"document.querySelector('{gates_sel} .road-skip')?.textContent")
+    check("the skip control opens by offering to state the absence",
+          before_label == "There are none on this job", before_label)
+    c.shot("54-road-band.png")
+
+    # --- state the fact: the salesperson's control, not a raw PUT ----------
+    # `element_center` scrolls, and with the tab strip hidden the band is the
+    # only navigation on screen — reset scroll first, the same idiom the
+    # property-context case uses before its second canvas drag.
+    c.js("window.scrollTo(0, 0); 'ok'")
+    c.click(*c.element_center(f'{gates_sel} .road-skip'))
+    # `saveStated()` is fire-and-forget from the click handler, so the PUT is
+    # still in flight the instant the click returns — poll for the TARGET
+    # value, not merely for a fetch to succeed (any fetch is truthy).
+    stated = wait_for(c, "fetch(`/api/projects/%s`).then(r => r.json())"
+                         ".then(p => JSON.stringify(p.stated))"
+                         ".then(s => s === '{\"no_gates\":true,\"no_promises\":false}' && s)"
+                         % pid)
+    check("the stated fact reaches the server",
+          stated == '{"no_gates":true,"no_promises":false}', stated)
+
+    after_state = wait_for(
+        c, f"document.querySelector('{gates_sel}')?.dataset.state === 'skipped' "
+           "&& 'skipped'")
+    check("the badge changes once the fact is stated — a click did not just "
+          "toggle a span nobody re-renders", after_state == "skipped", after_state)
+    after_label = c.js(f"document.querySelector('{gates_sel} .road-skip')?.textContent")
+    check("the control's own wording flips to the statement",
+          after_label == "There are some after all", after_label)
+
+    current = c.js(
+        "document.querySelector('#road [aria-current=\"step\"]')?.dataset.step")
+    check("stating a fact did not navigate — stopPropagation held",
+          current == "job", current)
+    c.shot("55-road-stated.png")
+
+    # --- and back: the control is a toggle, not a one-way door -------------
+    c.click(*c.element_center(f'{gates_sel} .road-skip'))
+    reverted = wait_for(c, "fetch(`/api/projects/%s`).then(r => r.json())"
+                           ".then(p => JSON.stringify(p.stated))"
+                           ".then(s => s === '{\"no_gates\":false,\"no_promises\":false}' && s)"
+                           % pid)
+    check("un-stating it reaches the server too",
+          reverted == '{"no_gates":false,"no_promises":false}', reverted)
+    reverted_state = wait_for(
+        c, f"document.querySelector('{gates_sel}')?.dataset.state === 'done' "
+           "&& 'done'")
+    check("the badge returns to clean", reverted_state == "done", reverted_state)
+
+    # leave the ambient state the way the next case expects it
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  s.value = 'all';
+  s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""")
+    if c.js("document.documentElement.lang") != "he":
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.0)
+
+
+def _smoke_knowledge_panes(c) -> None:
+    """The Knowledge tab's three panes, and the exclusion that is the whole fix.
+
+    The unit suite can prove `knowledge-rules.js` FILTERS on
+    `status === "proposed"`; it cannot prove the tab a person opens shows the
+    result. That gap is exactly how the road shipped stateless for a week — the
+    payload never arrived, every unit test was green, and no test in the gate
+    booted the real ES-module app.
+
+    So this case asserts against the rendered DOM: that Rules is the pane the
+    tab opens on, that no proposed candidate has a card in it while candidates
+    exist to be excluded, that the exclusion says so with a number, that a
+    rule's actions read as a sentence rather than as JSON, and that the strip
+    actually moves between all three panes.
+
+    Runs in English, like `_smoke_road`, because the assertions below read the
+    surface's own wording.
+    """
+    if c.js("document.documentElement.lang") != "en":
+        c.click(*c.element_center("#btn-locale"))
+        time.sleep(1.0)
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+
+    c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
+    time.sleep(1.2)
+
+    check("the Knowledge tab opens on the Rules pane",
+          c.js("document.getElementById('pane-k-rules').classList.contains('active')"))
+    check("the other two panes are not also showing",
+          c.js("""[...document.querySelectorAll('.k-pane.active')].length""") == 1)
+
+    # `GET /api/knowledge` is the unfiltered list the old renderer drew whole.
+    # Comparing it against what the pane drew is the actual claim.
+    served = c.js("""fetch('/api/knowledge').then(r => r.json())
+  .then(vs => JSON.stringify({
+    total: vs.length,
+    proposed: vs.filter(v => v.status === 'proposed').length,
+    active: vs.filter(v => v.status === 'active').length,
+    retired: vs.filter(v => v.status === 'retired').length,
+  }))""")
+    counts = json.loads(served) if served else {}
+    drawn = c.js("document.querySelectorAll('#knowledge-list .rule-card').length")
+    check("the rules list draws the rules in force, not every version",
+          drawn == counts.get("active"), f"drew {drawn}, active {counts.get('active')}")
+    check("no proposed candidate has a card in the rules list",
+          drawn + 0 == counts.get("active") and drawn != counts.get("total")
+          if counts.get("proposed") else True,
+          f"total {counts.get('total')}, proposed {counts.get('proposed')}")
+
+    # ...and the exclusion is STATED. A filter the reader cannot see is
+    # indistinguishable from data that was never published.
+    note = c.js("""(() => {
+  const n = document.getElementById('k-excluded-note');
+  return n.hidden ? '' : n.textContent.trim();
+})()""")
+    if counts.get("proposed"):
+        check("the excluded candidates are counted on screen",
+              str(counts["proposed"]) in (note or ""), note)
+        check("...and the note points at where they are decided",
+              "Review" in (note or ""), note)
+    else:
+        check("no candidates, so nothing claims any were excluded", not note, note)
+
+    # the JSON dumps the redesign removed
+    first = c.js("""(() => {
+  const card = document.querySelector('#knowledge-list .rule-card');
+  if (!card) return '';
+  return JSON.stringify({
+    actions: [...card.querySelectorAll('.actions-list li')].map(li => li.textContent.trim()),
+    chips: [...card.querySelectorAll('.rule-scope .chip')].map(ch => ch.textContent.trim()),
+  });
+})()""")
+    card = json.loads(first) if first else {}
+    check("a rule's actions read as sentences", bool(card.get("actions")), first)
+    check("...and not as a JSON dump",
+          not any(a.startswith("[{") or '"kind"' in a for a in card.get("actions", [])),
+          card.get("actions"))
+    check("a rule's scope reads as chips, or says it applies everywhere",
+          bool(card.get("chips")), card.get("chips"))
+
+    # retired rules are reachable rather than read first
+    check("retired rules are collapsed, not listed among the active ones",
+          c.js("""(() => {
+  const g = document.getElementById('k-retired-group');
+  return g.hidden || !g.open;
+})()"""))
+
+    c.shot("60-knowledge-rules.png")
+
+    # --- the strip moves ---------------------------------------------------
+    c.click(*c.element_center('#k-subnav button[data-kpane="published"]'))
+    time.sleep(0.6)
+    check("the strip switches to the Published pane",
+          c.js("document.getElementById('pane-k-published').classList.contains('active')"))
+    published_card = c.js("""(() => {
+  const el = document.getElementById('published-parts');
+  return el ? (el.offsetParent !== null ? 'visible' : 'hidden') : 'absent';
+})()""")
+    check("...and the parts inspector is visible there, if it is built yet",
+          published_card in ("visible", "absent"), published_card)
+
+    c.click(*c.element_center('#k-subnav button[data-kpane="author"]'))
+    time.sleep(0.6)
+    check("the strip switches to the Author pane",
+          c.js("document.getElementById('pane-k-author').classList.contains('active')"))
+    check("...and the rule builder is reachable there",
+          c.js("""(() => {
+  const el = document.getElementById('k-action-rows');
+  return el.offsetParent !== null;
+})()"""))
+    check("the rules pane stopped showing when the author pane started",
+          not c.js("document.getElementById('pane-k-rules').classList.contains('active')"))
+
+    c.shot("61-knowledge-author.png")
+
+    # Hebrew is the language this app opens in: the pane strip and the rule
+    # sentences are both new surfaces, and neither has ever been seen in RTL.
+    c.click(*c.element_center("#btn-locale"))
+    time.sleep(1.2)
+    c.click(*c.element_center('#k-subnav button[data-kpane="rules"]'))
+    time.sleep(0.8)
+    labels = c.js("""[...document.querySelectorAll('#k-subnav button span:not(.count)')]
+  .map(s => s.textContent.trim()).join('|')""")
+    check("the pane strip is translated, not left in English",
+          bool(labels) and "Rules" not in (labels or ""), labels)
+    check("the tab is laid out right-to-left",
+          c.js("document.documentElement.dir") == "rtl")
+    c.shot("62-knowledge-rtl.png")
+    # back to English for whatever follows
+    c.click(*c.element_center("#btn-locale"))
+    time.sleep(1.0)
+
+
+def _mm_across(c, mm: int) -> float:
+    """How many viewport pixels `mm` of world is, right now.
+
+    The canvas scales its viewBox to whatever width the column happens to be
+    and the view pans and zooms, so a drag measured in millimetres has to go
+    through the SAME matrix `canvas_px` uses. Asked of the browser as two
+    points that far apart rather than derived from the scale constant, which
+    would be a second copy of `geom.js`'s arithmetic living in the test.
+    """
+    a = c.canvas_px(0, 0)
+    b = c.canvas_px(mm, 0)
+    return b[0] - a[0]
+
+
+def _smoke_sales_step_surfaces(c) -> None:
+    """The four steps the user found empty or duplicated, on the road itself.
+
+    Each check below is one sentence of the instruction that produced it:
+
+      1. "the job — 'this job' shouldn't be on the side", "no need for 2 buttons
+         that do the same thing", "the 'no strategy yet ...' is redundant"
+      3. "which fence — doesn't show fence model selection"
+      4. "gates — the same"
+      5. "attach annotation — should be on the map layout itself, the user
+         clicks on any object on the map and attaches a note to it"
+
+    Only a browser can say these: every one of them is about what is ON SCREEN
+    at a given step, which is the product of `js/step-surfaces.js`, `style.css`
+    and the module that owns the panel — three files that each looked right on
+    their own while the step showed a report with nothing to press.
+    """
+    step = lambda key: (
+        c.js(f"document.querySelector('#road [data-step=\"{key}\"]').click(); 'ok'"),
+        time.sleep(0.8))
+
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  s.value = 'sales'; s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""")
+    c.js("document.getElementById('new-project-name').value = 'steps'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    pid = c.js("document.getElementById('project-select').value")
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 9000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]}
+    c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+
+    # --- 1 the job is the work, not something beside it -------------------
+    step("job")
+    job = c.js("""(() => {
+  const p = document.getElementById('job-panel');
+  const vis = (el) => !!el && el.getClientRects().length > 0;
+  return {
+    in_canvas_col: !!p && !!p.closest('.canvas-col'),
+    in_side_col: !!p && !!p.closest('.side-col'),
+    done_shown: vis(document.getElementById('step-done-btn')),
+    save_shown: vis(document.getElementById('job-save')),
+    summary_shown: vis(document.getElementById('strategy-summary')),
+  };
+})()""")
+    check("step 1 puts the job in the main column, not on the side",
+          job["in_canvas_col"] and not job["in_side_col"], job)
+    check("step 1 offers ONE button, the one that saves",
+          job["save_shown"] and not job["done_shown"], job)
+    check("no strategy caption under a picture that is not there",
+          not job["summary_shown"], job)
+
+    # ...and the one button still moves the road on, or removing the other one
+    # would have cost the salesperson the step they were on.
+    c.js("""(() => {
+  document.getElementById('job-customer').value = 'Steps Ltd';
+  document.getElementById('job-address').value = '1 Road';
+  document.getElementById('job-save').click();
+  return 'saved';
+})()""")
+    time.sleep(2.0)
+    check("saving still advances to step 2 on its own",
+          c.js("document.documentElement.dataset.step") == "property")
+
+    # --- finishing a run is not "done with this step" ----------------------
+    # Reported: "'finish run' shouldn't take the user to the next step". Enter
+    # means "that is the whole run" to the drawing, and it is also the
+    # browser's activation key for whatever button has focus — which, after
+    # arriving by pressing *Done — next: ...*, is that very button, because
+    # clicking an SVG moves focus nowhere. One keystroke committed the run and
+    # walked the salesperson on. Both halves are checked: the drawing takes
+    # focus on a press, and the step does not move.
+    step("layout")
+    c.js("window.scrollTo(0, 0); 'ok'")
+    c.click(*c.canvas_px(0, 0))
+    c.click(*c.canvas_px(6000, 0))
+    time.sleep(0.5)
+    focused = c.js("document.activeElement.id || document.activeElement.tagName")
+    check("a press on the drawing gives the drawing the keyboard",
+          focused == "canvas", focused)
+    before = c.js("document.documentElement.dataset.step")
+    c.click(*c.element_center("#btn-finish-draft"))
+    time.sleep(2.0)
+    after = c.js("document.documentElement.dataset.step")
+    runs = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                ".then(p => p.topology.runs.length)" % pid)
+    check("finishing the run records it and leaves the salesperson on the step "
+          "they were on",
+          before == "layout" and after == "layout" and (runs or 0) >= 1,
+          {"before": before, "after": after, "runs": runs})
+
+    # --- 3 which fence: a picker, not a report with nothing to press -------
+    step("model")
+    picker = c.js("""(() => {
+  const sel = document.getElementById('model-row-select');
+  if (!sel) return null;
+  const opts = [...sel.options].filter(o => o.value && !o.disabled).map(o => o.value);
+  return {shown: sel.getClientRects().length > 0, selectable: opts};
+})()""")
+    check("the 'which fence' step actually offers the fence models",
+          picker and picker["shown"] and len(picker["selectable"]) >= 1, picker)
+    if picker and picker["selectable"]:
+        chosen = picker["selectable"][0]
+        c.js("""(() => {
+  const sel = document.getElementById('model-row-select');
+  sel.value = %r; sel.dispatchEvent(new Event('change'));
+  return sel.value;
+})()""" % chosen)
+        time.sleep(2.0)
+        got = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                   ".then(p => p.fence_model && p.fence_model.model_id)" % pid)
+        check("choosing one records it as the job's model", got == chosen,
+              {"chose": chosen, "recorded": got})
+
+    # --- 4 gates: which gate, before where it goes ------------------------
+    step("gates")
+    gates = c.js("""(() => {
+  const panel = document.getElementById('gates-panel');
+  const sel = document.getElementById('gate-kit-select');
+  return {
+    panel_shown: !!panel && panel.getClientRects().length > 0,
+    kits: sel ? [...sel.options].map(o => o.value).filter(Boolean).length : 0,
+    says_no_catalog: !!panel && panel.textContent.includes('catalog'),
+  };
+})()""")
+    check("the gates step shows the gate panel",
+          gates["panel_shown"], gates)
+    check("...and names the gates that can be sold, before any click on the fence",
+          gates["kits"] >= 1 or gates["says_no_catalog"], gates)
+
+    # --- a gate is placed BESIDE the fence, and shows how it opens ----------
+    # "i want it placed at the end of the fence ie o-----o gate (it can combine
+    # 2 unconnected runs) but it doesnt change the layout of already placed
+    # runs" — and "a run and a gate are different things; the gate is placed
+    # next to a run, not on it."
+    #
+    # So the gesture is a drag out from the post the gate hangs from, and what
+    # it writes is a `GateSpan` on `topology.gates` — never a hole in a run.
+    # The engine invariant (the runs lay out identically either way) is pinned
+    # in tests/strategy/test_gate_span_generation.py; what only a browser can
+    # say is that the gesture reaches it, that the drawing shows the opening and
+    # the swing, and that the two controls on the drawing change them.
+    # Fit first, then aim. The canvas reframes itself around the topology, so a
+    # point outside the fitted box lands on the page behind the drawing and the
+    # gesture reaches nothing — indistinguishable, from the check's side, from a
+    # gate tool that does not work. `#btn-fit` lives in the generate bar, which
+    # this step hides; a hidden button still takes a scripted click.
+    c.js("document.getElementById('btn-fit').click(); 'ok'")
+    time.sleep(0.6)
+    c.js("window.scrollTo(0, 0); 'ok'")
+    before = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                  ".then(p => p.topology.runs.map(r => [r.id, r.start_node_id,"
+                  " r.end_node_id]))" % pid)
+    c.drag(*c.canvas_px(9000, 0), *c.canvas_px(10200, 0))
+    time.sleep(1.5)
+    placed = c.js("""fetch(`/api/projects/%s`).then(r => r.json()).then(p => {
+  const g = (p.topology.gates || [])[0];
+  if (!g) return {gates: (p.topology.gates || []).length};
+  const n = (id) => p.topology.nodes.find(x => x.id === id);
+  const a = n(g.start_node_id), b = n(g.end_node_id);
+  return {gates: p.topology.gates.length, id: g.id, leaf: g.leaf,
+          opens_to: g.opens_to, hinge: g.hinge, kit: g.kit_sku,
+          start_node_id: g.start_node_id,
+          opening: a && b ? Math.round(Math.hypot(b.x_mm - a.x_mm,
+                                                  b.y_mm - a.y_mm)) : null,
+          runs: p.topology.runs.map(r => [r.id, r.start_node_id, r.end_node_id]),
+          holes: p.topology.runs.reduce((k, r) => k +
+            (r.point_events || []).filter(e => e.payload.kind === 'gate').length, 0)};
+})""" % pid)
+    check("dragging beside the fence places a gate of its own, not a hole in a run",
+          placed.get("gates") == 1 and placed.get("holes") == 0
+          and placed.get("opening") is not None
+          and abs(placed["opening"] - 1200) <= 60, placed)
+    # the end it was dragged FROM is a post that was already there: that shared
+    # node is the whole of "it can combine 2 unconnected runs"
+    ends = {n for _, a, b in (before or []) for n in (a, b)}
+    check("it hangs from a post the fence already had, and moves no run",
+          placed.get("start_node_id") in ends
+          and placed.get("runs") == before, placed)
+    check("...and nothing is guessed about which way it opens",
+          placed.get("opens_to") is None and placed.get("leaf") == "single",
+          placed)
+
+    drawn = c.js("""(() => ({
+  marks: document.querySelectorAll('#g-gates *').length,
+  unstated: document.querySelectorAll('#g-gates .gate-arc').length,
+  handles: document.querySelectorAll('#g-gates .gate-handle').length,
+  body: document.querySelectorAll('#g-gates .gate-body').length,
+  panel: document.getElementById('gates-panel').textContent,
+}))()""")
+    check("the gate is on the drawing, marked as not yet answered for",
+          drawn["marks"] > 0 and drawn["unstated"] >= 1, drawn)
+    check("...with a handle on each end and a body to slide it by",
+          drawn["handles"] == 2 and drawn["body"] >= 1, drawn)
+
+    # --- and the office is TOLD it was never answered -----------------------
+    # A gate is the one element whose placement does not say how to build it.
+    # The drawing marks it and the panel says it; without this the handover
+    # sheet did not, so a job with a gate nobody can hang reached the office
+    # reading complete. The road's gates step is where it is reported, because
+    # that is the screen where one click closes it.
+    gap = c.js("""fetch(`/api/projects/%s/handover`).then(r => r.json())
+  .then(h => (h.gaps || []).map(g => g.code))""" % pid)
+    check("a gate nobody has answered for is a gap on the handover sheet",
+          "gate_swing_unstated" in (gap or []), gap)
+    badge = c.js("""(() => (document.querySelector(
+  '#road [data-step="gates"] .road-state')?.textContent || '').trim())()""")
+    check("...and the step that can close it says so",
+          "1" in (badge or ""), badge)
+
+    # answering it: one click on the question mark states a side, and the panel
+    # then says which way in words
+    def click_el(selector):
+        # A point ON the stroke, not the centre of the bounding box: the swing
+        # hit target is a quarter-circle path, and the centre of a quarter
+        # circle's box is not on the curve — aiming there clicks the empty
+        # canvas beside it. A person aiming at the dashed arc hits the 14 px
+        # transparent stroke; this is how the test aims at the same place.
+        box = c.js("""(() => {
+  const e = document.querySelector('%s');
+  if (!e) return null;
+  // paths only: a <circle> is an SVGGeometryElement too, and half its length
+  // is a point on the CIRCUMFERENCE rather than the middle of the dot
+  if (e.tagName === 'path' && e.getPointAtLength && e.getTotalLength) {
+    const p = e.getPointAtLength(e.getTotalLength() * 0.5);
+    const q = new DOMPoint(p.x, p.y).matrixTransform(e.getScreenCTM());
+    return [q.x, q.y];
+  }
+  const r = e.getBoundingClientRect();
+  return [r.x + r.width / 2, r.y + r.height / 2];
+})()""" % selector)
+        if box:
+            c.click(*box)
+            time.sleep(1.5)
+        return box
+
+    gate_now = lambda: c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                            ".then(p => (p.topology.gates || [])[0] || null)" % pid)
+    click_el("#g-gates .gate-arc")
+    stated = gate_now()
+    check("clicking the question mark states a side, and hangs it on a post",
+          stated and stated["opens_to"] in ("left", "right")
+          and stated["hinge"] == "start", stated)
+    words = c.js("document.getElementById('gates-panel').textContent")
+    check("...and the panel says which way it opens, in words",
+          "opens" in (words or "").lower(), (words or "")[:200])
+    gap_after = c.js("""fetch(`/api/projects/%s/handover`).then(r => r.json())
+  .then(h => (h.gaps || []).map(g => g.code))""" % pid)
+    check("answering it closes the gap the office would have seen",
+          "gate_swing_unstated" not in (gap_after or []), gap_after)
+    c.shot("58-gate-beside-the-fence.png")
+
+    click_el("#g-gates .gate-hinge")
+    swapped = gate_now()
+    check("clicking the hinge hangs it on the other post",
+          swapped and swapped["hinge"] == "end", swapped)
+    click_el("#g-gates .gate-arc")
+    flipped = gate_now()
+    check("clicking the swing opens it the other way",
+          flipped and flipped["opens_to"] != stated["opens_to"], flipped)
+
+    # --- a placed gate can be moved and resized -----------------------------
+    # It could only be deleted and placed again. A gate is two nodes, so its
+    # ends resize the opening and its body slides the whole thing along —
+    # and because those are NODES, whatever else is attached to one follows,
+    # which is the same thing dragging a run's dot has always done.
+    def nodes_of(gate):
+        return c.js("""fetch(`/api/projects/%s`).then(r => r.json()).then(p => {
+  const n = (id) => p.topology.nodes.find(x => x.id === id);
+  const a = n('%s'), b = n('%s');
+  return {a: [a.x_mm, a.y_mm], b: [b.x_mm, b.y_mm],
+          opening: Math.round(Math.hypot(b.x_mm - a.x_mm, b.y_mm - a.y_mm)),
+          start: '%s', end: '%s'};
+})""" % (pid, gate["start_node_id"], gate["end_node_id"],
+         gate["start_node_id"], gate["end_node_id"]))
+
+    def handle_px(selector):
+        box = c.js("""(() => {
+  const e = document.querySelector('%s');
+  if (!e) return null;
+  const r = e.getBoundingClientRect();
+  return [r.x + r.width / 2, r.y + r.height / 2];
+})()""" % selector)
+        return box
+
+    c.js("document.getElementById('tool-select').click(); 'ok'")
+    time.sleep(0.3)
+    was = nodes_of(flipped)
+    grab = handle_px('#g-gates .gate-handle[data-end="end"]')
+    check("the far end of the gate offers a handle to take hold of",
+          grab is not None, grab)
+    if grab:
+        # 800 mm further along the fence line
+        c.drag(grab[0], grab[1], grab[0] + _mm_across(c, 800), grab[1])
+        time.sleep(1.8)
+    grown = nodes_of(flipped)
+    check("dragging an end changes the opening and leaves the other end put",
+          grown and was and grown["a"] == was["a"]
+          and grown["opening"] > was["opening"] + 300,
+          {"before": was, "after": grown})
+
+    before_move = grown
+    body = handle_px("#g-gates .gate-body")
+    if body:
+        c.drag(body[0], body[1], body[0], body[1] - 60)
+        time.sleep(1.8)
+    moved = nodes_of(flipped)
+    check("dragging the body slides the whole gate, opening unchanged",
+          moved and before_move
+          and moved["a"] != before_move["a"] and moved["b"] != before_move["b"]
+          and abs(moved["opening"] - before_move["opening"]) <= 40,
+          {"before": before_move, "after": moved})
+
+    # --- the tool belongs to the step, and never outlives it ---------------
+    # Reported: "pressing on objects on 'note step' is placing gates; the click
+    # functionality shouldn't preserve between steps". Hiding the gate button
+    # never disarmed the gate tool, so on the notes step a click meant to
+    # attach a promise to the house placed a gate on the fence instead. The
+    # armed tool is checked on arrival at every step, and against the step's
+    # own rail rather than a list repeated here.
+    armed = {}
+    for key in ["layout", "sideview", "model", "gates", "notes", "review", "job"]:
+        step(key)
+        armed[key] = c.js("""(() => {
+  const t = document.getElementById('canvas').dataset.tool;
+  const btn = document.getElementById('tool-' + t);
+  return {tool: t,
+          offered: t === 'select' || (!!btn && btn.getClientRects().length > 0)};
+})()""")
+    check("each step arms its own tool — draw on the layout, the gate on gates, "
+          "the note on notes — and never one the step before it left behind",
+          [armed[k]["tool"] for k in ["layout", "gates", "notes"]]
+          == ["draw", "gate", "note"], armed)
+    check("...and never one this step's own rail does not offer",
+          all(v["offered"] for v in armed.values()), armed)
+
+    # --- 5 a note is attached by clicking the thing it is about ------------
+    step("notes")
+    surface = c.js("""(() => {
+  const vis = (id) => {
+    const el = document.getElementById(id);
+    return !!el && el.getClientRects().length > 0;
+  };
+  return {canvas: vis('canvas'), tool: vis('tool-note'), panel: vis('notes-panel')};
+})()""")
+    check("the notes step is the drawing, not a form on another tab",
+          surface["canvas"] and surface["tool"] and surface["panel"], surface)
+
+    # A house to point at. Placed through the API rather than by clicking, so
+    # this case is about the NOTE and fails for one reason only.
+    # Straddling the fence on purpose, and well inside the fitted view: the
+    # canvas reframes itself around the TOPOLOGY, so a house drawn four metres
+    # off the run can sit outside the visible box entirely and every click aimed
+    # at it lands on the page behind the canvas. It also sets up the check below
+    # — with the house drawn across the run, "a click on the fence is about the
+    # fence" is a real claim about the priority order rather than a click on
+    # empty ground that could not have gone wrong.
+    ctx = {"landmarks": [{"id": "lmN", "kind": "house", "label": "the house",
+                          "closed": True,
+                          "points": [[1000, -2000], [6500, -2000],
+                                     [6500, 2000], [1000, 2000]]}]}
+    c.js("fetch('/api/projects/" + pid + "/context', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(ctx) + ")}).then(r => r.status)")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+    step("notes")
+    c.click(*c.element_center("#tool-note"))
+    time.sleep(0.3)
+    c.js("window.scrollTo(0, 0); 'ok'")
+    c.click(*c.canvas_px(3500, 1200))     # inside the house, clear of the fence
+    time.sleep(0.8)
+    # `landed` says WHICH element the pointer actually reached. Without it, a
+    # click that missed the canvas (the view reframes itself around the
+    # topology, so a point outside the fitted box lands on the page behind it)
+    # is indistinguishable from a note tool that does not work — a whole
+    # debugging session's difference, in one extra field.
+    seen = c.js("""(() => {
+  const p = document.querySelector('.note-popover');
+  const px = %f, py = %f;
+  const el = document.elementFromPoint(px, py);
+  return {
+    text: p ? p.textContent : null,
+    tool: document.getElementById('canvas').dataset.tool,
+    landed: el ? (el.id || el.tagName) : null,
+  };
+})()""" % c.canvas_px(3500, 1200))
+    heading = seen["text"]
+    check("clicking the house opens a note addressed to the house, by its name",
+          bool(heading) and "the house" in heading, seen)
+    c.js("""(() => {
+  const t = document.querySelector('.note-popover textarea');
+  if (!t) return 'no textarea';
+  t.value = 'keep a post clear of the front window';
+  t.dispatchEvent(new Event('input', {bubbles: true}));
+  const btns = [...document.querySelectorAll('.note-popover button')];
+  const add = btns[btns.length - 1];
+  add.click();
+  return 'added';
+})()""")
+    time.sleep(2.5)
+    anns = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.annotations)"
+                % pid)
+    check("the promise is recorded verbatim, against the house it is about",
+          isinstance(anns, list) and len(anns) == 1
+          and anns[0]["target_ref"] == "landmark:lmN"
+          and anns[0]["text"] == "keep a post clear of the front window", anns)
+    marker = c.js("document.querySelectorAll('#g-notes *').length")
+    check("and the drawing shows where it was attached", (marker or 0) > 0, marker)
+    c.shot("56-sales-step-surfaces.png")
+
+    # a click on the FENCE is about the fence, not about the house behind it.
+    # Aimed at the run's OWN midpoint rather than at a remembered coordinate:
+    # the gate drags above moved a node this run shares, so the fence is no
+    # longer where it was drawn — which is what sharing a node means, and a
+    # check that assumed otherwise would be testing the old drawing.
+    mid = c.js("""fetch(`/api/projects/%s`).then(r => r.json()).then(p => {
+  const run = p.topology.runs.find(r => r.id === 'run1') || p.topology.runs[0];
+  const n = (id) => p.topology.nodes.find(x => x.id === id);
+  const a = n(run.start_node_id), b = n(run.end_node_id);
+  return [Math.round((a.x_mm + b.x_mm) / 2), Math.round((a.y_mm + b.y_mm) / 2)];
+})""" % pid)
+    c.js("window.scrollTo(0, 0); 'ok'")
+    c.click(*c.canvas_px(mid[0], mid[1]))
+    time.sleep(0.8)
+    on_run = c.js("""(() => {
+  const p = document.querySelector('.note-popover');
+  return p ? p.textContent : null;
+})()""")
+    check("a click on the fence is a note on the fence, not on the backdrop",
+          bool(on_run) and "run1" in on_run, on_run)
+    c.js("""(() => {
+  const btns = [...document.querySelectorAll('.note-popover button')];
+  if (btns.length) btns[0].click();
+  return 'cancelled';
+})()""")
+    time.sleep(0.3)
+    # back to the whole app for whatever follows
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  s.value = 'all'; s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""")
+    time.sleep(0.5)
+
+
+def _smoke_run_measurements(c) -> None:
+    """A stretch's length and angle are numbers you can type.
+
+    "The user should also be able to change the angle of the fence and
+    everything." A street landmark has had angle/length/width fields since the
+    property panel was built; the fence had none, so somebody who had MEASURED a
+    run could only drag until the label read about right.
+
+    The arithmetic is pinned in `tests/web/test_run_metrics_module.py`. What only
+    a browser can say is that the fields reach it, that the start stays put while
+    the end moves, and that a stretch with a corner in it is offered one row per
+    leg instead of one meaningless angle for the whole thing.
+    """
+    c.js("""(() => {
+  const s = document.getElementById('role-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+    c.js("document.getElementById('new-project-name').value = 'measure'; 'ok'")
+    c.click(*c.element_center("#btn-new-project"))
+    time.sleep(1.5)
+    pid = c.js("document.getElementById('project-select').value")
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 6000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]}
+    c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+
+    shown = c.js("""(() => {
+  const host = document.getElementById('run-measure');
+  if (!host) return null;
+  const get = (k) => {
+    const el = host.querySelector(`[data-kind="${k}"]`);
+    return el ? el.value : null;
+  };
+  return {rows: host.querySelectorAll('.measure-row').length,
+          length: get('length'), angle: get('angle')};
+})()""")
+    check("a straight stretch reports its length and its bearing",
+          shown and shown["rows"] == 1 and shown["length"] == "6000"
+          and shown["angle"] == "0", shown)
+
+    # type a length and a bearing together: 8 m turning 90 degrees
+    c.js("""(() => {
+  const host = document.getElementById('run-measure');
+  host.querySelector('[data-kind="length"]').value = '8000';
+  host.querySelector('[data-kind="angle"]').value = '90';
+  host.querySelector('[data-kind="angle"]').dispatchEvent(
+    new Event('change', {bubbles: true}));
+  return 'typed';
+})()""")
+    time.sleep(2.0)
+    nodes = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                 ".then(p => p.topology.nodes.map(n => [n.id, n.x_mm, n.y_mm]))" % pid)
+    by_id = {n[0]: (n[1], n[2]) for n in (nodes or [])}
+    # the START is the anchor - typing a length says "this stretch is 8 m", not
+    # "slide it off the corner it was drawn from"
+    check("typing a length and an angle moves the far end and leaves the start",
+          by_id.get("n1") == (0, 0) and by_id.get("n2") == (0, 8000), by_id)
+
+    # ...and a stretch with a corner gets one row per leg, never one angle for
+    # the whole shape, which would silently straighten what somebody drew
+    rev = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+               ".then(p => p.topology.revision)" % pid)
+    topo2 = {"revision": rev,
+             "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                       {"id": "n2", "x_mm": 9000, "y_mm": 3000}],
+             "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2",
+                       "interior_vertices": [[6000, 0]]}]}
+    c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+         " headers: {'Content-Type': 'application/json'},"
+         " body: JSON.stringify(" + json.dumps(topo2) + ")}).then(r => r.status)")
+    c.js("{const s = document.getElementById('project-select');"
+         " s.dispatchEvent(new Event('change'));} 'ok'")
+    time.sleep(2.0)
+    legs = c.js("""(() => {
+  const host = document.getElementById('run-measure');
+  return {rows: host.querySelectorAll('.measure-row').length};
+})()""")
+    check("a stretch with a corner is measured one leg at a time",
+          legs and legs["rows"] == 2, legs)
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
     _smoke_property_context,
     _smoke_handover_sheet,
+    _smoke_road,
     _smoke_choices_panel,
     _smoke_post_inspector,
     _smoke_side_drag,
     _smoke_plan_drag,
+    _smoke_knowledge_panes,
+    _smoke_sales_step_surfaces,
+    _smoke_run_measurements,
 ]
 
 
@@ -1440,36 +2567,60 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
   })""")
         check("undo restored the drag", length2 == 6000)
 
-        # --- gate tool + generate --------------------------------------------
+        # --- a gate, placed beside the fence, then generate -------------------
+        # A gate is its own element now, not a hole punched in a run: it is
+        # dragged out from the post it hangs from, and it joins two stretches by
+        # SHARING their end nodes. The user's words: "a run and a gate are
+        # different things — the gate is placed next to a run, not on it."
+        chosen_kit = c.js("document.getElementById('gate-kit-select')?.value || null")
         c.click(*c.element_center("#tool-gate"))
-        c.click(*c.canvas_px(2000, 0))
-        time.sleep(0.5)
-        has_popover = c.js("!!document.querySelector('.popover')")
-        check("gate popover opens", has_popover)
-        # the offered opening is the kit's DECLARED width (catalog attrs), never
-        # digits parsed out of its sku — another catalog's sku carries other
-        # numbers entirely (tools/catalogs/barrette.json: BAR-GATE-1168)
-        declared = c.js("""
-fetch('/api/catalog').then(r => r.json()).then(cat => {
-  const sku = document.getElementById('pop-kit')?.value;
-  const p = sku && cat.products[sku];
-  return p ? ((p.capabilities || {}).opening_width_mm ?? null) : null;
-})""")
-        width_field = c.js("document.getElementById('pop-width')?.value")
-        check("the gate width offered is the kit's declared opening",
-              declared is not None and str(declared) == (width_field or ""))
-        if has_popover:
-            c.js("document.getElementById('pop-save').click(); 'saved'")
-            time.sleep(1)
-            n_gates = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
-  .then(r => r.json())
-  .then(p => p.topology.runs[0].point_events.filter(e => e.payload.kind === 'gate').length)""")
-            check("gate saved to topology", n_gates == 1)
-        c.click(*c.element_center("#btn-generate"))
+        c.js("window.scrollTo(0, 0); 'ok'")
+        c.drag(*c.canvas_px(6000, 0), *c.canvas_px(7000, 0))
         time.sleep(1.5)
+        placed = c.js("""
+fetch(`/api/projects/${document.getElementById('project-select').value}`)
+  .then(r => r.json()).then(p => {
+    const g = (p.topology.gates || [])[0];
+    if (!g) return {gates: (p.topology.gates || []).length};
+    const run = p.topology.runs[0];
+    const n = (id) => p.topology.nodes.find(x => x.id === id);
+    const a = n(g.start_node_id), b = n(g.end_node_id);
+    return {gates: p.topology.gates.length, kit: g.kit_sku, leaf: g.leaf,
+            opens_to: g.opens_to,
+            joins_the_run: g.start_node_id === run.end_node_id,
+            opening: a && b ? Math.round(Math.hypot(b.x_mm - a.x_mm,
+                                                    b.y_mm - a.y_mm)) : null,
+            holes_in_runs: p.topology.runs.reduce((k, r) =>
+              k + (r.point_events || []).filter(e => e.payload.kind === 'gate').length, 0)};
+  })""")
+        check("the gate is its own element, hung from the post at the end of the "
+              "fence, and punches no hole in the run",
+              placed.get("gates") == 1 and placed.get("joins_the_run") is True
+              and placed.get("holes_in_runs") == 0, placed)
+        check("the drag states the opening, and the panel's gate is the one hung",
+              placed.get("opening") is not None
+              and abs(placed["opening"] - 1000) <= 40
+              and placed.get("kit") == chosen_kit, placed)
+        # ...and nothing is guessed about which way it opens
+        check("a gate nobody has answered for states no swing",
+              placed.get("leaf") == "single" and placed.get("opens_to") is None,
+              placed)
+        # Back to the select tool. A tool stays armed until something changes it
+        # (that is the whole point of `defaultToolForStep`), and the gate tool
+        # claims a press on empty canvas — which is exactly what the panning
+        # checks below drag on.
+        c.js("document.getElementById('tool-select').click(); 'ok'")
+        time.sleep(0.3)
+        c.click(*c.element_center("#btn-generate"))
+        time.sleep(2.5)
         n_posts = c.js("document.querySelectorAll('#g-overlay circle').length")
-        check("generate renders posts", (n_posts or 0) >= 3)
+        gen = c.js("""(() => ({
+  overlay: document.querySelectorAll('#g-overlay *').length,
+  summary: (document.getElementById('strategy-summary').textContent || '').slice(0, 80),
+  checked: document.getElementById('chk-overlay').checked,
+}))()""")
+        check("generate renders posts", (n_posts or 0) >= 3,
+              {"circles": n_posts, **(gen or {})})
         # the strategy must SAY what it produced, not only draw it
         summary = c.js("document.getElementById('strategy-summary').textContent")
         check("the strategy summary reports posts, spans and fence length",
@@ -1598,7 +2749,9 @@ fetch('/api/candidates').then(r => r.json()).then(cs => ({
         check("the draw tool aims instead of grabbing",
               c.js("getComputedStyle(document.getElementById('canvas')).cursor")
               == "crosshair")
-        c.js("document.getElementById('tool-gate').click(); 'ok'")
+        # `base`, not `gate`: a gate no longer writes onto a run, so it is no
+        # longer an event tool and no longer aims at a station on one.
+        c.js("document.getElementById('tool-base').click(); 'ok'")
         time.sleep(0.3)
         check("an event tool aims at a station on the run",
               c.js("getComputedStyle(document.querySelector('.run-hit')).cursor")
@@ -2500,7 +3653,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
     cells: rows.reduce((n, r) => n + r.querySelectorAll('td').length, 0),
     // what the document calls each row, beside what the row prints. A decision
     // group is named by the sku it chose, not by a tag, so it is not in here.
-    named: rows.filter(r => r.dataset.kind !== 'decision').map(r => ({
+    named: rows.filter(r => r.dataset.kind !== 'decision'
+                        && r.dataset.kind !== 'bucket').map(r => ({
       kind: r.dataset.kind, id: r.dataset.group,
       want: expected(r.dataset.group, r.dataset.kind) ?? null,
       got: (r.querySelector('.group-head strong')?.textContent || '').trim(),
@@ -3077,9 +4231,21 @@ fetch('/api/projects/{project_id}').then(r => r.json())
   .then(p => p.fence_model === null)""")
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.5)
-        aside_cleared = c.js("document.getElementById('model-row')?.textContent || ''")
+        # Read the REPORT, not the whole row. The row now also carries the
+        # picker — the "which fence" step of the salesperson's road had a
+        # report and nothing to press — and a picker lists every model there
+        # is, M-SLAT included, whichever one this project uses. Asserting on
+        # the row's whole textContent would now be asserting that the choice
+        # cannot be made, which is the opposite of what this check means.
+        aside_cleared = c.js(
+            "document.getElementById('model-row-report')?.textContent || ''")
+        picker_cleared = c.js(
+            "document.getElementById('model-row-select')?.value")
         check("clearing the model returns the project to the legacy panel",
-              cleared is True and "M-SLAT" not in aside_cleared)
+              cleared is True and "M-SLAT" not in aside_cleared,
+              aside_cleared)
+        check("...and the picker beside it comes back to 'none chosen'",
+              picker_cleared == "", picker_cleared)
 
         # --- zoom / pan / fit --------------------------------------------------
         vb0 = c.js("document.getElementById('canvas').getAttribute('viewBox')")
@@ -3099,6 +4265,7 @@ fetch('/api/projects/{project_id}').then(r => r.json())
 
         # --- rule impact preview (knowledge tab) ------------------------------
         c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
+        c.js("document.querySelector('#k-subnav button[data-kpane=\"author\"]').click(); 'ok'")
         time.sleep(0.5)
         # the actions JSON textarea became a rule builder — drive its default
         # set_param row (max_span_mm) through the real number input
@@ -3291,6 +4458,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
               "300" in (stock or "") and "3000" not in (stock or ""))
         # the raw-JSON editors are the STORAGE view: they must stay in mm
         c.js("document.querySelector('#tabs button[data-tab=\"knowledge\"]').click(); 'ok'")
+        c.js("document.querySelector('#k-subnav button[data-kpane=\"author\"]').click(); 'ok'")
         time.sleep(0.8)
         c.click(*c.element_center("#btn-k-advanced"))
         time.sleep(0.5)
@@ -3786,7 +4954,10 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # geometrically on the first leg — and at the corner itself
         stations = []
         for offset in (126, 0):
-            c.click(*c.element_center("#tool-gate"))
+            # `pin`, not `gate`: this checks which LEG a click on a run resolves
+            # to, and a gate no longer lands on a run at all. `pin`'s popover
+            # header is the same shape — the run id and the station it records.
+            c.click(*c.element_center("#tool-pin"))
             # WHOLE pixels: CDP keeps sub-pixel coordinates on mouseMoved but not
             # on mousePressed, and half a pixel is 12 mm on this canvas — the
             # check is about hover vs click, not about CDP's rounding
@@ -3810,13 +4981,16 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # --- an auto-focused field is SELECTED, not just focused --------------
         # a caret parked at position 0 of a pre-filled number field turned a
         # typed 1000 into 10000 — ten metres, saveable without a murmur
-        c.click(*c.element_center("#tool-gate"))
+        # `height`, for the reason above — and it is pre-filled (1800), which is
+        # what this check needs: an empty field cannot demonstrate the bug.
+        c.click(*c.element_center("#tool-height"))
         c.click(*c.canvas_px(3000, 0))
         time.sleep(0.5)
-        prefilled = c.js("document.getElementById('pop-width')?.value")
+        prefilled = c.js("document.getElementById('pop-height')?.value")
         type_text(c, "1234")
         check("typing into the auto-focused popover field replaces its value",
-              bool(prefilled) and c.js("document.getElementById('pop-width').value") == "1234")
+              bool(prefilled)
+              and c.js("document.getElementById('pop-height').value") == "1234")
         c.js("document.getElementById('pop-cancel')?.click(); 'ok'")
 
         # --- the model changes partway along, like base and height do ---------

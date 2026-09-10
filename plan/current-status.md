@@ -3,6 +3,188 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Session close — 2026-09-08: the agent is designed, and nothing is built
+
+**No code changed this session.** Two specs, one plan, four boundary turns, and
+one product decision. The next session implements
+`docs/superpowers/plans/2026-09-08-agent-framework-slice-1.md` and should read
+the two specs before it reads the plan.
+
+### What was decided, so it is not re-litigated
+
+The product owner answered every open question. In `advisory-agent-design.md`:
+the agent proposes into **input slots** and never reaches inside `generate()`,
+so advising on a rule and moving one post are the same mechanism at different
+altitudes; the **backend publishes the action registry** and the agent may only
+emit from it, which makes the ceiling enforce itself; **rejection has five
+types** and only two touch knowledge; knowledge is a **shared backbone plus a
+per-team view**, one company now but keyed from the start; **log always, sample
+later, score retrospectively**; and a recommendation is a graph node.
+
+Then `agent-framework-design.md` says how, and its load-bearing property falls
+out of a comment `ai/claude.py` already carried: structured outputs forbid a
+free-form dict, so a payload must be typed — and once it is, **a task's
+permission list can BE the output schema.** A task allowed to rank a choice set
+gets a grammar whose only verb is *pick point p2*. Narrow run stops being a
+policy and becomes a type.
+
+### The boundary moved, and the thread is what moved it
+
+`conversation.md` is at **T59**; our copy had stopped at T55 and we did not know
+until the product owner asked. Reading it properly — rather than grepping it,
+which is what this session did first and what cost the most — changed the design
+six times:
+
+- **A proposal id must be content-derived.** T46 §8: *"0 of 67 ids survive… The
+  gaps themselves did not all change; their identity did."* Random ids silently
+  break "a rejection suppresses re-proposal", because nothing can tell a
+  re-proposal is the same proposal.
+- **Reach is counted from the first task, not added later.** T52/T53/T54 measured
+  two correct systems, 6,563 runs and zero consultations, in silence for weeks.
+  *"A snapshot whose entire parameter corpus is unreachable looks, from either
+  side, exactly like a snapshot that is working."* An agent nobody keeps looks
+  the same way.
+- **A claim may only cite what the view handed it.** T57 §3 found that the
+  spec's *"re-executed against the view"* is impossible for a Knowledge
+  `ref_id` and forbidden by our own `core/gaps.py`. The rule taken is cheaper
+  than their first option and stricter than their second: an agent can echo a
+  citation, never invent one. **Accepted at T59 §2.**
+- **`no_standing` is not `needs`.** T54 §2 left an association table
+  deliberately empty rather than *"assert a product identity we do not hold"*.
+- **Never merge similar corrections.** T46 §11 / T49 §7, on real data where a
+  merge *"would have produced a confident span on a site the other four
+  documents refuse to answer for."*
+- **A goal says what a task is FOR, never what is TRUE** (T49 §6c), and the view
+  is never cached across runs (T53 §1).
+
+### Two things the product owner decided that cross the boundary
+
+**A customer's documents go to the Knowledge platform**; the products and prices
+read out of them stay here, with catalogue rows, import, column mapping and the
+price-list lifecycle. Our §8 described a store that was a description of theirs
+— 146 documents byte-exact, 82,282 elements, 25,961 citations with 0 dangling.
+Their tenancy work is now a **precondition**: all 146 documents are
+`owner_tenant = NULL`, and a customer's price list must not be shared. They will
+name the turn it first carries a row.
+
+**Both prices are kept**: a March quote prices at January's numbers. Half of it
+is already true — a `Quote` is a frozen document — so the build item narrows to
+catalogue products becoming append-only versions citing the document version
+they came from.
+
+`roles-and-boundaries.md` is **accepted with two notes**, both statements about
+what is built rather than modifications. Note (a) is the one that mattered: we
+have no person model at all, `author` is a caller-supplied string on eleven
+routes with no authentication anywhere, so every `WHO` from us is unattributed.
+**T59 §3 answered it and it does not block us** — `WHO` gates rank, not
+admissibility, on the precedent of their own unverifiable `reviewer`.
+
+### One live defect in this repo, found by reading their thread
+
+`knowledge/parameters.py:964` emits the `uncovered_point_contradicted` dispute
+**instead of** the ordinary coverage gap — it `continue`s past it. Both sides
+have now agreed it should accompany rather than replace, *"so a false dispute
+costs a curator a question rather than a record"* (T55 §7, accepted T59 §1). The
+`all([])` half of that finding is already fixed in the tree. Not scheduled; it
+is small and has a test-shaped fix.
+
+Also recorded: our three vendored snapshot fixtures are stale, which is why our
+alarm reports 48 disputes where every current cut reports 0.
+
+### Where to start
+
+Read `advisory-agent-design.md`, then `agent-framework-design.md`, then the
+plan. The first slice is **ranking a choice set** because it cannot produce a
+bad fence: `generate()` already enumerates the admissible points and `offered()`
+already drops the dominated ones, so the task was never handed the vocabulary to
+describe an inadmissible layout. It ends at a checkpoint the product owner walks
+in a browser — green tests are not the checkpoint.
+
+---
+
+## 2026-09-07: Published Emblem Parts available for inspection
+
+The persistent local BOM preview at `http://localhost:8000` now carries source
+snapshot `55bc6c76…`. Choose Everything → Knowledge → Published parts; search
+`noa22021705` for the three new draft drawing definitions. All 24 typed public
+Parts round-trip; draft visibility does not create assembly models. API and
+precision/locale checks passed. The saved s17 project has a separate null-point
+canvas overlay error. See [integration details](../docs/architecture/published-part-inspection.md)
+for evidence, backup, checks actually run, and limitations.
+
+## Session close — 2026-09-06: the visualization package got a decision
+
+**2540 tests · browser smoke 344/344.**
+
+The 24 MB package that arrived untracked from another session is now committed
+(`9de94eb`) and, for the first of the five things in it, decided.
+
+### It is five things, not one
+
+`docs/visualizations/salesperson-mvp/` contains (A) a six-step storyboard of a
+proposed salesperson screen, (B) an argument for measurement confidence, (C) an
+evidence/attachment package, (D) an office transfer lifecycle, and (E) an audit
+of the app as it actually stands. Only A has a spec. **D is the OFFICE person's
+MVP and must not be built from the storyboard's preview screen** — that is how
+a second MVP starts by accident.
+
+The studies and the five-agent review inside the package are AI-agent
+simulations, not user evidence. The audit half is different and stronger: it
+drove a real browser against this repo and reproduced what it found, which is
+why `handover.py` cites it by path.
+
+### The finding that made A cheap
+
+The storyboard's Ground / Base / Fence separation reads as a domain proposal and
+is not one. `Node.z_mm`, `ElevationSamplePayload`, `BasePayload.surface`,
+`BaseTopPayload.points`, `BaseTopPoint.lock` are all already there, and
+`BaseTopPoint.z_mm` is commented **in the type** as *"height of the base top
+ABOVE local ground"*. The model already separates them; the SCREEN blurs them.
+
+The one clause with nowhere to live is *"planned per drawing rev 3, not
+measured"* — every `z_mm` reads as measured fact. That is B, it is the only
+genuinely new domain concept in the package, and it is not specced yet.
+
+### `docs/superpowers/specs/2026-09-06-salesperson-road-design.md`
+
+The road exists and nothing shows it. Read it before building any of it; the
+load-bearing decisions are that the road is a **map and never a wizard** (a
+wizard is defeated by typing junk to get past a step, which turns a completeness
+report into a completeness lie), and that it **computes no completeness of its
+own** — three surfaces already answer "what is left" and disagree.
+
+**One open question is deliberately left open** and wants answering before the
+plan: does the road replace the tab strip for sales, or sit above it? It changes
+what `role.js` HIDES rather than what it words.
+
+### Audit B03 fixed, and one found while verifying it (`e77883b`)
+
+The canvas aside's model row read `project.fence_model` alone, so a job with both
+stretches sold as M-SLAT through *What was sold* still said "No model chosen" —
+and sent the salesperson to the Panel tab, which their own role hides. It also
+disagreed with the handover sheet three centimetres away. B01, B02 and B04 were
+already fixed by `884c09d`; **B03 was the last of the four.**
+
+Found while verifying, in the browser smoke's OWN screenshot rather than by any
+test: `#tool-model`, `#tool-house` and `#tool-street` printed the literal string
+`hint.model` under the canvas, in both languages. `editor.js` builds that key as
+`hint.${state.tool}` — a **dynamic** key, the one shape `test_bundle_key_parity`
+cannot see, because both bundles agreed with each other and neither had the
+entry. All three are tools a salesperson KEEPS. New guard:
+`test_every_tool_on_the_rail_has_a_hint_in_both_bundles`.
+
+`test_every_hidden_selector_exists` failed on the new `#model-row-hint` and was
+right to — its id scan read `.id = "x"` and object-literal forms but not ids in
+HTML template strings, which is how most of this frontend builds DOM.
+
+### Still recorded, not scheduled
+
+Audit observations 3–6. Observation 5 is visible in
+`tools/smoke-out/50-sales-mode.png` today: the generated summary offers *"see the
+priced BOM →"* while the BOM tab is hidden from the role.
+
+---
+
 ## Session close — 2026-09-04: the salesperson MVP is built
 
 **2535 tests · browser smoke 344/344 · contract hashes OK at v1.3.**
@@ -4835,3 +5017,232 @@ during mutation cannot revert an uncommitted fix — which it did twice in this 
 before the habit stuck.
 
 1866 pytest · 213 golden scenarios · compatibility gate unmoved.
+
+---
+
+## The salesperson's screen, corrected (2026-09-09) — COMPLETE
+
+Five corrections from the user, on the road they had just walked. Each one is a
+place where the step existed, the navigation worked, and the screen underneath
+had nothing on it worth doing.
+
+**1 — the job.** `#job-panel` was in the side column while step 1 hides the
+drawing, so the whole main column was blank and the only thing to do on the
+screen was tucked into the margin. It is the first child of `.canvas-col` now.
+Two buttons did one thing — the panel's Save and the road's *Done — next: The
+property* — and Save already advanced the road through `job-changed`. A step may
+now declare `commits: true` in `roads.js`, and `road.js` suppresses its own Done
+there; step 1 is the only one that has an explicit commit to make. And
+`strategy.none` ("No strategy yet — press ⚙ Generate strategy") is gone: it sat
+directly under the button it described, on every step including those with no
+canvas at all. `#statusbar` and `#strategy-summary` are now scoped WITH the
+drawing in `step-surfaces.js`, so a caption cannot outlive its picture.
+
+**2 — the property.** The header of `context.js` used to defend "one gesture,
+one shape: press, drag, release". The user overruled it and the reasons were
+better than ours: a house is not a rectangle, and a street with no width has
+nothing to edit. So the geometry moved into a new pure module,
+`js/landmark-shape.js` (node-tested beside `base-top.js`), which owns the
+gesture per kind — a house is built click by click, a street and a sidewalk are
+dragged BANDS, a pool/boundary/other is a bbox, a tree is a 16-gon. Because a
+band is a rectangle, `rectMetrics`/`rectFromMetrics` make angle, length and
+width typeable in the property panel; a click-built house is offered none,
+because inventing an angle for a free polygon squares off a shape somebody
+traced. `LANDMARK_KINDS` grew `sidewalk`, `pool`, `tree` — a registry addition,
+not an amendment, and the seam cost exactly what it was written to cost. Only
+the house and the street are toolbar buttons; the rest live behind one
+`#tool-other` picker.
+
+**3 and 4 — which fence, and gates.** Both steps showed a report and gave
+nothing to press. `#model-row` now carries a real picker over the same listing
+and the same `PUT /projects/{id}/fence-model` the Panel tab uses, with the
+report kept underneath — the select answers *what is the default*, the report
+answers *what was actually sold across the whole fence*, and collapsing them is
+audit B03 returning. A new `js/gates.js` owns `#gates-panel`: which gate, from
+the catalog, before any click on the fence — the gate popover now seeds from
+that standing choice — plus the gates already placed, removable. `editor.js`'s
+private `gateKitProducts`/`declaredOpening` moved there, so the filter that
+decides what counts as a gate has one home.
+
+**5 — notes.** The Annotations tab asked a salesperson to pick "r2" from a list
+of run ids. A note is attached by clicking the thing it is about now:
+`editor.js` resolves point event → corner node → run → landmark → the job, and
+`js/notes.js` opens the popover, posts the verbatim text, lists the promises
+back and marks them on the drawing. `target_ref` gained `landmark:<id>`. There
+is no delete, because there is no delete endpoint, because a promise a person
+made is not ours to withdraw — and a note outlives its referent, so an
+unresolvable ref reads as "something no longer on the drawing" rather than
+throwing.
+
+Three tests asserted the behaviour the user overruled and were rewritten to say
+what changed and why (`notes` is no longer the step whose surface is another
+panel; the map belongs to steps 2–7; the registry is seven kinds). The browser
+smoke gained `_smoke_sales_step_surfaces`, one check per sentence of the
+instruction, and its property case now proves the click-built house, the band's
+typeable width, that only two property tools are buttons, and that a tree chosen
+under "Other" is drawn and recorded.
+
+2758 pytest · 404 browser checks · compatibility gate unmoved.
+
+---
+
+## Five more corrections, and the gate design (2026-09-09) — COMPLETE
+
+The user walked the road again. Four defects and one design conversation.
+
+**The "Other" picker recorded everything as "Other".** `#tool-other` is a
+`<select>` whose id matches the `other` KIND, so the toolbar's own click wiring
+gave it a listener arming `other` — and a native select fires `change` when an
+option is chosen and `click` when the dropdown closes, in that order. Every
+tree, pool and sidewalk was armed correctly and then overwritten a millisecond
+later. Only `<button>` elements get click wiring now. The browser smoke had
+missed it by driving the picker with `change` alone, which is precisely the half
+that worked; it drives both, in order, and would now fail.
+
+**The street's fixed width.** A band has two gestures: drag the BOX the road
+occupies and both numbers come out of the one drag, or drag a LINE along it and
+get a default-width band as before. The box is wound long-side-first so
+`rectMetrics` reads "length" and "width" the way the person who dragged it
+would — a street running up the page is 18 m long and 3 m wide, not the reverse.
+
+**"Finish run" walking to the next step.** Enter means *that is the whole run*
+to the drawing and is also the browser's activation key for the focused button
+— which, after arriving by pressing *Done — next: …*, is that very button,
+because clicking an SVG moves focus nowhere. One keystroke, two commits. The
+canvas has `tabindex="-1"` and takes focus on a press, and the Enter that
+finishes a draft calls `preventDefault`.
+
+**Tools surviving their step.** Hiding a control never disarmed it, so the gate
+tool armed on step 6 was still armed on step 7, where clicking the house to
+attach a note placed a gate instead. `step-surfaces.js: defaultToolForStep`
+derives the answer from the tools a step KEEPS — one kept tool means the step is
+that tool (draw, gate, note); several or none gets `select` — and the invariant
+asserted is that no step can arm a tool its own rail hides.
+
+**Gates, discussed then built.** They sell single-swing, double-swing and
+sliding gates; the direction is stated by pointing at a side; it must reach the
+drawing and the setting-out sheet but must not pick hardware yet. So
+`GatePayload`/`Gate`/`GateRow` carry `leaf`, `opens_to`, `hinge`, `slides_to`;
+`js/gate-geom.js` (pure, node-tested) computes the opening, the swing arc and
+the slide arrow; `js/gates.js` draws them from the topology event before any
+generation and names the side from the landmarks actually on it — *"opens
+toward the house"*, not *"opens left"*. A side nobody stated is drawn as a
+question mark rather than as a default, and the payload validator refuses the
+contradictions. The opening is now CENTRED on the click, because the generator
+reads the anchor as the leading edge and a click used to put the hole beyond
+where the person pointed. Nothing reaches generation: an invariance test
+compares posts, spans, warnings, the BOM and every decision-graph node between
+a plain gate and a swung one.
+
+2813 pytest · 299 golden scenarios · 417 browser checks · compatibility gate
+unmoved.
+
+---
+
+## A gate is not a piece of fence (2026-09-09) — COMPLETE
+
+Two corrections, in the user's words: *"i want it placed at the end of the fence
+ie `o-----o gate` (it can combine 2 unconnected runs) but it doesnt change the
+layout of already placed runs"*, and then, on being told a gate was its own
+short stretch: *"no, a run and a gate are different things. the gate is placed
+next to a run, not on it!"*
+
+Both readings before that were wrong and both were backed out. The model that
+holds is a second, first-class kind: **`GateSpan` on `topology.gates`**, two
+nodes and a kit, standing beside the runs and on none of them.
+
+- **No stored width.** The opening is the distance between its nodes, as a run's
+  length is between its own — `topology/station.py: gate_opening_mm`. A stored
+  width would disagree with the geometry the instant somebody dragged a node,
+  and from then on the drawing and the price would be about different gates.
+- **It joins two runs by sharing their end nodes**, which is what "combines 2
+  unconnected runs" means and why nodes rather than a position.
+- **It changes the layout of neither.** `_generate_gate_spans` runs after the
+  whole run loop, so nothing a run produces can observe a gate — by
+  construction rather than by care. The test generates the same topology twice,
+  with and without the gates, and compares posts, spans, warnings, BOM lines and
+  every decision-graph node.
+- **It gets its own post** at a node no run touches (the far side of a gate
+  hanging off a single stretch), reinforced — it exists only because the gate
+  does. A SHARED node post keeps whatever the runs decided, because changing its
+  sku would change the BOM of a fence the gate is supposed to leave alone.
+- **Its kit is its own BOM group**, not the unassigned bucket: the kit is asked
+  for by the gate, and "nobody's part" is a different statement. Sections, nodes
+  and gates partition the demand exactly once.
+- **The setting-out sheet** gives it a block of its own — it belongs to no
+  section — read as "between A/P4 and G1/P2, 1200 mm, opens toward the house".
+
+The in-run gate (`GatePayload`) stays exactly as it was: stored projects have
+them and every golden scenario builds one. Nothing in the UI authors one any
+more, so `gate` left `EVENT_TOOLS` — an event tool writes onto a run, and this
+does not.
+
+Alongside it, and the same shape: **a stretch's length and angle are numbers you
+can type**. A street landmark had those fields and the fence did not, so
+somebody who had measured a run could only drag until the label read about
+right. `run-metrics.js` is pure and node-tested; the start stays anchored, and a
+stretch with a corner gets one row per leg rather than one angle that would
+silently straighten what was drawn.
+
+Three latent faults surfaced and were fixed on the way: `toPx(pointAtStation(…))`
+dereferenced before its own null check, so one unresolvable element abandoned
+the whole overlay mid-draw; the strategy summary measured gate length from
+stations, which a standalone gate does not have; and the gate tool swallowed
+presses on a gate's own controls, so they worked on every step except the one
+that shows them.
+
+2875 pytest · 299 golden scenarios · 421 browser checks · contract hashes verify.
+
+---
+
+## The four open ends, closed (2026-09-10) — COMPLETE
+
+**A placed gate can be moved and resized.** It could only be deleted and placed
+again. A span gets two endpoint grips and a body stroke; an end released near
+another node re-points at it, which is how a gate joins a stretch drawn after
+it. `moveGateNodes` is the ONE writer of a gate's node positions, and it names
+the ENDS rather than node ids so a re-point mid-gesture cannot leave a caller
+writing to the node it started from. Three placement details each avoid a bug:
+the body handle sits UNDER the gate's marks (a 1000 mm gate is 45 px wide, and a
+handle on top would swallow the clicks that state the swing), the grips step
+12 px off the line (on the post is where the hinge dot is), and both work with
+any tool armed.
+
+**A gate nobody has answered for is a gap on the handover sheet.**
+`gate_swing_unstated`, counted over both kinds and judged per leaf — a sliding
+gate on `slides_to`, since the validator REFUSES `opens_to` on one, so the naive
+check would have reported every slider. Non-blocking: the fence is priceable and
+the kit is chosen; what is missing is an instruction to the installer, and
+withholding the salesperson's price over it punishes the wrong person. It sits
+above `height_assumed`/`base_assumed` because those are silent DEFAULTS — wrong
+perhaps, buildable certainly — and a swing has no default at all, deliberately.
+The road's gates step claims it, because that is the screen where one click
+closes it.
+
+**The two named engine gaps.** `gate_on_slope` now fires for a gate span, from a
+shared `_resolve_gate_max_slope` + `_check_gate_slope` that both kinds call — the
+context minus the run facts, so a rule conditioned on a run is *not applicable*
+to a standalone gate rather than failing against it. Unstated ground is flat and
+not unknown, which is the answer the run beside it already gives. And a force
+override now reaches a gate's own post: `node:<id>` at station 0 needed no new
+addressing, it is marked applied so it stops reporting itself orphaned, and a
+post a RUN already stands at is still untouched — asserted with a directive whose
+sku genuinely differs, so the equality is discriminating.
+
+That last one was half-finished on arrival: `inspector.js: anchorOf` returned
+null for a post no run touches, so the panel said "this post is on no run" while
+the generator honoured the directive. A control that exists only in the engine is
+not a control. It addresses such a post by its own `node:<id>` now; suppression
+stays refused, because a gate with a post on one side only is unbuildable.
+
+**Old data discarded**, on the user's word that nothing in it was worth keeping:
+148 MB, 6 407 projects and 6 563 generation runs of exploration debris. The app
+reseeds a fresh database on first boot, so the run-id digest change that came
+with `Topology.gates` has nothing left to be stale against.
+
+Two smaller things found on the way: the handover sentence carried a gate count
+that neither locale used, and `inspect.post_suppress_only_line` interpolated a
+raw enum — "this is a end post" in English, and an English word inside a Hebrew
+sentence.
+
+2889 pytest · 299 golden scenarios · 428 browser checks · contract hashes verify.

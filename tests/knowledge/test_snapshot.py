@@ -473,10 +473,17 @@ def test_a_gap_that_does_not_parse_is_quarantined_not_fatal_and_not_dropped():
 
 
 def test_a_hole_the_publisher_already_declared_is_not_counted_twice(snapshot):
-    """The first real snapshot publishes all 16 of its `condition_point_uncovered`
-    gaps AND carries the same 16 points in `table.uncovered`, from which
-    `expand()` independently derives its own — 32 gaps for 16 holes, every one
+    """The early snapshots published each of their 16 uncovered points twice: as a
+    top-level `condition_point_uncovered` gap, and again as the `table.uncovered`
+    entry `expand()` derives its own from — 32 gaps for 16 holes, every one
     appearing twice in a curator's queue.
+
+    The publisher stopped emitting the top-level gap (`conversation.md` T26/T27),
+    and no snapshot they hold today carries that code, so this collision no
+    longer arrives from real data. It is synthesised here on purpose: the guard is
+    kept for any FUTURE published gap that happens to describe a hole `uncovered`
+    also declares, which would surface as two work items rather than as an error
+    and so has nothing else to catch it.
 
     `GapSubject.key()` is what makes them recognisable as one hole: parameter,
     scope and point together. That identity is exactly what v1.2's `ParamRef`

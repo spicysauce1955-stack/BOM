@@ -64,3 +64,38 @@ export function modelOptionLabel(row) {
 export function rowFor(listing, modelId) {
   return (listing || []).find((r) => r.id === modelId) || null;
 }
+
+/** What the WHOLE fence is built to — the project default and every model any
+ *  stretch was actually sold as, in one verdict.
+ *
+ *  Audit B03. `What was sold` writes a `fence_model` interval event on the run;
+ *  the canvas aside's row read `project.fence_model` alone, so a job with both
+ *  stretches sold as M-SLAT reported *"No model chosen"* — while the handover
+ *  sheet, three centimetres away, reported the job ready. `report/handover.py`
+ *  emits `no_model_chosen` only when there is no default AND millimetres nothing
+ *  covers, and two surfaces answering one question differently is the defect.
+ *
+ *  Pure over its argument, and it deliberately does NOT recompute coverage.
+ *  `_uncovered_mm` is the handover sheet's job and belongs to the surface that
+ *  reports completeness; a second copy of that arithmetic in JS would be a
+ *  second answer to *"is this job complete?"*, which is the bug this fixes.
+ *  This row answers only *what is it built to*.
+ *
+ *  `models` always carries the models found on stretches BESIDE the default —
+ *  with a default set they are the exceptions to it, and without one they are
+ *  the whole answer. An empty list with `kind: "none"` is nobody has said. */
+export function projectModelState(project) {
+  const chosen = project?.fence_model?.model_id || null;
+  const perRun = new Set();
+  for (const run of project?.topology?.runs || [])
+    for (const ev of run.interval_events || [])
+      if (ev.payload?.kind === "fence_model" && ev.payload.model_id)
+        perRun.add(ev.payload.model_id);
+  perRun.delete(chosen);
+  // Sorted so the row reads the same on every render: a Set iterates in
+  // insertion order, which is the order the events happen to sit in.
+  const models = [...perRun].sort();
+  if (chosen) return { kind: "default", model_id: chosen, models };
+  if (!models.length) return { kind: "none", models: [] };
+  return { kind: models.length === 1 ? "per_run" : "mixed", models };
+}

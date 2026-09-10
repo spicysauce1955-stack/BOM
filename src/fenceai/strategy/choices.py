@@ -48,6 +48,14 @@ class DesignPoint(BaseModel):
     keep the source lexeme for display."* A panel showing only our millimetres
     has thrown away what a reader checks against.
 
+    `bindings_milli` is the same fact for arithmetic rather than for display: the
+    publisher's thousandths per binding, where the point came from a published
+    `Quantity`. `bindings` is what the engine STORES (integer mm, ADR-0002) and
+    is what a person's `Selection` is keyed by; `bindings_milli` is what a
+    divider must consume, because §1.1 is BINDING that arithmetic multiplying a
+    published value rounds only its output. Empty for a point this engine
+    invented, and never rendered — `lexemes` is the thing a reader checks.
+
     `axes` are physical counts measured BY a probe: never money. A stored price
     goes stale the moment the catalog moves, and ADR-0011 puts what a fence
     costs in a `SupplyRun` against one yard.
@@ -59,6 +67,7 @@ class DesignPoint(BaseModel):
     label: str
     widths: list[Mm] = []
     bindings: dict[str, Mm] = {}
+    bindings_milli: dict[str, int] = {}
     lexemes: dict[str, str] = {}
     axes: dict[str, int] = {}
     # What choosing this would change relative to the baseline, on shared axes.

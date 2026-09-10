@@ -108,6 +108,20 @@ export async function saveContext() {
   emit("context-changed", state.project.context);
 }
 
+/** Persist what this job does NOT have.
+ *
+ *  Unrevisioned, like `saveJob` — a claim about an absence changes no
+ *  quantity. Emits `project-loaded` rather than a bespoke event because the
+ *  handover must be re-fetched: stating a fact can CREATE a gap
+ *  (`gates_contradicted`), so the road's own state depends on the round trip.
+ */
+export async function saveStated() {
+  state.project = await apiSend(
+    "PUT", `/api/projects/${state.projectId}/stated`, state.project.stated
+  );
+  emit("project-loaded", state.project);
+}
+
 /** Add a landmark locally. The caller persists with `saveContext()` — same
  *  shape as `addPointEvent` + `saveTopology`, so a drag that is cancelled
  *  mid-gesture leaves nothing on the server. */

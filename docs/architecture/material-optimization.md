@@ -123,6 +123,32 @@ transitions when rules demand a boundary): `n = ceil(L / max_span)`, widths `L//
 (e.g. sliver avoidance merges/steals from neighbors) — every adjustment is a decision node
 citing the preference.
 
+**The count divides by the PUBLISHED limit; the widths stay integer millimetres.**
+`contract.md:112-117` is binding that arithmetic multiplying a published value consumes its
+thousandths, and `n = ceil(L / max_span)` is the clause's own worked example — so
+`equal_layout_milli` divides by `max_span_milli` (`SetParam.value_milli`, defaulting to
+`max_span * 1000` for any authored rule). `n` is a count, so "rounds only its output" is
+satisfied by integer ceiling division; the widths it splits are lengths at rest and stay in
+whole millimetres (ADR-0002).
+
+That leaves a residue, and the residue is REPORTED rather than absorbed. Where the
+published limit falls between whole millimetres — five of the six real span magnitudes do,
+`56"` being 1422.4 mm — the remainder spread can put one bay a fraction over it: a 4267 mm
+run is three bays of 1422.333 mm, stored as `[1423, 1422, 1422]`, one of them 0.6 mm over.
+The alternative is a fourth post, footing and pour, which is the harm the clause exists to
+prevent, so the three-bay layout stands (`_SegmentModel.admits()` is the bound — the
+remainder ceiling `ceil(limit)` AND the minimum bay count, both required: exactly
+`max_span` for a whole-millimetre limit, so nothing authored can reach this). The segment
+then carries `warning.span_rounded_over_published_limit` at `info` severity and a
+`span_rounded_over_published_limit` decision node, `governed_by` the limit that chose the
+count — never `defeated` by it, because the rule was honoured, not beaten. The sentence
+shows the limit at published precision (a `*_milli` param, the one length the display layer
+does not round to the millimetre grid): printing `1422` would report our unit's problem as
+the customer's. Worst case over the first hundred metres is 0.8 mm, on roughly one run
+length in a hundred; anything `admits()` refuses — wider than the ceiling, or the right
+width with too few bays — is a layout bug, a wrong rule or a stale stored answer,
+and still fails the run.
+
 ## Objectives
 Lexicographic tiers with **named presets** (ADR-0007) — never a raw tier list and never
 user-facing weights. Two presets exist, because a company with an own-brand policy and a
