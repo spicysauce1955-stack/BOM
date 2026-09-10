@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 
-from fenceai.agent.proposal import Claim, Declined, NoStanding, Proposal, TaskResult
+from fenceai.agent.proposal import (
+    Claim, Declined, NoStanding, Proposal, TaskResult, proposal_id,
+)
 from fenceai.agent.registry import spec_for
 from fenceai.agent.tasks import TaskSpec
 from fenceai.agent.view import AgentView
@@ -62,10 +64,33 @@ def run_task(task: TaskSpec, view: AgentView, runner, project_id: str) -> TaskRe
     dropped = 0
     for proposal in raw.proposals:
         if _admissible(proposal, task, open_sets, handed_over):
-            # `saw` is stamped here, from what THIS run's view actually
-            # resolved against — never trusted from the runner, for the same
-            # reason `evaluated` above is not: it is the dispatcher's fact.
-            kept.append(proposal.model_copy(update={"saw": digest}))
+            # EVERY field that is the dispatcher's fact is stamped here, and
+            # for the same reason `evaluated` above is not inherited: a runner
+            # may say what it SUGGESTS, never what is true about the suggesting.
+            #
+            # `saw` was the only one stamped, and the other four are the ones
+            # that matter most. `status` is the whole "AI interpretations are
+            # proposals until confirmed" property (§15): a runner returning
+            # `status="kept"` asserted that a person had confirmed it, with no
+            # person, and it went to the wire that way. `project_id` and
+            # `task_id` are facts about THIS dispatch that a runner cannot be
+            # wrong about without being believed. And `id` must be the
+            # content-derived one or `proposal_id`'s whole reason evaporates —
+            # a rejection cannot suppress a re-proposal it can no longer
+            # recognise, which is exactly what the Claude adapter will need.
+            #
+            # `agent_id` comes off the runner's own `interpreter_id` (the port
+            # requires one) rather than the proposal, so a proposal cannot
+            # attribute itself to somebody else.
+            kept.append(proposal.model_copy(update={
+                "saw": digest,
+                "status": "proposed",
+                "task_id": task.id,
+                "project_id": project_id,
+                "agent_id": getattr(runner, "interpreter_id", "unknown"),
+                "id": proposal_id(task.id, proposal.kind, proposal.payload,
+                                  proposal.scope),
+            }))
         else:
             dropped += 1
 

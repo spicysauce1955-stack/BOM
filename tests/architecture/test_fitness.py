@@ -243,6 +243,35 @@ def test_only_the_api_layer_imports_the_agent():
     ]
     assert not offenders, offenders
 
+    # ...and the TRANSITIVE door, which the scan above cannot see. `ai` is not
+    # in DOMAIN — it is the port package, and `ai/stub.py` imports the agent
+    # legitimately. But `project/model.py` imports `fenceai.ai.records`, so
+    # `records` is a domain-reachable module inside a package that may import
+    # the agent. The day it reuses `agent.proposal.Claim` — an entirely
+    # plausible move — the agent becomes importable from `project`, `strategy`
+    # and everything downstream, and every assertion above stays green.
+    #
+    # So the one `ai` module the domain is allowed to reach carries the rule the
+    # domain carries.
+    records = SRC / "ai" / "records.py"
+    assert records.exists(), "ai/records.py moved; this guard needs rewiring"
+    leaks = sorted(m for m in _imports(records) if m.startswith("fenceai.agent"))
+    assert not leaks, (
+        f"ai/records.py imports {leaks}, and the domain imports ai/records.py — "
+        "that is a path from the domain to the agent")
+
+    # and nothing else in `ai` may be imported by the domain, or the allow-list
+    # above stops being the whole story
+    reaching_ai = sorted(
+        f"{path.relative_to(SRC)} imports {bad}"
+        for package in DOMAIN for path in _modules(package)
+        for bad in _imports(path)
+        if bad.startswith("fenceai.ai") and bad != "fenceai.ai.records"
+    )
+    assert not reaching_ai, (
+        f"{reaching_ai} — only `ai.records` is domain-reachable, because it is "
+        "the only one this test holds to the domain's own rule")
+
 
 def test_the_agent_never_reaches_the_store_or_the_generator():
     """The view takes what it is given. An agent module that imported

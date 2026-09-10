@@ -12,7 +12,7 @@ from fenceai.agent.proposal import Claim, Declined, NoStanding, Proposal, TaskRe
 from fenceai.agent.registry import _REGISTRY, ActionSpec, SelectChoicePoint, register
 from fenceai.agent.run import run_task
 from fenceai.agent.tasks import RANK_CHOICE_SET
-from fenceai.agent.view import AgentView
+from fenceai.agent.view import AgentView, point_ref
 from fenceai.decisions.graph import DecisionGraph
 from fenceai.project.model import Project, Selection
 from fenceai.strategy.choices import ChoiceSet, DesignPoint
@@ -73,7 +73,8 @@ def _proposal(point_id="p2", kind="select_choice_point", claims=None,
                     task_id="rank_choice_set", project_id="pr_1", kind=kind,
                     payload=payload, scope=scope,
                     claims=claims if claims is not None
-                    else [Claim(marker="read", text="x", evidence=f"point:{point_id}")])
+                    else [Claim(marker="read", text="x",
+                                evidence=point_ref("bay_layout", "gap:run1:0", point_id))])
 
 
 def test_a_good_proposal_survives_every_check():
@@ -181,7 +182,8 @@ def test_a_fabricated_citation_in_measured_is_refused_not_shown():
 
 
 def test_a_grounded_measured_claim_survives():
-    good = Claim(marker="read", text="a fact", evidence="point:p2")
+    good = Claim(marker="read", text="a fact",
+                 evidence=point_ref("bay_layout", "gap:run1:0", "p2"))
     raw = TaskResult(task_id=RANK_CHOICE_SET.id, evaluated=True, measured=[good])
     out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), _RawRunner(raw), project_id="pr_1")
     assert out.measured == [good]
@@ -276,7 +278,8 @@ def test_a_measured_claim_is_refused_because_this_slice_has_nothing_measurable()
     adapter in slice 2) — so a `measured` claim is refused outright, even one
     citing a ref this very run handed over, rather than passing by accident or
     failing the wrong check for the wrong reason."""
-    claim = Claim(marker="measured", text="observed", evidence="point:p2")
+    claim = Claim(marker="measured", text="observed",
+                  evidence=point_ref("bay_layout", "gap:run1:0", "p2"))
     out = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT),
                    _Runner(_proposal(claims=[claim])), project_id="pr_1")
     assert out.proposals == []
@@ -378,3 +381,113 @@ def test_a_kind_with_no_registry_row_at_all_is_dropped_not_admitted():
                    _Runner(_proposal(kind="never_registered")), project_id="pr_1")
     assert out.proposals == []
     assert out.dropped == 1
+
+
+def test_the_dispatcher_stamps_every_fact_that_is_its_own_not_the_runners():
+    """A runner says what it SUGGESTS. It does not get to say what is true about
+    the suggesting.
+
+    Only `saw` was stamped, and the rest passed through verbatim — so a runner
+    could return `status="kept"`, which asserts that a PERSON confirmed this
+    proposal, and it reached the wire that way. "AI interpretations are
+    proposals until confirmed" (foundation §15) was, at that point, the stub's
+    good manners rather than a property of the framework — which is precisely
+    what this module's own docstring says it must not be.
+
+    `id` matters for a second reason: content-derived is what lets a rejection
+    suppress a re-proposal. A runner minting its own id defeats that silently,
+    and nothing would notice until the Claude adapter re-proposed something a
+    person had already thrown away.
+    """
+    class Rogue:
+        interpreter_id = "the-real-runner"
+
+        def run(self, task, view, project_id):
+            view.open_choice_sets()
+            payload = {"choice_set": "bay_layout", "scope": "gap:run1:0",
+                       "point_id": "p2"}
+            return TaskResult(task_id=task.id, evaluated=True, proposals=[Proposal(
+                id="prop_MINTED_BY_THE_RUNNER",
+                task_id="a_task_that_did_not_run",
+                project_id="SOME_OTHER_PROJECT",
+                kind="select_choice_point", payload=payload, scope="gap:run1:0",
+                claims=[Claim(marker="read", text="4 posts",
+                              evidence=point_ref("bay_layout", "gap:run1:0", "p2"))],
+                agent_id="somebody-else",
+                status="kept",
+            )])
+
+    res = run_task(RANK_CHOICE_SET, _view(DEFAULT, ALT), Rogue(), project_id="pr_1")
+    assert len(res.proposals) == 1, "the proposal is admissible; that is the point"
+    p = res.proposals[0]
+    assert p.status == "proposed", "a runner claimed a person had kept it"
+    assert p.project_id == "pr_1"
+    assert p.task_id == RANK_CHOICE_SET.id
+    assert p.agent_id == "the-real-runner", "attributed to somebody else"
+    assert p.id == proposal_id(RANK_CHOICE_SET.id, "select_choice_point",
+                               {"choice_set": "bay_layout", "scope": "gap:run1:0",
+                                "point_id": "p2"}, "gap:run1:0")
+
+
+def test_two_open_gaps_do_not_collapse_into_one_grounding_ref():
+    """Check 2 is only as strong as the IDENTITY of the thing cited.
+
+    Point ids are a small fixed vocabulary — `default`, `displaced`, `tiling`,
+    `best_yield` — so every open gap on a job carries points with the same ids.
+    While the view recorded a bare `point:<id>`, all of them collapsed into one
+    ref: an agent citing "the point I read" produced a citation that resolved
+    against whichever gap happened to match, and `agent-advice.js` would print
+    one gap's widths as the stated reason for another's layout. A reference that
+    names two things does not ground anything.
+
+    What this does NOT claim: that a proposal may only cite its own gap. Citing
+    a neighbouring run is legitimate advice ("same layout as the stretch beside
+    it"), and forbidding it is a product decision this slice has not taken. The
+    property bought here is that such a citation is now RECOGNISABLE as being
+    about the other gap, rather than indistinguishable from a local one.
+    """
+    a = DesignPoint(id="best_yield", label="1666 · 1667 · 1667",
+                    widths=[1666, 1667, 1667], axes={"posts": 4, "offcut_mm": 10})
+    b = DesignPoint(id="best_yield", label="9999 · 9999", widths=[9999, 9999],
+                    axes={"posts": 3, "offcut_mm": 900})
+    sets = [ChoiceSet(id="bay_layout", scope="gap:run1:0", question="q", points=[DEFAULT, a]),
+            ChoiceSet(id="bay_layout", scope="gap:run2:0", question="q", points=[DEFAULT, b])]
+    view = AgentView(Project(id="pr_1", name="t"), GenerationResult(
+        run=GenerationRun(id="run_1", project_id="pr_1", topology_revision=1,
+                          snapshot_hash="kh"),
+        strategy=Strategy(id="st_1"), graph=DecisionGraph(), choice_sets=sets))
+    view.open_choice_sets()
+    refs = view.refs_handed_over()
+
+    # four points across two gaps are four refs, not two
+    assert len(refs) == 4, refs
+    assert point_ref("bay_layout", "gap:run1:0", "best_yield") in refs
+    assert point_ref("bay_layout", "gap:run2:0", "best_yield") in refs
+    assert "point:best_yield" not in refs, "the bare id is not an identity"
+    assert "point:default" not in refs
+
+
+def test_a_claim_citing_a_gap_that_was_never_read_is_refused():
+    """The other side of the qualification: a ref that looks plausible and was
+    never handed over must not resolve. Before, `point:best_yield` matched as
+    soon as ANY open gap had a point by that name — so an invented citation
+    naming a gap the view never returned was admitted on a name collision."""
+    view = _view(DEFAULT, ALT)
+
+    class Inventing:
+        interpreter_id = "fake"
+
+        def run(self, task, view, project_id):
+            view.open_choice_sets()
+            payload = {"choice_set": "bay_layout", "scope": "gap:run1:0",
+                       "point_id": "p2"}
+            return TaskResult(task_id=task.id, evaluated=True, proposals=[Proposal(
+                id="x", task_id=task.id, project_id=project_id,
+                kind="select_choice_point", payload=payload, scope="gap:run1:0",
+                claims=[Claim(marker="read", text="4 posts",
+                              evidence=point_ref("bay_layout", "gap:run9:0", "p2"))],
+            )])
+
+    res = run_task(RANK_CHOICE_SET, view, Inventing(), project_id="pr_1")
+    assert res.proposals == [], "a citation to a gap nobody read"
+    assert res.dropped == 1

@@ -7,7 +7,7 @@ owns" — this class is the read half of that, with no mutators to reach with.
 """
 from __future__ import annotations
 
-from fenceai.agent.view import AgentView
+from fenceai.agent.view import AgentView, point_ref
 from fenceai.project.model import Project, Selection
 from fenceai.strategy.choices import ChoiceSet, DesignPoint
 from fenceai.strategy.model import GenerationResult
@@ -58,7 +58,10 @@ def test_the_view_records_which_point_ids_it_handed_over():
     view = AgentView(Project(id="pr_1", name="t"), _result(_set()))
     view.open_choice_sets()
     assert view.point_ids("bay_layout", "gap:run1:0") == {"p1", "p2"}
-    assert "point:p2" in view.refs_handed_over()
+    assert point_ref("bay_layout", "gap:run1:0", "p2") in view.refs_handed_over()
+    # ...and the ref is QUALIFIED: a bare point id is not an identity,
+    # because every open gap on a job carries points with the same ids.
+    assert "point:p2" not in view.refs_handed_over()
 
 
 def test_nothing_is_handed_over_until_it_is_read():

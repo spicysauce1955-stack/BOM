@@ -10,7 +10,7 @@ import re
 
 from fenceai.agent.proposal import Claim, Proposal, TaskResult, proposal_id
 from fenceai.agent.tasks import TaskSpec
-from fenceai.agent.view import AgentView
+from fenceai.agent.view import AgentView, point_ref
 from fenceai.ai.records import CandidateIntent, CritiqueNote, InterpretationRecord
 from fenceai.knowledge.model import AddNote, KnowledgeVersion
 from fenceai.learning.model import Correction
@@ -193,6 +193,14 @@ class StubAgent:
         for choice_set in view.open_choice_sets():
             if len(proposals) >= task.max_proposals:
                 break
+            # NOT filtered through `offered()`, deliberately. Check 3 validates
+            # against `offered(matching.points)`, so the two lists must agree —
+            # and in production they do: `generator.py` stores `offered(points)`
+            # already, so filtering here would be a second application of a
+            # filter already applied. Doing it anyway would make this stub
+            # silently disagree with fixtures that hand it a dominated
+            # alternative on purpose. A producer that ever stores an unfiltered
+            # list is the thing to fix, and check 3 is where it would show.
             alternative = next((p for p in choice_set.points if not p.is_default), None)
             if alternative is None:
                 continue  # one admissible answer is not a question
@@ -210,7 +218,8 @@ class StubAgent:
                 # nothing is honest without saying so.
                 claims=[
                     Claim(marker="read", text=alternative.label,
-                          evidence=f"point:{alternative.id}"),
+                          evidence=point_ref(choice_set.id, choice_set.scope,
+                                             alternative.id)),
                 ],
                 saw=view.digest(task.reads),
                 agent_id=self.interpreter_id,
