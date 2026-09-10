@@ -1,0 +1,320 @@
+"""The advice panel's rendering (static/js/agent-advice.js).
+
+`renderAdvice(result, host)` is the one exported, DOM-light function this
+module owns: it takes a `TaskResult`-shaped object (or `null`) and a plain
+object standing in for the host element, and sets `.innerHTML` on it. That is
+enough surface to exercise real behaviour rather than grep for it — the first
+version of this file was five source-scanning greps and passed on a module
+that rendered nothing at all; two of the five broke on a harmless refactor
+because the string they matched lived in a COMMENT, not in behaviour. Spec
+§8b names exactly this defect, and Task 9 had it and fixed it the same way.
+
+A grep survives here only where behaviour genuinely cannot reach it: that
+`#choices` never appears in the source (a module reaching into another
+module's host selector), and that no write verb appears anywhere in it
+(slice 1 advises and does not act — there is no host state to observe that
+distinguishes "never called fetch with PUT" from "never wrote to state").
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
+MODULE = STATIC / "js" / "agent-advice.js"
+
+SCRIPT = """
+globalThis.localStorage = {
+  s: {},
+  getItem: (k) => globalThis.localStorage.s[k] ?? null,
+  setItem: (k, v) => { globalThis.localStorage.s[k] = String(v); },
+};
+// `liveHost` stands in for the real `#agent-advice` element through
+// `initAgentAdvice`'s own wiring (below) — `container()` reads it back via
+// `document.getElementById`, exactly as it would in a browser.
+const liveHost = { innerHTML: "" };
+globalThis.document = {
+  getElementById: (id) => (id === "agent-advice" ? liveHost : null),
+  querySelectorAll: () => [], querySelector: () => null, documentElement: {},
+};
+import { readFileSync } from "node:fs";
+const proposalAdviceBody = {
+  evaluated: true,
+  proposals: [{ claims: [{ marker: "read", text: "2500 · 2500 · 2400" }] }],
+};
+globalThis.fetch = async (url) => ({
+  ok: true,
+  json: async () => (url.includes("/advice") ? proposalAdviceBody
+    : JSON.parse(readFileSync(url, "utf8"))),
+});
+
+import { emit, state } from "./js/state.js";
+import { initI18n, setLocale } from "./js/i18n.js";
+import { setUnits } from "./js/units.js";
+import { initAgentAdvice, renderAdvice } from "./js/agent-advice.js";
+
+await initI18n();
+// the app OPENS in Hebrew, so pin the language before anything reads a word
+await setLocale("en");
+state.units = "mm";
+
+// A `read` claim's text is the SAME raw-millimetre widths label
+// `choices.js` renders beside this panel (`generator.py`'s
+// `" · ".join(str(w) for w in widths)`); the `inferred` claim carries prose
+// with a payload an agent-authored string is exactly the untrusted case for.
+const proposalResult = {
+  evaluated: true,
+  proposals: [{
+    claims: [
+      { marker: "read", text: "2500 · 2500 · 2400" },
+      { marker: "inferred", text: "<script>alert(1)</script> reasoning" },
+    ],
+  }],
+};
+
+const withProposal = { innerHTML: "" };
+renderAdvice(proposalResult, withProposal);
+
+// `evaluated: false` is "I NEVER LOOKED" — not "I looked and declined",
+// which is `evaluated: true` with no proposals, and not `TaskResult.declined`,
+// which is a third thing again (an action considered and not proposed).
+const neverLooked = { innerHTML: "" };
+renderAdvice({ evaluated: false, proposals: [] }, neverLooked);
+
+const nothing = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [] }, nothing);
+
+// The third state: it looked, it produced three, all three were refused as
+// agent defects. `agent.none` here would tell the reader "all clear".
+const allRefused = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [], produced: 3, dropped: 3 }, allRefused);
+
+const claimsRefused = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [], produced: 0, dropped: 0,
+               claims_refused: 2 }, claimsRefused);
+
+// A claim whose text is a bare number is NOT a widths label: a post count, a
+// year or a station reads the same, and 0.4 cm would be a wrong number rather
+// than an unconverted one.
+const scalarClaim = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [{ claims: [
+  { marker: "inferred", text: "4" }] }] }, scalarClaim);
+
+// must not throw when there is nowhere to render (a real early-return path)
+renderAdvice(proposalResult, null);
+
+state.units = "cm";
+const inCm = { innerHTML: "" };
+renderAdvice(proposalResult, inCm);
+
+// the same bare number under the OTHER display unit: converting it would
+// visibly divide it by ten, which is the symptom I6 names.
+const scalarClaimCm = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [{ claims: [
+  { marker: "inferred", text: "4" }] }] }, scalarClaimCm);
+
+await setLocale("he");
+const heNeverLooked = { innerHTML: "" };
+renderAdvice({ evaluated: false, proposals: [] }, heNeverLooked);
+const heAllRefused = { innerHTML: "" };
+renderAdvice({ evaluated: true, proposals: [], produced: 3, dropped: 3 }, heAllRefused);
+await setLocale("en");
+state.units = "mm";
+
+// ---- initAgentAdvice's REAL wiring: the one path a pure renderAdvice()
+// call cannot reach, and where N1 (a missing units-changed subscription)
+// and N3 (the no-run state, decided in refresh(), never renderAdvice())
+// actually live.
+state.result = null;   // no run yet
+initAgentAdvice();     // registers listeners exactly once for this script
+const noRunHtml = liveHost.innerHTML;
+
+state.result = { run: { id: "run1" } };
+emit("result-changed", state.result);       // -> refresh() -> the stubbed fetch
+await new Promise((r) => setTimeout(r, 0)); // let the fetch's microtasks settle
+const liveMm = liveHost.innerHTML;
+
+setUnits("cm");    // the real units-button path -> emits units-changed
+const liveCm = liveHost.innerHTML;
+
+console.log(JSON.stringify({
+  withProposal: withProposal.innerHTML,
+  neverLooked: neverLooked.innerHTML,
+  nothing: nothing.innerHTML,
+  allRefused: allRefused.innerHTML,
+  claimsRefused: claimsRefused.innerHTML,
+  scalarClaim: scalarClaim.innerHTML,
+  scalarClaimCm: scalarClaimCm.innerHTML,
+  inCm: inCm.innerHTML,
+  heNeverLooked: heNeverLooked.innerHTML,
+  heAllRefused: heAllRefused.innerHTML,
+  noRunHtml, liveMm, liveCm,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def out() -> dict:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", SCRIPT],
+        cwd=STATIC, capture_output=True, text=True, check=False,
+    )
+    # Also proves `renderAdvice(result, null)` above did not throw: an
+    # uncaught exception mid-script would leave this non-zero.
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_a_proposals_claim_text_actually_renders(out):
+    assert "2500" in out["withProposal"]
+    assert "reasoning" in out["withProposal"]
+
+
+def test_how_a_claim_is_KNOWN_reaches_the_screen(out):
+    """The one property the whole slice exists to make visible.
+
+    "A claim carries how it is known" is enforced in `run.py` and rendered by
+    `claimRow` — and deleting the entire `agent-claim__marker` span left this
+    file green, because the only assertion near it (`"reasoning"`) matches the
+    fixture's own claim TEXT, `"<script>alert(1)</script> reasoning"`, and not
+    the marker label at all. So it is asserted here through a string that
+    appears in no claim text: `agent.marker.read` is "from the run".
+
+    The disclaimer beside it is the same kind of promise — a stub that argues
+    nothing must SAY it argues nothing, or a reader learns to trust a judgement
+    that was never made — and deleting it was equally invisible.
+    """
+    html = out["withProposal"]
+    assert 'class="agent-claim__marker"' in html
+    assert "from the run" in html, "the marker label is not rendered"
+    assert "Offline suggestion" in html, "the stub's own disclaimer is not rendered"
+    # ...and the marker is on the claim it belongs to, not floating in the card
+    assert "agent-claim--read" in html and "agent-claim--inferred" in html
+
+
+def test_agent_authored_text_is_escaped_not_executed(out):
+    assert "<script>" not in out["withProposal"]
+    assert "&lt;script&gt;" in out["withProposal"]
+
+
+def test_a_dimension_claim_is_unit_converted_and_isolated(out):
+    """Finding I1: the same raw-mm dimension string `choices.js` shows beside
+    this panel must convert with display units and stay LTR-isolated, or the
+    two panels disagree and the digits reorder in RTL."""
+    assert '<bdi class="num">' in out["withProposal"]
+    assert "2500 · 2500 · 2400" not in out["inCm"]
+    assert "250 · 250 · 240" in out["inCm"]
+
+
+def test_evaluated_false_and_empty_proposals_render_differently(out):
+    """"I did not look" is never "nothing to report" — audit B01 in
+    miniature, and the reason this slice exists."""
+    assert out["neverLooked"] != out["nothing"]
+    assert "Could not check" in out["neverLooked"]
+    assert "Nothing to suggest here" not in out["neverLooked"]
+    assert "Nothing to suggest here" in out["nothing"]
+    assert "Could not check" not in out["nothing"]
+
+
+def test_everything_refused_is_not_nothing_to_suggest(out):
+    """Final-review I3. `produced: 3, dropped: 3` rendered as the same five
+    words as `produced: 0` — "an agent whose proposals nobody keeps looks
+    exactly like an agent that is working" (spec §8b) at the ONLY surface a
+    person ever looks at. The counters cross the wire so this panel can tell
+    the two apart; before this it read neither."""
+    assert "Nothing to suggest here" not in out["allRefused"]
+    assert "Could not check" not in out["allRefused"]
+    assert out["allRefused"] != out["nothing"]
+    assert "failed a check" in out["allRefused"]
+    # a refused CLAIM is an agent defect too, and gets the same sentence
+    assert out["claimsRefused"] == out["allRefused"]
+    assert "<h3>" in out["allRefused"]
+
+
+def test_the_all_refused_sentence_is_localized(out):
+    assert out["heAllRefused"] != out["allRefused"]
+    assert "נכשלה בבדיקה" in out["heAllRefused"]
+
+
+def test_every_rendered_state_carries_the_sections_own_heading(out):
+    """Finding I2: a bare "Could not check" has no subject. `<h3>` names the
+    section in every state `renderAdvice` produces."""
+    for rendered in (out["withProposal"], out["neverLooked"], out["nothing"],
+                     out["allRefused"]):
+        assert "<h3>" in rendered
+
+
+def test_the_heading_and_the_empty_sentence_are_localized(out):
+    assert out["heNeverLooked"] != out["neverLooked"]
+    assert "לא ניתן היה לבדוק" in out["heNeverLooked"]
+
+
+def test_no_run_yet_gets_its_own_state_not_i_did_not_look(out):
+    """Finding N3: `agent.no_run` lives in `refresh()`, not in `renderAdvice`
+    — the one state the pure-function tests above cannot reach, exercised
+    here through `initAgentAdvice`'s real wiring instead."""
+    assert "Generate a strategy" in out["noRunHtml"]
+    assert "Could not check" not in out["noRunHtml"]
+    assert "Nothing to suggest here" not in out["noRunHtml"]
+
+
+def test_a_units_toggle_re_renders_the_already_loaded_advice(out):
+    """Finding N1: I1's unit conversion is worthless if nothing re-renders
+    when the display-unit preference changes — the exact symptom (a stale
+    mm figure beside a cm one) reappearing through the missing
+    `units-changed` subscription rather than through the conversion itself.
+    Drives it through the REAL wiring (`initAgentAdvice` + `setUnits`,
+    which is what the units button actually calls), not a direct
+    `renderAdvice()` call, so removing `on("units-changed", render)` alone
+    is what this test is pinned against."""
+    assert "2500 · 2500 · 2400" in out["liveMm"]
+    assert "2500 · 2500 · 2400" not in out["liveCm"]
+    assert "250 · 250 · 240" in out["liveCm"]
+
+
+def test_a_bare_number_is_never_read_as_a_millimetre_dimension(out):
+    """Final-review I6. The sniff that decides "this is a widths label" saw a
+    bare `"4"` and rendered `0.4 cm`. Until the API TAGS what a claim's text
+    is (the seam named in `proposal.py` and at the sniff), the rule is that
+    only two-or-more numbers joined by `·` are unambiguous — a wrong number
+    on screen is worse than an unconverted one."""
+    # the number survives untouched, and is NOT wrapped as a converted
+    # dimension — `<bdi class="num">` is what `claimTextHtml` emits only when
+    # it decided the text was a millimetre list.
+    assert ">4<" in out["scalarClaim"]
+    assert '<bdi class="num">' not in out["scalarClaim"]
+    assert "0.4" not in out["scalarClaimCm"]
+    assert ">4<" in out["scalarClaimCm"]
+
+
+def test_the_panel_is_wired_into_the_page_and_the_bootstrap():
+    """The node harness stubs `document.getElementById`, so every test above
+    would stay green with the host element deleted from the page — the whole
+    feature vanishing at 2801/2801. This branch merges into one whose
+    in-flight work touches `index.html`, which is the exact way that line goes
+    missing. Same idiom as `test_site_module.py`."""
+    assert '<section id="agent-advice" class="panel agent-advice"' in (
+        STATIC / "index.html").read_text()
+    app = (STATIC / "app.js").read_text()
+    assert 'from "./js/agent-advice.js"' in app and "initAgentAdvice();" in app
+
+
+def test_the_module_never_touches_another_modules_dom():
+    src = MODULE.read_text()
+    assert "#choices" not in src, "no module touches another module's DOM subtree"
+
+
+def test_the_module_never_writes_project_state():
+    """Slice 1 advises and does not act. A keep/reverse path arrives in slice
+    2 with the record that makes a refusal mean something."""
+    src = MODULE.read_text()
+    for mutator in ("saveTopology", "pushSnapshot", "method: \"PUT\"", "method: 'PUT'"):
+        assert mutator not in src

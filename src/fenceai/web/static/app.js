@@ -2,6 +2,7 @@
 // All behavior lives in js/* modules communicating via state.js events.
 
 import { apiGet } from "./js/api.js";
+import { initAgentAdvice } from "./js/agent-advice.js";
 import { initPublishedParts } from "./js/published-parts.js";
 import { initAssembly } from "./js/assembly.js";
 import { initEditor } from "./js/editor.js";
@@ -110,6 +111,7 @@ async function main() {
   initNotes();
   initHandover();
   initEvidence();
+  initAgentAdvice();
   setupHeader();
   setupUndoButtons();
 

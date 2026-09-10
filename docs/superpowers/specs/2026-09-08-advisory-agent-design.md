@@ -483,3 +483,54 @@ Every slice ends with the product owner opening the app and doing one named
 thing. No concurrent agents inside a slice — the mechanism that let the
 choice-set feature run away on 2026-09-03, recorded in
 `2026-09-04-sales-mvp-design.md`.
+
+---
+
+## 12. Decided at the slice 1 checkpoint — 2026-09-09
+
+Slice 1 shipped read-only advice. The product owner reviewed it running and
+decided two things, both of which change slice 2's shape.
+
+### 12.1 Advice becomes actionable — later, and both modes stay
+
+Advice will be actionable: a person will be able to accept a proposal and have
+it applied, which is what finally lets `kept` / `reversed` fire. §8b's counters
+have been unable to record anything but `produced` / `dropped` / `shown`
+because nothing can be kept yet.
+
+**But read-only is not a stepping stone to be removed.** Both modes are
+supported, permanently. A proposal is read-only or actionable as a property of
+the situation, not a phase of the product — the same advisor may be allowed to
+act on one kind of question and only to comment on another, and an action kind
+that is actionable for one company may not be for another.
+
+This is why `ActionSpec.disposition` (`show` / `hold_pending` / `auto`) already
+exists and is deliberately not the agent's business (§7): an agent told which
+of its proposals get applied automatically will learn to phrase things to get
+applied. The actionable path is built on that field, and the agent still never
+reads it.
+
+### 12.2 "Nothing to suggest" is not one state — it has causes, and some are the user's to fix
+
+The slice-1 screen distinguishes four silences: no run yet, did not look,
+nothing to suggest, and had suggestions but refused them all. That is not
+enough. **Silence has causes, and the ones a person can act on must say so.**
+
+Named at the checkpoint:
+
+- **insufficient data** — the agent had nothing to reason from, and the missing
+  thing may be something the user can supply;
+- **contradictions in placement or layout choices** — the situation is
+  over-constrained, and the conflict is the user's to resolve;
+- and the two that are ours, not theirs: the agent genuinely had nothing to
+  add, and the agent produced only defects (§6 refusals).
+
+The distinction that matters is **whose problem it is**. A silence the user can
+resolve must be reported as an actionable gap; a silence that is ours must
+never be dressed up as one, or the user is sent to fix something that was never
+theirs. This is the same discipline the warning registry already enforces
+between our findings and a document's own words.
+
+`TaskResult.needs` is the existing seam for this — it is populated by nothing
+today and rendered by nothing, which is why the slice-1 UI collapses every
+cause into one sentence.

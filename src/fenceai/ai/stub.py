@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import re
 
+from fenceai.agent.proposal import Claim, Proposal, TaskResult, proposal_id
+from fenceai.agent.tasks import TaskSpec
+from fenceai.agent.view import AgentView, point_ref
 from fenceai.ai.records import CandidateIntent, CritiqueNote, InterpretationRecord
 from fenceai.knowledge.model import AddNote, KnowledgeVersion
 from fenceai.learning.model import Correction
@@ -168,3 +171,58 @@ class StubCritic:
                     )
                 )
         return notes
+
+
+class StubAgent:
+    """Deterministic agent for offline development and every unit test.
+
+    Capped on purpose and must not grow: it picks the first non-default point
+    the engine offered and says, as an `inferred` claim, that this is exactly
+    what it did. It has no judgement, so it claims none — which still exercises
+    the whole framework: registry, permission list, claims, the grounding
+    check, the ledger and the counters.
+    """
+
+    interpreter_id = "stub"
+
+    def run(self, task: TaskSpec, view: AgentView, project_id: str) -> TaskResult:
+        if task.id != "rank_choice_set":
+            return TaskResult(task_id=task.id, evaluated=False)
+
+        proposals = []
+        for choice_set in view.open_choice_sets():
+            if len(proposals) >= task.max_proposals:
+                break
+            # NOT filtered through `offered()`, deliberately. Check 3 validates
+            # against `offered(matching.points)`, so the two lists must agree —
+            # and in production they do: `generator.py` stores `offered(points)`
+            # already, so filtering here would be a second application of a
+            # filter already applied. Doing it anyway would make this stub
+            # silently disagree with fixtures that hand it a dominated
+            # alternative on purpose. A producer that ever stores an unfiltered
+            # list is the thing to fix, and check 3 is where it would show.
+            alternative = next((p for p in choice_set.points if not p.is_default), None)
+            if alternative is None:
+                continue  # one admissible answer is not a question
+            payload = {"choice_set": choice_set.id, "scope": choice_set.scope,
+                       "point_id": alternative.id}
+            proposals.append(Proposal(
+                id=proposal_id(task.id, "select_choice_point", payload, choice_set.scope),
+                task_id=task.id, project_id=project_id,
+                kind="select_choice_point", payload=payload, scope=choice_set.scope,
+                # ONE claim, and it is a `read`: the layout, and the point it
+                # came from. The stub used to add an `inferred` claim saying it
+                # had no judgement — true, but printing it taught readers to
+                # ignore the panel before a real model ever arrived (checkpoint,
+                # 2026-09-09). A stub that states what it was shown and argues
+                # nothing is honest without saying so.
+                claims=[
+                    Claim(marker="read", text=alternative.label,
+                          evidence=point_ref(choice_set.id, choice_set.scope,
+                                             alternative.id)),
+                ],
+                saw=view.digest(task.reads),
+                agent_id=self.interpreter_id,
+            ))
+        return TaskResult(task_id=task.id, evaluated=True, proposals=proposals,
+                          produced=len(proposals))

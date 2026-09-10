@@ -21,8 +21,11 @@ from fenceai.core.env import load_dotenv
 
 load_dotenv()  # .env in the working directory fills gaps; real env vars win
 
-from fenceai.ai.claude import build_interpreter  # noqa: E402
-from fenceai.ai.stub import StubCritic, StubProposer
+from fenceai.agent.run import run_task  # noqa: E402
+from fenceai.agent.tasks import RANK_CHOICE_SET
+from fenceai.agent.view import AgentView
+from fenceai.ai.claude import build_interpreter
+from fenceai.ai.stub import StubAgent, StubCritic, StubProposer
 from fenceai.catalog.demo import demo_catalog
 from fenceai.catalog.model import (
     CATALOG_SCHEMA_VERSION, Catalog, Product, catalog_hash, purchase_price_cents,
@@ -84,6 +87,7 @@ class AppState:
     interpreter = None
     proposer = None
     critic = None
+    agent = None
 
 
 state = AppState()
@@ -95,6 +99,7 @@ async def lifespan(app: FastAPI):
     state.interpreter = build_interpreter()
     state.proposer = StubProposer()
     state.critic = StubCritic()
+    state.agent = StubAgent()
     if state.store.load_catalog() is None:
         state.store.save_catalog(demo_catalog(), actor="seed")
     if not state.store.knowledge_base().versions:
@@ -722,6 +727,28 @@ def get_structure(run_id: str):
     # library the fence models live in.
     report.quoted_warnings = _quoted_warnings(result, priced)
     return report
+
+
+@app.get("/api/runs/{run_id}/advice")
+def get_advice(run_id: str):
+    """What the agent would suggest about this run's open questions.
+
+    Read-only and derived: nothing is stored, and a second call on unchanged
+    inputs returns the same proposal ids because they are content-derived.
+    """
+    result = _run(run_id)
+    project = _project(result.run.project_id)
+    # Same refusal as `/structure`: advice about a layout laid over an edited
+    # drawing is advice about a fence nobody drew.
+    if project.topology.revision != result.run.topology_revision:
+        raise HTTPException(409, {
+            "code": "topology_changed",
+            "run_topology_revision": result.run.topology_revision,
+            "project_topology_revision": project.topology.revision,
+        })
+    view = AgentView(project, result)
+    return run_task(RANK_CHOICE_SET, view, state.agent,
+                    project_id=result.run.project_id)
 
 
 # -- quotes (persisted BOM snapshots) ---------------------------------------------
