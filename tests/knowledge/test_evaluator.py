@@ -267,3 +267,75 @@ def test_a_row_that_agrees_below_the_millimetre_still_corroborates():
     assert next(f for f in res.firings
                 if f is not res.winner).corroborated_by == [res.winner.version.ref]
     assert res.conflicts == []
+
+
+def _overriding_published(obj_id: str, value: int, overrides: list[str]) -> KnowledgeVersion:
+    """A published row that beats a peer through an explicit `overrides` LINK.
+
+    The link is the point. `applicable_firings` pre-sorts by authority,
+    specificity and version, so a winner that wins on any of those is already
+    first and the fold never reclassifies anybody. `_beats` has a fourth clause
+    the sort key does not carry — `b.object_id in a.overrides_objects` — and that
+    is the one way a contender can take the seat AFTER its peers have been
+    classified against the row it unseats.
+    """
+    return KnowledgeVersion.from_published(
+        object_id=obj_id, version=1, type="hard_constraint",
+        overrides_objects=overrides,
+        actions=[SetParam(param="max_span_mm", value=value)])
+
+
+def test_agreement_is_judged_against_the_winner_that_actually_won():
+    """A corroboration recorded against a winner that later LOSES is a lie.
+
+    `resolve` folds over the firings with a running winner and classifies each
+    contender against whoever holds the seat at that moment. B ties with A and
+    states the same 1800, so it is recorded as corroborating. Then C — which
+    carries an explicit `overrides` link to A — takes the seat with 1500.
+
+    The graph afterwards drew a `corroborated` edge from B onto the
+    `resolve_max_span` node whose payload says 1500. Foundation §15: the decision
+    graph IS the explanation, and it was asserting that a source agreed with a
+    number it contradicts. Worse, B against C — a real disagreement between two
+    published rows — produced no `Conflict`, so nobody was ever asked to look at
+    it. The module's own *"ties never resolve silently"* had stopped holding: the
+    previous fix traded a FALSE conflict for a SILENT one.
+    """
+    kb = KnowledgeBase(versions=[
+        published("A", 1800),
+        published("B", 1800),
+        _overriding_published("C", 1500, ["A"]),
+    ])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    by_id = {f.version.object_id: f for f in res.firings}
+
+    assert res.winner.version.object_id == "C"
+    assert by_id["A"].defeated_by == ["C@v1"]      # genuinely beaten, by the link
+    # B states 1800 and the winner states 1500. Whatever else is true, B did not
+    # corroborate it...
+    assert by_id["B"].corroborated_by == []
+    # ...and the disagreement it hid is surfaced for review rather than swallowed.
+    assert ["B@v1", "C@v1"] == sorted(res.conflicts[-1].contenders)
+
+
+def test_a_row_that_agrees_with_the_LATER_winner_corroborates_it_instead():
+    """The other direction of the same reconciliation, so the fix cannot be a
+    blanket "clear every corroboration".
+
+    Same shape, but C states 1800 as well. B independently said what the winner
+    says, so it is still corroboration — re-pointed at the row that actually
+    won, rather than at the deposed one. This is the property `e291d4b` bought
+    and it has to survive the repair.
+    """
+    kb = KnowledgeBase(versions=[
+        published("A", 1800),
+        published("B", 1800),
+        _overriding_published("C", 1800, ["A"]),
+    ])
+    res = resolve_param(kb, CTX, "max_span_mm")
+    by_id = {f.version.object_id: f for f in res.firings}
+
+    assert res.winner.version.object_id == "C"
+    assert by_id["B"].corroborated_by == ["C@v1"]
+    assert by_id["B"].defeated_by == []
+    assert res.conflicts == []

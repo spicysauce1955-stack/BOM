@@ -133,12 +133,21 @@ def group_bom(
     a section is a run, and `run_ref` is the element's own answer rather than a
     second layout derivation.
     """
+    # A gate whose `run_ref` is None is a STANDALONE gate: it stands beside the
+    # runs and on none of them, so it is in no section and is deliberately left
+    # out of this map. It gets a group of its OWN below instead — a phantom
+    # section for a gate that belongs to no run would be a lie, and the
+    # unassigned bucket would file a gate kit under "nobody's part" when the
+    # gate it belongs to is right there on the drawing.
     section_of = {**{p.id: p.run_ref for p in strategy.posts},
                   **{s.id: s.run_ref for s in strategy.spans},
-                  **{g.id: g.run_ref for g in strategy.gates}}
+                  **{g.id: g.run_ref for g in strategy.gates
+                     if g.run_ref is not None}}
+    standalone_gates = {g.id for g in strategy.gates if g.run_ref is None}
 
     by_section: dict[str, list[GroupedLine]] = {}
     by_bay: dict[str, list[GroupedLine]] = {}
+    by_gate: dict[str, list[GroupedLine]] = {}
     spans = {s.id for s in strategy.spans}
     asked: dict[tuple[str, str], int] = {}
     unpegged: dict[tuple[str, str], int] = {}
@@ -159,7 +168,15 @@ def group_bom(
         # obvious next step for panel-to-post fixings) the section total would
         # have counted it twice while `asked` counted it once, and the balance
         # test would fail with no hint why.
-        for run_ref in {section_of[e] for e in req.pegs if e in section_of}:
+        sections = {section_of[e] for e in req.pegs if e in section_of}
+        if not sections and standalone_gates & set(req.pegs):
+            # pegged to a standalone gate and to nothing in any section: it is
+            # Its own group: the kit is asked for BY THE GATE, and a reader who
+            # wants to know what a gate costs should find it under that gate
+            # rather than in the bucket for parts nobody claimed.
+            for gate_id in standalone_gates & set(req.pegs):
+                by_gate.setdefault(gate_id, []).append(line)
+        for run_ref in sections:
             by_section.setdefault(run_ref, []).append(line)
         for span_id in {e for e in req.pegs if e in spans}:
             by_bay.setdefault(span_id, []).append(line)
@@ -184,6 +201,13 @@ def group_bom(
               for run_ref, lines in sorted(by_section.items())]
     groups += [BomGroup(kind="bay", element_id=span_id, lines=_merged(lines))
                for span_id, lines in sorted(by_bay.items())]
+    # A gate that stands beside the runs is its own group, for the same reason a
+    # node post is: it belongs to no section, and naming what it IS costs
+    # nothing and stays true. Sections, nodes and gates together partition the
+    # demand exactly once — a standalone gate's kit pegs to the gate and to
+    # nothing in any section, so it is counted here and nowhere else.
+    groups += [BomGroup(kind="gate", element_id=gate_id, lines=_merged(lines))
+               for gate_id, lines in sorted(by_gate.items())]
 
     by_id = {req.id: req for req in requirements}
     for decision in sorted(decisions or [], key=_decision_order):

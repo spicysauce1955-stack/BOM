@@ -16,7 +16,8 @@ from fenceai.knowledge.demo import demo_knowledge
 from fenceai.report.structure import build_structure
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import (
-    BasePayload, BaseTopPayload, BaseTopPoint, GatePayload, Node, Run, Topology,
+    BasePayload, BaseTopPayload, BaseTopPoint, GatePayload, GateSpan, Node, Run,
+    Topology,
 )
 from tests.conftest import add_interval_event, add_point_event, straight_topology
 
@@ -219,6 +220,77 @@ def test_a_gate_names_the_posts_it_hangs_between():
     assert gate.from_tag and gate.to_tag
     assert by_tag[gate.from_tag] == gate.start_station_mm
     assert by_tag[gate.to_tag] == gate.end_station_mm
+
+
+# --- a gate that belongs to no section ---------------------------------------
+#
+# A `GateSpan` stands BESIDE the runs and inside none of them, so it cannot be a
+# row in a section's gate list: it has no station to be set out at. It is read
+# the only way it is true — BETWEEN two posts, which is how a hanging crew reads
+# a gate anyway.
+
+def _two_runs_and_a_gate_between_them():
+    """o------o [gate] o------o — two runs drawn unconnected, joined by a gate
+    that shares n2 with the first and n3 with the second."""
+    return Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=5000, y_mm=0),
+               Node(id="n3", x_mm=6000, y_mm=0), Node(id="n4", x_mm=11000, y_mm=0)],
+        runs=[Run(id="rA", start_node_id="n1", end_node_id="n2"),
+              Run(id="rB", start_node_id="n3", end_node_id="n4")],
+        gates=[GateSpan(id="g1", start_node_id="n2", end_node_id="n3",
+                        hinge="start", opens_to="left")],
+    )
+
+
+def test_a_standalone_gate_is_reported_between_its_two_posts():
+    report, _, _, _ = _report(_two_runs_and_a_gate_between_them())
+    assert [g.tag for s in report.sections for g in s.gates] == [], \
+        "it is in no section — it is not a hole in a stretch of fence"
+
+    gate = report.gates[0]
+    assert gate.element_id == "gate@g1"
+    assert gate.opening_mm == 1000, "the distance between its two nodes"
+    assert gate.kit_sku == "GATE-KIT-1000"
+    assert (gate.leaf, gate.opens_to, gate.hinge) == ("single", "left", "start")
+
+    # both ends name a post the crew can walk up to, and they are the tags the
+    # SECTIONS gave those posts — a post has one name across the whole sheet
+    tags = {st.tag: st.element_id
+            for s in report.sections for st in s.setting_out}
+    assert gate.from_tag in tags and gate.to_tag in tags
+    assert tags[gate.from_tag] == "post@node:n2"
+    assert tags[gate.to_tag] == "post@node:n3"
+
+
+def test_a_gate_hanging_off_one_end_names_the_post_no_section_named():
+    """o-----o [gate] — the far node is touched by no run, so no section ever
+    tags its post. The gate names it in its own namespace instead of leaving the
+    crew a gate with one end."""
+    topo = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=5000, y_mm=0),
+               Node(id="n3", x_mm=6000, y_mm=0)],
+        runs=[Run(id="rA", start_node_id="n1", end_node_id="n2")],
+        gates=[GateSpan(id="g1", start_node_id="n2", end_node_id="n3")],
+    )
+    report, result, _, _ = _report(topo)
+    gate = report.gates[0]
+    section_tags = {st.tag for s in report.sections for st in s.setting_out}
+    assert gate.from_tag in section_tags, "the near end is the run's own end post"
+    assert gate.to_tag == "G1/P2" and gate.to_tag not in section_tags
+    # ...and that post is counted, because it is bought like any other
+    assert report.totals.posts == len(result.strategy.posts)
+
+
+def test_the_gate_kit_of_a_standalone_gate_is_on_its_row():
+    report, _, _, _ = _report(_two_runs_and_a_gate_between_them())
+    assert [(p.sku, p.qty) for p in report.gates[0].parts] == [("GATE-KIT-1000", 1)]
+
+
+def test_totals_count_both_kinds_of_gate():
+    report, result, _, _ = _report(_two_runs_and_a_gate_between_them())
+    assert report.totals.gates == len(result.strategy.gates) == 1
+    in_sections = sum(len(s.gates) for s in report.sections)
+    assert report.totals.gates == in_sections + len(report.gates)
 
 
 def test_totals_agree_with_the_sections():
@@ -537,3 +609,78 @@ def test_a_generated_bay_carries_the_joint_details_of_the_model_it_was_built_to(
         for slat in slats:
             assert slat.seat_start_mm == slat.y_mm
             assert slat.seat_end_mm - slat.seat_start_mm == detail.engagement_mm
+
+
+# --- which way the leaf goes --------------------------------------------------
+
+def _gated(payload: GatePayload):
+    topo = straight_topology(6000)
+    add_point_event(topo, "run1", "ev_gate", 2000, payload)
+    return topo
+
+
+def test_a_stated_swing_reaches_the_setting_out_sheet_unchanged():
+    """Topology -> `Gate` -> `GateRow`, asserted at every hop.
+
+    A fact carried in two of three places and dropped in the third fails
+    silently and reads to everyone as a frontend bug, so the pass-through is
+    tested end to end rather than per module."""
+    topo = _gated(GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000",
+                              leaf="single", opens_to="left", hinge="start"))
+    report, result, _, _ = _report(topo)
+
+    gate = result.strategy.gates[0]
+    assert (gate.leaf, gate.opens_to, gate.hinge, gate.slides_to) == \
+        ("single", "left", "start", None)
+
+    row = report.sections[0].gates[0]
+    assert (row.leaf, row.opens_to, row.hinge, row.slides_to) == \
+        ("single", "left", "start", None)
+    # the hinge is only useful because the row already names the two posts it
+    # hangs between: "hinge: start" is the post in `from_tag`
+    assert row.from_tag is not None and row.to_tag is not None
+
+
+def test_a_sliding_gate_reaches_the_sheet_the_same_way():
+    topo = _gated(GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000",
+                              leaf="sliding", slides_to="end"))
+    report, result, _, _ = _report(topo)
+
+    gate = result.strategy.gates[0]
+    assert (gate.leaf, gate.slides_to) == ("sliding", "end")
+    assert gate.opens_to is None and gate.hinge is None
+
+    row = report.sections[0].gates[0]
+    assert (row.leaf, row.slides_to) == ("sliding", "end")
+    assert row.opens_to is None and row.hinge is None
+
+
+def test_a_gate_nobody_has_described_states_nothing():
+    """The generator may not infer a swing: a swing nobody stated is a swing
+    nobody is responsible for."""
+    report, result, _, _ = _report(_straight_with_gate())
+    gate = result.strategy.gates[0]
+    row = report.sections[0].gates[0]
+    assert gate.leaf == "single" and row.leaf == "single"
+    for obj in (gate, row):
+        assert obj.opens_to is None and obj.hinge is None and obj.slides_to is None
+
+
+def test_the_swing_changes_no_number_the_generator_produces():
+    """It reaches the drawing and the sheet and nothing else: no post moves, no
+    kit changes, no warning appears. The catalog does not declare handedness
+    yet, so nothing may be chosen from this."""
+    plain = _report(_gated(GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000")))
+    swung = _report(_gated(GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000",
+                                       leaf="double", opens_to="right")))
+
+    assert [w.model_dump() for w in swung[1].strategy.warnings] == \
+        [w.model_dump() for w in plain[1].strategy.warnings]
+    assert [p.model_dump() for p in swung[1].strategy.posts] == \
+        [p.model_dump() for p in plain[1].strategy.posts]
+    assert [s.model_dump() for s in swung[1].strategy.spans] == \
+        [s.model_dump() for s in plain[1].strategy.spans]
+    assert swung[3].model_dump() == plain[3].model_dump(), "the BOM must be identical"
+    assert [n.model_dump() for n in swung[1].graph.nodes] == \
+        [n.model_dump() for n in plain[1].graph.nodes], \
+        "no swing fact may enter the decision graph"

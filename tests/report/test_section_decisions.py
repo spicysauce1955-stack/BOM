@@ -257,3 +257,38 @@ def test_the_view_is_pure_and_never_mutates_the_graph():
     decisions_for_section(result.graph, result.strategy, topo, "run1")
     decisions_for_section(result.graph, result.strategy, topo, "run1", lang="he")
     assert result.graph.model_dump_json() == before
+
+
+def test_a_gate_standing_beside_the_runs_is_in_no_sections_story():
+    """`Gate.run_ref is None` means the gate lies on no run, and this view
+    answers per SECTION. Its decisions are its own — reachable through
+    `/explain/{element}` — and attributing them to a neighbouring section would
+    put a gate nobody placed there into that section's story.
+
+    The section's own story must also be unchanged by the gate's presence, which
+    is the same property `tests/strategy/test_gate_span_generation.py` asserts of the
+    generator, seen from the read model.
+    """
+    from fenceai.topology.model import GateSpan
+
+    def _topo(with_gate: bool) -> Topology:
+        return Topology(
+            nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=5000, y_mm=0),
+                   Node(id="n3", x_mm=6000, y_mm=0), Node(id="n4", x_mm=11000, y_mm=0)],
+            runs=[Run(id="rA", start_node_id="n1", end_node_id="n2"),
+                  Run(id="rB", start_node_id="n3", end_node_id="n4")],
+            gates=([GateSpan(id="g1", start_node_id="n2", end_node_id="n3")]
+                   if with_gate else []),
+        )
+
+    gated, bare = _topo(True), _topo(False)
+    with_gate = generate(gated, demo_knowledge(), demo_catalog(), parts=PARTS)
+    without = generate(bare, demo_knowledge(), demo_catalog(), parts=PARTS)
+
+    story = decisions_for_section(with_gate.graph, with_gate.strategy, gated, "rA")
+    assert "gate@g1" not in {e for d in story.decisions for e in d.elements}
+
+    plain = decisions_for_section(without.graph, without.strategy, bare, "rA")
+    assert [(d.action, d.elements, d.sentence) for d in story.decisions] == \
+        [(d.action, d.elements, d.sentence) for d in plain.decisions], \
+        "placing a gate beside a run does not change that run's explanation"

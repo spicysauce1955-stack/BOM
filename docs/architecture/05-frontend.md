@@ -1,6 +1,6 @@
 # 05 — Frontend
 
-34 ES modules under `src/fenceai/web/static/js/`, plus SVG and CSS. **No framework,
+53 ES modules under `src/fenceai/web/static/js/`, plus SVG and CSS. **No framework,
 no build step, no CDN** — fonts are bundled, modules are loaded natively by the
 browser (ADR-0010). Hebrew-first RTL with an English toggle.
 
@@ -20,6 +20,9 @@ flowchart TD
         BT["base-top.js<br/>base geometry transforms"]
         RV["runview.js<br/>macro elevation placement"]
         JT["joint.js<br/>joint section drawing"]
+        LS["landmark-shape.js<br/>property-object geometry"]
+        GG["gate-geom.js<br/>opening, swing arc, slide"]
+        RM["run-metrics.js<br/>a stretch's length and bearing"]
         AP["api.js<br/>fetch + error rendering"]
     end
 
@@ -52,6 +55,9 @@ flowchart TD
         ME["model-editor.js"]
         TB["tabs.js"]
         SI["site.js — site conditions"]
+        CX["context.js — the property"]
+        GA["gates.js — which gate"]
+        NO["notes.js — notes on the drawing"]
     end
 
     SS --> AP
@@ -95,6 +101,21 @@ flowchart TD
     TB --> BU
     TB --> IM
     TB --> WA
+    TB --> NO
+    CX --> LS
+    CX --> HI
+    ED --> LS
+    ED --> CX
+    ED --> GA
+    ED --> NO
+    GA --> BU
+    GA --> GE
+    GA --> GG
+    GA --> CX
+    ST --> GA
+    IN --> RM
+    NO --> GE
+    NO --> CX
 
     style LEAF fill:#0f172a,color:#fff
 ```
@@ -105,6 +126,144 @@ universal.)*
 **One observation worth knowing:** `state.js` and `geom.js` import each other. ES
 modules tolerate it because neither uses the other at module-evaluation time, but it
 is the one place in the graph where the layering is not strict.
+
+---
+
+## The property, and the promises about it
+
+Two surfaces the salesperson's road leans on, and both are deliberately *outside*
+`Topology`. A landmark and a note change no quantity, so neither may bump the
+topology revision — a nudged driveway must not 409 the structure sheet.
+
+**`landmark-shape.js` is the property registry's frontend half**, pure and
+node-tested beside `base-top.js`. `project/model.py: LANDMARK_KINDS` says what is
+*recordable*; this module says how each kind is *drawn*:
+
+| gesture | kinds | what it makes |
+|---|---|---|
+| `polygon` | house | a closed shape built click by click — a building is not a box |
+| `band` | street, sidewalk | a rectangle around the dragged centreline, so it has a **width** |
+| `rect` | pool, boundary, other | the bbox of the drag |
+| `circle` | tree | a 16-gon; there is one shape in the storage model, so a tree is a polygon that reads as a circle |
+
+Only the house and the street are toolbar buttons. Everything else lives behind
+one `#tool-other` picker: seven equal buttons on the rail is the opposite of the
+screen a non-technical salesperson should open.
+
+Because a band is a rectangle, it is **editable**: `rectMetrics` reads
+`{centre, angle_deg, length_mm, width_mm}` off four corners and `rectFromMetrics`
+writes them back, which is what the property panel's angle/length/width fields
+are. A click-built house has no such reading and is offered none — inventing an
+angle for a free polygon would silently square off a shape somebody traced.
+
+**Notes are attached by clicking the thing they are about.** `editor.js`
+resolves what is under the pointer in a fixed order — point event, corner node,
+run, landmark, else the job itself — and hands `notes.js` a
+`{ref, label}`. Interval events (`base`, `height`, `model`) are deliberately not
+matched: `base` spans a whole run, so matching it would mean no click on a fence
+could ever be about the fence. `target_ref` gained `landmark:<id>` for this; the
+field is a free string on purpose, and a note **outlives its referent** — the
+drawing is mutable and verbatim human text is not, so every ref is resolved
+defensively and an unresolvable one reads as "something no longer on the
+drawing".
+
+---
+
+## Typed measurements
+
+A street landmark could be typed — angle, length, width — and the fence could
+not, so a salesperson who had *measured* a run could only drag until the label
+read about right. `run-metrics.js` is the fence's half of that pair, pure and
+node-tested beside `landmark-shape.js`: it reads a stretch's `{length_mm,
+angle_deg}` off its geometry and writes them back, with the **start anchored**
+— typing a length means "this stretch is 12.4 m", not "slide it off the corner
+it was drawn from".
+
+A stretch WITH CORNERS gets one row per leg and no single answer, for exactly
+the reason a click-built house is offered no angle: there is no one bearing for
+an L, and offering one would silently straighten a shape somebody drew. Editing
+a leg carries every later point along by the same translation, so lengthening
+the first leg of an L moves the corner and the far end rather than stretching
+past a corner that stayed put.
+
+---
+
+## A gate, and which way it opens
+
+A gate was a station, a `width_mm` and a `kit_sku` inside a run — a hole punched
+in a fence — drawn as a dashed segment labelled "gate" only *after* Generate.
+Two verdicts from the user rebuilt it: *"the placement is not sufficient for an
+opening fence"*, and then *"a run and a gate are different things — the gate is
+placed next to a run, not on it"*.
+
+**There are two kinds now**, and the second is the one this UI authors.
+`GateSpan` (`topology.gates`) is a gate that stands BESIDE the runs, between two
+nodes of its own:
+
+```
+o------------o  [====gate====]  o------------o
+    run rA       topology.gates      run rB
+                 sharing n2 and n3
+```
+
+It has no stored width — the opening is the distance between its nodes, as a
+run's length is between its own — it joins two stretches drawn unconnected by
+sharing their end nodes, and it changes the layout of neither: the generator
+runs it *after* the whole run loop, so nothing a run produces can observe a
+gate. That invariance is asserted, not asserted-in-a-comment. `GatePayload`, the
+in-run opening, stays valid: stored projects have them and the golden scenarios
+build them. Nothing in the UI makes a new one.
+
+Both carry `leaf` (single | double | sliding), `opens_to`, `hinge` and
+`slides_to`, validated by one shared `check_swing_coherence`, and `js/gates.js`
+draws both from the **topology** rather than from a generated strategy: the
+opening at its true width, the leaf where it stands open, the quarter arc
+showing it get there, and a dot on the post it hangs from. A swing nobody has
+stated is a question mark, never a default — and it is a gap on the handover
+sheet (`gate_swing_unstated`), reported on the road's gates step because that
+is the screen where one click closes it.
+
+A placed span is **grabbable**: two endpoint grips resize the opening, a
+transparent body stroke slides the whole gate, and an end released near another
+node re-points at it — which is how a gate joins a stretch drawn after it.
+Three details there are load-bearing and each was a bug avoided:
+
+* the body handle is painted UNDER the gate's marks, because a 1000 mm gate is
+  about 45 px wide and a handle on top would swallow the two clicks the gate
+  exists to answer;
+* the grips step 12 px off the line, because on the post is where the hinge dot
+  already is (the same offset, for the same reason, that keeps a ghost off a
+  generated post);
+* the grips work with **any** tool armed, so a person does not have to know
+  which tool "owns" a gate they can see.
+
+Moving an end moves a NODE, so anything else attached to it follows — a gate
+hung on a stretch's end node drags that end with it. That is what sharing a
+node means, and it is the same thing dragging a run's dot has always done.
+
+Three properties hold this together and each is load-bearing:
+
+* **The stored fact is run-relative (`left`/`right`), the sentence is
+  rendered.** *"Opens toward the house"* is computed by probing the side for a
+  landmark — the frontend is the only place that knows what is on the property.
+  Storing the sentence would mean a gate goes on claiming to open toward a
+  house that has since been moved.
+* **`None` means nobody has said, and is drawn as a question mark**, not as a
+  default side. A swing drawn from a default is a confident wrong drawing, and
+  which way it opens is the one question a gate on a plan exists to answer.
+  `GatePayload`'s validator refuses the contradictions outright (a sliding gate
+  that states a swing side, a double that states a hinge) rather than clearing
+  them quietly.
+* **None of it reaches generation.** The swing is carried through the generator
+  as one opaque value and influences no post, span, kit, warning, graph node or
+  BOM line — `tests/report/test_structure.py` compares all of those between a
+  plain gate and a swung one. Handedness will pick hardware only once the
+  catalog declares it, as its own slice.
+
+`contract.md` obligation 18 is why this lives on our side: `PanelSpec` models no
+gate — *"no handedness, no swing direction"* — so nothing across the boundary
+can tell us and nothing across it needs to be told. It is internal design and
+needed no amendment.
 
 ---
 

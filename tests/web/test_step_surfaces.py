@@ -39,7 +39,7 @@ import pytest
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
 SCRIPT = """
-import { STEP_HIDDEN, hiddenForStep } from "./js/step-surfaces.js";
+import { STEP_HIDDEN, defaultToolForStep, hiddenForStep } from "./js/step-surfaces.js";
 import { ROADS } from "./js/roads.js";
 
 const out = {};
@@ -50,6 +50,9 @@ out.step_keys = ROADS.sales.steps.map((s) => s.key);
 out.hidden = {};
 for (const key of out.step_keys) out.hidden[key] = hiddenForStep(key);
 out.unknown = hiddenForStep("nonsense-not-a-step");
+out.tools = {};
+for (const key of out.step_keys) out.tools[key] = defaultToolForStep(key);
+out.tool_unknown = defaultToolForStep("nonsense-not-a-step");
 console.log(JSON.stringify(out));
 """
 
@@ -152,7 +155,45 @@ def test_each_step_keeps_the_tools_it_needs(out):
             assert tool not in out["hidden"][step], f"{step} needs {tool}"
 
 
-MAP_STEPS = {"property", "layout", "sideview", "model", "gates"}
+MAP_STEPS = {"property", "layout", "sideview", "model", "gates", "notes"}
+
+
+def test_the_generate_bar_follows_the_drawing_except_on_notes(out):
+    """The one step that shows the map without the button that recomputes it.
+    Named on purpose: `#generate-toolbar` sitting in `DRAWING` for six steps
+    and separately for the seventh is the kind of near-copy that drifts, so if
+    somebody folds `notes` back into `DRAWING` this says what breaks."""
+    bar_shown = {s for s in out["hidden"] if "#generate-toolbar" not in out["hidden"][s]}
+    assert bar_shown == MAP_STEPS - {"notes"}
+
+
+def test_each_step_arms_a_tool_its_own_rail_offers(out):
+    """A tool used to survive the step that offered it, and the screen then
+    lied about what the next click would do: the gate tool armed on step 6 was
+    still armed on step 7, where clicking the house to write a note on it
+    placed a gate — on a step whose rail does not show the gate button at all.
+    Hiding a control does not disarm it.
+
+    The invariant, not the table: whatever a step arms, that step must not be
+    hiding it. `#tool-select` is never scoped (no step hides it), so the
+    neutral answer is always admissible.
+    """
+    for step, tool in out["tools"].items():
+        if tool == "select":
+            continue
+        assert f"#tool-{tool}" not in out["hidden"][step], (step, tool)
+
+
+def test_a_step_whose_whole_job_is_one_tool_arms_it(out):
+    """Derived from `STEP_TOOLS`, so it cannot drift from what the rail shows:
+    exactly one kept tool means the step IS that tool. Several, or none, has no
+    single answer and gets `select` — including a step nobody has heard of,
+    which must degrade like every other unknown key in this module."""
+    assert out["tools"] == {
+        "job": "select", "property": "select", "layout": "draw",
+        "sideview": "select", "model": "model", "gates": "gate",
+        "notes": "note", "review": "select"}
+    assert out["tool_unknown"] == "select"
 
 
 def test_the_road_band_is_never_scoped_away(out):
@@ -163,15 +204,18 @@ def test_the_road_band_is_never_scoped_away(out):
 
 
 def test_the_drawing_is_scoped_to_the_steps_whose_work_is_on_it(out):
-    """Steps 2-6, and nowhere else.
+    """Steps 2-7, and nowhere else.
 
     This REVERSES the earlier rule that the drawing stays on screen throughout,
-    on instruction: steps 1, 7 and 8 are a form, a note and a summary, and a
-    map behind them invites a click that does nothing while making step 1 read
-    as "draw something" when the only thing to do is type an address.
+    on instruction: steps 1 and 8 are a form and a summary, and a map behind
+    them invites a click that does nothing while making step 1 read as "draw
+    something" when the only thing to do is type an address.
 
-    `notes` is in the hidden set for list-equality only — that step switches to
-    the annotations TAB, so the canvas was never on screen there either way.
+    Step 7 has since come BACK onto the list, by the same authority. A note is
+    attached by clicking the thing it is about — the house, a stretch, the
+    ground by the gate — so there the map is not furniture, it is the surface.
+    What that step still hides is `#generate-toolbar`: working out the fence is
+    step 8's business, and a note is written about what is already drawn.
     """
     shown = {s for s in out["hidden"] if "#canvas" not in out["hidden"][s]}
     assert shown == MAP_STEPS, (

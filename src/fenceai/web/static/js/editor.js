@@ -7,16 +7,26 @@ import { loadCatalogProducts } from "./builder-ui.js";
 import { isSelectable, loadModelListing, modelOptionLabel } from "./fence-models.js";
 import {
   anchorFor, clearGroup, el, endpointNodeAt, GROUND_TOL_MM, groundSamplesFor,
-  groundZAt, nodeById, pointAtStation, RUN_HIT_MM, runAtPoint, runById, runLength,
-  runPoints, snapPoint, stationAtPoint, stationOfAnchor, toMmRaw, toPx,
+  groundZAt, nearestNode, nodeById, pointAtStation, RUN_HIT_MM, runAtPoint,
+  runById, runLength, runPoints, snapPoint, stationAtPoint, stationOfAnchor,
+  toMmRaw, toPx,
 } from "./geom.js";
 import { pushSnapshot, redo, undo } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import {
-  clearDraft as clearContextDraft, landmarkAt, landmarkById, nextLandmarkId,
-  render as renderContext, renderDraft as renderContextDraft, shapeFor,
+  clearDraft as clearContextDraft, landmarkAt, landmarkAtAny, landmarkById,
+  nextLandmarkId, render as renderContext, renderDraft as renderContextDraft,
+  renderDraftPolygon as renderContextDraftPolygon,
 } from "./context.js";
+import {
+  chosenGateKit, gateSpanById, moveGateNodes, nextGateId, renderGates,
+  repointGateEnd,
+} from "./gates.js";
+import {
+  gestureFor, LANDMARK_KINDS, MIN_MM, polygonFromClicks, shapeFor,
+} from "./landmark-shape.js";
+import { openNotePopover, targetLabel } from "./notes.js";
 import { layoutWithPin, snapCandidates, violations } from "./post-drag.js";
 import {
   addIntervalEvent, addLandmark, addPointEvent, generateStrategy, maxSpanFor, on,
@@ -30,7 +40,18 @@ import {
 import { gapsPanelHtml } from "./gaps.js";
 import { localizedByCode, warningRowHtml } from "./warnings.js";
 
-const EVENT_TOOLS = ["gate", "base", "ground", "height", "pin", "model"];
+// `gate` is deliberately NOT here any more. An event tool writes onto a RUN,
+// and a gate is no longer something that happens to a run: it is its own
+// element standing beside one (`topology/model.py: GateSpan`). The in-run gate
+// remains valid data — stored projects have them and the golden scenarios build
+// them — but nothing in this UI authors one, because it models something a
+// salesperson does not do.
+const EVENT_TOOLS = ["base", "ground", "height", "pin", "model"];
+
+// How near a press has to land to mean "this node". A gate is placed AT THE END
+// of a fence, so the whole gesture is about hitting the post that is there;
+// generous on purpose, and the same order as the drawing snap.
+const GATE_SNAP_MM = 700;
 
 const BASE_COLORS = { soil: "#a16207", concrete: "#64748b", masonry_wall: "#dc2626" };
 const POST_COLORS = { line: "#2563eb", end: "#1e293b", corner: "#1e293b",
@@ -70,17 +91,56 @@ function renderAllCanvas() {
 
 // ---------- toolbar ----------
 const TOOLS = ["select", "draw", "gate", "base", "ground", "height", "pin", "model",
-               "house", "street"];
+               "note", ...LANDMARK_KINDS];
 // The property layer. Its own list because these do not place an EVENT on a run
 // — they describe what is around the fence, and nothing they draw reaches
 // generation (see `project/model.py` SiteContext).
-const CONTEXT_TOOLS = ["house", "street"];
+//
+// DERIVED from the registry, never hand-written: a hand-written copy is a second
+// registry, and the day somebody adds a kind and forgets this line the new tool
+// draws nothing and the canvas silently pans instead.
+const CONTEXT_TOOLS = LANDMARK_KINDS;
+// ...and within it, the kinds built CLICK BY CLICK rather than by one drag. A
+// house is a closed shape of straight lines — an L-shaped building approximated
+// by a box is something the office person then has to ring up and ask about —
+// so it gets the draw tool's gesture, not the rubber band's.
+const POLYGON_TOOLS = LANDMARK_KINDS.filter((k) => gestureFor(k) === "polygon");
+// How near the first corner a click has to land to mean "close the shape".
+// Twice the minimum gesture: `polygonFromClicks` discards a final point that
+// close to the first anyway, so a looser target here only makes the same
+// gesture easier to hit.
+const POLY_CLOSE_MM = MIN_MM * 2;
+
+// The click-built landmark in progress: `{kind, points}` or null. It is NOT
+// `state.draftNodes` — that is the fence draft, and one buffer for both would
+// mean Escape, Enter and the Finish button could not tell a half-drawn house
+// from a half-drawn fence.
+let polyDraft = null;
 
 function setupToolbar() {
   for (const tool of TOOLS) {
     const btn = document.getElementById(`tool-${tool}`);
-    if (btn) btn.addEventListener("click", () => { setTool(tool); updateStatus(); });
+    // BUTTONS only, and the exclusion is a real bug rather than tidiness.
+    // `#tool-other` is a SELECT whose id matches the `other` KIND, so this loop
+    // gave it a click listener arming `other`. A native select fires `change`
+    // when an option is chosen and `click` when the dropdown closes — in that
+    // order — so every tree, pool and sidewalk was armed by `change` and then
+    // immediately overwritten by `click`, and the whole picker recorded nothing
+    // but "Other".
+    if (btn && btn.tagName === "BUTTON")
+      btn.addEventListener("click", () => { setTool(tool); updateStatus(); });
   }
+  // "Other…" — one control for every property object that is not the house or
+  // the street. A tree, a pool, a sidewalk and a boundary each deserve to be
+  // drawable and none of them deserves a permanent button: seven equal buttons
+  // on the rail is the opposite of the simple, intuitive screen this is for.
+  // A `<select>` rather than a popup menu because it is twenty lines less code,
+  // it is keyboard- and touch-native, and index.html can localize its options
+  // through the same `data-i18n` pass as everything else.
+  const other = document.getElementById("tool-other");
+  if (other) other.addEventListener("change", () => {
+    if (other.value) { setTool(other.value); updateStatus(); }
+  });
   // `apiSend` has already shown the user a localized sentence and logged the
   // server's body by the time it rethrows; passing the async function straight
   // to addEventListener made every refused generation ALSO an unhandled
@@ -98,6 +158,16 @@ function updateToolButtons() {
   for (const tool of TOOLS) {
     const btn = document.getElementById(`tool-${tool}`);
     if (btn) btn.classList.toggle("active", state.tool === tool);
+  }
+  // The "other" picker is a tool button that happens to be a select: it lights
+  // up while one of its kinds is active, and falls back to its own label the
+  // moment another tool is chosen — a select left reading "Pool" while the
+  // draw tool is armed is a control lying about what the next click will do.
+  const other = document.getElementById("tool-other");
+  if (other) {
+    const mine = [...other.options].some((o) => o.value && o.value === state.tool);
+    other.classList.toggle("active", mine);
+    if (!mine) other.value = "";
   }
   // cursors are affordances: only the select tool opens the length editor, so
   // only it may promise a text caret over a run label (style.css)
@@ -209,6 +279,19 @@ function setupCanvas() {
       if (hit) setSelection({ runId: hit.run.id });
       else if (!ev.target.closest("#g-overlay") && !ev.target.closest("#g-handles"))
         setSelection({});
+    } else if (POLYGON_TOOLS.includes(state.tool)) {
+      // Click by click, exactly like the draw tool one branch up — and for the
+      // same reason it exists there: the shape is whatever the person walked
+      // around, not whatever a rectangle could approximate.
+      const [mx, my] = svgCoords(ev);
+      addPolyPoint(state.tool, [Math.round(mx), Math.round(my)]);
+    } else if (state.tool === "note") {
+      // A promise is made ABOUT something. The Annotations tab asked a
+      // salesperson to pick "r2" out of a list of run ids; here they point at
+      // the thing they mean, and `noteTargetAt` says what that was.
+      const target = noteTargetAt(ev);
+      closePopover();
+      openNotePopover(target, ev.clientX, ev.clientY);
     } else if (EVENT_TOOLS.includes(state.tool)) {
       const hit = runHitAt(ev);
       closePopover();
@@ -216,7 +299,12 @@ function setupCanvas() {
     }
   });
 
-  svg.addEventListener("dblclick", (ev) => { ev.preventDefault(); finishDraft(); });
+  svg.addEventListener("dblclick", (ev) => {
+    ev.preventDefault();
+    // Whichever draft is open. Two buffers, one gesture that means "that is the
+    // whole shape" — see `polyDraft`'s declaration for why they are separate.
+    if (polyDraft) closePolyDraft(); else finishDraft();
+  });
 
   svg.addEventListener("wheel", (ev) => {
     ev.preventDefault();
@@ -225,13 +313,94 @@ function setupCanvas() {
 
   svg.addEventListener("pointerdown", (ev) => {
     const target = ev.target;
+    // The other half of the same fault: an SVG is not focusable, so focus stays
+    // on the last button pressed while the whole gesture happens on the canvas.
+    // Taking focus here means the keys that mean something to the DRAWING —
+    // Enter, Escape, a typed length — are delivered to it and to nothing else.
+    // `preventScroll`, or the page jumps to the canvas on every press.
+    if (document.activeElement && document.activeElement !== svg
+        && document.activeElement !== document.body)
+      document.activeElement.blur();
+    svg.focus?.({ preventScroll: true });
     // BEFORE the pan check, and that ordering is the whole bug this line fixes.
     // A landmark is drawn on EMPTY canvas by definition — the house goes where
     // the fence is not — so `onSomething` below is false for every one of these
     // gestures and panning swallowed them all. Ctrl/middle-drag still pans,
     // because a person needs to move the view while placing a house.
-    if (CONTEXT_TOOLS.includes(state.tool) && state.project
+    // A GATE is placed by dragging it out beside the fence — press at the post
+    // it hangs from, release where the far post goes. Before the pan check for
+    // the same reason the landmark tools are: the gesture starts on empty
+    // canvas by definition, since a gate stands where the fence does not.
+    // ...but never on a gate's own controls. `#g-gates` is `js/gates.js`'s
+    // subtree and its marks answer their own clicks — flip the swing, move the
+    // hinge. Capturing the pointer here would swallow those, and with the gate
+    // tool armed on the gates step that is EVERY press a person makes on a gate
+    // they have just placed: the controls would work on every step except the
+    // one that shows them.
+    if (state.tool === "gate" && state.project && !ev.target.closest?.("#g-gates")
         && ev.button === 0 && !ev.ctrlKey && !ev.metaKey) {
+      ev.preventDefault();
+      const from = svgCoords(ev);
+      // Snapped to a post if there is one near, because "at the end of the
+      // fence" is the whole gesture — the gate is what JOINS two stretches, and
+      // it can only join them by sharing their nodes.
+      const node = nearestNode(from[0], from[1], GATE_SNAP_MM);
+      drag = { kind: "gate-span",
+               from: node ? [node.x_mm, node.y_mm] : from,
+               fromNodeId: node ? node.id : null,
+               started: false, start: [ev.clientX, ev.clientY] };
+      svg.setPointerCapture(ev.pointerId);
+      return;
+    }
+    // A press on a PLACED gate's own handles: move it, or change its opening.
+    //
+    // Here, rather than down in the `select` block, because a gate's marks
+    // answer the pointer whatever tool is armed — `js/gates.js`'s click
+    // listener already flips a swing that way — and SELECT is exactly what a
+    // person reaches for to adjust something that is already there. The gate
+    // TOOL's branch above returns before ever reaching this only for a press
+    // OUTSIDE `#g-gates`; these handles are inside it, which is what that
+    // guard was written for.
+    const grab = state.project && ev.button === 0 && !ev.ctrlKey && !ev.metaKey
+      && target.closest?.(".gate-handle, .gate-body");
+    if (grab) {
+      const gate = gateSpanById(grab.dataset.gate);
+      const a = gate && nodeById(gate.start_node_id);
+      const b = gate && nodeById(gate.end_node_id);
+      if (gate && a && b) {
+        ev.preventDefault();
+        // Ids and the ORIGIN positions, never the node objects: a save in
+        // flight can swap `state.project` mid-gesture and a captured node
+        // would then be a detached copy this drag went on writing to. Same
+        // reason `landmark-move` above stores an id, and the origin is what
+        // makes every move of this drag a delta from where it STARTED rather
+        // than an accumulation of rounded steps.
+        drag = {
+          kind: grab.classList.contains("gate-body") ? "gate-move" : "gate-resize",
+          gateId: gate.id,
+          end: grab.dataset.end === "end" ? "end" : "start",
+          from: svgCoords(ev),
+          origin: { start: [a.x_mm, a.y_mm], end: [b.x_mm, b.y_mm] },
+          snapNodeId: null,
+          started: false, start: [ev.clientX, ev.clientY],
+        };
+        svg.setPointerCapture(ev.pointerId);
+        return;
+      }
+    }
+    // ...but a POLYGON kind is built from clicks, so its press must usually
+    // fall through to the pan branch below and let the click listener have the
+    // gesture — capturing the pointer here would swallow every corner of the
+    // house. The one exception is a press on a house that is already there
+    // while nothing is half-drawn: that is a MOVE, and losing it would mean a
+    // house could be drawn and never repositioned. Mid-shape the exception is
+    // off, or the click that closes an outline drawn over an older house would
+    // pick the old one up instead.
+    const polyTool = gestureFor(state.tool) === "polygon";
+    const movingPoly = polyTool && !polyDraft && state.project
+      && landmarkAt(state.project.context?.landmarks, svgCoords(ev), state.tool);
+    if (CONTEXT_TOOLS.includes(state.tool) && (!polyTool || movingPoly)
+        && state.project && ev.button === 0 && !ev.ctrlKey && !ev.metaKey) {
       // One gesture, one shape: press, drag, release. A click-click-click
       // polyline would be a second draft state machine beside the one this file
       // already owns for runs, and a house is a rectangle anyway.
@@ -268,7 +437,8 @@ function setupCanvas() {
     // run, a handle, a ghost or an overlay element still means what it meant.
     const onSomething = target.closest
       && (target.closest(".run-hit") || target.closest("#g-handles")
-          || target.closest("#g-overlay") || target.classList.contains("run-label"));
+          || target.closest("#g-overlay") || target.closest("#g-gates")
+          || target.classList.contains("run-label"));
     if (ev.button === 1 || (ev.button === 0 && (ev.ctrlKey || ev.metaKey))
         || (ev.button === 0 && !onSomething)) {
       ev.preventDefault();
@@ -377,7 +547,20 @@ function setupCanvas() {
       if (drawTyping && lengthBuffer) { clearLengthBuffer(); return; }
       cancelDraft();
     }
+    // `preventDefault` FIRST, and it is the whole of a reported bug. Enter is
+    // "that is the whole shape" here, and it is also the browser's activation
+    // key for whatever button happens to have focus — which, after arriving at
+    // a step by pressing *Done — next: ...*, is the road's own Done button,
+    // because clicking on an SVG moves focus nowhere. So finishing a run with
+    // the keyboard finished the run AND walked the salesperson to the next
+    // step. One keystroke, two commits, and only one of them asked for.
+    if (ev.key === "Enter" && polyDraft) {
+      ev.preventDefault();
+      closePolyDraft();
+      return;
+    }
     if (ev.key === "Enter" && state.draftNodes.length) {
+      ev.preventDefault();
       if (drawTyping && lengthBuffer) { commitTypedDot(); return; }
       finishDraft();
     }
@@ -391,6 +574,7 @@ function setupCanvas() {
 function onPointerMove(ev) {
   if (drag) { onDragMove(ev); return; }
   const [mx, my] = svgCoords(ev);
+  if (polyDraft) renderContextDraftPolygon(polyDraft.points, [mx, my]);
   if (state.tool === "draw" && state.draftNodes.length) {
     lastDrawMouse = [mx, my]; // remembered aim for typed-length commits
     renderRubberBand(mx, my, ev.altKey);
@@ -406,6 +590,25 @@ function onPointerMove(ev) {
 // ---------- select tool: drag / insert / delete ----------
 function onDragMove(ev) {
   const [mx, my] = svgCoords(ev);
+  if (drag.kind === "gate-span") {
+    drag.started = true;
+    const node = nearestNode(mx, my, GATE_SNAP_MM, drag.fromNodeId);
+    drag.to = node ? [node.x_mm, node.y_mm] : [mx, my];
+    drag.toNodeId = node ? node.id : null;
+    renderGateDraft(drag);
+    return;
+  }
+  if (drag.kind === "gate-move" || drag.kind === "gate-resize") {
+    if (!drag.started) {
+      if (Math.hypot(ev.clientX - drag.start[0], ev.clientY - drag.start[1]) < 4) return;
+      // ONE snapshot per gesture, pushed before the first mutation — the same
+      // discipline `landmark-move` keeps below and for the same reason.
+      pushSnapshot(drag.kind === "gate-move" ? "move-gate" : "resize-gate");
+      drag.started = true;
+    }
+    dragGate(drag, mx, my);
+    return;
+  }
   if (drag.kind === "landmark") {
     drag.started = true;
     drag.to = [mx, my];
@@ -489,6 +692,30 @@ function onDragEnd() {
   // click at all, so clear the flag on the next tick either way
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 0);
+  if (d.kind === "gate-span") {
+    clearGroup("g-snap");
+    commitGateSpan(d);
+    return;
+  }
+  if (d.kind === "gate-move" || d.kind === "gate-resize") {
+    // A press that never crossed the threshold moved nothing and pushed no
+    // snapshot, so there is nothing to save and nothing to undo. It is not a
+    // click on anything either: the marks that answer clicks — the swing arc,
+    // the `?`, the hinge dot — keep their own listener in `gates.js`, and the
+    // handles are drawn so as not to cover them.
+    if (!d.started) return;
+    // Dropped within reach of another post: hang this end on THAT node. It is
+    // how a gate joins a stretch drawn after it — the same "sharing their end
+    // nodes" the placement gesture does — and it is what makes two separately
+    // drawn stretches one fence with a gate between them. The node this end
+    // was on is left behind exactly as `removeGate` leaves one: it may well be
+    // a run's own end, and a stranded one draws nothing and costs nothing.
+    if (d.kind === "gate-resize" && d.snapNodeId)
+      repointGateEnd(d.gateId, d.end, d.snapNodeId);
+    renderGates();
+    saveTopology();   // the snapshot was pushed at gesture start
+    return;
+  }
   if (d.kind === "landmark") {
     clearContextDraft();
     const shape = shapeFor(d.landmarkKind, d.from, d.to);
@@ -818,58 +1045,19 @@ function onOutsidePointer(ev) {
 }
 
 // ---------- gate kit catalog ----------
-// The cache lives in builder-ui.js, shared with the rule builder and the model
-// editor. It used to live here AND there, with different failure behaviour on
-// each side: this copy retried after a failed fetch and the other cached the
-// empty catalog forever, so the same lost request left the gate picker working
-// and the SKU pickers permanently blank.
-
-function gateKitProducts(products) {
-  // components of assembly kits (gate leaves, hinge sets...) are parts, not
-  // sellable gates — exclude them even when their sku matches /GATE/i
-  const kitComponents = new Set(
-    Object.values(products).flatMap((p) =>
-      p.consumption?.kind === "assembly_kit"
-        ? (p.consumption.components || []).map((c) => c.sku) : []
-    )
-  );
-  return Object.values(products).filter((p) => {
-    if (kitComponents.has(p.sku)) return false;
-    // declaring an opening width IS declaring yourself a gate product
-    if (declaredOpening(p) !== null) return true;
-    if ((p.attrs || {}).category === "gate") return true;
-    if (/GATE/i.test(p.sku)) return true;
-    if (p.consumption?.kind === "assembly_kit") {
-      const names = [p.name || "", ...Object.values(p.name_i18n || {})];
-      return names.some((n) => /gate/i.test(n));
-    }
-    return false;
-  });
-}
-
-// The opening a product DECLARES it fits — catalog DATA, exactly like posts'
-// attrs.length_mm and exactly what the generator reads (KIT_OPENING_ATTR in
-// strategy/generator.py). A sku is an opaque id: "GATE-KIT-1000" is one
-// catalog's naming accident and "BAR-GATE-1168" carries a leaf size, so parsing
-// digits out of either invents a width for somebody else's catalog. A product
-// that declares nothing is never second-guessed here, as in the generator.
-const KIT_OPENING_ATTR = "opening_width_mm";
-function declaredOpening(p) {
-  const v = p && (p.capabilities || {})[KIT_OPENING_ATTR];
-  return Number.isFinite(v) ? v : null;
-}
+// Both `gateKitProducts` and `declaredOpening` now live in `js/gates.js`, with
+// the panel that asks the question they answer. They were private here, which is
+// why the ONLY place a gate product was ever named was inside this popover —
+// i.e. after the user had already committed to a spot on the fence. The gates
+// step of the salesperson's road showed no gate and no way to choose one, which
+// is the defect the panel fixes; keeping a second copy of the catalog filter
+// here would let the panel and the popover disagree about what a gate is.
 
 async function openEventPopover(tool, runId, station, clientX, clientY) {
   closePopover();
   const run = runById(runId);
   if (!run) return;
   const L = runLength(run);
-  // gate: kit choices come from the catalog; empty catalog falls back to free text
-  let gateKits = [], defaultKit = null;
-  if (tool === "gate") {
-    gateKits = gateKitProducts(await loadCatalogProducts());
-    defaultKit = gateKits[0] || null;   // catalog order; no sku is special
-  }
   // model: only PUBLISHED models may be authored onto a run — a draft's document
   // can still change under its version, so a run pinned to one is a run whose
   // panel could be rewritten under it
@@ -893,23 +1081,7 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
   let html = `<h4>${t("tool." + tool)}</h4>
     <div class="meta"><bdi>${esc(groundNode ? groundNode.id : runId)}</bdi>${wholeRun ? ""
       : ` · ${t("popover.station")} <span class="num">${esc(fmtLen(shownStation))}</span>`}</div>`;
-  if (tool === "gate") {
-    // the opening the user is building: seeded from the kit's declared width when
-    // the catalog states one, left blank when it does not
-    html += numField("popover.width", "pop-width", declaredOpening(defaultKit));
-    if (gateKits.length) {
-      // options cannot hold nested markup: dir="auto" + an LRM before the price
-      // keep the money figure readable in RTL (in lieu of a .num span)
-      html += `<label>${t("popover.kit")}<select id="pop-kit">` + gateKits.map((p) =>
-        `<option value="${esc(p.sku)}" dir="auto"${p === defaultKit ? " selected" : ""}>`
-        + `${esc(p.name_i18n?.[currentLocale()] || p.name)}`
-        + ` — ‎${esc(money(p.price_cents))}</option>`).join("")
-        + `</select></label>`;
-    } else {
-      // no catalog reached us: free text, and no sku invented on the user's behalf
-      html += `<label>${t("popover.kit")}<input id="pop-kit" value=""></label>`;
-    }
-  } else if (tool === "base") {
+  if (tool === "base") {
     const currentTilt = run.interval_events.find((iv) => iv.payload.kind === "post_tilt");
     const tiltMode = currentTilt?.payload.mode || "plumb";
     html += `<label>${t("popover.surface")}<select id="pop-surface">
@@ -969,7 +1141,7 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
   async function save() {
     // a blank or unparseable length is NOT zero: refuse the save, flag the field
     // and leave the popover open — never push null into a topology payload
-    const needed = { gate: ["pop-width"], ground: ["pop-z"],
+    const needed = { ground: ["pop-z"],
       height: ["pop-height", "pop-start", "pop-end"],
       model: ["pop-start", "pop-end"] }[tool] || [];
     const values = {};
@@ -985,13 +1157,7 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
     // model that does not resolve — the generator would refuse the whole run
     if (tool === "model" && !models.length) { closePopover(); return; }
     pushSnapshot(tool);
-    if (tool === "gate") {
-      addPointEvent(runId, {
-        kind: "gate",
-        width_mm: values["pop-width"],
-        kit_sku: document.getElementById("pop-kit").value.trim() || null,
-      }, station);
-    } else if (tool === "base") {
+    if (tool === "base") {
       // one base + one post-orientation per section: replace, whole run
       run.interval_events = run.interval_events.filter(
         (iv) => iv.payload.kind !== "base" && iv.payload.kind !== "post_tilt");
@@ -1068,13 +1234,6 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
   });
   popover.querySelector("#pop-cancel").addEventListener("click", closePopover);
   popover.querySelector("#pop-save").addEventListener("click", save);
-  // kit choice drives the width field when the product encodes one
-  const kitSel = popover.querySelector("select#pop-kit");
-  if (kitSel) kitSel.addEventListener("change", () => {
-    const w = declaredOpening(gateKits.find((g) => g.sku === kitSel.value));
-    // a kit that declares no opening leaves the user's figure alone
-    if (w !== null) popover.querySelector("#pop-width").value = toDisplayValue(w);
-  });
   // focus AND select: a caret parked at position 0 of a number field turns a
   // typed 1000 into 10000 — ten metres, silently saveable (openLengthInput does
   // the same, and every field this builds is pre-filled)
@@ -1198,6 +1357,240 @@ function commitTypedDot() {
   renderDraft();
 }
 
+// ---------- placing a gate ----------
+
+/** The rubber band while a gate is being dragged out.
+ *
+ *  Drawn into `g-snap`, which every gesture in this file uses for the mark that
+ *  is not state yet and which the next render clears — a preview that outlived
+ *  its gesture is the bug `clearDraft` exists to prevent. */
+function renderGateDraft(d) {
+  const g = clearGroup("g-snap");
+  if (!g || !d.to) return;
+  const a = toPx(d.from), b = toPx(d.to);
+  el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: "#0891b2",
+    "stroke-width": 5, opacity: 0.6, "pointer-events": "none" }, g);
+  const len = Math.round(Math.hypot(d.to[0] - d.from[0], d.to[1] - d.from[1]));
+  el("text", { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 - 10, "font-size": 10,
+    fill: "#0891b2", "text-anchor": "middle", class: "num",
+    "pointer-events": "none" }, g).textContent = tu("canvas.mm", { n_mm: len });
+  // ...and a ring on an end that has FOUND a post, so "this is what it will
+  // join" is visible before the gesture is committed rather than after.
+  for (const [p, id] of [[a, d.fromNodeId], [b, d.toNodeId]])
+    if (id) el("circle", { cx: p[0], cy: p[1], r: 9, fill: "none",
+      class: "snap-guide", "pointer-events": "none" }, g);
+}
+
+/** Commit the dragged gate.
+ *
+ *  Either end that landed on a post SHARES that node — which is the whole of
+ *  "it can combine 2 unconnected runs": two stretches drawn separately become
+ *  one fence because the gate between them is anchored to both their ends. An
+ *  end that found no post gets a node of its own, so a gate hanging off the end
+ *  of a single stretch still has something to hang from (the generator emits
+ *  the post there, because nothing else would).
+ *
+ *  It writes to `topology.gates` and touches no run — a gate is not a stretch
+ *  of fence and placing one changes the layout of none. */
+function commitGateSpan(d) {
+  if (!d.started || !d.to || !state.project) return;
+  const topo = state.project.topology;
+  const span = Math.hypot(d.to[0] - d.from[0], d.to[1] - d.from[1]);
+  // Too small to be deliberate — a stray press with the gate tool armed must
+  // not leave a 3 mm opening somebody then has to find and delete.
+  if (span < MIN_MM) return;
+  pushSnapshot("place-gate");
+  const nodeFor = (point, existingId) => {
+    if (existingId) return existingId;
+    const id = `n${state.nodeSeq++}`;
+    topo.nodes.push({ id, x_mm: Math.round(point[0]), y_mm: Math.round(point[1]),
+                      kind: "terminal" });
+    return id;
+  };
+  const startId = nodeFor(d.from, d.fromNodeId);
+  const endId = nodeFor(d.to, d.toNodeId);
+  topo.gates = [...(topo.gates || []), {
+    id: nextGateId(topo),
+    start_node_id: startId,
+    end_node_id: endId,
+    // The gate chosen once in the panel, not asked again per gate. Which way it
+    // opens is deliberately NOT guessed: it is a question mark on the drawing
+    // until somebody answers it, because a swing drawn from a default is a
+    // confident wrong drawing.
+    kit_sku: chosenGateKit(),
+    leaf: "single",
+  }];
+  saveTopology();
+}
+
+// ---------- moving a placed gate ----------
+//
+// The gesture the placement gesture was missing: a gate that is 200 mm along
+// the fence from where it should be could be deleted and placed again, and
+// nothing else. `js/gates.js` draws the handles (`#g-gates` is its subtree);
+// this is the drag, on the one gesture machine this canvas has.
+//
+// A gate drag writes `topology.nodes` and `topology.gates` and NEVER a run: a
+// gate is not a stretch of fence, and moving one changes the layout of none.
+
+/** One move of a gate drag: the new node positions, written, drawn, previewed.
+ *
+ *  Every move is a delta from where the pointer STARTED against the positions
+ *  the gate had THEN, so a drag that wanders and comes back lands exactly where
+ *  it began — an accumulation of per-move deltas would round its way somewhere
+ *  else.
+ *
+ *  Moving a node moves everything hanging on it. A gate end that shares its
+ *  post with a stretch of fence takes that stretch's end with it: that is what
+ *  connected means, it is what dragging the run's own dot has always done, and
+ *  it is the whole point of a gate that joins two stretches. */
+function dragGate(d, mx, my) {
+  const gate = gateSpanById(d.gateId);
+  if (!gate) return;                     // an undo removed it under this drag
+  const dx = mx - d.from[0], dy = my - d.from[1];
+  const shifted = (end) => [d.origin[end][0] + dx, d.origin[end][1] + dy];
+  let ends, moves;
+  if (d.kind === "gate-move") {
+    // both posts by the same delta: the opening keeps its width and its angle,
+    // which is what "move the gate" means and what "resize" is for otherwise
+    ends = { start: shifted("start"), end: shifted("end") };
+    moves = ends;
+    d.snapNodeId = null;
+  } else {
+    const movingId = d.end === "end" ? gate.end_node_id : gate.start_node_id;
+    const otherId = d.end === "end" ? gate.start_node_id : gate.end_node_id;
+    const p = shifted(d.end);
+    // The same reach the placement gesture uses, for the same question: is
+    // there a post here for this end to hang on? Excluding the node being
+    // dragged, which is sitting under the pointer by now and would otherwise
+    // find itself.
+    const near = nearestNode(p[0], p[1], GATE_SNAP_MM, movingId);
+    // Never both ends on one node: the opening IS the distance between them,
+    // so a gate from a node to itself has no opening and the backend refuses
+    // it. The far end is the one thing this drag is dragging TOWARD, so
+    // refusing the snap there is the answer and not a near miss.
+    const snap = near && near.id !== otherId ? near : null;
+    d.snapNodeId = snap ? snap.id : null;
+    // Snapped, the end goes exactly where it will land, so what the drawing
+    // shows before the drop is what the drop will do.
+    const at = snap ? [snap.x_mm, snap.y_mm] : p;
+    ends = { start: d.origin.start, end: d.origin.end, [d.end]: at };
+    moves = { [d.end]: at };             // the other post does not move at all
+  }
+  // The ONE writer of a gate's node positions (`gates.js`), which answers false
+  // when the gate or a node went away mid-gesture rather than writing half.
+  if (!moveGateNodes(d.gateId, moves)) return;
+  renderTopology();
+  renderHandles();
+  renderGates();
+  renderGateDragPreview(d, ends);
+}
+
+/** What this drop will do, drawn in `g-snap` before it happens.
+ *
+ *  The gate itself is already redrawn live — this drag moves the nodes, so the
+ *  opening and its printed width follow the pointer — so what the preview adds
+ *  is the one thing the drawing cannot say by itself: the RING on an end that
+ *  has found a post, which is "this is what it will join", visible before the
+ *  drop rather than after. `renderGateDraft` draws the same ring for the same
+ *  reason while a gate is being placed; the width it also prints is not
+ *  repeated here, because the live gate is already printing it and the same
+ *  figure twice reads as a fault in the drawing. */
+function renderGateDragPreview(d, ends) {
+  const g = clearGroup("g-snap");
+  if (!g) return;
+  const a = toPx(ends.start), b = toPx(ends.end);
+  el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: "#0891b2",
+    "stroke-width": 5, opacity: 0.35, "pointer-events": "none" }, g);
+  if (!d.snapNodeId) return;
+  const p = d.end === "end" ? b : a;
+  el("circle", { cx: p[0], cy: p[1], r: 9, fill: "none", class: "snap-guide",
+    "pointer-events": "none" }, g);
+}
+
+// ---------- click-built landmarks (the house) ----------
+
+/** Add one corner, or close the shape when the click lands back on the first.
+ *
+ *  There is no separate "close" button and there deliberately is not one: the
+ *  gesture that ends a shape is pointing at where it started, which is what a
+ *  person drawing on paper does. Enter and a double-click do it too, for
+ *  whoever reaches for a keyboard instead. */
+function addPolyPoint(kind, point) {
+  // Switching tools mid-shape abandons it rather than welding a pool onto a
+  // half-drawn house: `polyDraft` remembers which kind it belongs to.
+  if (polyDraft && polyDraft.kind !== kind) polyDraft = null;
+  if (!polyDraft) polyDraft = { kind, points: [] };
+  const first = polyDraft.points[0];
+  if (first && polyDraft.points.length >= 3
+      && Math.hypot(point[0] - first[0], point[1] - first[1]) <= POLY_CLOSE_MM) {
+    closePolyDraft();
+    return;
+  }
+  polyDraft.points.push(point);
+  renderContextDraftPolygon(polyDraft.points, null);
+}
+
+/** Commit whatever has been clicked so far, or drop it if it is not a shape.
+ *
+ *  `polygonFromClicks` is the judge — it drops a doubled corner and the closing
+ *  click, and refuses anything under three points, because `Landmark`'s own
+ *  validator refuses those too and getting a 422 back after drawing a building
+ *  is worse than the gesture quietly needing one more corner. */
+function closePolyDraft() {
+  const draft = polyDraft;
+  polyDraft = null;
+  clearContextDraft();
+  if (!draft || !state.project) return;
+  const shape = polygonFromClicks(draft.points);
+  if (!shape) return;
+  // Snapshot BEFORE the mutation, on the ONE undo stack the topology uses —
+  // the same discipline the drag-drawn landmarks keep in `onDragEnd`.
+  pushSnapshot("place-landmark");
+  addLandmark({
+    id: nextLandmarkId(state.project?.context?.landmarks),
+    kind: draft.kind, label: "", ...shape,
+  });
+  saveContext();
+}
+
+// ---------- the note tool: what did they point at? ----------
+
+/** The thing under a click, as a note target.
+ *
+ *  Order matters and each rung is a judgement:
+ *    1. a POINT event on a run — a gate, a ground reading, a pinned post. It is
+ *       the smallest thing there, so pointing at it means it.
+ *    2. a corner NODE, when the click is at the end of a run: "the post by the
+ *       gate post" is about the corner, not about either leg of it.
+ *    3. the RUN. Interval events (base, height, model) are deliberately NOT
+ *       matched: `base` covers the whole run, so matching it would mean no click
+ *       on a fence could ever be about the fence.
+ *    4. a LANDMARK — the house, the pool, a tree.
+ *    5. the job itself, for a click on empty ground.
+ *  The label travels with the ref because the popover has to say what it heard,
+ *  and `notes.js` owns how a ref is put into words. */
+function noteTargetAt(ev) {
+  const at = (ref) => ({ ref, label: targetLabel(ref) });
+  const [mx, my] = svgCoords(ev);
+  const hit = runHitAt(ev);
+  if (hit) {
+    const run = hit.run;
+    let best = null, bestD = RUN_HIT_MM;
+    for (const pe of run.point_events || []) {
+      const d = Math.abs(stationOfAnchor(run, pe.anchor) - hit.station);
+      if (d <= bestD) { best = pe; bestD = d; }
+    }
+    if (best) return at(`event:${best.id}`);
+    const node = endpointNodeAt(run, hit.station);
+    if (node) return at(`node:${node.id}`);
+    return at(`run:${run.id}`);
+  }
+  const lm = landmarkAtAny(state.project?.context?.landmarks, [mx, my]);
+  if (lm) return at(`landmark:${lm.id}`);
+  return at("project");
+}
+
 // ---------- draw tool ----------
 function cancelDraft() {
   state.draftNodes = [];
@@ -1206,6 +1599,7 @@ function cancelDraft() {
   clearLengthBuffer();
   clearGroup("g-draft");
   clearGroup("g-snap");
+  polyDraft = null;
   // The LANDMARK rubber band as well. Escape cancels "the draft" as a
   // salesperson means it — whatever I am half-way through drawing — and a
   // house or street half-drawn is exactly that. Left out, Escape cleared the
@@ -1374,15 +1768,13 @@ function renderTopology() {
     for (const pe of run.point_events) {
       const evStation = stationOfAnchor(run, pe.anchor);
       const p = toPx(pointAtStation(run.id, evStation));
-      if (pe.payload.kind === "gate") {
-        const pEnd = toPx(pointAtStation(run.id, evStation + pe.payload.width_mm));
-        el("line", { x1: p[0], y1: p[1], x2: pEnd[0], y2: pEnd[1], stroke: "#fff",
-          "stroke-width": 5 }, g);
-        el("line", { x1: p[0], y1: p[1], x2: pEnd[0], y2: pEnd[1], stroke: "#0891b2",
-          "stroke-width": 3, "stroke-dasharray": "5 4" }, g);
-        el("text", { x: (p[0] + pEnd[0]) / 2 - 10, y: p[1] - 10, "font-size": 10,
-          fill: "#0891b2" }, g).textContent = t("canvas.gate");
-      } else if (pe.payload.kind === "elevation_sample") {
+      // A gate is drawn by `js/gates.js` into its own `#g-gates` group, not
+      // here: the mark now carries the opening's real width, the way it opens
+      // and two controls for changing that, and none of it belongs in the
+      // module that draws the fence. This branch used to draw a dashed segment
+      // labelled "gate" — a placement, which is exactly what the user said is
+      // "not sufficient for an opening fence".
+      if (pe.payload.kind === "elevation_sample") {
         el("text", { x: p[0] - 8, y: p[1] + 20, "font-size": 9, fill: "#7c3aed" }, g)
           .textContent = `z=${fmt(pe.payload.z_mm)}`;
       }
@@ -1464,9 +1856,13 @@ function renderOverlay() {
 function renderGeneratedOverlay(g) {
   const s = state.result.strategy;
   for (const span of s.spans) {
-    const p0 = toPx(pointAtStation(span.run_ref, span.start_station_mm));
-    const p1 = toPx(pointAtStation(span.run_ref, span.end_station_mm));
-    if (!p0 || !p1) continue;
+    // Resolved BEFORE `toPx`, which dereferences its argument: the old order
+    // threw on a span whose run this drawing no longer has, instead of skipping
+    // it — and one throw here abandons the whole overlay mid-draw.
+    const a = pointAtStation(span.run_ref, span.start_station_mm);
+    const b = pointAtStation(span.run_ref, span.end_station_mm);
+    if (!a || !b) continue;
+    const p0 = toPx(a), p1 = toPx(b);
     const color = span.vertical === "stepped" ? "#7c3aed"
       : span.vertical === "raked" ? "#059669" : "#93c5fd";
     // data-run: an overlay line lies ON its run when the run is vertical, so it
@@ -1484,9 +1880,18 @@ function renderGeneratedOverlay(g) {
         .textContent = bayTag;
   }
   for (const gate of s.gates) {
-    const p0 = toPx(pointAtStation(gate.run_ref, gate.start_station_mm));
-    const p1 = toPx(pointAtStation(gate.run_ref, gate.end_station_mm));
-    if (!p0 || !p1) continue;
+    // A gate that lies on NO run is the standalone kind, and `js/gates.js` draws
+    // it — at its real width, with the way it opens, from the topology rather
+    // than from a generated strategy. Skipped here rather than guarded further
+    // down, because `run_ref: null` is not a missing value to tolerate: it is
+    // this loop being told the gate is somebody else's to draw.
+    if (!gate.run_ref) continue;
+    const a = pointAtStation(gate.run_ref, gate.start_station_mm);
+    const b = pointAtStation(gate.run_ref, gate.end_station_mm);
+    // BEFORE `toPx`, which dereferences its argument — the old order threw on a
+    // run this strategy no longer has rather than skipping the element.
+    if (!a || !b) continue;
+    const p0 = toPx(a), p1 = toPx(b);
     const line = el("line", { x1: p0[0], y1: p0[1] - 8, x2: p1[0], y2: p1[1] - 8,
       stroke: "#0891b2", "stroke-width": 6, "stroke-dasharray": "4 4",
       cursor: "pointer", "data-run": gate.run_ref }, g);
@@ -1589,13 +1994,23 @@ function renderStrategySummary() {
   const box = document.getElementById("strategy-summary");
   if (!box) return;
   if (!state.result) {
-    box.innerHTML = `<span class="meta">${esc(t("strategy.none"))}</span>`;
+    // Nothing, not a sentence. "No strategy yet — press ⚙ Generate strategy" sat
+    // directly beneath the button it was describing, on every step of the road
+    // including the ones with no drawing on screen at all. A label that repeats
+    // the control above it is not a hint; it is one more thing to read before
+    // finding out that nothing has happened yet. The empty box keeps its place
+    // in the column so the layout does not jump when a run does produce one.
+    box.innerHTML = "";
     return;
   }
   const s = state.result.strategy;
   const widths = s.spans.map((sp) => sp.width_mm);
   const fenceLen = widths.reduce((a, b) => a + b, 0)
-    + s.gates.reduce((a, g) => a + (g.end_station_mm - g.start_station_mm), 0);
+    // `width_mm`, not the station difference: a standalone gate lies on no run
+    // and carries 0/0 for its stations, so the old arithmetic left it out of the
+    // fence length entirely — a fence with a 1 m gate at the end read a metre
+    // short. For an in-run gate the two are the same number by construction.
+    + s.gates.reduce((a, g) => a + (g.width_mm || 0), 0);
   const modes = [...new Set(s.spans.map((sp) => sp.vertical))];
   const heights = [...new Set(s.spans.map((sp) => sp.height_mm))];
   const skus = [...new Set(s.posts.map((p) => p.sku))].filter(Boolean);

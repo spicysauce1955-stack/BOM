@@ -20,12 +20,20 @@
  *  person's road over the same gaps.
  *
  *  `satisfiedBy` names the `Stated` fact that answers a step nothing can
- *  check. A step is skippable exactly when it has one. */
+ *  check. A step is skippable exactly when it has one.
+ *
+ *  `commits` marks a step that already HAS an explicit "I have finished this"
+ *  control of its own — step 1's Save, which saves the job and then advances.
+ *  The road's own Done button is suppressed there rather than shown beside it:
+ *  two buttons that do one thing is not a choice, it is a question about which
+ *  one really saves, and the user asked for it to stop. Every other step is a
+ *  canvas gesture with nothing to press, which is why the Done button exists at
+ *  all. */
 export const SALES_ROAD = {
   role: "sales",
   anchor: "no_fence_drawn",
   steps: [
-    { key: "job", panel: "canvas",
+    { key: "job", panel: "canvas", commits: true,
       requires: ["customer_missing", "address_missing"],
       wants: ["sold_by_missing", "sold_on_missing"], satisfiedBy: null },
     { key: "property", panel: "canvas",
@@ -36,9 +44,19 @@ export const SALES_ROAD = {
       requires: ["height_assumed", "base_assumed"], wants: [], satisfiedBy: null },
     { key: "model", panel: "canvas",
       requires: ["no_model_chosen"], wants: [], satisfiedBy: null },
+    // `gate_swing_unstated` belongs HERE and not on the review step: it is
+    // answered by one click on the gate's own marker, which is on this step's
+    // screen. A gap reported where it cannot be closed is a gap that gets
+    // carried to the office.
     { key: "gates", panel: "canvas",
-      requires: ["gates_contradicted"], wants: [], satisfiedBy: "no_gates" },
-    { key: "notes", panel: "annotations",
+      requires: ["gates_contradicted", "gate_swing_unstated"],
+      wants: [], satisfiedBy: "no_gates" },
+    // The drawing, not the Annotations tab. A promise is made ABOUT something —
+    // the house, that stretch, the ground by the gate — and the tab's form asked
+    // a salesperson to pick "r2" from a list of run ids. It is attached by
+    // clicking the thing itself now, so this step's surface is the map
+    // (`js/notes.js` owns the popover and the side panel beside it).
+    { key: "notes", panel: "canvas",
       requires: ["promises_contradicted"], wants: [], satisfiedBy: "no_promises" },
     { key: "review", panel: "canvas",
       requires: [], wants: [], satisfiedBy: null },

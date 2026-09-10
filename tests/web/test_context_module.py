@@ -1,9 +1,16 @@
-"""The shape a drag describes (static/js/context.js).
+"""What the canvas layer does with a landmark (static/js/context.js).
 
-`shapeFor` is pure — no DOM, no state — so the geometry of "drag a rectangle for
-the house, a line for the street" is tested here rather than by aiming a mouse at
-a canvas. What the browser smoke then has to prove is only that the gesture
-reaches this function, which is a much smaller claim.
+The GEOMETRY itself no longer lives here: gestures, rectangles, circles and
+their inverses moved to `js/landmark-shape.js` when the house became a
+click-built polygon and the street became a rectangle, and they are covered in
+`test_landmark_shape_module.py`. `context.js` re-exports `shapeFor` so its
+callers did not have to move with it, and what is left to prove here is what
+context.js still owns: the hit test a move-drag needs, ids that do not collide,
+and the draft group being cleared.
+
+The re-export is checked through the same `shapeFor` the canvas calls, so a
+mistake in the wiring — importing the wrong name, or leaving the old inline
+implementation behind — fails here rather than in a browser.
 """
 
 from __future__ import annotations
@@ -23,12 +30,8 @@ import { DRAG_KINDS, landmarkAt, nextLandmarkId, shapeFor } from "./js/context.j
 const out = {};
 out.kinds = DRAG_KINDS;
 out.house = shapeFor("house", [0, 0], [8000, 6000]);
-out.house_backwards = shapeFor("house", [8000, 6000], [0, 0]);
 out.street = shapeFor("street", [-2000, -3000], [20000, -3000]);
-out.tiny = shapeFor("house", [0, 0], [100, 100]);
-out.thin_street = shapeFor("street", [0, 0], [9000, 40]);
 out.unknown = shapeFor("swimming-pool", [0, 0], [5000, 5000]);
-out.no_drag = shapeFor("house", [0, 0], null);
 out.id_empty = nextLandmarkId([]);
 out.id_gap = nextLandmarkId([{id: "lm1"}, {id: "lm3"}]);
 out.id_none = nextLandmarkId(null);
@@ -62,50 +65,48 @@ def out() -> dict:
     return json.loads(proc.stdout)
 
 
-def test_a_house_is_the_rectangle_the_drag_spanned(out):
-    assert out["house"]["closed"] is True
-    assert out["house"]["points"] == [[0, 0], [8000, 0], [8000, 6000], [0, 6000]]
+def test_a_house_drag_makes_nothing_because_a_house_is_built_by_clicking(out):
+    """A house used to be the bounding box of one drag. It is not: a building
+    has as many corners as it has, and a drag can only ever describe four of
+    them, so an L-shaped house came out square and the office person read a
+    wall that is not there.
+
+    The house tool now collects clicks (`polygonFromClicks`), and `shapeFor`
+    refuses the kind outright rather than quietly handing back a box — a
+    fallback rectangle here would be indistinguishable, on the canvas, from a
+    house somebody meant to draw that way. The box gestures that kept this
+    exact geometry (`pool`, `boundary`, `other`) are covered in
+    `test_landmark_shape_module.py`.
+    """
+    assert out["house"] is None
 
 
-def test_a_house_dragged_backwards_is_the_same_building(out):
-    """A person drags from whichever corner they started at. The rectangle must
-    not depend on which one — the corner order differs, the outline does not."""
-    assert out["house_backwards"]["closed"] is True
-    assert set(map(tuple, out["house_backwards"]["points"])) == \
-           set(map(tuple, out["house"]["points"]))
-
-
-def test_a_street_is_the_line_itself_and_never_a_box(out):
-    """A road is not a rectangle. Squaring it off would put a corner where the
-    salesperson drew none, and the office person would read a bend in the road
-    that is not there."""
-    assert out["street"]["closed"] is False
-    assert out["street"]["points"] == [[-2000, -3000], [20000, -3000]]
-
-
-def test_a_stray_click_leaves_no_invisible_building(out):
-    """The house tool is active, somebody clicks. Without this there is a 3 mm
-    landmark on the drawing that nobody can see and the office person then has
-    to ask about."""
-    assert out["tiny"] is None
-    assert out["no_drag"] is None
-
-
-def test_a_street_dragged_straight_along_one_axis_still_counts(out):
-    """The minimum applies per axis, not to both at once: a street IS a long
-    thin thing, and requiring 300 mm of drift in the short direction would
-    refuse the most ordinary gesture in this tool."""
-    assert out["thin_street"] is not None
-    assert out["thin_street"]["points"] == [[0, 0], [9000, 40]]
+def test_a_street_is_a_rectangle_because_a_road_has_width(out):
+    """A street used to be the bare two-point line of the drag. A line reads as
+    "the fence runs to here", not as the road the salesperson pointed at, and
+    it left the office person no width to check a setback against. The drag now
+    describes the road's CENTRE LINE and the shape is the band around it — a
+    closed rectangle whose width is editable afterwards, which is what a
+    salesperson means when they say the street is wider on that side."""
+    assert out["street"]["closed"] is True
+    assert len(out["street"]["points"]) == 4
+    # 4 m of carriageway, centred on the line that was dragged
+    assert out["street"]["points"] == [[-2000, -1000], [20000, -1000],
+                                       [20000, -5000], [-2000, -5000]]
 
 
 def test_a_kind_that_is_not_dragged_produces_nothing(out):
-    """`boundary` and `other` are authored on the backend and rendered here, but
-    no drag makes one. Returning a shape anyway would put a landmark of an
-    unknown kind on the project, which the API then refuses — failing far from
-    the gesture that caused it."""
+    """Returning a shape for an unknown kind would put a landmark the API then
+    refuses onto the project — failing far from the gesture that caused it.
+
+    `DRAG_KINDS` is now every kind EXCEPT the house: the house is the one thing
+    on the property built click-by-click, and everything else — street,
+    sidewalk, pool, tree, boundary, other — is still one press-drag-release.
+    """
     assert out["unknown"] is None
-    assert out["kinds"] == ["house", "street"]
+    assert "house" not in out["kinds"]
+    assert set(out["kinds"]) == {"street", "sidewalk", "pool", "tree",
+                                 "boundary", "other"}
 
 
 def test_ids_are_sequential_rather_than_time_based(out):

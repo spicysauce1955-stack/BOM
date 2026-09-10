@@ -18,6 +18,7 @@ from fenceai.topology.model import (
     BasePayload,
     ElevationSamplePayload,
     GatePayload,
+    GateSpan,
     Node,
     Run,
     Topology,
@@ -122,6 +123,18 @@ def _fixtures():
     gated = straight_topology(5000)
     add_point_event(gated, "run1", "gate", 2000, GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
 
+    # A gate of the OTHER kind: an element standing BESIDE the runs rather than
+    # punching a hole in one. It is a new element kind, a new decision-node kind
+    # (`gate_span`) and a post whose `run_ref` is `node:<id>` rather than a run
+    # id — and not one fixture in this battery carried one, so for a standalone
+    # gate none of traceability, determinism, edge-integrity, knowledge-ref
+    # resolution or cut feasibility had ever run. A new element kind is the thing
+    # most likely to break the peg chain, which is what this battery is for.
+    gate_span = straight_topology(5000)
+    gate_span.nodes.append(Node(id="n_far", x_mm=6000, y_mm=0))
+    gate_span.gates = [GateSpan(id="g_beside", start_node_id=gate_span.runs[0].end_node_id,
+                                end_node_id="n_far", opens_to="left", hinge="start")]
+
     # A RAKED run. The suite had none: the demo KB carries an unscoped
     # PreferVertical(stepped) (K-STEP-SLOPE), so every sloped fixture above
     # resolves to stepped and `grep -rn raked tests/` found nothing. Raked is
@@ -196,6 +209,7 @@ def _fixtures():
         ),
         "mixed_base": (mixed, [], None),
         "gated": (gated, [], None),
+        "gate_span": (gate_span, [], None),
         "lshape": (lshape, [], None),
         "pinned": (straight_topology(6000), [Override(id="ov1", run_id="run1", directive=PinPost(station_mm=2000))], None),
         "with_inventory": (

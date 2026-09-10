@@ -333,3 +333,84 @@ def test_a_base_gap_names_its_stretches_too():
     gaps = {g.code: g for g in handover_gaps(project)}
     assert gaps["base_assumed"].params["run_ids"] == sorted(
         r.id for r in project.topology.runs)
+
+
+# -- a gate nobody has said how to open ---------------------------------------
+#
+# The drawing already marks such a gate with a question mark and the gates panel
+# says so. The handover sheet did not — so a job whose gate nobody can hang
+# reached the office looking complete, and the one fact that is visible only to
+# whoever happens to open the drawing is the fact the office phones about.
+
+def _gated(**gate_kw) -> Project:
+    """A drawn fence with one gate ON the run, authored via conftest so the
+    anchor is built the way the frontend builds it (`geom.anchorFor`)."""
+    from fenceai.topology.model import GatePayload
+    from tests.conftest import add_point_event, straight_topology
+    topo = straight_topology(5000)
+    add_point_event(topo, "run1", "pe1", 2500,
+                    GatePayload(width_mm=1000, **gate_kw))
+    return Project(id="p1", name="untitled", topology=topo)
+
+
+def test_a_gate_that_says_which_way_it_opens_asks_nothing():
+    assert "gate_swing_unstated" not in _codes(_gated(opens_to="left"))
+
+
+def test_a_gate_that_says_nothing_is_the_question_the_office_would_phone_about():
+    """`None` is NOBODY HAS SAID, deliberately — there is no default swing,
+    because a leaf hung on the wrong side opens into the driveway."""
+    gap = next(g for g in handover_gaps(_gated())
+               if g.code == "gate_swing_unstated")
+    assert gap.params["gates"] == 1
+
+
+def test_an_unstated_swing_does_not_withhold_the_estimate():
+    """`blocking` gates the PRICE, and the price is not in doubt here: the fence
+    is priceable and the kit is chosen. What is missing is an instruction to the
+    installer, and withholding the salesperson's estimate over it would punish
+    the wrong person for the wrong thing."""
+    gap = next(g for g in handover_gaps(_gated())
+               if g.code == "gate_swing_unstated")
+    assert gap.blocking is False
+
+
+def test_both_kinds_of_gate_are_counted():
+    """A gate authored INSIDE a run (`GatePayload`) and one standing BESIDE the
+    runs (`GateSpan`) are the same four facts about the same physical object. A
+    sheet that counted only the first would go quiet the day a salesperson drew
+    the gate the other way."""
+    from fenceai.topology.model import GateSpan, Node
+    p = _gated()
+    p.topology.nodes += [Node(id="g1", x_mm=6000, y_mm=0),
+                         Node(id="g2", x_mm=7000, y_mm=0)]
+    p.topology.gates = [GateSpan(id="gate1", start_node_id="g1",
+                                 end_node_id="g2")]
+    gap = next(g for g in handover_gaps(p) if g.code == "gate_swing_unstated")
+    assert gap.params["gates"] == 2
+
+
+def test_a_sliding_gate_is_judged_on_the_field_that_can_hold_its_answer():
+    """The case a naive `opens_to is None` gets wrong.
+
+    A sliding gate retracts toward an EDGE and swings toward no side at all —
+    `check_swing_coherence` REFUSES a sliding gate that states `opens_to`, so
+    the only valid shape for a fully answered one is exactly this. Testing
+    `opens_to` would report every sliding gate ever drawn as unstated."""
+    p = _gated(leaf="sliding", slides_to="end")
+    assert p.topology.runs[0].point_events[0].payload.opens_to is None
+    assert "gate_swing_unstated" not in _codes(p)
+
+
+def test_a_sliding_gate_with_no_edge_stated_still_asks():
+    """The other half — otherwise the sliding branch would be a way to be
+    silent about a gate nobody can install either."""
+    assert "gate_swing_unstated" in _codes(_gated(leaf="sliding"))
+
+
+def test_the_code_is_registered():
+    """Hand-maintained beside the emitting sites: a code missing from the list
+    is invisible to the locale-bundle test, and reaches a screen as its own
+    key."""
+    from fenceai.report.handover import HANDOVER_CODES
+    assert "gate_swing_unstated" in HANDOVER_CODES

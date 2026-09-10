@@ -132,7 +132,7 @@ class Part(BaseModel):
     """§3.1. A part says what the piece IS — never where it goes."""
 
     id: str
-    version: int = 1
+    version: int | str = 1
     status: Literal["draft", "active", "retired"] = "active"
     type: PartTypeRef
     name_i18n: dict[str, str] = {}
@@ -147,6 +147,13 @@ class Part(BaseModel):
     # authority, and a second copy of a document's fields here would be a second
     # authority over the same facts.
     contributing_sources: list[str] = []
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def _version_identity(cls, value: Any) -> int | str:
+        if (type(value) is int and value > 0) or (isinstance(value, str) and value.strip()):
+            return value
+        raise ValueError("Part version must be a positive integer or nonempty opaque string")
 
     @field_validator("contributing_sources", mode="before")
     @classmethod

@@ -89,7 +89,20 @@ class Job(BaseModel):
 # a one-line change here — the seam is deliberate, because a salesperson will
 # eventually want a driveway, a pool or a neighbour's fence, and none of those
 # needs a schema discussion. Inventing one by typo is still refused.
-LANDMARK_KINDS = ("house", "street", "boundary", "other")
+#
+# "eventually" arrived: a salesperson asked for trees, a sidewalk and a pool, and
+# the seam paid for itself exactly as intended — this line, three locale entries
+# and a draw style each. It is a REGISTRY ADDITION and not a contract amendment
+# (CLAUDE.md: "Registry additions are not amendments"), because nothing across
+# the boundary reads a landmark: `SiteContext` lives on the project, never in
+# `Topology`, and changes no quantity anywhere downstream.
+#
+# The frontend half of this registry is `web/static/js/landmark-shape.js`, which
+# also says how each kind is DRAWN (a rectangle band, a bbox, a circle, or a
+# closed polyline built click by click). The two lists must agree; this one is
+# the authority, because it is the one that refuses.
+LANDMARK_KINDS = ("house", "street", "sidewalk", "pool", "tree",
+                  "boundary", "other")
 
 
 class Landmark(BaseModel):
@@ -172,7 +185,20 @@ class SiteContext(BaseModel):
 
 class Annotation(BaseModel):
     id: str
-    target_ref: str  # "project" | "run:<id>" | "node:<id>" | "event:<id>"
+    # "project" | "run:<id>" | "node:<id>" | "event:<id>" | "landmark:<id>"
+    #
+    # A free string on purpose, and the set above is documentation rather than a
+    # validator: a note is a promise a person made, and refusing to record one
+    # because the thing it is about has no id shape we anticipated would lose the
+    # promise, not the typo. `landmark:<id>` joined the set when notes became
+    # something you attach by CLICKING the drawing — "a post clear of that
+    # window" is said about the house, not about a run.
+    #
+    # The referent may STOP EXISTING (a landmark deleted, a run redrawn) and the
+    # note still stands: verbatim human text is immutable and the drawing is not,
+    # so every reader of this field resolves it defensively rather than assuming
+    # it still points at something.
+    target_ref: str
     text: str  # verbatim, immutable
     author: str = "user"
     created_at: str = ""

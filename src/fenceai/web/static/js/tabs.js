@@ -9,6 +9,7 @@ import { initChoices } from "./choices.js";
 import { initKnowledgeRules, renderKnowledgeRules } from "./knowledge-rules.js";
 import { currentLocale, t } from "./i18n.js";
 import { renderImpactReport } from "./impact.js";
+import { targetLabel } from "./notes.js";
 import { emit, on, reloadProject, state } from "./state.js";
 import {
   fmt, fmtLen, inputStep, money, roleWord, sentence, toDisplayValue, toMm, tu,
@@ -216,19 +217,24 @@ function parseInventory(text) {
   } catch { return null; }
 }
 
+/** The tab's own target picker — the office person's way in, and no longer the
+ *  only one: a salesperson attaches a note by clicking the thing on the drawing
+ *  (`js/notes.js`), which is what "r2" never told them.
+ *
+ *  Landmarks are offered here too, named the way `notes.js` names them, so the
+ *  two surfaces cannot disagree about what a target is called. */
 function renderAnnTargets() {
   const sel = document.getElementById("ann-target");
   sel.innerHTML = "";
-  const o = document.createElement("option");
-  o.value = "project";
-  o.textContent = t("annotations.whole_project");
-  sel.appendChild(o);
-  for (const r of state.project?.topology.runs || []) {
+  const add = (value) => {
     const opt = document.createElement("option");
-    opt.value = `run:${r.id}`;
-    opt.textContent = r.id;
+    opt.value = value;
+    opt.textContent = targetLabel(value);
     sel.appendChild(opt);
-  }
+  };
+  add("project");
+  for (const r of state.project?.topology.runs || []) add(`run:${r.id}`);
+  for (const lm of state.project?.context?.landmarks || []) add(`landmark:${lm.id}`);
 }
 
 function maybeRenderBom() {
@@ -417,7 +423,7 @@ function qtyCells(qty, unit) {
 export function groupedBomHtml(grouped, products) {
   const groups = grouped?.groups || [];
   if (!groups.length) return "";
-  const KINDS = ["section", "node", "bay", "decision"];
+  const KINDS = ["section", "node", "bay", "gate", "decision"];
   // Three different ids, one tag source. A BAY's key IS an element id; a
   // SECTION's is a run id, which `tagOf` does not index (it maps elements); and
   // a NODE's names the post standing there, whose element id is `post@<node>`.
@@ -464,7 +470,12 @@ export function groupedBomHtml(grouped, products) {
   }
   const bucket = (rows, key) => {
     if (!rows?.length) return "";
-    let out = `<div class="group-row"><div class="group-head"><strong>${t(key)}</strong></div><table>`;
+    // `data-kind="bucket"`: these two rows name a BUCKET and not an element, so
+    // they carry no `data-group` — and a reader (the browser suite among them)
+    // that walks `.group-row` needs to be able to tell them apart from a row
+    // that should have had one and did not.
+    let out = `<div class="group-row" data-kind="bucket">
+      <div class="group-head"><strong>${t(key)}</strong></div><table>`;
     for (const r of rows)
       out += `<tr><td class="sku">${esc(r.sku)}</td><td></td>
         ${qtyCells(r.qty, r.unit)}<td></td></tr>`;
@@ -615,7 +626,10 @@ async function renderAnnotations() {
   for (const ann of state.project?.annotations || []) {
     const card = document.createElement("div");
     card.className = "card";
-    let html = `<div class="meta"><bdi>${esc(ann.id)}</bdi> · ${esc(ann.target_ref)} · ${esc(ann.author)}</div>
+    // The target in words, not as a ref. "r2" is an id this app made up; the
+    // person reading the note has to know it means the stretch along the street.
+    let html = `<div class="meta"><bdi>${esc(ann.id)}</bdi> · <bdi>${
+      esc(targetLabel(ann.target_ref))}</bdi> · ${esc(ann.author)}</div>
       <div class="verbatim" dir="auto">“${esc(ann.text)}”</div>
       <button data-act="interpret">${t("annotations.interpret")}</button>`;
     for (const rec of ann.interpretations) {

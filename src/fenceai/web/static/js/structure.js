@@ -20,6 +20,8 @@ import {
 } from "./structure-data.js";
 import { enumWord, fmt, fmtLen, tu, unitLabel } from "./units.js";
 import { annexeHtml } from "./doc-warnings.js";
+import { swingPhraseFor } from "./gates.js";
+import { nodeById } from "./geom.js";
 import { supplyProblemsHtml } from "./warnings.js";
 
 let detail = "installer";
@@ -81,6 +83,7 @@ function render() {
   body.innerHTML = supplyProblemsHtml(report.warnings, report.unresolved,
                                       { customer: detail === "customer" })
     + `<div class="panel" id="structure-elevation"></div>`
+    + standaloneGatesHtml(report)
     + report.sections
       .map((s) => (detail === "customer" ? customerSection(s) : installerSection(s)))
       .join("")
@@ -315,15 +318,35 @@ function installerSection(section) {
       <td>${partsCell(visibleParts(b.parts))}</td>
     </tr>`).join("");
 
-  const gates = section.gates.map((g) => `
+  // Which way it opens, and which post it hangs from — the two facts a
+  // placement alone does not give, and the crew reading this sheet is who they
+  // are for. The SENTENCE is rendered by `gates.js` from the landmarks on the
+  // property, so this sheet and the drawing cannot disagree about which side
+  // "the house" is on. The hinge is named by the POST TAG this table already
+  // carries: `hinged on A3` is a thing a person can walk up to, in a way that
+  // "hinged on the start edge" is not.
+  const gates = section.gates.map((g) => {
+    const swing = swingPhraseFor({
+      run_id: section.run_id, station_mm: g.start_station_mm,
+      width_mm: g.opening_mm, leaf: g.leaf || "single",
+      opens_to: g.opens_to ?? null, hinge: g.hinge ?? null,
+      slides_to: g.slides_to ?? null,
+    });
+    const hingeTag = g.hinge === "end" ? g.to_tag
+      : g.hinge === "start" ? g.from_tag : null;
+    const lines = [swing];
+    if (hingeTag) lines.push(t("gate.hinged_on", { tag: hingeTag }));
+    return `
     <tr ${rowAttrs(section.run_id, g.element_id, "inspect.gate", { kit: g.kit_sku || "" })}>
       <td><b>${esc(g.tag)}</b></td>
       <td>${esc(g.from_tag || "")}–${esc(g.to_tag || "")}</td>
       <td class="num">${esc(fmt(g.start_station_mm))}</td>
       <td class="num">${esc(fmt(g.opening_mm))}</td>
+      <td dir="auto">${lines.filter(Boolean).map(esc).join("<br>")}</td>
       <td><span class="sku">${esc(g.kit_sku || "—")}</span></td>
       <td>${partsCell(visibleParts(g.parts))}</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   const u = unitLabel();
   return `<div class="panel structure-section">
@@ -351,6 +374,7 @@ function installerSection(section) {
       <th>${esc(t("structure.between"))}</th>
       <th>${esc(t("structure.station"))} (${esc(u)})</th>
       <th>${esc(t("structure.opening"))} (${esc(u)})</th>
+      <th>${esc(t("structure.gate_opens"))}</th>
       <th>${esc(t("structure.kit"))}</th>
       <th>${esc(t("structure.parts"))}</th></tr>${gates}</table>` : ""}
   </div>`;
@@ -397,4 +421,65 @@ function visibleParts(parts) {
   return detail === "customer"
     ? parts.filter((p) => !CONSUMABLE_ROLES.has(p.role))
     : parts;
+}
+
+
+/** The gates that belong to no section.
+ *
+ *  A gate is its own element standing BESIDE the runs, so it appears in no
+ *  stretch's table — and a crew that never sees it hangs nothing. It gets its
+ *  own block, read the way a hanging crew reads a gate: between these two
+ *  posts, this wide, opening this way. The two post tags are what makes it
+ *  actionable — `A/S3` is something a person can walk up to, in a way that
+ *  "the start edge" is not.
+ *
+ *  The in-run gate keeps its per-section table, unchanged: it is a hole in a
+ *  stretch and it belongs with that stretch.
+ */
+function standaloneGatesHtml(report) {
+  const gates = report.gates || [];
+  if (!gates.length) return "";
+  const u = unitLabel();
+  const rows = gates.map((g) => {
+    // The two nodes the row carries, resolved to points on the drawing. That
+    // is what turns `opens_to` — `left`/`right` of the gate's own direction,
+    // and meaningless on its own — into "opens toward the house": the sentence
+    // is built from the landmarks actually on that side, by the one function
+    // the drawing uses, so the sheet and the plan cannot disagree.
+    const a = nodeById(g.start_node_id), b = nodeById(g.end_node_id);
+    const swing = swingPhraseFor({
+      run_id: null,
+      points: a && b ? [[a.x_mm, a.y_mm], [b.x_mm, b.y_mm]] : null,
+      station_mm: 0,
+      width_mm: g.opening_mm,
+      leaf: g.leaf || "single",
+      opens_to: g.opens_to ?? null, hinge: g.hinge ?? null,
+      slides_to: g.slides_to ?? null,
+    });
+    const hingeTag = g.hinge === "end" ? g.to_tag
+      : g.hinge === "start" ? g.from_tag : null;
+    const lines = [swing];
+    if (hingeTag) lines.push(t("gate.hinged_on", { tag: hingeTag }));
+    return `<tr>
+      <td><b>${esc(g.tag)}</b></td>
+      <td>${esc(g.from_tag || "")}–${esc(g.to_tag || "")}</td>
+      <td class="num">${esc(fmt(g.opening_mm))}</td>
+      <td dir="auto">${lines.filter(Boolean).map(esc).join("<br>")}</td>
+      <td><span class="sku">${esc(g.kit_sku || "—")}</span></td>
+      <td>${partsCell(visibleParts(g.parts))}</td>
+    </tr>`;
+  }).join("");
+  // NOT `.structure-section`: a gate that stands beside the runs is not a
+  // section, and a reader counting the sections on this sheet — the browser
+  // suite among them — must not find one more card than the fence has stretches.
+  return `<div class="panel structure-gates">
+    <h3>${esc(t("structure.gates_title"))}</h3>
+    <table class="structure-table"><tr>
+      <th>${esc(t("structure.tag"))}</th>
+      <th>${esc(t("structure.between"))}</th>
+      <th>${esc(t("structure.opening"))} (${esc(u)})</th>
+      <th>${esc(t("structure.gate_opens"))}</th>
+      <th>${esc(t("structure.kit"))}</th>
+      <th>${esc(t("structure.parts"))}</th></tr>${rows}</table>
+  </div>`;
 }

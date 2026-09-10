@@ -868,3 +868,55 @@ def test_the_node_is_reachable_from_the_bay_that_carries_the_fraction():
         if span.width_mm * 1000 <= 1422400:
             assert node.id not in [
                 n.id for n in result.graph.nodes_for_element(span.id)]
+
+
+def test_the_ceiling_is_earned_when_the_published_limit_rounds_UP_too():
+    """The same doctrine, in the direction every test above happened to miss.
+
+    Every fractional case in this file publishes 1422.4 mm, which rounds DOWN:
+    `max_span_mm` (1422) sits BELOW `remainder_ceiling_mm` (1423), so a bay that
+    needs excusing always fell through to `earns_remainder_ceiling` and got the
+    count check. A limit that rounds UP collapses that gap — 2463.8 mm has
+    `max_span_mm == remainder_ceiling_mm == 2464` — and a per-bay clause written
+    in the rounded millimetre then admits the ceiling bay before the count is
+    ever consulted. That is the ceiling GRANTED to a bay, which is the exact
+    thing `earns_remainder_ceiling` exists to refuse.
+
+    A 4928 mm segment under a 2463.8 mm limit takes three bays, not two. Two bays
+    of 2464 are a post, a footing and a pour removed from a sealed schedule —
+    and `_span_rounded_over_published_limit` stays silent about them, because it
+    early-returns on exactly the predicate this fixes. The equality of
+    `max_span_mm` and the ceiling is asserted first so this test cannot quietly
+    stop testing what it says it tests.
+    """
+    milli = 2463800
+    max_span_mm = round_milli_to_mm(milli)
+    assert max_span_mm == remainder_ceiling_mm(milli) == 2464, "the round-UP shape"
+    assert min_bay_count(4928, milli) == 3
+
+    assert not admits_widths([2464, 2464], 4928, max_span_mm, max_span_milli=milli)
+    # the count the limit actually forces, with the fraction spread: admitted
+    assert admits_widths([1643, 1643, 1642], 4928, max_span_mm, max_span_milli=milli)
+    # a bay genuinely at or under the published limit needs no excuse at all
+    assert admits_widths([2463, 2465 - 2], 4926, max_span_mm, max_span_milli=milli)
+
+
+@pytest.mark.parametrize("max_span_milli", _MAGNITUDES)
+def test_no_layout_below_the_forced_bay_count_is_ever_admitted(max_span_milli):
+    """The loosening guard, swept over the real magnitudes rather than one.
+
+    `test_every_layout_this_engine_computes_is_admitted` is the tightening half
+    and runs on all six; the refusing half ran on 1422400 alone, so the round-UP
+    magnitudes had no assertion in the direction that costs a post. For each
+    length, take the engine's own layout and remove one bay by merging the two
+    widest: it still tiles the segment, and it is exactly one post short. Nothing
+    excuses that, at any magnitude.
+    """
+    max_span_mm = round_milli_to_mm(max_span_milli)
+    for length_mm in range(1, 8_001):
+        widths = sorted(equal_layout_milli(length_mm * 1000, max_span_milli))
+        if len(widths) < 2:
+            continue
+        merged = widths[:-2] + [widths[-2] + widths[-1]]
+        assert not admits_widths(merged, length_mm, max_span_mm,
+                                 max_span_milli=max_span_milli), (length_mm, merged)

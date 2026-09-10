@@ -11,8 +11,23 @@ from fenceai.decisions.explain import explain_element, explain_node
 from fenceai.knowledge.demo import demo_knowledge
 from fenceai.strategy.generator import generate
 from fenceai.strategy.overrides import Override, PinPost
-from fenceai.topology.model import GatePayload
+from fenceai.topology.model import GatePayload, GateSpan, Node
 from tests.conftest import add_point_event, straight_topology
+
+
+def _with_a_standalone_gate(topo):
+    """Hang a `GateSpan` off the end of a drawn run.
+
+    The battery below walks whatever nodes the demo graph produces, so a node
+    kind it never produces is a node kind it never checks. Every fixture here
+    drew its gate as a `GatePayload` point event, so `gate_span` — and the
+    `select_gate_kit` payload that names a gate rather than an event — never
+    reached the assertions, and both shipped unrendered."""
+    last = topo.nodes[-1]
+    topo.nodes.append(Node(id="n_gate_far", x_mm=last.x_mm + 1000, y_mm=last.y_mm))
+    topo.gates = [GateSpan(id="g_span", start_node_id=last.id,
+                           end_node_id="n_gate_far")]
+    return topo
 
 
 def test_explanations_localize():
@@ -43,6 +58,8 @@ def test_every_graph_node_has_hebrew_and_english_templates():
     knowledge, catalog = demo_knowledge(), demo_catalog()
     topo = straight_topology(6000)
     add_point_event(topo, "run1", "ev_gate", 2000, GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000"))
+    # ...and a gate of the OTHER kind, so the battery covers both
+    _with_a_standalone_gate(topo)
     ov = Override(id="ov1", run_id="run1", directive=PinPost(station_mm=1000))
     result = generate(topo, knowledge, catalog, overrides=[ov])
     # `knowledge_version` is the one node whose payload IS its content — a
@@ -62,6 +79,12 @@ def test_every_graph_node_has_hebrew_and_english_templates():
             # a raw payload DICT specifically; prose legitimately quotes a value
             # ("Vertical mode 'level' chosen"), so the marker is `{'`
             assert "{'" not in en and "{'" not in he, (node.action, en, he)
+            # ...and no unresolved value rendered as the word None. A template
+            # interpolating a key its payload does not carry does not raise —
+            # it publishes "opening of gate event None" as the explanation, in
+            # both languages, which is how `select_gate_kit` came to describe a
+            # standalone gate by the event it does not have.
+            assert "None" not in en and "None" not in he, (node.action, en, he)
 
 
 def test_template_key_parity():
@@ -319,3 +342,30 @@ def test_every_enum_value_has_a_hebrew_word():
         values |= set(get_args(model.model_fields[field].annotation))
     missing = sorted(v for v in values if v not in _ENUM_WORDS["he"])
     assert not missing, missing
+
+
+def test_a_standalone_gate_explains_itself_in_both_languages():
+    """`gate_span` and its kit are SENTENCES, not payload dicts.
+
+    A gate that stands beside the runs is a new node kind and a second payload
+    shape for an existing one, and neither had a template: `gate_span` rendered
+    its raw Python dict identically in Hebrew and English — the decision graph is
+    the explanation (foundation §15), so an untranslated dict is the explanation
+    missing — and `select_gate_kit` interpolated an `event_id` that a standalone
+    gate does not carry, publishing "opening of gate event None" in both.
+    """
+    knowledge, catalog = demo_knowledge(), demo_catalog()
+    result = generate(_with_a_standalone_gate(straight_topology(6000)),
+                      knowledge, catalog)
+
+    fact = next(n for n in result.graph.nodes if n.action == "gate_span")
+    en, he = (explain_node(result.graph, fact, lang=l) for l in ("en", "he"))
+    assert "g_span" in en and "g_span" in he      # the id stays verbatim
+    assert en != he, "a dict is not a translation"
+    assert "{" not in en and "{" not in he
+
+    kit = next(n for n in result.graph.nodes if n.action == "select_gate_kit")
+    en, he = (explain_node(result.graph, kit, lang=l) for l in ("en", "he"))
+    assert "None" not in en and "None" not in he
+    assert "g_span" in en and "g_span" in he
+    assert en != he

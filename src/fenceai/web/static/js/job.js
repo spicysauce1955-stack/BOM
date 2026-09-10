@@ -7,8 +7,14 @@
 //
 // It owns its own host, like `choices.js`: index.html is not this module's file,
 // and reaching into another module's subtree is what the frontend map forbids.
-// It sits at the TOP of the side column, above what the fence is built from,
-// because whose fence it is comes before what it is made of.
+//
+// It sits at the top of the CANVAS column, not the side column. It was on the
+// side, and on the road's first step that was the whole screen wrong: the step's
+// own surface list hides the drawing (`step-surfaces.js: STEP_DRAWING.job` is
+// empty — step 1 is a form, and a map behind it invites a click that does
+// nothing), so the main column was blank and the only thing to do on the screen
+// was tucked into the margin beside it. A side column is where you put what is
+// BESIDE the work; on step 1 the job IS the work.
 
 import { apiSend, esc } from "./api.js";
 import { t } from "./i18n.js";
@@ -75,7 +81,7 @@ function render() {
     <h3>${esc(t("job.title"))}</h3>
     <div class="job-fields">${rows}</div>
     <div class="job-actions">
-      <button id="job-save">${esc(t("job.save"))}</button>
+      <button id="job-save" class="primary">${esc(t("job.save"))}</button>
       <span id="job-status" class="meta"></span>
     </div>
     ${missing.length ? `<div class="job-missing meta">${
@@ -117,12 +123,14 @@ function ensureHost() {
   if (typeof document === "undefined") return null;
   let host = document.getElementById("job-panel");
   if (host) return host;
-  const side = document.querySelector(".side-col");
-  if (!side) return null;
+  const col = document.querySelector(".canvas-col");
+  if (!col) return null;
   host = document.createElement("div");
   host.className = "panel";
   host.id = "job-panel";
-  side.insertBefore(host, side.firstChild);
+  // First child: on step 1 it is the only thing in this column, and on every
+  // other step it is hidden, so nothing below it ever has to move around it.
+  col.insertBefore(host, col.firstChild);
   return host;
 }
 

@@ -9,9 +9,10 @@ import { esc } from "./api.js";
 import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { currentRole } from "./role.js";
-import { on, saveStated, state } from "./state.js";
+import { on, saveStated, setTool, state } from "./state.js";
 import { setTab } from "./tabs.js";
 import { panelFor, road } from "./road-model.js";
+import { defaultToolForStep } from "./step-surfaces.js";
 import { roadFor } from "./roads.js";
 
 let current = "job";
@@ -78,12 +79,22 @@ function renderDone(def) {
   const host = ensureDoneHost();
   if (!host) return;
   const at = def.steps.findIndex((s) => s.key === current);
+  const step = def.steps[at];
   const next = def.steps[at + 1];
+  // Two reasons this control is absent, and they are different reasons.
+  //
   // The last step has nowhere to go, so it gets no control rather than a dead
-  // one. `hidden`, not removal: the host stays put so the column does not
-  // reflow every time the salesperson reaches the end and steps back.
-  host.hidden = !next;
-  if (!next) return;
+  // one. And a step marked `commits` already has its own "I am finished here"
+  // button — step 1's Save, which saves the job and then calls `advance()`
+  // through the `job-changed` subscription below. Showing the road's Done
+  // beside it put two buttons on one screen that did one thing, which is what
+  // the user asked to stop: the question a person is left with is not "which do
+  // I press" but "does the other one save?".
+  //
+  // `hidden`, not removal: the host stays put so the column does not reflow
+  // every time the salesperson reaches the end and steps back.
+  host.hidden = !next || step?.commits === true;
+  if (host.hidden) return;
   let btn = host.querySelector("#step-done-btn");
   if (!btn) {
     btn = document.createElement("button");
@@ -108,6 +119,17 @@ function showStep(stepKey) {
   if (!def) return;
   const panel = panelFor(def, stepKey);
   if (panel) setTab(panel);
+  // ...and arm this step's own tool, because a tool that survives the step
+  // that offered it makes the drawing lie about what the next click will do:
+  // the gate tool armed on step 6 was still armed on step 7, where clicking
+  // the house to write a note on it placed a gate instead — on a step whose
+  // rail does not show the gate button at all. Hiding a control never disarms
+  // it (`role.js` says the same about hiding not being a permission), so the
+  // arming has to be explicit and it belongs here, where the step changes.
+  //
+  // `step-surfaces.js` derives the answer from the tools the step KEEPS, so
+  // this cannot drift from what the rail is showing.
+  setTool(defaultToolForStep(stepKey));
 }
 
 /** Build the band ONCE, then only toggle attributes.

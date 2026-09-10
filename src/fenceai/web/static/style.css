@@ -171,8 +171,25 @@ th { background: #eef2f6; }
 #toolbar button .t-label { font-size: 9px; line-height: 1.2; color: #475569; }
 #toolbar button.tool.active { background: #dbeafe; border-color: #2563eb; }
 #toolbar button.tool.active .t-label { color: #1d4ed8; }
+/* The "other" picker is a tool that happens to be a select — every property
+   object that is not the house or the street lives behind it, because a rail of
+   seven equal buttons is not the simple screen a salesperson opens. It matches
+   the buttons' 56 px hit area rather than the browser's default select height,
+   so the rail stays one column of equal squares. */
+#toolbar select#tool-other { inline-size: 56px; block-size: 56px; padding: 2px;
+  font-size: 9px; text-align: center; text-align-last: center;
+  border: 1px solid #d4dae2; border-radius: 6px; background: #fff;
+  color: #475569; }
+#toolbar select#tool-other.active { background: #dbeafe; border-color: #2563eb;
+  color: #1d4ed8; }
 .toolbar-spacer { flex: 1; }
 #toolbar button:disabled { opacity: 0.4; cursor: default; }
+
+/* The drawing takes focus on a press so the keys that mean something to it —
+   Enter, Escape, a typed length — are delivered to it rather than to the last
+   button pressed. No ring for that: it is a pointer gesture, and `tabindex=-1`
+   keeps the canvas out of the tab order, so :focus-visible never fires here. */
+#canvas:focus { outline: none; }
 
 #statusbar { font-size: 12px; color: #475569; padding: 4px 8px; min-height: 20px; }
 
@@ -811,146 +828,183 @@ html[data-role="office"] #tabs button[data-tab="review"] { display: none; }
    from drifting.
    ========================================================================= */
 
-/* --- 1 the job: no drawing tool offered, so keep only the job panel --- */
-html[data-step="job"] #tool-draw,
+/* --- 1 the job: a form, not a drawing — keep only the job panel --- */
 html[data-step="job"] #tool-house,
 html[data-step="job"] #tool-street,
+html[data-step="job"] #tool-other,
+html[data-step="job"] #context-panel,
+html[data-step="job"] #canvas,
+html[data-step="job"] #generate-toolbar,
+html[data-step="job"] #statusbar,
+html[data-step="job"] #strategy-summary,
+html[data-step="job"] #tool-draw,
 html[data-step="job"] #tool-ground,
 html[data-step="job"] #tool-base,
 html[data-step="job"] #tool-height,
-html[data-step="job"] #tool-model,
-html[data-step="job"] #tool-gate,
-html[data-step="job"] #context-panel,
 html[data-step="job"] #run-editing-panel,
 html[data-step="job"] #profile,
+html[data-step="job"] #tool-model,
 html[data-step="job"] #model-row,
+html[data-step="job"] #tool-gate,
+html[data-step="job"] #gates-panel,
+html[data-step="job"] #tool-note,
+html[data-step="job"] #notes-panel,
 html[data-step="job"] #handover-panel,
 html[data-step="job"] #warnings,
 html[data-step="job"] #site-conditions { display: none; }
 
 /* --- 2 the property: everything on the plot that is NOT the fence --- */
+html[data-step="property"] #job-panel,
 html[data-step="property"] #tool-draw,
 html[data-step="property"] #tool-ground,
 html[data-step="property"] #tool-base,
 html[data-step="property"] #tool-height,
-html[data-step="property"] #tool-model,
-html[data-step="property"] #tool-gate,
-html[data-step="property"] #job-panel,
 html[data-step="property"] #run-editing-panel,
 html[data-step="property"] #profile,
+html[data-step="property"] #tool-model,
 html[data-step="property"] #model-row,
+html[data-step="property"] #tool-gate,
+html[data-step="property"] #gates-panel,
+html[data-step="property"] #tool-note,
+html[data-step="property"] #notes-panel,
 html[data-step="property"] #handover-panel,
 html[data-step="property"] #warnings,
 html[data-step="property"] #site-conditions { display: none; }
 
 /* --- 3 the layout: the fence in plan, drawn to measured lengths --- */
+html[data-step="layout"] #job-panel,
 html[data-step="layout"] #tool-house,
 html[data-step="layout"] #tool-street,
+html[data-step="layout"] #tool-other,
+html[data-step="layout"] #context-panel,
 html[data-step="layout"] #tool-ground,
 html[data-step="layout"] #tool-base,
 html[data-step="layout"] #tool-height,
-html[data-step="layout"] #tool-model,
-html[data-step="layout"] #tool-gate,
-html[data-step="layout"] #job-panel,
-html[data-step="layout"] #context-panel,
 html[data-step="layout"] #run-editing-panel,
 html[data-step="layout"] #profile,
+html[data-step="layout"] #tool-model,
 html[data-step="layout"] #model-row,
+html[data-step="layout"] #tool-gate,
+html[data-step="layout"] #gates-panel,
+html[data-step="layout"] #tool-note,
+html[data-step="layout"] #notes-panel,
 html[data-step="layout"] #handover-panel,
 html[data-step="layout"] #warnings,
 html[data-step="layout"] #site-conditions { display: none; }
 
 /* --- 4 the side view: ground, base and height along each stretch --- */
-html[data-step="sideview"] #tool-draw,
+html[data-step="sideview"] #job-panel,
 html[data-step="sideview"] #tool-house,
 html[data-step="sideview"] #tool-street,
-html[data-step="sideview"] #tool-model,
-html[data-step="sideview"] #tool-gate,
-html[data-step="sideview"] #job-panel,
+html[data-step="sideview"] #tool-other,
 html[data-step="sideview"] #context-panel,
+html[data-step="sideview"] #tool-draw,
+html[data-step="sideview"] #tool-model,
 html[data-step="sideview"] #model-row,
+html[data-step="sideview"] #tool-gate,
+html[data-step="sideview"] #gates-panel,
+html[data-step="sideview"] #tool-note,
+html[data-step="sideview"] #notes-panel,
 html[data-step="sideview"] #handover-panel,
 html[data-step="sideview"] #warnings,
 html[data-step="sideview"] #site-conditions { display: none; }
 
-/* --- 5 which fence: the model this fence is built to --- */
-html[data-step="model"] #tool-draw,
+/* --- 5 which fence: the model this fence is built to, and the picker for it --- */
+html[data-step="model"] #job-panel,
 html[data-step="model"] #tool-house,
 html[data-step="model"] #tool-street,
+html[data-step="model"] #tool-other,
+html[data-step="model"] #context-panel,
+html[data-step="model"] #tool-draw,
 html[data-step="model"] #tool-ground,
 html[data-step="model"] #tool-base,
 html[data-step="model"] #tool-height,
-html[data-step="model"] #tool-gate,
-html[data-step="model"] #job-panel,
-html[data-step="model"] #context-panel,
 html[data-step="model"] #run-editing-panel,
 html[data-step="model"] #profile,
+html[data-step="model"] #tool-gate,
+html[data-step="model"] #gates-panel,
+html[data-step="model"] #tool-note,
+html[data-step="model"] #notes-panel,
 html[data-step="model"] #handover-panel,
 html[data-step="model"] #warnings,
 html[data-step="model"] #site-conditions { display: none; }
 
-/* --- 6 gates & openings: where, and how wide --- */
-html[data-step="gates"] #tool-draw,
+/* --- 6 gates & openings: which gate, then where and how wide --- */
+html[data-step="gates"] #job-panel,
 html[data-step="gates"] #tool-house,
 html[data-step="gates"] #tool-street,
+html[data-step="gates"] #tool-other,
+html[data-step="gates"] #context-panel,
+html[data-step="gates"] #tool-draw,
 html[data-step="gates"] #tool-ground,
 html[data-step="gates"] #tool-base,
 html[data-step="gates"] #tool-height,
-html[data-step="gates"] #tool-model,
-html[data-step="gates"] #job-panel,
-html[data-step="gates"] #context-panel,
 html[data-step="gates"] #profile,
+html[data-step="gates"] #tool-model,
 html[data-step="gates"] #model-row,
+html[data-step="gates"] #tool-note,
+html[data-step="gates"] #notes-panel,
 html[data-step="gates"] #handover-panel,
 html[data-step="gates"] #warnings,
 html[data-step="gates"] #site-conditions { display: none; }
 
-/* --- 7 notes & promises: its surface is a different TAB, not a panel here --- */
-html[data-step="notes"] #tool-draw,
+/* --- 7 notes & promises: attached by clicking the thing on the drawing --- */
+html[data-step="notes"] #job-panel,
 html[data-step="notes"] #tool-house,
 html[data-step="notes"] #tool-street,
+html[data-step="notes"] #tool-other,
+html[data-step="notes"] #context-panel,
+html[data-step="notes"] #generate-toolbar,
+html[data-step="notes"] #strategy-summary,
+html[data-step="notes"] #tool-draw,
 html[data-step="notes"] #tool-ground,
 html[data-step="notes"] #tool-base,
 html[data-step="notes"] #tool-height,
-html[data-step="notes"] #tool-model,
-html[data-step="notes"] #tool-gate,
-html[data-step="notes"] #job-panel,
-html[data-step="notes"] #context-panel,
 html[data-step="notes"] #run-editing-panel,
 html[data-step="notes"] #profile,
+html[data-step="notes"] #tool-model,
 html[data-step="notes"] #model-row,
+html[data-step="notes"] #tool-gate,
+html[data-step="notes"] #gates-panel,
 html[data-step="notes"] #handover-panel,
 html[data-step="notes"] #warnings,
 html[data-step="notes"] #site-conditions { display: none; }
 
 /* --- 8 review & handover: what the office still needs, and the ballpark --- */
-html[data-step="review"] #tool-draw,
+html[data-step="review"] #job-panel,
 html[data-step="review"] #tool-house,
 html[data-step="review"] #tool-street,
+html[data-step="review"] #tool-other,
+html[data-step="review"] #context-panel,
+html[data-step="review"] #canvas,
+html[data-step="review"] #generate-toolbar,
+html[data-step="review"] #statusbar,
+html[data-step="review"] #strategy-summary,
+html[data-step="review"] #tool-draw,
 html[data-step="review"] #tool-ground,
 html[data-step="review"] #tool-base,
 html[data-step="review"] #tool-height,
-html[data-step="review"] #tool-model,
-html[data-step="review"] #tool-gate,
-html[data-step="review"] #job-panel,
-html[data-step="review"] #context-panel,
 html[data-step="review"] #run-editing-panel,
 html[data-step="review"] #profile,
-html[data-step="review"] #model-row { display: none; }
+html[data-step="review"] #tool-model,
+html[data-step="review"] #model-row,
+html[data-step="review"] #tool-gate,
+html[data-step="review"] #gates-panel,
+html[data-step="review"] #tool-note,
+html[data-step="review"] #notes-panel { display: none; }
 
-/* The drawing belongs to the steps whose work happens ON it — 2 to 6. Steps
-   1, 7 and 8 are a form, a note and a summary, and a map behind them is
-   furniture: it invites a click that does nothing and makes step 1 read as
-   "draw something" when the only thing to do is type an address. Hidden, not
-   merely inert: `pointer-events: none` left it on screen, which is the reading
-   the user overruled. `notes` is listed for list-equality only — that step
-   switches to the annotations TAB and never shows the canvas anyway. */
-html[data-step="job"] #canvas,
-html[data-step="job"] #generate-toolbar,
-html[data-step="notes"] #canvas,
-html[data-step="notes"] #generate-toolbar,
-html[data-step="review"] #canvas,
-html[data-step="review"] #generate-toolbar { display: none; }
+/* The drawing belongs to the steps whose work happens ON it — 2 to 7. Steps 1
+   and 8 are a form and a summary, and a map behind them is furniture: it
+   invites a click that does nothing and makes step 1 read as "draw something"
+   when the only thing to do is type an address. Hidden, not merely inert:
+   `pointer-events: none` left it on screen, which is the reading the user
+   overruled. Step 7 has the canvas back — a note is attached by clicking the
+   thing it is about — but not the generate bar, which is step 8's business.
+   `#statusbar` and `#strategy-summary` are scoped WITH the drawing: they are
+   captions, and a caption under no picture is what put "No strategy yet —
+   press ⚙ Generate strategy" on a screen with no canvas on it. Every rule
+   above is generated from `js/step-surfaces.js: STEP_HIDDEN`, which is why
+   `tests/web/test_step_surfaces.py` can require the two copies to be EQUAL. */
 
 /* The "I have finished this step" control. Its own row under the drawing so
    it reads as the end of the step's work rather than as another toolbar
@@ -969,6 +1023,14 @@ html[data-step="review"] #generate-toolbar { display: none; }
    visit, so the blank fields are a note to them, not a wall. */
 .job-missing { margin-block-start: 6px; font-style: italic; }
 
+/* --- what a stretch measures, typed (js/inspector.js over run-metrics.js) --- */
+#run-measure h4 { margin: 10px 0 4px; font-size: 12px; }
+.measure-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-block-end: 4px; }
+.measure-leg { min-inline-size: 48px; }
+.measure-field { display: flex; align-items: center; gap: 3px; font-size: 11px; }
+.measure-field input { inline-size: 72px; }
+
 /* --- the property layer (slice 3): what is around the fence --- */
 .context-list { list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column; gap: 4px; }
@@ -977,6 +1039,40 @@ html[data-step="review"] #generate-toolbar { display: none; }
 .context-label-input { flex: 1; min-inline-size: 0; }
 /* A landmark is a backdrop, so its label never competes with a bay dimension. */
 .context-label { font-style: italic; }
+/* Angle, length and width — what makes a street EDITABLE, which is why a street
+   is a rectangle at all: a bare line has no width to type. They sit on their own
+   row under the label so three number fields cannot crush it. */
+.context-list li { flex-wrap: wrap; }
+.context-metrics { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+.context-metrics label { display: flex; align-items: center; gap: 3px;
+  font-size: 11px; color: #64748b; }
+.context-metrics input { inline-size: 62px; }
+
+/* --- a placed gate is grabbable (js/gates.js) --- */
+/* The marks are drawn in `#g-gates`; the cursor is what says they can be
+   taken hold of. `grab` on an end (it resizes the opening), `move` on the body
+   (it slides the whole gate along). */
+#g-gates .gate-handle { cursor: grab; }
+#g-gates .gate-body { cursor: move; }
+#canvas.panning #g-gates .gate-handle,
+#canvas.panning #g-gates .gate-body { cursor: grabbing; }
+
+/* --- notes attached to the drawing (js/notes.js) --- */
+/* `.verbatim` was scoped to `.card` and to the decisions panel; a note lives in
+   a `div.panel`, and the quoted sentence must look the same wherever it is
+   read — it is the one piece of text in this app that is never rewritten. */
+.panel .verbatim { background: #f1f5f9; border-inline-start: 3px solid #2563eb;
+  padding: 4px 8px; margin: 4px 0; font-style: italic; }
+.notes-list { display: flex; flex-direction: column; gap: 8px;
+  margin-block-start: 6px; }
+.note-row { font-size: 12px; }
+.note-target { color: #64748b; }
+/* The one popover in the app whose field is prose rather than a figure, so it
+   is the one that needs a textarea rule — `.popover input, .popover select`
+   does not reach it. */
+.note-popover textarea { display: block; inline-size: 100%; box-sizing: border-box;
+  margin-block-start: 4px; min-block-size: 72px; font: inherit;
+  border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; }
 
 /* --- the handover sheet (slice 4): what the office still needs --- */
 .handover-gaps { list-style: none; margin: 6px 0 0; padding: 0;

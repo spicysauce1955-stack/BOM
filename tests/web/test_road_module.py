@@ -104,10 +104,17 @@ def test_the_road_is_eight_steps_in_the_order_the_job_is_done(out):
                                 "model", "gates", "notes", "review"]
 
 
-def test_notes_is_the_one_step_whose_surface_is_another_panel(out):
-    assert out["panels"]["notes"] == "annotations"
-    assert {k: v for k, v in out["panels"].items() if k != "notes"} == {
-        k: "canvas" for k in out["panels"] if k != "notes"}
+def test_every_step_works_on_the_drawing(out):
+    """`notes` used to be the exception, and is not any more.
+
+    Its surface was the Annotations TAB, whose form asked a salesperson to pick
+    the target out of a `<select>` of run ids — so attaching "keep a post clear
+    of that window" to the house meant knowing that the house is not in the
+    list and that `r2` is the stretch along the street. The user's instruction
+    is that a note is attached by CLICKING the thing it is about, which makes
+    the map that step's surface like every other. The tab still exists for the
+    office person; it is no longer where the promise is written down."""
+    assert out["panels"] == {k: "canvas" for k in out["panels"]}
 
 
 def test_the_engine_takes_no_project(out):
@@ -188,7 +195,10 @@ def test_a_code_named_like_an_object_key_does_not_throw(out):
 
 
 def test_panel_for_is_road_scoped(out):
-    assert out["panel_of_notes"] == "annotations"
+    """A step this road does not define resolves to `null` rather than to some
+    other road's step of the same name. (`notes` reads `canvas` now — see
+    `test_every_step_works_on_the_drawing`.)"""
+    assert out["panel_of_notes"] == "canvas"
     assert out["panel_of_nothing"] is None
 
 
