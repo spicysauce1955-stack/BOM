@@ -76,3 +76,17 @@ def test_the_digest_is_identity_not_payload():
     assert digest.topology_revision == 4
     assert digest.knowledge_hash == "kh_abc"
     assert digest.slices == ["choice_sets"]
+
+
+def test_the_ref_separator_cannot_be_spelled_by_another_triple():
+    """`point_ref` joins on NUL, and the tests that use it build their expected
+    value by calling it — so any separator satisfies them, including one that
+    reintroduces the collision the qualification was added to remove.
+
+    A real scope contains colons (`gap:run1:0`). Joining on ":" lets
+    ("a", "gap:1", "b") and ("a", "gap", "1:b") spell the same reference, which
+    is the same "one ref, two things" defect one level down.
+    """
+    assert point_ref("a", "gap:1", "b") != point_ref("a", "gap", "1:b")
+    assert point_ref("bay_layout", "gap:run1:0", "p") != \
+        point_ref("bay_layout", "gap:run1", "0:p")

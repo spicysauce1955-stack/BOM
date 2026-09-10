@@ -101,6 +101,9 @@ def test_advice_is_the_same_on_two_calls(client, seeded_run):
     # non-empty list first, same reasoning as the open-question test above.
     assert ids, a
     assert ids == [p["id"] for p in b["proposals"]]
+    # ...and the WHOLE body, not just the ids: a route stamping a wall clock
+    # into `created_at` leaves every id identical and the replay different.
+    assert a == b
 
 
 def test_advice_refuses_a_run_whose_topology_moved(client, seeded_run, moved_topology):
@@ -145,3 +148,90 @@ def test_advice_on_an_unknown_run_is_a_404(client):
     r = client.get("/api/runs/nope/advice")
     assert r.status_code == 404
     assert "not found" in str(r.json()["detail"])
+
+
+def test_advice_changes_no_number_in_the_run_or_the_bom(client, seeded_run, project_id):
+    """THE purity property of this whole branch, at the wire.
+
+    `test_advice_never_mutates_the_project` re-reads the PROJECT — the drawing,
+    the answers, the site — and the agent was never the thing likely to touch
+    those. What it sits next to is the generated run: the spans, the posts, the
+    quantities, the BOM the office prices from. Making `get_advice` widen a span
+    by one millimetre and re-save the run left 509 tests green.
+
+    "No AI inside deterministic computation" (CLAUDE.md) is not a property of
+    the agent package; it is a property of what an advice call leaves behind.
+    So this reads the run and the BOM whole, on both sides of the call, and
+    compares them byte for byte.
+
+    Honest about today's guard: `save_run` is `INSERT OR IGNORE`, so a route
+    that mutated the result and re-saved it changes nothing anyway, and this
+    test stays green against that mutation alone. It is not therefore vacuous —
+    it fires the moment that stops being true, which was checked by making
+    `save_run` an upsert and watching it fail. The store's refusal and the
+    route's restraint are two different promises, and this is the one that
+    survives a change to the other.
+    """
+    before_run = client.get(f"/api/runs/{seeded_run}").json()
+    before_bom = client.get(f"/api/runs/{seeded_run}/bom").json()
+    before_structure = client.get(f"/api/runs/{seeded_run}/structure").json()
+    assert before_bom.get("requirements"), "an empty BOM would compare equal to anything"
+
+    assert client.get(f"/api/runs/{seeded_run}/advice").status_code == 200
+
+    assert client.get(f"/api/runs/{seeded_run}").json() == before_run
+    assert client.get(f"/api/runs/{seeded_run}/bom").json() == before_bom
+    assert client.get(f"/api/runs/{seeded_run}/structure").json() == before_structure
+
+
+def test_nothing_reaches_the_wire_without_passing_the_three_checks(
+        client, seeded_run, monkeypatch):
+    """The route must dispatch through `run_task`, not call the runner.
+
+    Every check-related property was asserted against a hand-built runner in the
+    unit layer, and nothing tied that to the endpoint: replacing
+    `run_task(RANK_CHOICE_SET, view, state.agent, ...)` with
+    `state.agent.run(...)` — bypassing all three checks AND every stamped
+    dispatcher fact — left 946 of 947 green, and the one failure was incidental.
+
+    So this puts a deliberately bad runner behind the route and asserts, over
+    HTTP, that a person is shown nothing: an unpermitted kind, and a citation to
+    a gap the view never handed over. Both must be counted, not silently eaten.
+    """
+    from fenceai.agent.proposal import Claim, Proposal, TaskResult
+    from fenceai.api import app as app_module
+
+    class BadRunner:
+        interpreter_id = "bad"
+
+        def run(self, task, view, project_id):
+            view.open_choice_sets()
+            return TaskResult(
+                task_id=task.id, evaluated=True,
+                proposals=[
+                    # 1 — a kind this task may not emit
+                    Proposal(id="a", task_id=task.id, project_id=project_id,
+                             kind="rewrite_the_knowledge_base", payload={},
+                             scope="gap:run1:0",
+                             claims=[Claim(marker="inferred", text="trust me")]),
+                    # 2 — a citation to something never handed over
+                    Proposal(id="b", task_id=task.id, project_id=project_id,
+                             kind="select_choice_point",
+                             payload={"choice_set": "bay_layout",
+                                      "scope": "gap:run1:0", "point_id": "p9"},
+                             scope="gap:run1:0",
+                             claims=[Claim(marker="read", text="invented",
+                                           evidence="point:made\x00up\x00ref")]),
+                ],
+                measured=[Claim(marker="read", text="also invented",
+                                evidence="point:not\x00handed\x00over")],
+            )
+
+    monkeypatch.setattr(app_module.state, "agent", BadRunner())
+    body = client.get(f"/api/runs/{seeded_run}/advice").json()
+
+    assert body["proposals"] == [], "a person was shown something unchecked"
+    assert body["produced"] == 2, "the emission must still be counted (spec 8b)"
+    assert body["dropped"] == 2
+    assert body["measured"] == []
+    assert body["claims_refused"] == 1

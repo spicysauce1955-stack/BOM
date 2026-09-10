@@ -178,6 +178,28 @@ def test_a_proposals_claim_text_actually_renders(out):
     assert "reasoning" in out["withProposal"]
 
 
+def test_how_a_claim_is_KNOWN_reaches_the_screen(out):
+    """The one property the whole slice exists to make visible.
+
+    "A claim carries how it is known" is enforced in `run.py` and rendered by
+    `claimRow` — and deleting the entire `agent-claim__marker` span left this
+    file green, because the only assertion near it (`"reasoning"`) matches the
+    fixture's own claim TEXT, `"<script>alert(1)</script> reasoning"`, and not
+    the marker label at all. So it is asserted here through a string that
+    appears in no claim text: `agent.marker.read` is "from the run".
+
+    The disclaimer beside it is the same kind of promise — a stub that argues
+    nothing must SAY it argues nothing, or a reader learns to trust a judgement
+    that was never made — and deleting it was equally invisible.
+    """
+    html = out["withProposal"]
+    assert 'class="agent-claim__marker"' in html
+    assert "from the run" in html, "the marker label is not rendered"
+    assert "Offline suggestion" in html, "the stub's own disclaimer is not rendered"
+    # ...and the marker is on the claim it belongs to, not floating in the card
+    assert "agent-claim--read" in html and "agent-claim--inferred" in html
+
+
 def test_agent_authored_text_is_escaped_not_executed(out):
     assert "<script>" not in out["withProposal"]
     assert "&lt;script&gt;" in out["withProposal"]
