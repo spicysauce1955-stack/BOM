@@ -420,3 +420,35 @@ def test_an_override_may_not_reach_a_post_a_run_already_stands_at(
         [p.model_dump() for p in without.strategy.posts]
     assert [s.model_dump() for s in result.strategy.spans] == \
         [s.model_dump() for s in without.strategy.spans]
+
+
+def test_a_gate_exactly_on_the_permille_boundary_warns(knowledge, catalog):
+    """The slope permille is rounded half-AWAY-from-zero, not by `round()`.
+
+    A 105 mm drop across a 1000 mm opening is 105 permille exactly, and a 52.5
+    case is the one that separates the two rules: `round()` is banker's and
+    returns the EVEN neighbour, so 52.5 became 52 and a gate sitting exactly on
+    the boundary of a 52 permille limit passed the check. That is the wrong
+    direction to round a safety comparison, and it is the same trap
+    `core/units.round_milli_to_mm` was written for.
+
+    Asserted through the reported permille rather than by reaching into the
+    helper: the number in `params` is the number the installer reads.
+    """
+    from fenceai.strategy.generator import _check_gate_slope
+    from fenceai.decisions.graph import GraphBuilder
+    from fenceai.strategy.model import Strategy
+
+    def permille(drop_mm, opening_mm, limit):
+        strategy = Strategy(id="s1")
+        _check_gate_slope(GraphBuilder(), strategy, "g1", drop_mm, opening_mm,
+                          limit, [])
+        return [w.params["slope_permille"] for w in strategy.warnings]
+
+    # 52.5 permille: half-away-from-zero says 53, which is over a limit of 52
+    assert permille(105, 2000, 52) == [53]
+    # 51.5 -> 52 under BOTH rules (banker's rounds to the even 52 here), so this
+    # one is not discriminating and is kept only to pin the reported number
+    assert permille(103, 2000, 51) == [52]
+    # a drop genuinely at the limit still does not warn
+    assert permille(104, 2000, 52) == []

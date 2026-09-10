@@ -135,8 +135,13 @@ def _contradiction_gaps(project: Project) -> list[HandoverGap]:
     """
     out: list[HandoverGap] = []
     if project.stated.no_gates:
+        # BOTH kinds, the same sum `_swing_unstated`'s caller makes below. A
+        # gate authored as a `GateSpan` is not a `PointEvent` and lives on
+        # `topology.gates`, so walking the runs alone reported a job with a gate
+        # standing beside the fence as having none — while the claim said so too.
         gates = sum(1 for r in project.topology.runs
                     for e in r.point_events if e.payload.kind == "gate")
+        gates += len(project.topology.gates)
         if gates:
             out.append(HandoverGap(code="gates_contradicted",
                                    params={"gates": gates}))

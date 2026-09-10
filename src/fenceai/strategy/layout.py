@@ -193,9 +193,18 @@ def admits_widths(
         return False
     if sum(widths) != length_mm:
         return False
-    if max(widths) <= max_span_mm:
-        return True
     milli = max_span_mm * 1000 if max_span_milli is None else max_span_milli
+    # Compared in THOUSANDTHS, not against `max_span_mm`. The rounded millimetre
+    # is the number the rest of the generator is written in, but it is the wrong
+    # side of the limit half the time: 2463.8 mm rounds UP to 2464, and a clause
+    # that admits `max(widths) <= 2464` hands the ceiling bay a free pass before
+    # `earns_remainder_ceiling` can ask whether the layout earned it. Two bays of
+    # 2464 on a 4928 mm segment then build where the sealed schedule forces
+    # three. Where the limit rounds DOWN (1422.4 -> 1422) the two readings agree
+    # for whole-millimetre widths, and where it is whole they are the same
+    # number, so this changes nothing that was previously right.
+    if max(widths) * 1000 <= milli:
+        return True
     return earns_remainder_ceiling(widths, length_mm, milli)
 
 

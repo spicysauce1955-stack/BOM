@@ -317,7 +317,15 @@ def _check_gate_slope(
     """
     if max_slope is None or opening_mm <= 0:
         return
-    slope = round(drop_mm * 1000 / opening_mm)
+    # Integer arithmetic, half-away-from-zero — NOT `round()` on a float.
+    # `core/units.round_milli_to_mm` exists in this repo precisely because
+    # `round()` is banker's and sends 2500 thousandths to 2 rather than 3; a
+    # 105 mm drop across a 2000 mm opening is 52.5 permille and rounded to an
+    # EVEN 52, so a gate exactly on the boundary of a 52 permille limit passed
+    # the check instead of warning. Rounding toward not-warning is the wrong
+    # direction for a safety comparison. Both call sites pass `abs(...)`, so
+    # half-up and half-away-from-zero coincide here.
+    slope = (drop_mm * 2000 + opening_mm) // (2 * opening_mm)
     if slope <= max_slope:
         return
     params = {"element": gate_id, "slope_permille": slope, "max_permille": max_slope}

@@ -13,7 +13,7 @@
 // idempotent PUT via `saveContext`, never `saveTopology`.
 
 import { apiSend } from "./api.js";
-import { emit, on, reloadProject, saveContext, saveTopology, state } from "./state.js";
+import { emit, on, reloadProject, saveContext, saveStated, saveTopology, state } from "./state.js";
 
 on("project-opened", () => resetHistory());
 
@@ -41,6 +41,16 @@ function snapshot() {
     // other, and undoing a house placement must pop the house rather than
     // reach past it into the fence edit underneath.
     context: state.project.context || { landmarks: [] },
+    // "No gates on this job", "nothing was promised" — a claim of ABSENCE, and
+    // a committed user gesture like any other. `road.js` already called
+    // `pushSnapshot("state-fact")` before setting one, and the comment there
+    // said "as undoable as any other job edit" while this function did not
+    // carry the field: the snapshot held no `stated`, `restore` never wrote
+    // one, so Ctrl+Z left the claim standing and popped the drawing edit
+    // underneath it instead — with the redo stack already discarded. That is
+    // the `choices` bug three comments up, reintroduced by the next field to
+    // join the project.
+    stated: state.project.stated || {},
   });
 }
 
@@ -125,6 +135,19 @@ async function syncContext(target) {
   await saveContext();
 }
 
+// `stated` is a plain replace like `context`, and for the same two reasons: its
+// endpoint carries no revision, and re-sending an unchanged claim would fire a
+// needless write on every ordinary fence undo. `saveStated` re-emits
+// `project-loaded`, which is what repaints the road's step badges.
+async function syncStated(target) {
+  const wanted = target || {};
+  const current = state.project.stated || {};
+  if (JSON.stringify(current) === JSON.stringify(wanted)) return;
+  state.project.stated = structuredClone(wanted);
+  await saveStated();
+}
+
+
 // `put_topology` bumps `Project.topology.revision` UNCONDITIONALLY on every
 // call (app.py) — it does not compare content. Restoring an unchanged
 // topology (the case for a context-only, choice-only or override-only undo)
@@ -157,6 +180,7 @@ function restore(snap, dir) {
         await syncOverrides(snap.overrides);
         await syncChoices(snap.choices || []);
         await syncContext(snap.context);
+        await syncStated(snap.stated);
         await syncTopology(snap.topology); // forward revision ONLY when topology itself changed
         emit("topology-changed");
       } catch (err) {

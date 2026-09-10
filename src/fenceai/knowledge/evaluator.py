@@ -209,21 +209,77 @@ def resolve(
                     f"{other.version.ref} tie with disagreeing outputs",
                     constraint_refs=[winner.version.ref, other.version.ref],
                 )
-            hard = (winner.version.effective_authority() <= HARD_AUTHORITY_MAX
-                    and other.version.effective_authority() <= HARD_AUTHORITY_MAX)
-            conflicts.append(
-                Conflict(
-                    param_or_action=key,
-                    contenders=[winner.version.ref, other.version.ref],
-                    message=(
-                        f"'{key}': {winner.version.ref} and {other.version.ref} tie on "
-                        "authority and scope; using the former — review required"
-                    ),
-                    hard=hard,
-                )
-            )
+            conflicts.append(_tie_conflict(key, winner, other))
             other.defeated_by.append(winner.version.ref)
+
+    # -- reconciliation: every edge points at the winner that ACTUALLY won -----
+    #
+    # The fold classified each contender against whoever held the seat when it
+    # was reached, and the seat can change afterwards. `applicable_firings`
+    # pre-sorts by authority, specificity and version, so those three can never
+    # reorder a winner — but `_beats` has a fourth clause the sort key does not
+    # carry (`b.object_id in a.overrides_objects`), and an explicit overrides
+    # link therefore unseats a winner that peers were already measured against.
+    #
+    # An agreement left pointing at a deposed winner is a `corroborated` edge
+    # onto a node stating a number the agreeing row contradicts — the decision
+    # graph asserting a consensus that does not exist (foundation §15) — and the
+    # disagreement it stands in for never becomes a Conflict, so "ties never
+    # resolve silently" quietly stops holding. Re-ask the pairwise question of
+    # the settled winner.
+    #
+    # WHICH rule wins is untouched: this reads `winner` and never assigns it.
+    # Only firings the fold called corroborators can be affected — a `defeated_by`
+    # is a structural loss that a change of seat cannot undo.
+    for f in contenders:
+        if f is winner or not f.corroborated_by:
+            continue
+        if stated is not None and stated(f) == stated(winner):
+            f.corroborated_by = [winner.version.ref]   # re-pointed, still agreement
+            continue
+        f.corroborated_by = []
+        if _beats(winner.version, f.version):
+            f.defeated_by.append(winner.version.ref)
+        else:
+            _raise_if_authored_hard_tie(key, winner, f)
+            conflicts.append(_tie_conflict(key, winner, f))
+            f.defeated_by.append(winner.version.ref)
+
     return Resolution(winner=winner, firings=contenders, conflicts=conflicts)
+
+
+def _tie_conflict(key: str, winner: Firing, other: Firing) -> Conflict:
+    """The review task a surviving tie with disagreeing outputs becomes."""
+    hard = (winner.version.effective_authority() <= HARD_AUTHORITY_MAX
+            and other.version.effective_authority() <= HARD_AUTHORITY_MAX)
+    return Conflict(
+        param_or_action=key,
+        contenders=[winner.version.ref, other.version.ref],
+        message=(
+            f"'{key}': {winner.version.ref} and {other.version.ref} tie on "
+            "authority and scope; using the former — review required"
+        ),
+        hard=hard,
+    )
+
+
+def _raise_if_authored_hard_tie(key: str, winner: Firing, other: Firing) -> None:
+    """A disagreeing tie between two rules WE wrote is a build error.
+
+    Factored out so the reconciliation pass raises on exactly the shape the fold
+    raises on. It has to: whether a given pair is compared during the fold or
+    during reconciliation depends on evaluation order, and an outcome that
+    depends on evaluation order is the fragility this pass exists to remove.
+    """
+    if (winner.version.effective_authority() <= HARD_AUTHORITY_MAX
+            and other.version.effective_authority() <= HARD_AUTHORITY_MAX
+            and winner.version.origin == "authored"
+            and other.version.origin == "authored"):
+        raise GenerationFailure(
+            f"hard knowledge conflict on '{key}': {winner.version.ref} vs "
+            f"{other.version.ref} tie with disagreeing outputs",
+            constraint_refs=[winner.version.ref, other.version.ref],
+        )
 
 
 def _param_statement(f: Firing) -> tuple[int, ...]:
