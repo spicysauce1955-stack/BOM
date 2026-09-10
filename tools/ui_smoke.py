@@ -1861,6 +1861,20 @@ def _smoke_knowledge_panes(c) -> None:
     time.sleep(1.0)
 
 
+def _mm_across(c, mm: int) -> float:
+    """How many viewport pixels `mm` of world is, right now.
+
+    The canvas scales its viewBox to whatever width the column happens to be
+    and the view pans and zooms, so a drag measured in millimetres has to go
+    through the SAME matrix `canvas_px` uses. Asked of the browser as two
+    points that far apart rather than derived from the scale constant, which
+    would be a second copy of `geom.js`'s arithmetic living in the test.
+    """
+    a = c.canvas_px(0, 0)
+    b = c.canvas_px(mm, 0)
+    return b[0] - a[0]
+
+
 def _smoke_sales_step_surfaces(c) -> None:
     """The four steps the user found empty or duplicated, on the road itself.
 
@@ -2056,10 +2070,29 @@ def _smoke_sales_step_surfaces(c) -> None:
     drawn = c.js("""(() => ({
   marks: document.querySelectorAll('#g-gates *').length,
   unstated: document.querySelectorAll('#g-gates .gate-arc').length,
+  handles: document.querySelectorAll('#g-gates .gate-handle').length,
+  body: document.querySelectorAll('#g-gates .gate-body').length,
   panel: document.getElementById('gates-panel').textContent,
 }))()""")
     check("the gate is on the drawing, marked as not yet answered for",
           drawn["marks"] > 0 and drawn["unstated"] >= 1, drawn)
+    check("...with a handle on each end and a body to slide it by",
+          drawn["handles"] == 2 and drawn["body"] >= 1, drawn)
+
+    # --- and the office is TOLD it was never answered -----------------------
+    # A gate is the one element whose placement does not say how to build it.
+    # The drawing marks it and the panel says it; without this the handover
+    # sheet did not, so a job with a gate nobody can hang reached the office
+    # reading complete. The road's gates step is where it is reported, because
+    # that is the screen where one click closes it.
+    gap = c.js("""fetch(`/api/projects/%s/handover`).then(r => r.json())
+  .then(h => (h.gaps || []).map(g => g.code))""" % pid)
+    check("a gate nobody has answered for is a gap on the handover sheet",
+          "gate_swing_unstated" in (gap or []), gap)
+    badge = c.js("""(() => (document.querySelector(
+  '#road [data-step="gates"] .road-state')?.textContent || '').trim())()""")
+    check("...and the step that can close it says so",
+          "1" in (badge or ""), badge)
 
     # answering it: one click on the question mark states a side, and the panel
     # then says which way in words
@@ -2097,6 +2130,10 @@ def _smoke_sales_step_surfaces(c) -> None:
     words = c.js("document.getElementById('gates-panel').textContent")
     check("...and the panel says which way it opens, in words",
           "opens" in (words or "").lower(), (words or "")[:200])
+    gap_after = c.js("""fetch(`/api/projects/%s/handover`).then(r => r.json())
+  .then(h => (h.gaps || []).map(g => g.code))""" % pid)
+    check("answering it closes the gap the office would have seen",
+          "gate_swing_unstated" not in (gap_after or []), gap_after)
     c.shot("58-gate-beside-the-fence.png")
 
     click_el("#g-gates .gate-hinge")
@@ -2107,6 +2144,58 @@ def _smoke_sales_step_surfaces(c) -> None:
     flipped = gate_now()
     check("clicking the swing opens it the other way",
           flipped and flipped["opens_to"] != stated["opens_to"], flipped)
+
+    # --- a placed gate can be moved and resized -----------------------------
+    # It could only be deleted and placed again. A gate is two nodes, so its
+    # ends resize the opening and its body slides the whole thing along —
+    # and because those are NODES, whatever else is attached to one follows,
+    # which is the same thing dragging a run's dot has always done.
+    def nodes_of(gate):
+        return c.js("""fetch(`/api/projects/%s`).then(r => r.json()).then(p => {
+  const n = (id) => p.topology.nodes.find(x => x.id === id);
+  const a = n('%s'), b = n('%s');
+  return {a: [a.x_mm, a.y_mm], b: [b.x_mm, b.y_mm],
+          opening: Math.round(Math.hypot(b.x_mm - a.x_mm, b.y_mm - a.y_mm)),
+          start: '%s', end: '%s'};
+})""" % (pid, gate["start_node_id"], gate["end_node_id"],
+         gate["start_node_id"], gate["end_node_id"]))
+
+    def handle_px(selector):
+        box = c.js("""(() => {
+  const e = document.querySelector('%s');
+  if (!e) return null;
+  const r = e.getBoundingClientRect();
+  return [r.x + r.width / 2, r.y + r.height / 2];
+})()""" % selector)
+        return box
+
+    c.js("document.getElementById('tool-select').click(); 'ok'")
+    time.sleep(0.3)
+    was = nodes_of(flipped)
+    grab = handle_px('#g-gates .gate-handle[data-end="end"]')
+    check("the far end of the gate offers a handle to take hold of",
+          grab is not None, grab)
+    if grab:
+        # 800 mm further along the fence line
+        c.drag(grab[0], grab[1], grab[0] + _mm_across(c, 800), grab[1])
+        time.sleep(1.8)
+    grown = nodes_of(flipped)
+    check("dragging an end changes the opening and leaves the other end put",
+          grown and was and grown["a"] == was["a"]
+          and grown["opening"] > was["opening"] + 300,
+          {"before": was, "after": grown})
+
+    before_move = grown
+    body = handle_px("#g-gates .gate-body")
+    if body:
+        c.drag(body[0], body[1], body[0], body[1] - 60)
+        time.sleep(1.8)
+    moved = nodes_of(flipped)
+    check("dragging the body slides the whole gate, opening unchanged",
+          moved and before_move
+          and moved["a"] != before_move["a"] and moved["b"] != before_move["b"]
+          and abs(moved["opening"] - before_move["opening"]) <= 40,
+          {"before": before_move, "after": moved})
 
     # --- the tool belongs to the step, and never outlives it ---------------
     # Reported: "pressing on objects on 'note step' is placing gates; the click
@@ -2207,8 +2296,19 @@ def _smoke_sales_step_surfaces(c) -> None:
     check("and the drawing shows where it was attached", (marker or 0) > 0, marker)
     c.shot("56-sales-step-surfaces.png")
 
-    # a click on the FENCE is about the fence, not about the house behind it
-    c.click(*c.canvas_px(7500, 0))
+    # a click on the FENCE is about the fence, not about the house behind it.
+    # Aimed at the run's OWN midpoint rather than at a remembered coordinate:
+    # the gate drags above moved a node this run shares, so the fence is no
+    # longer where it was drawn — which is what sharing a node means, and a
+    # check that assumed otherwise would be testing the old drawing.
+    mid = c.js("""fetch(`/api/projects/%s`).then(r => r.json()).then(p => {
+  const run = p.topology.runs.find(r => r.id === 'run1') || p.topology.runs[0];
+  const n = (id) => p.topology.nodes.find(x => x.id === id);
+  const a = n(run.start_node_id), b = n(run.end_node_id);
+  return [Math.round((a.x_mm + b.x_mm) / 2), Math.round((a.y_mm + b.y_mm) / 2)];
+})""" % pid)
+    c.js("window.scrollTo(0, 0); 'ok'")
+    c.click(*c.canvas_px(mid[0], mid[1]))
     time.sleep(0.8)
     on_run = c.js("""(() => {
   const p = document.querySelector('.note-popover');

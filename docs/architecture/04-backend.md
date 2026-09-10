@@ -97,11 +97,35 @@ Three properties hold this together.
   nodes, because it would change that post's sku and therefore the BOM of a fence
   the gate was supposed to leave alone.
 
-Not yet extended to gate spans, and named here rather than left to be
-rediscovered: the `gate_on_slope` check (it resolves `gate_max_slope_permille`
-from a run-scoped context that a standalone gate has none of), and force/suppress
-overrides addressed at a gate-only node post (they are addressed by
-`(run_id, station)`, and such a post is on no run).
+Both gaps this section used to name are now closed, and both by sharing rather
+than by copying.
+
+**`gate_on_slope` reaches a standalone gate.** The limit comes from
+`_resolve_gate_max_slope` and the verdict from `_check_gate_slope` — one
+resolution and one emission, called by both kinds of gate, so the graph cites the
+same winning version and the warning carries the same `code + params` whichever
+way the gate was drawn. Only the MEASUREMENT differs, because only the caller
+knows where its ground is: an in-run gate reads the run's ground profile at the
+opening's two stations, a gate span reads the elevations of its own two nodes.
+The span's context is the run path's minus the `run` facts it genuinely has none
+of — omitted, so a rule conditioned on one is *not applicable* rather than
+false. An unstated elevation is not a slope: `Node.z_mm` defaults to 0 and the
+run path reads that same defaulted field through `ground_samples`, so a gate
+whose nodes were never given a height warns about nothing, exactly like the run
+beside it.
+
+**A force override reaches a gate's own post.** The post `_generate_gate_spans`
+emits at a node no run stands at is bought and drawn, and nothing could address
+it: the pass never consulted overrides, so a forced sku did nothing and was then
+reported back as `orphaned_override`. It now consults `_matched_force_overrides`
+— the run path's own matcher — for the posts it CREATES, and records what it
+honours in the same `applied` set. No new addressing scheme was needed: such a
+post's `run_ref` is `node:<id>` at station 0, which is what the matcher already
+compares. The consultation sits after the *"a run already stands here"*
+`continue`, so an override cannot become a way around the invariance above —
+`tests/strategy/test_gate_span_generation.py` asserts that the same directive
+aimed at a shared node leaves that post byte-identical and is reported orphaned.
+Suppression stays out: a gate with a post on one side only is unbuildable.
 
 ---
 

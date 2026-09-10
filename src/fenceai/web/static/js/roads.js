@@ -44,8 +44,13 @@ export const SALES_ROAD = {
       requires: ["height_assumed", "base_assumed"], wants: [], satisfiedBy: null },
     { key: "model", panel: "canvas",
       requires: ["no_model_chosen"], wants: [], satisfiedBy: null },
+    // `gate_swing_unstated` belongs HERE and not on the review step: it is
+    // answered by one click on the gate's own marker, which is on this step's
+    // screen. A gap reported where it cannot be closed is a gap that gets
+    // carried to the office.
     { key: "gates", panel: "canvas",
-      requires: ["gates_contradicted"], wants: [], satisfiedBy: "no_gates" },
+      requires: ["gates_contradicted", "gate_swing_unstated"],
+      wants: [], satisfiedBy: "no_gates" },
     // The drawing, not the Annotations tab. A promise is made ABOUT something —
     // the house, that stretch, the ground by the gate — and the tab's form asked
     // a salesperson to pick "r2" from a list of run ids. It is attached by

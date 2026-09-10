@@ -271,6 +271,74 @@ def _check_gate_kit_width(
     )
 
 
+def _resolve_gate_max_slope(
+    kb: KnowledgeBase, ctx: dict, sink: ConflictSink
+) -> tuple[int | None, list[str]]:
+    """(max slope permitted across a gate opening, governed refs), or (None, []).
+
+    ONE resolution, two callers, and that is the whole point. An in-run gate asks
+    under its run-scoped context; a gate span lies on no run and asks under the
+    same scope with the `run` facts absent — which is not the same as those facts
+    being false: an omitted dimension makes a rule conditioned on it *not
+    applicable* rather than failing it.
+
+    A second copy of these four lines would be a second place for the two kinds
+    of gate to disagree about one rule, and because this resolution carries the
+    WINNING VERSION'S REF into the decision graph, they would then also disagree
+    about who said so. `(None, [])` means no rule states a limit at all, and the
+    check does not run — silence, not a default.
+    """
+    res = resolve_param(kb, ctx, "gate_max_slope_permille")
+    sink.extend(res.conflicts)
+    if res.winner is None:
+        return None, []
+    value = next(a.value for a in res.winner.actions if a.kind == "set_param")
+    return value, [res.winner.version.ref]
+
+
+def _check_gate_slope(
+    builder: GraphBuilder,
+    strategy: Strategy,
+    gate_id: str,
+    drop_mm: Mm,
+    opening_mm: Mm,
+    max_slope: int | None,
+    refs: list[str],
+) -> None:
+    """The ground across a gate opening must be near level — for both kinds.
+
+    The CALLER measures the drop, because the two kinds of gate measure it in
+    different places and only they know where: an in-run gate reads its run's
+    ground profile at the opening's two stations, a gate span reads the
+    elevations of its own two nodes. What must not differ is everything after
+    that — the permille arithmetic, the threshold, the graph node and the
+    warning's code and params — so it lives here once, exactly as
+    `_check_gate_kit_width` is the one answer to "does the kit fit".
+    """
+    if max_slope is None or opening_mm <= 0:
+        return
+    slope = round(drop_mm * 1000 / opening_mm)
+    if slope <= max_slope:
+        return
+    params = {"element": gate_id, "slope_permille": slope, "max_permille": max_slope}
+    node = builder.add(
+        "conflict", "gate_on_slope", payload=dict(params), governed_by=refs,
+    )
+    strategy.warnings.append(
+        StrategyWarning(
+            code="gate_on_slope", severity="warning",
+            # English fallback only: `warning.gate_on_slope` renders this from
+            # `params` in each locale (CLAUDE.md, the platform half of the split
+            # warning registry). The element id carries the stations an in-run
+            # gate used to name here, so nothing is lost by saying it once.
+            message=f"Gate {gate_id} sits on a {slope / 10:.1f}% slope "
+                    f"(limit {max_slope / 10:.1f}%) — the ground needs leveling "
+                    "for the gate to swing.",
+            element_refs=[gate_id], decision_ref=node.id, params=dict(params),
+        )
+    )
+
+
 def generate(
     topology: Topology,
     knowledge: KnowledgeBase,
@@ -355,7 +423,8 @@ def generate(
     # `_generate_gate_spans`. BEFORE the checks below, so a post this pass adds
     # is length-checked and reported exactly like any other.
     _generate_gate_spans(
-        topology, knowledge, scope, site_facts, sink, catalog, builder, strategy,
+        topology, knowledge, scope, site_facts, sink, catalog, overrides,
+        builder, strategy, applied,
     )
 
     _check_post_lengths(topology, knowledge, scope, site_facts, sink, catalog, builder, strategy)
@@ -1500,8 +1569,10 @@ def _generate_gate_spans(
     site: dict,
     sink: ConflictSink,
     catalog: Catalog,
+    overrides: list[Override],
     builder: GraphBuilder,
     strategy: Strategy,
+    applied: set[str],
 ) -> None:
     """`Topology.gates` -> one `Gate` each, plus a post at any node that has none.
 
@@ -1514,11 +1585,22 @@ def _generate_gate_spans(
     (`tests/strategy/test_gate_span_generation.py` asserts exactly that, by generating the
     same topology twice with and without its gate spans.)
 
-    What this DOES add is its own: the gate element, its kit, and a post at each
-    of its two nodes. A gate span between the ends of two drawn runs already has
-    both — they are the runs' own node posts, and they are left untouched. A gate
-    hanging off one run's end has a node nothing else stands at, and a gate with
-    a post on one side only is unbuildable, so that one is emitted here.
+    What this DOES add is its own: the gate element, its kit, its slope check,
+    and a post at each of its two nodes. A gate span between the ends of two
+    drawn runs already has both — they are the runs' own node posts, and they
+    are left untouched. A gate hanging off one run's end has a node nothing else
+    stands at, and a gate with a post on one side only is unbuildable, so that
+    one is emitted here.
+
+    **The posts this pass CREATES are the only ones it may override.** A forced
+    sku or mounting addressed at a gate-only node post used to reach nothing and
+    was then reported back as `orphaned_override` — a control that silently does
+    nothing and blames the user's drawing for it. It is honoured here, through
+    `_matched_force_overrides`, the same matcher the run path uses. The address
+    needed no invention: such a post's `run_ref` is `node:<id>` at station 0,
+    which is exactly what the matcher compares. Consulting overrides stops at
+    the `continue` above — a post a run already stands at stays as the runs
+    decided it, because an override is not a way around the invariance.
     """
     if not topology.gates:
         return
@@ -1565,6 +1647,24 @@ def _generate_gate_spans(
                 payload={"node_id": node.id, "x_mm": node.x_mm, "y_mm": node.y_mm,
                          "runs": 0},
             )
+            # This post exists nowhere else, so this is the ONLY pass that can
+            # honour a directive aimed at it. `run_ref` (`node:<id>`) and
+            # station 0 are the address it already carries, and the run path's
+            # own matcher takes both as given — no second addressing scheme.
+            forced_sku, forced_mounting, matched = _matched_force_overrides(
+                overrides, run_ref, 0
+            )
+            override_nodes: list[str] = []
+            for ov in matched:
+                # Recorded as applied through the same set the run path uses, so
+                # a directive this pass honours stops being reported orphaned.
+                applied.add(ov.id)
+                override_nodes.append(
+                    builder.add(
+                        "override_applied", ov.directive.kind,
+                        payload={"override_id": ov.id, "node_id": node.id},
+                    ).id
+                )
             post, cap_gap = _make_post(
                 builder, kb, scope, site, sink,
                 post_id=f"post@node:{node.id}", run_ref=run_ref,
@@ -1582,11 +1682,19 @@ def _generate_gate_spans(
                 reinforced=True,
                 reinforcement_refs=reinf_refs,
                 reinforced_sku=reinf_sku,
+                forced_sku=forced_sku, forced_mounting=forced_mounting,
+                override_nodes=override_nodes,
             )
             _cap_unsupplied(strategy, cap_gap, post.id, 0)
             strategy.posts.append(post)
 
     # -- then the gates themselves --------------------------------------------
+    # The slope limit, resolved ONCE for this pass and by the same function the
+    # run path uses. The context is the run path's minus its `run` facts, which
+    # a gate standing beside the runs genuinely does not have.
+    max_gate_slope, gate_slope_refs = _resolve_gate_max_slope(
+        kb, {"scope": bind_scope(scope), "site": site}, sink
+    )
     for gate in gates:
         opening = openings[gate.id]
         gate_ref = f"gate@{gate.id}"
@@ -1605,6 +1713,21 @@ def _generate_gate_spans(
         )
         strategy.gates.append(element)
         _check_gate_kit_width(builder, strategy, catalog, element.id, kit, opening)
+        # The drop across the opening is between the gate's own two NODES: it
+        # lies on no run, so there is no ground profile to sample and the node
+        # elevations are the only ones it has.
+        #
+        # An UNSTATED elevation is not a slope. `Node.z_mm` is not optional —
+        # it defaults to 0 — and the run path reads that same defaulted field
+        # through `ground_samples`, where it anchors the ends of a run whose
+        # ground nobody described: unstated means FLAT there, not unknown. Two
+        # unstated nodes are therefore a drop of 0 and warn about nothing,
+        # which is the run path's own silence; `or 0` keeps that the answer if
+        # the field ever becomes nullable, rather than crashing on a subtraction.
+        z_start = topology.node(gate.start_node_id).z_mm or 0
+        z_end = topology.node(gate.end_node_id).z_mm or 0
+        _check_gate_slope(builder, strategy, element.id, abs(z_end - z_start),
+                          opening, max_gate_slope, gate_slope_refs)
         placed = builder.add(
             "structural", "place_gate",
             payload={"gate_id": gate.id, "start_node_id": gate.start_node_id,
@@ -2472,11 +2595,9 @@ def _generate_run(
     sink.extend(height_res.conflicts)
     max_height = (next(a.value for a in height_res.winner.actions if a.kind == "set_param")
                   if height_res.winner else None)
-    gate_slope_res = resolve_param(kb, ctx, "gate_max_slope_permille")
-    sink.extend(gate_slope_res.conflicts)
-    max_gate_slope = (
-        next(a.value for a in gate_slope_res.winner.actions if a.kind == "set_param")
-        if gate_slope_res.winner else None)
+    # Shared with the standalone gate pass (`_generate_gate_spans`) — one rule,
+    # one resolution, one governing ref in the graph.
+    max_gate_slope, gate_slope_refs = _resolve_gate_max_slope(kb, ctx, sink)
     fixed: set[Mm] = {0, length} | set(corners) | set(transitions) | set(pinned_stations)
     fixed |= gate_edges | step_stations
     # BOTH ends of a locked bay are structural boundaries, for the plainest
@@ -2615,28 +2736,14 @@ def _generate_run(
         # setting-out sheet then hands "opening 600 · GATE-KIT-1000" to a crew.
         opening = min(openings[ev_id], ge - gs)
         _check_gate_kit_width(builder, strategy, catalog, gate.id, kit, opening)
-        if max_gate_slope is not None and ge > gs:
-            drop = abs(ground_z(topo, run, ge) - ground_z(topo, run, gs))
-            gate_slope = round(drop * 1000 / (ge - gs))
-            if gate_slope > max_gate_slope:
-                g_node = builder.add(
-                    "conflict", "gate_on_slope",
-                    payload={"element": f"gate@{run.id}:{gs}-{ge}",
-                             "slope_permille": gate_slope, "max_permille": max_gate_slope},
-                    governed_by=[gate_slope_res.winner.version.ref],
-                )
-                strategy.warnings.append(
-                    StrategyWarning(
-                        code="gate_on_slope", severity="warning",
-                        message=f"Gate opening at {gs}-{ge} sits on a "
-                                f"{gate_slope / 10:.1f}% slope — the ground needs "
-                                "leveling for the gate to swing.",
-                        element_refs=[f"gate@{run.id}:{gs}-{ge}"], decision_ref=g_node.id,
-                        params={"element": f"gate@{run.id}:{gs}-{ge}",
-                                "slope_permille": gate_slope,
-                                "max_permille": max_gate_slope},
-                    )
-                )
+        # The drop across the opening, read from the run's own ground profile —
+        # the measurement only this caller can make. Everything after it is
+        # `_check_gate_slope`, which the standalone gate calls too.
+        _check_gate_slope(
+            builder, strategy, gate.id,
+            abs(ground_z(topo, run, ge) - ground_z(topo, run, gs)), ge - gs,
+            max_gate_slope, gate_slope_refs,
+        )
         placed = builder.add(
             "structural", "place_gate",
             payload={"start_mm": gs, "end_mm": ge},

@@ -23,7 +23,16 @@ from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import fulfill
 from fenceai.fulfillment.supply import resolve_supply
 from fenceai.strategy.generator import generate
-from fenceai.topology.model import GateSpan, Node, Run, Topology
+from fenceai.strategy.overrides import ForceMounting, ForcePostSku, Override
+from fenceai.topology.model import (
+    GatePayload,
+    GateSpan,
+    Node,
+    PointEvent,
+    Run,
+    Topology,
+)
+from fenceai.topology.station import make_anchor
 
 GATE_ID = "g1"
 GATE_ELEMENT = "gate@g1"
@@ -245,3 +254,169 @@ def test_generation_is_deterministic_whatever_order_the_gates_arrive_in(
     a, b = generate(forward, knowledge, catalog), generate(reversed_, knowledge, catalog)
     assert a.strategy.model_dump() == b.strategy.model_dump()
     assert a.graph.model_dump() == b.graph.model_dump()
+
+
+# --- the ground under the gate ----------------------------------------------
+#
+# `gate_on_slope` was checked for an in-run gate and skipped for a standalone
+# one — so the gate MOST likely to be on falling ground, the one bridging two
+# stretches at different levels, was the one nothing warned about. Both kinds
+# now ask `_resolve_gate_max_slope` for the limit and `_check_gate_slope` for
+# the verdict; only the measurement differs, because only the caller knows
+# where its ground is (a run's profile at two stations, or a span's two nodes).
+
+def _hanging_gate_at(z_far_mm: int | None, z_near_mm: int | None = None) -> Topology:
+    """`o-----o [gate]` with elevations SAID out loud (or, for None, not said)."""
+    topo = _one_run_and_a_gate()
+    if z_near_mm is not None:
+        topo.node("n1").z_mm = z_near_mm
+        topo.node("n2").z_mm = z_near_mm
+    if z_far_mm is not None:
+        topo.node("n3").z_mm = z_far_mm
+    return topo
+
+
+def _slope_warning(result):
+    return next((w for w in result.strategy.warnings if w.code == "gate_on_slope"), None)
+
+
+def test_a_gate_span_between_two_levels_is_flagged(knowledge, catalog):
+    """A 1000 mm opening with a 100 mm drop is 100‰ — twice K-GATE-SLOPE's 50‰."""
+    result = generate(_hanging_gate_at(100), knowledge, catalog)
+    warning = _slope_warning(result)
+    assert warning is not None, "the gate bridging two levels is the whole point"
+    assert warning.severity == "warning"
+    assert warning.params == {
+        "element": GATE_ELEMENT, "slope_permille": 100, "max_permille": 50,
+    }, "the same params shape an in-run gate files, naming the gate as gate@<id>"
+    assert warning.element_refs == [GATE_ELEMENT]
+    # ...and the graph says WHICH version of WHICH rule decided the limit, which
+    # is what sharing the resolution with the run path buys.
+    node = result.graph.node(warning.decision_ref)
+    assert node.action == "gate_on_slope"
+    refs = {e.knowledge_ref for e in result.graph.in_edges(node.id)
+            if e.type == "governed_by"}
+    assert "K-GATE-SLOPE@v1" in refs
+
+
+def test_a_gate_span_on_level_ground_is_not_flagged(knowledge, catalog):
+    """Level ground SAID out loud — a site sitting 1500 mm up is not a slope."""
+    result = generate(_hanging_gate_at(1500, 1500), knowledge, catalog)
+    assert _slope_warning(result) is None
+
+
+def test_a_gate_span_whose_nodes_state_no_elevation_is_not_flagged(
+        knowledge, catalog):
+    """An UNSTATED elevation is not a slope.
+
+    `Node.z_mm` defaults to 0 and the run path reads the very same defaulted
+    field through `ground_samples`, where it anchors the ends of a run whose
+    ground nobody described. Unstated means LEVEL there, so it means level here:
+    a gate whose nodes were never given a height warns about nothing, exactly as
+    the run beside it does.
+    """
+    topo = _hanging_gate_at(None)
+    assert topo.node("n2").z_mm == 0 and topo.node("n3").z_mm == 0, \
+        "nobody stated an elevation; the default is what the run path reads too"
+    assert _slope_warning(generate(topo, knowledge, catalog)) is None
+
+
+def test_the_slope_of_an_in_run_gate_is_unchanged_by_the_sharing(
+        knowledge, catalog):
+    """The in-run check now runs through the same two helpers, and says the same
+    thing it said before (`tests/scenarios/test_vertical_ground.py` is the gate
+    on this; this is the half that lives beside the code it shares)."""
+    topo = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0, z_mm=0),
+               Node(id="n2", x_mm=6000, y_mm=0, z_mm=600)],
+        runs=[Run(id="rA", start_node_id="n1", end_node_id="n2")],
+    )
+    run = topo.run("rA")
+    run.point_events.append(PointEvent(
+        id="g", anchor=make_anchor(topo, run, 2000),
+        payload=GatePayload(width_mm=1000, kit_sku="GATE-KIT-1000")))
+    warning = _slope_warning(generate(topo, knowledge, catalog))
+    assert warning.params == {
+        "element": "gate@rA:2000-3000", "slope_permille": 100, "max_permille": 50,
+    }
+
+
+# --- overrides on a post only this pass creates -------------------------------
+#
+# A gate-only node post is real, it is bought and it is on the setting-out
+# sheet, and until now no override could reach it: this pass never consulted
+# them, so a forced sku did nothing and was then reported back as
+# `orphaned_override`. The address needed no invention — `node:<id>` at station
+# 0 is what the post already carries and what `_matched_force_overrides`
+# already compares.
+
+def _force_sku(run_id: str, sku: str) -> Override:
+    return Override(id="ov1", run_id=run_id,
+                    directive=ForcePostSku(station_mm=0, sku=sku))
+
+
+def _orphaned(result) -> list[str]:
+    return [w.params["override_id"] for w in result.strategy.warnings
+            if w.code == "orphaned_override"]
+
+
+def test_a_forced_sku_reaches_a_gate_only_post(knowledge, catalog):
+    topo = _one_run_and_a_gate()
+    plain = generate(topo, knowledge, catalog)
+    far_before = next(p for p in plain.strategy.posts if p.run_ref == "node:n3")
+    assert far_before.sku == "POST-S-HD", \
+        "left alone it is the gate-reinforced post, which is what the force must beat"
+
+    result = generate(topo, knowledge, catalog,
+                      overrides=[_force_sku("node:n3", "POST-S")])
+    far = next(p for p in result.strategy.posts if p.run_ref == "node:n3")
+    assert far.sku == "POST-S", "a forced sku outranks the gate reinforcement"
+    assert far.reinforced, "it is still the gate's post; only its product was chosen"
+    assert "ov1" not in _orphaned(result), \
+        "a directive that was honoured must not then blame the user's drawing"
+    assert "ov1" in result.run.overrides_applied
+    # the graph records WHY this post is this product
+    assert any(n.action == "force_post_sku" and n.payload["override_id"] == "ov1"
+               for n in result.graph.nodes)
+
+
+def test_a_forced_mounting_reaches_a_gate_only_post(knowledge, catalog):
+    result = generate(
+        _one_run_and_a_gate(), knowledge, catalog,
+        overrides=[Override(id="ov1", run_id="node:n3",
+                            directive=ForceMounting(station_mm=0, mounting="masonry"))])
+    far = next(p for p in result.strategy.posts if p.run_ref == "node:n3")
+    assert far.mounting == "masonry"
+    assert "ov1" not in _orphaned(result)
+
+
+def test_an_override_may_not_reach_a_post_a_run_already_stands_at(
+        knowledge, catalog):
+    """The invariance, as an assertion about the one door that could have got
+    around it: consulting overrides for the posts this pass CREATES must not
+    become a way to re-specify a post the runs decided.
+
+    n2 is the shared node — run rA ends there and the gate hangs off it — and
+    the override is addressed at `node:n2`, exactly as the honoured one above is
+    addressed at `node:n3`. It changes nothing, and it says so: the post is
+    byte-identical to the one the same fence generates with no override at all,
+    and the directive is reported orphaned rather than silently swallowed.
+    """
+    topo = _one_run_and_a_gate()
+    without = generate(topo, knowledge, catalog)
+    assert next(p for p in without.strategy.posts
+                if p.run_ref == "node:n2").sku == "POST-S", \
+        "the run decided POST-S here; the override below asks for something else"
+    result = generate(topo, knowledge, catalog,
+                      overrides=[_force_sku("node:n2", "POST-S-HD")])
+
+    shared = next(p for p in result.strategy.posts if p.run_ref == "node:n2")
+    assert shared.model_dump() == \
+        next(p for p in without.strategy.posts if p.run_ref == "node:n2").model_dump()
+    assert _orphaned(result) == ["ov1"], \
+        "unreachable is reported, not silently applied somewhere else"
+    # and the run beside it is untouched in every other respect too
+    assert [p.model_dump() for p in result.strategy.posts] == \
+        [p.model_dump() for p in without.strategy.posts]
+    assert [s.model_dump() for s in result.strategy.spans] == \
+        [s.model_dump() for s in without.strategy.spans]

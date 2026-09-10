@@ -218,9 +218,28 @@ Both carry `leaf` (single | double | sliding), `opens_to`, `hinge` and
 `slides_to`, validated by one shared `check_swing_coherence`, and `js/gates.js`
 draws both from the **topology** rather than from a generated strategy: the
 opening at its true width, the leaf where it stands open, the quarter arc
-showing it get there, and a dot on the post it hangs from. Placing one is a
-drag out from the post it hangs from; the two marks on the drawing are its
-controls.
+showing it get there, and a dot on the post it hangs from. A swing nobody has
+stated is a question mark, never a default — and it is a gap on the handover
+sheet (`gate_swing_unstated`), reported on the road's gates step because that
+is the screen where one click closes it.
+
+A placed span is **grabbable**: two endpoint grips resize the opening, a
+transparent body stroke slides the whole gate, and an end released near another
+node re-points at it — which is how a gate joins a stretch drawn after it.
+Three details there are load-bearing and each was a bug avoided:
+
+* the body handle is painted UNDER the gate's marks, because a 1000 mm gate is
+  about 45 px wide and a handle on top would swallow the two clicks the gate
+  exists to answer;
+* the grips step 12 px off the line, because on the post is where the hinge dot
+  already is (the same offset, for the same reason, that keeps a ghost off a
+  generated post);
+* the grips work with **any** tool armed, so a person does not have to know
+  which tool "owns" a gate they can see.
+
+Moving an end moves a NODE, so anything else attached to it follows — a gate
+hung on a stretch's end node drags that end with it. That is what sharing a
+node means, and it is the same thing dragging a run's dot has always done.
 
 Three properties hold this together and each is load-bearing:
 

@@ -451,11 +451,30 @@ export function sideOptions(runId, stationMm, widthMm, leaf) {
 const GATE_COLOR = "#0891b2";
 const LABEL_OFFSET_PX = 14;
 
-/** Every gate on the plan: the opening at its true width, and the way it opens. */
+/** Every gate on the plan: the opening at its true width, and the way it opens.
+ *
+ *  THREE passes over the same list, and the order is the answer to "which mark
+ *  gets the pointer where two of them overlap" — a 1000 mm gate is 45 px wide
+ *  on this canvas, so its controls DO overlap and the priority has to be
+ *  chosen rather than fallen into:
+ *
+ *    1. the body handle, UNDER everything. It lies along the whole opening, and
+ *       above the marks it would swallow the two clicks a gate exists to
+ *       answer: the `?` that states which way it opens, and the arc that turns
+ *       that round. Moving a gate is the rarer gesture and it has the whole
+ *       opening to be grabbed by; those two have one small mark each.
+ *    2. the gate itself, unchanged.
+ *    3. the endpoint grips, ON TOP. They step aside from the post rather than
+ *       sitting on it (see `drawGateEndHandles`), so the hinge dot keeps its
+ *       own click even though these are painted after it.
+ */
 export function renderGates() {
   const g = clearGroup("g-gates");
   if (!g) return;
-  for (const gate of placedGates(state.project)) drawGate(g, gate);
+  const gates = placedGates(state.project);
+  for (const gate of gates) drawGateBodyHandle(g, gate);
+  for (const gate of gates) drawGate(g, gate);
+  for (const gate of gates) drawGateEndHandles(g, gate);
 }
 
 function drawGate(g, gate) {
@@ -548,10 +567,15 @@ function drawSlide(g, points, gate, midPx, data) {
   hitPath(g, `M${from[0]} ${from[1]} L${to[0]} ${to[1]}`, t("gate.flip"), data);
 }
 
-/** The invisible wide stroke that actually receives the click. */
-function hitPath(g, d, title, data) {
+/** The invisible wide stroke that actually receives the click.
+ *
+ *  `opts` lets the handles below borrow it rather than growing a second
+ *  transparent-hit-stroke of their own: one place decides how wide a mark on
+ *  this drawing has to be before a person can hit it. */
+function hitPath(g, d, title, data, opts = {}) {
   const node = el("path", { d, fill: "none", stroke: "transparent",
-    "stroke-width": 14, class: "gate-arc", cursor: "pointer", ...data }, g);
+    "stroke-width": opts.width ?? HIT_STROKE_PX, class: opts.class ?? "gate-arc",
+    cursor: opts.cursor ?? "pointer", ...data }, g);
   node.append(titleEl(title));
   return node;
 }
@@ -573,6 +597,147 @@ function titleEl(text) {
   return node;
 }
 
+// ---------- the handles: move a placed gate, or change its opening -----------
+//
+// Until these existed a placed gate could be deleted and placed again, and that
+// was the whole of "move it 200 mm along the fence".
+//
+// The DRAG lives in `editor.js`, with every other pointer gesture on this
+// canvas: one 4 px threshold, one snapshot per gesture, one pointer capture. A
+// second gesture machine here would be a second set of those rules, free to
+// disagree with the first. What lives HERE is the marks — `#g-gates` is this
+// module's subtree — and the one writer of a gate's node positions below.
+//
+// ONLY A SPAN GETS HANDLES. An in-run gate (`kind === "event"`) is an opening
+// punched INTO a run: its place is an anchor on that run's polyline and its two
+// edges are stations along it, not nodes of its own. There is no pair of nodes
+// for either gesture to move, and "drag the gate" would mean editing the run —
+// which is what the run's own dots on `#g-handles` already are. So it gets
+// nothing here, rather than a handle that quietly rewrites somebody's fence.
+
+const HIT_STROKE_PX = 14;    // how wide a transparent target has to be to be hit
+const GRIP_PX = 11;          // the endpoint grip, square like a run's own vertex
+const GRIP_OFFSET_PX = 12;   // ...and how far it steps aside from the post
+
+/** Where a span gate's two ends are ON SCREEN, or null when there is nothing to
+ *  hang a handle on.
+ *
+ *  Guarded exactly like `drawGate`, and through the same `openingEdges`, so a
+ *  gate that draws no marks grows no controls either — a handle floating where
+ *  no gate is drawn would be a grab target for something invisible. */
+function spanEndsPx(gate) {
+  if (gate.kind !== "span") return null;
+  const points = lineOf(gate);
+  if (!points || !Number.isFinite(gate.width_mm) || gate.width_mm <= 0) return null;
+  const edges = openingEdges(points, gate.station_mm, gate.width_mm);
+  if (!edges) return null;
+  return { a: toPx(edges.a), b: toPx(edges.b) };
+}
+
+/** The whole opening as one grab target: press anywhere along it and the gate
+ *  moves, both posts together. */
+function drawGateBodyHandle(g, gate) {
+  const ends = spanEndsPx(gate);
+  if (!ends) return;
+  hitPath(g, `M${ends.a[0]} ${ends.a[1]} L${ends.b[0]} ${ends.b[1]}`,
+          t("gate.move"), { "data-gate": gate.id },
+          { class: "gate-body", cursor: "move" });
+}
+
+/** One grip per post: drag it and that end of the opening moves.
+ *
+ *  It STEPS ASIDE — a square, 12 px off the line, perpendicular — rather than
+ *  sitting on the post itself, and that is the whole design of it. On the post
+ *  is where the HINGE DOT already is (r 5, its own control, `drawLeaf`), and a
+ *  grip drawn last on the same pixel would swallow the click that moves the
+ *  hinge to the other post. `renderHandles` in `editor.js` solved the identical
+ *  collision the identical way — "12 px clears r 6 + r 5 with room, and
+ *  perpendicular works on a run of any direction" — and stepping aside also
+ *  keeps the grips clear of the `?` at the middle of the opening at every
+ *  opening width, which an inset along the line would not.
+ *
+ *  Square, because a square is already this app's mark for "drag this vertex"
+ *  (`.handle` on a run), and the round dot beside it means the hinge. */
+function drawGateEndHandles(g, gate) {
+  const ends = spanEndsPx(gate);
+  if (!ends) return;
+  const [ax, ay] = ends.a, [bx, by] = ends.b;
+  const len = Math.hypot(bx - ax, by - ay) || 1;
+  // the same normal the width label is offset along, and the opposite way, so
+  // the grips and the figure never sit on each other
+  const nx = (by - ay) / len, ny = -(bx - ax) / len;
+  for (const [end, p] of [["start", ends.a], ["end", ends.b]])
+    el("rect", { x: p[0] + nx * GRIP_OFFSET_PX - GRIP_PX / 2,
+      y: p[1] + ny * GRIP_OFFSET_PX - GRIP_PX / 2,
+      width: GRIP_PX, height: GRIP_PX, rx: 2, fill: "#fff",
+      stroke: GATE_COLOR, "stroke-width": 2,
+      // `style.css` names the cursor too (`#g-gates .gate-handle`) and a
+      // stylesheet rule beats a presentation attribute — they say the same
+      // thing on purpose, so the mark still reads as grabbable if this file is
+      // ever rendered without that sheet.
+      class: "gate-handle", cursor: "grab",
+      "data-gate": gate.id, "data-end": end }, g)
+      .append(titleEl(t("gate.resize")));
+}
+
+/** The gate record a handle names, or null. Spans only — a handle is only ever
+ *  drawn on one — so `editor.js` resolves a `data-gate` without having to know
+ *  which of the two kinds of gate it is holding. */
+export function gateSpanById(gateId) {
+  return (state.project?.topology?.gates || []).find((g) => g.id === gateId) || null;
+}
+
+/** THE writer of a gate's node positions. `moves` names the ENDS —
+ *  `{ start?: [x_mm, y_mm], end?: [x_mm, y_mm] }` — never node ids: which node
+ *  an end hangs on is the gate's own fact and `repointGateEnd` can change it
+ *  mid-gesture, so a caller that resolved the ids once would go on writing to
+ *  the node it started from.
+ *
+ *  Integer mm at the boundary (ADR-0002). Writes NOTHING and answers false when
+ *  the gate or one of its nodes went away under the gesture (an undo mid-drag),
+ *  so a half-moved gate is not a state this can reach.
+ *
+ *  Moving a node moves everything hanging on it, which is the point: a gate end
+ *  that shares its post with a stretch of fence takes that stretch's end with
+ *  it, exactly as dragging the run's own dot always has. */
+export function moveGateNodes(gateId, moves) {
+  const gate = gateSpanById(gateId);
+  if (!gate) return false;
+  const idOf = { start: gate.start_node_id, end: gate.end_node_id };
+  const writes = [];
+  for (const end of ["start", "end"]) {
+    const xy = moves?.[end];
+    if (!xy) continue;
+    const node = nodeById(idOf[end]);
+    if (!node) return false;
+    writes.push([node, xy]);
+  }
+  for (const [node, [x, y]] of writes) {
+    node.x_mm = Math.round(x);
+    node.y_mm = Math.round(y);
+  }
+  return true;
+}
+
+/** Hang one end of a gate on an EXISTING node.
+ *
+ *  This is how a gate joins a stretch that was drawn after it — the same
+ *  "sharing their end nodes" that placement does, which is what makes two
+ *  separately drawn stretches one fence with a gate between them.
+ *
+ *  Refuses to point both ends at one node: the opening IS the distance between
+ *  them, so a gate from a node to itself has no opening at all and `Topology`'s
+ *  own validator answers 422 (`gate <id> starts and ends at the same node`). */
+export function repointGateEnd(gateId, end, nodeId) {
+  const gate = gateSpanById(gateId);
+  if (!gate || !nodeId) return false;
+  const key = end === "end" ? "end_node_id" : "start_node_id";
+  const other = end === "end" ? gate.start_node_id : gate.end_node_id;
+  if (nodeId === other || gate[key] === nodeId || !nodeById(nodeId)) return false;
+  gate[key] = nodeId;
+  return true;
+}
+
 /** State a side, or turn it round. A click, not a drag: the answer is one of
  *  two and a 90 degree drag to choose between them is a gesture that can miss.
  *  From "not said" the first click STATES a side rather than cycling back
@@ -585,7 +750,7 @@ function titleEl(text) {
  *  one hinge swap rather than two of each. */
 function gateRecord(kind, gateId, runId) {
   const topo = state.project?.topology;
-  if (kind === "span") return (topo?.gates || []).find((g) => g.id === gateId) || null;
+  if (kind === "span") return gateSpanById(gateId);
   const run = (topo?.runs || []).find((r) => r.id === runId);
   const ev = (run?.point_events || []).find((e) => e.id === gateId);
   return ev && ev.payload.kind === "gate" ? ev.payload : null;

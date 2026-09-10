@@ -154,12 +154,24 @@ function anchorOf(post) {
   const runs = (state.project?.topology.runs || [])
     .filter((r) => r.start_node_id === nodeId || r.end_node_id === nodeId)
     .sort((a, b) => (a.id < b.id ? -1 : 1));
-  if (!runs.length) return null;
-  const run = runs[0];
-  return {
-    runId: run.id,
-    station: run.start_node_id === nodeId ? 0 : runLength(run),
-  };
+  if (runs.length) {
+    const run = runs[0];
+    return {
+      runId: run.id,
+      station: run.start_node_id === nodeId ? 0 : runLength(run),
+    };
+  }
+  // No run touches it — which is a real post and not a broken one: a GATE that
+  // hangs off the end of a single stretch stands on a node of its own, and the
+  // generator emits a post there because a gate with a post on one side only is
+  // unbuildable. Such a post is addressed by its OWN `node:<id>` at station 0,
+  // which is exactly the string `_matched_force_overrides` compares against —
+  // so the directive the generator already honours can finally be written.
+  //
+  // Returning null here was the whole of the half-finished control: the engine
+  // applied a forced sku on a gate post and the panel said "this post is on no
+  // run", so nobody could author one.
+  return { runId: post.run_ref, station: 0 };
 }
 
 /** The bay this post's `force_vertical` control governs: the one that STARTS
@@ -205,7 +217,12 @@ function suppressRefusal(post, anchor) {
   // kind first: it is the post's own answer, and it is the one a reader
   // recognises ("this is a corner") rather than a fact about the data model
   if (post.kind !== "line")
-    return { key: "inspect.post_suppress_only_line", params: { kind: post.kind } };
+    // `enumWord`, never the raw enum: this sentence reads "this is a {kind}
+    // post", and the raw value made it "this is a end post" in English and left
+    // an English word inside a Hebrew sentence. The lexicon is already there and
+    // every other control on this panel goes through it.
+    return { key: "inspect.post_suppress_only_line",
+             params: { kind: enumWord(post.kind) } };
   if (post.pinned) return { key: "inspect.post_suppress_pinned", params: {} };
   if (!anchor || post.run_ref.startsWith("node:"))
     return { key: "inspect.post_suppress_node", params: {} };

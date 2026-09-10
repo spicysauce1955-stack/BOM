@@ -104,6 +104,25 @@ def _job_gaps(project: Project) -> list[HandoverGap]:
     return out
 
 
+def _swing_unstated(gate) -> bool:
+    """Has nobody said which way this gate opens?
+
+    Takes either kind — a `GatePayload` punched into a run or a `GateSpan`
+    standing beside one — because they are the same four facts about the same
+    physical object, and a sheet that reported only the first kind would go
+    quiet the day a salesperson drew the gate the other way.
+
+    Which field carries the answer depends on the leaf, and that is the whole
+    subtlety: a sliding gate is judged on `slides_to`, and `opens_to` on one is
+    not merely absent but REFUSED (`check_swing_coherence`) — so an
+    `opens_to is None` test would report every sliding gate in the country as
+    unstated while it retracts toward a stated edge.
+    """
+    if gate.leaf == "sliding":
+        return gate.slides_to is None
+    return gate.opens_to is None
+
+
 def _contradiction_gaps(project: Project) -> list[HandoverGap]:
     """A stated absence the drawing disagrees with.
 
@@ -157,6 +176,28 @@ def handover_gaps(project: Project) -> list[HandoverGap]:
         # plane has to ask which side faces the road.
         out.append(HandoverGap(code="no_property_context"))
 
+    # Ahead of the two silent defaults below, and for the reason that separates
+    # it from them: a gate is the one element on a fence whose placement does
+    # not tell you how to build it. A height nobody stated is built at 1800 and
+    # a base nobody stated stands on soil — wrong perhaps, buildable certainly.
+    # A swing nobody stated has no default at all, deliberately, because a leaf
+    # hung on the wrong side is a gate that opens into the driveway.
+    #
+    # NOT blocking. `blocking` withholds the ESTIMATE, and it is right to do
+    # that for `no_fence_drawn` and `no_model_chosen` because a price for a
+    # fence nobody has drawn or chosen a model for is a number with nothing
+    # behind it. This one is the opposite case: the fence is priceable and the
+    # gate kit is chosen — what is missing is an instruction to the installer,
+    # and withholding the salesperson's price over it would punish the wrong
+    # person for the wrong thing.
+    unstated_swings = sum(
+        1 for r in topo.runs for e in r.point_events
+        if e.payload.kind == "gate" and _swing_unstated(e.payload)
+    ) + sum(1 for g in topo.gates if _swing_unstated(g))
+    if unstated_swings:
+        out.append(HandoverGap(code="gate_swing_unstated",
+                               params={"gates": unstated_swings}))
+
     bare_height = {r.id: _uncovered_mm(topo, r, "height_intent") for r in topo.runs}
     if any(bare_height.values()):
         # The number is in the params because "no height" and "assumed 1800" are
@@ -204,6 +245,7 @@ HANDOVER_CODES = [
     "sold_by_missing",
     "sold_on_missing",
     "no_property_context",
+    "gate_swing_unstated",
     "height_assumed",
     "base_assumed",
     "gates_contradicted",

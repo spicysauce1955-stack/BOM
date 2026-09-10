@@ -5192,3 +5192,57 @@ presses on a gate's own controls, so they worked on every step except the one
 that shows them.
 
 2875 pytest · 299 golden scenarios · 421 browser checks · contract hashes verify.
+
+---
+
+## The four open ends, closed (2026-09-10) — COMPLETE
+
+**A placed gate can be moved and resized.** It could only be deleted and placed
+again. A span gets two endpoint grips and a body stroke; an end released near
+another node re-points at it, which is how a gate joins a stretch drawn after
+it. `moveGateNodes` is the ONE writer of a gate's node positions, and it names
+the ENDS rather than node ids so a re-point mid-gesture cannot leave a caller
+writing to the node it started from. Three placement details each avoid a bug:
+the body handle sits UNDER the gate's marks (a 1000 mm gate is 45 px wide, and a
+handle on top would swallow the clicks that state the swing), the grips step
+12 px off the line (on the post is where the hinge dot is), and both work with
+any tool armed.
+
+**A gate nobody has answered for is a gap on the handover sheet.**
+`gate_swing_unstated`, counted over both kinds and judged per leaf — a sliding
+gate on `slides_to`, since the validator REFUSES `opens_to` on one, so the naive
+check would have reported every slider. Non-blocking: the fence is priceable and
+the kit is chosen; what is missing is an instruction to the installer, and
+withholding the salesperson's price over it punishes the wrong person. It sits
+above `height_assumed`/`base_assumed` because those are silent DEFAULTS — wrong
+perhaps, buildable certainly — and a swing has no default at all, deliberately.
+The road's gates step claims it, because that is the screen where one click
+closes it.
+
+**The two named engine gaps.** `gate_on_slope` now fires for a gate span, from a
+shared `_resolve_gate_max_slope` + `_check_gate_slope` that both kinds call — the
+context minus the run facts, so a rule conditioned on a run is *not applicable*
+to a standalone gate rather than failing against it. Unstated ground is flat and
+not unknown, which is the answer the run beside it already gives. And a force
+override now reaches a gate's own post: `node:<id>` at station 0 needed no new
+addressing, it is marked applied so it stops reporting itself orphaned, and a
+post a RUN already stands at is still untouched — asserted with a directive whose
+sku genuinely differs, so the equality is discriminating.
+
+That last one was half-finished on arrival: `inspector.js: anchorOf` returned
+null for a post no run touches, so the panel said "this post is on no run" while
+the generator honoured the directive. A control that exists only in the engine is
+not a control. It addresses such a post by its own `node:<id>` now; suppression
+stays refused, because a gate with a post on one side only is unbuildable.
+
+**Old data discarded**, on the user's word that nothing in it was worth keeping:
+148 MB, 6 407 projects and 6 563 generation runs of exploration debris. The app
+reseeds a fresh database on first boot, so the run-id digest change that came
+with `Topology.gates` has nothing left to be stale against.
+
+Two smaller things found on the way: the handover sentence carried a gate count
+that neither locale used, and `inspect.post_suppress_only_line` interpolated a
+raw enum — "this is a end post" in English, and an English word inside a Hebrew
+sentence.
+
+2889 pytest · 299 golden scenarios · 428 browser checks · contract hashes verify.

@@ -1047,6 +1047,15 @@ html[data-step="review"] #notes-panel { display: none; }
   font-size: 11px; color: #64748b; }
 .context-metrics input { inline-size: 62px; }
 
+/* --- a placed gate is grabbable (js/gates.js) --- */
+/* The marks are drawn in `#g-gates`; the cursor is what says they can be
+   taken hold of. `grab` on an end (it resizes the opening), `move` on the body
+   (it slides the whole gate along). */
+#g-gates .gate-handle { cursor: grab; }
+#g-gates .gate-body { cursor: move; }
+#canvas.panning #g-gates .gate-handle,
+#canvas.panning #g-gates .gate-body { cursor: grabbing; }
+
 /* --- notes attached to the drawing (js/notes.js) --- */
 /* `.verbatim` was scoped to `.card` and to the decisions panel; a note lives in
    a `div.panel`, and the quoted sentence must look the same wherever it is

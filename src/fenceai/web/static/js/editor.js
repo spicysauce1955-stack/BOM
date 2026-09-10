@@ -19,7 +19,10 @@ import {
   nextLandmarkId, render as renderContext, renderDraft as renderContextDraft,
   renderDraftPolygon as renderContextDraftPolygon,
 } from "./context.js";
-import { chosenGateKit, nextGateId } from "./gates.js";
+import {
+  chosenGateKit, gateSpanById, moveGateNodes, nextGateId, renderGates,
+  repointGateEnd,
+} from "./gates.js";
 import {
   gestureFor, LANDMARK_KINDS, MIN_MM, polygonFromClicks, shapeFor,
 } from "./landmark-shape.js";
@@ -349,6 +352,42 @@ function setupCanvas() {
       svg.setPointerCapture(ev.pointerId);
       return;
     }
+    // A press on a PLACED gate's own handles: move it, or change its opening.
+    //
+    // Here, rather than down in the `select` block, because a gate's marks
+    // answer the pointer whatever tool is armed — `js/gates.js`'s click
+    // listener already flips a swing that way — and SELECT is exactly what a
+    // person reaches for to adjust something that is already there. The gate
+    // TOOL's branch above returns before ever reaching this only for a press
+    // OUTSIDE `#g-gates`; these handles are inside it, which is what that
+    // guard was written for.
+    const grab = state.project && ev.button === 0 && !ev.ctrlKey && !ev.metaKey
+      && target.closest?.(".gate-handle, .gate-body");
+    if (grab) {
+      const gate = gateSpanById(grab.dataset.gate);
+      const a = gate && nodeById(gate.start_node_id);
+      const b = gate && nodeById(gate.end_node_id);
+      if (gate && a && b) {
+        ev.preventDefault();
+        // Ids and the ORIGIN positions, never the node objects: a save in
+        // flight can swap `state.project` mid-gesture and a captured node
+        // would then be a detached copy this drag went on writing to. Same
+        // reason `landmark-move` above stores an id, and the origin is what
+        // makes every move of this drag a delta from where it STARTED rather
+        // than an accumulation of rounded steps.
+        drag = {
+          kind: grab.classList.contains("gate-body") ? "gate-move" : "gate-resize",
+          gateId: gate.id,
+          end: grab.dataset.end === "end" ? "end" : "start",
+          from: svgCoords(ev),
+          origin: { start: [a.x_mm, a.y_mm], end: [b.x_mm, b.y_mm] },
+          snapNodeId: null,
+          started: false, start: [ev.clientX, ev.clientY],
+        };
+        svg.setPointerCapture(ev.pointerId);
+        return;
+      }
+    }
     // ...but a POLYGON kind is built from clicks, so its press must usually
     // fall through to the pan branch below and let the click listener have the
     // gesture — capturing the pointer here would swallow every corner of the
@@ -559,6 +598,17 @@ function onDragMove(ev) {
     renderGateDraft(drag);
     return;
   }
+  if (drag.kind === "gate-move" || drag.kind === "gate-resize") {
+    if (!drag.started) {
+      if (Math.hypot(ev.clientX - drag.start[0], ev.clientY - drag.start[1]) < 4) return;
+      // ONE snapshot per gesture, pushed before the first mutation — the same
+      // discipline `landmark-move` keeps below and for the same reason.
+      pushSnapshot(drag.kind === "gate-move" ? "move-gate" : "resize-gate");
+      drag.started = true;
+    }
+    dragGate(drag, mx, my);
+    return;
+  }
   if (drag.kind === "landmark") {
     drag.started = true;
     drag.to = [mx, my];
@@ -645,6 +695,25 @@ function onDragEnd() {
   if (d.kind === "gate-span") {
     clearGroup("g-snap");
     commitGateSpan(d);
+    return;
+  }
+  if (d.kind === "gate-move" || d.kind === "gate-resize") {
+    // A press that never crossed the threshold moved nothing and pushed no
+    // snapshot, so there is nothing to save and nothing to undo. It is not a
+    // click on anything either: the marks that answer clicks — the swing arc,
+    // the `?`, the hinge dot — keep their own listener in `gates.js`, and the
+    // handles are drawn so as not to cover them.
+    if (!d.started) return;
+    // Dropped within reach of another post: hang this end on THAT node. It is
+    // how a gate joins a stretch drawn after it — the same "sharing their end
+    // nodes" the placement gesture does — and it is what makes two separately
+    // drawn stretches one fence with a gate between them. The node this end
+    // was on is left behind exactly as `removeGate` leaves one: it may well be
+    // a run's own end, and a stranded one draws nothing and costs nothing.
+    if (d.kind === "gate-resize" && d.snapNodeId)
+      repointGateEnd(d.gateId, d.end, d.snapNodeId);
+    renderGates();
+    saveTopology();   // the snapshot was pushed at gesture start
     return;
   }
   if (d.kind === "landmark") {
@@ -1352,6 +1421,91 @@ function commitGateSpan(d) {
     leaf: "single",
   }];
   saveTopology();
+}
+
+// ---------- moving a placed gate ----------
+//
+// The gesture the placement gesture was missing: a gate that is 200 mm along
+// the fence from where it should be could be deleted and placed again, and
+// nothing else. `js/gates.js` draws the handles (`#g-gates` is its subtree);
+// this is the drag, on the one gesture machine this canvas has.
+//
+// A gate drag writes `topology.nodes` and `topology.gates` and NEVER a run: a
+// gate is not a stretch of fence, and moving one changes the layout of none.
+
+/** One move of a gate drag: the new node positions, written, drawn, previewed.
+ *
+ *  Every move is a delta from where the pointer STARTED against the positions
+ *  the gate had THEN, so a drag that wanders and comes back lands exactly where
+ *  it began — an accumulation of per-move deltas would round its way somewhere
+ *  else.
+ *
+ *  Moving a node moves everything hanging on it. A gate end that shares its
+ *  post with a stretch of fence takes that stretch's end with it: that is what
+ *  connected means, it is what dragging the run's own dot has always done, and
+ *  it is the whole point of a gate that joins two stretches. */
+function dragGate(d, mx, my) {
+  const gate = gateSpanById(d.gateId);
+  if (!gate) return;                     // an undo removed it under this drag
+  const dx = mx - d.from[0], dy = my - d.from[1];
+  const shifted = (end) => [d.origin[end][0] + dx, d.origin[end][1] + dy];
+  let ends, moves;
+  if (d.kind === "gate-move") {
+    // both posts by the same delta: the opening keeps its width and its angle,
+    // which is what "move the gate" means and what "resize" is for otherwise
+    ends = { start: shifted("start"), end: shifted("end") };
+    moves = ends;
+    d.snapNodeId = null;
+  } else {
+    const movingId = d.end === "end" ? gate.end_node_id : gate.start_node_id;
+    const otherId = d.end === "end" ? gate.start_node_id : gate.end_node_id;
+    const p = shifted(d.end);
+    // The same reach the placement gesture uses, for the same question: is
+    // there a post here for this end to hang on? Excluding the node being
+    // dragged, which is sitting under the pointer by now and would otherwise
+    // find itself.
+    const near = nearestNode(p[0], p[1], GATE_SNAP_MM, movingId);
+    // Never both ends on one node: the opening IS the distance between them,
+    // so a gate from a node to itself has no opening and the backend refuses
+    // it. The far end is the one thing this drag is dragging TOWARD, so
+    // refusing the snap there is the answer and not a near miss.
+    const snap = near && near.id !== otherId ? near : null;
+    d.snapNodeId = snap ? snap.id : null;
+    // Snapped, the end goes exactly where it will land, so what the drawing
+    // shows before the drop is what the drop will do.
+    const at = snap ? [snap.x_mm, snap.y_mm] : p;
+    ends = { start: d.origin.start, end: d.origin.end, [d.end]: at };
+    moves = { [d.end]: at };             // the other post does not move at all
+  }
+  // The ONE writer of a gate's node positions (`gates.js`), which answers false
+  // when the gate or a node went away mid-gesture rather than writing half.
+  if (!moveGateNodes(d.gateId, moves)) return;
+  renderTopology();
+  renderHandles();
+  renderGates();
+  renderGateDragPreview(d, ends);
+}
+
+/** What this drop will do, drawn in `g-snap` before it happens.
+ *
+ *  The gate itself is already redrawn live — this drag moves the nodes, so the
+ *  opening and its printed width follow the pointer — so what the preview adds
+ *  is the one thing the drawing cannot say by itself: the RING on an end that
+ *  has found a post, which is "this is what it will join", visible before the
+ *  drop rather than after. `renderGateDraft` draws the same ring for the same
+ *  reason while a gate is being placed; the width it also prints is not
+ *  repeated here, because the live gate is already printing it and the same
+ *  figure twice reads as a fault in the drawing. */
+function renderGateDragPreview(d, ends) {
+  const g = clearGroup("g-snap");
+  if (!g) return;
+  const a = toPx(ends.start), b = toPx(ends.end);
+  el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: "#0891b2",
+    "stroke-width": 5, opacity: 0.35, "pointer-events": "none" }, g);
+  if (!d.snapNodeId) return;
+  const p = d.end === "end" ? b : a;
+  el("circle", { cx: p[0], cy: p[1], r: 9, fill: "none", class: "snap-guide",
+    "pointer-events": "none" }, g);
 }
 
 // ---------- click-built landmarks (the house) ----------
