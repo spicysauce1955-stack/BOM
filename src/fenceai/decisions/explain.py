@@ -170,10 +170,32 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "concrete {concrete_sku}, caps {cap_sku}."
         ),
         "place_gate": "Gate opening from {start_mm} to {end_mm} {u}.",
+        # ...and the standalone gate, which has no stations to be "from" and
+        # "to": it filed `start_mm`/`end_mm` nowhere, so the key above rendered
+        # "Gate opening from None to None mm." in both languages.
+        "place_gate_span": (
+            "Gate {gate_id} placed between nodes {start_node_id} and "
+            "{end_node_id} — an opening of {opening_mm} {u}."
+        ),
         "select_gate_kit": "Gate kit {kit_sku} taken from gate event {event_id} as entered.",
         "select_gate_kit_catalog": (
             "Gate kit {kit_sku} selected from the catalog: it declares a fit for the "
             "{opening_width_mm} {u} opening of gate event {event_id}."
+        ),
+        # A gate that stands BESIDE the runs has no event to be taken from — its
+        # payload names the gate element instead. Rendering it through the two
+        # keys above interpolated a missing `event_id` and published the sentence
+        # "…opening of gate event None" in both languages. One key per
+        # provenance, exactly as `select_model_*` above: a standalone gate is a
+        # different sentence, not a word slotted into the in-run one.
+        "select_gate_kit_span": "Gate kit {kit_sku} taken from gate {gate_id} as entered.",
+        "select_gate_kit_span_catalog": (
+            "Gate kit {kit_sku} selected from the catalog: it declares a fit for the "
+            "{opening_width_mm} {u} opening of gate {gate_id}."
+        ),
+        "gate_span": (
+            "Gate {gate_id} stands beside the runs, between nodes {start_node_id} "
+            "and {end_node_id} — an opening of {opening_mm} {u}."
         ),
         "knowledge_conflict": (
             "Conflict on '{slot}' between {contenders} — surfaced for review."
@@ -412,10 +434,23 @@ TEMPLATES: dict[str, dict[str, str]] = {
             "בטון {concrete_sku}, כיפות {cap_sku}."
         ),
         "place_gate": "פתח שער מתחנה {start_mm} עד {end_mm} {u}.",
+        "place_gate_span": (
+            "השער {gate_id} הוצב בין הצמתים {start_node_id} ו-{end_node_id} — "
+            "פתח של {opening_mm} {u}."
+        ),
         "select_gate_kit": "ערכת השער {kit_sku} נלקחה מאירוע השער {event_id} כפי שהוזנה.",
         "select_gate_kit_catalog": (
             "ערכת השער {kit_sku} נבחרה מהקטלוג: היא מוצהרת כמתאימה לפתח של "
             "{opening_width_mm} {u} באירוע השער {event_id}."
+        ),
+        "select_gate_kit_span": "ערכת השער {kit_sku} נלקחה מהשער {gate_id} כפי שהוזנה.",
+        "select_gate_kit_span_catalog": (
+            "ערכת השער {kit_sku} נבחרה מהקטלוג: היא מוצהרת כמתאימה לפתח של "
+            "{opening_width_mm} {u} של השער {gate_id}."
+        ),
+        "gate_span": (
+            "השער {gate_id} עומד לצד המקטעים, בין הצמתים {start_node_id} "
+            "ו-{end_node_id} — פתח של {opening_mm} {u}."
         ),
         "knowledge_conflict": "סתירה על '{slot}' בין {contenders} — הוצפה לבדיקה.",
         "uncovered_param": (
@@ -735,12 +770,29 @@ def explain_node(
                 concrete_sku=p.get("concrete_sku"), cap_sku=p.get("cap_sku"),
             )
         case "place_gate":
-            base = _fmt(t, "place_gate", lang, units, start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))
+            # stations for an in-run gate, nodes for one standing beside the runs
+            if p.get("start_mm") is None:
+                base = _fmt(t, "place_gate_span", lang, units,
+                    gate_id=p.get("gate_id"), start_node_id=p.get("start_node_id"),
+                    end_node_id=p.get("end_node_id"), opening_mm=p.get("opening_mm"))
+            else:
+                base = _fmt(t, "place_gate", lang, units,
+                    start_mm=p.get("start_mm"), end_mm=p.get("end_mm"))
         case "select_gate_kit":
-            key = ("select_gate_kit_catalog" if p.get("source") == "catalog"
-                   else "select_gate_kit")
+            # WHICH gate this kit is for is the branch, and it is decided by the
+            # payload rather than by a flag: an in-run gate files `event_id`, a
+            # standalone `GateSpan` files `gate_id`, and neither files both.
+            span = p.get("event_id") is None
+            key = "select_gate_kit_span" if span else "select_gate_kit"
+            if p.get("source") == "catalog":
+                key += "_catalog"
             base = _fmt(t, key, lang, units, kit_sku=p.get("kit_sku"),
-                event_id=p.get("event_id"), opening_width_mm=p.get("opening_width_mm"))
+                event_id=p.get("event_id"), gate_id=p.get("gate_id"),
+                opening_width_mm=p.get("opening_width_mm"))
+        case "gate_span":
+            base = _fmt(t, "gate_span", lang, units, gate_id=p.get("gate_id"),
+                start_node_id=p.get("start_node_id"),
+                end_node_id=p.get("end_node_id"), opening_mm=p.get("opening_mm"))
         case "knowledge_conflict":
             base = _fmt(t, "knowledge_conflict", lang, units,
                 slot=p.get("slot"), contenders=", ".join(p.get("contenders", []))

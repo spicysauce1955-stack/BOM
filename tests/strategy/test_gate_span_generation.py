@@ -22,6 +22,10 @@ from __future__ import annotations
 from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import fulfill
 from fenceai.fulfillment.supply import resolve_supply
+from fenceai.knowledge.ast import Cmp, FieldRef, Lit
+from fenceai.knowledge.demo import demo_knowledge
+from fenceai.knowledge.model import KnowledgeBase, KnowledgeVersion, SetParam
+from fenceai.project.model import SiteConditions
 from fenceai.strategy.generator import generate
 from fenceai.strategy.overrides import ForceMounting, ForcePostSku, Override
 from fenceai.topology.model import (
@@ -254,6 +258,38 @@ def test_generation_is_deterministic_whatever_order_the_gates_arrive_in(
     a, b = generate(forward, knowledge, catalog), generate(reversed_, knowledge, catalog)
     assert a.strategy.model_dump() == b.strategy.model_dump()
     assert a.graph.model_dump() == b.graph.model_dump()
+    # The FENCE is order-independent; the run id deliberately is not. The id is a
+    # digest of the input document, and two orderings are two documents — which
+    # is the safe direction the digest comment names: "over-splitting is safe;
+    # under-splitting serves the wrong fence under a reused id". Asserted rather
+    # than left implied, because the test's name says "deterministic" and a
+    # reader is entitled to know which of the two it means.
+    assert a.run.id != b.run.id
+
+
+def test_adding_a_gate_changes_the_run_id(knowledge, catalog):
+    """A fence with a gate and the same fence without one are different runs.
+
+    The user-facing half of the digest property: `save_run` is `INSERT OR
+    IGNORE`, so two fences sharing an id means the second is dropped and every
+    later read — structure sheet, BOM, the handover the office works from —
+    serves the first. Nothing asserted it for gates at all.
+
+    Honest about what it does NOT prove: this pair does not isolate
+    `topology.gates` as the digest input responsible. Excluding `gates` from the
+    dump leaves these two ids different anyway, through some other input a gate
+    moves. The assertion that `gates` genuinely reaches the digest is the run-id
+    line in `test_generation_is_deterministic_whatever_order_the_gates_arrive_in`
+    above, which that exclusion does turn red — verified by making the mutation.
+    """
+    with_gate = _two_runs(True)
+    without = _two_runs(False)
+    a = generate(with_gate, knowledge, catalog)
+    b = generate(without, knowledge, catalog)
+    assert a.run.id != b.run.id, "a gate is part of the fence the id identifies"
+    # ...and the same topology twice is the same id, so the assertion above is
+    # about the gate and not about digest noise
+    assert generate(_two_runs(True), knowledge, catalog).run.id == a.run.id
 
 
 # --- the ground under the gate ----------------------------------------------
@@ -452,3 +488,43 @@ def test_a_gate_exactly_on_the_permille_boundary_warns(knowledge, catalog):
     assert permille(103, 2000, 51) == [52]
     # a drop genuinely at the limit still does not warn
     assert permille(104, 2000, 52) == []
+
+
+# --- what the standalone gate's rule context is BOUND to ---------------------
+
+def test_a_site_conditioned_gate_slope_rule_governs_a_standalone_gate(catalog):
+    """`site` must reach `_resolve_gate_max_slope`, and nothing said so.
+
+    The resolution context for a gate span is `{"scope": ..., "site": site}`.
+    Dropping `"site": site` from it left the entire suite green — so a
+    site-conditioned `gate_max_slope_permille` silently ceasing to apply to
+    standalone gates was invisible, and the fence would be built to a limit the
+    site's own rule does not set. `_assert_namespaces_bound` cannot catch it:
+    that raises when a rule conditions on an UNBOUND namespace, and an unbound
+    `site` is indistinguishable from a project that answered nothing.
+
+    So: one rule that applies only in exposure C, tightening the limit to 20‰,
+    and a gate at 100‰ that is inside 50‰-land but well outside 20‰.
+    """
+    tight = KnowledgeBase(versions=[
+        *demo_knowledge().versions,
+        KnowledgeVersion(
+            object_id="K-GATE-SLOPE-EXPOSED", version=1, type="company_rule",
+            title="Exposed sites need flatter gate ground",
+            condition=Cmp(cmp="==", left=FieldRef(path="site.exposure_category"),
+                          right=Lit(value="C")),
+            actions=[SetParam(param="gate_max_slope_permille", value=20)],
+        ),
+    ])
+    topo = _hanging_gate_at(30)   # 30 mm over 1000 mm = 30 permille
+
+    # in exposure C the tighter rule governs, and 30 > 20 warns...
+    exposed = generate(topo, tight, catalog,
+                       site=SiteConditions(exposure_category="C"))
+    warning = _slope_warning(exposed)
+    assert warning is not None, "the site rule never reached the standalone gate"
+    assert warning.params["max_permille"] == 20, \
+        "the limit came from the unconditioned rule, so `site` was not bound"
+
+    # ...and with no site stated the rule is NOT APPLICABLE, so 30 is inside 50
+    assert _slope_warning(generate(topo, tight, catalog)) is None
