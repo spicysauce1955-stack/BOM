@@ -75,7 +75,7 @@ out.proto = byKey(road(SALES_ROAD, [g("constructor")], st()));
 out.panel_of_notes = panelFor(SALES_ROAD, "notes");
 out.panel_of_nothing = panelFor(SALES_ROAD, "not_a_step");
 out.road_for_sales = roadFor("sales") === SALES_ROAD;
-out.road_for_office = roadFor("office");
+out.road_for_backoffice = roadFor("backoffice");
 out.road_for_all = roadFor("all");
 out.road_for_inherited = ["constructor", "toString", "hasOwnProperty"]
   .map((k) => roadFor(k));
@@ -204,7 +204,7 @@ def test_panel_for_is_road_scoped(out):
 
 def test_a_role_with_no_road_gets_none(out):
     assert out["road_for_sales"] is True
-    assert out["road_for_office"] is None
+    assert out["road_for_backoffice"] is None
     assert out["road_for_all"] is None
 
 

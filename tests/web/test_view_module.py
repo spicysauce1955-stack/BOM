@@ -37,7 +37,7 @@ const out = {};
 out.views = VIEWS;
 out.sales = hiddenFor("sales");
 out.all = hiddenFor("all");
-out.office = hiddenFor("office");
+out.backoffice = hiddenFor("backoffice");
 out.unknown = hiddenFor("nonsense-not-a-view");
 out.sales_tabs = SALES_TABS;
 console.log(JSON.stringify(out));
@@ -96,7 +96,7 @@ def test_the_three_views_are_the_company_s_roles_and_not_the_pipeline_s(out):
     the `persona_lab` roster, which names positions in our pipeline — the two
     lists answer different questions and merging them would put a salesperson on
     a ladder beside `knowledge-owner`."""
-    assert out["views"] == ["sales", "office", "all"]
+    assert out["views"] == ["sales", "backoffice", "all"]
 
 
 def test_the_widest_view_hides_nothing(out):
@@ -156,13 +156,13 @@ def test_a_promise_made_during_the_sale_keeps_a_home(out):
     assert "annotations" in out["sales_tabs"]
 
 
-def test_office_still_hides_the_knowledge_bench(out):
+def test_backoffice_still_hides_the_knowledge_bench(out):
     """`office` is not `all`. The office person holds the inventory and the
     items; authoring RULES is the super user's bench. This is the weakest of the
     three definitions and the one most likely to be wrong — it is asserted so
     that changing it is a decision rather than a drift."""
-    assert '[data-tab="knowledge"]' in set(out["office"])
-    assert '[data-tab="bom"]' not in set(out["office"])
+    assert '[data-tab="knowledge"]' in set(out["backoffice"])
+    assert '[data-tab="bom"]' not in set(out["backoffice"])
 
 
 def test_every_hidden_selector_exists(out):
@@ -180,7 +180,7 @@ def test_every_hidden_selector_exists(out):
     ids = _live_ids()
     tabs = set(re.findall(r'data-tab="([^"]+)"',
                           (STATIC / "index.html").read_text()))
-    for view in ("sales", "office"):
+    for view in ("sales", "backoffice"):
         for selector in out[view]:
             if selector.startswith("#"):
                 assert selector[1:] in ids, f"{view}: no element {selector}"

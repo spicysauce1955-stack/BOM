@@ -809,8 +809,8 @@ html[data-view="sales"] #tabs button[data-tab="inventory"] { display: none; }
 
 /* --- office: holds the inventory and the items; authoring RULES is the
        super user's bench --- */
-html[data-view="office"] #tabs button[data-tab="knowledge"],
-html[data-view="office"] #tabs button[data-tab="review"] { display: none; }
+html[data-view="backoffice"] #tabs button[data-tab="knowledge"],
+html[data-view="backoffice"] #tabs button[data-tab="review"] { display: none; }
 
 /* ============================================================================
    Road steps — a step shows only its OWN work, for `sales` only.

@@ -16,6 +16,18 @@
 // So: `view` is what is SHOWN, `capacity` is what an account may DO, and
 // `role` is what a part is FOR. Three words, three meanings, no overlap.
 //
+// The account's `capacity` will be `sales | backoffice | admin`, and the view
+// DEFAULTS from it: a salesperson opens on the sales view without choosing it.
+// Only an admin is offered the selector at all — the other two get their own
+// view and no control to leave it.
+//
+// That makes the SELECTOR admin-only. It does NOT make the view a permission,
+// and the distinction is the one this file has always insisted on: hiding is
+// CSS, anybody who edits `localStorage` sees other surfaces, and the API must
+// refuse on capacity regardless of what is on screen. The day a check lives
+// HERE and nowhere else is the day somebody relied on a stylesheet to protect
+// something.
+//
 // Nothing here is a security boundary. Switching to `sales` hides surfaces; it
 // does not revoke anything, and the API is unchanged. A mode that merely hides
 // must never be described as one that protects, or somebody will eventually rely
@@ -23,7 +35,7 @@
 //
 // The three views are named for the company's three people — COMPANY roles
 // rather than positions in our pipeline: a salesperson (non-technical, records what was sold), an
-// office person (holds the inventory and the installation knowledge), and a
+// back-office person (holds the inventory and the installation knowledge), and a
 // super user (alters and customises). `tools/persona_lab`'s older roster names
 // pipeline positions instead and contains nobody non-technical — which is the
 // likeliest reason the UI drifted into naming stations and spans at a person
@@ -37,12 +49,12 @@
 import { applyStatic } from "./i18n.js";
 import { emit, state } from "./state.js";
 
-export const VIEWS = ["sales", "office", "all"];
+export const VIEWS = ["sales", "backoffice", "all"];
 
 // Tabs a salesperson keeps. The canvas is where the job is drawn; annotations
 // are where a PROMISE lives — `Annotation.target_ref` already accepts
 // `run:<id>`, so "a post clear of that window" is recordable as a sentence the
-// office person must read, rather than as an override that would quietly reach
+// back-office person must read, rather than as an override that would quietly reach
 // generation.
 export const SALES_TABS = ["canvas", "annotations"];
 
@@ -50,7 +62,7 @@ const ALL_TABS = ["canvas", "annotations", "knowledge", "review", "structure",
                   "assembly", "panel", "models", "bom", "inventory"];
 
 // Everything on this list answers "how is this fence BUILT?" — which is the
-// office person's question and the super user's, never the salesperson's.
+// back-office person's question and the admin's, never the salesperson's.
 //
 //   #tool-pin          placing a post is not a thing that is sold
 //   #override-list     an override is a technical patch to a generated output
@@ -92,16 +104,16 @@ const SALES_HIDDEN = [
   ...ALL_TABS.filter((t) => !SALES_TABS.includes(t)).map((t) => `[data-tab="${t}"]`),
 ];
 
-// The office person holds the inventory and the items; AUTHORING RULES is the
+// The back-office person holds the inventory and the items; AUTHORING RULES is the
 // super user's bench. This is the weakest of the three definitions — it is the
 // one most likely to be wrong, so it is asserted in the tests to make changing
 // it a decision rather than a drift.
-const OFFICE_HIDDEN = [
+const BACKOFFICE_HIDDEN = [
   '[data-tab="knowledge"]',
   '[data-tab="review"]',
 ];
 
-const HIDDEN = { sales: SALES_HIDDEN, office: OFFICE_HIDDEN, all: [] };
+const HIDDEN = { sales: SALES_HIDDEN, backoffice: BACKOFFICE_HIDDEN, all: [] };
 
 /** The selectors a view hides. An unrecognised view hides NOTHING rather than
  *  everything: a preference stored by a future version, or a typo, must degrade

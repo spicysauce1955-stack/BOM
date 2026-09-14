@@ -62,7 +62,7 @@ def _from_css() -> dict[str, set[str]]:
     return out
 
 
-@pytest.mark.parametrize("view", ["sales", "office"])
+@pytest.mark.parametrize("view", ["sales", "backoffice"])
 def test_the_stylesheet_hides_exactly_what_the_module_says(view):
     js, css = _from_js(), _from_css()
     assert css.get(view, set()) == js[view], (
