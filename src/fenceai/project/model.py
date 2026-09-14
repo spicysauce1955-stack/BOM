@@ -317,6 +317,11 @@ class Project(BaseModel):
     # different question from when the sale happened (`job.sold_on`).
     submitted_at: str = ""
     created_by: str = ""
+    # When it left the open list. A FIELD rather than a walk of the audit log:
+    # the queue's finished view sorts by it, and a list query that walked an
+    # append-only table to date twenty-five rows would get slower every month.
+    # Written by the commands that close a job, and by nothing else.
+    closed_at: str = ""
 
     def display_name(self) -> str:
         """What to call this project on any surface a person reads.
