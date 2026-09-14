@@ -227,7 +227,7 @@ is safer for `min_rail_separation_mm`.
 
 ## Persistence
 
-Thirteen tables — twelve document stores plus the append-only `audit_log`. Documents are
+Fifteen tables — fourteen document stores plus the append-only `audit_log`. Documents are
 stored as JSON `doc` columns; the schema holds only what is queried or ordered by.
 
 ```sql
@@ -244,7 +244,26 @@ quotes(id, project_id, status, created_at, doc)
 knowledge_snapshots(snapshot_id, loaded_at, doc)      -- the published document
 active_snapshot(only_row, snapshot_id)                -- CHECK (only_row = 1)
 audit_log(seq, at, actor, action, ref)
+users(id, email, doc)                                 -- email UNIQUE
+sessions(token, user_id, doc)                         -- the token IS the key
 ```
+
+**`email` is UNIQUE and `User.email` normalises.** It is what somebody signs in with, so
+two rows answering one address is a lookup with no right answer. Normalisation lives on
+the model rather than at the call sites, because the first version of this lower-cased on
+write and stripped on read: an account created with a trailing space was unreachable from
+the machine that created it.
+
+**An account is deactivated, never deleted.** `audit_log.actor` names people who have left
+the company and every one of those rows must keep resolving to a name. `active=False` is
+the company's move, `verify_password` refuses it, and `delete_sessions_for` is the other
+half — without it, deactivating is a label somebody is still signed in behind.
+
+**The session token IS the row.** Opaque and looked up server-side rather than
+self-describing and merely validated, so signing out actually signs out: the row is
+deleted and the token stops working everywhere at once. A token carrying its own claims
+would stay valid in a pocket until it expired, which makes both "sign me out" and
+"deactivate this account" promises the server cannot keep.
 
 **The published snapshot is stored as the DOCUMENT, and what we make of it is not.**
 `knowledge_snapshots` keeps the bytes the Knowledge Platform sent, keyed by its own
