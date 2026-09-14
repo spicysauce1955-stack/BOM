@@ -13,6 +13,7 @@ from fenceai.fencemodel.selection import FenceModelChoice
 # `fencemodel.model` can read the dimension vocabulary without importing this
 # aggregate. Every caller that already said `from fenceai.project.model import
 # SiteConditions` still resolves, and there is still exactly one definition.
+from fenceai.project.lifecycle import JobState
 from fenceai.project.site import SITE_DIMENSIONS, SiteConditions
 from fenceai.strategy.overrides import Override
 from fenceai.topology.model import Topology
@@ -305,6 +306,17 @@ class Project(BaseModel):
     # `job`'s reason: a claim about an absence changes no quantity, so it must
     # not bump the topology revision and 409 every derived view.
     stated: Stated = Stated()
+    # Whose desk this is on. Project state, NOT topology: a job changing hands
+    # changes no quantity, so it must not bump `topology.revision` and 409 every
+    # derived view — the rule `/job`, `/context` and `/stated` already follow.
+    status: JobState = "drafting"
+    # The backoffice account that took it. `None` is a real state, not a blank:
+    # "nobody has taken this" is the whole reason a queue exists.
+    assignee: str | None = None
+    # When it reached the queue. Drives the service-promise sort, which is a
+    # different question from when the sale happened (`job.sold_on`).
+    submitted_at: str = ""
+    created_by: str = ""
 
     def display_name(self) -> str:
         """What to call this project on any surface a person reads.
