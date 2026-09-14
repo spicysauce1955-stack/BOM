@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +33,8 @@ from fenceai.catalog.model import (
 )
 from fenceai.core.errors import GenerationFailure, ReadRefused, RequestRefused
 from fenceai.core.ids import new_id
+from fenceai import commands
+from fenceai.commands import CommandRefused
 from fenceai.decisions.explain import explain_element
 from fenceai.decisions.supply import with_supply_decisions
 from fenceai.fencemodel.library import ModelListing
@@ -157,6 +160,18 @@ def _sample_project() -> Project:
 
 
 app = FastAPI(title="Fence AI", version="0.1.0", lifespan=lifespan)
+
+
+def _now_iso() -> str:
+    """The clock, for anything a route stamps on a document.
+
+    Here rather than inside `fenceai.commands`, because a command that read the
+    clock itself could not be driven through every state it declares from a test
+    without freezing time globally. The store keeps its own `_now` for the audit
+    column, which is a different fact: when the row was WRITTEN, not when the
+    thing it records happened.
+    """
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _project(project_id: str) -> Project:
@@ -399,6 +414,81 @@ def put_context(request: Request, project_id: str, context: SiteContext) -> Proj
     project.context = context
     state.store.save_project(project, actor=_actor(request))
     return project
+
+
+# -- one door: commands --------------------------------------------------------
+#
+# Every change that MOVES a job — whose desk it is on, or what it commits to —
+# comes through this one route (backoffice design §10). Field edits do not:
+# typing an address is not a command, and forcing it to be one turns the design
+# into ceremony.
+#
+# It is also the FIRST gated route in this app, and deliberately the only one.
+# Retrofitting capacity onto the other sixty-eight in the same slice that
+# introduces the mechanism is how the choice-set feature ran away on 2026-09-03;
+# a request with no session stays the ordinary case everywhere else and still
+# writes `system`.
+
+
+class CommandBody(BaseModel):
+    kind: str
+    payload: dict = {}
+    #: Who PROPOSED it, when that is not who performed it. `actor` is always the
+    #: session. Two names, because "Yossi accepted the agent's suggestion" and
+    #: "Yossi decided this himself" must stay different rows in the log.
+    origin: str = ""
+
+
+#: Which HTTP status each refusal earns. `command_wrong_state` is a 409 rather
+#: than a 403 because it is a conflict with the job as it stands now, not a
+#: statement about the caller — somebody else moved the folder while this screen
+#: was open, and the browser's answer is to reload rather than to give up. The
+#: default is 403: this account may not do this, and trying again will not help.
+_REFUSAL_STATUS = {"command_wrong_state": 409}
+
+
+@app.post("/api/projects/{project_id}/actions")
+def perform_command(request: Request, project_id: str, body: CommandBody) -> Project:
+    """Perform one command against one job, or refuse it in a sentence.
+
+    The three checks live in `fenceai.commands`, not here — a permission scattered
+    across handlers is a permission half of which gets added later by somebody who
+    did not know. This route contributes exactly what the pure half cannot have:
+    the session, the store, and one activity row.
+
+    The row is written only on success. A log that recorded every attempt would
+    make "who did what" a list of things nobody did.
+    """
+    user = _require_user(request)
+    project = _project(project_id)
+    try:
+        changed = commands.perform(
+            body.kind, body.payload, project,
+            actor=actor_ref(user), capacity=user.capacity, now=_now_iso(),
+        )
+    except KeyError as unknown:
+        raise HTTPException(404, {
+            "code": "command_unknown", "params": {"kind": body.kind},
+        }) from unknown
+    except CommandRefused as refused:
+        raise HTTPException(_REFUSAL_STATUS.get(refused.code, 403), {
+            "code": refused.code, "params": refused.params,
+        }) from refused
+    except ValidationError as invalid:
+        # A caller's mistake, not ours, and not a 500. The English list is
+        # AUTHORING text — our finding about a payload somebody is holding — so
+        # it carries no code of its own and is rendered for whoever can fix it,
+        # exactly as `validate_model`'s errors are.
+        raise HTTPException(400, {
+            "code": "command_payload_invalid",
+            "params": {"kind": body.kind},
+            "errors": [f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}"
+                       for e in invalid.errors()[:10]],
+        }) from invalid
+    state.store.save_project(changed, actor=actor_ref(user))
+    state.store._audit(actor_ref(user), f"command:{body.kind}",
+                       f"{project_id}|{body.origin}")
+    return changed
 
 
 @app.get("/api/projects/{project_id}/handover")

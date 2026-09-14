@@ -254,6 +254,22 @@ REFUSAL_CODES = [
     # asking whether somebody has an account here.
     "sign_in_failed",
     "not_signed_in",
+    # -- the one door (backoffice design §10) ------------------------------------
+    # The three questions a command is asked, each with its own sentence.
+    # `command_not_permitted` is deliberately silent about the job: capacity is
+    # checked BEFORE status, so a salesperson who tries to take a job is told the
+    # same thing whether or not there was a job there to take.
+    "command_not_permitted",
+    "command_wrong_state",
+    # A row `materialize=None` — something an agent may PROPOSE that no button
+    # performs yet. Its own sentence rather than `command_not_permitted`, whose
+    # words send the reader to find a colleague who can do it. Nobody can.
+    "command_not_performable",
+    "command_unknown",
+    # The payload did not type-check. The code carries the sentence; the list of
+    # fields travels beside it as AUTHORING text — our finding about a payload
+    # somebody is holding — and so carries no code of its own.
+    "command_payload_invalid",
     # a stored strategy whose derived member run points at a bay or slot that is
     # no longer in it — same class, same remedy
     "member_run_unreadable",
@@ -476,6 +492,14 @@ def test_backend_code_list_is_current():
         # invisible to this guard twice over: the file was not scanned, and a
         # route writes `"code": "x"` rather than `code="x"`. Both forms now.
         src / "api" / "app.py",
+        # the one door refuses in `fenceai.commands`, not at the route, because
+        # the three checks are pure and the route only carries the session. So
+        # the file that RAISES is not the file that answers — the same blind
+        # spot every entry above closed, one layer further in. `CommandRefused`
+        # is constructed with `code="..."` rather than positionally for exactly
+        # this reason: `SnapshotRefused` takes its code positionally and its
+        # three codes have to be maintained by hand below.
+        src / "commands" / "run.py",
     ]
     # ...and every read model, because they emit codes now too. Named as a
     # DIRECTORY rather than file by file: `report/assembly.py` raised
