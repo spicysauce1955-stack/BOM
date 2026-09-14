@@ -24,6 +24,22 @@
         <option value="all" data-i18n="view.all">Everything</option>
       </select>
       <span id="ai-badge" class="badge"></span>
+      <!-- Who is signed in. Signed OUT is the ordinary state and stays today's
+           app — this block is additive, and the view selector above is merely
+           hidden for an account that may not choose. -->
+      <form id="sign-in">
+        <input id="sign-in-email" type="email" autocomplete="username"
+               data-i18n-placeholder="signin.email" placeholder="Email">
+        <input id="sign-in-password" type="password" autocomplete="current-password"
+               data-i18n-placeholder="signin.password" placeholder="Password">
+        <button type="submit" class="primary" data-i18n="signin.submit">Sign in</button>
+      </form>
+      <span id="sign-in-error" class="warning error" hidden data-i18n="error.sign_in_failed"></span>
+      <div id="signed-in-as" hidden>
+        <span id="me-name"></span>
+        <span id="me-capacity" class="badge"></span>
+        <button id="sign-out" data-i18n="signin.out">Sign out</button>
+      </div>
     </div>
   </header>
 

@@ -809,6 +809,11 @@ html[data-view="sales"] #tabs button[data-tab="inventory"] { display: none; }
 
 /* --- office: holds the inventory and the items; authoring RULES is the
        super user's bench --- */
+/* An account that may not choose a view is not offered the control. This is a
+   PRESENTATION rule and never protection: hiding is CSS, `localStorage` is
+   editable, and what an account may DO is its capacity, checked on the server. */
+html[data-selector="no"] #view-select { display: none; }
+
 html[data-view="backoffice"] #tabs button[data-tab="knowledge"],
 html[data-view="backoffice"] #tabs button[data-tab="review"] { display: none; }
 

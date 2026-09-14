@@ -28,6 +28,7 @@ import { initStructureData } from "./js/structure-data.js";
 import { initStructure } from "./js/structure.js";
 import { initTabs } from "./js/tabs.js";
 import { initView, setView } from "./js/view.js";
+import { loadMe, signIn, signOut } from "./js/session.js";
 import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
 function setupHeader() {
@@ -41,14 +42,59 @@ function setupHeader() {
   document.getElementById("btn-locale").addEventListener("click",
     () => setLocale(currentLocale() === "he" ? "en" : "he"));
   document.getElementById("btn-units").addEventListener("click", toggleUnits);
-  const role = document.getElementById("view-select");
-  role.value = state.view;
-  role.addEventListener("change", () => setView(role.value));
+  const viewSelect = document.getElementById("view-select");
+  viewSelect.value = state.view;
+  viewSelect.addEventListener("change", () => setView(viewSelect.value));
+  wireIdentity();
   // the unit label itself is localized: relabel the button when the language flips
   on("locale-changed", updateUnitsButton);
   // ...and the picker is labelled by the JOB, which can be named long after the
   // project was created.
   on("job-changed", refreshProjectList);
+}
+
+/** The sign-in form and the who-am-I chip.
+ *
+ *  `loadMe()` runs AFTER `initView()` rather than instead of it: a signed-out
+ *  browser must reach today's app without waiting on a round trip, and a signed-in
+ *  one then corrects the view. The same ordering `initView` already needs against
+ *  `initI18n` — audit observation 2, where a reload in sales mode hid the right
+ *  surfaces and then showed an engineer's words on them.
+ */
+function wireIdentity() {
+  const form = document.getElementById("sign-in");
+  const chip = document.getElementById("signed-in-as");
+  const err = document.getElementById("sign-in-error");
+
+  const render = () => {
+    const me = state.me;
+    form.hidden = !!me;
+    chip.hidden = !me;
+    if (!me) return;
+    // `esc` is not needed for textContent, which is the point of using it: a
+    // person's own name is user text and never reaches innerHTML here.
+    document.getElementById("me-name").textContent = me.name;
+    document.getElementById("me-capacity").textContent =
+      t(`signin.capacity.${me.capacity}`);
+  };
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.hidden = true;
+    const ok = await signIn(document.getElementById("sign-in-email").value,
+                            document.getElementById("sign-in-password").value);
+    // One message for a wrong password and for an address with no account — the
+    // server already refuses both identically, and a kinder message here would
+    // undo that by telling somebody which half they got right.
+    if (!ok) err.hidden = false;
+    else document.getElementById("sign-in-password").value = "";
+  });
+  document.getElementById("sign-out").addEventListener("click", () => signOut());
+
+  on("signed-in", render);
+  on("signed-out", render);
+  render();
+  loadMe();
 }
 
 async function refreshProjectList() {

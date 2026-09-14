@@ -111,6 +111,7 @@ async def lifespan(app: FastAPI):
             state.store.insert_knowledge_version(v, actor="seed")
     if not state.store.list_projects():
         state.store.save_project(_sample_project(), actor="seed")
+    _seed_demo_accounts()
     yield
     state.store.close()
 
@@ -1682,6 +1683,29 @@ def put_inventory(project_id: str, inventory: Inventory) -> Inventory:
     _project(project_id)
     state.store.save_inventory(project_id, inventory)
     return inventory
+
+
+#: One account per capacity, so the sign-in screen has something to sign in AS
+#: on a fresh database. A shared password, because these are demo rows on a demo
+#: database and pretending otherwise would be theatre — a real deployment seeds
+#: its own accounts and these three never exist.
+DEMO_ACCOUNTS = [
+    ("u_dana", "Dana", "dana@example.com", "sales"),
+    ("u_yossi", "Yossi", "yossi@example.com", "backoffice"),
+    ("u_admin", "Admin", "admin@example.com", "admin"),
+]
+DEMO_PASSWORD = "demo"
+
+
+def _seed_demo_accounts() -> None:
+    """Only on an empty table. A company that has made its own accounts must
+    never find three strangers in the list after an upgrade."""
+    if state.store.list_users():
+        return
+    for uid, name, email, capacity in DEMO_ACCOUNTS:
+        user = User(id=uid, name=name, email=email, capacity=capacity)
+        user.set_password(DEMO_PASSWORD)
+        state.store.save_user(user, actor="seed")
 
 
 # -- who is asking -------------------------------------------------------------
