@@ -248,6 +248,12 @@ REFUSAL_CODES = [
     # field-level check would notice, because every field is still well-formed.
     "snapshot_id_mismatch",
     "run_predates_fence_model",
+    # -- signing in -------------------------------------------------------------
+    # `sign_in_failed` is deliberately ONE code for a wrong password and for an
+    # address with no account: two answers would turn the form into a way of
+    # asking whether somebody has an account here.
+    "sign_in_failed",
+    "not_signed_in",
     # a stored strategy whose derived member run points at a bay or slot that is
     # no longer in it — same class, same remedy
     "member_run_unreadable",

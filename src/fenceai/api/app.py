@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -73,6 +73,10 @@ from fenceai.report.annexe import WarningPlacement, place_for_plan
 from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
+from fenceai.identity.model import (
+    SYSTEM, User, actor_ref, default_view, may_choose_view, verify_password,
+)
+from fenceai.identity import session as sessions
 from fenceai.store.db import Store
 from fenceai.strategy.generator import DEFAULT_POLICY, LEGACY_MODEL_ID, generate
 from fenceai.strategy.model import PartUse
@@ -337,14 +341,14 @@ class ProjectCreate(BaseModel):
 
 
 @app.post("/api/projects")
-def create_project(body: ProjectCreate) -> Project:
+def create_project(request: Request, body: ProjectCreate) -> Project:
     project = Project(id=new_id("proj"), name=body.name, job=body.job)
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
 @app.put("/api/projects/{project_id}/job")
-def put_job(project_id: str, job: Job) -> Project:
+def put_job(request: Request, project_id: str, job: Job) -> Project:
     """Name the job, or finish naming it.
 
     The route that matters more than the create form. A salesperson enters this
@@ -359,12 +363,12 @@ def put_job(project_id: str, job: Job) -> Project:
     """
     project = _project(project_id)
     project.job = job
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
 @app.put("/api/projects/{project_id}/stated")
-def put_stated(project_id: str, stated: Stated) -> Project:
+def put_stated(request: Request, project_id: str, stated: Stated) -> Project:
     """Say what this job does not have.
 
     Unrevisioned, like `/job` and unlike `/site` and `/topology`. Those are
@@ -378,12 +382,12 @@ def put_stated(project_id: str, stated: Stated) -> Project:
     """
     project = _project(project_id)
     project.stated = stated
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
 @app.put("/api/projects/{project_id}/context")
-def put_context(project_id: str, context: SiteContext) -> Project:
+def put_context(request: Request, project_id: str, context: SiteContext) -> Project:
     """The house, the street, the boundary — what makes the layout a PLACE.
 
     Unrevisioned, like `/job` and unlike `/topology` and `/site`. A landmark
@@ -392,7 +396,7 @@ def put_context(project_id: str, context: SiteContext) -> Project:
     """
     project = _project(project_id)
     project.context = context
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
@@ -432,7 +436,7 @@ def get_project(project_id: str) -> Project:
 
 
 @app.put("/api/projects/{project_id}/site")
-def put_site_conditions(project_id: str, site: SiteConditions) -> Project:
+def put_site_conditions(request: Request, project_id: str, site: SiteConditions) -> Project:
     """What kind of site this is. Revisioned like the topology, and bumped HERE
     rather than trusted from the client, for the same reason: the revision is
     what every derived view checks itself against, so a client that forgot to
@@ -440,16 +444,16 @@ def put_site_conditions(project_id: str, site: SiteConditions) -> Project:
     project = _project(project_id)
     site.revision = project.site.revision + 1
     project.site = site
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
 @app.put("/api/projects/{project_id}/topology")
-def put_topology(project_id: str, topology: Topology) -> Project:
+def put_topology(request: Request, project_id: str, topology: Topology) -> Project:
     project = _project(project_id)
     topology.revision = project.topology.revision + 1
     project.topology = topology
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
@@ -462,25 +466,25 @@ class AnnotationCreate(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/annotations")
-def add_annotation(project_id: str, body: AnnotationCreate) -> Annotation:
+def add_annotation(request: Request, project_id: str, body: AnnotationCreate) -> Annotation:
     project = _project(project_id)
     annotation = Annotation(
         id=new_id("ann"), target_ref=body.target_ref, text=body.text, author=body.author
     )
     project.annotations.append(annotation)
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return annotation
 
 
 @app.post("/api/projects/{project_id}/annotations/{annotation_id}/interpret")
-def interpret_annotation(project_id: str, annotation_id: str):
+def interpret_annotation(request: Request, project_id: str, annotation_id: str):
     project = _project(project_id)
     annotation = next((a for a in project.annotations if a.id == annotation_id), None)
     if annotation is None:
         raise HTTPException(404, "annotation not found")
     record = state.interpreter.interpret(annotation)
     annotation.interpretations.append(record)
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return record
 
 
@@ -491,7 +495,7 @@ class IntentConfirm(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/intents/{intent_id}/confirm")
-def confirm_intent_route(project_id: str, intent_id: str, body: IntentConfirm):
+def confirm_intent_route(request: Request, project_id: str, intent_id: str, body: IntentConfirm):
     project = _project(project_id)
     try:
         materialized = confirm_intent(
@@ -499,30 +503,30 @@ def confirm_intent_route(project_id: str, intent_id: str, body: IntentConfirm):
         )
     except (StopIteration, ValueError) as e:
         raise HTTPException(400, str(e))
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return {"materialized_id": materialized}
 
 
 # -- overrides -----------------------------------------------------------------
 
 @app.post("/api/projects/{project_id}/overrides")
-def add_override(project_id: str, override: Override) -> Override:
+def add_override(request: Request, project_id: str, override: Override) -> Override:
     project = _project(project_id)
     if not override.id:
         override.id = new_id("ov")
     project.overrides.append(override)
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return override
 
 
 @app.delete("/api/projects/{project_id}/overrides/{override_id}")
-def delete_override(project_id: str, override_id: str):
+def delete_override(request: Request, project_id: str, override_id: str):
     project = _project(project_id)
     before = len(project.overrides)
     project.overrides = [o for o in project.overrides if o.id != override_id]
     if len(project.overrides) == before:
         raise HTTPException(404, "override not found")
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return {"deleted": override_id}
 
 
@@ -533,7 +537,7 @@ def delete_override(project_id: str, override_id: str):
 # an INPUT to generation, anchored to a scope that outlives a redraw.
 
 @app.put("/api/projects/{project_id}/choices")
-def put_choice(project_id: str, selection: Selection) -> Selection:
+def put_choice(request: Request, project_id: str, selection: Selection) -> Selection:
     """Upsert one selection by `(choice_set, scope)`.
 
     PUT and not POST because an answer is not an accumulation: choosing again
@@ -544,12 +548,12 @@ def put_choice(project_id: str, selection: Selection) -> Selection:
     project.choices = [
         c for c in project.choices if c.key() != selection.key()
     ] + [selection]
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return selection
 
 
 @app.delete("/api/projects/{project_id}/choices/{choice_set}")
-def delete_choice(project_id: str, choice_set: str, scope: str):
+def delete_choice(request: Request, project_id: str, choice_set: str, scope: str):
     """The scope is a QUERY parameter, not a path segment: a real scope is
     `model:mfr/certainteed/rail` and a path segment cannot carry the slashes."""
     project = _project(project_id)
@@ -559,7 +563,7 @@ def delete_choice(project_id: str, choice_set: str, scope: str):
     ]
     if len(project.choices) == before:
         raise HTTPException(404, "choice not found")
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return {"deleted": choice_set, "scope": scope}
 
 
@@ -759,7 +763,7 @@ class QuoteCreate(BaseModel):
 
 
 @app.post("/api/runs/{run_id}/quote")
-def create_quote(run_id: str, body: QuoteCreate) -> Quote:
+def create_quote(request: Request, run_id: str, body: QuoteCreate) -> Quote:
     """Snapshot the run's BOM as an immutable quote document."""
     result = _run(run_id)
     # via _priced, so the catalog staleness check applies here TOO. It did not
@@ -793,7 +797,7 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     # as well because a quote may be the first thing a project ever asks for, and
     # the document it stands behind must exist.
     supply = state.store.save_supply_run(
-        _supply_run_for(result, preset, priced, inventory), actor=body.author)
+        _supply_run_for(result, preset, priced, inventory), actor=_actor(request, body.author))
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
         label=body.label,
@@ -809,7 +813,7 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
         requirements=priced.requirements, bom=priced.bom,
         total_cents=priced.bom.total_cents,
     )
-    state.store.save_quote(quote, actor=body.author)
+    state.store.save_quote(quote, actor=_actor(request, body.author))
     return quote
 
 
@@ -832,9 +836,9 @@ def get_quote(quote_id: str) -> Quote:
 
 
 @app.post("/api/quotes/{quote_id}/accept")
-def accept_quote(quote_id: str, author: str = "user") -> Quote:
+def accept_quote(request: Request, quote_id: str, author: str = "user") -> Quote:
     try:
-        return state.store.accept_quote(quote_id, actor=author)
+        return state.store.accept_quote(quote_id, actor=_actor(request, author))
     except KeyError:
         raise HTTPException(404, f"quote {quote_id} not found")
     except ValueError as e:
@@ -931,10 +935,10 @@ class CorrectionCreate(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/corrections")
-def add_correction(project_id: str, body: CorrectionCreate) -> Correction:
+def add_correction(request: Request, project_id: str, body: CorrectionCreate) -> Correction:
     _project(project_id)
     correction = Correction(id=new_id("corr"), project_id=project_id, **body.model_dump())
-    state.store.save_correction(correction, actor=body.author)
+    state.store.save_correction(correction, actor=_actor(request, body.author))
     return correction
 
 
@@ -1170,7 +1174,7 @@ class KnowledgeCreate(BaseModel):
 
 
 @app.post("/api/knowledge")
-def upsert_knowledge(body: KnowledgeCreate):
+def upsert_knowledge(request: Request, body: KnowledgeCreate):
     """New version of a knowledge object; the previous active version is retired."""
     version_no = state.store.next_version(body.object_id)
     v = KnowledgeVersion(
@@ -1182,7 +1186,7 @@ def upsert_knowledge(body: KnowledgeCreate):
         derived_from=[f"{body.object_id}@v{version_no - 1}"] if version_no > 1 else [],
         status="active",
     )
-    state.store.replace_active_version(v, actor=body.author)
+    state.store.replace_active_version(v, actor=_actor(request, body.author))
     return v
 
 
@@ -1237,9 +1241,9 @@ def preview_candidate_impact(object_id: str, version: int) -> ImpactReport:
 
 
 @app.post("/api/knowledge/{object_id}/{version}/retire")
-def retire_knowledge(object_id: str, version: int, author: str = "user"):
+def retire_knowledge(request: Request, object_id: str, version: int, author: str = "user"):
     try:
-        state.store.update_knowledge_status(object_id, version, "retired", actor=author)
+        state.store.update_knowledge_status(object_id, version, "retired", actor=_actor(request, author))
     except KeyError:
         raise HTTPException(404, f"{object_id}@v{version} not found")
     except ValueError as e:
@@ -1303,7 +1307,7 @@ def get_fence_model(model_id: str, version: int) -> FenceModel:
 
 
 @app.post("/api/fence-models")
-def create_fence_model(model: FenceModel, author: str = "user"):
+def create_fence_model(request: Request, model: FenceModel, author: str = "user"):
     """A new model always arrives as a draft at the next free version.
 
     A draft may be saved INVALID, and its errors are returned rather than
@@ -1318,12 +1322,12 @@ def create_fence_model(model: FenceModel, author: str = "user"):
         "version": state.store.next_fence_model_version(model.id),
         "status": "draft",
     })
-    state.store.save_fence_model(draft, actor=author)
+    state.store.save_fence_model(draft, actor=_actor(request, author))
     return {"model": draft, "invalid": _model_errors(draft)}
 
 
 @app.put("/api/fence-models/{model_id}/draft")
-def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"):
+def put_fence_model_draft(request: Request, model_id: str, model: FenceModel, author: str = "user"):
     _reserved(model_id)
     library = state.store.fence_model_library()
     # the HIGHEST draft, which is the one `listing()` reports and therefore the
@@ -1335,7 +1339,7 @@ def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"
     version = existing.version if existing else state.store.next_fence_model_version(model_id)
     draft = model.model_copy(update={"id": model_id, "version": version, "status": "draft"})
     try:
-        state.store.save_fence_model(draft, actor=author)
+        state.store.save_fence_model(draft, actor=_actor(request, author))
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"model": draft, "invalid": _model_errors(draft)}
@@ -1358,7 +1362,7 @@ def preview_fence_model_impact(model: FenceModel) -> ImpactReport:
 
 
 @app.delete("/api/fence-models/{model_id}/{version}")
-def discard_fence_model_draft(model_id: str, version: int, author: str = "user"):
+def discard_fence_model_draft(request: Request, model_id: str, version: int, author: str = "user"):
     """Throw a draft away. ONLY a draft.
 
     Without this, every abandoned attempt stayed in the library for ever — and
@@ -1376,12 +1380,12 @@ def discard_fence_model_draft(model_id: str, version: int, author: str = "user")
             "code": "fence_model_not_a_draft",
             "params": {"model_ref": model.ref, "status": model.status},
         })
-    state.store.delete_fence_model_draft(model_id, version, actor=author)
+    state.store.delete_fence_model_draft(model_id, version, actor=_actor(request, author))
     return {"discarded": model.ref}
 
 
 @app.post("/api/fence-models/{model_id}/{version}/publish")
-def publish_fence_model(model_id: str, version: int, author: str = "user"):
+def publish_fence_model(request: Request, model_id: str, version: int, author: str = "user"):
     """Freeze a draft. This is the gate a draft save deliberately is not: from
     here the document is immutable and projects may select it."""
     model = state.store.load_fence_model(model_id, version)
@@ -1392,17 +1396,18 @@ def publish_fence_model(model_id: str, version: int, author: str = "user"):
     invalid = _model_errors(model)
     if invalid:
         raise HTTPException(422, invalid)
-    state.store.set_fence_model_status(model_id, version, "active", actor=author)
+    state.store.set_fence_model_status(model_id, version, "active", actor=_actor(request, author))
     return state.store.load_fence_model(model_id, version)
 
 
 @app.post("/api/fence-models/{model_id}/{version}/status")
 def set_fence_model_status(
+    request: Request,
     model_id: str, version: int, status: Literal["active", "retired"],
     author: str = "user",
 ):
     try:
-        state.store.set_fence_model_status(model_id, version, status, actor=author)
+        state.store.set_fence_model_status(model_id, version, status, actor=_actor(request, author))
     except KeyError:
         raise HTTPException(404, f"{model_id}@v{version} not found")
     except ValueError as e:
@@ -1533,7 +1538,7 @@ def preview_run_bay(run_id: str, element_id: str, body: BayPreviewRequest) -> Pa
 
 
 @app.put("/api/projects/{project_id}/fence-model")
-def put_project_fence_model(project_id: str, choice: FenceModelChoice | None = None) -> Project:
+def put_project_fence_model(request: Request, project_id: str, choice: FenceModelChoice | None = None) -> Project:
     """The project's default model. Refused at the boundary rather than at
     generation: a typo that only fails when someone presses Generate has already
     cost them the strategy they were working on."""
@@ -1548,7 +1553,7 @@ def put_project_fence_model(project_id: str, choice: FenceModelChoice | None = N
                            if choice.version_pin is not None else ""},
             })
     project.fence_model = choice
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
@@ -1677,6 +1682,123 @@ def put_inventory(project_id: str, inventory: Inventory) -> Inventory:
     _project(project_id)
     state.store.save_inventory(project_id, inventory)
     return inventory
+
+
+# -- who is asking -------------------------------------------------------------
+#
+# The cookie name is prefixed because a browser sends every cookie on the origin
+# and a bare `session` collides with whatever else is served there one day.
+SESSION_COOKIE = "fenceai_session"
+
+
+def _signed_in(request: Request) -> User | None:
+    """The account this request is signed in as, or None.
+
+    Never raises. Most routes are still open — accounts RECORD here, they do not
+    yet gate — so "nobody is signed in" has to be an ordinary answer rather than
+    an error every caller must catch.
+    """
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        return None
+    sess = state.store.session(token)
+    if sess is None or not sessions.is_live(sess):
+        return None
+    user = state.store.user(sess.user_id)
+    return user if user and user.active else None
+
+
+def _actor(request: Request, fallback: str = SYSTEM) -> str:
+    """Who to write in the log.
+
+    **A session outranks anything the caller said.** Twelve routes take
+    `?author=` and hand it to the store, which makes the log a thing anybody can
+    sign as anybody — an actor a client can NAME is not an audit trail. The
+    parameter survives only as the fallback for the unsigned-in case, which is
+    every existing test and the whole browser smoke.
+    """
+    user = _signed_in(request)
+    return actor_ref(user) if user else fallback
+
+
+def _require_user(request: Request) -> User:
+    user = _signed_in(request)
+    if user is None:
+        raise HTTPException(401, {"code": "not_signed_in"})
+    return user
+
+
+def _public(user: User) -> dict:
+    """An account as a screen may see it — everything except the hash.
+
+    Not a secret that unlocks anything, and still the one field on the record
+    worth attacking offline, with no surface that needs it.
+    """
+    return user.model_dump(exclude={"password_hash"})
+
+
+class SignIn(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/session")
+def sign_in(body: SignIn, response: Response) -> dict:
+    """Start a session.
+
+    One refusal for a wrong password and for an address with no account, with
+    the same words: two answers would turn this form into a way of asking
+    whether somebody has an account here.
+    """
+    user = state.store.user_by_email(body.email)
+    if user is None or not verify_password(user, body.password):
+        raise HTTPException(401, {"code": "sign_in_failed"})
+    sess = sessions.start(user.id)
+    state.store.save_session(sess)
+    response.set_cookie(
+        SESSION_COOKIE, sess.token, httponly=True, samesite="lax",
+        max_age=sessions.SESSION_DAYS * 24 * 3600,
+    )
+    state.store._audit(actor_ref(user), "sign_in", user.id)
+    return {"user": _public(user), "view": default_view(user.capacity),
+            "may_choose_view": may_choose_view(user.capacity)}
+
+
+@app.delete("/api/session", status_code=204)
+def sign_out(request: Request, response: Response) -> Response:
+    """End it, server-side.
+
+    The row IS the session, so deleting it stops the token working everywhere at
+    once — which is the property an opaque token buys and a self-describing one
+    could not.
+    """
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        state.store.delete_session(token)
+    response.delete_cookie(SESSION_COOKIE)
+    return Response(status_code=204)
+
+
+@app.get("/api/me")
+def me(request: Request) -> dict:
+    """Who am I, which view do I open on, and am I offered the selector.
+
+    The view is answered HERE rather than defaulted in the browser: that is the
+    safe way to flip the default the salesperson MVP deliberately left at `all`,
+    because nobody has to change a global setting for Dana to land on her own
+    screen — and the browser smoke signs in as an admin and keeps seeing today's
+    app.
+    """
+    user = _require_user(request)
+    return {"user": _public(user), "view": default_view(user.capacity),
+            "may_choose_view": may_choose_view(user.capacity)}
+
+
+@app.get("/api/users")
+def list_users(request: Request) -> list[dict]:
+    """The people, for the assignee picker and the “sold by” filter."""
+    _require_user(request)
+    return [_public(u) for u in state.store.list_users()]
 
 
 @app.get("/api/audit")

@@ -1331,5 +1331,7 @@
   "warning.uncovered_point_contradicted": "{parameter} lists {point} as uncovered, but row {row} already covers it — the table disagrees with itself",
   "warning.uncovered_rails_per_span": "No rule states how many rails a bay of {model_ref} gets in section {run_id}; {n} bay(s) built with {value} rails each — confirm before ordering",
   "warning.uncovered_screws_per_span": "No rule states how many screws a bay of {model_ref} gets in section {run_id}; {n} bay(s) built with {value} screws each — confirm before ordering",
-  "warning.unknown_product": "Gate kit '{sku}' is not in the catalog; BOM will price it at zero."
+  "warning.unknown_product": "Gate kit '{sku}' is not in the catalog; BOM will price it at zero.",
+  "error.sign_in_failed": "That email and password do not match an account.",
+  "error.not_signed_in": "Sign in to do that."
 }
