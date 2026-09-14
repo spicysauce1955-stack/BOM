@@ -29,9 +29,9 @@ DOCS = Path(__file__).resolve().parents[2] / "docs" / "architecture"
 # Everything that is NOT a delivery mechanism. The rules below are about what
 # these may depend on; `api` and `web` are the outside and may depend on them.
 DOMAIN = (
-    "catalog", "core", "decisions", "demand", "fencemodel", "fulfillment",
-    "identity", "knowledge", "learning", "parts", "project", "report", "strategy",
-    "topology",
+    "catalog", "commands", "core", "decisions", "demand", "fencemodel",
+    "fulfillment", "identity", "knowledge", "learning", "parts", "project",
+    "report", "strategy", "topology",
 )
 
 
