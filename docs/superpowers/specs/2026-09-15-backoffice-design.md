@@ -194,6 +194,22 @@ choose, a warning to read, a plan to commit — is open on every fresh job by
 definition, so counting it would make every row read the same and tell the reader
 nothing. The office's list lives on its road, inside the job.
 
+### Two Finished columns have no source, and one gets a field
+
+`select_rows` is pure over loaded projects, so it can fill neither `closed_at`
+(no such field) nor `quote_total_cents` (in the store, which `project/` may not
+import). The answers differ on purpose:
+
+* **`closed_at` becomes a fifth field on `Project`**, written by the commands that
+  close a job. It is a fact about the job, nothing else knows it, and deriving it
+  from the audit log would make a list query walk an append-only table.
+* **`quote_total_cents` is filled by the ROUTE**, which holds the store. Twenty-five
+  lookups for a page of twenty-five, and no stored copy of a number that already
+  lives somewhere — the same argument as the open-question count.
+
+Spec §6's other Finished columns — "the plan" and "planned by" — have no source on
+`Project` either and are NOT invented here. They arrive with `committed_run_id`.
+
 **Paging is a correctness requirement, not a nicety.** The count is derived, and
 read models here are derived and never stored. Deriving it for a page of 25 keeps
 that rule and costs nothing; deriving it for an unbounded list does not. So the
