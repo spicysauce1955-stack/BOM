@@ -131,28 +131,56 @@ def test_every_registered_kind_has_a_locale_key_in_both_bundles():
         assert f"command.{kind}" in he, kind
 
 
-def test_the_table_imports_nothing_of_ours():
-    """A pure leaf, and pinned rather than intended.
-
-    Both ends of the system reach this package — a route performs a row, an agent
-    proposes one — so the moment it can import either, one of them owns it again
-    and we are back to a table living wherever its first caller happened to be.
-    `fenceai.commands.model` is the one exception the scan allows: the package
-    naming its own row type is not a dependency on anything.
-    """
+def _imported_modules(path: Path) -> list[str]:
     import ast
 
+    names: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            names.append(node.module)
+        elif isinstance(node, ast.Import):
+            names += [a.name for a in node.names]
+    return [n for n in names if n.startswith("fenceai.")]
+
+
+def test_the_table_itself_imports_nothing_of_ours():
+    """The two modules that ARE the table are a pure leaf, and pinned rather than
+    intended.
+
+    Both ends of the system reach this package — a route performs a row, an agent
+    proposes one — so the moment the table can import either, one of them owns it
+    again and we are back to a table living wherever its first caller happened to
+    be. `fenceai.commands.model` is the one exception the scan allows: the package
+    naming its own row type is not a dependency on anything.
+    """
+    src = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "commands"
+    offenders = []
+    for name in ("model.py", "registry.py"):
+        offenders += [f"{name} imports {n}" for n in _imported_modules(src / name)
+                      if not n.startswith("fenceai.commands.")]
+    assert not offenders, offenders
+
+
+def test_no_row_imports_either_end_of_the_system():
+    """The ROWS are allowed to know what they change, and only that.
+
+    `desk.py` moves a `status` and writes an `Annotation`, so it names
+    `fenceai.project`; a row forbidden to name what a job is would have to be
+    written somewhere else, which would split the table in two and leave the
+    permission column in one half and the effect in the other. `fenceai.core` and
+    `fenceai.project` are leaves themselves and neither imports this package, so
+    allowing them widens nothing.
+
+    What no module here may name is `fenceai.api` or `fenceai.agent`. That is the
+    actual property — not "imports nothing", which was only ever the cheapest way
+    to state it while the table had one row and no effects.
+    """
     src = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "commands"
     modules = sorted(src.rglob("*.py"))
     assert modules, "no command modules found — this test is looking at nothing"
+    allowed = ("fenceai.commands.", "fenceai.core.", "fenceai.project.")
     offenders = []
     for path in modules:
-        for node in ast.walk(ast.parse(path.read_text())):
-            names = []
-            if isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            elif isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            offenders += [f"{path.name} imports {n}" for n in names
-                          if n.startswith("fenceai.") and not n.startswith("fenceai.commands.")]
+        offenders += [f"{path.name} imports {n}" for n in _imported_modules(path)
+                      if not n.startswith(allowed) and n != "fenceai.commands"]
     assert not offenders, offenders
