@@ -428,7 +428,7 @@ export function initContext() {
   on("project-loaded", redraw);
   on("context-changed", redraw);
   on("locale-changed", redraw);
-  on("role-changed", redraw);
+  on("view-changed", redraw);
   on("fit-view", render);
   // Only the panel: the canvas draws world millimetres and does not care what
   // unit they are typed in. The fields DO hold mm rendered in the display unit,

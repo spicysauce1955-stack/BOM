@@ -141,5 +141,5 @@ export function initJob() {
   // The words change with the role too (`sales.job.*` beats `job.*`), and this
   // panel renders through `t()` at render time rather than through the static
   // pass — so unlike index.html's labels it needs telling.
-  on("role-changed", render);
+  on("view-changed", render);
 }

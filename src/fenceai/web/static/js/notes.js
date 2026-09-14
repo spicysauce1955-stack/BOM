@@ -394,7 +394,7 @@ export function initNotes() {
   on("locale-changed", redraw);
   // every label here resolves `sales.<key>` first, so they go stale the instant
   // the role changes (i18n.js `lookup`)
-  on("role-changed", redraw);
+  on("view-changed", redraw);
   // The drawing moved under the markers. The PANEL is redrawn with them for the
   // first two: deleting a landmark or an event does not change a note, but it
   // does change what that note's target is CALLED — the row has to start saying

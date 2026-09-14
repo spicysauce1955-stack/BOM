@@ -8,7 +8,7 @@
 import { esc } from "./api.js";
 import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
-import { currentRole } from "./role.js";
+import { currentView } from "./view.js";
 import { on, saveStated, setTool, state } from "./state.js";
 import { setTab } from "./tabs.js";
 import { panelFor, road } from "./road-model.js";
@@ -18,7 +18,7 @@ import { roadFor } from "./roads.js";
 let current = "job";
 
 function currentRoad() {
-  return roadFor(currentRole());
+  return roadFor(currentView());
 }
 
 /** Move to the next step in this road, or stay if this is the last.
@@ -124,7 +124,7 @@ function showStep(stepKey) {
   // the gate tool armed on step 6 was still armed on step 7, where clicking
   // the house to write a note on it placed a gate instead — on a step whose
   // rail does not show the gate button at all. Hiding a control never disarms
-  // it (`role.js` says the same about hiding not being a permission), so the
+  // it (`view.js` says the same about hiding not being a permission), so the
   // arming has to be explicit and it belongs here, where the step changes.
   //
   // `step-surfaces.js` derives the answer from the tools the step KEEPS, so
@@ -177,7 +177,7 @@ export function render() {
   // absent attribute matches no `html[data-step="X"]` rule in style.css — so
   // `office`/`all` sit under no step rule at all (step-surfaces.js's header
   // comment, "Only `sales` has steps").
-  if (currentRole() === "sales") document.documentElement.dataset.step = current;
+  if (currentView() === "sales") document.documentElement.dataset.step = current;
   else delete document.documentElement.dataset.step;
   // A role with no road shows none — and the tab strip is what it navigates by.
   host.hidden = def === null;
@@ -236,14 +236,14 @@ export function initRoad() {
   // job saved while the salesperson is working on step 4 must not yank them
   // off what they are doing.
   on("job-changed", () => {
-    if (currentRole() === "sales" && current === "job") advance();
+    if (currentView() === "sales" && current === "job") advance();
   });
-  on("role-changed", () => {
+  on("view-changed", () => {
     render();
     // Entering sales from another role can leave a panel the road does not
     // claim active and visible — the BOM tab, say — while the band says step
     // 1. The band is this role's only navigation, so it must not describe a
     // screen the user is not on.
-    if (currentRole() === "sales") showStep(current);
+    if (currentView() === "sales") showStep(current);
   });
 }

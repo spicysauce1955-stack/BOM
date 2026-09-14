@@ -1,9 +1,9 @@
 // Which of a sales step's controls are visible — a scoping list built exactly
-// like `role.js`'s hide-list, and for the same reason: CSS cannot read a JS
+// like `view.js`'s hide-list, and for the same reason: CSS cannot read a JS
 // array, so this module owns the LIST and `style.css` repeats it, and the two
 // copies are checked for EQUALITY (not overlap) by
 // `tests/web/test_step_surfaces.py`, mirroring the check already made for
-// `role.js` against its own stylesheet copy.
+// `view.js` against its own stylesheet copy.
 //
 // Built as navigation alone, the road moved an underline while the screen
 // underneath stayed identical: in `sales` every step showed all nine tools
@@ -33,7 +33,7 @@
 
 // Tools each step KEEPS. `#tool-select` is never listed — it is the default
 // tool and stays visible in every step, so it is never part of the scoped
-// union below (the same split `role.js` makes for tabs versus `ALL_TABS`).
+// union below (the same split `view.js` makes for tabs versus `ALL_TABS`).
 const STEP_TOOLS = {
   job: [],
   // `#tool-other` is the one control behind which every property object that is
@@ -123,7 +123,7 @@ export const STEP_HIDDEN = Object.fromEntries(STEP_KEYS.map((key) => {
 }));
 
 /** The selectors a step hides, or `[]` for a step this list does not know —
- *  the same degrade-to-nothing rule as `role.js: hiddenFor`, and for the same
+ *  the same degrade-to-nothing rule as `view.js: hiddenFor`, and for the same
  *  reason: an unrecognised step must not blank the screen. */
 export function hiddenForStep(key) {
   return STEP_HIDDEN[key] ? [...STEP_HIDDEN[key]] : [];
@@ -135,7 +135,7 @@ export function hiddenForStep(key) {
  *  screen lying about what the next click would do: arm the gate tool on step
  *  6, walk to step 7, click the house to write a note on it, and a gate was
  *  placed instead — on a step whose rail does not even show the gate button.
- *  Hiding a control does not disarm it, exactly as `role.js` says hiding is
+ *  Hiding a control does not disarm it, exactly as `view.js` says hiding is
  *  never a permission.
  *
  *  DERIVED from `STEP_TOOLS`, not a second hand-written table: a step that

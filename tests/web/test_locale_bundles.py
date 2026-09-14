@@ -1369,7 +1369,7 @@ def test_every_sales_override_renames_a_key_that_actually_exists():
 
 
 def test_every_sales_override_reaches_the_screen_when_the_role_changes():
-    """The guard `role.js` relies on.
+    """The guard `view.js` relies on.
 
     Switching role re-renders the static `data-i18n` pass. That reaches every
     label in `index.html` and NOTHING a module renders through `t()` at render
@@ -1381,7 +1381,7 @@ def test_every_sales_override_reaches_the_screen_when_the_role_changes():
     So an override is admissible by one of two routes, and no third:
 
     1. its key is a `data-i18n` attribute in `index.html` — the static pass, or
-    2. a module that subscribes to `role-changed` renders that namespace, and
+    2. a module that subscribes to `view-changed` renders that namespace, and
        therefore re-renders itself when the role changes.
 
     Route 2 is matched on the key's NAMESPACE rather than the literal key,
@@ -1395,7 +1395,7 @@ def test_every_sales_override_reaches_the_screen_when_the_role_changes():
     static_keys = set(re.findall(r'data-i18n(?:-title|-placeholder)?="([^"]+)"', html))
 
     role_aware = [m.read_text() for m in (STATIC / "js").glob("*.js")
-                  if 'on("role-changed"' in m.read_text()]
+                  if 'on("view-changed"' in m.read_text()]
 
     def reachable(key: str) -> bool:
         if key in static_keys:
@@ -1407,7 +1407,7 @@ def test_every_sales_override_reaches_the_screen_when_the_role_changes():
     unreachable = sorted(k for k in overrides if not reachable(k))
     assert not unreachable, (
         "sales overrides that nothing would re-render on a role change — either "
-        "make the rendering module subscribe to `role-changed`, or drop the "
+        "make the rendering module subscribe to `view-changed`, or drop the "
         f"override: {unreachable}")
 
 
@@ -1416,8 +1416,8 @@ def test_at_least_one_module_subscribes_to_role_changed():
     role-aware modules at all — a rename of the event, or of the subscription
     idiom, would silently turn route 2 into "anything goes"."""
     role_aware = [m.name for m in (STATIC / "js").glob("*.js")
-                  if 'on("role-changed"' in m.read_text()]
-    assert role_aware, "no module subscribes to role-changed — has the event been renamed?"
+                  if 'on("view-changed"' in m.read_text()]
+    assert role_aware, "no module subscribes to view-changed — has the event been renamed?"
 
 
 def test_every_handover_code_has_locale_entries():

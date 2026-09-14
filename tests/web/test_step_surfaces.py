@@ -17,8 +17,8 @@ eight would pass while `property`, `sideview` and `model` sat completely
 unscoped in the running app — green tests, and the bug the user rejected still
 on screen for three of eight steps.
 
-Two failure modes this file exists to catch, mirroring `test_role_module.py`
-and `test_role_sync.py` for the analogous role list:
+Two failure modes this file exists to catch, mirroring `test_view_module.py`
+and `test_view_sync.py` for the analogous view list:
 
 - a step with no entry hides nothing and silently shows the whole app
   (`test_every_step_has_a_surface_list`);
@@ -72,7 +72,7 @@ def out() -> dict:
 
 def _live_ids() -> set[str]:
     """Every id the running app actually has — copied from
-    `test_role_module.py`, which needed it for the same reason: an id can be
+    `test_view_module.py`, which needed it for the same reason: an id can be
     real and absent from `index.html`, created instead by the module that
     owns it (`#choices`, `#job-panel`, `#context-panel`, `#handover-panel`)."""
     ids = set(re.findall(r'id="([^"]+)"', (STATIC / "index.html").read_text()))
@@ -114,15 +114,15 @@ def test_every_step_has_a_surface_list(out):
 
 
 def test_an_unknown_step_hides_nothing_rather_than_everything(out):
-    """The same degrade-to-nothing rule `role.js: hiddenFor` uses for an
-    unrecognised role: a stored preference from a future version, or a typo,
+    """The same degrade-to-nothing rule `view.js: hiddenFor` uses for an
+    unrecognised view: a stored preference from a future version, or a typo,
     must not blank the screen."""
     assert out["unknown"] == []
 
 
 def test_every_scoped_selector_exists(out):
     """The assertion that earns this file, and the same one
-    `test_role_module.py` makes: a selector matching nothing hides nothing,
+    `test_view_module.py` makes: a selector matching nothing hides nothing,
     breaks no test, and looks fine on screen."""
     ids = _live_ids()
     for step, selectors in out["hidden"].items():
@@ -223,15 +223,15 @@ def test_the_drawing_is_scoped_to_the_steps_whose_work_is_on_it(out):
 
 
 def test_step_and_role_lists_stay_independent(out):
-    """`data-role` answers who is looking; `data-step` answers what they are
+    """`data-view` answers who is looking; `data-step` answers what they are
     doing now. Merged, "is the inspector visible?" would have six answers."""
     src = (STATIC / "js" / "step-surfaces.js").read_text()
-    assert "role" not in src.lower().replace("role.js", ""), (
-        "step-surfaces.js must not reason about roles")
+    assert "role" not in src.lower().replace("view.js", ""), (
+        "step-surfaces.js must not reason about views")
 
 
 def test_the_two_copies_are_equal(out):
-    """`test_role_sync.py`'s rule, applied to steps: CSS cannot read a JS
+    """`test_view_sync.py`'s rule, applied to steps: CSS cannot read a JS
     array, so the list exists twice and the copies must be EQUAL."""
     css = _from_css_steps()
     for step in out["step_keys"]:

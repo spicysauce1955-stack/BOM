@@ -30,7 +30,7 @@
  *  canvas gesture with nothing to press, which is why the Done button exists at
  *  all. */
 export const SALES_ROAD = {
-  role: "sales",
+  view: "sales",
   anchor: "no_fence_drawn",
   steps: [
     { key: "job", panel: "canvas", commits: true,
@@ -74,6 +74,6 @@ export const ROADS = { sales: SALES_ROAD };
  *  the prototype and hands back `Object` for `roadFor("constructor")`, a
  *  truthy non-road whose `.steps` is undefined. `road()` guards gap codes the
  *  same way, for the same reason: both keys come from data. */
-export function roadFor(role) {
-  return Object.hasOwn(ROADS, role) ? ROADS[role] : null;
+export function roadFor(view) {
+  return Object.hasOwn(ROADS, view) ? ROADS[view] : null;
 }

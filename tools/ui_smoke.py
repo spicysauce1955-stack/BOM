@@ -834,7 +834,7 @@ def _smoke_sales_mode(c) -> None:
     """The salesperson's app is the same app with the engineering taken out.
 
     Three things only a browser can answer. That the hide-list actually HIDES —
-    `role.js` and `style.css` hold the list twice and `tests/web/test_role_sync.py`
+    `view.js` and `style.css` hold the list twice and `tests/web/test_view_sync.py`
     proves they agree with each other, which is not the same as proving either
     agrees with the rendered page. That the surfaces recording what was SOLD
     survive, because a mode that hid those would be small rather than useful.
@@ -878,7 +878,7 @@ def _smoke_sales_mode(c) -> None:
           and before["inspector"] == "shown", before)
 
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'sales';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -890,7 +890,7 @@ def _smoke_sales_mode(c) -> None:
           all(sales[k] == "hidden" for k in
               ("pin", "knowledge", "bom", "inspector", "gaps")), sales)
     # Read each surface IN THE STEP THAT OWNS IT. Two hide mechanisms now act
-    # on these same elements — `data-role` answers who is looking, `data-step`
+    # on these same elements — `data-view` answers who is looking, `data-step`
     # answers what they are doing now — and their LISTS are independent
     # (`test_step_surfaces.py`) while their EFFECTS compose. Read blind, this
     # check sat on step 1 and called four surfaces role-hidden that the STEP
@@ -1000,7 +1000,7 @@ def _smoke_sales_mode(c) -> None:
     # A RELOAD in sales mode, which is how a salesperson actually arrives: the
     # role persists in localStorage, so the hiding survived — and the WORDING
     # did not, because `initI18n` applies the static pass while the role is
-    # still the default and `initRole` never re-applied it (audit observation
+    # still the default and `initView` never re-applied it (audit observation
     # 2). It looked like a rendering hiccup because switching role or language
     # fixed it.
     c.js("location.reload(); 'ok'")
@@ -1015,7 +1015,7 @@ def _smoke_sales_mode(c) -> None:
     # ...and back, because a mode nobody can leave is a mode that traps the
     # office person who borrowed the salesperson's laptop.
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'all';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -1039,7 +1039,7 @@ def _smoke_job_identity(c) -> None:
     them the drawing, the panel would be worse than the blank field it replaced.
     """
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1140,7 +1140,7 @@ def _smoke_property_context(c) -> None:
     so this case asserts the wiring rather than re-deriving the rectangle.
     """
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1465,7 +1465,7 @@ def _smoke_handover_sheet(c) -> None:
     that the number never appears without the sentence that qualifies it.
     """
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1622,7 +1622,7 @@ def _smoke_road(c) -> None:
         time.sleep(1.0)
 
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1644,7 +1644,7 @@ def _smoke_road(c) -> None:
 
     # --- the road is a salesperson's surface -------------------------------
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'sales';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -1714,7 +1714,7 @@ def _smoke_road(c) -> None:
 
     # leave the ambient state the way the next case expects it
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'all';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -1746,7 +1746,7 @@ def _smoke_knowledge_panes(c) -> None:
         c.click(*c.element_center("#btn-locale"))
         time.sleep(1.0)
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1897,7 +1897,7 @@ def _smoke_sales_step_surfaces(c) -> None:
         time.sleep(0.8))
 
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'sales'; s.dispatchEvent(new Event('change'));
   return 'ok';
 })()""")
@@ -2324,7 +2324,7 @@ def _smoke_sales_step_surfaces(c) -> None:
     time.sleep(0.3)
     # back to the whole app for whatever follows
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'all'; s.dispatchEvent(new Event('change'));
   return 'ok';
 })()""")
@@ -2345,7 +2345,7 @@ def _smoke_run_measurements(c) -> None:
     leg instead of one meaningless angle for the whole thing.
     """
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")

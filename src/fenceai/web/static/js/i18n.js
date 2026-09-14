@@ -19,11 +19,11 @@ export function currentLocale() {
 // words that are actually wrong for a salesperson — instead of a second full
 // bundle that would drift from this one the first time anybody edited either.
 //
-// It reads `state.role` rather than importing role.js, which would be a cycle
-// (role.js emits through state.js, and this module is imported by nearly
+// It reads `state.view` rather than importing view.js, which would be a cycle
+// (view.js emits through state.js, and this module is imported by nearly
 // everything). Same reason units.js reads `state.units`.
 function lookup(table, key) {
-  if (state.role === "sales") {
+  if (state.view === "sales") {
     const plain = table[`sales.${key}`];
     if (plain !== undefined) return plain;
   }

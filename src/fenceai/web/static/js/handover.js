@@ -169,5 +169,5 @@ export function initHandover() {
   on("job-changed", refresh);
   on("locale-changed", render);
   on("units-changed", render);
-  on("role-changed", render);
+  on("view-changed", render);
 }
