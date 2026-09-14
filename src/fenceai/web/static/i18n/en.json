@@ -1352,5 +1352,8 @@
   "signin.out": "Sign out",
   "signin.capacity.sales": "Sales",
   "signin.capacity.backoffice": "Back office",
-  "signin.capacity.admin": "Admin"
+  "signin.capacity.admin": "Admin",
+  "error.assignee_unknown": "That person does not have an account here.",
+  "error.queue_cursor_invalid": "That page link is no longer valid — start from the first page.",
+  "error.queue_filter_invalid": "That filter is not valid: {detail}"
 }

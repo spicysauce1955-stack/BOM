@@ -254,6 +254,10 @@ REFUSAL_CODES = [
     # asking whether somebody has an account here.
     "sign_in_failed",
     "not_signed_in",
+    # -- the queue and the one door ---------------------------------------------
+    "assignee_unknown",
+    "queue_cursor_invalid",
+    "queue_filter_invalid",
     # -- the one door (backoffice design §10) ------------------------------------
     # The three questions a command is asked, each with its own sentence.
     # `command_not_permitted` is deliberately silent about the job: capacity is

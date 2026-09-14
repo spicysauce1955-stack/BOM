@@ -80,6 +80,7 @@ from fenceai.identity.model import (
     SYSTEM, User, actor_ref, default_view, may_choose_view, verify_password,
 )
 from fenceai.identity import session as sessions
+from fenceai.project.queue import DEFAULT_LIMIT, QueueFilter, select_rows
 from fenceai.store.db import Store
 from fenceai.strategy.generator import DEFAULT_POLICY, LEGACY_MODEL_ID, generate
 from fenceai.strategy.model import PartUse
@@ -447,6 +448,26 @@ class CommandBody(BaseModel):
 _REFUSAL_STATUS = {"command_wrong_state": 409}
 
 
+def _refuse_unknown_assignee(body: CommandBody) -> None:
+    """A desk you can hand a job to has to exist.
+
+    `commands/` cannot reach the store, so `AssignJob.user_id` is unchecked there
+    and says so in a comment. Unchecked here too, a typo would put the job on a
+    desk nobody has — off every list at once, with nothing refusing and nobody
+    able to find it again except by reading the database. That is the failure the
+    seam was left open for, and this is the side of the seam that knows who
+    exists.
+    """
+    if body.kind != "assign_job":
+        return
+    user_id = (body.payload or {}).get("user_id")
+    target = state.store.user(user_id) if user_id else None
+    if target is None or not target.active:
+        raise HTTPException(422, {
+            "code": "assignee_unknown", "params": {"user_id": user_id or ""},
+        })
+
+
 @app.post("/api/projects/{project_id}/actions")
 def perform_command(request: Request, project_id: str, body: CommandBody) -> Project:
     """Perform one command against one job, or refuse it in a sentence.
@@ -461,6 +482,7 @@ def perform_command(request: Request, project_id: str, body: CommandBody) -> Pro
     """
     user = _require_user(request)
     project = _project(project_id)
+    _refuse_unknown_assignee(body)
     try:
         changed = commands.perform(
             body.kind, body.payload, project,
@@ -514,11 +536,89 @@ def get_handover(project_id: str) -> dict:
 
 @app.get("/api/projects")
 def list_projects() -> list[dict]:
-    # `label` is what a person would call the job; `name` stays because the
-    # picker is not the only caller and something keyed on it must not silently
-    # start reading a customer's name instead.
+    """The PICKER's list — every project, three fields, unchanged.
+
+    Deliberately not the queue. They answer different questions and want
+    different rows: the picker is "which job am I looking at" and includes a
+    salesperson's own drafts, while the queue is "what should I work on next"
+    and hides drafts from everybody but their author. Folding them into one
+    route meant changing this one's envelope from a list to an object, which
+    broke five callers including the picker itself — the plan said "rebuilt
+    rather than extended" and the rebuild turned out to be a second question,
+    not a bigger answer.
+    """
     return [{"id": p.id, "name": p.name, "label": p.display_name()}
             for p in state.store.list_projects()]
+
+
+@app.get("/api/queue")
+def queue(
+    request: Request,
+    bucket: str = "open",
+    status: str = "",
+    assignee: str = "",
+    sold_by: str = "",
+    submitted_from: str = "",
+    submitted_to: str = "",
+    has_open: bool | None = None,
+    q: str = "",
+    sort: str = "waiting",
+    limit: int = DEFAULT_LIMIT,
+    cursor: str = "",
+) -> dict:
+    """What should I work on next — or, in the finished bucket, what did we do.
+
+    Paged from the first commit, because the open-question count is DERIVED per
+    row: deriving it for twenty-five is free and for an unbounded list is what
+    would make "read models are derived, never stored" unaffordable.
+    """
+    user = _signed_in(request)
+    # `me` is resolved HERE and never passed through. `select_rows` refuses the
+    # literal string on purpose: matched as an id it would return an empty page
+    # that reads as "you have nothing to do", which is the most misleading answer
+    # a queue can give.
+    who = actor_user_id(user) if assignee == "me" else assignee
+    try:
+        f = QueueFilter(
+            bucket=bucket,
+            status=tuple(s for s in status.split(",") if s),
+            assignee=who or None,
+            sold_by=sold_by,
+            submitted_from=submitted_from, submitted_to=submitted_to,
+            has_open=has_open, q=q, sort=sort,
+            for_capacity=user.capacity if user else None,
+            limit=limit, cursor=cursor or None,
+        )
+        rows, next_cursor = select_rows(
+            state.store.list_projects(), f, now=datetime.now(timezone.utc))
+    except ValidationError as e:
+        raise HTTPException(422, {"code": "queue_filter_invalid",
+                                  "params": {"detail": e.errors()[0]["msg"]}})
+    except ValueError as e:
+        raise HTTPException(400, {"code": "queue_cursor_invalid",
+                                  "params": {"detail": str(e)}})
+    return {"rows": [_queue_row(r) for r in rows], "next_cursor": next_cursor}
+
+
+def actor_user_id(user: User | None) -> str:
+    """`assignee=me` with nobody signed in matches nobody, which is the honest
+    answer — not everybody."""
+    return user.id if user else "\x00-nobody"
+
+
+def _queue_row(row) -> dict:
+    """One row, plus the two columns a pure function could not fill.
+
+    `quote_total_cents` is looked up here because the store is here, and NOT
+    stored on the job for the same reason the open-question count is not: it
+    already lives somewhere, and a second copy is a second answer.
+    """
+    out = row.model_dump()
+    if row.status in ("quoted", "delivered"):
+        quotes = state.store.list_quotes(row.id)
+        accepted = [q for q in quotes if q.status == "accepted"] or quotes
+        out["quote_total_cents"] = accepted[-1].total_cents if accepted else None
+    return out
 
 
 @app.get("/api/projects/{project_id}")
