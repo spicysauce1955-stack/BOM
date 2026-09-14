@@ -226,6 +226,7 @@
   "choices.value_with_lexeme": "{lexeme} ({value_mm} {u})",
   "choices.widths": "{widths} {u}",
   "choices.withdraw": "ביטול הבחירה",
+  "command.select_choice_point": "נבחרה פריסה",
   "common.add": "הוספה",
   "common.cancel": "ביטול",
   "common.close": "סגירה",

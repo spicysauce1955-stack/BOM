@@ -1,10 +1,10 @@
-"""What an agent may propose — a code-registered table, not a config file.
+"""What an AGENT may propose — the subset, and the row shape a proposal needs.
 
 `knowledge/ast.py`'s FnCall whitelist is the same instinct: a closed vocabulary
 resolved in code, no eval of strings, ever. Spec §1 asks that a task's
-permission list BE the model's output schema, so an action absent from this
-table has no word in any grammar an agent is ever handed — narrow run stops
-being a policy somebody must enforce and becomes a type.
+permission list BE the model's output schema, so an action absent from the table
+has no word in any grammar an agent is ever handed — narrow run stops being a
+policy somebody must enforce and becomes a type.
 
 **That schema half is not built yet.** It arrives with the Claude adapter in
 slice 2, which will compile the schema FROM `may_emit`. Until then the property
@@ -15,15 +15,26 @@ otherwise be told the grammar already exists: `view.py` carries the reason we
 are careful about that ("Ours was worse than a stale comment — we asserted the
 stale state as a current reason").
 
+**The table itself left this module.** It is `fenceai/commands/` now, and it was
+never the agent's: it held one row, the agent was its only caller, so it lived
+here. The list of things that may be done to a job belongs to the job (backoffice
+design §10). What stays is the agent's half — the payload it may send, the
+referential check a proposal has to survive, and `KINDS`, the SUBSET it may
+propose. `register` / `spec_for` / `parse_payload` are re-exported rather than
+re-implemented, because a human pressing a button and an agent proposing one must
+reach the same row; two tables would drift, and the drift is where an untraceable
+change comes from.
+
 **Growth is additive.** A run stamps only the inputs it actually had, so adding
 an entry never invalidates a stored run. But a finding that fits no entry
-becomes a COUNTER before it becomes a row here — T54 §2, where the Knowledge
+becomes a COUNTER before it becomes a row there — T54 §2, where the Knowledge
 team wanted a ninth Gap kind, found none of the eight fitted, and declined to
 add one "for something we can measure on our own side". Without that restraint
 the table accumulates one-off kinds and the grammar is only as good as the
 judgement of whoever last extended it.
 
-Design: docs/superpowers/specs/2026-09-08-agent-framework-design.md §2.
+Design: docs/superpowers/specs/2026-09-08-agent-framework-design.md §2;
+docs/superpowers/specs/2026-09-15-backoffice-design.md §10.
 """
 
 from __future__ import annotations
@@ -34,6 +45,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from fenceai.commands.model import CommandSpec
+from fenceai.commands.registry import _TABLE as _REGISTRY  # noqa: F401
+from fenceai.commands.registry import parse_payload, register, spec_for  # noqa: F401
 from fenceai.strategy.choices import ChoiceSet, offered
 
 
@@ -52,18 +66,17 @@ class SelectChoicePoint(BaseModel):
     point_id: str
 
 
-@dataclass(frozen=True)
-class ActionSpec:
-    """One thing an agent may propose.
+@dataclass(frozen=True, kw_only=True)
+class ActionSpec(CommandSpec):
+    """A command row an agent may propose: the shared row, plus check 3.
 
-    A dataclass rather than a model: `payload_model` is a TYPE, and a registry
-    row is code rather than data on the wire.
+    A subclass rather than a parallel class, so `spec_for` hands back one kind of
+    thing and the desk and the agent cannot end up describing the same command
+    twice. `referential` is the only column an agent needs and a button does not:
+    a person pressing `Take it` names nothing that has to still exist, while a
+    proposal names a point that may have stopped being offered.
     """
 
-    kind: str
-    payload_model: type[BaseModel]
-    rung: Literal["note", "selection", "directive", "rule"]
-    i18n_key: str
     # Check 3 (spec §6), and it lives HERE rather than in the dispatcher on
     # purpose: a `kind` whose payload parses is not a `kind` whose payload
     # RESOLVES, and a dispatcher that asked "is this the one kind I know how to
@@ -75,29 +88,15 @@ class ActionSpec:
     # Backend policy, and deliberately not the agent's business (spec §7): an
     # agent told which of its proposals get applied automatically will learn to
     # phrase things to get applied, and every check would still pass.
+    #
+    # Redeclared with the agent framework's own words rather than inheriting
+    # `CommandSpec.disposition`. They are one dial — `show` is `suggest` and
+    # `hold_pending` is `ask` — and reconciling them to one vocabulary is §11's
+    # job, when the agent actually starts proposing desk commands. Doing it in a
+    # commit that only moves a table would leave the agent spec's §7 table
+    # describing words the code no longer has, which is the drift this package
+    # keeps warning about.
     disposition: Literal["show", "hold_pending", "auto"] = "show"
-
-
-_REGISTRY: dict[str, ActionSpec] = {}
-
-
-def register(spec: ActionSpec) -> ActionSpec:
-    if spec.kind in _REGISTRY:
-        raise ValueError(f"action kind already registered: {spec.kind}")
-    _REGISTRY[spec.kind] = spec
-    return spec
-
-
-def spec_for(kind: str) -> ActionSpec:
-    if kind not in _REGISTRY:
-        raise KeyError(f"no registered action kind: {kind}")
-    return _REGISTRY[kind]
-
-
-def parse_payload(kind: str, payload: dict) -> BaseModel:
-    """The typed model is authoritative; a stored `Proposal.payload` is its
-    serialised form, and this is the only way to read one back."""
-    return spec_for(kind).payload_model.model_validate(payload)
 
 
 def _select_choice_point_resolves(payload: BaseModel, open_sets: list[ChoiceSet]) -> bool:
@@ -125,4 +124,8 @@ SELECT_CHOICE_POINT = register(ActionSpec(
     referential=_select_choice_point_resolves,
 ))
 
-KINDS: tuple[str, ...] = tuple(_REGISTRY)
+#: What an agent may propose — the agent's SUBSET of the table, not the table.
+#: Written from the rows this module registers rather than read off `_REGISTRY`,
+#: which is now shared: `tuple(_REGISTRY)` would grow a desk command the day one
+#: happened to be imported first, and `may_emit` would silently widen.
+KINDS: tuple[str, ...] = (SELECT_CHOICE_POINT.kind,)

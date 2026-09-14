@@ -226,6 +226,7 @@
   "choices.value_with_lexeme": "{lexeme} ({value_mm} {u})",
   "choices.widths": "{widths} {u}",
   "choices.withdraw": "Withdraw this answer",
+  "command.select_choice_point": "Chose a layout",
   "common.add": "Add",
   "common.cancel": "Cancel",
   "common.close": "Close",
