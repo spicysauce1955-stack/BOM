@@ -5301,3 +5301,69 @@ raw enum — "this is a end post" in English, and an English word inside a Hebre
 sentence.
 
 2889 pytest · 299 golden scenarios · 428 browser checks · contract hashes verify.
+
+---
+
+## Everything on one trunk (2026-09-10) — MERGED
+
+The two long-running branches are on `main` and gone. `feat/salesperson-road`
+(64 commits: the road, `Stated`, gates as first-class, the Knowledge tab) merged
+as PR #3; `feat/agent-framework-slice-1` (22 commits: the advisory agent) merged
+as PR #4. Fifteen stale `worktree-agent-*` branches and `gap-as-a-return-type`
+were already ancestors of `main` and were deleted with their worktrees. `origin`
+now has ONE branch.
+
+**Thirteen defects the pre-merge review found, each reproduced before it was
+fixed and each guard verified by mutation.** The four that would have cost money
+or trust:
+
+* `admits_widths` granted the remainder ceiling to a bay whenever the published
+  limit rounds UP — two bays of 2464 mm build on a 4928 mm segment under a
+  2463.8 mm limit where the sealed schedule forces three, with no warning,
+  because `_span_rounded_over_published_limit` early-returns on the same
+  predicate. Every fractional test in the file published 1422.4, which rounds
+  DOWN, so this magnitude had no loosening-direction test at all.
+* `gates_contradicted` could not see a `GateSpan`, so a job could carry
+  `no_gates=True` and a gate at once — the office receiving a handover claiming
+  no gates with a gate kit on the BOM, which is what `Stated` exists to prevent.
+* A standalone gate had NO explanation: `gate_span` rendered its raw payload
+  dict byte-identically in both languages, and `select_gate_kit` / `place_gate`
+  published "gate event None" and "from None to None" in both.
+* The agent dispatcher stamped `saw` and nothing else, so a runner could return
+  `status="kept"` — asserting that a person had confirmed a proposal, with no
+  person.
+
+Two review findings were REJECTED after checking them against the code: an
+override anchored `node:<id>` losing its address once a run reaches that node is
+the documented invariance with its own test, and it reports `orphaned_override`
+rather than failing silently; corroboration recognised only between
+precedence-tied rules is the stated design. One reproduction was corrected
+rather than repeated — the purity mutation offered for the advice route is
+stopped by the store (`save_run` is `INSERT OR IGNORE`), not by the route.
+
+### Open, and deliberately not closed at merge
+
+Carried here so the next chapter does not rediscover them:
+
+* **A single-leaf gate with `opens_to` and no `hinge` raises no gap.** The doc
+  and `tests/report/test_handover.py` agree it "asks nothing"; the docstring's
+  own rationale ("a leaf hung on the wrong side opens into the driveway")
+  argues the other way. A product decision, not a defect to settle in a fix.
+* **No smoke check drives `#agent-advice` in a real browser, and `ui_smoke.py`
+  captures no console errors** — so a throw inside `initAgentAdvice` is
+  invisible to BOTH suites. The missing console capture is the wider hole.
+* `agent-advice.js`'s `project-loaded` and `locale-changed` subscriptions and
+  the panel's 409 branch are unpinned; five `agent.*` locale keys are dead to
+  the suite; `ActionSpec.i18n_key` has no bundle-parity check.
+* The agent's proposal cap trims admissible proposals with no counter, so
+  `produced - dropped` overstates the survivors — §8b's "never rendered" row has
+  no source.
+* `store` sits outside `DOMAIN`, so `test_only_the_api_layer_imports_the_agent`
+  still overstates what it enforces.
+* Design smells recorded, not acted on: `Stated` carries no author or timestamp;
+  `_resolve_gate_max_slope` drops `run.*`-conditioned rules for a standalone
+  gate silently; `AgentView.point_ids` is unused and bypasses the open-set
+  filter; the stub picks outside `offered()` (unreachable today).
+
+3015 pytest · 310 golden scenarios · 428 browser checks · contract hashes verify
+at v1.3. The app boots from `main`.
