@@ -15,10 +15,26 @@ import { panelFor, road } from "./road-model.js";
 import { defaultToolForStep } from "./step-surfaces.js";
 import { roadFor } from "./roads.js";
 
-let current = "job";
+let current = null;
 
 function currentRoad() {
   return roadFor(currentView());
+}
+
+/** The step we are on, re-anchored to THIS road when it is not one of its own.
+ *
+ *  `current` was the literal string `"job"` — the salesperson's first step,
+ *  hard-coded in the one module that is supposed to draw whatever road it is
+ *  handed. A second road starting anywhere else opened on a step it does not
+ *  have: no `[data-step]` button to mark `aria-current`, no panel to switch to,
+ *  and an `html[data-step]` naming somebody else's step. The road says where it
+ *  begins; this file asks it.
+ *
+ *  It re-anchors rather than only defaulting, because switching between two
+ *  roads leaves a step key belonging to the road just left. */
+function stepIn(def) {
+  if (!def.steps.some((s) => s.key === current)) current = def.steps[0].key;
+  return current;
 }
 
 /** Move to the next step in this road, or stay if this is the last.
@@ -128,8 +144,13 @@ function showStep(stepKey) {
   // arming has to be explicit and it belongs here, where the step changes.
   //
   // `step-surfaces.js` derives the answer from the tools the step KEEPS, so
-  // this cannot drift from what the rail is showing.
-  setTool(defaultToolForStep(stepKey));
+  // this cannot drift from what the rail is showing. It is given the ROAD as
+  // well as the step: two roads may spell a step the same way, and a module
+  // that imports nothing cannot work out which one is on screen by itself. The
+  // road's own `view` is that key (`js/roads.js`), which is why passing
+  // `currentView()` here instead would be the same value by luck rather than
+  // by construction — and would say nothing when the view has no road.
+  setTool(defaultToolForStep(def.view, stepKey));
 }
 
 /** Build the band ONCE, then only toggle attributes.
@@ -172,16 +193,23 @@ export function render() {
   const host = document.getElementById("road");
   if (!host) return;
   const def = currentRoad();
-  // `data-step` exists only while `sales` has a step to show; every other
-  // role gets the attribute REMOVED rather than left stale, because an
-  // absent attribute matches no `html[data-step="X"]` rule in style.css — so
-  // `office`/`all` sit under no step rule at all (step-surfaces.js's header
-  // comment, "Only `sales` has steps").
-  if (currentView() === "sales") document.documentElement.dataset.step = current;
-  else delete document.documentElement.dataset.step;
-  // A role with no road shows none — and the tab strip is what it navigates by.
+  // A view with no road shows none — and the tab strip is what it navigates by.
   host.hidden = def === null;
-  if (def === null) return;
+  // `data-step` exists while there is a road with a step to show, whichever
+  // road it is; a view without one gets the attribute REMOVED rather than left
+  // stale, because an absent attribute matches no `html[data-step="X"]` rule in
+  // style.css, so that view sits under no step rule at all.
+  //
+  // This used to be spelled `currentView() === "sales"`, which was the same
+  // answer while sales was the only road and silently the wrong one after —
+  // a second road would have rendered its band with the screen unscoped behind
+  // it, every tool and panel visible on every step, which is precisely the
+  // state `step-surfaces.js` exists to end.
+  if (def === null) {
+    delete document.documentElement.dataset.step;
+    return;
+  }
+  document.documentElement.dataset.step = stepIn(def);
   const steps = road(def, state.handover?.gaps ?? null,
                      state.project?.stated ?? {});
   build(host, def);
@@ -240,10 +268,13 @@ export function initRoad() {
   });
   on("view-changed", () => {
     render();
-    // Entering sales from another role can leave a panel the road does not
-    // claim active and visible — the BOM tab, say — while the band says step
-    // 1. The band is this role's only navigation, so it must not describe a
-    // screen the user is not on.
-    if (currentView() === "sales") showStep(current);
+    // Entering a road from a view that has none can leave a panel the road does
+    // not claim active and visible — the BOM tab, say — while the band says
+    // step 1. The band is the only navigation these views have, so it must not
+    // describe a screen the user is not on. Asked of the ROAD rather than of
+    // the view's name, so the second road gets the same correction the first
+    // one does.
+    const def = currentRoad();
+    if (def) showStep(stepIn(def));
   });
 }
