@@ -532,8 +532,14 @@ def test_backend_code_list_is_current():
     # key. `report/handover.py` arrived inside the `report/*.py` glob and this
     # guard caught it immediately — which is the guard working, not a nuisance.
     from fenceai.report.handover import HANDOVER_CODES
+    # A FIFTH, for the fourth's reason one step on: a readiness item renders
+    # under `readiness.<code>`, its own namespace beside `handover.<code>`,
+    # because the two read models answer different questions and a shared
+    # namespace would let one silently satisfy the other's locale check.
+    # `report/readiness.py` arrives inside the same `report/*.py` glob.
+    from fenceai.report.readiness import READINESS_CODES
     known = (set(WARNING_CODES) | set(CRITIQUE_CODES) | set(REFUSAL_CODES)
-             | set(HANDOVER_CODES))
+             | set(HANDOVER_CODES) | set(READINESS_CODES))
     # Built from a loop variable (`code=f"{field}_missing"`), so no literal
     # exists for the scan to find — the same shape as continuity's
     # `code=note.code` noted above. They are real codes and stay in
@@ -1493,3 +1499,39 @@ def test_the_handover_code_list_is_current():
     assert 'code=f"{field}_missing"' in src, (
         "the per-field family changed shape — this test names those four codes "
         "explicitly because they have no literal to scan for")
+
+
+def test_every_readiness_code_has_locale_entries():
+    """The office road's own codes, guarded exactly like the handover's.
+
+    Same failure, one read model along: a code with no entry reaches the screen
+    as its own key — `readiness.plan_stale` in the middle of a sentence — and
+    the office person is the one reader of this app who cannot dismiss it as a
+    salesperson's tooltip, because it is the whole content of a step.
+    """
+    from fenceai.report.readiness import READINESS_CODES
+    en = json.loads((STATIC / "i18n" / "en.json").read_text())
+    he = json.loads((STATIC / "i18n" / "he.json").read_text())
+    for code in READINESS_CODES:
+        assert f"readiness.{code}" in en, code
+        assert f"readiness.{code}" in he, code
+
+
+def test_the_readiness_code_list_is_current():
+    """...and BOTH directions, which is where this list differs from the
+    handover's.
+
+    `READINESS_CODES` is hand-maintained beside the emitting sites, so an
+    unlisted code would be invisible to the test above. A LISTED code with no
+    emitting site is the other half: it is a pair of locale entries nobody can
+    reach, and it hides the rename that orphaned them. Every code here is a
+    plain literal — there is no `{field}` family to exempt — so the scan can
+    check both ways without a hole.
+    """
+    from fenceai.report.readiness import READINESS_CODES
+    src = (Path(__file__).resolve().parents[2] / "src" / "fenceai" / "report"
+           / "readiness.py").read_text()
+    literals = set(re.findall(r'ReadinessItem\(code="([a-z_]+)"', src))
+    listed = set(READINESS_CODES)
+    assert literals == listed, {"emitted but not listed": sorted(literals - listed),
+                                "listed but not emitted": sorted(listed - literals)}

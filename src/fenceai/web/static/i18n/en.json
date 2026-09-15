@@ -1387,5 +1387,13 @@
   "queue.status.quoted": "quoted",
   "queue.status.returned": "returned",
   "queue.status.delivered": "delivered",
-  "queue.status.cancelled": "cancelled"
+  "queue.status.cancelled": "cancelled",
+  "readiness.sale_unread": "Nobody has confirmed reading what was sold and promised.",
+  "readiness.choices_unanswered": "{n} question(s) from the engine have no answer yet.",
+  "readiness.no_run": "This fence has not been worked out yet.",
+  "readiness.warnings_unreviewed": "{n} warning(s) from this run have not been read.",
+  "readiness.supply_unresolved": "{n} item(s) on the list got no product.",
+  "readiness.no_plan_committed": "No run has been named as the plan.",
+  "readiness.plan_stale": "The drawing has moved since the plan was committed.",
+  "readiness.not_priced": "The plan has no quote."
 }

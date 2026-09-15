@@ -1387,5 +1387,13 @@
   "queue.status.quoted": "תומחר",
   "queue.status.returned": "הוחזר",
   "queue.status.delivered": "נמסר",
-  "queue.status.cancelled": "בוטל"
+  "queue.status.cancelled": "בוטל",
+  "readiness.sale_unread": "אף אחד לא אישר שקרא מה נמכר ומה הובטח.",
+  "readiness.choices_unanswered": "{n} שאלות של המנוע עדיין בלי תשובה.",
+  "readiness.no_run": "הגדר הזו עוד לא חושבה.",
+  "readiness.warnings_unreviewed": "{n} אזהרות מההרצה הזו עוד לא נקראו.",
+  "readiness.supply_unresolved": "{n} שורות בדרישה לא קיבלו מוצר.",
+  "readiness.no_plan_committed": "אף הרצה לא נקבעה כתוכנית.",
+  "readiness.plan_stale": "השרטוט השתנה מאז שהתוכנית נקבעה.",
+  "readiness.not_priced": "לתוכנית אין הצעת מחיר."
 }
