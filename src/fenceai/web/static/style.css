@@ -798,6 +798,7 @@ html[data-view="sales"] #gaps,
 html[data-view="sales"] #chk-overlay-label,
 html[data-view="sales"] #profile-exag,
 html[data-view="sales"] #model-row-hint,
+html[data-view="sales"] #tabs button[data-tab="queue"],
 html[data-view="sales"] #tabs button[data-tab="knowledge"],
 html[data-view="sales"] #tabs button[data-tab="review"],
 html[data-view="sales"] #tabs button[data-tab="structure"],
@@ -813,6 +814,21 @@ html[data-view="sales"] #tabs button[data-tab="inventory"] { display: none; }
    PRESENTATION rule and never protection: hiding is CSS, `localStorage` is
    editable, and what an account may DO is its capacity, checked on the server. */
 html[data-selector="no"] #view-select { display: none; }
+
+/* The jobs list. Logical properties only — the queue mirrors in RTL like every
+   other table, unlike the drawings, which never do. */
+.queue-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+             margin-block-end: 10px; }
+.queue-bar select, .queue-bar input { padding: 5px 8px; border: 1px solid #b9c2cd;
+             border-radius: 4px; font-size: 13px; }
+.queue-bar .meta { margin-inline-start: auto; color: #64748b; font-size: 12px; }
+#queue-list table { border-collapse: collapse; width: 100%; background: #fff;
+             font-size: 13px; }
+#queue-list th, #queue-list td { border: 1px solid #d4dae2; padding: 6px 8px;
+             text-align: start; }
+#queue-list th { background: #eef2f6; font-size: 12px; }
+#queue-list .queue-mine { background: #f0fdf4; font-weight: 600; }
+#queue-list .queue-take { margin-inline-start: 8px; padding: 2px 8px; font-size: 12px; }
 
 html[data-view="backoffice"] #tabs button[data-tab="knowledge"],
 html[data-view="backoffice"] #tabs button[data-tab="review"] { display: none; }

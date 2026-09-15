@@ -98,12 +98,22 @@ what it looks like. Two consequences that are not optional:
   test, not a comment — it is the first thing that would quietly break the whole
   "who did what" premise.
 
-### Open: is `admin` one job or two?
+### Decided: `admin` is one job until somebody has only half of it
 
 The specs describe a **super user** who alters and customises; "admin" usually also
-means *manages accounts*. If one person does both here, three capacities is right.
-If not it is four — and noticing before `admin` acquires two jobs is the whole
-lesson of slice 1.
+means *manages accounts*. **Three capacities, with `admin` holding both** — at this
+company size the person who owns the fence models is the person who issues the
+accounts, and a fourth capacity nobody is issued is a row in a table pretending to
+be a decision.
+
+The seam is cheap and already open: `CAPACITIES` is a tuple, `default_view` falls
+through to `all` for anything it does not name, and a capacity is checked per
+command on its own row. Splitting later is one entry plus a re-issue of the
+accounts holding it — smaller than guessing now and being wrong in the direction
+that locks somebody out.
+
+*Trigger to split: the first person who should author fence models and must NOT be
+able to create accounts, or the reverse.*
 
 ---
 
@@ -139,11 +149,20 @@ to an incomplete job is to see how incomplete it is, not to reject it.
 something, the job has to leave the backoffice queue or the queue stops meaning
 "work I can do". The reason travels as a verbatim note, never as a code.
 
-### Open: what happens after pricing?
+### Decided: `delivered` means the backoffice is done with it
 
-Whoever receives the priced plan — a materials order, an installation crew, a
-document to the customer — is what `delivered` should actually be called, and may
-deserve a state of its own. Until told, `delivered` is the name.
+Whoever receives the priced plan — a materials order, a crew, a document to the
+customer — is a fact about this company's process the code does not need yet. What
+it needs is the moment **the job leaves this desk**, and that moment exists whatever
+happens next.
+
+So `delivered` is the name, and it is deliberately the LAST state: `TRANSITIONS`
+gives it an empty set. If the handoff turns out to have stages the office tracks —
+ordered, cut, installed — those are states after it and the table grows. Nothing
+here is unpicked to add them, because a state with no exits is the one shape that
+never constrains what follows it.
+
+*Trigger to extend: somebody asks "which of these has the material arrived for?"*
 
 ---
 
@@ -318,6 +337,27 @@ dies when the anchor moves — `Stated` in spirit, `Override` in mechanism:
 Named facts, never step keys — `Stated`'s own docstring: *"a step key would put a
 screen's structure into the project record."*
 
+### Decided: the backoffice may edit the drawing, and the log is what makes that safe
+
+Yossi pinned a post on step 4 and could equally nudge a corner on step 2. **Nothing
+stops him, and nothing should.** He is the one who will discover that the gate
+cannot open where it was drawn, and a tool that makes him phone the salesperson to
+move a node is a tool he works around by phoning her anyway and typing it himself
+under her name.
+
+The sold layout is not protected by being read-only. It is protected by being
+**recoverable and attributed**: the topology is revisioned, every write names an
+actor, and a change he makes is his in the log rather than hers. That is the same
+answer the whole escape hatch gives — the system marks who did what instead of
+forbidding it.
+
+What it does NOT mean is that his edit is silent to her. A drawing that moves after
+submission is exactly what `plan_stale` and the three staleness refusals are for,
+and a note back to sales is one `return_to_sales` away.
+
+*Trigger to revisit: a salesperson finding their measurements changed without being
+told, which is a notification problem rather than a permission one.*
+
 ### Three landmines the implementation must clear
 
 * **`step-surfaces.js` is not road-scoped and must become so.** `STEP_TOOLS`,
@@ -394,11 +434,22 @@ A bent bar end is not evidence; a post the engine should have upgraded is. Nobod
 can separate them afterwards from a log of clicks, and that difference is the whole
 value of the record.
 
-### Open: depth 4 versus regenerate
+### Decided: depth 4 asks, and does not lock
 
-Does pressing Generate discard a replaced BOM (asking first), or does replacing
-**lock** the job against regeneration until explicitly unlocked? A question about
-people, not data.
+Pressing Generate on a job whose BOM was replaced by hand **asks first**, and on a
+yes supersedes the hand-made document.
+
+Not a lock, for the reason the assignee is not a lock: a lock is state somebody has
+to remember to release, and the person who set it is the person on holiday. An ask
+is made by whoever is in front of the screen at the moment it matters, and it
+cannot rot.
+
+What makes the ask safe rather than merely polite is that the replaced document is
+**superseded, not erased** — the discipline every version in this repo follows. The
+activity log still names who replaced it and why.
+
+*Trigger to revisit: somebody losing work to the ask, which would mean the dialog is
+being clicked through rather than read.*
 
 ---
 

@@ -58,7 +58,7 @@ export const VIEWS = ["sales", "backoffice", "all"];
 // generation.
 export const SALES_TABS = ["canvas", "annotations"];
 
-const ALL_TABS = ["canvas", "annotations", "knowledge", "review", "structure",
+const ALL_TABS = ["queue", "canvas", "annotations", "knowledge", "review", "structure",
                   "assembly", "panel", "models", "bom", "inventory"];
 
 // Everything on this list answers "how is this fence BUILT?" — which is the

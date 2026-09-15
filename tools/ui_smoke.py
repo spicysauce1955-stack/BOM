@@ -115,7 +115,20 @@ fetch('/api/projects', {method: 'POST', headers: {'Content-Type': 'application/j
     # broken and is not.
     # ...and pin the display unit, because an earlier case may have left it in
     # centimetres and the toggle assertion below is about a KNOWN starting point.
+    #
+    # ...and pin the VIEW, for exactly the same reason and against a defect that
+    # cost an afternoon before it was understood. This case inherited whatever
+    # view an earlier one left. In `sales` the generate toolbar is step-scoped
+    # away, so `element_center('#btn-generate')` aimed at a hidden element, the
+    # click landed nowhere, no run was generated, and the failure read
+    # `sets: 0` — which looks exactly like the backend failing to ask a
+    # question. It passed or failed depending on case ORDER, which is why it
+    # looked intermittent.
+    #
+    # `fenceai.view` is `view.js`'s storage key; setting it before the reload is
+    # what `initView()` reads.
     c.js("localStorage.setItem('fenceai.units', 'mm');"
+         " localStorage.setItem('fenceai.view', 'all');"
          " location.hash = ''; location.reload(); 'ok'")
     wait_for(c, "!!document.getElementById('project-select').value", timeout=20)
     c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
@@ -2419,6 +2432,90 @@ def _smoke_run_measurements(c) -> None:
           legs and legs["rows"] == 2, legs)
 
 
+def _smoke_backoffice_queue(c):
+    """Sign in as the backoffice and land on a LIST OF JOBS.
+
+    The whole point of the slice, and the thing a person notices immediately if
+    it is wrong: a backoffice account whose day starts on a drawing has to choose
+    what to work on by scrolling a picker.
+
+    This case creates its own jobs through the API rather than reusing the demo
+    project, because the queue is about jobs somebody SUBMITTED and the demo
+    project is a drawing nobody handed over. It signs out at the end — a case
+    that changes who is signed in and leaves it changed would make every later
+    check depend on having run.
+    """
+    made = c.js("""(async () => {
+  await fetch('/api/session', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: 'dana@example.com', password: 'demo'})});
+  const ids = [];
+  for (const name of ['Levi', 'Cohen']) {
+    const p = await (await fetch('/api/projects', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name})})).json();
+    await fetch(`/api/projects/${p.id}/job`, {method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({customer: name, address: 'Herzl 12, Ramat Gan',
+                            sold_by: 'Dana', sold_on: '2026-09-14'})});
+    await fetch(`/api/projects/${p.id}/actions`, {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({kind: 'submit_job', payload: {}})});
+    ids.push(p.id);
+  }
+  await fetch('/api/session', {method: 'DELETE'});
+  return ids.length;
+})()""")
+    check("two jobs to put on the queue", made == 2, made)
+
+    c.js("""document.getElementById('sign-in-email').value = 'yossi@example.com';
+            document.getElementById('sign-in-password').value = 'demo';
+            document.getElementById('sign-in').requestSubmit(); 'ok'""")
+    wait_for(c, "document.documentElement.dataset.view === 'backoffice'", timeout=15)
+
+    check("signing in as the backoffice lands on the JOBS tab, not a drawing",
+          c.js("document.querySelector('#tabs button.active')?.dataset.tab") == "queue",
+          c.js("document.querySelector('#tabs button.active')?.dataset.tab"))
+
+    wait_for(c, "document.querySelectorAll('#queue-list tr').length > 1", timeout=15)
+    shape = c.js("""(() => {
+  const rows = [...document.querySelectorAll('#queue-list tr')].slice(1);
+  return {rows: rows.length,
+          takeable: document.querySelectorAll('.queue-take').length,
+          first: rows[0]?.innerText.replace(/\\s+/g, ' ').trim(),
+          selector: getComputedStyle(document.getElementById('view-select')).display};
+})()""")
+    check("the queue lists the submitted jobs with a Take it on each",
+          shape and shape["rows"] >= 2 and shape["takeable"] >= 2, shape)
+    check("a backoffice account is not offered the view selector",
+          shape and shape["selector"] == "none", shape)
+    c.shot("60-backoffice-queue.png")
+
+    c.js("document.querySelector('.queue-take').click(); 'ok'")
+    wait_for(c, "document.querySelectorAll('.queue-take').length < 2", timeout=15)
+    after = c.js("""(() => {
+  const row = document.querySelector('#queue-list .queue-mine');
+  return {mine: !!row, text: row?.innerText.trim(),
+          planning: document.querySelector('#queue-list tr:nth-child(2)')
+                      ?.innerText.includes('planning')};
+})()""")
+    check("taking a job puts your name on it and moves it to planning",
+          after and after["mine"] and after["planning"], after)
+    c.shot("61-backoffice-queue-taken.png")
+
+    # Put the world back. Signing out is NOT enough on its own: `signedOutState`
+    # deliberately has no opinion about the view, so `data-view` stays wherever
+    # the account put it — which is correct behaviour (a signed-out reload keeps
+    # the toggle you chose) and leaves this case's `backoffice` behind for
+    # everybody after it. So the view is restored explicitly, the way this suite
+    # restores every other piece of state it changes.
+    c.js("document.getElementById('sign-out').click(); 'ok'")
+    wait_for(c, "!document.getElementById('signed-in-as') ||"
+                " document.getElementById('signed-in-as').hidden", timeout=15)
+    c.js("localStorage.setItem('fenceai.view', 'all');"
+         " document.documentElement.dataset.view = 'all'; 'ok'")
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
@@ -2432,6 +2529,7 @@ _CHOICE_CASES: list = [
     _smoke_knowledge_panes,
     _smoke_sales_step_surfaces,
     _smoke_run_measurements,
+    _smoke_backoffice_queue,
 ]
 
 

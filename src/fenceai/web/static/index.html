@@ -44,6 +44,7 @@
   </header>
 
   <nav id="tabs">
+    <button data-tab="queue" data-i18n="tabs.queue">Jobs</button>
     <button data-tab="canvas" class="active" data-i18n="tabs.canvas">Topology &amp; Strategy</button>
     <button data-tab="annotations" data-i18n="tabs.annotations">Annotations</button>
     <button data-tab="knowledge" data-i18n="tabs.knowledge">Knowledge</button>
@@ -58,6 +59,19 @@
   <nav id="road" aria-label="Job steps"></nav>
 
   <main>
+    <!-- ============ jobs tab — the backoffice's home screen ============ -->
+    <section id="tab-queue" class="tab">
+      <div class="queue-bar">
+        <button id="queue-open" class="mode active" data-i18n="queue.open">Open</button>
+        <button id="queue-finished" class="mode" data-i18n="queue.finished">Finished</button>
+        <select id="queue-status"></select>
+        <select id="queue-with"></select>
+        <input id="queue-q" data-i18n-placeholder="queue.search" placeholder="Customer, address…">
+        <span id="queue-count" class="meta"></span>
+      </div>
+      <div id="queue-list"></div>
+    </section>
+
     <!-- ============ canvas tab ============ -->
     <section id="tab-canvas" class="tab active">
       <div class="canvas-row">

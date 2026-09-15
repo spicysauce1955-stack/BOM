@@ -29,6 +29,7 @@ import { initStructure } from "./js/structure.js";
 import { initTabs } from "./js/tabs.js";
 import { initView, setView } from "./js/view.js";
 import { loadMe, signIn, signOut } from "./js/session.js";
+import { initQueue } from "./js/queue.js";
 import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
 function setupHeader() {
@@ -45,6 +46,7 @@ function setupHeader() {
   const viewSelect = document.getElementById("view-select");
   viewSelect.value = state.view;
   viewSelect.addEventListener("change", () => setView(viewSelect.value));
+  initQueue();
   wireIdentity();
   // the unit label itself is localized: relabel the button when the language flips
   on("locale-changed", updateUnitsButton);

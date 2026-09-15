@@ -32,8 +32,33 @@ PERSONAS = [
 ]
 
 
+#: What the ports were before they were overridable, and still are by default.
+DEFAULT_PORT_BASE = 8800
+DEFAULT_CDP_BASE = 9400
+
+
 def ports_for(index: int) -> tuple[int, int]:
-    return 8800 + index, 9400 + index
+    """The two ports this persona's stack listens on.
+
+    The base is read from the environment and DEFAULTS to what it always was, so
+    a single run is unchanged. It is overridable because a hard-coded port is a
+    land mine for concurrency: two checkouts running `pytest` at once — two
+    worktrees, two agents, a developer beside CI — collided here and produced 22
+    errors that read exactly like real failures, on a suite where nothing was
+    wrong with either copy.
+
+    `_port_free` below already refuses to start on a busy port, which is the
+    right behaviour and not the problem; the problem was that every caller
+    wanted the same port.
+
+    **Read at CALL time, not at import.** A module-level `PORT_BASE` was the
+    first attempt and it silently did nothing: `stack.py` is imported before any
+    fixture runs, so the constant froze at the default and both copies collided
+    exactly as before — with the override in place and looking like it worked.
+    """
+    base = int(os.environ.get("FENCEAI_LAB_PORT_BASE", DEFAULT_PORT_BASE))
+    cdp = int(os.environ.get("FENCEAI_LAB_CDP_BASE", DEFAULT_CDP_BASE))
+    return base + index, cdp + index
 
 
 def session_path(run_dir: Path) -> Path:
