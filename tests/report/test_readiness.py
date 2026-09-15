@@ -229,12 +229,16 @@ def test_the_sale_anchor_does_not_move_when_the_notes_are_merely_reordered():
     assert sale_anchor(p) == before
 
 
-def test_the_sale_is_unread_on_a_project_that_has_no_acknowledgements_field():
-    """Task 3 adds `Project.acknowledgements`; this module must work on both
-    sides of it. Read through `getattr`, so a project saved before that field
-    existed reports "nobody has read this" rather than raising."""
+def test_a_project_with_nothing_acknowledged_reports_the_sale_unread():
+    """Task 3 has landed and `Project.acknowledgements` exists, so the
+    `hasattr` guard this test carried while the two tasks overlapped is gone.
+
+    What it pins now is the answer for an EMPTY list, which is the state every
+    project in the database is in and the one a reader is most likely to see:
+    nobody has read it. The `getattr` in `_acknowledgements` stays, because a
+    document stored before the field existed still validates without it."""
     p = Project(id="p", name="x")
-    assert not hasattr(p, "acknowledgements")  # remove when Task 3 lands
+    assert p.acknowledgements == []
     assert "sale_unread" in _codes(p)
 
 

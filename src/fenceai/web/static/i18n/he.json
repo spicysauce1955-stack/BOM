@@ -1395,5 +1395,7 @@
   "readiness.supply_unresolved": "{n} שורות בדרישה לא קיבלו מוצר.",
   "readiness.no_plan_committed": "אף הרצה לא נקבעה כתוכנית.",
   "readiness.plan_stale": "השרטוט השתנה מאז שהתוכנית נקבעה.",
-  "readiness.not_priced": "לתוכנית אין הצעת מחיר."
+  "readiness.not_priced": "לתוכנית אין הצעת מחיר.",
+  "command.acknowledge_sale": "סימן/ה שקרא/ה את המכירה",
+  "command.acknowledge_warnings": "עבר/ה על האזהרות"
 }

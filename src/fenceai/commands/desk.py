@@ -38,7 +38,10 @@ from fenceai.commands.model import CommandSpec
 from fenceai.commands.registry import register
 from fenceai.core.ids import new_id
 from fenceai.project.lifecycle import OPEN_STATES, TRANSITIONS
-from fenceai.project.model import Annotation, Project
+from fenceai.project.model import (
+    SALE_READ, WARNINGS_REVIEWED, Acknowledgement, Annotation, Project,
+    sale_anchor,
+)
 
 #: The capacities that run the back office. A name rather than the set spelled
 #: out five times, so widening the queue is one edit and not a search.
@@ -261,4 +264,79 @@ REOPEN_JOB = register(CommandSpec(
     # un-finishing one would make "delivered" a state the office could not trust.
     from_states=frozenset({"cancelled"}),
     materialize=_reopen,
+))
+
+
+# -- the two acknowledgements -------------------------------------------------
+#
+# The only rows here that record something the system cannot work out for
+# itself. Everything else moves a job between desks; these two say a person read
+# something — which is the one fact the office road's steps 1 and 4 turn on, and
+# the one nothing can derive.
+#
+# `from_states` is empty on both: reading her promise is not a stage of the work,
+# it is a thing you do while doing the work, and a job in `returned` is exactly
+# when somebody most wants to re-read what she wrote.
+
+
+class AcknowledgeWarnings(BaseModel):
+    """Which run's warnings were read.
+
+    Explicit rather than "the latest run": by the time this arrives the latest
+    run may already be a newer one than the person was looking at, and an
+    acknowledgement that quietly covered a run nobody read is worse than none.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    run_id: str
+
+
+def _remember(project: Project, kind: str, anchor: str, *, actor: str,
+              now: str) -> Project:
+    """Write one acknowledgement, replacing any earlier answer to the SAME
+    question.
+
+    Same question means same `(kind, anchor)`. Two runs are two questions and
+    keep two rows; pressing the button twice on one run is one answer given
+    twice, and a list that grew each time would be a list nothing could read.
+    """
+    kept = [a for a in project.acknowledgements
+            if not (a.kind == kind and a.anchor == anchor)]
+    kept.append(Acknowledgement(kind=kind, anchor=anchor, by=actor, at=now))
+    return project.model_copy(update={"acknowledgements": kept})
+
+
+def _acknowledge_sale(payload, project: Project, *, actor: str, now: str) -> Project:
+    # The anchor comes from `readiness.sale_anchor`, never rebuilt here. Two
+    # spellings of "what was this read against" is precisely how an
+    # acknowledgement stops matching without anybody touching it.
+    return _remember(project, SALE_READ, sale_anchor(project), actor=actor, now=now)
+
+
+def _acknowledge_warnings(payload: AcknowledgeWarnings, project: Project, *,
+                          actor: str, now: str) -> Project:
+    return _remember(project, WARNINGS_REVIEWED, payload.run_id, actor=actor, now=now)
+
+
+ACKNOWLEDGE_SALE = register(CommandSpec(
+    kind="acknowledge_sale",
+    payload_model=NoPayload,
+    rung="note",
+    i18n_key="command.acknowledge_sale",
+    # The office's record of having read HER work. A salesperson pressing it
+    # would make the one fact nobody can derive also the one nobody can trust.
+    capacities=DESK,
+    from_states=frozenset(),
+    materialize=_acknowledge_sale,
+))
+
+ACKNOWLEDGE_WARNINGS = register(CommandSpec(
+    kind="acknowledge_warnings",
+    payload_model=AcknowledgeWarnings,
+    rung="note",
+    i18n_key="command.acknowledge_warnings",
+    capacities=DESK,
+    from_states=frozenset(),
+    materialize=_acknowledge_warnings,
 ))

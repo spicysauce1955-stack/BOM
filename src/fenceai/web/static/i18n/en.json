@@ -1395,5 +1395,7 @@
   "readiness.supply_unresolved": "{n} item(s) on the list got no product.",
   "readiness.no_plan_committed": "No run has been named as the plan.",
   "readiness.plan_stale": "The drawing has moved since the plan was committed.",
-  "readiness.not_priced": "The plan has no quote."
+  "readiness.not_priced": "The plan has no quote.",
+  "command.acknowledge_sale": "marked the sale as read",
+  "command.acknowledge_warnings": "reviewed the warnings"
 }

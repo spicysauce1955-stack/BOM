@@ -45,7 +45,9 @@ from pydantic import BaseModel
 from fenceai.core.warnings import DocumentWarning
 from fenceai.fulfillment.quote import Quote
 from fenceai.fulfillment.supply import SupplyResolution
-from fenceai.project.model import Project
+from fenceai.project.model import (
+    SALE_READ, WARNINGS_REVIEWED, Project, sale_anchor,
+)
 from fenceai.strategy.choices import ChoiceSet
 from fenceai.strategy.model import GenerationRun, Strategy
 
@@ -56,8 +58,10 @@ from fenceai.strategy.model import GenerationRun, Strategy
 # `docs/superpowers/plans/2026-09-15-office-road.md`) and must use `sale_anchor`
 # below for the first one, so the writer and the reader cannot disagree about
 # what was acknowledged.
-SALE_READ = "sale_read"
-WARNINGS_REVIEWED = "warnings_reviewed"
+# The two kinds, re-exported from `project/` so this module and `commands/desk.py`
+# name one spelling. They live down there because an anchor is a fact about the
+# PROJECT — what a person read — and putting it in a read model made a leaf
+# package depend upward on a reporting one.
 
 
 class ReadinessItem(BaseModel):
@@ -80,26 +84,6 @@ class ReadinessItem(BaseModel):
     # one component to branch on. See the module docstring for why no check sets
     # it.
     blocking: bool = False
-
-
-def sale_anchor(project: Project) -> str:
-    """What "I have read the sale" was read AGAINST.
-
-    The SET of annotation ids, sorted and joined — so the acknowledgement dies
-    the moment the salesperson adds a note, and a promise nobody has read is
-    never covered by somebody having read the ones before it. That is `Override`'s
-    mechanism (an anchor that stops resolving) applied to `Stated`'s kind of
-    fact.
-
-    Sorted because the order of a note list is nobody's decision: an anchor that
-    moved when two notes swapped places would un-read a sale somebody had read,
-    and the office person would never learn what they had done to deserve it.
-
-    Exported because `commands/desk.py` has to write exactly this string. Two
-    implementations of one anchor disagree the first time either moves, and the
-    failure is silent in the worst direction — a step that reads done for ever.
-    """
-    return ",".join(sorted(a.id for a in project.annotations))
 
 
 def _acknowledgements(project: Project) -> list:

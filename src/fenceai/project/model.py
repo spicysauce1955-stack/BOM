@@ -272,6 +272,62 @@ class Stated(BaseModel):
     no_promises: bool = False
 
 
+#: The two things somebody can say they have read. Named facts, never step keys
+#: — `Stated`'s argument, applied again: a step key would put a screen's
+#: structure into the project record.
+SALE_READ = "sale_read"
+WARNINGS_REVIEWED = "warnings_reviewed"
+
+
+class Acknowledgement(BaseModel):
+    """Somebody says they have read something, anchored to what they read.
+
+    The office road has two steps that ask for a fact **no code can derive** —
+    *did you read her promise about the kitchen window?* and *did you read the
+    warning that the ground falls 6 % across the gate?* Deriving it is not merely
+    hard, it is the wrong shape: counting OPEN warnings instead would leave the
+    step permanently amber, because a 6 % slope is a fact and not a fault. A map
+    with a step that can never go green trains its reader to ignore the map.
+
+    `Stated` in spirit — a **named fact, never a step key**, for the reason
+    `Stated`'s own docstring gives: a step key would put a screen's structure into
+    the project record. `Override` in mechanism — anchored to what it is about,
+    and silently dead when the anchor moves, rather than a tick that goes on
+    claiming something that stopped being true.
+
+    `anchor` is deliberately an opaque string rather than a typed reference,
+    because the two kinds anchor to different shapes: a set of annotation ids for
+    the sale, a run id for the warnings. `report/readiness.py` owns both spellings
+    and the commands call it — two spellings of "what was this read against" is
+    how an acknowledgement quietly stops matching.
+    """
+
+    kind: str
+    anchor: str
+    by: str
+    at: str
+
+
+def sale_anchor(project: Project) -> str:
+    """What "I have read the sale" was read AGAINST.
+
+    The SET of annotation ids, sorted and joined — so the acknowledgement dies
+    the moment the salesperson adds a note, and a promise nobody has read is
+    never covered by somebody having read the ones before it. That is `Override`'s
+    mechanism (an anchor that stops resolving) applied to `Stated`'s kind of
+    fact.
+
+    Sorted because the order of a note list is nobody's decision: an anchor that
+    moved when two notes swapped places would un-read a sale somebody had read,
+    and the office person would never learn what they had done to deserve it.
+
+    Exported because `commands/desk.py` has to write exactly this string. Two
+    implementations of one anchor disagree the first time either moves, and the
+    failure is silent in the worst direction — a step that reads done for ever.
+    """
+    return ",".join(sorted(a.id for a in project.annotations))
+
+
 class Project(BaseModel):
     id: str
     name: str
@@ -322,6 +378,8 @@ class Project(BaseModel):
     # append-only table to date twenty-five rows would get slower every month.
     # Written by the commands that close a job, and by nothing else.
     closed_at: str = ""
+    # What somebody has said they READ. See `Acknowledgement`.
+    acknowledgements: list[Acknowledgement] = []
 
     def display_name(self) -> str:
         """What to call this project on any surface a person reads.
