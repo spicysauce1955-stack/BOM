@@ -834,11 +834,22 @@ html[data-view="backoffice"] #tabs button[data-tab="knowledge"],
 html[data-view="backoffice"] #tabs button[data-tab="review"] { display: none; }
 
 /* ============================================================================
-   Road steps — a step shows only its OWN work, for `sales` only.
+   Road steps — a step shows only its OWN work.
 
    `js/step-surfaces.js` owns the LIST; this file only obeys it. Keyed on
-   <html data-step>, which `road.js` sets only while the role is `sales` and
-   removes otherwise, so `office`/`all` are untouched by every rule below.
+   <html data-step>, which `road.js` sets for whichever road is on screen and
+   REMOVES for a view that has none, so a view with no road is untouched by
+   every rule below.
+
+   Keyed on the step ALONE, while `step-surfaces.js`'s maps are keyed on the
+   road AND the step. That asymmetry is deliberate and it has a price attached:
+   it is sound only while no two roads spell a step the same way, and
+   `test_step_keys_are_unique_across_roads` is what holds that. The alternative
+   was a `[data-view]` on all one hundred and forty-nine selectors below,
+   which raises the specificity of every one of them against working CSS that
+   currently ties with them — a refactor whose failure mode is a panel quietly
+   reappearing somewhere nobody looked. The JS stays road-scoped either way,
+   because that is what stops a step key one road lacks from hiding everything.
 
    The eight keys are `js/roads.js: SALES_ROAD`'s real step keys, not the six
    names in the design doc's surface table — see `step-surfaces.js`'s header

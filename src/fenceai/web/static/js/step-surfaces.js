@@ -1,4 +1,4 @@
-// Which of a sales step's controls are visible — a scoping list built exactly
+// Which of a road step's controls are visible — a scoping list built exactly
 // like `view.js`'s hide-list, and for the same reason: CSS cannot read a JS
 // array, so this module owns the LIST and `style.css` repeats it, and the two
 // copies are checked for EQUALITY (not overlap) by
@@ -12,9 +12,31 @@
 // is the fix — each step names what it KEEPS, and hides everything else that
 // is scoped to a step.
 //
-// The eight keys below are the real ones `js/roads.js: SALES_ROAD` defines
-// (docs/superpowers/specs/2026-09-07-eight-step-road-design.md), which is
-// what `document.documentElement.dataset.step` is actually ever set to. They
+// THE MAPS ARE KEYED `{road key: {step key: [...]}}`, AND THE OUTER LEVEL IS
+// LOAD-BEARING. Keyed on the step alone, as they were while `sales` was the
+// only road, two things break the moment a second road exists and neither
+// announces itself:
+//
+//   * a step key both roads use resolves to whichever map was written first —
+//     the office road's step 4 would have been called `layout` but for this,
+//     and `layout` is already the salesperson's draw step. `road-model.js`'s
+//     `panelFor` has been road-scoped from the day it was written for exactly
+//     this reason ("a search over one global list would silently return the
+//     first match"); this module arrived at it late.
+//   * a step key only ONE road has gets an empty keep list subtracted from the
+//     union of BOTH roads' surfaces — so it hides every tool and panel the
+//     other road scopes. A hide-list that is wrong by omission hides nothing
+//     and looks fine; a hide-list that is wrong by inheritance blanks the
+//     screen. The union below is therefore taken PER ROAD.
+//
+// A road key is the road's own `view` (`js/roads.js: ROADS`, and each road
+// carries it): this module imports nothing and cannot look one up, so
+// `road.js` hands it over and `test_a_road_key_is_its_view_key` pins that the
+// two spellings can never drift apart.
+//
+// The eight sales keys below are the real ones `js/roads.js: SALES_ROAD`
+// defines (docs/superpowers/specs/2026-09-07-eight-step-road-design.md), which
+// is what `document.documentElement.dataset.step` is actually ever set to. They
 // are NOT the six names in the design doc's surface table, which was written
 // against the road as it stood before that split and was never reconciled
 // with it. The correspondence is direct: the doc's "job", "gates", "notes"
@@ -35,17 +57,27 @@
 // tool and stays visible in every step, so it is never part of the scoped
 // union below (the same split `view.js` makes for tabs versus `ALL_TABS`).
 const STEP_TOOLS = {
-  job: [],
-  // `#tool-other` is the one control behind which every property object that is
-  // not the house or the street lives — a tree, a pool, a sidewalk, a boundary.
-  // One entry here rather than five, which is the whole point of it.
-  property: ["#tool-house", "#tool-street", "#tool-other"],
-  layout: ["#tool-draw"],
-  sideview: ["#tool-ground", "#tool-base", "#tool-height"],
-  model: ["#tool-model"],
-  gates: ["#tool-gate"],
-  notes: ["#tool-note"],
-  review: [],
+  sales: {
+    job: [],
+    // `#tool-other` is the one control behind which every property object that
+    // is not the house or the street lives — a tree, a pool, a sidewalk, a
+    // boundary. One entry here rather than five, which is the whole point of it.
+    property: ["#tool-house", "#tool-street", "#tool-other"],
+    layout: ["#tool-draw"],
+    sideview: ["#tool-ground", "#tool-base", "#tool-height"],
+    model: ["#tool-model"],
+    gates: ["#tool-gate"],
+    notes: ["#tool-note"],
+    review: [],
+  },
+  // The office road's surfaces land with the office road; this key lands now,
+  // empty, so the two-level shape is proven by a test before anything depends
+  // on it. Empty is the safe state and an ABSENT key is not: both answer every
+  // lookup with nothing, but a key that is present says the module has heard
+  // of this road, and a key that is missing says only that nobody noticed —
+  // and the two read identically right up to the day the surfaces are added
+  // under a spelling this module does not carry.
+  office: {},
 };
 
 // Panels each step KEEPS.
@@ -56,16 +88,20 @@ const STEP_TOOLS = {
 // drawing now (`js/notes.js`), and this step keeps the map and the panel that
 // reads the promises back.
 const STEP_PANELS = {
-  job: ["#job-panel"],
-  property: ["#context-panel"],
-  layout: [],
-  sideview: ["#run-editing-panel", "#profile"],
-  model: ["#model-row"],
-  // Which gate comes before where it goes: `#gates-panel` is where the product
-  // is chosen, and `#run-editing-panel` is where the placed ones are edited.
-  gates: ["#gates-panel", "#run-editing-panel"],
-  notes: ["#notes-panel"],
-  review: ["#handover-panel", "#warnings", "#site-conditions"],
+  sales: {
+    job: ["#job-panel"],
+    property: ["#context-panel"],
+    layout: [],
+    sideview: ["#run-editing-panel", "#profile"],
+    model: ["#model-row"],
+    // Which gate comes before where it goes: `#gates-panel` is where the
+    // product is chosen, and `#run-editing-panel` is where the placed ones are
+    // edited.
+    gates: ["#gates-panel", "#run-editing-panel"],
+    notes: ["#notes-panel"],
+    review: ["#handover-panel", "#warnings", "#site-conditions"],
+  },
+  office: {},
 };
 
 // The drawing itself, scoped like any other surface and kept by exactly the
@@ -89,44 +125,79 @@ const STEP_PANELS = {
 // strategy". Two captions for a picture that is not on the screen.
 const DRAWING = ["#canvas", "#generate-toolbar", "#statusbar", "#strategy-summary"];
 const STEP_DRAWING = {
-  job: [],
-  property: DRAWING,
-  layout: DRAWING,
-  sideview: DRAWING,
-  model: DRAWING,
-  gates: DRAWING,
-  // The map, without the generate bar: this step attaches promises to what is
-  // already drawn, and working out the fence is step 8's business, not this
-  // one's.
-  notes: ["#canvas", "#statusbar"],
-  review: [],
+  sales: {
+    job: [],
+    property: DRAWING,
+    layout: DRAWING,
+    sideview: DRAWING,
+    model: DRAWING,
+    gates: DRAWING,
+    // The map, without the generate bar: this step attaches promises to what is
+    // already drawn, and working out the fence is step 8's business, not this
+    // one's.
+    notes: ["#canvas", "#statusbar"],
+    review: [],
+  },
+  office: {},
 };
 
-const STEP_KEYS = Object.keys(STEP_TOOLS);
+/** `map[key]`, or `null` — never `map[key] || null`, which resolves through the
+ *  prototype and hands back `Object` for a road or a step called
+ *  `"constructor"`. Both keys here come from data, which is the same reason
+ *  `road-model.js: road()` guards its gap codes this way. */
+function own(map, key) {
+  return Object.hasOwn(map, key) ? map[key] : null;
+}
 
-// The union of everything ANY step scopes. Deriving each step's hidden list
-// by subtracting its own keeps from this union — rather than hand-writing
-// eight hidden lists — is what stops adding a tool to one step from silently
-// leaving it visible in the other seven: a new surface only ever needs to be
-// named once, as a KEEP.
-const ALL_SCOPED = [...new Set(STEP_KEYS.flatMap(
-  (key) => [...STEP_TOOLS[key], ...STEP_PANELS[key], ...STEP_DRAWING[key]]))];
+/** Everything one step of one road KEEPS, across all three maps. */
+function keptBy(roadKey, stepKey) {
+  return [STEP_TOOLS, STEP_PANELS, STEP_DRAWING].flatMap((map) => {
+    const steps = own(map, roadKey);
+    return (steps && own(steps, stepKey)) || [];
+  });
+}
 
-/** `{step key: [selector, ...]}` — what each step hides, derived rather than
- *  hand-written. `#road` is never in `ALL_SCOPED`, so it can never appear
- *  here: the band is the only navigation this mode has, and hiding it strands
- *  a keyboard user completely. `#canvas` IS scoped — see `STEP_DRAWING`. */
-export const STEP_HIDDEN = Object.fromEntries(STEP_KEYS.map((key) => {
-  const keep = new Set(
-    [...STEP_TOOLS[key], ...STEP_PANELS[key], ...STEP_DRAWING[key]]);
-  return [key, ALL_SCOPED.filter((selector) => !keep.has(selector))];
-}));
+const ROAD_KEYS = Object.keys(STEP_TOOLS);
 
-/** The selectors a step hides, or `[]` for a step this list does not know —
- *  the same degrade-to-nothing rule as `view.js: hiddenFor`, and for the same
- *  reason: an unrecognised step must not blank the screen. */
-export function hiddenForStep(key) {
-  return STEP_HIDDEN[key] ? [...STEP_HIDDEN[key]] : [];
+/** `{road key: [selector, ...]}` — the union of everything ANY of that road's
+ *  steps scopes.
+ *
+ *  Deriving each step's hidden list by subtracting its own keeps from this
+ *  union — rather than hand-writing a hidden list per step — is what stops
+ *  adding a tool to one step from silently leaving it visible in the other
+ *  seven: a new surface only ever needs to be named once, as a KEEP.
+ *
+ *  Exported because the PER-ROAD part of that is otherwise invisible while one
+ *  road's maps are still empty: a shared union would show up as the empty road
+ *  hiding the other road's whole screen, and there is no step of the empty road
+ *  to observe it on until its steps land. This is the handle the test holds. */
+export const STEP_SCOPED = Object.fromEntries(ROAD_KEYS.map((roadKey) => [
+  roadKey,
+  [...new Set(Object.keys(STEP_TOOLS[roadKey])
+    .flatMap((stepKey) => keptBy(roadKey, stepKey)))],
+]));
+
+/** `{road key: {step key: [selector, ...]}}` — what each step hides, derived
+ *  rather than hand-written. `#road` is never in `STEP_SCOPED`, so it can never
+ *  appear here: the band is the only navigation this mode has, and hiding it
+ *  strands a keyboard user completely. `#canvas` IS scoped — see
+ *  `STEP_DRAWING`. */
+export const STEP_HIDDEN = Object.fromEntries(ROAD_KEYS.map((roadKey) => [
+  roadKey,
+  Object.fromEntries(Object.keys(STEP_TOOLS[roadKey]).map((stepKey) => {
+    const keep = new Set(keptBy(roadKey, stepKey));
+    return [stepKey, STEP_SCOPED[roadKey].filter((sel) => !keep.has(sel))];
+  })),
+]));
+
+/** The selectors a step of a road hides, or `[]` for a road or a step this
+ *  module does not know — the same degrade-to-nothing rule as `view.js:
+ *  hiddenFor`, and for the same reason: an unrecognised key must not blank the
+ *  screen. There are two keys to get wrong now, and both degrade the same way. */
+export function hiddenForStep(roadKey, stepKey) {
+  const steps = own(STEP_HIDDEN, roadKey);
+  const hidden = steps && own(steps, stepKey);
+  return hidden ? [...hidden] : [];
 }
 
 /** The tool a step ARMS when you arrive on it.
@@ -146,10 +217,15 @@ export function hiddenForStep(key) {
  *  does a step with no tools at all. The invariant that matters either way is
  *  that the armed tool is one this step actually shows.
  *
+ *  Road-scoped for the same reason the hide-lists are: a road that has no
+ *  `layout` must not arm the salesperson's draw tool on a step of its own that
+ *  happens to be spelled that way.
+ *
  *  `#tool-select` is never in `STEP_TOOLS` (it is the default and no step
  *  hides it), so "select" can be returned for any step, known or not. */
-export function defaultToolForStep(key) {
-  const keep = STEP_TOOLS[key];
+export function defaultToolForStep(roadKey, stepKey) {
+  const steps = own(STEP_TOOLS, roadKey);
+  const keep = steps && own(steps, stepKey);
   if (!keep || keep.length !== 1) return "select";
   return keep[0].replace(/^#tool-/, "");
 }
