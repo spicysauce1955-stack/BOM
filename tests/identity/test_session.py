@@ -20,10 +20,20 @@ def test_a_token_is_long_and_never_the_same_twice():
 def test_a_token_carries_nothing_about_the_account():
     """Opaque, so that signing out can actually sign out: the server forgets the
     row. A self-describing token would stay valid in a pocket until it expired,
-    which makes "deactivate this account" a promise we cannot keep."""
+    which makes "deactivate this account" a promise we cannot keep.
+
+    `assert "u_" not in s.token` was the first version and it was a 1-in-100
+    FLAKE: `secrets.token_urlsafe` draws from an alphabet that includes `_`, so
+    roughly 1.005% of tokens contain the pair by chance. It would have failed
+    one CI run in a hundred and looked exactly like a security regression, which
+    is the worst way for a test to be wrong.
+
+    The property meant is that the token does not CARRY the id — so assert the
+    id, not a two-character substring an alphabet can produce on its own.
+    """
     s = start("u_yossi", now=NOW)
+    assert s.user_id not in s.token
     assert "yossi" not in s.token
-    assert "u_" not in s.token
 
 
 def test_a_fresh_session_is_live_and_an_old_one_is_not():

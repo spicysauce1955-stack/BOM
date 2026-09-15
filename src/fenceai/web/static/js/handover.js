@@ -69,10 +69,20 @@ function gapSentence(gap) {
   // millimetre figure in a centimetre-mode sentence is the exact defect the
   // `{…_mm}` + `{u}` convention exists to prevent.
   const params = gap.params || {};
+  // The NAMESPACE comes from the item, not from this module. Two read models
+  // feed the road — `handover_gaps` answers "did the sale get captured" and
+  // `readiness` answers "can this be built and priced" — and their codes live in
+  // separate bundle namespaces on purpose. Hard-coding `handover.` here made the
+  // eight `readiness.*` entries unreachable: guarded on the Python side by
+  // `test_the_readiness_code_list_is_current`, and by nothing at all on the
+  // render side, so they would have shipped as raw keys or as nothing.
+  const ns = gap.ns || "handover";
   return params.uncovered_mm !== undefined || params.height_mm !== undefined
-    ? tu(`handover.${gap.code}`, params)
-    : t(`handover.${gap.code}`, params);
+    ? tu(`${ns}.${gap.code}`, params)
+    : t(`${ns}.${gap.code}`, params);
 }
+
+export { gapSentence };
 
 function render() {
   const host = ensureHost();

@@ -1397,5 +1397,13 @@
   "readiness.plan_stale": "The drawing has moved since the plan was committed.",
   "readiness.not_priced": "The plan has no quote.",
   "command.acknowledge_sale": "marked the sale as read",
-  "command.acknowledge_warnings": "reviewed the warnings"
+  "command.acknowledge_warnings": "reviewed the warnings",
+  "road.sale": "The sale",
+  "road.blanks": "The blanks",
+  "road.questions": "The questions",
+  "road.generate": "Generate",
+  "road.materials": "The materials",
+  "road.plan": "The plan",
+  "road.price": "The price",
+  "readiness.supply_unknown": "The materials have not been worked out for this run yet."
 }

@@ -1397,5 +1397,13 @@
   "readiness.plan_stale": "השרטוט השתנה מאז שהתוכנית נקבעה.",
   "readiness.not_priced": "לתוכנית אין הצעת מחיר.",
   "command.acknowledge_sale": "סימן/ה שקרא/ה את המכירה",
-  "command.acknowledge_warnings": "עבר/ה על האזהרות"
+  "command.acknowledge_warnings": "עבר/ה על האזהרות",
+  "road.sale": "המכירה",
+  "road.blanks": "מה שחסר",
+  "road.questions": "השאלות",
+  "road.generate": "חישוב",
+  "road.materials": "החומרים",
+  "road.plan": "התוכנית",
+  "road.price": "המחיר",
+  "readiness.supply_unknown": "החומרים עבור החישוב הזה עדיין לא חושבו."
 }

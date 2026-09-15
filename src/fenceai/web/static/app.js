@@ -53,6 +53,20 @@ function setupHeader() {
   // ...and the picker is labelled by the JOB, which can be named long after the
   // project was created.
   on("job-changed", refreshProjectList);
+  // The picker follows whatever job is OPEN, however it was opened.
+  //
+  // It only ever rebuilt on create and on rename, so a job opened from the
+  // queue — or created by anybody else since this tab loaded — was not among
+  // its options and setting `.value` to an unknown id silently left the old
+  // one selected. The header then named a different job from the one on
+  // screen, which is the "project 7" confusion the job identity slice existed
+  // to end, arriving by a new route.
+  on("project-opened", async (id) => {
+    const sel = document.getElementById("project-select");
+    if (!sel) return;
+    if (![...sel.options].some((o) => o.value === id)) await refreshProjectList();
+    sel.value = id;
+  });
 }
 
 /** The sign-in form and the who-am-I chip.

@@ -272,3 +272,80 @@ def test_a_window_on_submission_excludes_the_job_that_was_never_submitted():
 def test_free_text_searches_what_a_person_would_type():
     rows, _ = select_rows(JOBS, QueueFilter(q="mizrahi"), now=NOW)
     assert {r.id for r in rows} == {"p_c"}
+
+
+# --- the five mutants that survived together ----------------------------------
+
+def _p(pid: str, **kw) -> Project:
+    base = dict(id=pid, name=pid, status="waiting",
+                submitted_at="2026-09-14T08:00:00+00:00")
+    return Project(**{**base, **kw})
+
+
+def test_a_job_nobody_submitted_does_not_lead_the_longest_waiting():
+    """The blank-placement key. Flipping `0 if p.submitted_at else 1` survived
+    every test, because every fixture had a submitted date and the one job
+    without one was alone in its list — so the ordering it decides was never
+    observable. The failure it prevents is named in the code: every
+    never-submitted job sitting at the top of the list of who has waited longest.
+    """
+    rows, _ = select_rows(
+        [_p("blank", status="drafting", submitted_at=""),
+         _p("old", submitted_at="2026-09-01T08:00:00+00:00"),
+         _p("new", submitted_at="2026-09-14T08:00:00+00:00")],
+        QueueFilter(bucket="open", status=("waiting", "drafting")), now=NOW)
+    assert [r.id for r in rows][0] == "old", [r.id for r in rows]
+    assert [r.id for r in rows][-1] == "blank", [r.id for r in rows]
+
+
+def test_newest_is_the_other_direction_from_longest_waiting():
+    """`sort="newest"` was never requested by any test; flipping its descending
+    flag survived."""
+    jobs = [_p("old", submitted_at="2026-09-01T08:00:00+00:00"),
+            _p("new", submitted_at="2026-09-14T08:00:00+00:00")]
+    waiting, _ = select_rows(jobs, QueueFilter(sort="waiting"), now=NOW)
+    newest, _ = select_rows(jobs, QueueFilter(sort="newest"), now=NOW)
+    assert [r.id for r in waiting] == ["old", "new"]
+    assert [r.id for r in newest] == ["new", "old"]
+
+
+def test_customer_sorts_by_the_name_a_person_would_look_for():
+    """Never requested either; replacing the key with a constant survived."""
+    jobs = [_p("b", job=Job(customer="Zohar")), _p("a", job=Job(customer="Abergel"))]
+    rows, _ = select_rows(jobs, QueueFilter(sort="customer"), now=NOW)
+    assert [r.customer for r in rows] == ["Abergel", "Zohar"]
+
+
+def test_each_stored_filter_actually_filters():
+    """`status`, `sold_by` and the sold-on window were all in the spec's filter
+    set, all sent by the real `<select>` elements, and all survived being
+    neutralised. Driven together because the failure is the same shape for each:
+    a chip that looks like it did something."""
+    jobs = [_p("w", status="waiting", job=Job(sold_by="Dana", sold_on="2026-09-01")),
+            _p("p", status="planning", job=Job(sold_by="Ron", sold_on="2026-09-10"))]
+
+    rows, _ = select_rows(jobs, QueueFilter(status=("waiting",)), now=NOW)
+    assert [r.id for r in rows] == ["w"]
+
+    rows, _ = select_rows(jobs, QueueFilter(sold_by="Ron"), now=NOW)
+    assert [r.id for r in rows] == ["p"]
+
+    rows, _ = select_rows(jobs, QueueFilter(sold_on_from="2026-09-05"), now=NOW)
+    assert [r.id for r in rows] == ["p"]
+
+    rows, _ = select_rows(jobs, QueueFilter(sold_on_to="2026-09-05"), now=NOW)
+    assert [r.id for r in rows] == ["w"]
+
+
+def test_one_unreadable_timestamp_does_not_hide_every_other_job():
+    """`_waiting_seconds` guards a naive or unparseable stored time and returns
+    0. Removing the guard raised inside `select_rows` — a 500 on the whole list,
+    which is the failure its own docstring names: a queue that dies because one
+    row's timestamp is malformed hides every other job on it."""
+    jobs = [_p("naive", submitted_at="2026-09-14T08:00:00"),
+            _p("junk", submitted_at="not a date"),
+            _p("fine")]
+    rows, _ = select_rows(jobs, QueueFilter(), now=NOW)
+    assert {r.id for r in rows} == {"naive", "junk", "fine"}
+    assert next(r for r in rows if r.id == "naive").waiting_seconds == 0
+    assert next(r for r in rows if r.id == "junk").waiting_seconds == 0

@@ -75,6 +75,35 @@ out.proto = byKey(road(SALES_ROAD, [g("constructor")], st()));
 out.panel_of_notes = panelFor(SALES_ROAD, "notes");
 out.panel_of_nothing = panelFor(SALES_ROAD, "not_a_step");
 out.road_for_sales = roadFor("sales") === SALES_ROAD;
+// Every code any road can carry, driven against every registered road.
+const HANDOVER = ["no_fence_drawn", "no_model_chosen", "customer_missing",
+  "address_missing", "sold_by_missing", "sold_on_missing", "no_property_context",
+  "gate_swing_unstated", "height_assumed", "base_assumed", "gates_contradicted",
+  "promises_contradicted"];
+const READINESS = ["sale_unread", "choices_unanswered", "no_run",
+  "warnings_unreviewed", "supply_unresolved", "no_plan_committed", "plan_stale",
+  "not_priced"];
+// What each road is actually FED. The salesperson's screen never fetches the
+// run-scoped half, so requiring her road to claim it would pin a rule nobody
+// wants — and hide the one that matters, which is that a road must claim every
+// code it DOES receive.
+const FED = { sales: HANDOVER, backoffice: [...HANDOVER, ...READINESS] };
+out.commits = Object.fromEntries(Object.entries(ROADS).map(([k, def_]) =>
+  [k, Object.fromEntries(def_.steps.map((s) => [s.key, s.commits === true]))]));
+out.orphan_totality = {};
+out.unclaimed = {};
+for (const [k, def] of Object.entries(ROADS)) {
+  out.orphan_totality[k] = {};
+  const claimed = new Set(def.steps.flatMap((s) => [...s.requires, ...s.wants]));
+  out.unclaimed[k] = (FED[k] || []).filter((c) => !claimed.has(c));
+  // Every code ANY road can carry is driven at every road, because not
+  // throwing is a property of the engine and not of who is fed what.
+  for (const c of [...HANDOVER, ...READINESS]) {
+    try { road(def, [{code: c, params: {}, blocking: false}], {});
+          out.orphan_totality[k][c] = "ok"; }
+    catch (e) { out.orphan_totality[k][c] = "THREW"; }
+  }
+}
 out.road_for_backoffice = roadFor("backoffice");
 out.road_for_all = roadFor("all");
 out.road_for_inherited = ["constructor", "toString", "hasOwnProperty"]
@@ -202,9 +231,18 @@ def test_panel_for_is_road_scoped(out):
     assert out["panel_of_nothing"] is None
 
 
-def test_a_role_with_no_road_gets_none(out):
+def test_a_view_with_no_road_gets_none(out):
+    """`all` is the engineer's view of the whole app and deliberately has no
+    road: it is the view somebody chooses precisely to see everything at once,
+    and a map over it would be claiming an order that view exists to escape.
+
+    `backoffice` HAS one now. It read `None` from the day `roadFor` was written
+    until the office road landed, which is what that null was always for —
+    `roadFor` returns null rather than defaulting to the salesperson's, because
+    "showing an office person a salesperson's map would be worse than showing
+    them none"."""
     assert out["road_for_sales"] is True
-    assert out["road_for_backoffice"] is None
+    assert out["road_for_backoffice"] is not None
     assert out["road_for_all"] is None
 
 
@@ -220,3 +258,57 @@ def test_the_engine_imports_nothing():
     src = (STATIC / "js" / "road-model.js").read_text()
     assert not re.search(r"^\s*import\s", src, re.M), (
         "road-model.js must import nothing — put data in roads.js")
+
+
+def test_no_registered_road_throws_on_a_code_no_step_of_it_claims(out):
+    """The defect this file existed and did not catch.
+
+    `ORPHAN_STEP` was the literal `"review"` — the salesperson's last step. The
+    bucket map is built from THIS road's keys, so an unclaimed code on a road
+    without a `review` step reached `held["review"].push` on `undefined` and
+    threw. Four handover codes are unclaimed by the office road and one of them
+    is `no_fence_drawn`, that road's own ANCHOR, so it fired on nearly every
+    job — and `render()` calls `road()` before `build()`, so the band was never
+    drawn at all.
+
+    The old orphan test exercised `SALES_ROAD` only, which is exactly why 3184
+    tests were green over a crash. This one drives EVERY registered road against
+    EVERY code any road can carry.
+    """
+    for road_key, results in out["orphan_totality"].items():
+        for code, outcome in results.items():
+            assert outcome == "ok", f"{road_key} threw on {code}"
+
+
+def test_every_road_claims_every_code_it_is_actually_fed(out):
+    """Not throwing is the floor; landing somewhere a person will LOOK is the
+    property.
+
+    Per road, because the two are fed different things: the salesperson's screen
+    never fetches the run-scoped half, so requiring her road to claim it would
+    pin a rule nobody wants. What both must satisfy is that nothing they receive
+    falls into the orphan bucket, where it is one line at the bottom of the last
+    step instead of the thing that step is for.
+    """
+    for road_key, unclaimed in out["unclaimed"].items():
+        assert unclaimed == [], f"{road_key} claims no step for: {unclaimed}"
+
+
+def test_no_step_suppresses_the_done_button_without_having_its_own(out):
+    """`commits: true` hides the road's Done button, on the grounds that the
+    step "already has an explicit I-have-finished control of its own".
+
+    Four office steps claimed it while their controls were unbuilt, which left
+    those steps with no way to be finished at all — a road you cannot walk.
+    Sales' step 1 earns it: `#job-panel` has a Save that advances.
+
+    The rule is not "office steps may not commit"; it is that the claim must be
+    true when it is made. A step flips to `true` in the commit that ships its
+    button.
+    """
+    for road_key, steps in out["commits"].items():
+        for step, commits in steps.items():
+            if not commits:
+                continue
+            assert (road_key, step) in {("sales", "job")}, (
+                f"{road_key}/{step} suppresses Done and has no control of its own")

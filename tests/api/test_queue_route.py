@@ -124,11 +124,98 @@ def test_too_large_a_page_refuses_rather_than_clamping(client):
 # --- the column a pure function could not fill --------------------------------
 
 def test_a_page_hands_back_a_cursor_only_when_there_is_more(client):
+    """The second assertion was `next_cursor is None OR len(rows) <= 2`, and the
+    request used `limit=2` — so the right half was ALWAYS true and the test could
+    not fail. Verified: forcing the route to return a cursor unconditionally
+    still passed. The `or` was hedging against other tests' jobs polluting the
+    store, and the hedge is what made it vacuous; the fix is to isolate the rows
+    instead, with a status nothing else in this file uses.
+    """
     _sign_in(client, "u_y7", "backoffice")
     for i in range(3):
-        _job(client, f"j{i}", "waiting")
-    body = client.get("/api/queue", params={"limit": 2}).json()
-    assert len(body["rows"]) == 2 and body["next_cursor"]
-    rest = client.get("/api/queue", params={"limit": 2,
+        _job(client, f"cursor-{i}", "returned")
+    params = {"limit": 2, "status": "returned"}
+    body = client.get("/api/queue", params=params).json()
+    assert len(body["rows"]) == 2
+    assert body["next_cursor"], "two of three rows returned and no way to the third"
+
+    rest = client.get("/api/queue", params={**params,
                                             "cursor": body["next_cursor"]}).json()
-    assert rest["next_cursor"] is None or len(rest["rows"]) <= 2
+    assert len(rest["rows"]) == 1
+    assert rest["next_cursor"] is None, "a last page must not offer another"
+    assert {r["id"] for r in body["rows"]} & {r["id"] for r in rest["rows"]} == set()
+
+
+# --- the guards that shipped with no test at all -------------------------------
+
+def test_a_typo_in_the_assignee_is_refused_rather_than_losing_the_job(client):
+    """`_refuse_unknown_assignee` is twenty lines with a docstring explaining it
+    closes the seam `commands/` deliberately left open — and deleting its body
+    failed nothing. `assignee_unknown` appeared in the suite exactly once, as a
+    string in the locale test, which proves a SENTENCE exists and not that
+    anything emits it.
+
+    The failure it prevents: a job on a desk nobody has, off every list at once,
+    with nothing refusing and no way back but reading the database."""
+    _sign_in(client, "u_assign", "backoffice")
+    job = _job(client, "typo target", "waiting")
+    r = client.post(f"/api/projects/{job}/actions",
+                    json={"kind": "assign_job", "payload": {"user_id": "u_typo"}})
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "assignee_unknown"
+    assert state.store.load_project(job).assignee is None
+
+
+def test_a_deactivated_account_cannot_be_handed_a_job(client):
+    """Deactivated is what a company does instead of deleting. Handing work to
+    one is the same lost job as a typo."""
+    _sign_in(client, "u_assign2", "backoffice")
+    gone = _account("u_gone", "backoffice")
+    gone.active = False
+    state.store.save_user(gone)
+    job = _job(client, "to a leaver", "waiting")
+    r = client.post(f"/api/projects/{job}/actions",
+                    json={"kind": "assign_job", "payload": {"user_id": "u_gone"}})
+    assert r.status_code == 422
+
+
+def test_assigning_to_a_real_person_works(client):
+    """The other half. A guard that refused everything would pass the two tests
+    above and be worse than no guard."""
+    _sign_in(client, "u_assign3", "backoffice")
+    _account("u_maya2", "backoffice")
+    job = _job(client, "to maya", "waiting")
+    r = client.post(f"/api/projects/{job}/actions",
+                    json={"kind": "assign_job", "payload": {"user_id": "u_maya2"}})
+    assert r.status_code == 200
+    assert state.store.load_project(job).assignee == "u_maya2"
+
+
+def test_the_finished_list_carries_the_quote_and_the_closing_date(client):
+    """Both columns a pure function could not fill. The route's own docstring
+    promised they were answered here and only `me` was tested — replacing
+    `_queue_row` with a bare dump passed 327 tests."""
+    _sign_in(client, "u_q", "backoffice")
+    job = _job(client, "priced", "quoted")
+    stored = state.store.load_project(job)
+    stored.closed_at = "2026-09-15T12:00:00+00:00"
+    state.store.save_project(stored)
+    row = next(r for r in client.get("/api/queue",
+                                     params={"bucket": "open", "status": "quoted"}
+                                     ).json()["rows"] if r["id"] == job)
+    assert row["closed_at"] == "2026-09-15T12:00:00+00:00"
+    assert "quote_total_cents" in row
+
+
+def test_deactivating_an_account_ends_a_session_that_is_already_open(client):
+    """The whole justification for opaque server-side tokens is that a
+    self-describing one makes "deactivate this account" a promise the server
+    cannot keep. The half that keeps it on an ALREADY-ISSUED cookie was
+    unpinned: dropping `and user.active` from `_signed_in` passed 591 tests."""
+    _sign_in(client, "u_bye2", "backoffice")
+    assert client.get("/api/me").status_code == 200
+
+    user = state.store.user("u_bye2")
+    user.active = False
+    state.store.save_user(user)
+    assert client.get("/api/me").status_code == 401

@@ -69,6 +69,7 @@ from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.report.handover import handover_gaps
+from fenceai.report.readiness import readiness
 from fenceai.project.model import (
     Annotation, Job, Project, Selection, SiteConditions, SiteContext, Stated,
 )
@@ -508,9 +509,44 @@ def perform_command(request: Request, project_id: str, body: CommandBody) -> Pro
                        for e in invalid.errors()[:10]],
         }) from invalid
     state.store.save_project(changed, actor=actor_ref(user))
-    state.store._audit(actor_ref(user), f"command:{body.kind}",
+    state.store.log(actor_ref(user), f"command:{body.kind}",
                        f"{project_id}|{body.origin}")
     return changed
+
+
+@app.get("/api/projects/{project_id}/readiness")
+def get_readiness(project_id: str) -> dict:
+    """What the OFFICE still has to do — the run-scoped sibling of `/handover`.
+
+    Two read models and deliberately not one. `/handover` is a pure function of
+    the PROJECT and must stay one: that is what lets it catch the silent 1800 mm
+    height before a strategy exists to make it look decided. These questions are
+    about a run, so folding them in would drag a run into a function whose whole
+    value is not needing one.
+
+    The road reads both and GROUPS them. It never recounts — three surfaces
+    answering "what is left" and disagreeing is the defect this repo already
+    paid for once.
+
+    **Reads the STORED run and never re-evaluates.** No knowledge base is loaded
+    here and `readiness()` takes none, so there is nothing in scope to resolve
+    against: re-running the evaluator would re-resolve to "current" (contract
+    3.2.1) and recompute a quantity in a read model (foundation §15).
+    """
+    project = _project(project_id)
+    runs = state.store.list_runs(project_id)
+    # The LATEST run, because that is the one the office is looking at. An older
+    # one is a document somebody may still read, but "what is left to do" is a
+    # question about the fence as it stands now.
+    result = _run(runs[-1]["id"]) if runs else None
+    items = readiness(
+        project,
+        run=result.run if result else None,
+        strategy=result.strategy if result else None,
+        choice_sets=result.choice_sets if result else None,
+        quotes=state.store.list_quotes(project_id),
+    )
+    return {"items": [i.model_dump() for i in items]}
 
 
 @app.get("/api/projects/{project_id}/handover")
@@ -1973,7 +2009,7 @@ def sign_in(body: SignIn, response: Response) -> dict:
         SESSION_COOKIE, sess.token, httponly=True, samesite="lax",
         max_age=sessions.SESSION_DAYS * 24 * 3600,
     )
-    state.store._audit(actor_ref(user), "sign_in", user.id)
+    state.store.log(actor_ref(user), "sign_in", user.id)
     return {"user": _public(user), "view": default_view(user.capacity),
             "may_choose_view": may_choose_view(user.capacity)}
 

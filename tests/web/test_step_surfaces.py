@@ -185,14 +185,14 @@ def test_each_road_derives_its_hidden_lists_from_its_OWN_union(out):
     exported so this is checkable now rather than on the day the office road
     gets its first step, which is the day it would otherwise have shipped.
     """
-    assert out["scoped"]["office"] == [], out["scoped"]["office"]
+    assert out["scoped"]["backoffice"], "the office road scopes nothing"
     assert out["scoped"]["sales"], "sales scopes nothing"
     for road, steps in out["hidden"].items():
         for step, selectors in steps.items():
             assert set(selectors) <= set(out["scoped"][road]), (road, step)
 
 
-def test_the_office_road_has_a_surface_map_before_it_has_steps(out):
+def test_the_office_road_has_a_surface_map(out):
     """The shape, proven before anything depends on it.
 
     An empty inner map is the honest state for a road whose steps have not
@@ -203,7 +203,7 @@ def test_the_office_road_has_a_surface_map_before_it_has_steps(out):
     up to the moment the office road's surfaces were added under a key the
     module has never heard of.
     """
-    assert "office" in out["surface_roads"], out["surface_roads"]
+    assert "backoffice" in out["surface_roads"], out["surface_roads"]
 
 
 def test_a_road_key_is_its_view_key(out):

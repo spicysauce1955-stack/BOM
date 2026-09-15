@@ -341,6 +341,7 @@ def _row(p: Project, open_questions: int, now: datetime) -> QueueRow:
         sold_by=job.sold_by if job else "",
         sold_on=job.sold_on if job else "",
         status=p.status,
+        closed_at=p.closed_at,
         assignee=p.assignee,
         submitted_at=p.submitted_at,
         waiting_seconds=_waiting_seconds(p.submitted_at, now),

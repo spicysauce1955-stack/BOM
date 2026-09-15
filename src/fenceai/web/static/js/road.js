@@ -160,11 +160,29 @@ function showStep(stepKey) {
  *  losing focus here strands a keyboard user completely. The buttons are always
  *  enabled: the road is a map, not a wizard. */
 function build(host, def) {
-  if (host.children.length) return;
+  // Built once PER ROAD, not once per page. `if (host.children.length) return`
+  // was correct while there was one road and became a defect the moment there
+  // were two: a browser that had shown the salesperson's eight steps kept
+  // showing them after signing in as the backoffice, because the strip already
+  // had children. The road was right, the state was right, and the buttons on
+  // screen were somebody else's — which the browser tier caught and no unit
+  // test could, since the model was never wrong.
+  //
+  // Keyed on the VIEW rather than on step count or identity: two roads could
+  // have the same number of steps, and `def` is a fresh object on every import
+  // in no scenario that matters but would be a silent no-op if it ever were.
+  if (host.dataset.road === def.view) return;
+  host.dataset.road = def.view;
+  host.replaceChildren();
   host.innerHTML = def.steps.map((s, i) => `<button data-step="${esc(s.key)}">`
     + `<span class="road-index">${String(i + 1).padStart(2, "0")}</span>`
     + `<span class="road-name">${esc(t(`road.${s.key}`))}</span>`
     + `<span class="road-state"></span></button>`).join("");
+  // `replaceChildren` above drops the old buttons but NOT a listener bound to
+  // the host, so rebuilding would stack one handler per road switch and fire a
+  // step change several times. Bound once, guarded by its own flag.
+  if (host.dataset.wired === "yes") return;
+  host.dataset.wired = "yes";
   host.addEventListener("click", (ev) => {
     const skip = ev.target.closest(".road-skip");
     if (skip) {
@@ -189,6 +207,22 @@ function build(host, def) {
  *  styling to key on. Audit B01's lesson applies here exactly as it does in
  *  `road-model.js` — a step that reads "nothing missing" before the response
  *  is back is the bug, not a stricter one. */
+/** Fetch the office's half of the checks.
+ *
+ *  Only for a view that HAS a road needing them — the salesperson's eight steps
+ *  are answered entirely by the handover sheet, and asking for a run-scoped read
+ *  model on her screen would be a request whose answer she has no step to show.
+ */
+export async function loadReadiness() {
+  const id = state.project?.id;
+  if (!id || !currentRoad()) { state.readiness = null; return; }
+  if (currentView() !== "backoffice") { state.readiness = null; return; }
+  const r = await fetch(`/api/projects/${id}/readiness`);
+  state.readiness = r.ok ? await r.json() : null;
+  render();
+}
+
+
 export function render() {
   const host = document.getElementById("road");
   if (!host) return;
@@ -210,8 +244,22 @@ export function render() {
     return;
   }
   document.documentElement.dataset.step = stepIn(def);
-  const steps = road(def, state.handover?.gaps ?? null,
-                     state.project?.stated ?? {});
+  // BOTH sources, concatenated and never recounted. `handover_gaps` answers
+  // "did the sale get captured"; `readiness` answers "can this be built and
+  // priced". The engine GROUPS what they return — the moment this file computes
+  // coverage of its own there are two answers to "is this job done", which is
+  // the defect `road-model.js`'s header was written against.
+  //
+  // `null` from either stays null for the whole list, because a step that reads
+  // `done` before an answer has arrived is the bug, not a stricter one.
+  // Each item carries the NAMESPACE its sentence lives in. Without it the
+  // renderer defaults everything to `handover.` and the eight `readiness.*`
+  // entries are unreachable — which is how they nearly shipped: guarded on the
+  // Python side and by nothing on the render side.
+  const gaps = state.handover?.gaps == null ? null
+    : [...state.handover.gaps.map((g) => ({ ...g, ns: "handover" })),
+       ...(state.readiness?.items ?? []).map((g) => ({ ...g, ns: "readiness" }))];
+  const steps = road(def, gaps, state.project?.stated ?? {});
   build(host, def);
   renderDone(def);
   // Set every render, not in `build()`: `build()` runs once, so freezing the
@@ -250,7 +298,10 @@ export function render() {
 
 export function initRoad() {
   render();
-  on("project-loaded", render);
+  on("project-loaded", () => { render(); loadReadiness(); });
+  // A new run changes what the office still has to do — new warnings nobody
+  // has read, and a committed plan that now points at the previous one.
+  on("result-changed", () => { render(); loadReadiness(); });
   on("handover-changed", render);
   on("locale-changed", render);
   // Step 1 is the only step with an explicit COMMIT — the other seven are

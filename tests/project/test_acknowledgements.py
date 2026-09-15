@@ -20,8 +20,18 @@ from fenceai.report.readiness import SALE_READ, WARNINGS_REVIEWED, readiness, sa
 NOW = "2026-09-15T09:00:00+00:00"
 
 
-def _note(nid: str) -> Annotation:
-    return Annotation(id=nid, target_ref="job", text="a promise", author="user:u_dana")
+def _note(nid: str, created_at: str = "2026-09-14T10:00:00+00:00") -> Annotation:
+    return Annotation(id=nid, target_ref="job", text="a promise",
+                      author="user:u_dana", created_at=created_at)
+
+
+SUBMITTED = "2026-09-14T20:00:00+00:00"
+
+
+def _sold(**kw) -> Project:
+    """A job as it arrives on the office desk: submitted, with her notes on it."""
+    return Project(id="p", name="x", submitted_at=SUBMITTED,
+                   annotations=[_note("a1")], **kw)
 
 
 def _codes(project: Project, **kw) -> set[str]:
@@ -37,28 +47,32 @@ def _ack(project: Project, kind: str, payload: dict | None = None,
 # --- reading the sale ---------------------------------------------------------
 
 def test_reading_the_sale_answers_the_step_nothing_can_check():
-    p = Project(id="p", name="x", annotations=[_note("a1")])
+    p = _sold()
     assert "sale_unread" in _codes(p)
     p = _ack(p, "acknowledge_sale")
     assert "sale_unread" not in _codes(p)
 
 
-def test_it_stops_being_true_the_moment_a_note_arrives():
-    """Anchored to the SET of annotation ids. A promise added after somebody read
-    the job is a promise nobody has read, and being covered by having read the
-    earlier ones is exactly the silence this concept exists to break."""
-    p = Project(id="p", name="x", annotations=[_note("a1")])
+def test_re_submitting_with_a_new_promise_un_reads_the_sale():
+    """The anchor is the sale AS HANDED OVER — her notes at `submitted_at`.
+
+    She cannot add a promise to a job on his desk without it coming back, and
+    `submit_job` re-stamps `submitted_at`, so the round trip un-reads the sale
+    exactly once: at the moment there is genuinely something new to read."""
+    p = _sold()
     p = _ack(p, "acknowledge_sale")
     assert "sale_unread" not in _codes(p)
 
-    p.annotations.append(_note("a2"))
+    p.annotations.append(_note("a2", created_at="2026-09-15T08:00:00+00:00"))
+    p.submitted_at = "2026-09-15T08:30:00+00:00"
     assert "sale_unread" in _codes(p)
 
 
 def test_the_order_of_the_notes_is_nobody_s_decision():
     """Sorted, so two notes swapping places does not un-read a sale — the office
     person would never learn what they had done to deserve it."""
-    p = Project(id="p", name="x", annotations=[_note("a1"), _note("a2")])
+    p = Project(id="p", name="x", submitted_at=SUBMITTED,
+                annotations=[_note("a1"), _note("a2")])
     p = _ack(p, "acknowledge_sale")
     p.annotations.reverse()
     assert "sale_unread" not in _codes(p)
@@ -120,7 +134,8 @@ def test_the_command_writes_the_anchor_the_read_model_reads():
     """Two spellings of "what was this read against" is how an acknowledgement
     silently stops matching. The command calls `sale_anchor` rather than
     rebuilding it."""
-    p = Project(id="p", name="x", annotations=[_note("a2"), _note("a1")])
+    p = Project(id="p", name="x", submitted_at=SUBMITTED,
+                annotations=[_note("a2"), _note("a1")])
     p = _ack(p, "acknowledge_sale")
     assert p.acknowledgements[-1].anchor == sale_anchor(p)
 
@@ -135,3 +150,49 @@ def test_a_salesperson_does_not_acknowledge_the_office_s_reading():
     with pytest.raises(CommandRefused):
         perform("acknowledge_sale", {}, Project(id="p", name="x"),
                 actor="user:u_dana", capacity="sales", now=NOW)
+
+
+def test_the_office_writing_its_own_note_does_not_un_read_the_sale():
+    """The anchor was over EVERY annotation, so an office note on step 4 un-read
+    step 1, and `return_to_sales` — which appends one as part of the command —
+    un-read the sale the same person had just read on their way out. Step 1
+    flickered amber for a reason no reader could connect to anything they did,
+    which is the behaviour this concept exists to prevent."""
+    p = _sold()
+    p = _ack(p, "acknowledge_sale")
+    assert "sale_unread" not in _codes(p)
+
+    p.annotations.append(Annotation(id="a2", target_ref="job",
+                                    text="pinned a post clear of the window",
+                                    author="user:u_yossi",
+                                    created_at="2026-09-15T09:00:00+00:00"))
+    assert "sale_unread" not in _codes(p)
+
+
+def test_handing_a_job_back_does_not_un_read_the_sale():
+    p = _sold(status="planning", assignee="u_yossi")
+    p = _ack(p, "acknowledge_sale")
+    p = perform("return_to_sales", {"reason": "wall height?"}, p,
+                actor="user:u_yossi", capacity="backoffice", now=NOW)
+    assert "sale_unread" not in _codes(p)
+
+
+def test_a_note_written_after_the_handover_is_not_part_of_the_sale():
+    """The narrowing's whole point. Anything added after she handed the job over
+    — his own note, the reason he sent it back — is not the sale he read."""
+    p = _sold()
+    p = _ack(p, "acknowledge_sale")
+    p.annotations.append(_note("a2", created_at="2026-09-15T09:00:00+00:00"))
+    assert "sale_unread" not in _codes(p)
+
+
+def test_the_anchor_does_not_grow_with_the_note_count():
+    """Stored on every acknowledgement, so an id list would grow without bound
+    on a job with a talkative salesperson."""
+    from fenceai.project.model import sale_anchor
+
+    few = Project(id="p", name="x", submitted_at=SUBMITTED,
+                  annotations=[_note(f"a{i}") for i in range(2)])
+    many = Project(id="p", name="x", submitted_at=SUBMITTED,
+                   annotations=[_note(f"a{i}") for i in range(200)])
+    assert len(sale_anchor(few)) == len(sale_anchor(many))

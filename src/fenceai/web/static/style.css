@@ -1196,3 +1196,120 @@ html[dir="rtl"] .actions-list li::before { content: "←"; }
 #k-retired-group summary { cursor: pointer; font-size: 12.5px; font-weight: 600;
   color: #64748b; padding: 6px 2px; }
 #k-retired-group[open] summary { color: #1d2733; }
+
+/* The office road's step scoping — the mirrored half of
+   `step-surfaces.js`'s `backoffice` maps. CSS cannot read a JS array, so the
+   list exists twice and `test_the_two_copies_are_equal` checks them for
+   EQUALITY rather than overlap. Generated from the module, never by hand. */
+html[data-step="blanks"] #choices,
+html[data-step="blanks"] #inspector,
+html[data-step="blanks"] #notes-panel,
+html[data-step="blanks"] #override-list,
+html[data-step="blanks"] #site-conditions,
+html[data-step="blanks"] #tool-pin,
+html[data-step="blanks"] #warnings { display: none; }
+html[data-step="generate"] #choices,
+html[data-step="generate"] #notes-panel,
+html[data-step="generate"] #profile,
+html[data-step="generate"] #run-editing-panel,
+html[data-step="generate"] #tool-base,
+html[data-step="generate"] #tool-gate,
+html[data-step="generate"] #tool-ground,
+html[data-step="generate"] #tool-height,
+html[data-step="generate"] #tool-model { display: none; }
+html[data-step="materials"] #canvas,
+html[data-step="materials"] #choices,
+html[data-step="materials"] #generate-toolbar,
+html[data-step="materials"] #inspector,
+html[data-step="materials"] #notes-panel,
+html[data-step="materials"] #override-list,
+html[data-step="materials"] #profile,
+html[data-step="materials"] #run-editing-panel,
+html[data-step="materials"] #site-conditions,
+html[data-step="materials"] #statusbar,
+html[data-step="materials"] #strategy-summary,
+html[data-step="materials"] #tool-base,
+html[data-step="materials"] #tool-gate,
+html[data-step="materials"] #tool-ground,
+html[data-step="materials"] #tool-height,
+html[data-step="materials"] #tool-model,
+html[data-step="materials"] #tool-pin,
+html[data-step="materials"] #warnings { display: none; }
+html[data-step="plan"] #canvas,
+html[data-step="plan"] #choices,
+html[data-step="plan"] #generate-toolbar,
+html[data-step="plan"] #inspector,
+html[data-step="plan"] #notes-panel,
+html[data-step="plan"] #override-list,
+html[data-step="plan"] #profile,
+html[data-step="plan"] #run-editing-panel,
+html[data-step="plan"] #site-conditions,
+html[data-step="plan"] #statusbar,
+html[data-step="plan"] #strategy-summary,
+html[data-step="plan"] #tool-base,
+html[data-step="plan"] #tool-gate,
+html[data-step="plan"] #tool-ground,
+html[data-step="plan"] #tool-height,
+html[data-step="plan"] #tool-model,
+html[data-step="plan"] #tool-pin,
+html[data-step="plan"] #warnings { display: none; }
+html[data-step="price"] #canvas,
+html[data-step="price"] #choices,
+html[data-step="price"] #generate-toolbar,
+html[data-step="price"] #inspector,
+html[data-step="price"] #notes-panel,
+html[data-step="price"] #override-list,
+html[data-step="price"] #profile,
+html[data-step="price"] #run-editing-panel,
+html[data-step="price"] #site-conditions,
+html[data-step="price"] #statusbar,
+html[data-step="price"] #strategy-summary,
+html[data-step="price"] #tool-base,
+html[data-step="price"] #tool-gate,
+html[data-step="price"] #tool-ground,
+html[data-step="price"] #tool-height,
+html[data-step="price"] #tool-model,
+html[data-step="price"] #tool-pin,
+html[data-step="price"] #warnings { display: none; }
+html[data-step="questions"] #generate-toolbar,
+html[data-step="questions"] #inspector,
+html[data-step="questions"] #notes-panel,
+html[data-step="questions"] #override-list,
+html[data-step="questions"] #profile,
+html[data-step="questions"] #run-editing-panel,
+html[data-step="questions"] #site-conditions,
+html[data-step="questions"] #strategy-summary,
+html[data-step="questions"] #tool-base,
+html[data-step="questions"] #tool-gate,
+html[data-step="questions"] #tool-ground,
+html[data-step="questions"] #tool-height,
+html[data-step="questions"] #tool-model,
+html[data-step="questions"] #tool-pin,
+html[data-step="questions"] #warnings { display: none; }
+html[data-step="sale"] #choices,
+html[data-step="sale"] #generate-toolbar,
+html[data-step="sale"] #inspector,
+html[data-step="sale"] #override-list,
+html[data-step="sale"] #profile,
+html[data-step="sale"] #run-editing-panel,
+html[data-step="sale"] #site-conditions,
+html[data-step="sale"] #strategy-summary,
+html[data-step="sale"] #tool-base,
+html[data-step="sale"] #tool-gate,
+html[data-step="sale"] #tool-ground,
+html[data-step="sale"] #tool-height,
+html[data-step="sale"] #tool-model,
+html[data-step="sale"] #tool-pin,
+html[data-step="sale"] #warnings { display: none; }
+
+/* The office road's step scoping — the mirrored half of
+   `step-surfaces.js`'s `backoffice` maps. CSS cannot read a JS array, so the
+   list exists twice and `test_the_two_copies_are_equal` checks them for
+   EQUALITY rather than overlap. Generated from the module, never by hand. */
+html[data-step="blanks"] #handover-panel { display: none; }
+html[data-step="generate"] #handover-panel { display: none; }
+html[data-step="materials"] #handover-panel { display: none; }
+html[data-step="plan"] #handover-panel { display: none; }
+html[data-step="price"] #handover-panel { display: none; }
+html[data-step="questions"] #handover-panel { display: none; }
+html[data-step="sale"] #handover-panel { display: none; }

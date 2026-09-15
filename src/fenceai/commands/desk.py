@@ -37,7 +37,7 @@ from pydantic import BaseModel, field_validator
 from fenceai.commands.model import CommandSpec
 from fenceai.commands.registry import register
 from fenceai.core.ids import new_id
-from fenceai.project.lifecycle import OPEN_STATES, TRANSITIONS
+from fenceai.project.lifecycle import FINISHED_STATES, OPEN_STATES, TRANSITIONS
 from fenceai.project.model import (
     SALE_READ, WARNINGS_REVIEWED, Acknowledgement, Annotation, Project,
     sale_anchor,
@@ -97,7 +97,7 @@ class ReturnToSales(BaseModel):
         return text
 
 
-def _move(project: Project, to: str) -> None:
+def _move(project: Project, to: str, *, now: str | None = None) -> None:
     """Change the status, and refuse a move the lifecycle table does not have.
 
     `from_states` and `TRANSITIONS` are two descriptions of one lifecycle, and
@@ -111,11 +111,23 @@ def _move(project: Project, to: str) -> None:
         raise ValueError(
             f"no transition {project.status!r} -> {to!r} in the lifecycle table")
     project.status = to
+    # The moment it left the open list, stamped HERE rather than in each closing
+    # row. `closed_at` was declared, documented, and rendered in the Finished
+    # list's Closed column — and written by nothing, so that column was blank on
+    # every job while the whole suite was green. One place, so the next closing
+    # state added to `FINISHED_STATES` cannot forget.
+    if now is not None:
+        if to in FINISHED_STATES and not project.closed_at:
+            project.closed_at = now
+        elif to not in FINISHED_STATES:
+            # Reopening clears it: a job back on the open list has no closing
+            # date, and a stale one would sort it into last month.
+            project.closed_at = ""
 
 
 def _submit(payload: BaseModel, project: Project, *, actor: str, now: str) -> Project:
     """Sales hands the job over. Never gated on completeness — see the header."""
-    _move(project, "waiting")
+    _move(project, "waiting", now=now)
     # Stamped every time, including on a job coming back round after `returned`:
     # the queue's service-promise sort asks how long this has been WAITING, and
     # the first submission stopped being the answer the moment it came back.
@@ -127,7 +139,7 @@ def _claim(payload: BaseModel, project: Project, *, actor: str, now: str) -> Pro
     """Take it. TWO things in one act, because in the office they are one
     gesture: it becomes yours AND it moves `waiting -> planning` (spec §5)."""
     project.assignee = _user_id(actor)
-    _move(project, "planning")
+    _move(project, "planning", now=now)
     return project
 
 
@@ -140,7 +152,7 @@ def _assign(payload: AssignJob, project: Project, *, actor: str, now: str) -> Pr
     """
     project.assignee = payload.user_id
     if project.status == "waiting":
-        _move(project, "planning")
+        _move(project, "planning", now=now)
     return project
 
 
@@ -154,7 +166,7 @@ def _return_to_sales(payload: ReturnToSales, project: Project, *,
     job, never a code — because a code would need a sentence written in advance
     for a question nobody has asked yet.
     """
-    _move(project, "returned")
+    _move(project, "returned", now=now)
     project.assignee = None
     project.annotations.append(Annotation(
         id=new_id("ann"), target_ref="job", text=payload.reason,
@@ -171,7 +183,7 @@ def _cancel(payload: BaseModel, project: Project, *, actor: str, now: str) -> Pr
     is waiting — and it is the only remaining record of whose desk it was on when
     it stopped.
     """
-    _move(project, "cancelled")
+    _move(project, "cancelled", now=now)
     return project
 
 
@@ -182,7 +194,7 @@ def _reopen(payload: BaseModel, project: Project, *, actor: str, now: str) -> Pr
     when it was cancelled: that may have been months ago and they may have left
     the company. A reopened job is work somebody has to choose again.
     """
-    _move(project, "waiting")
+    _move(project, "waiting", now=now)
     project.assignee = None
     return project
 

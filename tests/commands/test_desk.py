@@ -291,3 +291,69 @@ def test_a_desk_command_never_touches_the_drawing():
     out = perform("claim_job", {}, _job("waiting"),
                   actor="user:u_y", capacity="backoffice", now=NOW)
     assert out.topology.revision == before
+
+
+def test_closing_a_job_stamps_when_it_left_the_open_list():
+    """`closed_at` was declared, documented, and rendered in the Finished list's
+    Closed column — and written by NOTHING. The column was blank on every job
+    and the whole suite was green, which is the exact shape of defect this repo
+    keeps finding: a feature that exists everywhere except where it happens."""
+    p = Project(id="p", name="x", status="planning")
+    out = perform("cancel_job", {}, p, actor="user:u_y", capacity="backoffice",
+                  now=NOW)
+    assert out.closed_at == NOW
+
+
+def test_reopening_clears_the_closing_date():
+    """A job back on the open list has no closing date, and a stale one would
+    sort it into last month on the finished list it is no longer in."""
+    p = Project(id="p", name="x", status="planning")
+    p = perform("cancel_job", {}, p, actor="user:u_y", capacity="backoffice", now=NOW)
+    p = perform("reopen_job", {}, p, actor="user:u_y", capacity="backoffice",
+                now="2026-09-16T09:00:00+00:00")
+    assert p.closed_at == ""
+
+
+def test_an_open_move_never_stamps_it():
+    for kind, start in [("claim_job", "waiting"), ("return_to_sales", "planning")]:
+        p = Project(id="p", name="x", status=start, assignee="u_y")
+        payload = {"reason": "why"} if kind == "return_to_sales" else {}
+        out = perform(kind, payload, p, actor="user:u_y", capacity="backoffice",
+                      now=NOW)
+        assert out.closed_at == "", kind
+
+
+def test_a_bad_payload_from_a_capacity_that_may_not_act_says_so_first():
+    """The ordering leak the existing test could not see: its fixture passed both
+    permission checks, so hoisting `parse_payload` to the first line of `perform`
+    survived 591 tests.
+
+    It matters because a salesperson sending a malformed `claim_job` would learn
+    the PAYLOAD was the problem — which tells them the command exists and that
+    they got as far as its shape — instead of `command_not_permitted`."""
+    with pytest.raises(CommandRefused) as e:
+        perform("assign_job", {"nonsense": True}, Project(id="p", name="x",
+                                                          status="waiting"),
+                actor="user:u_dana", capacity="sales", now=NOW)
+    assert e.value.code == "command_not_permitted"
+
+
+def test_a_bad_payload_in_the_wrong_state_reports_the_state_first():
+    """Same argument one rung down: state outranks shape, so somebody is told
+    the job moved rather than being sent to look at their own request."""
+    with pytest.raises(CommandRefused) as e:
+        perform("claim_job", {"nonsense": True},
+                Project(id="p", name="x", status="delivered"),
+                actor="user:u_y", capacity="backoffice", now=NOW)
+    assert e.value.code == "command_wrong_state"
+
+
+def test_the_lifecycle_guard_refuses_a_row_the_table_disagrees_with():
+    """`_move` raises `ValueError` — not a `CommandRefused` — when a row's
+    `from_states` names a move `TRANSITIONS` does not have. Deleting the guard
+    survived every test, because the existing fitness test asserts what the
+    guard enforces and so can only fail if a ROW is edited."""
+    from fenceai.commands.desk import _move
+
+    with pytest.raises(ValueError):
+        _move(Project(id="p", name="x", status="delivered"), "waiting", now=NOW)

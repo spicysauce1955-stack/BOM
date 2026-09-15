@@ -202,7 +202,17 @@ def readiness(
     # unresolved line is one that never got a product and so cannot reach
     # `fulfill()` at all, which is a fact about the order rather than a remark
     # about it.
-    if supply and supply.unresolved:
+    #
+    # **A caller that did not resolve supply gets `supply_unknown`, never
+    # silence.** For `no_run` the absence of a run IS the answer; for supply,
+    # "nobody worked it out" and "there is nothing to report" are different
+    # facts that produced the same output — so step 5 read DONE on a job with
+    # unresolved demand, which is the completeness lie this module exists to
+    # prevent, on the one step whose whole subject is what cannot be bought.
+    if supply is None:
+        if run is not None:
+            out.append(ReadinessItem(code="supply_unknown", params={}))
+    elif supply.unresolved:
         out.append(ReadinessItem(code="supply_unresolved",
                                  params={"n": len(supply.unresolved)}))
 
@@ -258,6 +268,7 @@ READINESS_CODES = [
     "no_run",
     "warnings_unreviewed",
     "supply_unresolved",
+    "supply_unknown",
     "no_plan_committed",
     "plan_stale",
     "not_priced",

@@ -77,7 +77,23 @@ const STEP_TOOLS = {
   // of this road, and a key that is missing says only that nobody noticed —
   // and the two read identically right up to the day the surfaces are added
   // under a spelling this module does not carry.
-  office: {},
+  backoffice: {
+    // Reading, not drawing. No tool armed: `#tool-select` is the default and is
+    // never scoped, so a step that keeps nothing still lets somebody click a
+    // note to read it.
+    sale: [],
+    // Her work, finished — the one office step that borrows the salesperson's
+    // tools, because these four checks are hers and these are the tools that
+    // close them.
+    blanks: ["#tool-ground", "#tool-base", "#tool-height", "#tool-model", "#tool-gate"],
+    questions: [],
+    // A promise becomes an instruction here: "a post clear of that window" is
+    // a pin, and the pin is the only tool this step offers.
+    generate: ["#tool-pin"],
+    materials: [],
+    plan: [],
+    price: [],
+  },
 };
 
 // Panels each step KEEPS.
@@ -101,7 +117,27 @@ const STEP_PANELS = {
     notes: ["#notes-panel"],
     review: ["#handover-panel", "#warnings", "#site-conditions"],
   },
-  office: {},
+  backoffice: {
+    // `#handover-panel` is scoped to this road and kept by NO step. It renders
+    // the salesperson's answer to "what is left" — including the sentence
+    // "nothing missing, this job is ready to hand over" — and unscoped it sat
+    // on every office step contradicting the band above it, beside an estimate
+    // that is not the quote step 7 is about. Two surfaces answering one
+    // question is the defect `road-model.js`'s header was written against; the
+    // band is the office's answer, so the panel is not on this road at all.
+    sale: ["#notes-panel"],
+    blanks: ["#run-editing-panel", "#profile"],
+    questions: ["#choices"],
+    // `#site-conditions` rides here as a COLLAPSED disclosure rather than a step
+    // of its own: the dimensions published rules key on matter the day a real
+    // snapshot arrives, and on a job today they are a field nobody fills in. A
+    // step amber on every job for a reason nobody can act on is the
+    // completeness lie inverted (spec §8).
+    generate: ["#warnings", "#inspector", "#override-list", "#site-conditions"],
+    materials: [],
+    plan: [],
+    price: [],
+  },
 };
 
 // The drawing itself, scoped like any other surface and kept by exactly the
@@ -138,7 +174,17 @@ const STEP_DRAWING = {
     notes: ["#canvas", "#statusbar"],
     review: [],
   },
-  office: {},
+  backoffice: {
+    sale: ["#canvas", "#statusbar"],
+    blanks: DRAWING,
+    questions: ["#canvas", "#statusbar"],
+    generate: DRAWING,
+    // The materials, the sheet and the price are read on their own tabs. A map
+    // behind them is furniture — it invites a click that does nothing.
+    materials: [],
+    plan: [],
+    price: [],
+  },
 };
 
 /** `map[key]`, or `null` — never `map[key] || null`, which resolves through the
@@ -171,10 +217,30 @@ const ROAD_KEYS = Object.keys(STEP_TOOLS);
  *  road's maps are still empty: a shared union would show up as the empty road
  *  hiding the other road's whole screen, and there is no step of the empty road
  *  to observe it on until its steps land. This is the handle the test holds. */
+/** Surfaces a road scopes and NO step of it keeps — hidden on every step.
+ *
+ *  `#handover-panel` renders the salesperson's answer to "what is left",
+ *  including "nothing missing — this job is ready to hand over" and an estimate
+ *  that is not the quote step 7 is about. Unscoped, it sat on every office step
+ *  contradicting the band above it. Two surfaces answering one question is the
+ *  defect `road-model.js`'s header was written against, and the band is this
+ *  road's answer.
+ *
+ *  A keep-list cannot express "scoped by nobody", because the union is derived
+ *  FROM the keeps — so it is named here, which is also the honest place: it
+ *  says what the road hides rather than burying it in six empty arrays. */
+const ROAD_HIDES_ENTIRELY = {
+  sales: [],
+  backoffice: ["#handover-panel"],
+};
+
 export const STEP_SCOPED = Object.fromEntries(ROAD_KEYS.map((roadKey) => [
   roadKey,
-  [...new Set(Object.keys(STEP_TOOLS[roadKey])
-    .flatMap((stepKey) => keptBy(roadKey, stepKey)))],
+  [...new Set([
+    ...Object.keys(STEP_TOOLS[roadKey])
+      .flatMap((stepKey) => keptBy(roadKey, stepKey)),
+    ...(ROAD_HIDES_ENTIRELY[roadKey] || []),
+  ])],
 ]));
 
 /** `{road key: {step key: [selector, ...]}}` — what each step hides, derived

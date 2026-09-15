@@ -979,6 +979,28 @@ class Store:
         self._conn.commit()
         return cur.rowcount
 
+    @_serialized
+    def log(self, actor: str, action: str, ref: str) -> None:
+        """Write one activity row, from outside this module.
+
+        `_audit` is private and unguarded ON PURPOSE — `@_serialized` is
+        re-entrant but the convention here is that a private helper is already
+        inside a guarded public call, and `_audit` never commits because its
+        caller is mid-transaction and will.
+
+        Called from a route, both of those become defects: the INSERT runs on the
+        shared `check_same_thread=False` connection outside the lock that exists
+        because of 48 failures in ~540 overlapping requests, and the row sits in
+        an open transaction that lands only if some later write happens to commit
+        — and is lost on a clean shutdown. A test reading `audit_entries` on the
+        same connection sees the uncommitted row and passes, which is how this
+        shipped.
+
+        So: one public door, guarded, and it commits.
+        """
+        self._audit(actor, action, ref)
+        self._conn.commit()
+
     def audit_entries(self, limit: int = 100) -> list[dict]:
         rows = self._conn.execute(
             "SELECT seq, at, actor, action, ref FROM audit_log ORDER BY seq DESC LIMIT ?",

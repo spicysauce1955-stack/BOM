@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import re
 
 from pydantic import BaseModel, field_validator, model_validator
@@ -311,6 +313,30 @@ class Acknowledgement(BaseModel):
 def sale_anchor(project: Project) -> str:
     """What "I have read the sale" was read AGAINST.
 
+    **The SALESPERSON's notes only**, which is the correction that matters here.
+    Anchoring over every annotation meant the office person writing a note on
+    step 4 un-read their own step 1, and `return_to_sales` — which APPENDS an
+    annotation as part of the command — un-read the sale the same person had
+    just read on the way out. Step 1 would have flickered amber for reasons no
+    reader could connect to anything they did, which is precisely the behaviour
+    the concept was introduced to prevent.
+
+    The sale is **what existed when she handed it over**: notes created at or
+    before `submitted_at`. Author is not the discriminator — once notes are
+    written through an account hers carry `user:` exactly as his do — and
+    `created_at` against the handover moment is a fact both halves already
+    store.
+
+    A note she adds afterwards therefore does NOT un-read it, and that is
+    right: she cannot add one to a job sitting on his desk without it coming
+    back, and `submit_job` re-stamps `submitted_at` on a re-submission, so the
+    round trip un-reads the sale exactly once, at the moment there is genuinely
+    something new to read.
+
+    A note with no `created_at` counts as part of the sale, because every
+    annotation written before this field was populated has none and the safe
+    reading of an unknown time is "it was already there".
+
     The SET of annotation ids, sorted and joined — so the acknowledgement dies
     the moment the salesperson adds a note, and a promise nobody has read is
     never covered by somebody having read the ones before it. That is `Override`'s
@@ -325,7 +351,14 @@ def sale_anchor(project: Project) -> str:
     implementations of one anchor disagree the first time either moves, and the
     failure is silent in the worst direction — a step that reads done for ever.
     """
-    return ",".join(sorted(a.id for a in project.annotations))
+    handed_over = project.submitted_at
+    ids = sorted(a.id for a in project.annotations
+                 if not handed_over or not a.created_at
+                 or a.created_at <= handed_over)
+    # A DIGEST, not the list. The anchor is stored on every acknowledgement and
+    # the id list grows without bound with the note count; nothing reads it back
+    # as ids, only compares it.
+    return hashlib.sha256(",".join(ids).encode()).hexdigest()[:16]
 
 
 class Project(BaseModel):

@@ -2481,12 +2481,16 @@ def _smoke_backoffice_queue(c):
     shape = c.js("""(() => {
   const rows = [...document.querySelectorAll('#queue-list tr')].slice(1);
   return {rows: rows.length,
-          takeable: document.querySelectorAll('.queue-take').length,
+          takeable: document.querySelectorAll('#queue-list .queue-take').length,
           first: rows[0]?.innerText.replace(/\\s+/g, ' ').trim(),
           selector: getComputedStyle(document.getElementById('view-select')).display};
 })()""")
     check("the queue lists the submitted jobs with a Take it on each",
           shape and shape["rows"] >= 2 and shape["takeable"] >= 2, shape)
+    # The row TEXT, which was captured and never asserted: blanking every
+    # customer cell passed the count check above.
+    check("a row names the customer it is about",
+          shape and "Levi" in (shape["first"] or ""), shape)
     check("a backoffice account is not offered the view selector",
           shape and shape["selector"] == "none", shape)
     c.shot("60-backoffice-queue.png")
@@ -2494,26 +2498,82 @@ def _smoke_backoffice_queue(c):
     c.js("document.querySelector('.queue-take').click(); 'ok'")
     wait_for(c, "document.querySelectorAll('.queue-take').length < 2", timeout=15)
     after = c.js("""(() => {
-  const row = document.querySelector('#queue-list .queue-mine');
-  return {mine: !!row, text: row?.innerText.trim(),
-          planning: document.querySelector('#queue-list tr:nth-child(2)')
-                      ?.innerText.includes('planning')};
+  const row = document.querySelector('#queue-list tr.has-mine, #queue-list tr:has(.queue-mine)')
+              || document.querySelector('#queue-list .queue-mine')?.closest('tr');
+  return {mine: !!document.querySelector('#queue-list .queue-mine'),
+          text: row?.innerText.trim(),
+          // The row's own id, then the STATUS off the API — not the rendered
+          // label, which is localized and passed only because earlier cases
+          // left the app in English.
+          id: row?.dataset.id};
 })()""")
+    moved = c.js("""fetch('/api/queue?bucket=open&status=planning')
+  .then((r) => r.json())
+  .then((d) => d.rows.some((x) => x.id === %r && x.assignee))""" % (after or {}).get("id"))
     check("taking a job puts your name on it and moves it to planning",
-          after and after["mine"] and after["planning"], after)
+          after and after["mine"] and moved is True, {**(after or {}), "moved": moved})
     c.shot("61-backoffice-queue-taken.png")
 
     # A row opens its job. Until this existed you could take a job and then had
     # no way INTO it — the queue was a list you could claim from and not enter.
-    c.js("document.querySelector('#queue-list tr:nth-child(2) td').click(); 'ok'")
+    # The row's OWN id, captured before the click. Asserting only "a project is
+    # selected" passed with `openProject` deleted, because `#project-select`
+    # already has a value from every earlier case — the regression this check
+    # exists to prevent would have sailed through it.
+    # ONE element, captured and clicked. Capturing `tr[data-id]` and clicking
+    # `tr:nth-child(2)` looked equivalent and is not — the browser inserts a
+    # `<tbody>`, and the take-it click earlier in this case re-sorts the list —
+    # so the two selectors resolved to different rows and the repaired assertion
+    # caught it immediately. A check that names a row must click that row.
+    wanted = c.js("""(() => {
+  const row = document.querySelector('#queue-list tr[data-id]');
+  row.querySelector('td').click();
+  return row.dataset.id;
+})()""")
     wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab !== 'queue'",
              timeout=15)
     opened = c.js("""(() => ({
   tab: document.querySelector('#tabs button.active')?.dataset.tab,
   project: document.getElementById('project-select')?.value || '',
 }))()""")
-    check("clicking a row opens that job rather than leaving you on the list",
-          opened and opened["tab"] != "queue" and bool(opened["project"]), opened)
+    check("clicking a row opens THAT job rather than leaving you on the list",
+          opened and opened["tab"] != "queue" and opened["project"] == wanted,
+          {**(opened or {}), "wanted": wanted})
+
+    # The road, which is the point of the whole slice: a backoffice account
+    # inside a job is on step 1 of seven, not staring at nine tabs.
+    wait_for(c, "!!document.querySelector('#road [data-step]')", timeout=15)
+    road = c.js("""(() => {
+  const btns = [...document.querySelectorAll('#road [data-step]')];
+  return {steps: btns.map((b) => b.dataset.step),
+          current: document.querySelector('#road [aria-current="step"]')?.dataset.step,
+          named: btns.every((b) => (b.querySelector('.road-name')?.textContent || '').trim()
+                                   && !(b.querySelector('.road-name').textContent || '').includes('road.')),
+          tabs: getComputedStyle(document.getElementById('tabs')).display};
+})()""")
+    check("a backoffice account inside a job walks a road of seven steps",
+          road and road["steps"] == ["sale", "blanks", "questions", "generate",
+                                     "materials", "plan", "price"], road)
+    check("it opens on the first step rather than the salesperson's",
+          road and road["current"] == "sale", road)
+    check("every step is named in the reader's language, not by its key",
+          road and road["named"] is True, road)
+    c.shot("62-office-road.png")
+
+    # A step shows only its OWN work. Step 3 is the questions; the side-view
+    # tools belong to step 2 and must be gone.
+    c.js("document.querySelector('#road [data-step=\"questions\"]').click(); 'ok'")
+    time.sleep(1.2)
+    scoped = c.js("""(() => {
+  const vis = (id) => {
+    const el = document.getElementById(id);
+    return el ? getComputedStyle(el).display !== 'none' : null;
+  };
+  return {choices: vis('choices'), height: vis('tool-height'), pin: vis('tool-pin')};
+})()""")
+    check("a step shows only its own work",
+          scoped and scoped["height"] is False and scoped["pin"] is False, scoped)
+    c.shot("63-office-road-step.png")
 
     # Put the world back. Signing out is NOT enough on its own: `signedOutState`
     # deliberately has no opinion about the view, so `data-view` stays wherever
