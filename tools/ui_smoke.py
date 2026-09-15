@@ -2503,6 +2503,18 @@ def _smoke_backoffice_queue(c):
           after and after["mine"] and after["planning"], after)
     c.shot("61-backoffice-queue-taken.png")
 
+    # A row opens its job. Until this existed you could take a job and then had
+    # no way INTO it — the queue was a list you could claim from and not enter.
+    c.js("document.querySelector('#queue-list tr:nth-child(2) td').click(); 'ok'")
+    wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab !== 'queue'",
+             timeout=15)
+    opened = c.js("""(() => ({
+  tab: document.querySelector('#tabs button.active')?.dataset.tab,
+  project: document.getElementById('project-select')?.value || '',
+}))()""")
+    check("clicking a row opens that job rather than leaving you on the list",
+          opened and opened["tab"] != "queue" and bool(opened["project"]), opened)
+
     # Put the world back. Signing out is NOT enough on its own: `signedOutState`
     # deliberately has no opinion about the view, so `data-view` stays wherever
     # the account put it — which is correct behaviour (a signed-out reload keeps

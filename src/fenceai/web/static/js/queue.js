@@ -154,11 +154,22 @@ export function initQueue() {
   }
   document.getElementById("queue-q").addEventListener("change", render);
 
-  // Taking a job is one click and two effects — it becomes yours AND it moves
-  // to planning, because in an office those are one gesture.
   document.getElementById("queue-list").addEventListener("click", async (e) => {
+    // A click on the row OPENS the job; a click on the button TAKES it. Two
+    // intentions, and doing both would open a job somebody only meant to claim
+    // — which on a list you are working down is the difference between keeping
+    // your place and losing it.
     const btn = e.target.closest(".queue-take");
+    const row = e.target.closest("tr[data-id]");
+    if (!btn && row) {
+      const { openProject } = await import("./state.js");
+      await openProject(row.dataset.id);
+      setTab("canvas");
+      return;
+    }
     if (!btn) return;
+    // Taking a job is one click and two effects — it becomes yours AND it moves
+    // to planning, because in an office those are one gesture.
     const id = btn.closest("tr").dataset.id;
     await fetch(`/api/projects/${id}/actions`, {
       method: "POST", headers: { "Content-Type": "application/json" },
