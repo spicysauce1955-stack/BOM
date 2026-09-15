@@ -3,6 +3,101 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-09-15: the backoffice has a desk, and it is on main
+
+PR #5 merged. `main` is at `1a587b4`, **3208 tests and 439 browser checks green
+on the trunk itself**. This is the first slice in a while that is merged rather
+than parked on a branch.
+
+Two plans, both executed: `docs/superpowers/plans/2026-09-15-backoffice-queue.md`
+and `2026-09-15-office-road.md`, against
+`docs/superpowers/specs/2026-09-15-backoffice-design.md`. That spec is the
+office person's MVP the sales MVP said was unwritten, and it answers the
+advisory-agent spec's §12 question — **the workspace first**, because agent
+slice 1 was built and had no surface to live on.
+
+### What exists now
+
+Sign in (`dana@` / `yossi@` / `admin@example.com`, password `demo` on an empty
+database). A **Jobs** queue with filters, Open and Finished, and an
+open-question count read off the handover sheet that already existed. Take a
+job, click it, and walk **seven office-road steps** — the sale, the blanks, the
+questions, generate, the materials, the plan, the price — each showing only its
+own work.
+
+Underneath: `fenceai/identity/` (accounts, capacities, opaque server-side
+sessions), `fenceai/commands/` (the closed table of what may be done to a job,
+extracted from `agent/registry.py`, which was never its home), `project/queue.py`
+and `report/readiness.py` as pure read models, and five new `Project` fields
+plus `Acknowledgement`.
+
+### Three words that were one
+
+    view      what is SHOWN            sales | backoffice | all
+    capacity  what an account may DO   sales | backoffice | admin
+    role      what a part is FOR       rail | screw | post | …
+
+`role` was carrying all three, and two of them shared a locale namespace —
+`roleWord("all")` would have rendered "Everything". `role.*` is back to being
+only the contract's Roles registry.
+
+### What is NOT done, and will look like a bug
+
+* **Steps 6 and 7 read amber on every job.** `commit_plan` does not exist, so
+  `no_plan_committed` always fires. The road is reporting something genuinely
+  undone; spec §7 is the slice that closes it.
+* **Steps 1 and 4 have no acknowledge button.** Their `commits` is `false` so
+  the road's own Done button shows — it flips to `true` in the commit that ships
+  the control, not before.
+* **Capacity is enforced on `POST /projects/{id}/actions` only.** The other 70
+  routes are as open as they were. Deferred deliberately; spec §3 records it as
+  a trigger rather than claiming it is built.
+
+### What the two reviewers found, because it is the lesson
+
+`architecture-critic` and `test-reviewer` ran before merge and were worth more
+than the code. Between them: two blockers, a live defect, two assertions that
+provably could not fail, a 1-in-100 flake, three untested guards and five queue
+mutants surviving together. All in `80df7b6`, whose message records each one.
+
+Three worth carrying forward:
+
+* **The office road crashed on almost every real job.** `ORPHAN_STEP` was the
+  literal `"review"`; the office road has no such step, and one of its unclaimed
+  codes was its own anchor. The orphan test only ever drove the sales road, so
+  3184 tests were green over a crash.
+* **`closed_at` was declared, documented, rendered — and written by nothing.**
+* **Repairing a vacuous assertion found a further bug.** Once "clicking a row
+  opens THAT job" could fail, it did: `openProject` never touched the picker, so
+  a job opened from the queue left the header naming a different one.
+
+And one for whoever writes the next plan: the prose and the design in both plans
+held up; **the test code written into them did not** — vacuous assertions, a
+test that could never go green, a dataclass that could not hold its own
+subclass. Plans should carry assertions about BEHAVIOUR and let the executor
+write the fixtures.
+
+### Fixed along the way, unrelated to the feature
+
+`tools/persona_lab/stack.py` bound a fixed port, so two checkouts could not run
+`pytest` at once — the second produced 22 errors that read exactly like real
+failures. The base is read from the environment at call time and
+`tests/tools/conftest.py` derives one from the checkout path. Verified: two full
+persona suites concurrently, 86 and 86, both green.
+
+The browser suite's choice-set cases also inherited whatever VIEW an earlier
+case left, which made four checks fail or pass on case ORDER. They pin the view
+now, the way they already pinned the unit.
+
+### Next, in order
+
+`commit_plan` and the committed-plan view (spec §7) · doing it by hand,
+including taking over the cut plan (§9) · the agent proposing (§11). None is
+planned as code yet, on purpose: the next plan should be written after somebody
+has used this one.
+
+---
+
 ## Checkpoint — 2026-09-09: the agent is built, and it advises on the screen
 
 Slice 1 of `docs/superpowers/plans/2026-09-08-agent-framework-slice-1.md` is
