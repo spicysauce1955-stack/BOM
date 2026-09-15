@@ -1,4 +1,4 @@
-"""Which surfaces each company role sees (static/js/role.js).
+"""Which surfaces each view shows (static/js/view.js).
 
 Fence AI serves three people (`docs/superpowers/specs/2026-09-04-sales-mvp-design.md`):
 a **salesperson** who is explicitly non-technical, an **office person** who holds
@@ -8,7 +8,7 @@ customises. The repo's older roster in `tools/persona_lab` is engineering-shaped
 contains nobody non-technical, which is the likeliest reason the UI drifted into
 naming stations and spans at a person who sells fences.
 
-Hiding is CSS keyed on `<html data-role>`, so `role.js` holds only the LIST. That
+Hiding is CSS keyed on `<html data-view>`, so `view.js` holds only the LIST. That
 is what makes it testable here instead of by aiming a browser at it.
 
 **The assertion that earns this file** is `test_every_hidden_selector_exists`. A
@@ -31,14 +31,14 @@ import pytest
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
 SCRIPT = """
-import { ROLES, SALES_TABS, hiddenFor } from "./js/role.js";
+import { VIEWS, SALES_TABS, hiddenFor } from "./js/view.js";
 
 const out = {};
-out.roles = ROLES;
+out.views = VIEWS;
 out.sales = hiddenFor("sales");
 out.all = hiddenFor("all");
-out.office = hiddenFor("office");
-out.unknown = hiddenFor("nonsense-not-a-role");
+out.backoffice = hiddenFor("backoffice");
+out.unknown = hiddenFor("nonsense-not-a-view");
 out.sales_tabs = SALES_TABS;
 console.log(JSON.stringify(out));
 """
@@ -91,23 +91,23 @@ def _live_ids() -> set[str]:
     return ids
 
 
-def test_the_three_roles_are_the_company_s_and_not_the_pipeline_s(out):
+def test_the_three_views_are_the_company_s_roles_and_not_the_pipeline_s(out):
     """`sales` / `office` / `all` name people in the company. Deliberately NOT
     the `persona_lab` roster, which names positions in our pipeline — the two
     lists answer different questions and merging them would put a salesperson on
     a ladder beside `knowledge-owner`."""
-    assert out["roles"] == ["sales", "office", "all"]
+    assert out["views"] == ["sales", "backoffice", "all"]
 
 
-def test_the_widest_role_hides_nothing(out):
+def test_the_widest_view_hides_nothing(out):
     """`all` must be exactly today's app. It is the default, so a mistake here
     is a feature disappearing for everybody rather than a mode being wrong."""
     assert out["all"] == []
 
 
-def test_an_unknown_role_hides_nothing_rather_than_everything(out):
+def test_an_unknown_view_hides_nothing_rather_than_everything(out):
     """A stored preference from a future version, or a typo, must degrade to the
-    full app. Hiding on an unrecognised role would present a stranger with a
+    full app. Hiding on an unrecognised view would present a stranger with a
     stripped UI and no way to tell why."""
     assert out["unknown"] == []
 
@@ -156,13 +156,13 @@ def test_a_promise_made_during_the_sale_keeps_a_home(out):
     assert "annotations" in out["sales_tabs"]
 
 
-def test_office_still_hides_the_knowledge_bench(out):
+def test_backoffice_still_hides_the_knowledge_bench(out):
     """`office` is not `all`. The office person holds the inventory and the
     items; authoring RULES is the super user's bench. This is the weakest of the
     three definitions and the one most likely to be wrong — it is asserted so
     that changing it is a decision rather than a drift."""
-    assert '[data-tab="knowledge"]' in set(out["office"])
-    assert '[data-tab="bom"]' not in set(out["office"])
+    assert '[data-tab="knowledge"]' in set(out["backoffice"])
+    assert '[data-tab="bom"]' not in set(out["backoffice"])
 
 
 def test_every_hidden_selector_exists(out):
@@ -180,15 +180,15 @@ def test_every_hidden_selector_exists(out):
     ids = _live_ids()
     tabs = set(re.findall(r'data-tab="([^"]+)"',
                           (STATIC / "index.html").read_text()))
-    for role in ("sales", "office"):
-        for selector in out[role]:
+    for view in ("sales", "backoffice"):
+        for selector in out[view]:
             if selector.startswith("#"):
-                assert selector[1:] in ids, f"{role}: no element {selector}"
+                assert selector[1:] in ids, f"{view}: no element {selector}"
             elif selector.startswith('[data-tab='):
                 name = selector[len('[data-tab="'):-len('"]')]
-                assert name in tabs, f"{role}: no tab {selector}"
+                assert name in tabs, f"{view}: no tab {selector}"
             else:
-                pytest.fail(f"{role}: selector {selector!r} is neither an id "
+                pytest.fail(f"{view}: selector {selector!r} is neither an id "
                             f"nor a [data-tab=...] — this check cannot verify it")
 
 

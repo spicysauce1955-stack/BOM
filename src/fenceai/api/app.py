@@ -9,10 +9,11 @@ from __future__ import annotations
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -32,6 +33,8 @@ from fenceai.catalog.model import (
 )
 from fenceai.core.errors import GenerationFailure, ReadRefused, RequestRefused
 from fenceai.core.ids import new_id
+from fenceai import commands
+from fenceai.commands import CommandRefused
 from fenceai.decisions.explain import explain_element
 from fenceai.decisions.supply import with_supply_decisions
 from fenceai.fencemodel.library import ModelListing
@@ -66,6 +69,7 @@ from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.report.handover import handover_gaps
+from fenceai.report.readiness import readiness
 from fenceai.project.model import (
     Annotation, Job, Project, Selection, SiteConditions, SiteContext, Stated,
 )
@@ -73,6 +77,11 @@ from fenceai.report.annexe import WarningPlacement, place_for_plan
 from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
+from fenceai.identity.model import (
+    SYSTEM, User, actor_ref, default_view, may_choose_view, verify_password,
+)
+from fenceai.identity import session as sessions
+from fenceai.project.queue import DEFAULT_LIMIT, QueueFilter, select_rows
 from fenceai.store.db import Store
 from fenceai.strategy.generator import DEFAULT_POLICY, LEGACY_MODEL_ID, generate
 from fenceai.strategy.model import PartUse
@@ -107,6 +116,7 @@ async def lifespan(app: FastAPI):
             state.store.insert_knowledge_version(v, actor="seed")
     if not state.store.list_projects():
         state.store.save_project(_sample_project(), actor="seed")
+    _seed_demo_accounts()
     yield
     state.store.close()
 
@@ -152,6 +162,18 @@ def _sample_project() -> Project:
 
 
 app = FastAPI(title="Fence AI", version="0.1.0", lifespan=lifespan)
+
+
+def _now_iso() -> str:
+    """The clock, for anything a route stamps on a document.
+
+    Here rather than inside `fenceai.commands`, because a command that read the
+    clock itself could not be driven through every state it declares from a test
+    without freezing time globally. The store keeps its own `_now` for the audit
+    column, which is a different fact: when the row was WRITTEN, not when the
+    thing it records happened.
+    """
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _project(project_id: str) -> Project:
@@ -337,14 +359,14 @@ class ProjectCreate(BaseModel):
 
 
 @app.post("/api/projects")
-def create_project(body: ProjectCreate) -> Project:
+def create_project(request: Request, body: ProjectCreate) -> Project:
     project = Project(id=new_id("proj"), name=body.name, job=body.job)
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
 @app.put("/api/projects/{project_id}/job")
-def put_job(project_id: str, job: Job) -> Project:
+def put_job(request: Request, project_id: str, job: Job) -> Project:
     """Name the job, or finish naming it.
 
     The route that matters more than the create form. A salesperson enters this
@@ -359,12 +381,12 @@ def put_job(project_id: str, job: Job) -> Project:
     """
     project = _project(project_id)
     project.job = job
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
 @app.put("/api/projects/{project_id}/stated")
-def put_stated(project_id: str, stated: Stated) -> Project:
+def put_stated(request: Request, project_id: str, stated: Stated) -> Project:
     """Say what this job does not have.
 
     Unrevisioned, like `/job` and unlike `/site` and `/topology`. Those are
@@ -378,12 +400,12 @@ def put_stated(project_id: str, stated: Stated) -> Project:
     """
     project = _project(project_id)
     project.stated = stated
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
 @app.put("/api/projects/{project_id}/context")
-def put_context(project_id: str, context: SiteContext) -> Project:
+def put_context(request: Request, project_id: str, context: SiteContext) -> Project:
     """The house, the street, the boundary — what makes the layout a PLACE.
 
     Unrevisioned, like `/job` and unlike `/topology` and `/site`. A landmark
@@ -392,8 +414,139 @@ def put_context(project_id: str, context: SiteContext) -> Project:
     """
     project = _project(project_id)
     project.context = context
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
+
+
+# -- one door: commands --------------------------------------------------------
+#
+# Every change that MOVES a job — whose desk it is on, or what it commits to —
+# comes through this one route (backoffice design §10). Field edits do not:
+# typing an address is not a command, and forcing it to be one turns the design
+# into ceremony.
+#
+# It is also the FIRST gated route in this app, and deliberately the only one.
+# Retrofitting capacity onto the other sixty-eight in the same slice that
+# introduces the mechanism is how the choice-set feature ran away on 2026-09-03;
+# a request with no session stays the ordinary case everywhere else and still
+# writes `system`.
+
+
+class CommandBody(BaseModel):
+    kind: str
+    payload: dict = {}
+    #: Who PROPOSED it, when that is not who performed it. `actor` is always the
+    #: session. Two names, because "Yossi accepted the agent's suggestion" and
+    #: "Yossi decided this himself" must stay different rows in the log.
+    origin: str = ""
+
+
+#: Which HTTP status each refusal earns. `command_wrong_state` is a 409 rather
+#: than a 403 because it is a conflict with the job as it stands now, not a
+#: statement about the caller — somebody else moved the folder while this screen
+#: was open, and the browser's answer is to reload rather than to give up. The
+#: default is 403: this account may not do this, and trying again will not help.
+_REFUSAL_STATUS = {"command_wrong_state": 409}
+
+
+def _refuse_unknown_assignee(body: CommandBody) -> None:
+    """A desk you can hand a job to has to exist.
+
+    `commands/` cannot reach the store, so `AssignJob.user_id` is unchecked there
+    and says so in a comment. Unchecked here too, a typo would put the job on a
+    desk nobody has — off every list at once, with nothing refusing and nobody
+    able to find it again except by reading the database. That is the failure the
+    seam was left open for, and this is the side of the seam that knows who
+    exists.
+    """
+    if body.kind != "assign_job":
+        return
+    user_id = (body.payload or {}).get("user_id")
+    target = state.store.user(user_id) if user_id else None
+    if target is None or not target.active:
+        raise HTTPException(422, {
+            "code": "assignee_unknown", "params": {"user_id": user_id or ""},
+        })
+
+
+@app.post("/api/projects/{project_id}/actions")
+def perform_command(request: Request, project_id: str, body: CommandBody) -> Project:
+    """Perform one command against one job, or refuse it in a sentence.
+
+    The three checks live in `fenceai.commands`, not here — a permission scattered
+    across handlers is a permission half of which gets added later by somebody who
+    did not know. This route contributes exactly what the pure half cannot have:
+    the session, the store, and one activity row.
+
+    The row is written only on success. A log that recorded every attempt would
+    make "who did what" a list of things nobody did.
+    """
+    user = _require_user(request)
+    project = _project(project_id)
+    _refuse_unknown_assignee(body)
+    try:
+        changed = commands.perform(
+            body.kind, body.payload, project,
+            actor=actor_ref(user), capacity=user.capacity, now=_now_iso(),
+        )
+    except KeyError as unknown:
+        raise HTTPException(404, {
+            "code": "command_unknown", "params": {"kind": body.kind},
+        }) from unknown
+    except CommandRefused as refused:
+        raise HTTPException(_REFUSAL_STATUS.get(refused.code, 403), {
+            "code": refused.code, "params": refused.params,
+        }) from refused
+    except ValidationError as invalid:
+        # A caller's mistake, not ours, and not a 500. The English list is
+        # AUTHORING text — our finding about a payload somebody is holding — so
+        # it carries no code of its own and is rendered for whoever can fix it,
+        # exactly as `validate_model`'s errors are.
+        raise HTTPException(400, {
+            "code": "command_payload_invalid",
+            "params": {"kind": body.kind},
+            "errors": [f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}"
+                       for e in invalid.errors()[:10]],
+        }) from invalid
+    state.store.save_project(changed, actor=actor_ref(user))
+    state.store.log(actor_ref(user), f"command:{body.kind}",
+                       f"{project_id}|{body.origin}")
+    return changed
+
+
+@app.get("/api/projects/{project_id}/readiness")
+def get_readiness(project_id: str) -> dict:
+    """What the OFFICE still has to do — the run-scoped sibling of `/handover`.
+
+    Two read models and deliberately not one. `/handover` is a pure function of
+    the PROJECT and must stay one: that is what lets it catch the silent 1800 mm
+    height before a strategy exists to make it look decided. These questions are
+    about a run, so folding them in would drag a run into a function whose whole
+    value is not needing one.
+
+    The road reads both and GROUPS them. It never recounts — three surfaces
+    answering "what is left" and disagreeing is the defect this repo already
+    paid for once.
+
+    **Reads the STORED run and never re-evaluates.** No knowledge base is loaded
+    here and `readiness()` takes none, so there is nothing in scope to resolve
+    against: re-running the evaluator would re-resolve to "current" (contract
+    3.2.1) and recompute a quantity in a read model (foundation §15).
+    """
+    project = _project(project_id)
+    runs = state.store.list_runs(project_id)
+    # The LATEST run, because that is the one the office is looking at. An older
+    # one is a document somebody may still read, but "what is left to do" is a
+    # question about the fence as it stands now.
+    result = _run(runs[-1]["id"]) if runs else None
+    items = readiness(
+        project,
+        run=result.run if result else None,
+        strategy=result.strategy if result else None,
+        choice_sets=result.choice_sets if result else None,
+        quotes=state.store.list_quotes(project_id),
+    )
+    return {"items": [i.model_dump() for i in items]}
 
 
 @app.get("/api/projects/{project_id}/handover")
@@ -419,11 +572,89 @@ def get_handover(project_id: str) -> dict:
 
 @app.get("/api/projects")
 def list_projects() -> list[dict]:
-    # `label` is what a person would call the job; `name` stays because the
-    # picker is not the only caller and something keyed on it must not silently
-    # start reading a customer's name instead.
+    """The PICKER's list — every project, three fields, unchanged.
+
+    Deliberately not the queue. They answer different questions and want
+    different rows: the picker is "which job am I looking at" and includes a
+    salesperson's own drafts, while the queue is "what should I work on next"
+    and hides drafts from everybody but their author. Folding them into one
+    route meant changing this one's envelope from a list to an object, which
+    broke five callers including the picker itself — the plan said "rebuilt
+    rather than extended" and the rebuild turned out to be a second question,
+    not a bigger answer.
+    """
     return [{"id": p.id, "name": p.name, "label": p.display_name()}
             for p in state.store.list_projects()]
+
+
+@app.get("/api/queue")
+def queue(
+    request: Request,
+    bucket: str = "open",
+    status: str = "",
+    assignee: str = "",
+    sold_by: str = "",
+    submitted_from: str = "",
+    submitted_to: str = "",
+    has_open: bool | None = None,
+    q: str = "",
+    sort: str = "waiting",
+    limit: int = DEFAULT_LIMIT,
+    cursor: str = "",
+) -> dict:
+    """What should I work on next — or, in the finished bucket, what did we do.
+
+    Paged from the first commit, because the open-question count is DERIVED per
+    row: deriving it for twenty-five is free and for an unbounded list is what
+    would make "read models are derived, never stored" unaffordable.
+    """
+    user = _signed_in(request)
+    # `me` is resolved HERE and never passed through. `select_rows` refuses the
+    # literal string on purpose: matched as an id it would return an empty page
+    # that reads as "you have nothing to do", which is the most misleading answer
+    # a queue can give.
+    who = actor_user_id(user) if assignee == "me" else assignee
+    try:
+        f = QueueFilter(
+            bucket=bucket,
+            status=tuple(s for s in status.split(",") if s),
+            assignee=who or None,
+            sold_by=sold_by,
+            submitted_from=submitted_from, submitted_to=submitted_to,
+            has_open=has_open, q=q, sort=sort,
+            for_capacity=user.capacity if user else None,
+            limit=limit, cursor=cursor or None,
+        )
+        rows, next_cursor = select_rows(
+            state.store.list_projects(), f, now=datetime.now(timezone.utc))
+    except ValidationError as e:
+        raise HTTPException(422, {"code": "queue_filter_invalid",
+                                  "params": {"detail": e.errors()[0]["msg"]}})
+    except ValueError as e:
+        raise HTTPException(400, {"code": "queue_cursor_invalid",
+                                  "params": {"detail": str(e)}})
+    return {"rows": [_queue_row(r) for r in rows], "next_cursor": next_cursor}
+
+
+def actor_user_id(user: User | None) -> str:
+    """`assignee=me` with nobody signed in matches nobody, which is the honest
+    answer — not everybody."""
+    return user.id if user else "\x00-nobody"
+
+
+def _queue_row(row) -> dict:
+    """One row, plus the two columns a pure function could not fill.
+
+    `quote_total_cents` is looked up here because the store is here, and NOT
+    stored on the job for the same reason the open-question count is not: it
+    already lives somewhere, and a second copy is a second answer.
+    """
+    out = row.model_dump()
+    if row.status in ("quoted", "delivered"):
+        quotes = state.store.list_quotes(row.id)
+        accepted = [q for q in quotes if q.status == "accepted"] or quotes
+        out["quote_total_cents"] = accepted[-1].total_cents if accepted else None
+    return out
 
 
 @app.get("/api/projects/{project_id}")
@@ -432,7 +663,7 @@ def get_project(project_id: str) -> Project:
 
 
 @app.put("/api/projects/{project_id}/site")
-def put_site_conditions(project_id: str, site: SiteConditions) -> Project:
+def put_site_conditions(request: Request, project_id: str, site: SiteConditions) -> Project:
     """What kind of site this is. Revisioned like the topology, and bumped HERE
     rather than trusted from the client, for the same reason: the revision is
     what every derived view checks itself against, so a client that forgot to
@@ -440,16 +671,16 @@ def put_site_conditions(project_id: str, site: SiteConditions) -> Project:
     project = _project(project_id)
     site.revision = project.site.revision + 1
     project.site = site
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
 @app.put("/api/projects/{project_id}/topology")
-def put_topology(project_id: str, topology: Topology) -> Project:
+def put_topology(request: Request, project_id: str, topology: Topology) -> Project:
     project = _project(project_id)
     topology.revision = project.topology.revision + 1
     project.topology = topology
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
@@ -462,25 +693,25 @@ class AnnotationCreate(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/annotations")
-def add_annotation(project_id: str, body: AnnotationCreate) -> Annotation:
+def add_annotation(request: Request, project_id: str, body: AnnotationCreate) -> Annotation:
     project = _project(project_id)
     annotation = Annotation(
         id=new_id("ann"), target_ref=body.target_ref, text=body.text, author=body.author
     )
     project.annotations.append(annotation)
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return annotation
 
 
 @app.post("/api/projects/{project_id}/annotations/{annotation_id}/interpret")
-def interpret_annotation(project_id: str, annotation_id: str):
+def interpret_annotation(request: Request, project_id: str, annotation_id: str):
     project = _project(project_id)
     annotation = next((a for a in project.annotations if a.id == annotation_id), None)
     if annotation is None:
         raise HTTPException(404, "annotation not found")
     record = state.interpreter.interpret(annotation)
     annotation.interpretations.append(record)
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return record
 
 
@@ -491,7 +722,7 @@ class IntentConfirm(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/intents/{intent_id}/confirm")
-def confirm_intent_route(project_id: str, intent_id: str, body: IntentConfirm):
+def confirm_intent_route(request: Request, project_id: str, intent_id: str, body: IntentConfirm):
     project = _project(project_id)
     try:
         materialized = confirm_intent(
@@ -499,30 +730,30 @@ def confirm_intent_route(project_id: str, intent_id: str, body: IntentConfirm):
         )
     except (StopIteration, ValueError) as e:
         raise HTTPException(400, str(e))
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return {"materialized_id": materialized}
 
 
 # -- overrides -----------------------------------------------------------------
 
 @app.post("/api/projects/{project_id}/overrides")
-def add_override(project_id: str, override: Override) -> Override:
+def add_override(request: Request, project_id: str, override: Override) -> Override:
     project = _project(project_id)
     if not override.id:
         override.id = new_id("ov")
     project.overrides.append(override)
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return override
 
 
 @app.delete("/api/projects/{project_id}/overrides/{override_id}")
-def delete_override(project_id: str, override_id: str):
+def delete_override(request: Request, project_id: str, override_id: str):
     project = _project(project_id)
     before = len(project.overrides)
     project.overrides = [o for o in project.overrides if o.id != override_id]
     if len(project.overrides) == before:
         raise HTTPException(404, "override not found")
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return {"deleted": override_id}
 
 
@@ -533,7 +764,7 @@ def delete_override(project_id: str, override_id: str):
 # an INPUT to generation, anchored to a scope that outlives a redraw.
 
 @app.put("/api/projects/{project_id}/choices")
-def put_choice(project_id: str, selection: Selection) -> Selection:
+def put_choice(request: Request, project_id: str, selection: Selection) -> Selection:
     """Upsert one selection by `(choice_set, scope)`.
 
     PUT and not POST because an answer is not an accumulation: choosing again
@@ -544,12 +775,12 @@ def put_choice(project_id: str, selection: Selection) -> Selection:
     project.choices = [
         c for c in project.choices if c.key() != selection.key()
     ] + [selection]
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return selection
 
 
 @app.delete("/api/projects/{project_id}/choices/{choice_set}")
-def delete_choice(project_id: str, choice_set: str, scope: str):
+def delete_choice(request: Request, project_id: str, choice_set: str, scope: str):
     """The scope is a QUERY parameter, not a path segment: a real scope is
     `model:mfr/certainteed/rail` and a path segment cannot carry the slashes."""
     project = _project(project_id)
@@ -559,7 +790,7 @@ def delete_choice(project_id: str, choice_set: str, scope: str):
     ]
     if len(project.choices) == before:
         raise HTTPException(404, "choice not found")
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return {"deleted": choice_set, "scope": scope}
 
 
@@ -759,7 +990,7 @@ class QuoteCreate(BaseModel):
 
 
 @app.post("/api/runs/{run_id}/quote")
-def create_quote(run_id: str, body: QuoteCreate) -> Quote:
+def create_quote(request: Request, run_id: str, body: QuoteCreate) -> Quote:
     """Snapshot the run's BOM as an immutable quote document."""
     result = _run(run_id)
     # via _priced, so the catalog staleness check applies here TOO. It did not
@@ -793,7 +1024,7 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
     # as well because a quote may be the first thing a project ever asks for, and
     # the document it stands behind must exist.
     supply = state.store.save_supply_run(
-        _supply_run_for(result, preset, priced, inventory), actor=body.author)
+        _supply_run_for(result, preset, priced, inventory), actor=_actor(request, body.author))
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
         label=body.label,
@@ -809,7 +1040,7 @@ def create_quote(run_id: str, body: QuoteCreate) -> Quote:
         requirements=priced.requirements, bom=priced.bom,
         total_cents=priced.bom.total_cents,
     )
-    state.store.save_quote(quote, actor=body.author)
+    state.store.save_quote(quote, actor=_actor(request, body.author))
     return quote
 
 
@@ -832,9 +1063,9 @@ def get_quote(quote_id: str) -> Quote:
 
 
 @app.post("/api/quotes/{quote_id}/accept")
-def accept_quote(quote_id: str, author: str = "user") -> Quote:
+def accept_quote(request: Request, quote_id: str, author: str = "user") -> Quote:
     try:
-        return state.store.accept_quote(quote_id, actor=author)
+        return state.store.accept_quote(quote_id, actor=_actor(request, author))
     except KeyError:
         raise HTTPException(404, f"quote {quote_id} not found")
     except ValueError as e:
@@ -931,10 +1162,10 @@ class CorrectionCreate(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/corrections")
-def add_correction(project_id: str, body: CorrectionCreate) -> Correction:
+def add_correction(request: Request, project_id: str, body: CorrectionCreate) -> Correction:
     _project(project_id)
     correction = Correction(id=new_id("corr"), project_id=project_id, **body.model_dump())
-    state.store.save_correction(correction, actor=body.author)
+    state.store.save_correction(correction, actor=_actor(request, body.author))
     return correction
 
 
@@ -1170,7 +1401,7 @@ class KnowledgeCreate(BaseModel):
 
 
 @app.post("/api/knowledge")
-def upsert_knowledge(body: KnowledgeCreate):
+def upsert_knowledge(request: Request, body: KnowledgeCreate):
     """New version of a knowledge object; the previous active version is retired."""
     version_no = state.store.next_version(body.object_id)
     v = KnowledgeVersion(
@@ -1182,7 +1413,7 @@ def upsert_knowledge(body: KnowledgeCreate):
         derived_from=[f"{body.object_id}@v{version_no - 1}"] if version_no > 1 else [],
         status="active",
     )
-    state.store.replace_active_version(v, actor=body.author)
+    state.store.replace_active_version(v, actor=_actor(request, body.author))
     return v
 
 
@@ -1237,9 +1468,9 @@ def preview_candidate_impact(object_id: str, version: int) -> ImpactReport:
 
 
 @app.post("/api/knowledge/{object_id}/{version}/retire")
-def retire_knowledge(object_id: str, version: int, author: str = "user"):
+def retire_knowledge(request: Request, object_id: str, version: int, author: str = "user"):
     try:
-        state.store.update_knowledge_status(object_id, version, "retired", actor=author)
+        state.store.update_knowledge_status(object_id, version, "retired", actor=_actor(request, author))
     except KeyError:
         raise HTTPException(404, f"{object_id}@v{version} not found")
     except ValueError as e:
@@ -1303,7 +1534,7 @@ def get_fence_model(model_id: str, version: int) -> FenceModel:
 
 
 @app.post("/api/fence-models")
-def create_fence_model(model: FenceModel, author: str = "user"):
+def create_fence_model(request: Request, model: FenceModel, author: str = "user"):
     """A new model always arrives as a draft at the next free version.
 
     A draft may be saved INVALID, and its errors are returned rather than
@@ -1318,12 +1549,12 @@ def create_fence_model(model: FenceModel, author: str = "user"):
         "version": state.store.next_fence_model_version(model.id),
         "status": "draft",
     })
-    state.store.save_fence_model(draft, actor=author)
+    state.store.save_fence_model(draft, actor=_actor(request, author))
     return {"model": draft, "invalid": _model_errors(draft)}
 
 
 @app.put("/api/fence-models/{model_id}/draft")
-def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"):
+def put_fence_model_draft(request: Request, model_id: str, model: FenceModel, author: str = "user"):
     _reserved(model_id)
     library = state.store.fence_model_library()
     # the HIGHEST draft, which is the one `listing()` reports and therefore the
@@ -1335,7 +1566,7 @@ def put_fence_model_draft(model_id: str, model: FenceModel, author: str = "user"
     version = existing.version if existing else state.store.next_fence_model_version(model_id)
     draft = model.model_copy(update={"id": model_id, "version": version, "status": "draft"})
     try:
-        state.store.save_fence_model(draft, actor=author)
+        state.store.save_fence_model(draft, actor=_actor(request, author))
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"model": draft, "invalid": _model_errors(draft)}
@@ -1358,7 +1589,7 @@ def preview_fence_model_impact(model: FenceModel) -> ImpactReport:
 
 
 @app.delete("/api/fence-models/{model_id}/{version}")
-def discard_fence_model_draft(model_id: str, version: int, author: str = "user"):
+def discard_fence_model_draft(request: Request, model_id: str, version: int, author: str = "user"):
     """Throw a draft away. ONLY a draft.
 
     Without this, every abandoned attempt stayed in the library for ever — and
@@ -1376,12 +1607,12 @@ def discard_fence_model_draft(model_id: str, version: int, author: str = "user")
             "code": "fence_model_not_a_draft",
             "params": {"model_ref": model.ref, "status": model.status},
         })
-    state.store.delete_fence_model_draft(model_id, version, actor=author)
+    state.store.delete_fence_model_draft(model_id, version, actor=_actor(request, author))
     return {"discarded": model.ref}
 
 
 @app.post("/api/fence-models/{model_id}/{version}/publish")
-def publish_fence_model(model_id: str, version: int, author: str = "user"):
+def publish_fence_model(request: Request, model_id: str, version: int, author: str = "user"):
     """Freeze a draft. This is the gate a draft save deliberately is not: from
     here the document is immutable and projects may select it."""
     model = state.store.load_fence_model(model_id, version)
@@ -1392,17 +1623,18 @@ def publish_fence_model(model_id: str, version: int, author: str = "user"):
     invalid = _model_errors(model)
     if invalid:
         raise HTTPException(422, invalid)
-    state.store.set_fence_model_status(model_id, version, "active", actor=author)
+    state.store.set_fence_model_status(model_id, version, "active", actor=_actor(request, author))
     return state.store.load_fence_model(model_id, version)
 
 
 @app.post("/api/fence-models/{model_id}/{version}/status")
 def set_fence_model_status(
+    request: Request,
     model_id: str, version: int, status: Literal["active", "retired"],
     author: str = "user",
 ):
     try:
-        state.store.set_fence_model_status(model_id, version, status, actor=author)
+        state.store.set_fence_model_status(model_id, version, status, actor=_actor(request, author))
     except KeyError:
         raise HTTPException(404, f"{model_id}@v{version} not found")
     except ValueError as e:
@@ -1533,7 +1765,7 @@ def preview_run_bay(run_id: str, element_id: str, body: BayPreviewRequest) -> Pa
 
 
 @app.put("/api/projects/{project_id}/fence-model")
-def put_project_fence_model(project_id: str, choice: FenceModelChoice | None = None) -> Project:
+def put_project_fence_model(request: Request, project_id: str, choice: FenceModelChoice | None = None) -> Project:
     """The project's default model. Refused at the boundary rather than at
     generation: a typo that only fails when someone presses Generate has already
     cost them the strategy they were working on."""
@@ -1548,7 +1780,7 @@ def put_project_fence_model(project_id: str, choice: FenceModelChoice | None = N
                            if choice.version_pin is not None else ""},
             })
     project.fence_model = choice
-    state.store.save_project(project)
+    state.store.save_project(project, actor=_actor(request))
     return project
 
 
@@ -1677,6 +1909,146 @@ def put_inventory(project_id: str, inventory: Inventory) -> Inventory:
     _project(project_id)
     state.store.save_inventory(project_id, inventory)
     return inventory
+
+
+#: One account per capacity, so the sign-in screen has something to sign in AS
+#: on a fresh database. A shared password, because these are demo rows on a demo
+#: database and pretending otherwise would be theatre — a real deployment seeds
+#: its own accounts and these three never exist.
+DEMO_ACCOUNTS = [
+    ("u_dana", "Dana", "dana@example.com", "sales"),
+    ("u_yossi", "Yossi", "yossi@example.com", "backoffice"),
+    ("u_admin", "Admin", "admin@example.com", "admin"),
+]
+DEMO_PASSWORD = "demo"
+
+
+def _seed_demo_accounts() -> None:
+    """Only on an empty table. A company that has made its own accounts must
+    never find three strangers in the list after an upgrade."""
+    if state.store.list_users():
+        return
+    for uid, name, email, capacity in DEMO_ACCOUNTS:
+        user = User(id=uid, name=name, email=email, capacity=capacity)
+        user.set_password(DEMO_PASSWORD)
+        state.store.save_user(user, actor="seed")
+
+
+# -- who is asking -------------------------------------------------------------
+#
+# The cookie name is prefixed because a browser sends every cookie on the origin
+# and a bare `session` collides with whatever else is served there one day.
+SESSION_COOKIE = "fenceai_session"
+
+
+def _signed_in(request: Request) -> User | None:
+    """The account this request is signed in as, or None.
+
+    Never raises. Most routes are still open — accounts RECORD here, they do not
+    yet gate — so "nobody is signed in" has to be an ordinary answer rather than
+    an error every caller must catch.
+    """
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        return None
+    sess = state.store.session(token)
+    if sess is None or not sessions.is_live(sess):
+        return None
+    user = state.store.user(sess.user_id)
+    return user if user and user.active else None
+
+
+def _actor(request: Request, fallback: str = SYSTEM) -> str:
+    """Who to write in the log.
+
+    **A session outranks anything the caller said.** Twelve routes take
+    `?author=` and hand it to the store, which makes the log a thing anybody can
+    sign as anybody — an actor a client can NAME is not an audit trail. The
+    parameter survives only as the fallback for the unsigned-in case, which is
+    every existing test and the whole browser smoke.
+    """
+    user = _signed_in(request)
+    return actor_ref(user) if user else fallback
+
+
+def _require_user(request: Request) -> User:
+    user = _signed_in(request)
+    if user is None:
+        raise HTTPException(401, {"code": "not_signed_in"})
+    return user
+
+
+def _public(user: User) -> dict:
+    """An account as a screen may see it — everything except the hash.
+
+    Not a secret that unlocks anything, and still the one field on the record
+    worth attacking offline, with no surface that needs it.
+    """
+    return user.model_dump(exclude={"password_hash"})
+
+
+class SignIn(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/session")
+def sign_in(body: SignIn, response: Response) -> dict:
+    """Start a session.
+
+    One refusal for a wrong password and for an address with no account, with
+    the same words: two answers would turn this form into a way of asking
+    whether somebody has an account here.
+    """
+    user = state.store.user_by_email(body.email)
+    if user is None or not verify_password(user, body.password):
+        raise HTTPException(401, {"code": "sign_in_failed"})
+    sess = sessions.start(user.id)
+    state.store.save_session(sess)
+    response.set_cookie(
+        SESSION_COOKIE, sess.token, httponly=True, samesite="lax",
+        max_age=sessions.SESSION_DAYS * 24 * 3600,
+    )
+    state.store.log(actor_ref(user), "sign_in", user.id)
+    return {"user": _public(user), "view": default_view(user.capacity),
+            "may_choose_view": may_choose_view(user.capacity)}
+
+
+@app.delete("/api/session", status_code=204)
+def sign_out(request: Request, response: Response) -> Response:
+    """End it, server-side.
+
+    The row IS the session, so deleting it stops the token working everywhere at
+    once — which is the property an opaque token buys and a self-describing one
+    could not.
+    """
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        state.store.delete_session(token)
+    response.delete_cookie(SESSION_COOKIE)
+    return Response(status_code=204)
+
+
+@app.get("/api/me")
+def me(request: Request) -> dict:
+    """Who am I, which view do I open on, and am I offered the selector.
+
+    The view is answered HERE rather than defaulted in the browser: that is the
+    safe way to flip the default the salesperson MVP deliberately left at `all`,
+    because nobody has to change a global setting for Dana to land on her own
+    screen — and the browser smoke signs in as an admin and keeps seeing today's
+    app.
+    """
+    user = _require_user(request)
+    return {"user": _public(user), "view": default_view(user.capacity),
+            "may_choose_view": may_choose_view(user.capacity)}
+
+
+@app.get("/api/users")
+def list_users(request: Request) -> list[dict]:
+    """The people, for the assignee picker and the “sold by” filter."""
+    _require_user(request)
+    return [_public(u) for u in state.store.list_users()]
 
 
 @app.get("/api/audit")

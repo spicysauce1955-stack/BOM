@@ -612,12 +612,12 @@ function renderModelRow() {
   }
 
   host.querySelector("#model-row-report").innerHTML = body
-    // Hidden from sales by `#model-row-hint` on role.js's list: sending somebody
-    // to a tab their own role hides is worse than saying nothing. It is an id on
+    // Hidden from sales by `#model-row-hint` on view.js's list: sending somebody
+    // to a tab their own view hides is worse than saying nothing. It is an id on
     // the hide-list rather than a `sales.` locale override because `applyStatic`
     // walks `data-i18n` attributes, and this string is rendered by JS. Hiding is
-    // CSS on `html[data-role]`, so it keeps working across this re-render — and
-    // the hint is still true for the roles that can see it: the Panel tab is
+    // CSS on `html[data-view]`, so it keeps working across this re-render — and
+    // the hint is still true for the views that can see it: the Panel tab is
     // where the same choice is made beside a priced preview of it.
     + `<div class="meta" id="model-row-hint">${esc(t("panel.see_panel_tab"))}</div>`;
 }

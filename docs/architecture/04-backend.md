@@ -131,7 +131,7 @@ Suppression stays out: a gate with a post on one side only is unbuildable.
 
 ## The API surface
 
-64 routes. Grouped by what they are for rather than by path:
+71 routes. Grouped by what they are for rather than by path:
 
 | Group | Routes | Notes |
 |---|---|---|
@@ -153,6 +153,10 @@ Suppression stays out: a gate with a post on one side only is unbuildable.
 | Choices | `PUT /projects/{id}/choices`, `DELETE .../choices/{choice_set}?scope=...` | A row of its own, not part of Overrides, because a choice is **not** an override: nothing was wrong, the data simply left two admissible answers (specs/2026-09-03-design-choices-and-placement-design.md §3). So a selection anchors to a **scope** — `gap:run1:0`, `model:M-VINYL` — instead of a station, and survives a redraw that would kill an override; and it is an *input* to `generate()`, not a patch on its output. PUT upserts on `(choice_set, scope)`: choosing again replaces, or a project would hold two current answers to one question. `asked: false` on the same route is a **pin** (*"we always dig 610, stop asking"*) — the same record with one flag, because pinning and choosing differ in what happens next, not in what was decided. The DELETE takes the scope as a **query** parameter because a real scope is `model:mfr/certainteed/rail` and a path segment cannot carry the slashes |
 | Catalog & inventory | `GET /catalog`, `PUT /catalog/products`, `GET/PUT /projects/{id}/inventory` | |
 | Evidence | `POST /source-refs:batch` | Fixture-backed (`knowledge/discovery_stub.py`): resolves a `SourceRef.id` (core/gaps.py) against a vendored copy of fence-rag's design fixture, not a live Discovery API — see specs/2026-08-23-frontend-design.md §3. Batched from the first commit so a queue resolving many citations issues one call, not N |
+| Identity | `POST /api/session`, `DELETE /api/session`, `GET /api/me`, `GET /api/users` | Accounts, and the first thing in this app that is a PERMISSION rather than a preference. A `capacity` (`sales \| backoffice \| admin`) is what an account may DO and is read on the server; a `view` is what is SHOWN and is a browser preference — `identity/model.py` carries the paragraph keeping the two apart. `/me` answers which view to open on, which is the safe way to flip the default the salesperson MVP left at `all`: nobody edits a global setting, Dana lands on her own screen because of who she is, and the smoke signs in as an `admin` and keeps seeing today's app. Sign-out is server-side because the token IS the row — a self-describing token would stay valid in a pocket and make both "sign me out" and "deactivate this account" promises we could not keep. **Nothing is gated yet**: a request with no session is the ordinary case and still writes `system`, which is what keeps 3000-odd tests and the whole browser smoke working. What DID change is that a session now outranks `?author=` at eleven write sites — an actor a client can name was never an audit trail |
+| Commands | `POST /projects/{id}/actions` | **One door.** Every change that MOVES a job — whose desk it is on, or what it commits to — is a named, typed, permission-checked row in `fenceai/commands/` rather than a route of its own (backoffice design §10). Field edits are deliberately NOT commands: typing an address is not one, and forcing it to be turns the design into ceremony. The row answers three questions before anything happens — may this capacity perform this kind · is the job in a status that allows it · does the payload type-check — and in that ORDER, so a refusal never leaks whether the job was in a state that would have allowed it. `command_wrong_state` is a 409 because it is a conflict with the job as it stands (somebody moved the folder while the screen was open); everything else is a 403 or a 404. This is the **first and only gated route** in the app: it 401s an anonymous caller, because a command names who did it and `system` is not somebody who may take a job. Retrofitting capacity onto the other sixty-eight in the slice that introduces the mechanism is how a feature ran away here before. The table is shared with the agent, which keeps the SUBSET it may propose (`agent/registry.py::KINDS`) — a human pressing a button and an agent proposing one reach the same row, or the second implementation drifts and the drift is where an untraceable change comes from |
+| The office road | `GET /api/projects/{id}/readiness` | What the OFFICE still has to do — the run-scoped sibling of `/handover`, and deliberately not folded into it. `/handover` is a pure function of the PROJECT and must stay one: that is what lets it catch the silent 1800 mm height before a strategy exists to make it look decided. These questions are about a run, so folding them in would drag a run into a function whose whole value is not needing one. The road reads both and GROUPS them; it never recounts, because three surfaces answering "what is left" and disagreeing is a defect this repo has already paid for. It reads the STORED run and loads no knowledge base — `readiness()` takes none, so there is nothing in scope to re-evaluate: re-running the evaluator would re-resolve to "current" (contract 3.2.1) and recompute a quantity in a read model (foundation §15). Nothing it returns is `blocking`, because contract 3.2.4 forbids failing a run over a gap and a step that stopped somebody generating would be the first thing worked around |
+| The queue | `GET /api/queue` | What should I work on next, or — in the finished bucket — what did we do. A SECOND route rather than a rebuild of `GET /api/projects`, which stays the picker's bare list of three fields: they answer different questions and want different rows, and folding them together meant changing the picker's envelope from a list to an object under five existing callers. Paged from the first commit, because the open-question count is DERIVED per row — free for twenty-five, unaffordable for an unbounded list, which is what would make "read models are derived, never stored" a rule nobody could keep. `assignee=me` is resolved HERE from the session: the pure half REFUSES the literal string, because matched as an id it returns an empty page reading as "you have nothing to do". A bad cursor is a 400 rather than a silent restart (a paging loop would otherwise run for ever) and an over-large `limit` is a 422 rather than a clamp |
 | Ops | `GET /api/health`, `GET /api/audit` | |
 
 Two routes exist that look redundant and are not: `POST /fence-models/preview` takes
@@ -227,7 +231,7 @@ is safer for `min_rail_separation_mm`.
 
 ## Persistence
 
-Thirteen tables — twelve document stores plus the append-only `audit_log`. Documents are
+Fifteen tables — fourteen document stores plus the append-only `audit_log`. Documents are
 stored as JSON `doc` columns; the schema holds only what is queried or ordered by.
 
 ```sql
@@ -244,7 +248,26 @@ quotes(id, project_id, status, created_at, doc)
 knowledge_snapshots(snapshot_id, loaded_at, doc)      -- the published document
 active_snapshot(only_row, snapshot_id)                -- CHECK (only_row = 1)
 audit_log(seq, at, actor, action, ref)
+users(id, email, doc)                                 -- email UNIQUE
+sessions(token, user_id, doc)                         -- the token IS the key
 ```
+
+**`email` is UNIQUE and `User.email` normalises.** It is what somebody signs in with, so
+two rows answering one address is a lookup with no right answer. Normalisation lives on
+the model rather than at the call sites, because the first version of this lower-cased on
+write and stripped on read: an account created with a trailing space was unreachable from
+the machine that created it.
+
+**An account is deactivated, never deleted.** `audit_log.actor` names people who have left
+the company and every one of those rows must keep resolving to a name. `active=False` is
+the company's move, `verify_password` refuses it, and `delete_sessions_for` is the other
+half — without it, deactivating is a label somebody is still signed in behind.
+
+**The session token IS the row.** Opaque and looked up server-side rather than
+self-describing and merely validated, so signing out actually signs out: the row is
+deleted and the token stops working everywhere at once. A token carrying its own claims
+would stay valid in a pocket until it expired, which makes both "sign me out" and
+"deactivate this account" promises the server cannot keep.
 
 **The published snapshot is stored as the DOCUMENT, and what we make of it is not.**
 `knowledge_snapshots` keeps the bytes the Knowledge Platform sent, keyed by its own

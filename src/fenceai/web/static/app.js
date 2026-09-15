@@ -27,7 +27,9 @@ import { initSite } from "./js/site.js";
 import { initStructureData } from "./js/structure-data.js";
 import { initStructure } from "./js/structure.js";
 import { initTabs } from "./js/tabs.js";
-import { initRole, setRole } from "./js/role.js";
+import { initView, setView } from "./js/view.js";
+import { loadMe, signIn, signOut } from "./js/session.js";
+import { initQueue } from "./js/queue.js";
 import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
 function setupHeader() {
@@ -41,14 +43,74 @@ function setupHeader() {
   document.getElementById("btn-locale").addEventListener("click",
     () => setLocale(currentLocale() === "he" ? "en" : "he"));
   document.getElementById("btn-units").addEventListener("click", toggleUnits);
-  const role = document.getElementById("role-select");
-  role.value = state.role;
-  role.addEventListener("change", () => setRole(role.value));
+  const viewSelect = document.getElementById("view-select");
+  viewSelect.value = state.view;
+  viewSelect.addEventListener("change", () => setView(viewSelect.value));
+  initQueue();
+  wireIdentity();
   // the unit label itself is localized: relabel the button when the language flips
   on("locale-changed", updateUnitsButton);
   // ...and the picker is labelled by the JOB, which can be named long after the
   // project was created.
   on("job-changed", refreshProjectList);
+  // The picker follows whatever job is OPEN, however it was opened.
+  //
+  // It only ever rebuilt on create and on rename, so a job opened from the
+  // queue — or created by anybody else since this tab loaded — was not among
+  // its options and setting `.value` to an unknown id silently left the old
+  // one selected. The header then named a different job from the one on
+  // screen, which is the "project 7" confusion the job identity slice existed
+  // to end, arriving by a new route.
+  on("project-opened", async (id) => {
+    const sel = document.getElementById("project-select");
+    if (!sel) return;
+    if (![...sel.options].some((o) => o.value === id)) await refreshProjectList();
+    sel.value = id;
+  });
+}
+
+/** The sign-in form and the who-am-I chip.
+ *
+ *  `loadMe()` runs AFTER `initView()` rather than instead of it: a signed-out
+ *  browser must reach today's app without waiting on a round trip, and a signed-in
+ *  one then corrects the view. The same ordering `initView` already needs against
+ *  `initI18n` — audit observation 2, where a reload in sales mode hid the right
+ *  surfaces and then showed an engineer's words on them.
+ */
+function wireIdentity() {
+  const form = document.getElementById("sign-in");
+  const chip = document.getElementById("signed-in-as");
+  const err = document.getElementById("sign-in-error");
+
+  const render = () => {
+    const me = state.me;
+    form.hidden = !!me;
+    chip.hidden = !me;
+    if (!me) return;
+    // `esc` is not needed for textContent, which is the point of using it: a
+    // person's own name is user text and never reaches innerHTML here.
+    document.getElementById("me-name").textContent = me.name;
+    document.getElementById("me-capacity").textContent =
+      t(`signin.capacity.${me.capacity}`);
+  };
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.hidden = true;
+    const ok = await signIn(document.getElementById("sign-in-email").value,
+                            document.getElementById("sign-in-password").value);
+    // One message for a wrong password and for an address with no account — the
+    // server already refuses both identically, and a kinder message here would
+    // undo that by telling somebody which half they got right.
+    if (!ok) err.hidden = false;
+    else document.getElementById("sign-in-password").value = "";
+  });
+  document.getElementById("sign-out").addEventListener("click", () => signOut());
+
+  on("signed-in", render);
+  on("signed-out", render);
+  render();
+  loadMe();
 }
 
 async function refreshProjectList() {
@@ -87,7 +149,7 @@ function setupUndoButtons() {
 async function main() {
   await initI18n();
   initUnits();      // display unit before the first render (i18n first: it labels it)
-  initRole();       // ...and who is looking, before anything is drawn for them
+  initView();       // ...and who is looking, before anything is drawn for them
   initRoad();       // ...and the road they navigate by, before the panels load
   initEditor();
   initInspector();

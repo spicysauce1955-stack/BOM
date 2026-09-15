@@ -185,7 +185,7 @@ export function initGates() {
   // and the words change with the ROLE: `t()` resolves `sales.<key>` before
   // `<key>`, so every label this panel renders is stale the instant the role
   // changes (`job.js` documents the same subscription, for the same reason)
-  on("role-changed", render);
+  on("view-changed", render);
 }
 
 async function render() {

@@ -775,49 +775,81 @@ button.evidence-link:hover { filter: none; color: #1d4ed8; }
 
 /* ============================================================================
    Role modes — which of the company's three people is looking.
-   `js/role.js` owns the LIST; this file only obeys it. Keyed on <html
-   data-role>, so nothing here needs a module to reach into another's subtree.
+   `js/view.js` owns the LIST; this file only obeys it. Keyed on <html
+   data-view>, so nothing here needs a module to reach into another's subtree.
 
    PRESENTATION ONLY. Hiding is not a permission: the API is unchanged and a
    switch back shows everything. Never treat this as a boundary that protects.
 
-   The selectors below are duplicated from `role.js` by necessity — CSS cannot
-   read a JS array — and `tests/web/test_role_sync.py` is what stops the two
+   The selectors below are duplicated from `view.js` by necessity — CSS cannot
+   read a JS array — and `tests/web/test_view_sync.py` is what stops the two
    copies from drifting.
    ========================================================================= */
 
 /* --- sales: a salesperson records what was SOLD, never how it is BUILT --- */
-html[data-role="sales"] #tabs,
-html[data-role="sales"] #tool-pin,
-html[data-role="sales"] #override-list,
-html[data-role="sales"] #choices,
-html[data-role="sales"] #agent-advice,
-html[data-role="sales"] #section-decisions,
-html[data-role="sales"] #inspector,
-html[data-role="sales"] #gaps,
-html[data-role="sales"] #chk-overlay-label,
-html[data-role="sales"] #profile-exag,
-html[data-role="sales"] #model-row-hint,
-html[data-role="sales"] #tabs button[data-tab="knowledge"],
-html[data-role="sales"] #tabs button[data-tab="review"],
-html[data-role="sales"] #tabs button[data-tab="structure"],
-html[data-role="sales"] #tabs button[data-tab="assembly"],
-html[data-role="sales"] #tabs button[data-tab="panel"],
-html[data-role="sales"] #tabs button[data-tab="models"],
-html[data-role="sales"] #tabs button[data-tab="bom"],
-html[data-role="sales"] #tabs button[data-tab="inventory"] { display: none; }
+html[data-view="sales"] #tabs,
+html[data-view="sales"] #tool-pin,
+html[data-view="sales"] #override-list,
+html[data-view="sales"] #choices,
+html[data-view="sales"] #agent-advice,
+html[data-view="sales"] #section-decisions,
+html[data-view="sales"] #inspector,
+html[data-view="sales"] #gaps,
+html[data-view="sales"] #chk-overlay-label,
+html[data-view="sales"] #profile-exag,
+html[data-view="sales"] #model-row-hint,
+html[data-view="sales"] #tabs button[data-tab="queue"],
+html[data-view="sales"] #tabs button[data-tab="knowledge"],
+html[data-view="sales"] #tabs button[data-tab="review"],
+html[data-view="sales"] #tabs button[data-tab="structure"],
+html[data-view="sales"] #tabs button[data-tab="assembly"],
+html[data-view="sales"] #tabs button[data-tab="panel"],
+html[data-view="sales"] #tabs button[data-tab="models"],
+html[data-view="sales"] #tabs button[data-tab="bom"],
+html[data-view="sales"] #tabs button[data-tab="inventory"] { display: none; }
 
 /* --- office: holds the inventory and the items; authoring RULES is the
        super user's bench --- */
-html[data-role="office"] #tabs button[data-tab="knowledge"],
-html[data-role="office"] #tabs button[data-tab="review"] { display: none; }
+/* An account that may not choose a view is not offered the control. This is a
+   PRESENTATION rule and never protection: hiding is CSS, `localStorage` is
+   editable, and what an account may DO is its capacity, checked on the server. */
+html[data-selector="no"] #view-select { display: none; }
+
+/* The jobs list. Logical properties only — the queue mirrors in RTL like every
+   other table, unlike the drawings, which never do. */
+.queue-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+             margin-block-end: 10px; }
+.queue-bar select, .queue-bar input { padding: 5px 8px; border: 1px solid #b9c2cd;
+             border-radius: 4px; font-size: 13px; }
+.queue-bar .meta { margin-inline-start: auto; color: #64748b; font-size: 12px; }
+#queue-list table { border-collapse: collapse; width: 100%; background: #fff;
+             font-size: 13px; }
+#queue-list th, #queue-list td { border: 1px solid #d4dae2; padding: 6px 8px;
+             text-align: start; }
+#queue-list th { background: #eef2f6; font-size: 12px; }
+#queue-list .queue-mine { background: #f0fdf4; font-weight: 600; }
+#queue-list .queue-take { margin-inline-start: 8px; padding: 2px 8px; font-size: 12px; }
+
+html[data-view="backoffice"] #tabs button[data-tab="knowledge"],
+html[data-view="backoffice"] #tabs button[data-tab="review"] { display: none; }
 
 /* ============================================================================
-   Road steps — a step shows only its OWN work, for `sales` only.
+   Road steps — a step shows only its OWN work.
 
    `js/step-surfaces.js` owns the LIST; this file only obeys it. Keyed on
-   <html data-step>, which `road.js` sets only while the role is `sales` and
-   removes otherwise, so `office`/`all` are untouched by every rule below.
+   <html data-step>, which `road.js` sets for whichever road is on screen and
+   REMOVES for a view that has none, so a view with no road is untouched by
+   every rule below.
+
+   Keyed on the step ALONE, while `step-surfaces.js`'s maps are keyed on the
+   road AND the step. That asymmetry is deliberate and it has a price attached:
+   it is sound only while no two roads spell a step the same way, and
+   `test_step_keys_are_unique_across_roads` is what holds that. The alternative
+   was a `[data-view]` on all one hundred and forty-nine selectors below,
+   which raises the specificity of every one of them against working CSS that
+   currently ties with them — a refactor whose failure mode is a panel quietly
+   reappearing somewhere nobody looked. The JS stays road-scoped either way,
+   because that is what stops a step key one road lacks from hiding everything.
 
    The eight keys are `js/roads.js: SALES_ROAD`'s real step keys, not the six
    names in the design doc's surface table — see `step-surfaces.js`'s header
@@ -1164,3 +1196,120 @@ html[dir="rtl"] .actions-list li::before { content: "←"; }
 #k-retired-group summary { cursor: pointer; font-size: 12.5px; font-weight: 600;
   color: #64748b; padding: 6px 2px; }
 #k-retired-group[open] summary { color: #1d2733; }
+
+/* The office road's step scoping — the mirrored half of
+   `step-surfaces.js`'s `backoffice` maps. CSS cannot read a JS array, so the
+   list exists twice and `test_the_two_copies_are_equal` checks them for
+   EQUALITY rather than overlap. Generated from the module, never by hand. */
+html[data-step="blanks"] #choices,
+html[data-step="blanks"] #inspector,
+html[data-step="blanks"] #notes-panel,
+html[data-step="blanks"] #override-list,
+html[data-step="blanks"] #site-conditions,
+html[data-step="blanks"] #tool-pin,
+html[data-step="blanks"] #warnings { display: none; }
+html[data-step="generate"] #choices,
+html[data-step="generate"] #notes-panel,
+html[data-step="generate"] #profile,
+html[data-step="generate"] #run-editing-panel,
+html[data-step="generate"] #tool-base,
+html[data-step="generate"] #tool-gate,
+html[data-step="generate"] #tool-ground,
+html[data-step="generate"] #tool-height,
+html[data-step="generate"] #tool-model { display: none; }
+html[data-step="materials"] #canvas,
+html[data-step="materials"] #choices,
+html[data-step="materials"] #generate-toolbar,
+html[data-step="materials"] #inspector,
+html[data-step="materials"] #notes-panel,
+html[data-step="materials"] #override-list,
+html[data-step="materials"] #profile,
+html[data-step="materials"] #run-editing-panel,
+html[data-step="materials"] #site-conditions,
+html[data-step="materials"] #statusbar,
+html[data-step="materials"] #strategy-summary,
+html[data-step="materials"] #tool-base,
+html[data-step="materials"] #tool-gate,
+html[data-step="materials"] #tool-ground,
+html[data-step="materials"] #tool-height,
+html[data-step="materials"] #tool-model,
+html[data-step="materials"] #tool-pin,
+html[data-step="materials"] #warnings { display: none; }
+html[data-step="plan"] #canvas,
+html[data-step="plan"] #choices,
+html[data-step="plan"] #generate-toolbar,
+html[data-step="plan"] #inspector,
+html[data-step="plan"] #notes-panel,
+html[data-step="plan"] #override-list,
+html[data-step="plan"] #profile,
+html[data-step="plan"] #run-editing-panel,
+html[data-step="plan"] #site-conditions,
+html[data-step="plan"] #statusbar,
+html[data-step="plan"] #strategy-summary,
+html[data-step="plan"] #tool-base,
+html[data-step="plan"] #tool-gate,
+html[data-step="plan"] #tool-ground,
+html[data-step="plan"] #tool-height,
+html[data-step="plan"] #tool-model,
+html[data-step="plan"] #tool-pin,
+html[data-step="plan"] #warnings { display: none; }
+html[data-step="price"] #canvas,
+html[data-step="price"] #choices,
+html[data-step="price"] #generate-toolbar,
+html[data-step="price"] #inspector,
+html[data-step="price"] #notes-panel,
+html[data-step="price"] #override-list,
+html[data-step="price"] #profile,
+html[data-step="price"] #run-editing-panel,
+html[data-step="price"] #site-conditions,
+html[data-step="price"] #statusbar,
+html[data-step="price"] #strategy-summary,
+html[data-step="price"] #tool-base,
+html[data-step="price"] #tool-gate,
+html[data-step="price"] #tool-ground,
+html[data-step="price"] #tool-height,
+html[data-step="price"] #tool-model,
+html[data-step="price"] #tool-pin,
+html[data-step="price"] #warnings { display: none; }
+html[data-step="questions"] #generate-toolbar,
+html[data-step="questions"] #inspector,
+html[data-step="questions"] #notes-panel,
+html[data-step="questions"] #override-list,
+html[data-step="questions"] #profile,
+html[data-step="questions"] #run-editing-panel,
+html[data-step="questions"] #site-conditions,
+html[data-step="questions"] #strategy-summary,
+html[data-step="questions"] #tool-base,
+html[data-step="questions"] #tool-gate,
+html[data-step="questions"] #tool-ground,
+html[data-step="questions"] #tool-height,
+html[data-step="questions"] #tool-model,
+html[data-step="questions"] #tool-pin,
+html[data-step="questions"] #warnings { display: none; }
+html[data-step="sale"] #choices,
+html[data-step="sale"] #generate-toolbar,
+html[data-step="sale"] #inspector,
+html[data-step="sale"] #override-list,
+html[data-step="sale"] #profile,
+html[data-step="sale"] #run-editing-panel,
+html[data-step="sale"] #site-conditions,
+html[data-step="sale"] #strategy-summary,
+html[data-step="sale"] #tool-base,
+html[data-step="sale"] #tool-gate,
+html[data-step="sale"] #tool-ground,
+html[data-step="sale"] #tool-height,
+html[data-step="sale"] #tool-model,
+html[data-step="sale"] #tool-pin,
+html[data-step="sale"] #warnings { display: none; }
+
+/* The office road's step scoping — the mirrored half of
+   `step-surfaces.js`'s `backoffice` maps. CSS cannot read a JS array, so the
+   list exists twice and `test_the_two_copies_are_equal` checks them for
+   EQUALITY rather than overlap. Generated from the module, never by hand. */
+html[data-step="blanks"] #handover-panel { display: none; }
+html[data-step="generate"] #handover-panel { display: none; }
+html[data-step="materials"] #handover-panel { display: none; }
+html[data-step="plan"] #handover-panel { display: none; }
+html[data-step="price"] #handover-panel { display: none; }
+html[data-step="questions"] #handover-panel { display: none; }
+html[data-step="sale"] #handover-panel { display: none; }

@@ -248,6 +248,32 @@ REFUSAL_CODES = [
     # field-level check would notice, because every field is still well-formed.
     "snapshot_id_mismatch",
     "run_predates_fence_model",
+    # -- signing in -------------------------------------------------------------
+    # `sign_in_failed` is deliberately ONE code for a wrong password and for an
+    # address with no account: two answers would turn the form into a way of
+    # asking whether somebody has an account here.
+    "sign_in_failed",
+    "not_signed_in",
+    # -- the queue and the one door ---------------------------------------------
+    "assignee_unknown",
+    "queue_cursor_invalid",
+    "queue_filter_invalid",
+    # -- the one door (backoffice design §10) ------------------------------------
+    # The three questions a command is asked, each with its own sentence.
+    # `command_not_permitted` is deliberately silent about the job: capacity is
+    # checked BEFORE status, so a salesperson who tries to take a job is told the
+    # same thing whether or not there was a job there to take.
+    "command_not_permitted",
+    "command_wrong_state",
+    # A row `materialize=None` — something an agent may PROPOSE that no button
+    # performs yet. Its own sentence rather than `command_not_permitted`, whose
+    # words send the reader to find a colleague who can do it. Nobody can.
+    "command_not_performable",
+    "command_unknown",
+    # The payload did not type-check. The code carries the sentence; the list of
+    # fields travels beside it as AUTHORING text — our finding about a payload
+    # somebody is holding — and so carries no code of its own.
+    "command_payload_invalid",
     # a stored strategy whose derived member run points at a bay or slot that is
     # no longer in it — same class, same remedy
     "member_run_unreadable",
@@ -470,6 +496,14 @@ def test_backend_code_list_is_current():
         # invisible to this guard twice over: the file was not scanned, and a
         # route writes `"code": "x"` rather than `code="x"`. Both forms now.
         src / "api" / "app.py",
+        # the one door refuses in `fenceai.commands`, not at the route, because
+        # the three checks are pure and the route only carries the session. So
+        # the file that RAISES is not the file that answers — the same blind
+        # spot every entry above closed, one layer further in. `CommandRefused`
+        # is constructed with `code="..."` rather than positionally for exactly
+        # this reason: `SnapshotRefused` takes its code positionally and its
+        # three codes have to be maintained by hand below.
+        src / "commands" / "run.py",
     ]
     # ...and every read model, because they emit codes now too. Named as a
     # DIRECTORY rather than file by file: `report/assembly.py` raised
@@ -498,8 +532,14 @@ def test_backend_code_list_is_current():
     # key. `report/handover.py` arrived inside the `report/*.py` glob and this
     # guard caught it immediately — which is the guard working, not a nuisance.
     from fenceai.report.handover import HANDOVER_CODES
+    # A FIFTH, for the fourth's reason one step on: a readiness item renders
+    # under `readiness.<code>`, its own namespace beside `handover.<code>`,
+    # because the two read models answer different questions and a shared
+    # namespace would let one silently satisfy the other's locale check.
+    # `report/readiness.py` arrives inside the same `report/*.py` glob.
+    from fenceai.report.readiness import READINESS_CODES
     known = (set(WARNING_CODES) | set(CRITIQUE_CODES) | set(REFUSAL_CODES)
-             | set(HANDOVER_CODES))
+             | set(HANDOVER_CODES) | set(READINESS_CODES))
     # Built from a loop variable (`code=f"{field}_missing"`), so no literal
     # exists for the scan to find — the same shape as continuity's
     # `code=note.code` noted above. They are real codes and stay in
@@ -1369,7 +1409,7 @@ def test_every_sales_override_renames_a_key_that_actually_exists():
 
 
 def test_every_sales_override_reaches_the_screen_when_the_role_changes():
-    """The guard `role.js` relies on.
+    """The guard `view.js` relies on.
 
     Switching role re-renders the static `data-i18n` pass. That reaches every
     label in `index.html` and NOTHING a module renders through `t()` at render
@@ -1381,7 +1421,7 @@ def test_every_sales_override_reaches_the_screen_when_the_role_changes():
     So an override is admissible by one of two routes, and no third:
 
     1. its key is a `data-i18n` attribute in `index.html` — the static pass, or
-    2. a module that subscribes to `role-changed` renders that namespace, and
+    2. a module that subscribes to `view-changed` renders that namespace, and
        therefore re-renders itself when the role changes.
 
     Route 2 is matched on the key's NAMESPACE rather than the literal key,
@@ -1395,7 +1435,7 @@ def test_every_sales_override_reaches_the_screen_when_the_role_changes():
     static_keys = set(re.findall(r'data-i18n(?:-title|-placeholder)?="([^"]+)"', html))
 
     role_aware = [m.read_text() for m in (STATIC / "js").glob("*.js")
-                  if 'on("role-changed"' in m.read_text()]
+                  if 'on("view-changed"' in m.read_text()]
 
     def reachable(key: str) -> bool:
         if key in static_keys:
@@ -1407,7 +1447,7 @@ def test_every_sales_override_reaches_the_screen_when_the_role_changes():
     unreachable = sorted(k for k in overrides if not reachable(k))
     assert not unreachable, (
         "sales overrides that nothing would re-render on a role change — either "
-        "make the rendering module subscribe to `role-changed`, or drop the "
+        "make the rendering module subscribe to `view-changed`, or drop the "
         f"override: {unreachable}")
 
 
@@ -1416,8 +1456,8 @@ def test_at_least_one_module_subscribes_to_role_changed():
     role-aware modules at all — a rename of the event, or of the subscription
     idiom, would silently turn route 2 into "anything goes"."""
     role_aware = [m.name for m in (STATIC / "js").glob("*.js")
-                  if 'on("role-changed"' in m.read_text()]
-    assert role_aware, "no module subscribes to role-changed — has the event been renamed?"
+                  if 'on("view-changed"' in m.read_text()]
+    assert role_aware, "no module subscribes to view-changed — has the event been renamed?"
 
 
 def test_every_handover_code_has_locale_entries():
@@ -1459,3 +1499,39 @@ def test_the_handover_code_list_is_current():
     assert 'code=f"{field}_missing"' in src, (
         "the per-field family changed shape — this test names those four codes "
         "explicitly because they have no literal to scan for")
+
+
+def test_every_readiness_code_has_locale_entries():
+    """The office road's own codes, guarded exactly like the handover's.
+
+    Same failure, one read model along: a code with no entry reaches the screen
+    as its own key — `readiness.plan_stale` in the middle of a sentence — and
+    the office person is the one reader of this app who cannot dismiss it as a
+    salesperson's tooltip, because it is the whole content of a step.
+    """
+    from fenceai.report.readiness import READINESS_CODES
+    en = json.loads((STATIC / "i18n" / "en.json").read_text())
+    he = json.loads((STATIC / "i18n" / "he.json").read_text())
+    for code in READINESS_CODES:
+        assert f"readiness.{code}" in en, code
+        assert f"readiness.{code}" in he, code
+
+
+def test_the_readiness_code_list_is_current():
+    """...and BOTH directions, which is where this list differs from the
+    handover's.
+
+    `READINESS_CODES` is hand-maintained beside the emitting sites, so an
+    unlisted code would be invisible to the test above. A LISTED code with no
+    emitting site is the other half: it is a pair of locale entries nobody can
+    reach, and it hides the rename that orphaned them. Every code here is a
+    plain literal — there is no `{field}` family to exempt — so the scan can
+    check both ways without a hole.
+    """
+    from fenceai.report.readiness import READINESS_CODES
+    src = (Path(__file__).resolve().parents[2] / "src" / "fenceai" / "report"
+           / "readiness.py").read_text()
+    literals = set(re.findall(r'ReadinessItem\(code="([a-z_]+)"', src))
+    listed = set(READINESS_CODES)
+    assert literals == listed, {"emitted but not listed": sorted(literals - listed),
+                                "listed but not emitted": sorted(listed - literals)}

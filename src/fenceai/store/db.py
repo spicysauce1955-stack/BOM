@@ -27,6 +27,8 @@ from fenceai.learning.model import Correction
 from fenceai.parts.model import Part, PartLibrary
 from fenceai.fulfillment.supply_run import SupplyRun
 from fenceai.project.model import Project
+from fenceai.identity.model import User
+from fenceai.identity.session import Session
 from fenceai.strategy.model import GenerationResult
 
 _SCHEMA = """
@@ -70,6 +72,17 @@ CREATE TABLE IF NOT EXISTS active_snapshot (
 CREATE TABLE IF NOT EXISTS audit_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
     action TEXT NOT NULL, ref TEXT NOT NULL);
+-- Accounts. `email` is UNIQUE because it is what somebody signs in with, and two
+-- rows answering one address is a lookup with no right answer. Deactivated
+-- rather than deleted (`User.active`), because `audit_log.actor` names people
+-- who have left and every one of those rows must keep resolving to a name.
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
+-- Signed-in browsers. The token is the key and the row IS the session, so
+-- signing out deletes it and it stops working everywhere at once — which a
+-- self-describing token could not promise.
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY, user_id TEXT NOT NULL, doc TEXT NOT NULL);
 """
 
 
@@ -899,6 +912,92 @@ class Store:
     def log(self, actor: str, action: str, ref: str) -> None:
         """Public audit hook for domain events the store doesn't itself perform
         (e.g. a BOM computed against an inventory snapshot)."""
+        self._audit(actor, action, ref)
+        self._conn.commit()
+
+    # -- accounts and sessions -------------------------------------------------
+
+    @_serialized
+    def save_user(self, user: User, actor: str = "system") -> None:
+        self._conn.execute(
+            "INSERT INTO users (id, email, doc) VALUES (?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET email=excluded.email, doc=excluded.doc",
+            (user.id, user.email, user.model_dump_json()),
+        )
+        self._audit(actor, "save_user", user.id)
+        self._conn.commit()
+
+    @_serialized
+    def user(self, user_id: str) -> User | None:
+        row = self._conn.execute(
+            "SELECT doc FROM users WHERE id=?", (user_id,)).fetchone()
+        return User.model_validate_json(row[0]) if row else None
+
+    @_serialized
+    def user_by_email(self, email: str) -> User | None:
+        """`User.email` normalises on the way in, so the column holds one
+        spelling. This normalises the QUERY the same way — the two halves have to
+        agree, and the model is where that agreement is defined."""
+        row = self._conn.execute(
+            "SELECT doc FROM users WHERE email=?", (email.strip().lower(),)
+        ).fetchone()
+        return User.model_validate_json(row[0]) if row else None
+
+    @_serialized
+    def list_users(self) -> list[User]:
+        rows = self._conn.execute("SELECT doc FROM users ORDER BY id").fetchall()
+        return [User.model_validate_json(r[0]) for r in rows]
+
+    @_serialized
+    def save_session(self, session: Session) -> None:
+        self._conn.execute(
+            "INSERT INTO sessions (token, user_id, doc) VALUES (?,?,?) "
+            "ON CONFLICT(token) DO UPDATE SET doc=excluded.doc",
+            (session.token, session.user_id, session.model_dump_json()),
+        )
+        self._conn.commit()
+
+    @_serialized
+    def session(self, token: str) -> Session | None:
+        row = self._conn.execute(
+            "SELECT doc FROM sessions WHERE token=?", (token,)).fetchone()
+        return Session.model_validate_json(row[0]) if row else None
+
+    @_serialized
+    def delete_session(self, token: str) -> None:
+        self._conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+        self._conn.commit()
+
+    @_serialized
+    def delete_sessions_for(self, user_id: str) -> int:
+        """Every browser this account is signed in on, at once.
+
+        What `active=False` would otherwise fail to mean: deactivating an
+        account that is still signed in somewhere is a label, not a revocation.
+        """
+        cur = self._conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        self._conn.commit()
+        return cur.rowcount
+
+    @_serialized
+    def log(self, actor: str, action: str, ref: str) -> None:
+        """Write one activity row, from outside this module.
+
+        `_audit` is private and unguarded ON PURPOSE — `@_serialized` is
+        re-entrant but the convention here is that a private helper is already
+        inside a guarded public call, and `_audit` never commits because its
+        caller is mid-transaction and will.
+
+        Called from a route, both of those become defects: the INSERT runs on the
+        shared `check_same_thread=False` connection outside the lock that exists
+        because of 48 failures in ~540 overlapping requests, and the row sits in
+        an open transaction that lands only if some later write happens to commit
+        — and is lost on a clean shutdown. A test reading `audit_entries` on the
+        same connection sees the uncommitted row and passes, which is how this
+        shipped.
+
+        So: one public door, guarded, and it commits.
+        """
         self._audit(actor, action, ref)
         self._conn.commit()
 

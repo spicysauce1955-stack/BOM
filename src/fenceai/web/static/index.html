@@ -18,16 +18,33 @@
       <!-- Which of the company's three people is looking. A PRESENTATION
            preference like the unit toggle beside it — it hides surfaces, it
            does not revoke anything, and it is never a permission. -->
-      <select id="role-select" data-i18n-title="role.title" title="Who is using this">
-        <option value="sales" data-i18n="role.sales">Salesperson</option>
-        <option value="office" data-i18n="role.office">Office</option>
-        <option value="all" data-i18n="role.all">Everything</option>
+      <select id="view-select" data-i18n-title="view.title" title="Who is using this">
+        <option value="sales" data-i18n="view.sales">Salesperson</option>
+        <option value="backoffice" data-i18n="view.backoffice">Office</option>
+        <option value="all" data-i18n="view.all">Everything</option>
       </select>
       <span id="ai-badge" class="badge"></span>
+      <!-- Who is signed in. Signed OUT is the ordinary state and stays today's
+           app — this block is additive, and the view selector above is merely
+           hidden for an account that may not choose. -->
+      <form id="sign-in">
+        <input id="sign-in-email" type="email" autocomplete="username"
+               data-i18n-placeholder="signin.email" placeholder="Email">
+        <input id="sign-in-password" type="password" autocomplete="current-password"
+               data-i18n-placeholder="signin.password" placeholder="Password">
+        <button type="submit" class="primary" data-i18n="signin.submit">Sign in</button>
+      </form>
+      <span id="sign-in-error" class="warning error" hidden data-i18n="error.sign_in_failed"></span>
+      <div id="signed-in-as" hidden>
+        <span id="me-name"></span>
+        <span id="me-capacity" class="badge"></span>
+        <button id="sign-out" data-i18n="signin.out">Sign out</button>
+      </div>
     </div>
   </header>
 
   <nav id="tabs">
+    <button data-tab="queue" data-i18n="tabs.queue">Jobs</button>
     <button data-tab="canvas" class="active" data-i18n="tabs.canvas">Topology &amp; Strategy</button>
     <button data-tab="annotations" data-i18n="tabs.annotations">Annotations</button>
     <button data-tab="knowledge" data-i18n="tabs.knowledge">Knowledge</button>
@@ -42,6 +59,19 @@
   <nav id="road" aria-label="Job steps"></nav>
 
   <main>
+    <!-- ============ jobs tab — the backoffice's home screen ============ -->
+    <section id="tab-queue" class="tab">
+      <div class="queue-bar">
+        <button id="queue-open" class="mode active" data-i18n="queue.open">Open</button>
+        <button id="queue-finished" class="mode" data-i18n="queue.finished">Finished</button>
+        <select id="queue-status"></select>
+        <select id="queue-with"></select>
+        <input id="queue-q" data-i18n-placeholder="queue.search" placeholder="Customer, address…">
+        <span id="queue-count" class="meta"></span>
+      </div>
+      <div id="queue-list"></div>
+    </section>
+
     <!-- ============ canvas tab ============ -->
     <section id="tab-canvas" class="tab active">
       <div class="canvas-row">

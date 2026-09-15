@@ -30,7 +30,7 @@
  *  canvas gesture with nothing to press, which is why the Done button exists at
  *  all. */
 export const SALES_ROAD = {
-  role: "sales",
+  view: "sales",
   anchor: "no_fence_drawn",
   steps: [
     { key: "job", panel: "canvas", commits: true,
@@ -66,7 +66,74 @@ export const SALES_ROAD = {
 /** Roads by role. A role absent here has no road, and `roadFor` returns null
  *  rather than defaulting to the salesperson's: showing an office person a
  *  salesperson's map would be worse than showing them none. */
-export const ROADS = { sales: SALES_ROAD };
+/** The backoffice's road. Seven steps, and **not one is a rename of hers**.
+ *
+ *  Her road captures what was sold; this one decides how it gets built. The
+ *  keys are deliberately different words from the sales road's — not for
+ *  tidiness, but because `step-surfaces.js` is keyed by `(road, step)` and a
+ *  shared key hands one road the other's tools. `test_step_keys_are_unique_
+ *  across_roads` is what holds it.
+ *
+ *  `view: "backoffice"` and the `ROADS` key are the SAME WORD on purpose:
+ *  `road.js` hands `step-surfaces.js` a road's own `view` as the road key,
+ *  because a module that imports nothing cannot look one up. Registered under
+ *  anything else, that handoff asks for surfaces nobody defined and every step
+ *  shows everything. `test_a_road_key_is_its_view_key` pins it.
+ *
+ *  `panel` names a TAB here, where every sales step named the canvas. The
+ *  office works across the app — the cut plan is on the BOM tab and the
+ *  setting-out sheet is its own — and `road.js` already calls `setTab` with
+ *  whatever a step names, so this needed no engine change.
+ *
+ *  Steps 6 and 7 cannot read `done` until `commit_plan` exists. That is the
+ *  road reporting something genuinely undone rather than a defect, and it is
+ *  written here so the next reader does not go looking for a bug.
+ */
+export const OFFICE_ROAD = {
+  view: "backoffice",
+  anchor: "no_fence_drawn",
+  steps: [
+    // `no_fence_drawn` is the anchor AND claimed here, which is not a
+    // contradiction: the anchor makes every step read `empty`, and a step that
+    // also REQUIRES it is the one that says why. Sales does the same on its
+    // `layout` step. Unclaimed, it fell to the orphan bucket — one line at the
+    // bottom of the last step, on the job where nothing else is true yet.
+    //
+    // The four job fields are `wants`: the office cares that the address is
+    // blank and is not stopped by it. Required-ness belongs to the STEP, which
+    // is the whole reason a second road can read the same sheet differently —
+    // `sold_by_missing` gates her handover and not his planning.
+    // `commits` is FALSE deliberately. It suppresses the road's own Done
+    // button on the grounds that the step "already has its own control" — and
+    // the acknowledge buttons are not built yet, so claiming it left the step
+    // with no way to be finished at all. It flips to true in the commit that
+    // ships the button, not before.
+    { key: "sale", panel: "canvas", commits: false,
+      requires: ["no_fence_drawn", "sale_unread", "promises_contradicted",
+                 "gates_contradicted"],
+      wants: ["customer_missing", "address_missing", "sold_by_missing",
+              "sold_on_missing", "no_property_context"], satisfiedBy: null },
+    { key: "blanks", panel: "canvas",
+      requires: ["height_assumed", "base_assumed", "no_model_chosen",
+                 "gate_swing_unstated"],
+      wants: [], satisfiedBy: null },
+    { key: "questions", panel: "canvas",
+      requires: ["choices_unanswered"], wants: [], satisfiedBy: null },
+    // Generate itself is this step's control, but "I have read the warnings"
+    // is not built — same reasoning as step 1.
+    { key: "generate", panel: "canvas", commits: false,
+      requires: ["no_run", "warnings_unreviewed"], wants: [], satisfiedBy: null },
+    { key: "materials", panel: "bom",
+      requires: ["supply_unresolved", "supply_unknown"], wants: [],
+      satisfiedBy: null },
+    { key: "plan", panel: "structure", commits: false,
+      requires: ["no_plan_committed", "plan_stale"], wants: [], satisfiedBy: null },
+    { key: "price", panel: "bom", commits: false,
+      requires: ["not_priced"], wants: [], satisfiedBy: null },
+  ],
+};
+
+export const ROADS = { sales: SALES_ROAD, backoffice: OFFICE_ROAD };
 
 /** The road for a role, or `null` for a role that has no road.
  *
@@ -74,6 +141,6 @@ export const ROADS = { sales: SALES_ROAD };
  *  the prototype and hands back `Object` for `roadFor("constructor")`, a
  *  truthy non-road whose `.steps` is undefined. `road()` guards gap codes the
  *  same way, for the same reason: both keys come from data. */
-export function roadFor(role) {
-  return Object.hasOwn(ROADS, role) ? ROADS[role] : null;
+export function roadFor(view) {
+  return Object.hasOwn(ROADS, view) ? ROADS[view] : null;
 }

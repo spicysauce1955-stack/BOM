@@ -115,7 +115,20 @@ fetch('/api/projects', {method: 'POST', headers: {'Content-Type': 'application/j
     # broken and is not.
     # ...and pin the display unit, because an earlier case may have left it in
     # centimetres and the toggle assertion below is about a KNOWN starting point.
+    #
+    # ...and pin the VIEW, for exactly the same reason and against a defect that
+    # cost an afternoon before it was understood. This case inherited whatever
+    # view an earlier one left. In `sales` the generate toolbar is step-scoped
+    # away, so `element_center('#btn-generate')` aimed at a hidden element, the
+    # click landed nowhere, no run was generated, and the failure read
+    # `sets: 0` — which looks exactly like the backend failing to ask a
+    # question. It passed or failed depending on case ORDER, which is why it
+    # looked intermittent.
+    #
+    # `fenceai.view` is `view.js`'s storage key; setting it before the reload is
+    # what `initView()` reads.
     c.js("localStorage.setItem('fenceai.units', 'mm');"
+         " localStorage.setItem('fenceai.view', 'all');"
          " location.hash = ''; location.reload(); 'ok'")
     wait_for(c, "!!document.getElementById('project-select').value", timeout=20)
     c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
@@ -834,7 +847,7 @@ def _smoke_sales_mode(c) -> None:
     """The salesperson's app is the same app with the engineering taken out.
 
     Three things only a browser can answer. That the hide-list actually HIDES —
-    `role.js` and `style.css` hold the list twice and `tests/web/test_role_sync.py`
+    `view.js` and `style.css` hold the list twice and `tests/web/test_view_sync.py`
     proves they agree with each other, which is not the same as proving either
     agrees with the rendered page. That the surfaces recording what was SOLD
     survive, because a mode that hid those would be small rather than useful.
@@ -878,7 +891,7 @@ def _smoke_sales_mode(c) -> None:
           and before["inspector"] == "shown", before)
 
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'sales';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -890,7 +903,7 @@ def _smoke_sales_mode(c) -> None:
           all(sales[k] == "hidden" for k in
               ("pin", "knowledge", "bom", "inspector", "gaps")), sales)
     # Read each surface IN THE STEP THAT OWNS IT. Two hide mechanisms now act
-    # on these same elements — `data-role` answers who is looking, `data-step`
+    # on these same elements — `data-view` answers who is looking, `data-step`
     # answers what they are doing now — and their LISTS are independent
     # (`test_step_surfaces.py`) while their EFFECTS compose. Read blind, this
     # check sat on step 1 and called four surfaces role-hidden that the STEP
@@ -1000,7 +1013,7 @@ def _smoke_sales_mode(c) -> None:
     # A RELOAD in sales mode, which is how a salesperson actually arrives: the
     # role persists in localStorage, so the hiding survived — and the WORDING
     # did not, because `initI18n` applies the static pass while the role is
-    # still the default and `initRole` never re-applied it (audit observation
+    # still the default and `initView` never re-applied it (audit observation
     # 2). It looked like a rendering hiccup because switching role or language
     # fixed it.
     c.js("location.reload(); 'ok'")
@@ -1015,7 +1028,7 @@ def _smoke_sales_mode(c) -> None:
     # ...and back, because a mode nobody can leave is a mode that traps the
     # office person who borrowed the salesperson's laptop.
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'all';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -1039,7 +1052,7 @@ def _smoke_job_identity(c) -> None:
     them the drawing, the panel would be worse than the blank field it replaced.
     """
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1140,7 +1153,7 @@ def _smoke_property_context(c) -> None:
     so this case asserts the wiring rather than re-deriving the rectangle.
     """
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1465,7 +1478,7 @@ def _smoke_handover_sheet(c) -> None:
     that the number never appears without the sentence that qualifies it.
     """
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1622,7 +1635,7 @@ def _smoke_road(c) -> None:
         time.sleep(1.0)
 
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1644,7 +1657,7 @@ def _smoke_road(c) -> None:
 
     # --- the road is a salesperson's surface -------------------------------
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'sales';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -1714,7 +1727,7 @@ def _smoke_road(c) -> None:
 
     # leave the ambient state the way the next case expects it
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'all';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -1746,7 +1759,7 @@ def _smoke_knowledge_panes(c) -> None:
         c.click(*c.element_center("#btn-locale"))
         time.sleep(1.0)
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -1897,7 +1910,7 @@ def _smoke_sales_step_surfaces(c) -> None:
         time.sleep(0.8))
 
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'sales'; s.dispatchEvent(new Event('change'));
   return 'ok';
 })()""")
@@ -2324,7 +2337,7 @@ def _smoke_sales_step_surfaces(c) -> None:
     time.sleep(0.3)
     # back to the whole app for whatever follows
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   s.value = 'all'; s.dispatchEvent(new Event('change'));
   return 'ok';
 })()""")
@@ -2345,7 +2358,7 @@ def _smoke_run_measurements(c) -> None:
     leg instead of one meaningless angle for the whole thing.
     """
     c.js("""(() => {
-  const s = document.getElementById('role-select');
+  const s = document.getElementById('view-select');
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
@@ -2419,6 +2432,162 @@ def _smoke_run_measurements(c) -> None:
           legs and legs["rows"] == 2, legs)
 
 
+def _smoke_backoffice_queue(c):
+    """Sign in as the backoffice and land on a LIST OF JOBS.
+
+    The whole point of the slice, and the thing a person notices immediately if
+    it is wrong: a backoffice account whose day starts on a drawing has to choose
+    what to work on by scrolling a picker.
+
+    This case creates its own jobs through the API rather than reusing the demo
+    project, because the queue is about jobs somebody SUBMITTED and the demo
+    project is a drawing nobody handed over. It signs out at the end — a case
+    that changes who is signed in and leaves it changed would make every later
+    check depend on having run.
+    """
+    made = c.js("""(async () => {
+  await fetch('/api/session', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: 'dana@example.com', password: 'demo'})});
+  const ids = [];
+  for (const name of ['Levi', 'Cohen']) {
+    const p = await (await fetch('/api/projects', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name})})).json();
+    await fetch(`/api/projects/${p.id}/job`, {method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({customer: name, address: 'Herzl 12, Ramat Gan',
+                            sold_by: 'Dana', sold_on: '2026-09-14'})});
+    await fetch(`/api/projects/${p.id}/actions`, {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({kind: 'submit_job', payload: {}})});
+    ids.push(p.id);
+  }
+  await fetch('/api/session', {method: 'DELETE'});
+  return ids.length;
+})()""")
+    check("two jobs to put on the queue", made == 2, made)
+
+    c.js("""document.getElementById('sign-in-email').value = 'yossi@example.com';
+            document.getElementById('sign-in-password').value = 'demo';
+            document.getElementById('sign-in').requestSubmit(); 'ok'""")
+    wait_for(c, "document.documentElement.dataset.view === 'backoffice'", timeout=15)
+
+    check("signing in as the backoffice lands on the JOBS tab, not a drawing",
+          c.js("document.querySelector('#tabs button.active')?.dataset.tab") == "queue",
+          c.js("document.querySelector('#tabs button.active')?.dataset.tab"))
+
+    wait_for(c, "document.querySelectorAll('#queue-list tr').length > 1", timeout=15)
+    shape = c.js("""(() => {
+  const rows = [...document.querySelectorAll('#queue-list tr')].slice(1);
+  return {rows: rows.length,
+          takeable: document.querySelectorAll('#queue-list .queue-take').length,
+          first: rows[0]?.innerText.replace(/\\s+/g, ' ').trim(),
+          selector: getComputedStyle(document.getElementById('view-select')).display};
+})()""")
+    check("the queue lists the submitted jobs with a Take it on each",
+          shape and shape["rows"] >= 2 and shape["takeable"] >= 2, shape)
+    # The row TEXT, which was captured and never asserted: blanking every
+    # customer cell passed the count check above.
+    check("a row names the customer it is about",
+          shape and "Levi" in (shape["first"] or ""), shape)
+    check("a backoffice account is not offered the view selector",
+          shape and shape["selector"] == "none", shape)
+    c.shot("60-backoffice-queue.png")
+
+    c.js("document.querySelector('.queue-take').click(); 'ok'")
+    wait_for(c, "document.querySelectorAll('.queue-take').length < 2", timeout=15)
+    after = c.js("""(() => {
+  const row = document.querySelector('#queue-list tr.has-mine, #queue-list tr:has(.queue-mine)')
+              || document.querySelector('#queue-list .queue-mine')?.closest('tr');
+  return {mine: !!document.querySelector('#queue-list .queue-mine'),
+          text: row?.innerText.trim(),
+          // The row's own id, then the STATUS off the API — not the rendered
+          // label, which is localized and passed only because earlier cases
+          // left the app in English.
+          id: row?.dataset.id};
+})()""")
+    moved = c.js("""fetch('/api/queue?bucket=open&status=planning')
+  .then((r) => r.json())
+  .then((d) => d.rows.some((x) => x.id === %r && x.assignee))""" % (after or {}).get("id"))
+    check("taking a job puts your name on it and moves it to planning",
+          after and after["mine"] and moved is True, {**(after or {}), "moved": moved})
+    c.shot("61-backoffice-queue-taken.png")
+
+    # A row opens its job. Until this existed you could take a job and then had
+    # no way INTO it — the queue was a list you could claim from and not enter.
+    # The row's OWN id, captured before the click. Asserting only "a project is
+    # selected" passed with `openProject` deleted, because `#project-select`
+    # already has a value from every earlier case — the regression this check
+    # exists to prevent would have sailed through it.
+    # ONE element, captured and clicked. Capturing `tr[data-id]` and clicking
+    # `tr:nth-child(2)` looked equivalent and is not — the browser inserts a
+    # `<tbody>`, and the take-it click earlier in this case re-sorts the list —
+    # so the two selectors resolved to different rows and the repaired assertion
+    # caught it immediately. A check that names a row must click that row.
+    wanted = c.js("""(() => {
+  const row = document.querySelector('#queue-list tr[data-id]');
+  row.querySelector('td').click();
+  return row.dataset.id;
+})()""")
+    wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab !== 'queue'",
+             timeout=15)
+    opened = c.js("""(() => ({
+  tab: document.querySelector('#tabs button.active')?.dataset.tab,
+  project: document.getElementById('project-select')?.value || '',
+}))()""")
+    check("clicking a row opens THAT job rather than leaving you on the list",
+          opened and opened["tab"] != "queue" and opened["project"] == wanted,
+          {**(opened or {}), "wanted": wanted})
+
+    # The road, which is the point of the whole slice: a backoffice account
+    # inside a job is on step 1 of seven, not staring at nine tabs.
+    wait_for(c, "!!document.querySelector('#road [data-step]')", timeout=15)
+    road = c.js("""(() => {
+  const btns = [...document.querySelectorAll('#road [data-step]')];
+  return {steps: btns.map((b) => b.dataset.step),
+          current: document.querySelector('#road [aria-current="step"]')?.dataset.step,
+          named: btns.every((b) => (b.querySelector('.road-name')?.textContent || '').trim()
+                                   && !(b.querySelector('.road-name').textContent || '').includes('road.')),
+          tabs: getComputedStyle(document.getElementById('tabs')).display};
+})()""")
+    check("a backoffice account inside a job walks a road of seven steps",
+          road and road["steps"] == ["sale", "blanks", "questions", "generate",
+                                     "materials", "plan", "price"], road)
+    check("it opens on the first step rather than the salesperson's",
+          road and road["current"] == "sale", road)
+    check("every step is named in the reader's language, not by its key",
+          road and road["named"] is True, road)
+    c.shot("62-office-road.png")
+
+    # A step shows only its OWN work. Step 3 is the questions; the side-view
+    # tools belong to step 2 and must be gone.
+    c.js("document.querySelector('#road [data-step=\"questions\"]').click(); 'ok'")
+    time.sleep(1.2)
+    scoped = c.js("""(() => {
+  const vis = (id) => {
+    const el = document.getElementById(id);
+    return el ? getComputedStyle(el).display !== 'none' : null;
+  };
+  return {choices: vis('choices'), height: vis('tool-height'), pin: vis('tool-pin')};
+})()""")
+    check("a step shows only its own work",
+          scoped and scoped["height"] is False and scoped["pin"] is False, scoped)
+    c.shot("63-office-road-step.png")
+
+    # Put the world back. Signing out is NOT enough on its own: `signedOutState`
+    # deliberately has no opinion about the view, so `data-view` stays wherever
+    # the account put it — which is correct behaviour (a signed-out reload keeps
+    # the toggle you chose) and leaves this case's `backoffice` behind for
+    # everybody after it. So the view is restored explicitly, the way this suite
+    # restores every other piece of state it changes.
+    c.js("document.getElementById('sign-out').click(); 'ok'")
+    wait_for(c, "!document.getElementById('signed-in-as') ||"
+                " document.getElementById('signed-in-as').hidden", timeout=15)
+    c.js("localStorage.setItem('fenceai.view', 'all');"
+         " document.documentElement.dataset.view = 'all'; 'ok'")
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
@@ -2432,6 +2601,7 @@ _CHOICE_CASES: list = [
     _smoke_knowledge_panes,
     _smoke_sales_step_surfaces,
     _smoke_run_measurements,
+    _smoke_backoffice_queue,
 ]
 
 

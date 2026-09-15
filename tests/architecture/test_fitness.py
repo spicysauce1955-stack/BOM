@@ -29,8 +29,9 @@ DOCS = Path(__file__).resolve().parents[2] / "docs" / "architecture"
 # Everything that is NOT a delivery mechanism. The rules below are about what
 # these may depend on; `api` and `web` are the outside and may depend on them.
 DOMAIN = (
-    "catalog", "core", "decisions", "demand", "fencemodel", "fulfillment",
-    "knowledge", "learning", "parts", "project", "report", "strategy", "topology",
+    "catalog", "commands", "core", "decisions", "demand", "fencemodel",
+    "fulfillment", "identity", "knowledge", "learning", "parts", "project",
+    "report", "strategy", "topology",
 )
 
 
@@ -292,3 +293,24 @@ def test_the_agent_never_reaches_the_store_or_the_generator():
                            if m.startswith("fenceai.strategy.generator"))
     ]
     assert not generator_offenders, generator_offenders
+
+
+def test_nothing_outside_the_store_writes_an_audit_row_privately():
+    """`Store._audit` is private and unguarded on purpose: it is re-entrant
+    inside a guarded public call and does not commit, because its caller is
+    mid-transaction and will.
+
+    Called from a route both of those become defects — an INSERT on the shared
+    connection outside the lock that 48 failures in ~540 overlapping requests
+    bought, and a row in an open transaction that is lost on a clean shutdown.
+    A test reading `audit_entries` on the same connection sees the uncommitted
+    row and passes, which is exactly how it shipped. `Store.log` is the public
+    door; this is what keeps it the only one.
+    """
+    offenders = [
+        f"{path.relative_to(SRC)} calls Store._audit"
+        for package in (*DOMAIN, "api", "agent")
+        for path in _modules(package)
+        if "_audit(" in path.read_text()
+    ]
+    assert not offenders, offenders

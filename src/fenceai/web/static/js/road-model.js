@@ -28,10 +28,26 @@
 export const STATES = ["unknown", "empty", "skipped", "blocked", "missing",
                        "done"];
 
-/** Where a gap no step claims goes. Never reached while the totality test
- *  passes; it exists so that if one ever does reach a browser, it is visible
- *  to the person who can act on it rather than silently dropped. */
-const ORPHAN_STEP = "review";
+/** Where a gap no step claims goes, for THIS road.
+ *
+ *  It was the literal `"review"` — the salesperson's last step — which was
+ *  correct while there was one road and became a crash the moment there were
+ *  two: `held` is built from this road's own keys, so an unclaimed code on a
+ *  road with no `review` step hit `held["review"].push` on `undefined`.
+ *
+ *  Four handover codes are unclaimed by the office road, and one of them is
+ *  `no_fence_drawn` — that road's own ANCHOR. So the throw fired on every job
+ *  that was not fully drawn and fully sold-by'd, which is most of them, and
+ *  `render()` calls `road()` before `build()`, so the band was never built at
+ *  all: an empty `#road` and a stale `html[data-step]` still driving the CSS.
+ *
+ *  The last step, because that is where a road puts the thing it has no better
+ *  home for — the salesperson's `review` and the office's `price` are both the
+ *  step somebody is on when they are looking for what is left.
+ */
+function orphanStep(roadDef) {
+  return roadDef.steps[roadDef.steps.length - 1].key;
+}
 
 /** The panel a step shows, or `null` for a step this road does not define.
  *  Road-scoped, so two roads may each have a `review` step — a search over one
@@ -68,7 +84,7 @@ export function road(roadDef, gaps, stated) {
 
   const held = Object.fromEntries(roadDef.steps.map((s) => [s.key, []]));
   for (const gap of gaps)
-    held[Object.hasOwn(ownerOf, gap.code) ? ownerOf[gap.code] : ORPHAN_STEP]
+    held[Object.hasOwn(ownerOf, gap.code) ? ownerOf[gap.code] : orphanStep(roadDef)]
       .push(gap);
 
   const started = !gaps.some((g) => g.code === roadDef.anchor);
