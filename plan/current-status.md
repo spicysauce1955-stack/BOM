@@ -132,6 +132,71 @@ added in `test_step_surfaces.py`, `test_landmark_shape_module.py`,
 **3227 tests and 500 browser checks green** on the branch (from 3208 / 439).
 `tools/persona_lab` signs in before a persona looks.
 
+## Checkpoint — 2026-09-17: the office reads a job before it edits one
+
+PR #8 merged. `main` is at `ed359f1`, **3442 tests and 643 browser checks green
+on the trunk**. Spec `docs/superpowers/specs/2026-09-16-office-job-screen-design.md`,
+plan `docs/superpowers/plans/2026-09-16-office-job-screen.md`.
+
+### What exists now
+
+The office takes a job and lands on a **plan of it**, not on step 1 of an
+editing road. Every stretch is open beside the map with its own side view; every
+problem is marked where it actually is; editing is a switch, and turning it on
+brings the office road back whole.
+
+Underneath: two pure read models (`report/sections.py` — what each stretch IS
+before anything is generated; `report/flags.py` — every finding, carrying where
+it belongs), two routes, and four frontend modules in `elevation.js`'s style —
+detached element returned, no state imported, interactivity opt-in.
+
+### The decision that changed during implementation
+
+The plan had this as a new TAB. That would have meant a second plan renderer —
+the map is `#canvas`, drawn by `editor.js`. So the screen is a **layout around
+the existing canvas**: `#job-screen` owns the side column and
+`html[data-jobmode="read"]` empties the rest. Which is also what "a map in the
+centre" literally asks for; the canvas column already is the centre.
+
+### What the reviews found, because it is the lesson
+
+Three agents reviewed the branch, twice. They found **two blockers, a screen
+claiming protection it did not have, and 18 of 19 frontend mutations surviving a
+green suite.** Four worth carrying forward:
+
+* **The screen never reacted to Generate.** `result-changed` is emitted;
+  thirteen modules subscribe; this one did not. The office kept its
+  pre-generation render — "this job has not been worked out yet" — on a job that
+  now had a run.
+* **The cards never received a single bay.** `SectionFacts` has none by design.
+  So the "no fence here" mark, the one thing the demo job's section A exists to
+  show, was DEAD CODE in the running app while its unit tests passed on
+  hand-built fixtures and the smoke counted `<svg>` elements rather than
+  rectangles.
+* **A green check is only evidence if the fixture can produce the state it
+  names.** "A blocker is told apart from a question" passed on a fixture with no
+  blocking finding in it. "Every placeable finding is drawn" was an inequality
+  every mark-dropping mutation passed. And the wait after Generate waited for
+  MARKS, which pre-exist the click — so every assertion after it raced a
+  generation still in flight.
+* **Reading is not protection, and the screen must not say otherwise.**
+  `profile.js` never checked `drawingLocked()`, so a wall top could be dragged
+  through `saveTopology()` while the header read "nothing you click changes the
+  job".
+
+Writing the missing tests found a further live bug: `markGroups` took the run id
+after the double-count guard, so a finding whose first place named no run drew a
+mark with none — unclickable, while its own row offered one.
+
+### Deferred, with triggers in the spec §11
+
+Selecting a BAY · dismissing a flag with a written reason · attributing
+`grouped.unresolved` per section (**a stretch one part short currently reads as
+complete on its card**) · never summing lines across section cards · route-level
+capacity, which is what would make the switch protection rather than posture.
+
+---
+
 ## Checkpoint — 2026-09-15: the backoffice has a desk, and it is on main
 
 PR #5 merged. `main` is at `1a587b4`, **3208 tests and 439 browser checks green
