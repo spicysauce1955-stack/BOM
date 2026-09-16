@@ -1545,13 +1545,17 @@ html[data-jobmode="read"] #job-panel { display: none; }
 .job-flags-empty { margin: 0 0 10px; }
 
 /* Marks on the plan itself — js/flag-marks.js owns #g-flags. */
-.flag-mark { cursor: pointer; }
-.flag-mark circle { fill: #fff; stroke-width: 2; }
-.flag-mark-blocking circle { stroke: #a93636; }
-.flag-mark-open circle { stroke: #9a6410; }
+/* The circle and the glyph are SIBLINGS under #g-flags, not nested. Written as
+   descendant combinators (`.flag-mark circle`) these five rules matched nothing
+   at all, so the marks painted from the module's inline fallbacks and the
+   contract in its header — "the stylesheet owns the palette, so both themes and
+   the printed sheet can differ" — was false. */
+.flag-mark { fill: #fff; stroke-width: 2; cursor: pointer; }
+.flag-mark-blocking { stroke: #a93636; }
+.flag-mark-open { stroke: #9a6410; }
 .flag-mark-glyph { font-size: 11px; font-weight: 700; text-anchor: middle; }
-.flag-mark-blocking .flag-mark-glyph { fill: #a93636; }
-.flag-mark-open .flag-mark-glyph { fill: #9a6410; }
+.flag-mark-glyph-blocking { fill: #a93636; }
+.flag-mark-glyph-open { fill: #9a6410; }
 .flag-mark-count { font-size: 9px; fill: #475569; }
 
 /* The switch. Presentation and never protection — see js/job-screen.js. */
@@ -1612,3 +1616,10 @@ html[data-jobmode="read"] #job-panel { display: none; }
 /* The built base's top, on a card that has no generated bays yet — the wall the
    fence will stand on, before anybody has pressed Generate. */
 .section-elev-basetop { fill: none; stroke: #a9714e; stroke-width: 1.5; }
+/* The tag IS the control (see js/job-screen.js) — styled as text, because a
+   button that looked like a button here would compete with the card. */
+button.job-card-tag { background: none; border: 0; padding: 0; cursor: pointer;
+                      font: inherit; font-weight: 700; font-size: 15px;
+                      color: inherit; }
+.job-flag-btn { display: contents; background: none; border: 0; padding: 0;
+                font: inherit; color: inherit; text-align: start; cursor: pointer; }

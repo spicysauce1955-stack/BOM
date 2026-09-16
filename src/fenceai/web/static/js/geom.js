@@ -212,14 +212,27 @@ export function groundSamplesFor(run, L = runLength(run)) {
 }
 
 // piecewise-linear ground, matching backend ground_z() (endpoints always present)
+//
+// **At a vertical step the RIGHT side wins, and this used to answer the left.**
+// Two samples at one station is how a cliff or a retaining drop is carried
+// (`station.ground_samples`), and `station.ground_z` resolves it half-open:
+// `if s1 == s0: return z1`, plus "a step at s1 follows — let it claim the
+// boundary". This returned `a.z` and had neither rule, so on the demo job's
+// section A — samples (4000, 0) and (4000, 1120) — the backend answered 1120
+// and this answered 0. A 1120 mm disagreement at exactly the discontinuity the
+// office screen exists to show, between the engine and the drawing of it.
 export function groundZAt(samples, station) {
   const last = samples[samples.length - 1];
   const s = Math.max(samples[0].station, Math.min(station, last.station));
   for (let i = 0; i + 1 < samples.length; i++) {
     const a = samples[i], b = samples[i + 1];
-    if (a.station <= s && s <= b.station)
-      return b.station === a.station
-        ? a.z : Math.round(a.z + ((b.z - a.z) * (s - a.station)) / (b.station - a.station));
+    if (a.station <= s && s <= b.station) {
+      if (b.station === a.station) return b.z;
+      // a step begins exactly where this segment ends: it owns the boundary
+      if (s === b.station && i + 2 < samples.length
+          && samples[i + 2].station === b.station) continue;
+      return Math.round(a.z + ((b.z - a.z) * (s - a.station)) / (b.station - a.station));
+    }
   }
   return last.z;
 }
@@ -234,6 +247,17 @@ export function el(tag, attrs, parent) {
 
 export function clearGroup(id) {
   const g = document.getElementById(id);
+  // `null` for a group that is not on the page, rather than a throw.
+  //
+  // Six call sites write `const g = clearGroup("x"); if (!g) return;` — the
+  // no-op-when-absent convention this codebase follows everywhere else — and
+  // every one of those guards was DEAD CODE: the `g.firstChild` dereference
+  // above ran first and threw, so a missing host took the whole render down
+  // instead of skipping it. Two review agents found it independently, at
+  // `gates.js` and at three places in `context.js`, and two further sites have
+  // no guard at all. Fixing it here makes all six read the way they were
+  // written, and costs the callers that do it correctly nothing.
+  if (!g) return null;
   while (g.firstChild) g.removeChild(g.firstChild);
   return g;
 }

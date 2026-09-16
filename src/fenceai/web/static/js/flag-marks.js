@@ -206,6 +206,14 @@ export function markGroups(flags) {
         group = { key, at, runId: "", severity: flag.severity, count: 0, flags: [] };
         byPoint.set(key, group);
       }
+      // The run to select from this mark, taken BEFORE the double-count guard
+      // below. Left under it, a finding whose FIRST place on this point names
+      // no run — a shared-corner warning carrying `post@node:n2` and then
+      // `post@run1:10000` — skipped this line on its second place and produced
+      // a mark with no run at all: unclickable, while the same finding's ROW in
+      // the list offered `run1`, because `job-screen.js: flagRun` scans every
+      // place. Two surfaces disagreeing about one finding, from a `continue`.
+      if (!group.runId && place.run_id) group.runId = String(place.run_id);
       if (group.flags.includes(flag)) continue;
       group.flags.push(flag);
       group.count = group.flags.length;
@@ -214,12 +222,6 @@ export function markGroups(flags) {
       // reading error this whole screen is built to prevent.
       if ((RANK[flag.severity] ?? RANK.open) < (RANK[group.severity] ?? RANK.open))
         group.severity = flag.severity;
-      // The run to select from this mark, matching `job-screen.js: flagRun` —
-      // the first place that names one. Left `""` rather than borrowed from a
-      // neighbouring flag: a node and a gate beside the fence are on no run,
-      // and selecting some run because another flag on the same pixel had one
-      // would move the reader to a stretch nothing pointed at.
-      if (!group.runId && place.run_id) group.runId = String(place.run_id);
     }
   }
   return [...byPoint.values()].sort(
@@ -315,14 +317,23 @@ function drawMark(g, group, opts) {
     "data-count": String(group.count),
     "pointer-events": interactive ? "auto" : "none",
   }, g);
-  if (interactive) circle.addEventListener("click", () => opts.onSelect(group.runId));
+  if (interactive) // The click STOPS HERE. Without this it also reaches `editor.js`'s canvas
+    // handler and one gesture does two things: select-and-frame from this
+    // listener, plus whatever tool is armed — placing a ground sample, opening
+    // an event popover — from the canvas. `notes.js` keeps its markers
+    // pointer-events:none for the same reason; this layer wants the click, so
+    // it has to end it.
+    circle.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      opts.onSelect(group.runId);
+    });
 
   // The glyph, and it is never conditional — see the header. `!` and `?` are
   // punctuation rather than words: they need no locale entry, and adding one
   // would invite a translation of a mark that has no sentence in it.
   el("text", {
     x, y: y + 3.5, "font-size": 11, "font-weight": 700, "text-anchor": "middle",
-    fill: FALLBACK[sev].stroke, class: "flag-mark-glyph", ...inert,
+    fill: FALLBACK[sev].stroke, class: `flag-mark-glyph flag-mark-glyph-${sev}`, ...inert,
   }, g).textContent = sev === "blocking" ? "!" : "?";
 
   // The count only when there IS one to report: a "1" beside every mark is

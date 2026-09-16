@@ -238,3 +238,64 @@ def test_it_does_not_mutate_what_it_is_given():
     before = copy.deepcopy(gaps)
     job_flags(gaps=gaps, items=[], warnings=[], choice_sets=[])
     assert gaps == before, "reading a finding must not reorder it"
+
+
+def test_an_element_ref_with_no_coordinates_falls_through_to_the_node():
+    """The regression this module's own prose describes, finally pinned.
+
+    `post@node:n8` — a post standing on a shared node — parses to no run and no
+    station, so an early `return` on `element_refs` threw away a `node_id` in
+    `params` that could have placed the very same warning. The existing node
+    test builds a warning with NO element refs, so both the buggy and the fixed
+    version fall through identically and the fix was covered by nothing.
+
+    This is the combined case: an uncoordinated element ref AND a node id.
+    """
+    warning = StrategyWarning(
+        code="node_surface_disagreement", severity="warning", message="x",
+        params={"node_id": "n8", "surfaces": "concrete, masonry_wall"},
+        element_refs=["post@node:n8"])
+    (place,) = _flag(job_flags(gaps=[], items=[], warnings=[warning],
+                               choice_sets=[]), "node_surface_disagreement").places
+    assert (place.kind, place.node_id) == ("node", "n8"), (
+        "an element ref that cannot be drawn must not shadow a node id that can")
+
+
+def test_a_warning_naming_only_a_run_is_placed_on_that_run():
+    """The `params["run_id"]` branch, which nothing exercised."""
+    warning = StrategyWarning(code="something", severity="warning", message="x",
+                              params={"run_id": "run7"})
+    (place,) = _flag(job_flags(gaps=[], items=[], warnings=[warning],
+                               choice_sets=[]), "something").places
+    assert (place.kind, place.run_id) == ("run", "run7")
+
+
+def test_an_unrecognised_severity_is_open_rather_than_silently_answered():
+    """`answered` draws NO MARK. A severity this mapping does not know must not
+    default into the band that makes a finding invisible — the safe default for
+    an unknown is to show it, not to hide it."""
+    warning = StrategyWarning(code="x", message="x")
+    warning.severity = "catastrophic"   # a word no version of this enum has
+    (flag,) = job_flags(gaps=[], items=[], warnings=[warning], choice_sets=[])
+    assert flag.severity == "open"
+
+
+def test_a_scope_with_too_many_parts_is_not_forced_into_a_station():
+    """`gap:run2:0:extra` is not a scope this screen can place, and guessing
+    `run2` at station 0 from it would put a mark on a spot nobody named."""
+    item = ReadinessItem(code="choices_unanswered",
+                         params={"n": 1, "scopes": ["gap:run2:0:extra"]})
+    (place,) = _flag(job_flags(gaps=[], items=[item], warnings=[],
+                               choice_sets=[]), "choices_unanswered").places
+    assert place.kind == "job"
+
+
+def test_a_scope_whose_station_is_not_a_number_does_not_become_station_zero():
+    """The other parse path of the rule this module is emphatic about: a
+    missing station is `None`, never 0, because 0 is the START of a stretch."""
+    item = ReadinessItem(code="choices_unanswered",
+                         params={"n": 1, "scopes": ["gap:run2:middle"]})
+    (place,) = _flag(job_flags(gaps=[], items=[item], warnings=[],
+                               choice_sets=[]), "choices_unanswered").places
+    assert place.kind == "job"
+    assert place.station_mm is None

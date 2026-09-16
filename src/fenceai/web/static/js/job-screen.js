@@ -58,6 +58,23 @@ let runIsStale = false;
  *  `null` is the honest answer for a job nobody has generated, and the
  *  materials block renders it as such rather than as "nothing to cut". */
 let grouped = null;
+/** `run_id -> Section` from the structure report, when there is a current run.
+ *
+ *  **Without this the card's elevation draws no bay at all.** `SectionFacts`
+ *  answers from the topology and has no bays by design — it exists to answer
+ *  BEFORE a run — so feeding it alone meant `bayRects` always returned an empty
+ *  list and the "no fence here" mark, the one thing section A of the demo job
+ *  exists to show, was dead code in the running app while its unit tests passed
+ *  on fixtures built by hand. Empty before generation, and empty while the run
+ *  is stale: those are the two cases `SectionFacts` is for. */
+let builtSections = new Map();
+/** Did the materials read FAIL, as opposed to there being nothing to read?
+ *
+ *  Without this a non-ok `/bom` left `grouped` null, which the materials block
+ *  renders as "this job has not been worked out yet" — on a job that has been,
+ *  where the request simply failed. Audit finding B01 one surface further on:
+ *  the empty answer and the failed answer must not be the same answer. */
+let bomFailed = false;
 
 /** Which emphasis layers are on. They EMPHASISE and never HIDE: nothing
  *  disappears when one is off, and `job-layers.js: PROTECTED` names everything
@@ -114,6 +131,11 @@ function renderMode() {
   host.querySelector("#job-mode-toggle").addEventListener("click", () => {
     editing = !editing;
     render();
+    // Re-focus: `render()` rebuilds this button's markup, so the element the
+    // person was standing on is gone and focus falls to <body>. A keyboard user
+    // who pressed Enter here would lose their place while the whole road
+    // reappeared around them.
+    document.getElementById("job-mode-toggle")?.focus();
     // The lock is keyed on the same answer, and `editor.js` only re-reads it on
     // these two events — so saying nothing here would leave the tools visible
     // and refusing every gesture, which reads as the app being broken.
@@ -162,10 +184,16 @@ function cardHtml(section) {
   //
   // The separator moved into the locale string for the same reason: punctuation
   // assembled in JS is punctuation no translator can move.
-  return `<article class="job-card" data-run="${esc(section.run_id)}"
-            tabindex="0" role="button" aria-pressed="false">
+  // The CARD is not a button. `role="button"` on an <article> flattens every
+  // descendant into one accessible name — the tag, the meta sentence, the
+  // elevation's label, both facts, the whole materials table — announced as a
+  // single control, and it forbids interactive descendants, which the shared-
+  // piece chips will be the moment `onSelectElement` is wired. The real button
+  // is the tag, and the click delegation still works off `[data-run]`.
+  return `<article class="job-card" data-run="${esc(section.run_id)}">
       <header class="job-card-head">
-        <span class="job-card-tag sku">${esc(section.tag)}</span>
+        <button type="button" class="job-card-tag sku" data-run="${esc(section.run_id)}"
+                aria-pressed="false">${esc(section.tag)}</button>
         <span class="job-card-meta">${sentence("job.card_meta", {
           length_mm: section.length_mm, surface: section.base_surface })}</span>
       </header>
@@ -204,10 +232,43 @@ function heightText(section) {
 
 // ---------- the flags ---------------------------------------------------------
 
-/** The findings that may be DRAWN on the plan as it stands now. */
+/** The materials block for a card whose BOM request failed.
+ *
+ *  Its own sentence, because "we could not read it" and "there is nothing to
+ *  read" are different facts and only one of them means somebody should press
+ *  Generate. Built here rather than given to `section-materials.js` as a fifth
+ *  state: the failure is the CALLER's fact — that module was handed nothing and
+ *  cannot know why.
+ */
+function failedMaterials() {
+  const el = document.createElement("section");
+  el.className = "section-materials";
+  el.dataset.state = "unreadable";
+  const p = document.createElement("p");
+  p.className = "section-materials-empty";
+  p.textContent = t("job.materials_failed");
+  el.appendChild(p);
+  return el;
+}
+
+/** The findings that may be DRAWN on the plan as it stands now.
+ *
+ *  Filtered by the PLACE, never by the source. Filtering on `source !==
+ *  "strategy"` looked right and was not: a `readiness` finding carries places
+ *  too — `choices_unanswered` names `gap:{run}:{station}` scopes minted against
+ *  the stored run's own choice sets — so half the run-derived stations survived
+ *  the filter and were drawn on a drawing that had moved under them. That is
+ *  the same defect the revision pair was added to prevent, wearing the other
+ *  source's clothes.
+ *
+ *  What is safe on a moved drawing is a place the TOPOLOGY answers: a `run`.
+ *  Every station, node and element place came from the run.
+ */
 function drawableFlags() {
   if (!runIsStale) return flags;
-  return flags.filter((f) => f.source !== "strategy");
+  return flags
+    .map((f) => ({ ...f, places: (f.places || []).filter((p) => p.kind === "run") }))
+    .filter((f) => f.places.length);
 }
 
 /** The run a flag is about, for selecting from its row. `""` when it is about
@@ -242,13 +303,18 @@ function flagsHtml() {
   return stale + `<h3 class="job-sections-title">${esc(t("job.flags"))}</h3>` +
     `<ul class="job-flag-list">${flags.map((flag) => {
       const run = flagRun(flag);
-      return `<li class="job-flag" data-sev="${esc(flag.severity)}"
-                ${run ? `data-run="${esc(run)}" tabindex="0" role="button"` : ""}>
-          <span class="job-flag-glyph" aria-hidden="true">${
+      // A real <button> inside the <li>, not a re-roled <li>. Every child of a
+      // <ul> must stay a listitem — re-roling them removes the list semantics
+      // and the count, and with `list-style: none` a screen reader then
+      // announces no list at all. The button also brings its own focus and
+      // keyboard handling, so the manual tabindex/keydown path goes away.
+      const body = `<span class="job-flag-glyph" aria-hidden="true">${
             flag.severity === "blocking" ? "!" : "?"}</span>
           <span class="job-flag-sev">${esc(t(`job.sev.${flag.severity}`))}</span>
-          <span class="job-flag-text">${flagText(flag)}</span>
-        </li>`;
+          <span class="job-flag-text">${flagText(flag)}</span>`;
+      return `<li class="job-flag" data-sev="${esc(flag.severity)}">${
+        run ? `<button type="button" class="job-flag-btn" data-run="${esc(run)}">${
+          body}</button>` : body}</li>`;
     }).join("")}</ul>`;
 }
 
@@ -321,6 +387,10 @@ function saleHtml() {
 function renderFlags() {
   const host = document.getElementById("job-flags");
   if (!host) return;
+  // Announced when findings arrive: this list changes underneath the reader
+  // after a generation, and silence is not an answer for somebody who cannot
+  // see it change.
+  host.setAttribute("aria-live", "polite");
   host.innerHTML = status === READY ? flagsHtml() : "";
 }
 
@@ -339,7 +409,11 @@ function render() {
   // names belongs to a drawing that has since moved, and a mark is a claim
   // about a spot. The handover findings are unaffected: they are placed on
   // runs, which are the drawing itself.
-  renderFlagMarks(applies ? drawableFlags() : [], { onSelect: selectRun });
+  // Interactive only while READING. While editing, the canvas belongs to the
+  // armed tool, and a mark that still took clicks would make one gesture do two
+  // things — select-and-frame here, place a point there.
+  renderFlagMarks(applies ? drawableFlags() : [],
+                  isReading() ? { onSelect: selectRun } : {});
   // Erased when the screen does not apply — one call with everything off is how
   // a salesperson never inherits the office's bands.
   renderJobLayers(applies ? sections : [], applies ? layerState : {});
@@ -393,7 +467,12 @@ function render() {
     const slot = host.querySelector(
       `.job-card[data-run="${CSS.escape(section.run_id)}"] .job-card-elev`);
     if (slot) {
-      slot.appendChild(renderSectionElevation(section, {
+      // The built section when there is one — it carries the bays, and the
+      // bays are what make the drawing say anything. `SectionFacts` is the
+      // fallback, and it is the RIGHT answer before generation and while a run
+      // is stale: it draws the ground and the wall from the topology itself.
+      const built = builtSections.get(section.run_id);
+      slot.appendChild(renderSectionElevation(built || section, {
         width: 300, height: 74,
         label: t("job.elev_label", { tag: section.tag }),
       }));
@@ -404,7 +483,14 @@ function render() {
     // detached element, which is what keeps it free of innerHTML and of
     // anything to escape. Re-appended on every render because `render()`
     // rebuilds the markup.
-    if (card) card.appendChild(renderSectionMaterials(grouped, section.run_id, {}));
+    // `grouped` is null while the run is stale (see `load`), so the materials
+    // block renders its "nothing has been worked out" answer rather than a
+    // stale run's cut lengths printed as current numbers.
+    if (card) {
+      card.appendChild(bomFailed
+        ? failedMaterials()
+        : renderSectionMaterials(grouped, section.run_id, {}));
+    }
   }
   paintSelection();
 }
@@ -416,7 +502,9 @@ function paintSelection() {
   for (const card of document.querySelectorAll("#job-sections .job-card")) {
     const on_ = card.dataset.run === runId;
     card.dataset.on = on_ ? "1" : "0";
-    card.setAttribute("aria-pressed", on_ ? "true" : "false");
+    // `aria-pressed` belongs on the control, not on the article around it.
+    card.querySelector(".job-card-tag")?.setAttribute(
+      "aria-pressed", on_ ? "true" : "false");
   }
 }
 
@@ -434,7 +522,7 @@ async function load() {
   // `view-changed` calls this again the moment the office does look.
   if (!screenApplies()) {
     sections = []; flags = []; flagsRunId = ""; runIsStale = false;
-    grouped = null; loadedFor = null;
+    grouped = null; bomFailed = false; loadedFor = null;
     status = READY;
     render();
     return;
@@ -458,9 +546,30 @@ async function load() {
     // cheaper and more honest than asking for the materials of a job nobody has
     // worked out.
     grouped = null;
-    if (flagBody.run_id) {
-      const bomRes = await fetch(`/api/runs/${flagBody.run_id}/bom`);
+    builtSections = new Map();
+    bomFailed = false;
+    const stale = !!flagBody.run_id
+      && flagBody.run_topology_revision !== flagBody.topology_revision;
+    // Nothing from a stale run is read at all — not its bays and not its cut
+    // lengths. A mark is refused because "a mark is a claim about a spot"; a
+    // bay rectangle and a cut length are claims about the same spot, and
+    // printing them plain while refusing the mark would be the screen holding
+    // two opinions about one run.
+    if (flagBody.run_id && !stale) {
+      const [bomRes, structRes] = await Promise.all([
+        fetch(`/api/runs/${flagBody.run_id}/bom`),
+        fetch(`/api/runs/${flagBody.run_id}/structure`),
+      ]);
       if (bomRes.ok) grouped = (await bomRes.json()).grouped || null;
+      else bomFailed = true;
+      // `/structure` refuses a run whose drawing or site moved (409). That is a
+      // second, stricter staleness answer than the revision pair, and it is
+      // honoured rather than argued with: no bays is the safe answer.
+      if (structRes.ok) {
+        for (const sec of (await structRes.json()).sections || []) {
+          builtSections.set(sec.run_id, sec);
+        }
+      }
     }
   } catch {
     // The cache is NOT kept: a failed reload must not leave the previous job's
@@ -471,6 +580,7 @@ async function load() {
     flagsRunId = "";
     runIsStale = false;
     grouped = null;
+    bomFailed = false;
     status = FAILED;
     render();
     return;
@@ -522,6 +632,11 @@ export function initJobScreen() {
     if (!(key in layerState)) return;
     layerState[key] = ev.target.checked;
     render();
+    // Same reason as the mode toggle, and worse here: rebuilding both inputs on
+    // every change means a keyboard user cannot reach the second checkbox
+    // without tabbing in from the top again.
+    document.querySelector(
+      `#job-layers input[data-layer="${CSS.escape(key)}"]`)?.focus();
   });
   on("project-loaded", () => {
     // Reset only when the JOB changes, never on a reload of the same one.
@@ -533,6 +648,12 @@ export function initJobScreen() {
     load();
   });
   on("view-changed", () => { render(); if (screenApplies() && loadedFor !== state.projectId) load(); });
+  // **Generation.** Every other run-derived surface in this app listens for
+  // this, and nothing calls `reloadProject()` on generate — so without it the
+  // screen kept its pre-generation render, telling the office "this job has not
+  // been worked out yet" on a job that now had a run. On the one screen whose
+  // stated job is "what did the engine make of it".
+  on("result-changed", load);
   on("locale-changed", render);
   on("units-changed", render);
   on("selection-changed", paintSelection);

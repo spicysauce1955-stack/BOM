@@ -3693,10 +3693,44 @@ def _smoke_office_job_screen(c) -> None:
       nodes: [{id: 'n1', x_mm: 0,    y_mm: 0,     kind: 'terminal'},
               {id: 'n2', x_mm: 8000, y_mm: 0,     kind: 'terminal'},
               {id: 'n3', x_mm: 8000, y_mm: -12000, kind: 'terminal'},
-              {id: 'n4', x_mm: 16000, y_mm: -12000, kind: 'terminal'}],
-      runs: [{id: 'ra', start_node_id: 'n1', end_node_id: 'n2'},
-             {id: 'rb', start_node_id: 'n2', end_node_id: 'n3'},
-             {id: 'rc', start_node_id: 'n3', end_node_id: 'n4'}]})});
+              {id: 'n4', x_mm: 16000, y_mm: -12000, kind: 'terminal'},
+              {id: 'n5', x_mm: 19000, y_mm: -12000, kind: 'terminal'}],
+      runs: [
+        // Stretch A stands on a WALL that steps up 1120 mm halfway along, which
+        // is the demo job's own shape and the only thing in this fixture that
+        // makes the run come back with a BLOCKING finding (`excessive_step`).
+        // Without it every finding here is `open`, and a check asking whether a
+        // blocker is told apart from a question has nothing to tell apart —
+        // which is how "a mark carries a glyph" passed while a renderer that
+        // printed `?` on everything would have too. It also gives the surface
+        // layer something other than `soil` to paint and the heights layer a
+        // stated height to draw.
+        {id: 'ra', start_node_id: 'n1', end_node_id: 'n2',
+         interval_events: [
+           {id: 'ev-base', payload: {kind: 'base', surface: 'masonry_wall'},
+            start_anchor: {segment_index: 0, offset_mm: 0,
+                           seg_len_at_authoring_mm: 8000, reanchor: 'proportional'},
+            end_anchor: {segment_index: 0, offset_mm: 8000,
+                         seg_len_at_authoring_mm: 8000, reanchor: 'proportional'}},
+           {id: 'ev-top', payload: {kind: 'base_top', points: [
+              {pos_permille: 0, z_mm: 940, lock: 'level'},
+              {pos_permille: 500, z_mm: 940, lock: 'step'},
+              {pos_permille: 500, z_mm: 2060, lock: 'level'},
+              {pos_permille: 1000, z_mm: 2060, lock: null}]},
+            start_anchor: {segment_index: 0, offset_mm: 0,
+                           seg_len_at_authoring_mm: 8000, reanchor: 'proportional'},
+            end_anchor: {segment_index: 0, offset_mm: 8000,
+                         seg_len_at_authoring_mm: 8000, reanchor: 'proportional'}},
+           {id: 'ev-h', payload: {kind: 'height_intent', height_mm: 1800},
+            start_anchor: {segment_index: 0, offset_mm: 0,
+                           seg_len_at_authoring_mm: 8000, reanchor: 'proportional'},
+            end_anchor: {segment_index: 0, offset_mm: 8000,
+                         seg_len_at_authoring_mm: 8000, reanchor: 'proportional'}}]},
+        {id: 'rb', start_node_id: 'n2', end_node_id: 'n3'},
+        {id: 'rc', start_node_id: 'n3', end_node_id: 'n4'}],
+      // A gate beside the fence: the only thing that exercises resolving a
+      // `gate@` place to a point on the plan.
+      gates: [{id: 'g1', start_node_id: 'n4', end_node_id: 'n5', leaf: 'single'}]})});
   await fetch(`/api/projects/${p.id}/actions`, {method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({kind: 'submit_job', payload: {}})});
@@ -3814,23 +3848,81 @@ def _smoke_office_job_screen(c) -> None:
           ungenerated)
 
     c.js("document.getElementById('btn-generate')?.click(); 'ok'")
-    wait_for(c, "document.querySelectorAll('#g-flags .flag-mark').length > 0",
-             timeout=30)
+    # Wait for the RUN, not for marks. Marks already exist before the click —
+    # the handover findings are placed on the three stretches from the start —
+    # so `marks > 0` was satisfied on the first poll and every assertion after
+    # it raced a generation that was still running. That is why the API here
+    # answered `run_id: ""` and `no_run` while `/runs` already had one: the two
+    # fetches straddled the moment it landed.
+    generated = wait_for(c, """fetch('/api/projects/%s/flags').then(r => r.json())
+        .then(d => !!d.run_id)""" % pid, timeout=40)
+    check("the office can generate from the reading surface", bool(generated),
+          generated)
+    # ...and then for the screen to have caught up with it, which it does on
+    # `result-changed` rather than by polling.
+    wait_for(c, "document.querySelectorAll('#job-flags .job-flag').length > 0",
+             timeout=20)
 
     # The API says what SHOULD be drawable; the DOM says what is. Comparing the
     # two is what makes this survive the job changing — a hardcoded count would
     # go stale the first time a rule fires differently.
-    drawable = c.js("""fetch('/api/projects/%s/flags').then(r => r.json()).then(d => {
+    # Distinct PLACES is not distinct POINTS, and that difference is the whole
+    # grouping rule: a node and the end of the stretch that meets it are two
+    # descriptors on one pixel, and the screen draws them as ONE mark carrying a
+    # count. So the expectation resolves the geometry itself — through
+    # `js/geom.js`, not through the module under test, which would be asserting
+    # `flag-marks.js` against itself.
+    drawable = c.js("""(async () => {
+      const geom = await import('/js/geom.js');
+      const s = await import('/js/state.js');
+      const d = await (await fetch('/api/projects/%s/flags')).json();
+      const topo = s.state.project?.topology || {nodes: [], runs: [], gates: []};
+      const at = (p) => {
+        try {
+          if (p.kind === 'job') return null;
+          if (p.kind === 'node') {
+            const n = topo.nodes.find((x) => x.id === p.node_id);
+            return n ? [n.x_mm, n.y_mm] : null;
+          }
+          if (p.kind === 'run') {
+            const r = geom.runById(p.run_id);
+            return r ? geom.pointAtStation(r.id, Math.round(geom.runLength(r) / 2)) : null;
+          }
+          if (p.station_mm != null && p.run_id) {
+            return geom.runById(p.run_id)
+              ? geom.pointAtStation(p.run_id, p.station_mm) : null;
+          }
+          if ((p.element_id || '').startsWith('gate@')) {
+            const g = (topo.gates || []).find(
+              (x) => x.id === p.element_id.slice(5));
+            if (!g) return null;
+            const a = topo.nodes.find((n) => n.id === g.start_node_id);
+            const b = topo.nodes.find((n) => n.id === g.end_node_id);
+            return a && b ? [Math.round((a.x_mm + b.x_mm) / 2),
+                             Math.round((a.y_mm + b.y_mm) / 2)] : null;
+          }
+          return null;
+        } catch (e) { return null; }
+      };
       const pts = new Set();
       for (const f of d.flags) {
         if (f.severity === 'answered') continue;
-        for (const p of f.places) if (p.kind !== 'job') pts.add(JSON.stringify(p));
+        for (const p of f.places) {
+          const q = at(p);
+          if (q) pts.add(q[0] + '|' + q[1]);
+        }
       }
-      return {flags: d.flags.length, placeable: pts.size};
-    })""" % pid)
+      return {flags: d.flags.length, points: pts.size};
+    })()""" % pid)
+    # EQUALITY against the number of distinct POINTS the API's places resolve
+    # to. `marks > 0 and marks <= placeable` was an inequality, and every
+    # mark-dropping mutation passed it as long as one mark survived — including
+    # "never draw an answered flag", "count is always 1" and "a gate ref
+    # resolves to nothing". Grouping by point is how `markGroups` counts, so
+    # this compares like with like: two findings on one spot are one mark.
     marks = c.js("document.querySelectorAll('#g-flags .flag-mark').length")
-    check("every placeable finding is drawn on the plan",
-          marks > 0 and marks <= (drawable or {}).get("placeable", 0),
+    check("every placeable finding is drawn on the plan, and no more",
+          marks == (drawable or {}).get("points", -1),
           {"marks": marks, "api": drawable})
 
     # EVERY finding gets a row, including the ones that are about the whole job
@@ -3844,10 +3936,29 @@ def _smoke_office_job_screen(c) -> None:
 
     # Colour is not an encoding on its own: a reader who cannot tell red from
     # amber must still be able to tell a blocker from a question.
-    glyphs = c.js("[...new Set([...document.querySelectorAll("
-                  "'#g-flags .flag-mark-glyph')].map(e => e.textContent))]")
-    check("a mark carries a glyph, not only a colour",
-          bool(glyphs) and all(g in ("!", "?") for g in glyphs), glyphs)
+    # The point of this check is that a reader who cannot tell red from amber
+    # can still tell a blocker from a question. `all(g in ("!", "?"))` did not
+    # say that: a renderer printing `?` on EVERY mark, blockers included,
+    # passed it. So assert both glyphs are present and that `!` is on exactly
+    # the blocking marks.
+    glyphs = c.js("""(() => {
+      const marks = [...document.querySelectorAll('#g-flags .flag-mark')];
+      const glyph = (m) => m.parentElement?.querySelector('.flag-mark-glyph')
+        ?.textContent ?? document.querySelector('#g-flags .flag-mark-glyph')?.textContent;
+      const pairs = [...document.querySelectorAll('#g-flags .flag-mark-glyph')]
+        .map(g => [g.textContent, g.getAttribute('class')]);
+      return {
+        set: [...new Set(pairs.map(p => p[0]))].sort(),
+        blocking_all_bang: pairs.filter(p => (p[1] || '').includes('blocking'))
+                                .every(p => p[0] === '!'),
+        open_all_query: pairs.filter(p => (p[1] || '').includes('glyph-open'))
+                             .every(p => p[0] === '?'),
+      };
+    })()""")
+    check("a blocker and a question are told apart by their glyph, not by colour",
+          (glyphs or {}).get("set") == ["!", "?"]
+          and (glyphs or {}).get("blocking_all_bang")
+          and (glyphs or {}).get("open_all_query"), glyphs)
 
     check("the notes layer is untouched by the flags",
           c.js("document.querySelectorAll('#g-flags .flag-mark').length") > 0
@@ -3862,10 +3973,10 @@ def _smoke_office_job_screen(c) -> None:
     c.js("(async () => (await import('/js/state.js'))"
          ".setSelection({runId: null}))()")
     time.sleep(0.4)
-    wanted = c.js("document.querySelector('#job-flags .job-flag[data-run]')"
+    wanted = c.js("document.querySelector('#job-flags [data-run]')"
                   "?.dataset.run")
     before_box = c.js("document.getElementById('canvas')?.getAttribute('viewBox')")
-    c.js("""document.querySelector('#job-flags .job-flag[data-run]')?.click(); 'ok'""")
+    c.js("""document.querySelector('#job-flags [data-run]')?.click(); 'ok'""")
     time.sleep(0.8)
     after_box = c.js("document.getElementById('canvas')?.getAttribute('viewBox')")
     picked = c.js("(async () => (await import('/js/state.js'))"
@@ -3881,13 +3992,24 @@ def _smoke_office_job_screen(c) -> None:
     check("the screen offers its emphasis layers", sorted(layers or []) ==
           ["ground", "heights"], layers)
 
+    # All SIX selectors `job-layers.js: PROTECTED` names, not the three this
+    # once covered — a hand-copied subset of an un-negotiable list is the exact
+    # failure the export was created to prevent. Visibility as well as count,
+    # because a layer that DIMMED a protected element without removing it
+    # passed a count comparison.
     def protected_counts():
-        return c.js("""(() => ({
-          runs: document.querySelectorAll('#g-topology .run-hit, #g-topology line,'
-                + ' #g-topology polyline').length,
-          gates: document.querySelectorAll('#g-gates *').length,
-          flags: document.querySelectorAll('#g-flags .flag-mark').length,
-        }))()""")
+        return c.js("""(() => {
+          const sels = ['#g-topology line, #g-topology polyline', '.run-hit',
+                        '.run-label', '#g-gates *', '#g-context *',
+                        '#g-flags .flag-mark'];
+          const out = {};
+          for (const sel of sels) {
+            const els = [...document.querySelectorAll(sel)];
+            out[sel] = {n: els.length,
+                        shown: els.filter(e => e.checkVisibility()).length};
+          }
+          return out;
+        })()""")
 
     all_off = protected_counts()
     c.js("""[...document.querySelectorAll('#job-layers input[data-layer]')]

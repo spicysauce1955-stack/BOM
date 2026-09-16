@@ -45,6 +45,7 @@
 
 import { esc } from "./api.js";
 import { t } from "./i18n.js";
+import { tagOf } from "./structure-data.js";
 import { fmt, roleWord, sentence, unitLabel } from "./units.js";
 
 // ------------------------------------------------------------------ pure half
@@ -125,7 +126,7 @@ export function linesForRun(grouped, runId) {
  *  `/bom` route says so on the way out ("a second inversion of them in JS is how
  *  the two views would come to disagree about which bay bought a rail").
  *
- *  `bom_groups.GroupedLine` does not carry the field yet, so today every line
+ *  `bom_groups.GroupedLine` did not carry the field until this branch added it, so today every line
  *  reads as unshared and no row is marked. That is the honest failure — a count
  *  that is right per stretch and silent about one piece serving two of them —
  *  rather than the dishonest one, which would be guessing sharing from the merge
@@ -263,15 +264,25 @@ function cutText(line) {
  *  RTL must not reorder `span@run1:0-1500` into a different-looking id.
  */
 function sharedRow(line, interactive) {
+  // The element's TAG, falling back to its id. The docstring above argues that
+  // naming beats counting because "`A/B3` does not send a reader hunting" — and
+  // then printed `span@ra:0-1500`, which does. `structure-data.js: tagOf` is the
+  // one place that translation lives; `warnings.js` already uses it for exactly
+  // this, and it answers the id back when no structure report is loaded.
+  const label = (id) => tagOf(id) || id;
   const chips = line.sharedWith.map((id) => (interactive
     ? `<button type="button" class="section-materials-share-chip sku"
-              data-element="${esc(id)}">${esc(id)}</button>`
-    : `<bdi class="sku">${esc(id)}</bdi>`)).join(" ");
+              data-element="${esc(id)}">${esc(label(id))}</button>`
+    : `<bdi class="sku">${esc(label(id))}</bdi>`)).join(" ");
+  // One is the common case — `_shared_with` returns the pegs outside this
+  // section — and "it also serves 1 other elements" is the plural bug this
+  // bundle has a house pattern for (`strategy.posts_one`).
+  const note = line.sharedWith.length === 1
+    ? "job.materials_shared_note_one" : "job.materials_shared_note";
   return `<tr class="section-materials-share-row">
       <td colspan="4">
         <span class="section-materials-shared">${esc(t("job.materials_shared"))}</span>
-        <span class="meta">${sentence("job.materials_shared_note",
-                                      { n: line.sharedWith.length })}</span>
+        <span class="meta">${sentence(note, { n: line.sharedWith.length })}</span>
         ${chips}
       </td>
     </tr>`;

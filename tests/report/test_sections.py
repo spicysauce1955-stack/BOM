@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import copy
 
-from fenceai.report.sections import section_facts
+from fenceai.report.sections import DEFAULT_SURFACE, section_facts
 from fenceai.topology.model import (
     BasePayload, BaseTopPayload, BaseTopPoint, FenceModelPayload,
     HeightIntentPayload, Node, Run, Topology, WallProfilePayload,
@@ -357,3 +357,80 @@ def test_a_point_profile_with_no_points_claims_nothing():
     assert [(p.station_mm, p.z_mm) for p in facts.base_top] == [
         (0, 600), (8000, 600)]
     assert base_top_at(topo, topo.run("run1"), 4000)[0] == 600
+
+
+def test_a_wall_that_steps_DOWN_keeps_its_two_sides_in_drawing_order():
+    """Every other fixture steps UP, so position-order and z-order coincide and
+    a sort by the wrong key looks right. A descending step is where they part:
+    sorted by z, the two sides of this step would swap and the wall would be
+    drawn climbing where it drops."""
+    topo = straight_topology(8000)
+    add_interval_event(topo, "run1", "ev1", 0, 8000, BaseTopPayload(points=[
+        BaseTopPoint(pos_permille=0, z_mm=1420),
+        BaseTopPoint(pos_permille=500, z_mm=1420),
+        BaseTopPoint(pos_permille=500, z_mm=300),
+        BaseTopPoint(pos_permille=1000, z_mm=300),
+    ]))
+    (facts,) = section_facts(topo)
+    assert [(p.station_mm, p.z_mm) for p in facts.base_top] == [
+        (0, 1420), (4000, 1420), (4000, 300), (8000, 300)]
+
+
+def test_two_walls_authored_out_of_order_are_reported_along_the_stretch():
+    """A read model reports the stretch in the order somebody walks it, not in
+    the order the events happen to sit in the document."""
+    topo = straight_topology(8000)
+    add_interval_event(topo, "run1", "far", 4000, 8000, BaseTopPayload(points=[
+        BaseTopPoint(pos_permille=0, z_mm=900),
+        BaseTopPoint(pos_permille=1000, z_mm=900)]))
+    add_interval_event(topo, "run1", "near", 0, 4000, BaseTopPayload(points=[
+        BaseTopPoint(pos_permille=0, z_mm=300),
+        BaseTopPoint(pos_permille=1000, z_mm=300)]))
+    (facts,) = section_facts(topo)
+    stations = [p.station_mm for p in facts.base_top]
+    assert stations == sorted(stations), stations
+    assert facts.base_top[0].z_mm == 300, "the near wall is the one at the start"
+
+
+def test_a_station_that_does_not_divide_evenly_is_rounded_the_generators_way():
+    """`round`, not truncation: the comment claims this matches
+    `base_top_step_stations` so a step reported here lands on the station the
+    generator will put a post at. 333 permille of 1000 mm is 333, and `int()`
+    of 333.0 agrees — so the fixture uses a length where they differ."""
+    # 333 permille of 1500 mm is 499.5 — the one shape where rounding and
+    # truncation part company. The first version of this test used 999 of 3000,
+    # which is exactly 2997, so `int()` and `round()` agreed and the assertion
+    # could not fail.
+    topo = straight_topology(1500)
+    add_interval_event(topo, "run1", "ev1", 0, 1500, BaseTopPayload(points=[
+        BaseTopPoint(pos_permille=0, z_mm=500),
+        BaseTopPoint(pos_permille=333, z_mm=500),
+        BaseTopPoint(pos_permille=1000, z_mm=500),
+    ]))
+    (facts,) = section_facts(topo)
+    assert [p.station_mm for p in facts.base_top] == [0, 500, 1500], (
+        "333 permille of 1500 is 499.5, and the generator rounds it to 500")
+
+
+def test_a_run_with_no_stretches_reports_the_default_rather_than_mixed():
+    """`_one_surface`'s empty case. "Mixed" means MORE THAN ONE, and a stretch
+    with none has not got more than one — the word would be a claim about a
+    fence that is not there."""
+    from fenceai.report.sections import MIXED, _one_surface
+    assert _one_surface([]) == DEFAULT_SURFACE
+    assert _one_surface([]) != MIXED
+
+
+def test_the_facts_carry_the_corners_and_the_slope_the_topology_reports():
+    """Neither was asserted on a `SectionFacts` anywhere — only on
+    `topology/station.py` directly — so dropping either from the model was
+    invisible."""
+    topo = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0, z_mm=0),
+               Node(id="n2", x_mm=4000, y_mm=0, z_mm=800)],
+        runs=[Run(id="run1", start_node_id="n1", end_node_id="n2",
+                  interior_vertices=[(2000, 2000)])],
+    )
+    (facts,) = section_facts(topo)
+    assert facts.corner_stations, "a right-angle bend is a corner"
+    assert facts.max_slope_permille > 0, "ground that climbs has a slope"

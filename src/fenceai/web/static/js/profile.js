@@ -14,8 +14,8 @@ import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { inspect } from "./inspector.js";
 import {
-  addIntervalEvent, addPointEvent, maxSpanFor, on, reloadProject, saveTopology,
-  setSelection, state,
+  addIntervalEvent, addPointEvent, drawingLocked, maxSpanFor, on, reloadProject,
+  saveTopology, setSelection, state,
 } from "./state.js";
 import {
   currentUnit, enumWord, fmt, fmtLen, inputStep, snapStep, toDisplayValue, toMm, tu,
@@ -1008,6 +1008,16 @@ function setupSvg() {
 
   svg.addEventListener("pointerdown", (ev) => {
     if (!view) return;
+    // **The lock reaches the side view.** Every other drawing surface checks
+    // this and `profile.js` never did, so its gestures — drag a wall top, add a
+    // ground sample, insert a top point — went straight to `pushSnapshot` →
+    // mutate → `saveTopology()` while the screen above said the drawing was not
+    // being edited. The CSS lock only ever hid the button bar, which is not the
+    // same thing as refusing the gesture: hiding is presentation, and this is
+    // the refusal. It covers BOTH locks — a salesperson whose job is on the
+    // office's desk, and an office reading a job it has not chosen to edit.
+    if (drawingLocked()) return;
+
     const target = ev.target;
     if (target.classList.contains("profile-node")) {
       drag = { kind: "node", nodeId: target.dataset.node, started: false, startY: ev.clientY };
@@ -1115,6 +1125,16 @@ function setupSvg() {
   // top event; the base-top edge inserts an interpolated point
   svg.addEventListener("dblclick", (ev) => {
     if (!view) return;
+    // **The lock reaches the side view.** Every other drawing surface checks
+    // this and `profile.js` never did, so its gestures — drag a wall top, add a
+    // ground sample, insert a top point — went straight to `pushSnapshot` →
+    // mutate → `saveTopology()` while the screen above said the drawing was not
+    // being edited. The CSS lock only ever hid the button bar, which is not the
+    // same thing as refusing the gesture: hiding is presentation, and this is
+    // the refusal. It covers BOTH locks — a salesperson whose job is on the
+    // office's desk, and an office reading a job it has not chosen to edit.
+    if (drawingLocked()) return;
+
     const cls = ev.target.classList;
     const entry = chainEntry(ev.target.dataset.run);
     if (!entry) return;
