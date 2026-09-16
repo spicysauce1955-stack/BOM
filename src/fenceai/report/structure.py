@@ -363,9 +363,15 @@ def _merge_parts(parts: list[Part]) -> list[Part]:
 _SECTION_TAGS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
-def _section_tag(index: int) -> str:
+def section_tag(index: int) -> str:
     """A, B, … Z, AA, AB … — sections are named, not numbered, so a bay tag (B3)
-    never reads like a section tag."""
+    never reads like a section tag.
+
+    **Public, because two read models letter sections.** `report/sections.py`
+    answers what each stretch is before anything is generated; this report
+    answers what it became after. Two private copies of this would agree on
+    every job anybody has drawn and disagree on the twenty-seventh run.
+    """
     tag = ""
     n = index
     while True:
@@ -436,7 +442,7 @@ def build_structure(
     for index, run in enumerate(topology.runs):
         length = run_length(topology, run)
         section = Section(
-            tag=_section_tag(index), run_id=run.id, length_mm=length,
+            tag=section_tag(index), run_id=run.id, length_mm=length,
             base_surface=_base_surface(topology, run.id),
             post_tilt=_post_tilt(topology, run.id),
             ground=ground_samples(topology, run),
