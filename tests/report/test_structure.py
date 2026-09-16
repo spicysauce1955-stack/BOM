@@ -13,7 +13,7 @@ from fenceai.demand.derive import derive_requirements
 from fenceai.fulfillment.fulfill import Inventory, InventoryItem, fulfill
 from fenceai.fulfillment.supply import resolve_supply
 from fenceai.knowledge.demo import demo_knowledge
-from fenceai.report.structure import build_structure
+from fenceai.report.structure import build_structure, section_tag
 from fenceai.strategy.generator import generate
 from fenceai.topology.model import (
     BasePayload, BaseTopPayload, BaseTopPoint, GatePayload, GateSpan, Node, Run,
@@ -41,6 +41,19 @@ def _straight_with_gate(length_mm: int = 6000):
 
 
 # --- setting out ------------------------------------------------------------
+
+def test_section_tag_is_public_and_letters_past_z():
+    """Public because a second read model letters sections too.
+
+    `report/sections.py` answers what each stretch is BEFORE anything is
+    generated, and it must arrive at the same letters as the structure report
+    does after. Two private implementations would agree right up to the job
+    with twenty-seven runs.
+    """
+    assert [section_tag(i) for i in (0, 1, 25)] == ["A", "B", "Z"]
+    assert [section_tag(i) for i in (26, 27, 51)] == ["AA", "AB", "AZ"]
+    assert section_tag(52) == "BA"
+
 
 def test_sections_posts_bays_and_gates_are_tagged_in_order():
     report, _, _, _ = _report(_straight_with_gate())

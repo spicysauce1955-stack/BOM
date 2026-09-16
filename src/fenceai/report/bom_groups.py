@@ -55,6 +55,15 @@ class GroupedLine(BaseModel):
     slot_key: str = ""
     cut_length_mm: Mm | None = None
     length_basis: str | None = None
+    # The OTHER elements this same physical piece also serves, relative to the
+    # group the row is in — `structure.Part.shared_with`'s statement, made per
+    # group rather than per element (see `_shared_with` for what "other" is for
+    # each kind). A rail derived continuous pegs to every bay it crosses
+    # (contract obligation 14) and its one demand line appears under each of
+    # them, which is right — the crew meets it in each — and reads as one piece
+    # per bay unless the row says otherwise. Inverted from the line's own pegs,
+    # never counted here: this is a read model and the quantity is the BOM's.
+    shared_with: list[str] = []
 
 
 class SkuTotal(BaseModel):
@@ -96,22 +105,61 @@ def _decision_order(decision: SupplyDecision) -> tuple:
     return (decision.role, decision.slot_key, tuple(sorted(decision.requirement_ids)))
 
 
-def _line(req: ResolvedSupplyLine) -> GroupedLine:
+def _shared_with(pegs: list[str], mine: set[str]) -> list[str]:
+    """The pegs this group does NOT own: `mine` is the set of the line's own pegs
+    that belong to the group, and everything else is the other side of a piece
+    the group only has part of.
+
+    In peg order rather than sorted, because the pegs are the demand line's own
+    answer and re-ordering them would be a second derivation of something already
+    decided — and a list order is stable only if nobody re-derives it.
+
+    What "other" IS differs per kind — the kinds do not partition the fence the
+    same way (`BomGroup.kind`), so one answer for all five is wrong for some of
+    them whichever answer is picked:
+
+    * **section / node** — other means outside THIS SECTION, not merely another
+      element. A rail derived continuous across three bays of one stretch is a
+      piece that stretch owns whole; calling it shared would send the reader
+      looking for another stretch that has half of his rail. So a peg is judged
+      by the run it stands on (`section_of`), never by its id — and a peg that
+      stands on no run at all (a standalone gate) is outside every section.
+    * **bay** — other means another ELEMENT, exactly as `structure.Part` means
+      it. The bay is where a continuous rail must say it is one piece across four
+      bays, and this view and the setting-out sheet must not disagree about the
+      same rail.
+    * **gate** — a standalone gate is a group of exactly one element, so "outside
+      the group" and "another element" are the same set; it reads like a bay.
+    * **decision** — left empty, and not for want of data. A decision group is a
+      CAUSE, not a place on the fence: it is collected by requirement id and it
+      holds every line it bought whole, so there is no other side for a piece to
+      be shared with. Filling it with the line's pegs would answer a different
+      question (where the piece goes) under this field's name.
+    """
+    return [p for p in pegs if p not in mine]
+
+
+def _line(req: ResolvedSupplyLine,
+          shared_with: list[str] | None = None) -> GroupedLine:
     return GroupedLine(
         sku=req.sku, qty=req.engineering_qty, unit=req.unit, role=req.role,
         slot_key=req.slot_key, cut_length_mm=req.cut_length_mm,
-        length_basis=req.length_basis,
+        length_basis=req.length_basis, shared_with=list(shared_with or []),
     )
 
 
 def _merged(lines: list[GroupedLine]) -> list[GroupedLine]:
-    """One row per (sku, unit, role, slot, cut length): two rails of one cut read
-    as 2, not as 1 + 1. Same key `report/structure.py::_merge_parts` uses, so a
-    bay reads the same here as it does on the schedule."""
+    """One row per (sku, unit, role, slot, cut length, sharing): two rails of one
+    cut read as 2, not as 1 + 1. Same key `report/structure.py::_merge_parts`
+    uses, so a bay reads the same here as it does on the schedule — `shared_with`
+    included, because a piece this group owns whole and a piece it splits with
+    the next stretch are different pieces however identical their cut: merged,
+    one row would claim the sharing on behalf of both and the reader would go
+    looking for a second stretch that has half of a rail it owns outright."""
     out: dict[tuple, GroupedLine] = {}
     for line in lines:
         key = (line.sku, line.unit, line.role, line.slot_key, line.cut_length_mm,
-               line.length_basis)
+               line.length_basis, tuple(line.shared_with))
         if key in out:
             out[key].qty += line.qty
         else:
@@ -153,7 +201,6 @@ def group_bom(
     unpegged: dict[tuple[str, str], int] = {}
 
     for req in requirements:
-        line = _line(req)
         key = (req.sku, req.unit)
         asked[key] = asked.get(key, 0) + req.engineering_qty
         if not req.pegs:
@@ -175,11 +222,16 @@ def group_bom(
             # wants to know what a gate costs should find it under that gate
             # rather than in the bucket for parts nobody claimed.
             for gate_id in standalone_gates & set(req.pegs):
-                by_gate.setdefault(gate_id, []).append(line)
+                by_gate.setdefault(gate_id, []).append(
+                    _line(req, _shared_with(req.pegs, {gate_id})))
         for run_ref in sections:
-            by_section.setdefault(run_ref, []).append(line)
+            # the pegs THIS section owns are the ones standing on this run — see
+            # `_shared_with` for why the comparison is by run and not by id
+            by_section.setdefault(run_ref, []).append(_line(req, _shared_with(
+                req.pegs, {e for e in req.pegs if section_of.get(e) == run_ref})))
         for span_id in {e for e in req.pegs if e in spans}:
-            by_bay.setdefault(span_id, []).append(line)
+            by_bay.setdefault(span_id, []).append(
+                _line(req, _shared_with(req.pegs, {span_id})))
 
     # NOTE, because two views of one fence must not quietly disagree:
     # `report/structure.py` lists a shared node post in EVERY section that
@@ -211,6 +263,8 @@ def group_bom(
 
     by_id = {req.id: req for req in requirements}
     for decision in sorted(decisions or [], key=_decision_order):
+        # no `shared_with`: a decision holds every line it bought whole, so there
+        # is no other side for a piece to be shared with (`_shared_with`)
         lines = [_line(by_id[rid]) for rid in decision.requirement_ids if rid in by_id]
         if not lines:
             continue

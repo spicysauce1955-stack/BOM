@@ -3041,6 +3041,7 @@ def _smoke_street_grips_by_step(c) -> None:
     switch_user(c, "yossi@example.com")
     open_project(c, pid)
     c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click(); 'ok'")
+
     wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7", timeout=15)
     office = {}
     for key in ("blanks", "generate"):
@@ -3654,6 +3655,432 @@ def _smoke_my_jobs_round_trip(c) -> None:
           and finish_all["send"] is False, finish_all)
 
 
+def _smoke_office_job_screen(c) -> None:
+    """The office opens a job it did not draw, and the screen says what it IS.
+
+    The complaint this closes: taking a job used to land the office on step 1 of
+    an EDITING road — her customer and address in a form with a Save button, the
+    drawing pencils in the rail — with nothing on screen saying what the job was.
+    Now the side column is one reading surface beside the map, a card per
+    stretch, each with its own side view.
+
+    **The map is the CANVAS**, not a second drawing: this screen is a layout
+    around `#canvas` rather than a tab beside it, which is the only way "a map in
+    the centre" does not become a second implementation of the plan. So the check
+    that matters is that the canvas is still the thing in the middle while the
+    column beside it has changed.
+
+    On a job of its own with THREE stretches of different lengths, because one
+    run cannot show that the cards follow the drawing's order rather than an id's.
+    Every fact is read from the API, never from the rendered words, which are
+    localized.
+    """
+    sign_out(c)
+    pid = c.js("""(async () => {
+  await fetch('/api/session', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: 'dana@example.com', password: 'demo'})});
+  const p = await (await fetch('/api/projects', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: 'Reading surface'})})).json();
+  await fetch(`/api/projects/${p.id}/job`, {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({customer: 'Readme', address: 'Ha-Gderot 3, Holon',
+                          sold_by: 'Dana', sold_on: '2026-09-16'})});
+  await fetch(`/api/projects/${p.id}/topology`, {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      nodes: [{id: 'n1', x_mm: 0,    y_mm: 0,     kind: 'terminal'},
+              {id: 'n2', x_mm: 8000, y_mm: 0,     kind: 'terminal'},
+              {id: 'n3', x_mm: 8000, y_mm: -12000, kind: 'terminal'},
+              {id: 'n4', x_mm: 16000, y_mm: -12000, kind: 'terminal'},
+              {id: 'n5', x_mm: 19000, y_mm: -12000, kind: 'terminal'}],
+      runs: [
+        // Stretch A stands on a WALL that steps up 1120 mm halfway along, which
+        // is the demo job's own shape and the only thing in this fixture that
+        // makes the run come back with a BLOCKING finding (`excessive_step`).
+        // Without it every finding here is `open`, and a check asking whether a
+        // blocker is told apart from a question has nothing to tell apart —
+        // which is how "a mark carries a glyph" passed while a renderer that
+        // printed `?` on everything would have too. It also gives the surface
+        // layer something other than `soil` to paint and the heights layer a
+        // stated height to draw.
+        {id: 'ra', start_node_id: 'n1', end_node_id: 'n2',
+         interval_events: [
+           {id: 'ev-base', payload: {kind: 'base', surface: 'masonry_wall'},
+            start_anchor: {segment_index: 0, offset_mm: 0,
+                           seg_len_at_authoring_mm: 8000, reanchor: 'proportional'},
+            end_anchor: {segment_index: 0, offset_mm: 8000,
+                         seg_len_at_authoring_mm: 8000, reanchor: 'proportional'}},
+           {id: 'ev-top', payload: {kind: 'base_top', points: [
+              {pos_permille: 0, z_mm: 940, lock: 'level'},
+              {pos_permille: 500, z_mm: 940, lock: 'step'},
+              {pos_permille: 500, z_mm: 2060, lock: 'level'},
+              {pos_permille: 1000, z_mm: 2060, lock: null}]},
+            start_anchor: {segment_index: 0, offset_mm: 0,
+                           seg_len_at_authoring_mm: 8000, reanchor: 'proportional'},
+            end_anchor: {segment_index: 0, offset_mm: 8000,
+                         seg_len_at_authoring_mm: 8000, reanchor: 'proportional'}},
+           {id: 'ev-h', payload: {kind: 'height_intent', height_mm: 1800},
+            start_anchor: {segment_index: 0, offset_mm: 0,
+                           seg_len_at_authoring_mm: 8000, reanchor: 'proportional'},
+            end_anchor: {segment_index: 0, offset_mm: 8000,
+                         seg_len_at_authoring_mm: 8000, reanchor: 'proportional'}}]},
+        {id: 'rb', start_node_id: 'n2', end_node_id: 'n3'},
+        {id: 'rc', start_node_id: 'n3', end_node_id: 'n4'}],
+      // A gate beside the fence: the only thing that exercises resolving a
+      // `gate@` place to a point on the plan.
+      gates: [{id: 'g1', start_node_id: 'n4', end_node_id: 'n5', leaf: 'single'}]})});
+  await fetch(`/api/projects/${p.id}/actions`, {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({kind: 'submit_job', payload: {}})});
+  await fetch('/api/session', {method: 'DELETE'});
+  return p.id;
+})()""")
+    check("a three-stretch job, sold and sent to the office", bool(pid), pid)
+    if not pid:
+        sign_in(c, ADMIN)
+        return
+
+    sign_in(c, "yossi@example.com")
+    c.js("""(async () => {
+  const s = await import('/js/state.js');
+  const {setTab} = await import('/js/tabs.js');
+  await s.openProject(%s); setTab('canvas'); return 'ok'; })()""" % json.dumps(pid))
+    wait_for(c, "document.querySelectorAll('#job-sections .job-card').length === 3",
+             timeout=15)
+
+    def visible(sel):
+        return c.js("!!document.querySelector(%s)?.checkVisibility()" % json.dumps(sel))
+
+    check("the office's reading surface is on screen",
+          visible("#job-screen"), c.js("document.documentElement.dataset.jobmode"))
+
+    # The API is the source of truth for what SHOULD be on screen; the DOM is
+    # what IS. Comparing them is what makes this check survive the job changing.
+    want = c.js("fetch('/api/projects/%s/sections').then(r => r.json())"
+                ".then(d => d.sections.map(s => s.tag))" % pid)
+    got = c.js("[...document.querySelectorAll('#job-sections .job-card "
+               ".job-card-tag')].map(e => e.textContent.trim())")
+    check("one card per stretch, lettered in the drawing's order", want == got,
+          {"api": want, "screen": got})
+
+    runs = c.js("[...document.querySelectorAll('#job-sections .job-card')]"
+                ".map(e => e.dataset.run)")
+    check("each card names the stretch it is about", runs == ["ra", "rb", "rc"], runs)
+
+    elevs = c.js("document.querySelectorAll('#job-sections .job-card svg')" ".length")
+    check("every card carries a side view", elevs == 3, elevs)
+
+    # The lengths are 8 m, 12 m, 8 m — so a screen rendering raw millimetres and
+    # a screen rendering the reader's unit differ, and this says which it is.
+    meta_mm = c.js("document.querySelector('#job-sections .job-card-meta')"
+                   "?.textContent || ''")
+    c.js("document.getElementById('btn-units').click(); 'ok'")
+    time.sleep(0.6)
+    meta_cm = c.js("document.querySelector('#job-sections .job-card-meta')"
+                   "?.textContent || ''")
+    c.js("document.getElementById('btn-units').click(); 'ok'")
+    time.sleep(0.6)
+    check("a card's length follows the display unit", meta_mm != meta_cm,
+          {"mm": meta_mm, "cm": meta_cm})
+
+    check("nobody stated a height, and the card says so rather than staying blank",
+          bool(c.js("document.querySelector('#job-sections .job-card-facts dd')"
+                    "?.textContent.trim()")),
+          c.js("document.querySelector('#job-sections .job-card-facts dd')"
+               "?.textContent"))
+
+    # The map is the canvas, and it is still the middle of the screen.
+    check("the plan is still the canvas, not a second drawing",
+          visible("#canvas") and c.js(
+              "document.querySelectorAll('#tab-canvas svg#canvas').length") == 1,
+          c.js("document.querySelectorAll('#tab-canvas svg#canvas').length"))
+
+    # Reading means reading: the pencils and the engineer's panels are away.
+    check("the drawing tools are put away while reading",
+          not visible("#toolbar"), c.js("document.documentElement.dataset.jobmode"))
+    check("the side column is the reading surface alone",
+          not visible("#inspector") and not visible("#run-editing-panel"),
+          {"inspector": visible("#inspector"),
+           "run_editing": visible("#run-editing-panel")})
+
+    # The complaint this whole screen answers: the office used to land on her
+    # customer and address in an editable form with a Save button. `#job-panel`
+    # is mounted into `.canvas-col` by `js/job.js`, NOT into the side column, so
+    # a rule that emptied the side column never reached it — which is exactly
+    # how this survived the first pass and was caught by looking at a
+    # screenshot rather than at a check.
+    check("her sale is not an editable form on the office's screen",
+          not visible("#job-panel"), visible("#job-panel"))
+    check("...but what was sold is still READABLE",
+          bool(c.js("document.querySelector('.job-sale')?.innerText?.includes("
+                    "'Readme')")),
+          c.js("document.querySelector('.job-sale')?.innerText"))
+
+    # The office's own acts stay: reading mode is about not changing the
+    # DRAWING, not about being unable to do the job.
+    check("the office can still act on its own desk while reading",
+          visible("#desk-actions"), visible("#desk-actions"))
+
+    # The regression a fully green suite could not see. `data-jobmode` is set on
+    # EVERY step of the office road, so emptying the side column also took the
+    # four panels the road KEEPS — choices on the questions step, notes on sale,
+    # run editing on blanks, the inspector on generate. `test_step_surfaces.py`
+    # asserts that hidden selectors have a rule, never that a kept one is
+    # VISIBLE; and `_smoke_office_desk_acts` walks the road as an ADMIN, whose
+    # view is `all`, so this mode never turns on there. Reading and the road are
+    # exclusive now — while reading there is no step to be on.
+    check("the road is away while reading, so no step is missing its panels",
+          not visible("#road"), visible("#road"))
+    # The other half of that property — that the road STILL WORKS for an account
+    # using it — is asserted by `_smoke_office_desk_acts`, which walks all seven
+    # steps. A `check(True, ...)` here saying so would be a passing line that
+    # tests nothing, which is the failure this file has shipped before.
+
+    # --- every problem, drawn where it actually is ----------------------------
+    # Nothing has been generated yet, so the only findings are the handover
+    # sheet's — and they are about the whole job and its three stretches.
+    ungenerated = c.js("document.querySelector('#job-flags .job-flags-empty')?.textContent || ''")
+    check("a job nobody has generated says SO, rather than looking clean",
+          bool(ungenerated.strip()) or c.js(
+              "document.querySelectorAll('#job-flags .job-flag').length") > 0,
+          ungenerated)
+
+    c.js("document.getElementById('btn-generate')?.click(); 'ok'")
+    # Wait for the RUN, not for marks. Marks already exist before the click —
+    # the handover findings are placed on the three stretches from the start —
+    # so `marks > 0` was satisfied on the first poll and every assertion after
+    # it raced a generation that was still running. That is why the API here
+    # answered `run_id: ""` and `no_run` while `/runs` already had one: the two
+    # fetches straddled the moment it landed.
+    generated = wait_for(c, """fetch('/api/projects/%s/flags').then(r => r.json())
+        .then(d => !!d.run_id)""" % pid, timeout=40)
+    check("the office can generate from the reading surface", bool(generated),
+          generated)
+    # ...and then for the screen to have caught up with it, which it does on
+    # `result-changed` rather than by polling.
+    wait_for(c, "document.querySelectorAll('#job-flags .job-flag').length > 0",
+             timeout=20)
+
+    # The API says what SHOULD be drawable; the DOM says what is. Comparing the
+    # two is what makes this survive the job changing — a hardcoded count would
+    # go stale the first time a rule fires differently.
+    # Distinct PLACES is not distinct POINTS, and that difference is the whole
+    # grouping rule: a node and the end of the stretch that meets it are two
+    # descriptors on one pixel, and the screen draws them as ONE mark carrying a
+    # count. So the expectation resolves the geometry itself — through
+    # `js/geom.js`, not through the module under test, which would be asserting
+    # `flag-marks.js` against itself.
+    drawable = c.js("""(async () => {
+      const geom = await import('/js/geom.js');
+      const s = await import('/js/state.js');
+      const d = await (await fetch('/api/projects/%s/flags')).json();
+      const topo = s.state.project?.topology || {nodes: [], runs: [], gates: []};
+      const at = (p) => {
+        try {
+          if (p.kind === 'job') return null;
+          if (p.kind === 'node') {
+            const n = topo.nodes.find((x) => x.id === p.node_id);
+            return n ? [n.x_mm, n.y_mm] : null;
+          }
+          if (p.kind === 'run') {
+            const r = geom.runById(p.run_id);
+            return r ? geom.pointAtStation(r.id, Math.round(geom.runLength(r) / 2)) : null;
+          }
+          if (p.station_mm != null && p.run_id) {
+            return geom.runById(p.run_id)
+              ? geom.pointAtStation(p.run_id, p.station_mm) : null;
+          }
+          if ((p.element_id || '').startsWith('gate@')) {
+            const g = (topo.gates || []).find(
+              (x) => x.id === p.element_id.slice(5));
+            if (!g) return null;
+            const a = topo.nodes.find((n) => n.id === g.start_node_id);
+            const b = topo.nodes.find((n) => n.id === g.end_node_id);
+            return a && b ? [Math.round((a.x_mm + b.x_mm) / 2),
+                             Math.round((a.y_mm + b.y_mm) / 2)] : null;
+          }
+          return null;
+        } catch (e) { return null; }
+      };
+      const pts = new Set();
+      for (const f of d.flags) {
+        if (f.severity === 'answered') continue;
+        for (const p of f.places) {
+          const q = at(p);
+          if (q) pts.add(q[0] + '|' + q[1]);
+        }
+      }
+      return {flags: d.flags.length, points: pts.size};
+    })()""" % pid)
+    # EQUALITY against the number of distinct POINTS the API's places resolve
+    # to. `marks > 0 and marks <= placeable` was an inequality, and every
+    # mark-dropping mutation passed it as long as one mark survived — including
+    # "never draw an answered flag", "count is always 1" and "a gate ref
+    # resolves to nothing". Grouping by point is how `markGroups` counts, so
+    # this compares like with like: two findings on one spot are one mark.
+    marks = c.js("document.querySelectorAll('#g-flags .flag-mark').length")
+    check("every placeable finding is drawn on the plan, and no more",
+          marks == (drawable or {}).get("points", -1),
+          {"marks": marks, "api": drawable})
+
+    # EVERY finding gets a row, including the ones that are about the whole job
+    # and so have nowhere to be drawn. `or True` would make this check pass with
+    # the list deleted — the vacuous-assertion trap this repo has shipped before
+    # — so it compares two counts that can genuinely differ.
+    rows = c.js("document.querySelectorAll('#job-flags .job-flag').length")
+    check("every finding gets a row, whether or not it can be drawn",
+          rows == (drawable or {}).get("flags", -1),
+          {"rows": rows, "api_flags": (drawable or {}).get("flags")})
+
+    # Colour is not an encoding on its own: a reader who cannot tell red from
+    # amber must still be able to tell a blocker from a question.
+    # The point of this check is that a reader who cannot tell red from amber
+    # can still tell a blocker from a question. `all(g in ("!", "?"))` did not
+    # say that: a renderer printing `?` on EVERY mark, blockers included,
+    # passed it. So assert both glyphs are present and that `!` is on exactly
+    # the blocking marks.
+    glyphs = c.js("""(() => {
+      const marks = [...document.querySelectorAll('#g-flags .flag-mark')];
+      const glyph = (m) => m.parentElement?.querySelector('.flag-mark-glyph')
+        ?.textContent ?? document.querySelector('#g-flags .flag-mark-glyph')?.textContent;
+      const pairs = [...document.querySelectorAll('#g-flags .flag-mark-glyph')]
+        .map(g => [g.textContent, g.getAttribute('class')]);
+      return {
+        set: [...new Set(pairs.map(p => p[0]))].sort(),
+        blocking_all_bang: pairs.filter(p => (p[1] || '').includes('blocking'))
+                                .every(p => p[0] === '!'),
+        open_all_query: pairs.filter(p => (p[1] || '').includes('glyph-open'))
+                             .every(p => p[0] === '?'),
+      };
+    })()""")
+    check("a blocker and a question are told apart by their glyph, not by colour",
+          (glyphs or {}).get("set") == ["!", "?"]
+          and (glyphs or {}).get("blocking_all_bang")
+          and (glyphs or {}).get("open_all_query"), glyphs)
+
+    check("the notes layer is untouched by the flags",
+          c.js("document.querySelectorAll('#g-flags .flag-mark').length") > 0
+          and c.js("document.querySelectorAll('#g-notes .flag-mark').length") == 0,
+          c.js("document.querySelectorAll('#g-notes .flag-mark').length"))
+
+    # Click-through: a flag reaches its geometry by the same path a card does.
+    # Clear the selection first. A card is already selected from the check
+    # above, and clicking a finding about THAT SAME stretch correctly toggles it
+    # off — which is the behaviour, not a bug, and asserting "something is
+    # selected" without clearing tested the previous click instead of this one.
+    c.js("(async () => (await import('/js/state.js'))"
+         ".setSelection({runId: null}))()")
+    time.sleep(0.4)
+    wanted = c.js("document.querySelector('#job-flags [data-run]')"
+                  "?.dataset.run")
+    before_box = c.js("document.getElementById('canvas')?.getAttribute('viewBox')")
+    c.js("""document.querySelector('#job-flags [data-run]')?.click(); 'ok'""")
+    time.sleep(0.8)
+    after_box = c.js("document.getElementById('canvas')?.getAttribute('viewBox')")
+    picked = c.js("(async () => (await import('/js/state.js'))"
+                  ".state.selection.runId)()")
+    check("clicking a finding selects the stretch it is about",
+          bool(wanted) and picked == wanted, {"row": wanted, "selected": picked})
+    check("...and the map frames that stretch", before_box != after_box,
+          {"before": before_box, "after": after_box})
+
+    # --- layers emphasise, and the base is protected from them ----------------
+    layers = c.js("[...document.querySelectorAll('#job-layers input[data-layer]')]"
+                  ".map(e => e.dataset.layer)")
+    check("the screen offers its emphasis layers", sorted(layers or []) ==
+          ["ground", "heights"], layers)
+
+    # All SIX selectors `job-layers.js: PROTECTED` names, not the three this
+    # once covered — a hand-copied subset of an un-negotiable list is the exact
+    # failure the export was created to prevent. Visibility as well as count,
+    # because a layer that DIMMED a protected element without removing it
+    # passed a count comparison.
+    def protected_counts():
+        return c.js("""(() => {
+          const sels = ['#g-topology line, #g-topology polyline', '.run-hit',
+                        '.run-label', '#g-gates *', '#g-context *',
+                        '#g-flags .flag-mark'];
+          const out = {};
+          for (const sel of sels) {
+            const els = [...document.querySelectorAll(sel)];
+            out[sel] = {n: els.length,
+                        shown: els.filter(e => e.checkVisibility()).length};
+          }
+          return out;
+        })()""")
+
+    all_off = protected_counts()
+    c.js("""[...document.querySelectorAll('#job-layers input[data-layer]')]
+            .forEach(e => { if (!e.checked) { e.checked = true;
+              e.dispatchEvent(new Event('change', {bubbles: true})); } }); 'ok'""")
+    time.sleep(0.8)
+    on_shapes = c.js("document.querySelectorAll('#g-layers *').length")
+    check("turning a layer on draws something on the plan", on_shapes > 0, on_shapes)
+
+    all_on = protected_counts()
+    check("...and nothing in the protected base changed when it did",
+          all_on == all_off, {"off": all_off, "on": all_on})
+
+    c.js("""[...document.querySelectorAll('#job-layers input[data-layer]')]
+            .forEach(e => { if (e.checked) { e.checked = false;
+              e.dispatchEvent(new Event('change', {bubbles: true})); } }); 'ok'""")
+    time.sleep(0.8)
+    back_off = protected_counts()
+    check("turning every layer OFF hides nothing that was there",
+          back_off == all_off and
+          c.js("document.querySelectorAll('#g-layers *').length") == 0,
+          {"protected": back_off, "layers": c.js(
+              "document.querySelectorAll('#g-layers *').length")})
+
+    # --- what gets cut, per stretch ------------------------------------------
+    mats = c.js("document.querySelectorAll('#job-sections .section-materials').length")
+    check("every card says what gets cut for its stretch",
+          mats == c.js("document.querySelectorAll('#job-sections .job-card').length"),
+          mats)
+
+    # Money is pooled across the job, so a price on a card would be an
+    # apportionment nothing measured — the refusal tabs.js already makes.
+    money = c.js("""(() => {
+      const t = document.getElementById('job-sections')?.innerText || '';
+      return /[₪$€]|\d+\.\d\d(?!\d)/.test(t);
+    })()""")
+    check("...and never what it costs", money is False, money)
+
+    # Clicking a card selects that stretch — the same selection the side view and
+    # the section-decisions panel already follow.
+    c.js("document.querySelector('#job-sections .job-card[data-run=\"rb\"]')"
+         ".click(); 'ok'")
+    time.sleep(0.5)
+    # An async IIFE, not a bare top-level `await`: `Runtime.evaluate` compiles
+    # its expression as a classic script, where `await` outside a function is a
+    # SyntaxError — which `Cdp.js` raises, killing the case rather than failing
+    # a check.
+    selected = c.js("(async () => (await import('/js/state.js'))"
+                    ".state.selection.runId)()")
+    check("clicking a card selects that stretch", selected == "rb", selected)
+    check("the selected card says so",
+          c.js("document.querySelector('#job-sections .job-card[data-run=\"rb\"]')"
+               "?.dataset.on") == "1",
+          c.js("document.querySelector('#job-sections .job-card[data-run=\"rb\"]')"
+               "?.dataset.on"))
+
+    # A salesperson never sees this screen: it is the office's, and the sales
+    # view has its own road and its own home.
+    sign_out(c)
+    sign_in(c, ADMIN)
+    c.js("""(async () => { const {setView} = await import('/js/view.js');
+             setView('sales'); return 'ok'; })()""")
+    time.sleep(0.8)
+    check("the sales view does not get the office's reading surface",
+          not visible("#job-screen"),
+          c.js("document.documentElement.dataset.jobmode"))
+    c.js("""(async () => { const {setView} = await import('/js/view.js');
+             setView('all'); return 'ok'; })()""")
+    time.sleep(0.5)
+
+
 def _smoke_office_desk_acts(c) -> None:
     """The office's remaining desk acts, walked end to end on one job.
 
@@ -3854,6 +4281,24 @@ def _smoke_office_desk_acts(c) -> None:
                    ".then(o => !!o.ok)")
     open_project(c, pid)
     c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click(); 'ok'")
+    # AFTER the job is open, not after sign-in: opening a job returns the
+    # office to reading (a mode is a decision about the job in front of
+    # you), so a toggle clicked before the job loads is undone by it.
+    # The office now LANDS in reading, so the road is away until somebody asks
+    # for it. Turning it on is the product owner's own requirement — "can edit,
+    # but needs to toggle something for it" — and this is where the rest of this
+    # case proves the road still works whole once it is on.
+    wait_for(c, "!!document.getElementById('job-mode-toggle')", timeout=15)
+    check("the office road is away until editing is turned on",
+          not c.js("!!document.getElementById('road')?.checkVisibility()"),
+          c.js("document.documentElement.dataset.jobmode"))
+    c.js("document.getElementById('job-mode-toggle')?.click(); 'ok'")
+    time.sleep(0.8)
+    check("turning editing on brings the road back, whole",
+          c.js("!!document.getElementById('road')?.checkVisibility()")
+          and c.js("document.querySelectorAll('#road [data-step]').length") == 7,
+          {"road": c.js("!!document.getElementById('road')?.checkVisibility()"),
+           "steps": c.js("document.querySelectorAll('#road [data-step]').length")})
     seven = wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7",
                      timeout=15)
     check("the office takes the job and walks into it on a road of seven steps",
@@ -4319,6 +4764,7 @@ _CHOICE_CASES: list = [
     _smoke_account_decides,
     _smoke_my_jobs_round_trip,
     _smoke_office_desk_acts,
+    _smoke_office_job_screen,
 ]
 
 

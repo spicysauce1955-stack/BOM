@@ -1433,3 +1433,193 @@ html[data-step="questions"] #desk-actions-plan,
 html[data-step="review"] #desk-actions-plan,
 html[data-step="sale"] #desk-actions-plan,
 html[data-step="sideview"] #desk-actions-plan { display: none; }
+
+/* ============================================================================
+   The office's reading surface — js/job-screen.js.
+
+   `html[data-jobmode="read"]` empties the side column of everything but the
+   screen and puts the tools away. It is PRESENTATION and never protection:
+   hiding is CSS, `localStorage` is editable, and what an account may DO is its
+   capacity, checked on the server (identity/model.py). What gates a mutation is
+   a capacity check on a route, and most routes still have none.
+
+   Logical properties only — the cards mirror in RTL like every other list. The
+   DRAWINGS never do: the section elevation's station axis runs 0 from the left
+   in every locale, like the plan canvas and the profile, because it has to stay
+   geometrically consistent with the map beside it.
+   ========================================================================= */
+
+/* THE ROAD GOES AWAY WHILE READING, and that is what makes the rule below safe.
+   Without it this mode was a regression the whole suite missed: `data-jobmode`
+   is set on every step of the office road, and emptying the side column took
+   with it the four panels `js/step-surfaces.js` says the road KEEPS — the
+   choices panel on the questions step, the notes panel on sale, run editing on
+   blanks, the inspector on generate. The office could see a road and could not
+   use it. `tests/web/test_step_surfaces.py` did not catch it because it asserts
+   that hidden selectors have a rule, never that a kept selector is visible; the
+   office-road smoke did not catch it because it runs as an admin, whose view is
+   `all` and for whom this mode never turns on.
+
+   Reading and the road are therefore EXCLUSIVE: while reading there is no step
+   to be on, so nothing is hiding a surface a step needed. Editing removes
+   `data-jobmode` entirely and the road — and every one of its step rules —
+   comes back untouched. */
+html[data-jobmode="read"] #road,
+html[data-jobmode="read"] #toolbar,
+html[data-jobmode="read"] #profile-base-bar,
+html[data-jobmode="read"] .side-col > *:not(#job-screen) { display: none; }
+
+/* `#job-panel` is NOT in the side column — `js/job.js` mounts it into
+   `.canvas-col` ("this job" is not a side note), so the rule above never
+   reached it and the office kept landing on her customer and address in an
+   editable form with a Save button under them. That form is the whole
+   complaint this screen answers, so it is named here rather than caught by a
+   column selector that does not cover it.
+
+   `#desk-actions` deliberately STAYS. "I have read the sale", "hand it back
+   with a question" and "reject" are the office's own acts on its own desk, not
+   edits to her work — reading mode is about not changing the drawing, not
+   about being unable to do the job. */
+html[data-jobmode="read"] #job-panel { display: none; }
+
+/* What was sold, read-only, where the form used to be. */
+.job-sale { border: 1px solid #d4dae2; border-radius: 6px; padding: 8px 10px;
+            background: #f8fafc; }
+.job-sale h3 { margin: 0 0 6px; font-size: 13px; color: #475569; }
+.job-sale dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
+            margin: 0; font-size: 12px; }
+.job-sale dt { color: #64748b; }
+.job-sale dd { margin: 0; }
+
+#job-screen { display: flex; flex-direction: column; gap: 10px; }
+.job-sections-title { margin: 0 0 8px; font-size: 13px; color: #475569; }
+
+.job-card { border: 1px solid #d4dae2; border-radius: 6px; padding: 8px 10px;
+            margin-block-end: 8px; background: #fff; cursor: pointer; }
+.job-card[data-on="1"] { border-color: #2f6fed; box-shadow: 0 0 0 2px #dee8fd; }
+.job-card:focus-visible { outline: 2px solid #2f6fed; outline-offset: 2px; }
+/* Explicit, because `.panel header` elsewhere paints a dark bar and a card
+   header is not a panel header. */
+.job-card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+            background: none; color: inherit; padding: 0; margin: 0 0 4px; }
+.job-card-tag { font-weight: 700; font-size: 15px; }
+.job-card-meta { color: #64748b; font-size: 12px; }
+.job-card-facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
+            margin: 6px 0 0; font-size: 12px; }
+.job-card-facts dt { color: #64748b; }
+.job-card-facts dd { margin: 0; }
+
+/* The side view. `section-elev-nofence` is the load-bearing one: a bay carrying
+   no fence has height 0, and a zero-height rectangle is invisible — so the
+   stretch where the wall rose above the fence top would read as plain wall,
+   which is indistinguishable from a stretch nobody has looked at. */
+/* `direction: ltr` like every other drawing in this file (#canvas, #profile-svg,
+   .joint-svg, .template-draw). Shapes do not mirror from `direction` alone, so
+   nothing looks wrong today — but the module has an opt-in bay-selection seam
+   and no <text> yet, and the first station tick or dimension label added there
+   would flip in Hebrew. The station axis reads 0 from the left in every locale. */
+.section-elev { display: block; width: 100%; height: auto; direction: ltr; }
+.section-elev-base { fill: #f0e2d8; stroke: #a9714e; stroke-width: 1; }
+.section-elev-panel { fill: #dee8fd; stroke: #2f6fed; stroke-width: 1; }
+.section-elev-ground { fill: none; stroke: #94a3b8; stroke-width: 1.5; }
+.section-elev-nofence { stroke: #a93636; stroke-width: 2; stroke-dasharray: 3 3; }
+.section-elev-hit { fill: transparent; cursor: pointer; }
+
+/* What needs attention — the list beside the map. Every row that has a stretch
+   clicks through to it (spec §4): a list that does not is the documented way a
+   review surface dies. Severity carries a GLYPH as well as a colour, because
+   colour alone is not an encoding. */
+.job-flag-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.job-flag { display: grid; grid-template-columns: auto auto 1fr; gap: 6px;
+            align-items: baseline; padding: 5px 7px; margin-block-end: 4px;
+            border-radius: 5px; font-size: 12px; background: #f8fafc;
+            border-inline-start: 3px solid #cbd5e1; }
+.job-flag[data-run] { cursor: pointer; }
+.job-flag[data-sev="blocking"] { background: #f8e2e2; border-inline-start-color: #a93636; }
+.job-flag[data-sev="open"] { background: #f7ecd8; border-inline-start-color: #9a6410; }
+.job-flag-glyph { font-weight: 700; }
+.job-flag[data-sev="blocking"] .job-flag-glyph { color: #a93636; }
+.job-flag[data-sev="open"] .job-flag-glyph { color: #9a6410; }
+.job-flag-sev { color: #475569; font-size: 11px; white-space: nowrap; }
+.job-flag:focus-visible { outline: 2px solid #2f6fed; outline-offset: 2px; }
+.job-flags-empty { margin: 0 0 10px; }
+
+/* Marks on the plan itself — js/flag-marks.js owns #g-flags. */
+/* The circle and the glyph are SIBLINGS under #g-flags, not nested. Written as
+   descendant combinators (`.flag-mark circle`) these five rules matched nothing
+   at all, so the marks painted from the module's inline fallbacks and the
+   contract in its header — "the stylesheet owns the palette, so both themes and
+   the printed sheet can differ" — was false. */
+.flag-mark { fill: #fff; stroke-width: 2; cursor: pointer; }
+.flag-mark-blocking { stroke: #a93636; }
+.flag-mark-open { stroke: #9a6410; }
+.flag-mark-glyph { font-size: 11px; font-weight: 700; text-anchor: middle; }
+.flag-mark-glyph-blocking { fill: #a93636; }
+.flag-mark-glyph-open { fill: #9a6410; }
+.flag-mark-count { font-size: 9px; fill: #475569; }
+
+/* The switch. Presentation and never protection — see js/job-screen.js. */
+.job-mode { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            padding: 6px 8px; border-radius: 5px; background: #eef2f6;
+            font-size: 12px; margin-block-end: 8px; }
+.job-mode-state { color: #475569; }
+.job-mode button { margin-inline-start: auto; font-size: 12px; padding: 3px 10px; }
+
+/* Emphasis layers — js/job-layers.js owns #g-layers. Colours live HERE and not
+   inline so both themes and the printed sheet can differ; a <polygon> with no
+   rule fills solid black, so these are required rather than cosmetic.
+   Everything is pointer-events:none in the module: emphasis must never swallow
+   a click meant for the fence or for a flag mark. */
+.job-layer-surface { stroke: none; opacity: .5; }
+.job-layer-surface-masonry_wall { fill: #a9714e; }
+.job-layer-surface-concrete { fill: #7d8590; }
+.job-layer-surface-soil { fill: #b0a07a; }
+.job-layer-height { fill: #2f6fed; opacity: .16; stroke: #2f6fed;
+                    stroke-width: 1; stroke-opacity: .45; }
+.job-layer-height[data-partial="yes"] { stroke-dasharray: 5 4; }
+
+/* The layer switches. They EMPHASISE and never hide — see js/job-layers.js and
+   design §5. Nothing in this block may ever carry `display: none` for anything
+   in that module's PROTECTED list. */
+.job-layers { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+              margin-block-end: 8px; font-size: 12px; }
+.job-layers label { display: inline-flex; align-items: center; gap: 5px;
+              padding: 3px 8px; border: 1px solid #d4dae2; border-radius: 999px;
+              background: #fff; cursor: pointer; }
+.job-layers label[data-on="1"] { border-color: #2f6fed; background: #dee8fd; }
+
+/* A run the office is looking at that was laid out against an older drawing. */
+.job-stale { margin: 0 0 8px; padding: 6px 8px; border-radius: 5px;
+             background: #f7ecd8; color: #9a6410; font-size: 12px;
+             border-inline-start: 3px solid #9a6410; }
+
+/* What gets cut for one stretch — js/section-materials.js. Cut PIECES only:
+   what gets bought is pooled across the whole job, and a price here would be an
+   apportionment nothing measured (the same refusal tabs.js already makes one
+   level up). Logical properties only; the table scrolls rather than pushing the
+   card sideways at phone width. */
+.section-materials { margin-block-start: 8px; border-block-start: 1px solid #e2e8f0;
+                     padding-block-start: 6px; }
+.section-materials-title { font-size: 11px; color: #64748b; margin: 0 0 4px; }
+.section-materials-hint { font-size: 11px; color: #94a3b8; margin: 4px 0 0; }
+.section-materials-empty { font-size: 12px; color: #64748b; margin: 0; }
+.section-materials-table { width: 100%; border-collapse: collapse; font-size: 11.5px;
+                     display: block; overflow-x: auto; }
+.section-materials-table th { text-align: start; color: #64748b; font-weight: 500;
+                     padding-block-end: 2px; }
+.section-materials-row td { padding-block: 2px; }
+.section-materials-row[data-shared="1"] { background: #f8fafc; }
+.section-materials-shared, .section-materials-share-chip {
+                     font-size: 10.5px; color: #9a6410; background: #f7ecd8;
+                     border-radius: 3px; padding: 1px 5px; }
+.section-materials-share-row td { color: #94a3b8; font-size: 10.5px; }
+/* The built base's top, on a card that has no generated bays yet — the wall the
+   fence will stand on, before anybody has pressed Generate. */
+.section-elev-basetop { fill: none; stroke: #a9714e; stroke-width: 1.5; }
+/* The tag IS the control (see js/job-screen.js) — styled as text, because a
+   button that looked like a button here would compete with the card. */
+button.job-card-tag { background: none; border: 0; padding: 0; cursor: pointer;
+                      font: inherit; font-weight: 700; font-size: 15px;
+                      color: inherit; }
+.job-flag-btn { display: contents; background: none; border: 0; padding: 0;
+                font: inherit; color: inherit; text-align: start; cursor: pointer; }

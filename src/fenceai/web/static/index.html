@@ -166,6 +166,12 @@
                  make the drawing harder to edit than it was before. -->
             <g id="g-context"></g>
             <g id="g-context-draft"></g>
+            <!-- EMPHASIS, and never anything else. Owned by js/job-layers.js:
+                 what each stretch stands on, and how tall the fence is along
+                 it. UNDER g-topology on purpose — emphasis sits beneath the
+                 fence line rather than over it, and its own PROTECTED list
+                 names everything no layer may ever affect. -->
+            <g id="g-layers"></g>
             <g id="g-topology"></g>
             <g id="g-overlay"></g>
             <g id="g-handles"></g>
@@ -184,6 +190,12 @@
                  before g-notes so a note marker is never hidden under a leaf. -->
             <g id="g-gates"></g>
             <g id="g-notes"></g>
+            <!-- Every problem on this job, drawn where it actually is. Owned
+                 entirely by js/flag-marks.js and deliberately NOT written into
+                 g-notes: that subtree is js/notes.js's, and a second concern
+                 inside it is the coupling this repo keeps paying for. After
+                 g-notes so a blocking mark is never hidden under a note. -->
+            <g id="g-flags"></g>
             <!-- a street's own grips (js/context.js): above the fence, because
                  they are the thing being dragged, unlike the backdrop in g-context -->
             <g id="g-landmark-grips"></g>
@@ -214,6 +226,19 @@
           </div>
         </div>
         <aside class="side-col">
+          <!-- THE OFFICE'S READING SURFACE. Owned by js/job-screen.js.
+               First in the column and alone on it while reading: the office
+               opens a job it did not draw, so the screen it lands on shows
+               what each stretch IS, beside the map, with every problem marked
+               where it actually is. `html[data-jobmode="read"]` hides
+               everything else in this column — see
+               docs/superpowers/specs/2026-09-16-office-job-screen-design.md. -->
+          <section id="job-screen" class="panel" hidden>
+            <div id="job-mode"></div>
+            <div id="job-layers"></div>
+            <div id="job-flags"></div>
+            <div id="job-sections"></div>
+          </section>
           <!-- what this fence is BUILT FROM, without leaving the drawing.
                Owned by js/panel.js (the Panel tab owns the rest of the story). -->
           <div class="panel" id="model-row"></div>

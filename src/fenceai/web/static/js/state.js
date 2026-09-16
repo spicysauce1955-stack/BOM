@@ -9,6 +9,12 @@ export const state = {
   result: null,        // last GenerationResult
   critique: [],
   selection: { runId: null, dotIndex: null, elementId: null },
+  // Is the OFFICE reading rather than editing? Owned by `js/job-screen.js`,
+  // which is the only writer; declared here rather than created dynamically,
+  // because a field that appears from nowhere is the trap `view` already fell
+  // into once (see the note below). False for every other reader, so the lock
+  // answers exactly as it did before this existed.
+  officeReading: false,
   locale: "en",        // Task 10 flips the default to "he"
   units: "mm",         // DISPLAY unit only (mm | cm); storage is always int mm
   // Which view is on screen (sales | backoffice | all). A presentation
@@ -147,17 +153,32 @@ export function addLandmark(landmark) {
  *  `SUBMIT_JOB.from_states` is the same set and a test pins the two. */
 export const SALES_EDITABLE = ["drafting", "returned"];
 
-/** Is the drawing view-only for the person looking? Only on the sales view: a
- *  job she has sent is on the office's desk, and a drag there would bump the
- *  topology revision under a run the office generated (409 topology_changed).
+/** Is the drawing view-only for the person looking?
+ *
+ *  Two answers, because the two readers are locked for different reasons and a
+ *  single rule would have to lie about one of them:
+ *
+ *  * **the SALESPERSON is locked by STATUS.** A job she has sent is on the
+ *    office's desk, and a drag there would bump the topology revision under a
+ *    run the office generated (409 `topology_changed`).
+ *  * **the OFFICE is locked by MODE.** It may edit anything — the backoffice
+ *    design decided that in as many words, and this does not touch it — but it
+ *    lands in reading and turns editing on deliberately. Status has nothing to
+ *    do with it: the office holds the job in every status it can edit.
+ *
+ *  `reading` is passed in rather than imported, so this stays a pure function
+ *  node can test and so `job-screen.js` remains the one owner of that answer.
+ *  Callers that pass nothing keep exactly today's behaviour.
+ *
  *  Presentation, like every view rule — the server does not gate topology writes
- *  by status yet. */
-export function drawingLockedFor(view, status) {
-  return view === "sales" && !!status && !SALES_EDITABLE.includes(status);
+ *  by status or by mode. */
+export function drawingLockedFor(view, status, reading = false) {
+  if (view === "sales") return !!status && !SALES_EDITABLE.includes(status);
+  return !!reading;
 }
 
 export function drawingLocked() {
-  return drawingLockedFor(state.view, state.project?.status);
+  return drawingLockedFor(state.view, state.project?.status, state.officeReading);
 }
 
 /** Perform a named command on a job — the one gated door
