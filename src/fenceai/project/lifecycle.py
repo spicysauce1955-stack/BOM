@@ -47,3 +47,36 @@ def is_open(state: str) -> bool:
     if state not in TRANSITIONS:
         raise KeyError(f"unknown job state: {state!r}")
     return state not in FINISHED_STATES
+
+
+#: The five words a SALESPERSON reads for where her job is. Eight states is the
+#: office's vocabulary — "planning" and "planned" are two problems to the person
+#: choosing what to work on next and one fact to the person who sold the fence:
+#: the office took it. So her list folds them.
+#:
+#:   draft       still hers; nobody in the office has seen it
+#:   pending     sent, waiting for somebody to take it
+#:   needs_info  the office handed it back with a question
+#:   accepted    the office is working on it, or has finished it
+#:   rejected    it is not happening
+SalesStatus = Literal["draft", "pending", "needs_info", "accepted", "rejected"]
+
+SALES_STATUS: dict[str, str] = {
+    "drafting": "draft",
+    "waiting": "pending",
+    "returned": "needs_info",
+    "planning": "accepted",
+    "planned": "accepted",
+    "quoted": "accepted",
+    "delivered": "accepted",
+    "cancelled": "rejected",
+}
+
+
+def sales_status(state: str) -> str:
+    """The salesperson's word for a job state. Raises on an unknown state, for
+    `is_open`'s reason: a state nobody declared must not quietly read as one of
+    hers."""
+    if state not in SALES_STATUS:
+        raise KeyError(f"unknown job state: {state!r}")
+    return SALES_STATUS[state]

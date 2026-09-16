@@ -27,7 +27,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from fenceai.core.units import Mm
-from fenceai.project.model import Project
+from fenceai.project.model import Project, sale_notes
 from fenceai.topology.model import Run, Topology
 from fenceai.topology.station import anchor_station, run_length
 
@@ -145,9 +145,13 @@ def _contradiction_gaps(project: Project) -> list[HandoverGap]:
         if gates:
             out.append(HandoverGap(code="gates_contradicted",
                                    params={"gates": gates}))
-    if project.stated.no_promises and project.annotations:
+    # Her promises only. A question the office pinned on the drawing, or the
+    # reason it sent the job back, is not a promise she made — counted, it turned
+    # her own "no promises" red for words she never wrote.
+    promises = sale_notes(project)
+    if project.stated.no_promises and promises:
         out.append(HandoverGap(code="promises_contradicted",
-                               params={"notes": len(project.annotations)}))
+                               params={"notes": len(promises)}))
     return out
 
 

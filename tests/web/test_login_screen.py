@@ -1,0 +1,81 @@
+"""The front door: signed out, the page is the login screen and nothing else.
+
+These are static checks on the markup, the stylesheet and the bootstrap,
+because the failure they guard against is a flash or a leak that a browser run
+only sees if it happens to look at the right millisecond: a login form
+flashing on a signed-in reload, or a job loaded behind the login screen.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
+
+
+def _css() -> str:
+    return re.sub(r"/\*.*?\*/", "", (STATIC / "style.css").read_text(), flags=re.S)
+
+
+def test_the_page_starts_undecided():
+    """`pending` until `/api/me` answers — neither the app nor the form shows,
+    so neither can flash."""
+    html = (STATIC / "index.html").read_text()
+    assert re.search(r'<html[^>]*\bdata-auth="pending"', html)
+
+
+def test_only_a_signed_in_page_shows_the_app_and_only_a_signed_out_one_the_form():
+    """Keyed on NOT in / NOT out, so `pending` hides both. A rule written as
+    `[data-auth="in"] #login-screen` instead would flash the form on every
+    signed-in reload and pass every other test."""
+    css = _css()
+    assert re.search(
+        r'html:not\(\[data-auth="in"\]\)\s+body\s*>\s*:not\(#login-screen\)\s*\{\s*display:\s*none', css)
+    assert re.search(
+        r'html:not\(\[data-auth="out"\]\)\s+#login-screen\s*\{\s*display:\s*none', css)
+
+
+def test_the_login_screen_holds_the_form_and_the_header_does_not():
+    html = (STATIC / "index.html").read_text()
+    screen = html[html.index('<section id="login-screen"'):html.index("</section>")]
+    for el in ('id="sign-in"', 'id="sign-in-email"', 'id="sign-in-password"',
+               'id="sign-in-error"', 'id="sign-in-unreachable"'):
+        assert el in screen, el
+    header = html[html.index("<header>"):html.index("</header>")]
+    assert 'id="sign-in"' not in header
+
+
+def test_the_job_picker_and_name_box_are_gone():
+    """"We don't need project selection in mid project." """
+    html = (STATIC / "index.html").read_text()
+    app = (STATIC / "app.js").read_text()
+    for gone in ("project-select", "new-project-name"):
+        assert gone not in html and gone not in app, gone
+
+
+def test_no_project_is_loaded_before_somebody_signs_in():
+    """The bootstrap loads projects only from `openWorkspace`, and
+    `openWorkspace` runs only on `signed-in`."""
+    app = re.sub(r"//[^\n]*", "", (STATIC / "app.js").read_text())
+    main = app[app.index("async function main()"):]
+    assert "loadProjects" not in main and "openProject" not in main
+    assert "createProject" not in main
+    assert re.search(r'on\("signed-in",[^\n]*openWorkspace', app)
+    workspace = app[app.index("async function openWorkspace()"):app.index("function setupUndoButtons")]
+    assert "loadProjects" in workspace
+
+
+def test_the_frontend_is_served_revalidated_so_an_update_cannot_mix_modules():
+    """No build step means the same file names every version. Cached
+    heuristically, a browser paired a new `app.js` with an old `session.js`,
+    the import failed, and the page stayed blank on `data-auth="pending"`."""
+    from fastapi.testclient import TestClient
+
+    from fenceai.api.app import app
+
+    with TestClient(app) as client:
+        for path in ("/", "/app.js", "/js/session.js", "/style.css"):
+            r = client.get(path)
+            assert r.status_code == 200, path
+            assert r.headers.get("cache-control") == "no-cache", path

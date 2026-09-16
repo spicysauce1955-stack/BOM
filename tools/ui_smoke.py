@@ -12,6 +12,7 @@ tools/smoke-out/, and exits non-zero on any failed check.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import signal
@@ -80,6 +81,103 @@ def type_text(c, text: str) -> None:
     time.sleep(0.2)
 
 
+# --- the app's own state module, and who is signed in -------------------------
+#
+# There is no job picker in the header any more (a job is opened from the Jobs
+# queue), so "which project is open" and "open that one" are asked of the app
+# itself. `import('./js/state.js')` from page context resolves to the SAME
+# module instance `app.js` imported — the module map is keyed by URL — so these
+# read and drive the live state rather than a copy.
+STATE_JS = "import('./js/state.js')"
+# Truthy once somebody is signed in AND a project is on screen. `__smokeStale` is
+# planted on a page just before it reloads, so a poll that runs before the
+# navigation has actually happened cannot answer for the page that is leaving.
+PROJECT_LOADED_JS = (
+    "(!window.__smokeStale && document.documentElement.dataset.auth === 'in')"
+    f" && {STATE_JS}.then(m => !!(m.state.projectId && m.state.project))")
+ADMIN = "admin@example.com"
+
+
+def current_project_id(c) -> str | None:
+    return c.js(f"{STATE_JS}.then(m => m.state.projectId)")
+
+
+def new_project(c, name: str) -> str | None:
+    """Create a project with this name and open it; returns its id."""
+    return c.js(f"{STATE_JS}.then(m => m.createProject({json.dumps(name)}))"
+                ".then(p => p.id)")
+
+
+def open_project(c, pid: str) -> None:
+    c.js(f"{STATE_JS}.then(m => m.openProject({json.dumps(pid)})).then(() => 'ok')")
+
+
+def reopen_project(c) -> None:
+    """Re-read the open project from the server (what dispatching `change` on
+    the old picker did): after a raw API write, the screen catches up."""
+    c.js(f"{STATE_JS}.then(m => m.openProject(m.state.projectId)).then(() => 'ok')")
+
+
+def admin_on_canvas(c) -> None:
+    """An admin (like the backoffice) is put on the Jobs tab by `queue.js` on
+    every sign-in — and a signed-in RELOAD is a sign-in. Every check the admin
+    runs was written against the drawing, which is where the tab strip used to
+    open, so go there the way a person would: by clicking the tab."""
+    c.js(f"{STATE_JS}.then(m => {{ if (m.state.me?.capacity === 'admin')"
+         " document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click();"
+         " return 'ok'; })")
+    time.sleep(0.3)
+
+
+def reload_page(c, timeout: float = 20) -> None:
+    """`location.reload()`, and wait for the signed-in workspace to come back."""
+    c.js("window.__smokeStale = true; location.reload(); 'ok'")
+    wait_for(c, PROJECT_LOADED_JS, timeout=timeout)
+    c.js("window.confirm = () => true; window.alert = () => {}; undefined")
+    admin_on_canvas(c)
+
+
+def sign_out(c) -> None:
+    """The real `#sign-out`, which signs out and RELOADS to the login screen."""
+    c.js("window.__smokeStale = true;"
+         " document.getElementById('sign-out').click(); 'ok'")
+    out = wait_for(c, "!window.__smokeStale && document.documentElement.dataset.auth === 'out'",
+                   timeout=20)
+    c.js("window.confirm = () => true; window.alert = () => {}; undefined")
+    # `__smokeStale` gone means the page really was replaced, not merely re-rendered
+    check("sign-out reloads to the login screen",
+          bool(out) and bool(c.js("!!document.getElementById('login-screen')"
+                                  "?.checkVisibility()")),
+          {"out": out, "auth": c.js("document.documentElement.dataset.auth")})
+
+
+def sign_in(c, email: str, password: str = "demo") -> bool:
+    """Through the real login form, then wait for the workspace to open.
+
+    Only valid on the login screen: call `sign_out` first when somebody is in."""
+    c.js("""(() => {
+  document.getElementById('sign-in-email').value = %s;
+  document.getElementById('sign-in-password').value = %s;
+  document.getElementById('sign-in').requestSubmit();
+  return 'ok';
+})()""" % (json.dumps(email), json.dumps(password)))
+    ok = wait_for(c, PROJECT_LOADED_JS, timeout=20)
+    c.js("window.confirm = () => true; window.alert = () => {}; undefined")
+    screen = c.js("""({
+  login: !!document.getElementById('login-screen')?.checkVisibility(),
+  header: !!document.querySelector('header')?.checkVisibility()})""")
+    check(f"after signing in as {email}, the login screen is gone and the header is up",
+          bool(ok) and screen and not screen["login"] and screen["header"],
+          {"signed_in": ok, **(screen or {})})
+    admin_on_canvas(c)
+    return bool(ok)
+
+
+def switch_user(c, email: str, password: str = "demo") -> bool:
+    sign_out(c)
+    return sign_in(c, email, password)
+
+
 def _smoke_choices_panel(c) -> None:
     """The plan's open questions, answered from the plan itself (spec §2).
 
@@ -126,21 +224,14 @@ fetch('/api/projects', {method: 'POST', headers: {'Content-Type': 'application/j
     # looked intermittent.
     #
     # `fenceai.view` is `view.js`'s storage key; setting it before the reload is
-    # what `initView()` reads.
+    # what `initView()` reads. (Signed in, the account then names the view on
+    # load — `all` for the admin this suite signs in as — so both agree.)
     c.js("localStorage.setItem('fenceai.units', 'mm');"
          " localStorage.setItem('fenceai.view', 'all');"
-         " location.hash = ''; location.reload(); 'ok'")
-    wait_for(c, "!!document.getElementById('project-select').value", timeout=20)
+         " location.hash = ''; 'ok'")
+    reload_page(c)
     c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
-    c.js("""
-{
-  const sel = document.getElementById('project-select');
-  const o = document.createElement('option');
-  o.value = %r; o.textContent = 'choices';
-  sel.appendChild(o); sel.value = %r;
-  sel.dispatchEvent(new Event('change'));
-}
-'ok'""" % (pid, pid))
+    open_project(c, pid)
     wait_for(c, "!!document.getElementById('choices')")
     c.click(*c.element_center("#btn-generate"))
     # The two halves, separately: a question the backend never asked and a
@@ -150,7 +241,7 @@ fetch(`/api/projects/%s/runs`).then((r) => r.json()).then((rs) => rs.length
   ? fetch(`/api/runs/${rs[rs.length - 1].id}`).then((x) => x.json())
       .then((run) => (run.choice_sets || []).length)
   : 0)""" % pid, timeout=20)
-    check("the ⚙ button generated a run, and it carries an open question",
+    check("the generate button generated a run, and it carries an open question",
           asked == 1, asked)
     wait_for(c, "document.querySelectorAll('#choices .choice-point').length")
 
@@ -240,7 +331,7 @@ def _smoke_post_inspector(c) -> None:
     project with no override at all — a panel that drew three selects and wrote
     nothing would screenshot identically to one that works.
     """
-    project_js = "document.getElementById('project-select').value"
+    project_js = "(await import('./js/state.js')).state.projectId"
 
     def overrides():
         return c.js(f"""
@@ -328,13 +419,12 @@ def _smoke_post_inspector(c) -> None:
     c.cmd("Page.navigate", url=f"http://localhost:{PORT}/")
     time.sleep(3)
     c.js("window.confirm = () => true; window.alert = () => {}; undefined")
-    wait_for(c, f"!!{project_js}", timeout=10)
+    wait_for(c, PROJECT_LOADED_JS, timeout=10)
+    admin_on_canvas(c)
     if c.js("document.documentElement.lang") != "en":
         c.click(*c.element_center("#btn-locale"))
         time.sleep(1)
-    c.js("document.getElementById('new-project-name').value = 'post-inspector'; 'ok'")
-    c.click(*c.element_center("#btn-new-project"))
-    time.sleep(1.5)
+    new_project(c, 'post-inspector')
     # An L, drawn as two runs meeting at a node the fence TURNS at: the corner
     # post the suppress control has to refuse, plus a straight 6 m run with
     # interior line posts for the three controls that apply.
@@ -467,10 +557,8 @@ def _smoke_side_drag(c) -> None:
     report PASS while the post lands in the wrong section.
     """
     # --- a chain with a reversed section ---------------------------------
-    c.js("document.getElementById('new-project-name').value = 'side-drag'; 'ok'")
-    c.click(*c.element_center("#btn-new-project"))
-    time.sleep(1.5)
-    pid = c.js("document.getElementById('project-select').value")
+    new_project(c, 'side-drag')
+    pid = current_project_id(c)
 
     topo = {
         "revision": 0,
@@ -485,8 +573,7 @@ def _smoke_side_drag(c) -> None:
         "fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
         " headers: {'Content-Type': 'application/json'},"
         " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
     c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
     time.sleep(0.8)
@@ -702,9 +789,7 @@ def _smoke_plan_drag(c) -> None:
         time.sleep(0.5)
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.4)
-        c.js("document.getElementById('new-project-name').value = 'placement'; 'ok'")
-        c.click(*c.element_center("#btn-new-project"))
-        time.sleep(1.5)
+        new_project(c, 'placement')
         # ...and SAY that it worked. Without this the case would silently run
         # against whatever project the previous case left open — which is
         # exactly what a swallowed click looks like from here.
@@ -1016,8 +1101,13 @@ def _smoke_sales_mode(c) -> None:
     # still the default and `initView` never re-applied it (audit observation
     # 2). It looked like a rendering hiccup because switching role or language
     # fixed it.
-    c.js("location.reload(); 'ok'")
-    wait_for(c, "!!document.getElementById('project-select').value", timeout=20)
+    #
+    # Login-first: the view now comes from the ACCOUNT on every load, so the
+    # admin's toggle does not survive a reload by design — the admin's account
+    # says `all`. A salesperson arrives signed in as one, so the reload is made
+    # as Dana, whose account names `sales`.
+    switch_user(c, "dana@example.com")
+    reload_page(c)
     time.sleep(1.0)
     reloaded = c.js(shown)
     check("a reload in sales mode keeps the sales VOCABULARY, not just the hiding",
@@ -1026,14 +1116,19 @@ def _smoke_sales_mode(c) -> None:
           and reloaded["tab1"] == sales["tab1"], reloaded)
 
     # ...and back, because a mode nobody can leave is a mode that traps the
-    # office person who borrowed the salesperson's laptop.
-    c.js("""(() => {
+    # office person who borrowed the salesperson's laptop. Only the admin holds
+    # the selector, so sign back in as the admin (the suite's own identity),
+    # play the salesperson again, and leave through the selector.
+    switch_user(c, ADMIN)
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+    for view in ("sales", "all"):
+        c.js("""(() => {
   const s = document.getElementById('view-select');
-  s.value = 'all';
+  s.value = '%s';
   s.dispatchEvent(new Event('change'));
   return 'ok';
-})()""")
-    time.sleep(0.6)
+})()""" % view)
+        time.sleep(0.6)
     back = c.js(shown)
     check("leaving sales mode restores the whole app",
           back["pin"] == "shown" and back["knowledge"] == "shown"
@@ -1056,10 +1151,31 @@ def _smoke_job_identity(c) -> None:
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
-    c.js("document.getElementById('new-project-name').value = 'jobtest'; 'ok'")
+    # Through the REAL header button, the one place in the suite that does: it
+    # is labelled "New job", takes no name (who and where is step 1's business),
+    # and must open a NEW project rather than leave the previous one on screen.
+    # The deep-linked evidence viewer from the end of main() survives every
+    # reload (its `#evidence=` hash does) and its overlay covers the header, so
+    # a real click would land on IT. Close it the way a person would.
+    c.js("document.querySelector('[data-evidence-close]')?.click();"
+         " if (location.hash) location.hash = ''; 'ok'")
+    time.sleep(0.5)
+    was_open = current_project_id(c)
+    button = c.js("document.getElementById('btn-new-project').textContent.trim()")
     c.click(*c.element_center("#btn-new-project"))
-    time.sleep(1.5)
-    pid = c.js("document.getElementById('project-select').value")
+    pid = wait_for(c, f"{STATE_JS}.then(m => m.state.projectId !== {json.dumps(was_open)}"
+                      " && m.state.project?.id === m.state.projectId && m.state.projectId)",
+                   timeout=10)
+    fresh = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                 ".then(p => ({name: p.name, runs: p.topology.runs.length}))" % pid) if pid else None
+    untitled = c.js("fetch('/i18n/' + document.documentElement.lang + '.json')"
+                    ".then(r => r.json()).then(b => b['project.untitled'])")
+    check("the header's New job button opens a new, untitled, empty job",
+          bool(pid) and pid != was_open and fresh is not None
+          and fresh["name"] == untitled and fresh["runs"] == 0
+          and button in ("New job", "עבודה חדשה"),
+          {"was": was_open, "now": pid, "project": fresh, "untitled": untitled,
+           "button": button})
     check("a job to name", bool(pid), pid)
     if not pid:
         return
@@ -1094,8 +1210,7 @@ def _smoke_job_identity(c) -> None:
     c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
          " headers: {'Content-Type': 'application/json'},"
          " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
 
     # --- ...and only now find the address on the sketch ------------------
@@ -1111,15 +1226,14 @@ def _smoke_job_identity(c) -> None:
           and final["job"]["sold_by"] == "bob"
           and final["job"]["sold_on"] == "2026-09-04", final["job"])
 
-    # The picker is the payoff: this is the surface that said "project 7".
-    # By id, not by "whichever is selected": an earlier case may have left the
-    # selection elsewhere, and this case is about how THIS job is labelled.
+    # The label is the payoff: the header picker said "project 7". The picker is
+    # gone (a job is opened from the Jobs queue), and every list of jobs is
+    # rendered from the API's own `label` — so that is what is asserted, by id,
+    # because this case is about how THIS job is labelled.
     label = c.js("""
-(() => {
-  const s = document.getElementById('project-select');
-  return [...s.options].find((o) => o.value === %s)?.textContent || '(no option)';
-})()""" % json.dumps(pid))
-    check("the picker calls the job what a person would call it",
+fetch('/api/projects').then(r => r.json())
+  .then(ps => (ps.find((p) => p.id === %s) || {}).label || '(no row)')""" % json.dumps(pid))
+    check("the job list calls the job what a person would call it",
           label == "Dana Levy — Herzl 12", label)
     c.shot("51-job-identity.png")
 
@@ -1157,10 +1271,8 @@ def _smoke_property_context(c) -> None:
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
-    c.js("document.getElementById('new-project-name').value = 'property'; 'ok'")
-    c.click(*c.element_center("#btn-new-project"))
-    time.sleep(1.5)
-    pid = c.js("document.getElementById('project-select').value")
+    new_project(c, 'property')
+    pid = current_project_id(c)
     topo = {"revision": 0,
             "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
                       {"id": "n2", "x_mm": 8000, "y_mm": 0}],
@@ -1168,8 +1280,7 @@ def _smoke_property_context(c) -> None:
     c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
          " headers: {'Content-Type': 'application/json'},"
          " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
     rev_before = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
                       ".then(p => p.topology.revision)" % pid)
@@ -1247,7 +1358,9 @@ def _smoke_property_context(c) -> None:
     # panel's own width field is checked further down.
     c.click(*c.element_center("#tool-street"))
     time.sleep(0.3)
-    c.drag(*c.canvas_px(-1000, -2000), *c.canvas_px(10000, -2000))
+    # Positive world x throughout: in Hebrew the side column sits on the LEFT,
+    # and x < 0 is off the drawing's left edge, where a press reaches nothing.
+    c.drag(*c.canvas_px(500, -2000), *c.canvas_px(10000, -2000))
     time.sleep(1.2)
     ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
     marks = (ctx or {}).get("landmarks", [])
@@ -1289,39 +1402,141 @@ def _smoke_property_context(c) -> None:
           typed == "typed" and was and now and abs(now - was * 2) <= 2,
           {"typed": typed, "before": was, "after": now})
 
-    # --- a street can also be dragged as a BOX, width and all ---------------
-    # "The street has a fixed width and is not easy to place." Dragging the box
-    # the road occupies states both numbers in one gesture; the line gesture
-    # above still works and still supplies a default. Drawn clear of the first
-    # street so this is a second landmark rather than a move of the first.
+    # --- a street is dragged along its CENTRE LINE, at any angle -------------
+    # "Make the street placement more flexible (angles and such)". The box
+    # gesture ("drag a box, that box is the street") is gone: a box is
+    # axis-aligned, so a diagonal drag drew a fat square. Now the drag IS the
+    # centre line, the band takes the default width around it, and the width
+    # and both ends are grips on the drawing. Drawn clear of the house and of
+    # the first street (a press INSIDE an existing street moves it), at a
+    # bearing no 15-degree snap is within 4 degrees of: atan2(3000, 4000) = 36.9.
     c.click(*c.element_center("#tool-street"))
     time.sleep(0.3)
     c.js("window.scrollTo(0, 0); 'ok'")
-    # Clear of the house and of the first street, and every corner inside the
-    # canvas's own 900x500 box — a gesture aimed outside it reaches the page
-    # behind the drawing and records nothing.
-    c.drag(*c.canvas_px(9000, 3000), *c.canvas_px(15000, 5000))
+    c.drag(*c.canvas_px(11000, 500), *c.canvas_px(15000, 3500))
     time.sleep(1.2)
-    ctx = c.js("fetch(`/api/projects/%s`).then(r => r.json()).then(p => p.context)" % pid)
-    marks = (ctx or {}).get("landmarks", [])
-    boxed = [m for m in marks if m["kind"] == "street" and m["id"] != street_id]
-    dims = None
-    if boxed and len(boxed[0]["points"]) == 4:
-        pts = boxed[0]["points"]
-        side = lambda a, b: round(((pts[b][0] - pts[a][0]) ** 2
-                                   + (pts[b][1] - pts[a][1]) ** 2) ** 0.5)
-        dims = (side(0, 1), side(1, 2))
-    check("a street dragged as a box takes BOTH its length and its width "
-          "from the drag, long side first",
-          dims is not None and abs(dims[0] - 6000) <= 30
-          and abs(dims[1] - 2000) <= 30, {"dims": dims, "marks": len(marks)})
+
+    def axis_of(lm):
+        """`bandAxis` read back in Python: a = mid(p3, p0), b = mid(p1, p2)."""
+        if not lm or len(lm["points"]) != 4:
+            return None
+        p0, p1, p2, p3 = lm["points"]
+        a = ((p0[0] + p3[0]) / 2, (p0[1] + p3[1]) / 2)
+        b = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+        return {"a": a, "b": b,
+                "angle": math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])),
+                "length": math.hypot(b[0] - a[0], b[1] - a[1]),
+                "width": math.hypot(p2[0] - p1[0], p2[1] - p1[1]),
+                "edge_mid": ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)}
+
+    def other_street():
+        got = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                   ".then(p => p.context.landmarks)" % pid) or []
+        mine = [m for m in got if m["kind"] == "street" and m["id"] != street_id]
+        return (mine[0] if mine else None), got
+
+    diag, marks = other_street()
+    ax = axis_of(diag)
+    check("a diagonal drag with the street tool records a band at THAT angle, "
+          "not an axis-aligned box",
+          ax is not None and abs(ax["angle"] - 36.87) <= 1.5
+          and len({round(pt[0]) for pt in diag["points"]}) == 4
+          and abs(ax["length"] - 5000) <= 60,
+          {"axis": ax, "marks": len(marks)})
+    check("...and it takes the street's default width, whatever the drag's extent",
+          ax is not None and abs(ax["width"] - 4000) <= 2, ax)
+
+    # --- the band's grips --------------------------------------------------
+    grips = c.js("""(() => [...document.querySelectorAll(
+    '#g-landmark-grips .landmark-grip[data-lm="%s"]')].map(g => g.dataset.grip).sort())()"""
+                 % (diag or {}).get("id"))
+    check("a placed street shows its grips while the street tool is armed: "
+          "both ends and the width",
+          grips == ["a", "b", "width"], grips)
+
+    def grip_px(lm_id, grip):
+        """The grip's screen centre, and what is ACTUALLY under that point — a
+        drag that starts on a panel or on another element proves nothing."""
+        return c.js("""(() => {
+  const g = document.querySelector('#g-landmark-grips .landmark-grip[data-lm="%s"][data-grip="%s"]');
+  if (!g) return null;
+  const r = g.getBoundingClientRect();
+  const x = r.x + r.width / 2, y = r.y + r.height / 2;
+  const hit = document.elementFromPoint(x, y)?.closest?.('.landmark-grip');
+  return {x, y, under: !!hit && hit.dataset.lm === '%s' && hit.dataset.grip === '%s'};
+})()""" % (lm_id, grip, lm_id, grip))
+
+    def press_move_release(x0, y0, x1, y1):
+        # one move, like the plan-drag case: an eight-step drag can be cut short
+        # by a `pointercancel` on a captured pointer in headless Chrome
+        c.cmd("Input.dispatchMouseEvent", type="mousePressed", x=x0, y=y0,
+              button="left", buttons=1, clickCount=1)
+        c.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=(x0 + x1) / 2,
+              y=(y0 + y1) / 2, button="left", buttons=1)
+        c.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=x1, y=y1,
+              button="left", buttons=1)
+        time.sleep(0.05)
+        c.cmd("Input.dispatchMouseEvent", type="mouseReleased", x=x1, y=y1,
+              button="left", buttons=0, clickCount=1)
+        time.sleep(1.5)
+
+    if diag and ax:
+        # swing the far end: b to (13000, 5000) about a — atan2(4500, 2000) = 66.0
+        c.js("window.scrollTo(0, 0); 'ok'")
+        end_b = grip_px(diag["id"], "b")
+        check("the end grip is under the pointer before it is dragged",
+              bool(end_b) and end_b["under"], end_b)
+        if end_b:
+            press_move_release(end_b["x"], end_b["y"], *c.canvas_px(13000, 5000))
+        swung, _ = other_street()
+        sx = axis_of(swung)
+        check("dragging an end grip swings the street about its other end, and it is saved",
+              sx is not None and abs(sx["angle"] - 66.04) <= 2
+              and abs(sx["a"][0] - ax["a"][0]) <= 30 and abs(sx["a"][1] - ax["a"][1]) <= 30
+              and abs(sx["width"] - 4000) <= 2,
+              {"before": ax, "after": sx})
+
+        # widen it: the pointer 1500 mm off the centre line makes it 3000 wide,
+        # aimed on the side the grip already sits on so the drag is short
+        if sx:
+            mid = ((sx["a"][0] + sx["b"][0]) / 2, (sx["a"][1] + sx["b"][1]) / 2)
+            nx = -(sx["b"][1] - sx["a"][1]) / sx["length"]
+            ny = (sx["b"][0] - sx["a"][0]) / sx["length"]
+            side = 1 if ((sx["edge_mid"][0] - mid[0]) * nx
+                         + (sx["edge_mid"][1] - mid[1]) * ny) >= 0 else -1
+            target = (round(mid[0] + side * nx * 1500), round(mid[1] + side * ny * 1500))
+            c.js("window.scrollTo(0, 0); 'ok'")
+            wgrip = grip_px(diag["id"], "width")
+            check("the width grip is under the pointer before it is dragged",
+                  bool(wgrip) and wgrip["under"], wgrip)
+            if wgrip:
+                press_move_release(wgrip["x"], wgrip["y"], *c.canvas_px(*target))
+            widened, _ = other_street()
+            wx = axis_of(widened)
+            check("dragging the width grip sets the width to twice the pointer's "
+                  "distance from the centre line, and it is saved",
+                  wx is not None and abs(wx["width"] - 3000) <= 80
+                  and abs(wx["angle"] - sx["angle"]) <= 0.5,
+                  {"before": sx, "after": wx, "target": target})
+
+            # one grip drag is ONE undo step, however many moves it took
+            c.click(*c.element_center("#btn-undo"))
+            time.sleep(2.0)
+            undone, _ = other_street()
+            ux = axis_of(undone)
+            check("one undo reverts one grip drag — the width, and only the width",
+                  ux is not None and abs(ux["width"] - 4000) <= 2
+                  and abs(ux["angle"] - sx["angle"]) <= 0.5,
+                  {"after_undo": ux, "before_widen": sx})
+    c.shot("52b-street-grips.png")
+
     # remove it again: the checks below describe a drawing of two landmarks
-    if boxed:
+    if diag:
         c.js("""(() => {
   const b = document.querySelector('#context-panel [data-lm="%s"].context-remove');
   if (b) b.click();
   return 'removed';
-})()""" % boxed[0]["id"])
+})()""" % diag["id"])
         time.sleep(1.5)
 
     # --- an object under "other" is placeable, and is NOT a default button --
@@ -1482,10 +1697,8 @@ def _smoke_handover_sheet(c) -> None:
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
-    c.js("document.getElementById('new-project-name').value = 'handover'; 'ok'")
-    c.click(*c.element_center("#btn-new-project"))
-    time.sleep(1.5)
-    pid = c.js("document.getElementById('project-select').value")
+    new_project(c, 'handover')
+    pid = current_project_id(c)
 
     read = """
 (() => {
@@ -1514,8 +1727,7 @@ def _smoke_handover_sheet(c) -> None:
     c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
          " headers: {'Content-Type': 'application/json'},"
          " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
     drawn = c.js(read)
     check("a drawn fence turns one item into the real list",
@@ -1545,8 +1757,7 @@ fetch('/api/fence-models').then(r => r.json()).then((ms) => {
     body: JSON.stringify({model_id: id})}).then(r => r.status);
 })""" % pid)
     check("the model that was sold could be recorded", model == 200, model)
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
 
     # Read BEFORE the save, or the "-4" below is measured against the answer.
@@ -1608,8 +1819,7 @@ fetch('/api/projects/%s').then(r => r.json()).then((p) => {
     body: JSON.stringify(p.topology)}).then(r => r.status);
 })""" % (pid, ev["height"], pid))
     check("the height and base could be stated", full == 200, full)
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
     done = c.js(read)
     check("a fully recorded job has nothing left for the office to ask",
@@ -1639,10 +1849,8 @@ def _smoke_road(c) -> None:
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
-    c.js("document.getElementById('new-project-name').value = 'road'; 'ok'")
-    c.click(*c.element_center("#btn-new-project"))
-    time.sleep(1.5)
-    pid = c.js("document.getElementById('project-select').value")
+    new_project(c, 'road')
+    pid = current_project_id(c)
 
     # A drawn fence, so the anchor step reads "started" — road-model.js pins
     # "empty beats skip": every step short-circuits to `empty` until then, and
@@ -1662,8 +1870,7 @@ def _smoke_road(c) -> None:
   s.dispatchEvent(new Event('change'));
   return 'ok';
 })()""")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
 
     order = c.js(
@@ -1914,10 +2121,8 @@ def _smoke_sales_step_surfaces(c) -> None:
   s.value = 'sales'; s.dispatchEvent(new Event('change'));
   return 'ok';
 })()""")
-    c.js("document.getElementById('new-project-name').value = 'steps'; 'ok'")
-    c.click(*c.element_center("#btn-new-project"))
-    time.sleep(1.5)
-    pid = c.js("document.getElementById('project-select').value")
+    new_project(c, 'steps')
+    pid = current_project_id(c)
     topo = {"revision": 0,
             "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
                       {"id": "n2", "x_mm": 9000, "y_mm": 0}],
@@ -1925,8 +2130,7 @@ def _smoke_sales_step_surfaces(c) -> None:
     c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
          " headers: {'Content-Type': 'application/json'},"
          " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
 
     # --- 1 the job is the work, not something beside it -------------------
@@ -2261,8 +2465,7 @@ def _smoke_sales_step_surfaces(c) -> None:
     c.js("fetch('/api/projects/" + pid + "/context', {method: 'PUT',"
          " headers: {'Content-Type': 'application/json'},"
          " body: JSON.stringify(" + json.dumps(ctx) + ")}).then(r => r.status)")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
     step("notes")
     c.click(*c.element_center("#tool-note"))
@@ -2362,10 +2565,8 @@ def _smoke_run_measurements(c) -> None:
   if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
   return 'ok';
 })()""")
-    c.js("document.getElementById('new-project-name').value = 'measure'; 'ok'")
-    c.click(*c.element_center("#btn-new-project"))
-    time.sleep(1.5)
-    pid = c.js("document.getElementById('project-select').value")
+    new_project(c, 'measure')
+    pid = current_project_id(c)
     topo = {"revision": 0,
             "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
                       {"id": "n2", "x_mm": 6000, "y_mm": 0}],
@@ -2373,8 +2574,7 @@ def _smoke_run_measurements(c) -> None:
     c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
          " headers: {'Content-Type': 'application/json'},"
          " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
 
     shown = c.js("""(() => {
@@ -2421,8 +2621,7 @@ def _smoke_run_measurements(c) -> None:
     c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
          " headers: {'Content-Type': 'application/json'},"
          " body: JSON.stringify(" + json.dumps(topo2) + ")}).then(r => r.status)")
-    c.js("{const s = document.getElementById('project-select');"
-         " s.dispatchEvent(new Event('change'));} 'ok'")
+    reopen_project(c)
     time.sleep(2.0)
     legs = c.js("""(() => {
   const host = document.getElementById('run-measure');
@@ -2441,10 +2640,35 @@ def _smoke_backoffice_queue(c):
 
     This case creates its own jobs through the API rather than reusing the demo
     project, because the queue is about jobs somebody SUBMITTED and the demo
-    project is a drawing nobody handed over. It signs out at the end — a case
-    that changes who is signed in and leaves it changed would make every later
-    check depend on having run.
+    project is a drawing nobody handed over. It signs back in as the admin at the
+    end — a case that changes who is signed in and leaves it changed would make
+    every later check depend on having run.
     """
+    # Signing out is the real control now, and it RELOADS to the login screen:
+    # the next person on this browser must not inherit the open job.
+    sign_out(c)
+    front = c.js("""import('./js/state.js').then(m => ({
+  auth: document.documentElement.dataset.auth,
+  login: !!document.getElementById('login-screen')?.checkVisibility(),
+  header: !!document.querySelector('header')?.checkVisibility(),
+  canvas: !!document.getElementById('canvas')?.checkVisibility(),
+  project: m.state.projectId || null,
+}))""")
+    check("signed out, the page is ONLY the login screen, and no job is loaded",
+          front and front["auth"] == "out" and front["login"]
+          and not front["header"] and not front["canvas"]
+          and front["project"] is None, front)
+    c.js("""(() => {
+  document.getElementById('sign-in-email').value = 'dana@example.com';
+  document.getElementById('sign-in-password').value = 'wrong';
+  document.getElementById('sign-in').requestSubmit();
+  return 'ok';
+})()""")
+    refused = wait_for(c, "!document.getElementById('sign-in-error').hidden", timeout=10)
+    check("a wrong password keeps the login screen and says so",
+          bool(refused) and c.js("document.documentElement.dataset.auth") == "out",
+          c.js("document.documentElement.dataset.auth"))
+
     made = c.js("""(async () => {
   await fetch('/api/session', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -2468,9 +2692,7 @@ def _smoke_backoffice_queue(c):
 })()""")
     check("two jobs to put on the queue", made == 2, made)
 
-    c.js("""document.getElementById('sign-in-email').value = 'yossi@example.com';
-            document.getElementById('sign-in-password').value = 'demo';
-            document.getElementById('sign-in').requestSubmit(); 'ok'""")
+    sign_in(c, "yossi@example.com")
     wait_for(c, "document.documentElement.dataset.view === 'backoffice'", timeout=15)
 
     check("signing in as the backoffice lands on the JOBS tab, not a drawing",
@@ -2517,8 +2739,8 @@ def _smoke_backoffice_queue(c):
     # A row opens its job. Until this existed you could take a job and then had
     # no way INTO it — the queue was a list you could claim from and not enter.
     # The row's OWN id, captured before the click. Asserting only "a project is
-    # selected" passed with `openProject` deleted, because `#project-select`
-    # already has a value from every earlier case — the regression this check
+    # selected" passed with `openProject` deleted, because a project is already
+    # open from every earlier case — the regression this check
     # exists to prevent would have sailed through it.
     # ONE element, captured and clicked. Capturing `tr[data-id]` and clicking
     # `tr:nth-child(2)` looked equivalent and is not — the browser inserts a
@@ -2534,8 +2756,8 @@ def _smoke_backoffice_queue(c):
              timeout=15)
     opened = c.js("""(() => ({
   tab: document.querySelector('#tabs button.active')?.dataset.tab,
-  project: document.getElementById('project-select')?.value || '',
 }))()""")
+    opened = {**(opened or {}), "project": current_project_id(c)}
     check("clicking a row opens THAT job rather than leaving you on the list",
           opened and opened["tab"] != "queue" and opened["project"] == wanted,
           {**(opened or {}), "wanted": wanted})
@@ -2575,17 +2797,861 @@ def _smoke_backoffice_queue(c):
           scoped and scoped["height"] is False and scoped["pin"] is False, scoped)
     c.shot("63-office-road-step.png")
 
-    # Put the world back. Signing out is NOT enough on its own: `signedOutState`
-    # deliberately has no opinion about the view, so `data-view` stays wherever
-    # the account put it — which is correct behaviour (a signed-out reload keeps
-    # the toggle you chose) and leaves this case's `backoffice` behind for
-    # everybody after it. So the view is restored explicitly, the way this suite
-    # restores every other piece of state it changes.
-    c.js("document.getElementById('sign-out').click(); 'ok'")
-    wait_for(c, "!document.getElementById('signed-in-as') ||"
-                " document.getElementById('signed-in-as').hidden", timeout=15)
-    c.js("localStorage.setItem('fenceai.view', 'all');"
-         " document.documentElement.dataset.view = 'all'; 'ok'")
+    # Put the world back: signed in as the admin the suite runs as, whose
+    # account names the `all` view — asserted, not assumed, because every later
+    # check reads the full app.
+    back = switch_user(c, ADMIN)
+    check("signing out and back in as the admin returns the whole app",
+          back and c.js("document.documentElement.dataset.view") == "all"
+          and c.js("!!document.getElementById('view-select').checkVisibility()"),
+          {"signed_in": back, "view": c.js("document.documentElement.dataset.view")})
+
+
+def _smoke_generate_button_scope(c) -> None:
+    """`#btn-generate` belongs to ONE step: the office's "work out the fence".
+
+    It sat in the drawing's toolbar and so followed the drawing onto every step
+    that showed a map — a "work out the fence" button on the property step, the
+    layout, the side view, the gates. "It should not be static throughout the
+    steps." The same three facts are pinned against the module's lists and the
+    generated stylesheet in `tests/web/test_step_surfaces.py`
+    (`test_the_generate_button_is_hidden_on_every_sales_step`,
+    `test_the_office_sees_the_generate_button_on_its_generate_step_only`,
+    `test_hiding_the_generate_button_leaves_the_drawing_toolbar_where_the_map_is`).
+    What only a browser can say is that the page as rendered agrees — and on a
+    step where the map is ON SCREEN, which is the case that matters: on a form
+    step the whole toolbar is gone and the button with it, for a reason that is
+    not this. So wherever the drawing shows, `#btn-fit` (the same toolbar) must
+    still be visible, or "the button is hidden" proves nothing.
+
+    Visibility through `checkVisibility()`, never `offsetParent`.
+    Runs after the backoffice case, whose submitted jobs give Yossi a queue row
+    to open; changes who is signed in, and signs the admin back in at the end.
+    """
+    def visible(sel):
+        return c.js("!!document.querySelector(%s)?.checkVisibility()" % json.dumps(sel))
+
+    def walk(steps):
+        seen = {}
+        for key in steps:
+            c.js("document.querySelector('#road [data-step=\"%s\"]')?.click(); 'ok'" % key)
+            time.sleep(0.6)
+            seen[key] = {"step": c.js("document.documentElement.dataset.step"),
+                         "button": visible("#btn-generate"),
+                         "fit": visible("#btn-fit"),
+                         "canvas": visible("#canvas")}
+        return seen
+
+    # --- the salesperson: on none of her eight steps ------------------------
+    signed = switch_user(c, "dana@example.com")
+    wait_for(c, "document.querySelectorAll('#road [data-step]').length === 8", timeout=15)
+    sales_steps = ["job", "property", "layout", "sideview", "model", "gates",
+                   "notes", "review"]
+    sales = walk(sales_steps)
+    check("the salesperson sees no generate button on any of her eight steps",
+          signed and all(sales[k]["step"] == k and sales[k]["button"] is False
+                         for k in sales_steps), sales)
+    check("...including the steps where the drawing itself is on screen",
+          all(sales[k]["canvas"] for k in ("layout", "sideview", "gates")), sales)
+    map_steps = ("property", "layout", "sideview", "model", "gates")
+    check("...where the drawing's toolbar is still up: only the button went",
+          all(sales[k]["fit"] is True for k in map_steps),
+          {k: sales[k] for k in map_steps})
+
+    # --- the office: on its generate step and no other ----------------------
+    signed = switch_user(c, "yossi@example.com")
+    wait_for(c, "document.querySelectorAll('#queue-list tr[data-id]').length > 0",
+             timeout=15)
+    c.js("""(() => {
+  const row = document.querySelector('#queue-list tr[data-id]');
+  row?.querySelector('td')?.click();
+  return 'ok';
+})()""")
+    wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7", timeout=15)
+    office_steps = ["sale", "blanks", "questions", "generate", "materials",
+                    "plan", "price"]
+    office = walk(office_steps)
+    check("the office sees the generate button on its generate step",
+          signed and office["generate"]["step"] == "generate"
+          and office["generate"]["button"] is True, office)
+    check("...and on none of its other six steps",
+          all(office[k]["step"] == k and office[k]["button"] is False
+              for k in office_steps if k != "generate"), office)
+    check("...and on the office's map step the drawing's toolbar is still up",
+          office["blanks"]["fit"] is True and office["blanks"]["canvas"] is True,
+          office["blanks"])
+
+    # --- the admin's whole app: no road, so no step hides it ----------------
+    back = switch_user(c, ADMIN)
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
+    time.sleep(0.6)
+    admin = {"view": c.js("document.documentElement.dataset.view"),
+             "step": c.js("document.documentElement.dataset.step ?? null"),
+             "button": visible("#btn-generate")}
+    check("in the admin's `all` view the generate button is on screen as before",
+          back and admin["view"] == "all" and admin["step"] is None
+          and admin["button"] is True, admin)
+
+
+def _smoke_street_grips_by_step(c) -> None:
+    """A street's grips show where the property is being EDITED, and nowhere else.
+
+    `gripKindsFor(tool, step)` decides it from state: the street or sidewalk
+    tool shows that kind's grips; the select tool shows every band's grips on
+    the salesperson's `property` step, or with no road at all; any other tool or
+    step shows none. The browser half is the TIMING: the old rule read whether
+    the property panel was on screen, and read it before the step had been
+    scoped — so a reviewer saw three grips on `sideview` with the select tool,
+    and none on `property`. Walking property -> sideview -> property is what
+    catches a rule one step late.
+
+    Also here: stretching a street along its own line keeps a typed angle. Only
+    TURNING it snaps to 15 degrees; a street at 12 degrees pulled longer must
+    not quietly become 15.
+
+    Signs in as Dana and then Yossi; the admin is signed back in at the end.
+    """
+    def grips():
+        return c.js("document.querySelectorAll('#g-landmark-grips .landmark-grip').length")
+
+    def step(key):
+        c.js("document.querySelector('#road [data-step=\"%s\"]')?.click(); 'ok'" % key)
+        time.sleep(0.8)
+
+    def arm(tool_id):
+        c.js("document.getElementById('%s').click(); 'ok'" % tool_id)
+        time.sleep(0.5)
+
+    switch_user(c, "dana@example.com")
+    pid = new_project(c, "grips")
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 1000, "y_mm": 0},
+                      {"id": "n2", "x_mm": 9000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2"}]}
+    # Two BANDS, in `bandRect`'s corner order (a = mid(p0, p3), b = mid(p1, p2)):
+    # a 1 m street along y=800 and a 1 m sidewalk below the fence. Narrow and
+    # close to the fence on purpose: the fitted view of an 8 m run shows only
+    # about y -4000..2700, and a grip drawn above that sits under the road band,
+    # where no pointer can reach it.
+    ctx = {"landmarks": [
+        {"id": "lmS", "kind": "street", "label": "", "closed": True,
+         "points": [[1000, 300], [8000, 300], [8000, 1300], [1000, 1300]]},
+        {"id": "lmW", "kind": "sidewalk", "label": "", "closed": True,
+         "points": [[1000, -2500], [8000, -2500], [8000, -1500], [1000, -1500]]}]}
+    put = c.js("""(async () => {
+  const t = await fetch('/api/projects/%s/topology', {method: 'PUT',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(%s)});
+  const x = await fetch('/api/projects/%s/context', {method: 'PUT',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(%s)});
+  return [t.status, x.status];
+})()""" % (pid, json.dumps(topo), pid, json.dumps(ctx)))
+    reopen_project(c)
+    time.sleep(1.5)
+    check("a sales job with a street and a sidewalk to grip", put == [200, 200], put)
+    bands = 2
+
+    c.js("document.getElementById('btn-fit').click(); 'ok'")
+    step("property"); arm("tool-select")
+    on_property = grips()
+    step("sideview"); arm("tool-select")
+    on_sideview = grips()
+    step("property"); arm("tool-select")
+    back_on_property = grips()
+    step("layout"); arm("tool-draw")
+    on_layout = grips()
+    seen = {"property": on_property, "sideview": on_sideview,
+            "property_again": back_on_property, "layout_draw": on_layout,
+            "drawn": c.js("document.querySelectorAll('#g-context path').length")}
+    check("with the select tool on the property step every band shows its three grips",
+          on_property == 3 * bands, seen)
+    check("...on the side view the same tool shows none",
+          on_sideview == 0, seen)
+    check("...and back on the property step they are there again, not one step late",
+          back_on_property == 3 * bands, seen)
+    check("...and the draw tool on the layout step shows none", on_layout == 0, seen)
+
+    # --- stretching along its own line keeps a typed angle ---------------------
+    step("property"); arm("tool-select")
+    typed = c.js("""(() => {
+  const f = document.querySelector('#context-panel li[data-lm="lmS"] .context-metric[data-metric="angle"]');
+  if (!f) return 'no angle field';
+  f.value = '12';
+  f.dispatchEvent(new Event('change', {bubbles: true}));
+  return 'typed';
+})()""")
+    time.sleep(1.5)
+
+    def street():
+        got = c.js("fetch(`/api/projects/%s`).then(r => r.json())"
+                   ".then(p => p.context.landmarks.find(m => m.id === 'lmS') || null)" % pid)
+        if not got or len(got["points"]) != 4:
+            return None
+        p0, p1, p2, p3 = got["points"]
+        a = ((p0[0] + p3[0]) / 2, (p0[1] + p3[1]) / 2)
+        b = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+        return {"a": a, "b": b,
+                "angle": math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])),
+                "length": math.hypot(b[0] - a[0], b[1] - a[1])}
+
+    before = street()
+    check("an angle typed in the property panel is the street's saved angle",
+          typed == "typed" and before is not None and abs(before["angle"] - 12) <= 0.1,
+          {"typed": typed, "street": before})
+    if before:
+        # the view reframes on a context change, so aim through the live matrix
+        c.js("window.scrollTo(0, 0); 'ok'")
+        arm("tool-select")
+        grip = c.js("""(() => {
+  const g = document.querySelector('#g-landmark-grips .landmark-grip[data-lm="lmS"][data-grip="b"]');
+  if (!g) return null;
+  const r = g.getBoundingClientRect();
+  const x = r.x + r.width / 2, y = r.y + r.height / 2;
+  const hit = document.elementFromPoint(x, y)?.closest?.('.landmark-grip');
+  const el = document.elementFromPoint(x, y);
+  return {x, y, under: !!hit && hit.dataset.lm === 'lmS' && hit.dataset.grip === 'b',
+          found: el ? (el.id || el.tagName) + '.' + (el.getAttribute('class') || '') : null,
+          step: document.documentElement.dataset.step, scrollY: window.scrollY};
+})()""")
+        check("the street's end grip is under the pointer before it is pulled",
+              bool(grip) and grip["under"], grip)
+        if grip:
+            rad = math.radians(before["angle"])
+            gx, gy = c.canvas_px(round(before["b"][0]), round(before["b"][1]))
+            tx, ty = c.canvas_px(round(before["b"][0] + 1000 * math.cos(rad)),
+                                 round(before["b"][1] + 1000 * math.sin(rad)))
+            # from the grip's drawn centre, by the on-screen offset of 1 m along
+            # the street — so the pull is along the line even if the rounding of
+            # the grip's box is a pixel off the mathematical end
+            x1, y1 = grip["x"] + (tx - gx), grip["y"] + (ty - gy)
+            for kind, x, y in (("mousePressed", grip["x"], grip["y"]),
+                               ("mouseMoved", (grip["x"] + x1) / 2, (grip["y"] + y1) / 2),
+                               ("mouseMoved", x1, y1),
+                               ("mouseReleased", x1, y1)):
+                c.cmd("Input.dispatchMouseEvent", type=kind, x=x, y=y, button="left",
+                      buttons=0 if kind == "mouseReleased" else 1, clickCount=1)
+                time.sleep(0.05)
+            time.sleep(1.5)
+        after = street()
+        check("stretching a street along its own line keeps its typed angle exactly",
+              after is not None and abs(after["angle"] - 12) <= 0.1
+              and after["length"] > before["length"] + 600,
+              {"before": before, "after": after})
+
+    # --- the office: its steps edit no property ---------------------------------
+    switch_user(c, "yossi@example.com")
+    open_project(c, pid)
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click(); 'ok'")
+    wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7", timeout=15)
+    office = {}
+    for key in ("blanks", "generate"):
+        step(key); arm("tool-select")
+        office[key] = {"grips": grips(),
+                       "step": c.js("document.documentElement.dataset.step"),
+                       "backdrop": c.js("document.querySelectorAll('#g-context path').length")}
+    check("the office's blanks and generate steps show no street grips",
+          all(office[k]["step"] == k and office[k]["grips"] == 0
+              for k in ("blanks", "generate"))
+          and office["blanks"]["backdrop"] >= bands, office)
+
+    switch_user(c, ADMIN)
+
+
+def _smoke_account_decides(c) -> None:
+    """What the ACCOUNT decides on load: the view, and which job reopens.
+
+    The view: an admin can play the salesperson with the selector, but a reload
+    is a sign-in, and the account says `all`. The job: the last one each person
+    had open, remembered PER ACCOUNT (`fenceai.lastProject.<userId>`), so Dana
+    gets her job back and Yossi on the same browser does not get Dana's.
+    Starts and ends signed in as the admin.
+    """
+    # --- the view comes from the account ---------------------------------------
+    c.js("""(() => {
+  const s = document.getElementById('view-select');
+  s.value = 'sales'; s.dispatchEvent(new Event('change'));
+  return document.documentElement.dataset.view;
+})()""")
+    time.sleep(0.5)
+    played = c.js("document.documentElement.dataset.view")
+    reload_page(c)
+    check("an admin who played the salesperson reloads into the view the account names",
+          played == "sales" and c.js("document.documentElement.dataset.view") == "all",
+          {"before_reload": played, "after": c.js("document.documentElement.dataset.view")})
+    c.js("""(() => {
+  const s = document.getElementById('view-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+
+    # --- the job comes back, for the person who had it -------------------------
+    switch_user(c, "dana@example.com")
+    mine = new_project(c, "dana-remembered")
+    sign_out(c)
+    remembered = c.js("localStorage.getItem('fenceai.lastProject.u_dana')")
+    yossi_had = c.js("localStorage.getItem('fenceai.lastProject.u_yossi')")
+    sign_in(c, "dana@example.com")
+    check("Dana signs back in to the job she last had open",
+          bool(mine) and current_project_id(c) == mine and remembered == mine,
+          {"made": mine, "opened": current_project_id(c), "remembered": remembered})
+
+    switch_user(c, "yossi@example.com")
+    ids = c.js("fetch('/api/projects').then(r => r.json()).then(ps => ps.map(p => p.id))") or []
+    expected = yossi_had if yossi_had in ids else (ids[0] if ids else None)
+    opened = current_project_id(c)
+    check("Yossi on the same browser reopens HIS last job, not Dana's",
+          opened == expected and (opened != mine or expected == mine)
+          and c.js("localStorage.getItem('fenceai.lastProject.u_dana')") == mine,
+          {"opened": opened, "expected": expected, "dana": mine, "yossi_had": yossi_had})
+
+    switch_user(c, ADMIN)
+
+
+def _smoke_my_jobs_round_trip(c) -> None:
+    """A salesperson's home, a job sent to the office and handed back, and the
+    gate step's drawn swing options.
+
+    One job walks the whole loop, because the loop IS the feature: Dana starts a
+    job from "My jobs", answers its gate by pointing at a drawn option, reviews
+    it on the map and sends it; Yossi asks a question back (one note pinned on
+    the fence, one reason typed in the send-back panel); Dana finds the job at
+    the top of her list with the office's words on it, opens it straight onto
+    the review step with both notes and the pinned marker, and sends her answer.
+
+    Starts and ends signed in as the admin. Dana's id is read from the app, not
+    assumed, and every status is read from the API — the rendered words are
+    localized.
+    """
+    def visible(sel):
+        return c.js("!!document.querySelector(%s)?.checkVisibility()" % json.dumps(sel))
+
+    def active_tab():
+        return c.js("document.querySelector('#tabs button.active')?.dataset.tab || null")
+
+    def step(key):
+        c.js("document.querySelector('#road [data-step=\"%s\"]')?.click(); 'ok'" % key)
+        time.sleep(0.8)
+
+    def status_of(pid):
+        return c.js("fetch('/api/projects/%s').then(r => r.json()).then(p => p.status)" % pid)
+
+    def rows():
+        return c.js("""[...document.querySelectorAll('#myjobs-list li.myjob')].map(li => ({
+  id: li.dataset.id, status: li.dataset.status,
+  office: li.querySelector('.myjob-office .verbatim')?.textContent ?? null}))""")
+
+    # --- home: a salesperson signs in onto her jobs -----------------------------
+    sign_out(c)
+    sign_in(c, "dana@example.com")
+    home = wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab === 'myjobs'"
+                       " && !!document.getElementById('myjobs-new')", timeout=15)
+    header = c.js("[...document.querySelector('.project-bar').children]"
+                  ".slice(0, 2).map(e => e.id)")
+    seen = {"tab": active_tab(), "road": visible("#road"),
+            "list": visible("#myjobs-list"), "home_btn": visible("#btn-my-jobs"),
+            "header": header}
+    check("a salesperson signs in onto My jobs, with no road band showing",
+          bool(home) and seen["tab"] == "myjobs" and seen["road"] is False
+          and seen["list"] is True, seen)
+    check("the header offers New job and then My jobs to a salesperson",
+          header == ["btn-new-project", "btn-my-jobs"] and seen["home_btn"] is True, seen)
+    me = c.js(f"{STATE_JS}.then(m => m.state.me?.id || null)")
+
+    # --- New job, from the home screen ---------------------------------------------
+    was = current_project_id(c)
+    c.js("document.getElementById('myjobs-new').click(); 'ok'")
+    pid = wait_for(c, f"{STATE_JS}.then(m => m.state.projectId !== {json.dumps(was)}"
+                      " && m.state.project?.id === m.state.projectId"
+                      " && document.documentElement.dataset.step === 'job'"
+                      " && m.state.projectId)", timeout=15)
+    owner = c.js("fetch('/api/projects/%s').then(r => r.json()).then(p => p.created_by)"
+                 % pid) if pid else None
+    opened = {"pid": pid, "was": was, "tab": active_tab(), "road": visible("#road"),
+              "step": c.js("document.documentElement.dataset.step"),
+              "owner": owner, "me": me}
+    check("New job on My jobs opens a new job on the job step, owned by her",
+          bool(pid) and pid != was and opened["tab"] == "canvas"
+          and opened["road"] is True and opened["step"] == "job"
+          and bool(me) and owner == me, opened)
+    if not pid:
+        switch_user(c, ADMIN)
+        return
+
+    c.js("document.getElementById('btn-my-jobs').click(); 'ok'")
+    back_home = wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab"
+                            " === 'myjobs' && !document.getElementById('road').checkVisibility()"
+                            " && document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]')"
+                            " && 'home'" % pid, timeout=10)
+    check("the header's My jobs goes back home, where the new job is listed as a draft",
+          back_home == "home" and any(r["id"] == pid and r["status"] == "draft"
+                                      for r in (rows() or [])),
+          {"home": back_home, "rows": rows()})
+
+    # The header's New job does the same from home: it opens the job it made,
+    # rather than creating one behind the list.
+    c.js("document.getElementById('btn-new-project').click(); 'ok'")
+    other = wait_for(c, f"{STATE_JS}.then(m => m.state.projectId !== {json.dumps(pid)}"
+                        " && m.state.project?.id === m.state.projectId"
+                        " && document.querySelector('#tabs button.active')?.dataset.tab === 'canvas'"
+                        " && document.documentElement.dataset.step === 'job'"
+                        " && m.state.projectId)", timeout=15)
+    check("the header's New job, pressed on My jobs, opens the new job on the job step",
+          bool(other) and other != pid and visible("#road") is True,
+          {"opened": other, "tab": active_tab(), "road": visible("#road"),
+           "step": c.js("document.documentElement.dataset.step")})
+    c.js("document.getElementById('btn-my-jobs').click(); 'ok'")
+    wait_for(c, "document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]')" % pid,
+             timeout=10)
+
+    # Open it again from its row, and give it a customer, a fence and a gate.
+    c.js("document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]').click(); 'ok'" % pid)
+    wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab === 'canvas'"
+                " && document.documentElement.dataset.step === 'job'", timeout=10)
+    c.js(f"{STATE_JS}.then(m => m.emit('road-go', 'blanks')).then(() => 'ok')")
+    time.sleep(0.5)
+    stayed = c.js("document.documentElement.dataset.step")
+    check("asking the sales road for a step it does not have changes nothing",
+          stayed == "job", stayed)
+    c.js("""fetch('/api/projects/%s/job', {method: 'PUT',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({customer: 'Roundtrip', address: 'Herzl 1, Holon'})})
+  .then(r => r.status)""" % pid)
+    reopen_project(c)
+    time.sleep(1.0)
+    # Through the app's own mutation path — snapshot, mutate, save — so the undo
+    # below has a history that starts here.
+    wrote = c.js("""Promise.all([import('./js/state.js'), import('./js/history.js')])
+  .then(async ([s, h]) => {
+    h.pushSnapshot('smoke-gate');
+    const topo = s.state.project.topology;
+    topo.nodes = [{id: 'n1', x_mm: 0, y_mm: 0, kind: 'terminal'},
+                  {id: 'n2', x_mm: 6000, y_mm: 0, kind: 'terminal'},
+                  {id: 'n3', x_mm: 7200, y_mm: 0, kind: 'terminal'}];
+    topo.runs = [{id: 'run1', start_node_id: 'n1', end_node_id: 'n2'}];
+    topo.gates = [{id: 'g1', start_node_id: 'n2', end_node_id: 'n3', leaf: 'single'}];
+    await s.saveTopology();
+    const p = await (await fetch(`/api/projects/${s.state.projectId}`)).json();
+    return p.topology.gates.length;
+  })""")
+    check("a job with a fence and an unanswered single gate beside it", wrote == 1, wrote)
+
+    # --- gate swing options ------------------------------------------------------------
+    def options():
+        return c.js("""[...document.querySelectorAll('#g-gates circle.gate-option')].map(o => ({
+  opens_to: o.dataset.opensTo, hinge: o.dataset.hinge, slides_to: o.dataset.slidesTo}))""")
+
+    def gate():
+        return c.js("fetch('/api/projects/%s').then(r => r.json())"
+                    ".then(p => (p.topology.gates || [])[0] || null)" % pid)
+
+    step("gates")
+    c.js("document.getElementById('btn-fit').click(); 'ok'")
+    time.sleep(0.6)
+    on_gates = options() or []
+    check("on the gates step an unanswered single gate draws its four swing options",
+          len(on_gates) == 4
+          and sorted((o["opens_to"], o["hinge"]) for o in on_gates)
+          == [("left", "end"), ("left", "start"), ("right", "end"), ("right", "start")],
+          on_gates)
+    step("review")
+    on_review = options()
+    check("...and no options on the review step", on_review == [], on_review)
+
+    step("gates")
+    c.js("document.getElementById('btn-fit').click(); 'ok'")
+    time.sleep(0.6)
+    c.js("window.scrollTo(0, 0); 'ok'")
+    aim = c.js("""(() => {
+  const o = document.querySelector('#g-gates circle.gate-option[data-opens-to="right"][data-hinge="end"]');
+  if (!o) return null;
+  const r = o.getBoundingClientRect();
+  const x = r.x + r.width / 2, y = r.y + r.height / 2;
+  return {x, y, under: document.elementFromPoint(x, y) === o};
+})()""")
+    check("the right/end option is what the pointer is over before the click",
+          bool(aim) and aim["under"], aim)
+    if aim:
+        c.click(aim["x"], aim["y"])
+    chosen = wait_for(c, "fetch('/api/projects/%s').then(r => r.json()).then(p => {"
+                         " const g = p.topology.gates[0];"
+                         " return g.opens_to === 'right' && g.hinge === 'end' && g; })" % pid,
+                      timeout=8)
+    time.sleep(0.5)
+    left = options() or []
+    check("one click on an option states its side and its post together",
+          bool(chosen) and chosen.get("slides_to") is None, chosen or gate())
+    check("...and the stated swing is no longer offered: three options remain",
+          len(left) == 3 and {"opens_to": "right", "hinge": "end", "slides_to": ""}
+          not in left, left)
+    c.js("import('./js/history.js').then(h => h.undo()).then(() => 'ok')")
+    undone = wait_for(c, "fetch('/api/projects/%s').then(r => r.json()).then(p => {"
+                         " const g = p.topology.gates[0];"
+                         " return g.opens_to === null && g.hinge === null && 'undone'; })" % pid,
+                      timeout=8)
+    check("one undo takes the whole chosen swing back", undone == "undone", gate())
+
+    def set_leaf(leaf):
+        c.js("""(() => {
+  const s = document.querySelector('#gates-panel select.gate-type-select');
+  if (!s) return 'no select';
+  s.value = '%s'; s.dispatchEvent(new Event('change'));
+  return 'ok';
+})()""" % leaf)
+        wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                    ".then(p => p.topology.gates[0].leaf === '%s')" % (pid, leaf), timeout=8)
+        time.sleep(0.6)
+        return options() or []
+
+    def click_option(selector):
+        c.js("window.scrollTo(0, 0); 'ok'")
+        at = c.js("""(() => {
+  const o = document.querySelector('%s');
+  if (!o) return null;
+  const r = o.getBoundingClientRect();
+  const x = r.x + r.width / 2, y = r.y + r.height / 2;
+  return {x, y, under: document.elementFromPoint(x, y) === o};
+})()""" % selector)
+        if at and at["under"]:
+            c.click(at["x"], at["y"])
+        return at
+
+    as_double = set_leaf("double")
+    as_sliding = set_leaf("sliding")
+    check("a double gate offers two options, one per side",
+          len(as_double) == 2
+          and sorted(o["opens_to"] for o in as_double) == ["left", "right"]
+          and all(o["hinge"] == "" for o in as_double), as_double)
+    check("a sliding gate offers two options, one per end it slides to",
+          len(as_sliding) == 2
+          and sorted(o["slides_to"] for o in as_sliding) == ["end", "start"], as_sliding)
+    # A slide's target stands past the edge it retracts to, OFF the posts: on
+    # the posts it sat under the gate's own end handles, where no click reaches it.
+    clear = c.js("""import('./js/geom.js').then(g => {
+  const svg = document.getElementById('canvas');
+  const post = ([x, y]) => {
+    const [px, py] = g.toPx([x, y]);
+    return new DOMPoint(px, py).matrixTransform(svg.getScreenCTM());
+  };
+  const posts = [post([6000, 0]), post([7200, 0])];
+  return [...document.querySelectorAll('#g-gates circle.gate-option')].map(o => {
+    const r = o.getBoundingClientRect();
+    const x = r.x + r.width / 2, y = r.y + r.height / 2;
+    return Math.round(Math.min(...posts.map(p => Math.hypot(p.x - x, p.y - y))));
+  });
+})""")
+    check("...and neither sliding target sits on a post",
+          isinstance(clear, list) and len(clear) == 2 and all(d > 12 for d in clear), clear)
+    slid_at = click_option('#g-gates circle.gate-option[data-slides-to="end"]')
+    slid = wait_for(c, "fetch('/api/projects/%s').then(r => r.json()).then(p => {"
+                       " const g = p.topology.gates[0];"
+                       " return g.slides_to === 'end' && g; })" % pid, timeout=8)
+    check("choosing a sliding option states the slide and no swing side or post",
+          bool(slid_at) and slid_at["under"] and bool(slid)
+          and slid.get("opens_to") is None and slid.get("hinge") is None,
+          {"aim": slid_at, "gate": slid or gate()})
+    as_single = set_leaf("single")
+    check("back to a single leaf, the four swing options return",
+          len(as_single) == 4, as_single)
+    single_at = click_option('#g-gates circle.gate-option[data-opens-to="left"][data-hinge="start"]')
+    single = wait_for(c, "fetch('/api/projects/%s').then(r => r.json()).then(p => {"
+                         " const g = p.topology.gates[0];"
+                         " return g.opens_to === 'left' && g.hinge === 'start' && g; })" % pid,
+                      timeout=8)
+    check("choosing a single-leaf option leaves no slide behind",
+          bool(single_at) and single_at["under"] and bool(single)
+          and single.get("slides_to") is None and single.get("leaf") == "single",
+          {"aim": single_at, "gate": single or gate()})
+
+    # --- the review step: the map, the notes and the way out ---------------------------
+    step("review")
+    review = {k: visible(s) for k, s in (
+        ("canvas", "#canvas"), ("fit", "#btn-fit"), ("notes", "#notes-panel"),
+        ("finish", "#finish-job"), ("generate", "#btn-generate"),
+        ("send", "#finish-send"), ("home", "#finish-home"))}
+    check("the review step shows the map, its fit control, the notes and the finish panel",
+          all(review[k] is True for k in ("canvas", "fit", "notes", "finish")), review)
+    check("...but no generate button", review["generate"] is False, review)
+    check("a draft's finish panel offers Send to the office and Back to my jobs",
+          review["send"] is True and review["home"] is True, review)
+
+    # site conditions: the optional four folded, and blank
+    site = c.js("""(() => {
+  const more = document.getElementById('site-more');
+  const v = (id) => document.getElementById(id)?.value ?? null;
+  return {exists: !!more, open: !!more?.open, shown: visible('#site-conditions'),
+          hvhz: v('site-hvhz'), frost: v('site-frost'),
+          jurisdiction: v('site-jurisdiction'), code: v('site-code-edition'),
+          hvhz_unset_text: document.querySelector('#site-hvhz option[value=""]')?.textContent ?? null,
+          frost_placeholder: document.getElementById('site-frost')?.getAttribute('placeholder') || '',
+          status: document.getElementById('site-status')?.textContent || ''};
+  function visible(s) { return !!document.querySelector(s)?.checkVisibility(); }
+})()""")
+    check("the review step's site panel folds the optional conditions away, closed",
+          site["shown"] and site["exists"] and site["open"] is False, site)
+    check("...and every optional condition starts blank, with no placeholder answer",
+          site["hvhz"] == "" and site["frost"] == "" and site["jurisdiction"] == ""
+          and site["code"] == "" and site["hvhz_unset_text"] == ""
+          and site["frost_placeholder"] == "", site)
+    # the removed sentences: "{n} condition(s) not stated" / "One condition not
+    # stated", and in Hebrew "{n} תנאים לא נמסרו" / "תנאי אחד לא נמסר"
+    check("...and no 'N conditions not stated' count",
+          not re.search(r"conditions?\(?s?\)? not stated|תנאים לא נמסרו|תנאי אחד לא נמסר",
+                        site["status"]), site["status"])
+
+    c.js("""(() => {
+  const f = document.getElementById('site-frost');
+  f.value = '600'; f.dispatchEvent(new Event('input'));
+  document.getElementById('btn-site-save').click();
+  return 'ok';
+})()""")
+    frost = wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                        ".then(p => p.site.frost_depth_mm)" % pid, timeout=8)
+    # A whole page reload, not a re-fetch: the panel remembers a fold somebody
+    # opened for as long as the page lives, so only a fresh page proves it is the
+    # STORED value that opens it.
+    reload_page(c)
+    wait_for(c, "document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]')" % pid,
+             timeout=15)
+    c.js("document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]').click(); 'ok'" % pid)
+    wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab === 'canvas'"
+                " && document.documentElement.dataset.step === 'job'", timeout=10)
+    step("review")
+    reopened = c.js("({open: !!document.getElementById('site-more')?.open,"
+                    " frost: document.getElementById('site-frost')?.value})")
+    check("once a frost depth is saved, the fold opens by itself on the reloaded job",
+          bool(frost) and reopened["open"] is True and reopened["frost"] not in ("", None),
+          {"stored": frost, **(reopened or {})})
+
+    # --- send it -------------------------------------------------------------------------
+    c.js("document.getElementById('finish-send').click(); 'ok'")
+    sent = wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab === 'myjobs'"
+                       " && document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]')"
+                       "?.dataset.status" % pid, timeout=15)
+    check("Send to the office submits the job and lands back on My jobs, pending",
+          status_of(pid) == "waiting" and sent == "pending",
+          {"status": status_of(pid), "row": sent, "tab": active_tab()})
+    c.js("document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]').click(); 'ok'" % pid)
+    wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab === 'canvas'",
+             timeout=10)
+    step("review")
+    out_of_hands = {"send": c.js("!!document.getElementById('finish-send')"),
+                    "home": visible("#finish-home"),
+                    "locked": c.js("document.documentElement.dataset.locked")}
+    check("a sent job's review step offers no Send, only Back to my jobs",
+          out_of_hands["send"] is False and out_of_hands["home"] is True, out_of_hands)
+
+    # --- a sent job is hers to look at, not to change ------------------------------------
+    def drag_end_dot():
+        """The gesture that moves a run's end dot on an unlocked job: select the
+        run, then drag its first dot 2 m up."""
+        c.js(f"{STATE_JS}.then(m => m.setTool('select')).then(() => 'ok')")
+        c.js("window.scrollTo(0, 0); 'ok'")
+        c.click(*c.canvas_px(3000, 0))
+        c.drag(*c.canvas_px(0, 0), *c.canvas_px(0, 2000))
+        time.sleep(1.2)
+
+    step("layout")
+    c.js("document.getElementById('btn-fit').click(); 'ok'")
+    time.sleep(0.6)
+    before_lock = c.js("fetch('/api/projects/%s').then(r => r.json()).then(p => ({"
+                       " revision: p.topology.revision,"
+                       " n1: p.topology.nodes.find(n => n.id === 'n1')}))" % pid)
+    locked = {"locked": c.js("document.documentElement.dataset.locked"),
+              "draw": visible("#tool-draw"), "undo": visible("#btn-undo")}
+    check("a sent job opens locked for the salesperson: no drawing tools on the layout step",
+          out_of_hands["locked"] == "yes" and locked["locked"] == "yes"
+          and locked["draw"] is False and locked["undo"] is False, locked)
+    drag_end_dot()
+    # Delete on a selected dot, and an undo with something on the stack to undo:
+    # both would write a new topology revision if the keys were honoured.
+    c.js(f"""Promise.all([{STATE_JS}, import('./js/history.js')]).then(([s, h]) => {{
+  s.setTool('select');
+  s.setSelection({{runId: 'run1', dotIndex: 0}});
+  h.pushSnapshot('smoke-locked');
+  document.getElementById('canvas').focus();
+  return 'ok';
+}})""")
+    c.key("Delete")
+    c.key("z", ctrl=True)
+    time.sleep(1.2)
+    after_lock = c.js("fetch('/api/projects/%s').then(r => r.json()).then(p => ({"
+                      " revision: p.topology.revision, runs: p.topology.runs.length,"
+                      " n1: p.topology.nodes.find(n => n.id === 'n1')}))" % pid)
+    check("...where a drag, Delete and Ctrl+Z change nothing on the server",
+          before_lock is not None and after_lock == {**before_lock, "runs": 1},
+          {"before": before_lock, "after": after_lock})
+
+    # --- the office asks a question back -------------------------------------------------
+    switch_user(c, "yossi@example.com")
+    open_project(c, pid)
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click(); 'ok'")
+    wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7", timeout=15)
+    step("sale")
+    desk = {"send_back": visible("#desk-send-back"), "reason": visible("#desk-reason"),
+            "step": c.js("document.documentElement.dataset.step")}
+    check("the office's sale step offers to send the job back",
+          desk["step"] == "sale" and desk["send_back"] is True and desk["reason"] is True,
+          desk)
+    c.js("document.getElementById('desk-reason').value = '';"
+         " document.getElementById('desk-send-back').click(); 'ok'")
+    time.sleep(1.0)
+    refused = {"error": visible("#desk-error"), "status": status_of(pid)}
+    check("sending back with no question says so and sends nothing",
+          refused["error"] is True and refused["status"] == "waiting", refused)
+
+    pinned_text = "Is this post on the property line?"
+    reason = "Which side of the gate faces the street?"
+    # The question is typed first and the note pinned after, the way a person
+    # finds the second thing to ask while writing the first: the reload the pin
+    # causes must not eat the typed question.
+    c.js("""(() => {
+  const r = document.getElementById('desk-reason');
+  r.value = %s; r.dispatchEvent(new Event('input', {bubbles: true}));
+  return 'ok';
+})()""" % json.dumps(reason))
+    pinned = c.js("""fetch('/api/projects/%s/annotations', {method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({target_ref: 'run:run1', text: %s})}).then(r => r.status)"""
+                  % (pid, json.dumps(pinned_text)))
+    check("the office pins a note on the fence", pinned == 200, pinned)
+    c.js(f"{STATE_JS}.then(m => m.reloadProject()).then(() => 'ok')")
+    time.sleep(0.8)
+    kept = c.js("document.getElementById('desk-reason')?.value ?? null")
+    check("the typed question survives the project reloading under it",
+          kept == reason, kept)
+    time.sleep(1.1)   # the reason is stamped after the pinned note, never with it
+    c.js("document.getElementById('desk-reason').value = %s;"
+         " document.getElementById('desk-send-back').click(); 'ok'" % json.dumps(reason))
+    returned = wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                           ".then(p => p.status === 'returned'"
+                           " && document.querySelector('#tabs button.active')?.dataset.tab"
+                           " === 'queue' && 'returned')" % pid, timeout=15)
+    check("sending back with a question returns the job and goes back to the queue",
+          returned == "returned", {"status": status_of(pid), "tab": active_tab()})
+
+    # --- the salesperson reads it where it was asked ------------------------------------
+    switch_user(c, "dana@example.com")
+    wait_for(c, "document.querySelector('#myjobs-list li.myjob')", timeout=15)
+    listed = rows() or []
+    first = listed[0] if listed else {}
+    check("the returned job heads her list, needing information, with the office's words",
+          first.get("id") == pid and first.get("status") == "needs_info"
+          and first.get("office") == reason, listed[:3])
+    c.js("document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]').click(); 'ok'" % pid)
+    landed = wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab === 'canvas'"
+                         " && document.documentElement.dataset.step === 'review' && 'review'",
+                      timeout=10)
+    time.sleep(0.8)
+    read = c.js("""({
+  office_rows: document.querySelectorAll('#notes-panel .note-row-office').length,
+  labels: document.querySelectorAll('#notes-panel .note-row-office .note-from-office').length,
+  markers: document.querySelectorAll('#g-notes .note-marker-office').length,
+  text: document.getElementById('notes-panel')?.textContent || '',
+  send: !!document.getElementById('finish-send')?.checkVisibility()})""")
+    check("opening it lands on the review step",
+          landed == "review", c.js("document.documentElement.dataset.step"))
+    check("...where both office notes are marked as the office's",
+          read["office_rows"] == 2 and read["labels"] == 2
+          and reason in read["text"] and pinned_text in read["text"], read)
+    check("...the pinned one is marked on the map as the office's",
+          read["markers"] == 1, read)
+    check("...and she is offered to send her answers", read["send"] is True, read)
+    c.shot("64-my-jobs-returned.png")
+    step("layout")
+    unlocked = {"locked": c.js("document.documentElement.dataset.locked"),
+                "draw": visible("#tool-draw")}
+    check("a job handed back is hers to change again: unlocked, drawing tools back",
+          unlocked["locked"] == "no" and unlocked["draw"] is True, unlocked)
+    # ...and the same drag that changed nothing while locked moves the dot now,
+    # which is what makes the locked result mean something. Undone at once.
+    c.js("document.getElementById('btn-fit').click(); 'ok'")
+    time.sleep(0.6)
+    n1_before = c.js("fetch('/api/projects/%s').then(r => r.json())"
+                     ".then(p => p.topology.nodes.find(n => n.id === 'n1'))" % pid)
+    drag_end_dot()
+    n1_moved = c.js("fetch('/api/projects/%s').then(r => r.json())"
+                    ".then(p => p.topology.nodes.find(n => n.id === 'n1'))" % pid)
+    c.js("import('./js/history.js').then(h => h.undo()).then(() => 'ok')")
+    n1_back = wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                          ".then(p => { const n = p.topology.nodes.find(n => n.id === 'n1');"
+                          " return n.x_mm === %d && n.y_mm === %d && n; })"
+                       % (pid, (n1_before or {}).get("x_mm", 0), (n1_before or {}).get("y_mm", 0)),
+                       timeout=8)
+    check("...where the same drag does move the dot (and one undo puts it back)",
+          n1_before is not None and n1_moved is not None
+          and n1_moved["y_mm"] != n1_before["y_mm"] and bool(n1_back),
+          {"before": n1_before, "moved": n1_moved, "back": n1_back})
+    step("review")
+    c.js("document.getElementById('finish-send').click(); 'ok'")
+    again = wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab === 'myjobs'"
+                        " && document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]')"
+                        "?.dataset.status" % pid, timeout=15)
+    check("sending her answers puts it back with the office, pending",
+          status_of(pid) == "waiting" and again == "pending",
+          {"status": status_of(pid), "row": again})
+
+    # --- a note she adds after sending is news to the office; the office's is not -------
+    def readiness_codes():
+        return c.js("fetch('/api/projects/%s/readiness').then(r => r.json())"
+                    ".then(d => (d.items || []).map(i => i.code))" % pid)
+
+    def post_note(text):
+        return c.js("""fetch('/api/projects/%s/annotations', {method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({target_ref: 'job', text: %s})}).then(r => r.status)"""
+                    % (pid, json.dumps(text)))
+
+    switch_user(c, "yossi@example.com")
+    acked = c.js("""fetch('/api/projects/%s/actions', {method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({kind: 'acknowledge_sale', payload: {}})}).then(r => r.status)""" % pid)
+    read_codes = readiness_codes()
+    office_note = post_note("We will call the customer about the gate.")
+    after_office = readiness_codes()
+    check("the office reads the sale, and its own note does not un-read it",
+          acked == 200 and office_note == 200 and isinstance(read_codes, list)
+          and "sale_unread" not in read_codes and "sale_unread" not in (after_office or []),
+          {"ack": acked, "read": read_codes, "note": office_note, "after": after_office})
+
+    switch_user(c, "dana@example.com")
+    late = post_note("The customer also wants a bell at the gate.")
+    after_late = readiness_codes()
+    check("a note the salesperson adds after sending un-reads the sale for the office",
+          late == 200 and "sale_unread" in (after_late or []),
+          {"note": late, "codes": after_late})
+
+    # --- a refusal the desk panel explains, rather than a raw state word -----------------
+    switch_user(c, "yossi@example.com")
+    open_project(c, pid)
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click(); 'ok'")
+    wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7", timeout=15)
+    step("sale")
+    behind = c.js("""fetch('/api/projects/%s/actions', {method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({kind: 'return_to_sales', payload: {reason: 'behind the screen'}})})
+  .then(r => r.status)""" % pid)
+    c.js("document.getElementById('desk-reason').value = 'one more question';"
+         " document.getElementById('desk-send-back').click(); 'ok'")
+    wrong = wait_for(c, "(() => { const e = document.getElementById('desk-error');"
+                        " return e && !e.hidden && e.textContent.trim(); })()", timeout=8)
+    # Against the bundle in the page's own language: in English the status word
+    # IS spelled like the state key, so "the raw word is absent" cannot be
+    # asked there — "the sentence is the wrong-state sentence with the localized
+    # word in it" can, in either language.
+    expected = c.js("""fetch('/i18n/' + document.documentElement.lang + '.json')
+  .then(r => r.json())
+  .then(b => b['error.command_wrong_state'].replace('{status}', b['queue.status.returned']))""")
+    check("sending back a job somebody already moved is refused in words, not state keys",
+          behind == 200 and bool(wrong) and bool(expected) and wrong == expected
+          and status_of(pid) == "returned",
+          {"moved": behind, "error": wrong, "expected": expected, "status": status_of(pid)})
+
+    switch_user(c, ADMIN)
+    finish_all = c.js("""({view: document.documentElement.dataset.view,
+  shown: !!document.getElementById('finish-job')?.checkVisibility(),
+  send: !!document.getElementById('finish-send')})""")
+    check("in the admin's whole-app view the finish panel is hidden, with no Send",
+          finish_all["view"] == "all" and finish_all["shown"] is False
+          and finish_all["send"] is False, finish_all)
 
 
 _CHOICE_CASES: list = [
@@ -2602,6 +3668,10 @@ _CHOICE_CASES: list = [
     _smoke_sales_step_surfaces,
     _smoke_run_measurements,
     _smoke_backoffice_queue,
+    _smoke_generate_button_scope,
+    _smoke_street_grips_by_step,
+    _smoke_account_decides,
+    _smoke_my_jobs_round_trip,
 ]
 
 
@@ -2686,14 +3756,33 @@ def main() -> int:
         # server refuses fails the check that asked for it.
         c.js("window.confirm = () => true; window.alert = () => {}; undefined")
 
+        # --- login first ------------------------------------------------------
+        # A fresh browser is signed out, and signed out the page is the login
+        # form and nothing else: no project is fetched for nobody in particular.
+        wait_for(c, "document.documentElement.dataset.auth === 'out'", timeout=20)
+        door = c.js("""import('./js/state.js').then(m => ({
+  auth: document.documentElement.dataset.auth,
+  login: !!document.getElementById('login-screen')?.checkVisibility(),
+  header: !!document.querySelector('header')?.checkVisibility(),
+  project: m.state.projectId || null,
+}))""")
+        check("a fresh browser opens on the login screen alone, with no job loaded",
+              door and door["auth"] == "out" and door["login"]
+              and not door["header"] and door["project"] is None, door)
+        # The suite runs as the admin: the admin's account opens the `all` view,
+        # which is the whole app every check below was written against.
+        signed = sign_in(c, ADMIN)
+        check("signing in through the login form opens the workspace",
+              signed and c.js("document.documentElement.dataset.view") == "all"
+              and c.js("!!document.querySelector('header').checkVisibility()"),
+              {"signed_in": signed, "view": c.js("document.documentElement.dataset.view")})
+
         # fresh DBs now open into the seeded sample project (which already has
         # runs + a gate); create an EMPTY project so every check below starts
         # from known-zero state
-        c.js("document.getElementById('new-project-name').value = 'smoke'; 'ok'")
-        c.click(*c.element_center("#btn-new-project"))
-        time.sleep(1.5)
+        new_project(c, 'smoke')
         n_runs0 = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.topology.runs.length)""")
         check("fresh project starts empty", n_runs0 == 0)
 
@@ -2704,7 +3793,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.key("Enter")
         time.sleep(1)
         n_runs = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.topology.runs.length)""")
         check("draw creates a run", n_runs == 1)
         c.shot("01-drawn.png")
@@ -2714,7 +3803,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.click(*c.canvas_px(3000, 0))       # select the run
         c.drag(*c.canvas_px(6000, 0), *c.canvas_px(6000, 2000))
         length = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const run = p.topology.runs[0];
     const n = (id) => p.topology.nodes.find(x => x.id === id);
@@ -2728,7 +3817,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.key("z", ctrl=True)
         time.sleep(1)
         length2 = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const run = p.topology.runs[0];
     const n = (id) => p.topology.nodes.find(x => x.id === id);
@@ -2748,7 +3837,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.drag(*c.canvas_px(6000, 0), *c.canvas_px(7000, 0))
         time.sleep(1.5)
         placed = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const g = (p.topology.gates || [])[0];
     if (!g) return {gates: (p.topology.gates || []).length};
@@ -2929,7 +4018,7 @@ fetch('/api/candidates').then(r => r.json()).then(cs => ({
         c.js("document.getElementById('tool-select').click(); 'ok'")
         time.sleep(0.3)
         n_runs_after_pan = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.topology.runs.length)""")
         check("panning never edits the drawing", n_runs_after_pan == 1)
         c.click(*c.element_center("#btn-fit"))
@@ -2956,8 +4045,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         rows = c.js("document.querySelectorAll('#structure-body tr[data-element]').length")
         expected_rows = c.js("""
 (async () => {
-  const runs = await (await fetch(
-    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const runs = await (await import('./js/state.js').then(m => fetch(
+    `/api/projects/${m.state.projectId}/runs`))).json();
   const doc = await (await fetch(`/api/runs/${runs[runs.length - 1].id}/structure`)).json();
   return doc.sections.reduce((n, s) =>
     n + s.setting_out.length + s.bays.length + s.gates.length, 0);
@@ -2970,8 +4059,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # it is in the whole sheet exactly once.
         annexe = c.js("""
 (async () => {
-  const runs = await (await fetch(
-    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const runs = await (await import('./js/state.js').then(m => fetch(
+    `/api/projects/${m.state.projectId}/runs`))).json();
   const doc = await (await fetch(`/api/runs/${runs[runs.length - 1].id}/structure`)).json();
   const placed = (doc.quoted_warnings || {}).placements || [];
   const box = placed.find(p => p.where === 'annexe');
@@ -3256,7 +4345,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(1.6)
         macro = c.js("""
 (async () => {
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
   const report = await (await fetch(
     `/api/runs/${runs[runs.length - 1].id}/structure`)).json();
@@ -3318,7 +4407,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
             "document.querySelector('#assembly-micro .summary-line b')?.textContent || ''")
         picked_tag = c.js(f"""
 (async () => {{
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   const runs = await (await fetch(`/api/projects/${{pid}}/runs`)).json();
   const report = await (await fetch(
     `/api/runs/${{runs[runs.length - 1].id}}/structure`)).json();
@@ -3504,7 +4593,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # existing run, or re-priced it, keeps the count and changes the answer
         runs_before = c.js("""
 (async () => {
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
   const last = runs[runs.length - 1];
   const bom = await (await fetch(`/api/runs/${last.id}/bom`)).json();
@@ -3531,7 +4620,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # would otherwise contradict while calling itself "as generated".
         priced_like_the_run = c.js("""
 (async () => {
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
   const runId = runs[runs.length - 1].id;
   const doc = await (await fetch(`/api/runs/${runId}/bom`)).json();
@@ -3592,7 +4681,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(1.6)
         after = c.js("""
 (async () => {
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   const runs = await (await fetch(`/api/projects/${pid}/runs`)).json();
   const last = runs[runs.length - 1];
   const bom = await (await fetch(`/api/runs/${last.id}/bom`)).json();
@@ -3642,7 +4731,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
             " .sku')?.textContent || ''")
         c.js(f"""
 (async () => {{
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   await fetch(`/api/projects/${{pid}}/inventory`, {{
     method: 'PUT', headers: {{ 'Content-Type': 'application/json' }},
     body: JSON.stringify({{ items: [
@@ -3675,7 +4764,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
                  "document.querySelectorAll('#assembly-drawer .drawer-table tr').length")
         netted = c.js(f"""
 (async () => {{
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   const runs = await (await fetch(`/api/projects/${{pid}}/runs`)).json();
   const doc = await (await fetch(`/api/runs/${{runs[runs.length - 1].id}}/bom`)).json();
   const cut = (doc.bom.allocations || [])
@@ -3696,7 +4785,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # it makes every check after it depend on this one having run.
         c.js("""
 (async () => {
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   await fetch(`/api/projects/${pid}/inventory`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items: [] }),
@@ -3721,7 +4810,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.js("document.querySelector('[data-accept-quote]')?.click(); 'ok'")
         time.sleep(1.2)
         accepted = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}/quotes`))
   .then(r => r.json()).then(qs => qs.filter(q => q.status === 'accepted').length)""")
         check("quote accepted via UI", accepted == 1)
 
@@ -3754,8 +4843,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         # rows would be the noise the annexe exists to keep off a plan.
         product_note = c.js("""
 (async () => {
-  const runs = await (await fetch(
-    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const runs = await (await import('./js/state.js').then(m => fetch(
+    `/api/projects/${m.state.projectId}/runs`))).json();
   const doc = await (await fetch(`/api/runs/${runs[runs.length - 1].id}/bom`)).json();
   const placed = (doc.quoted_warnings || {}).placements || [];
   const note = placed.find(p => p.where === 'product');
@@ -3800,8 +4889,8 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
   // from the page. Reading them out of the structure tab would only prove the
   // app agrees with itself; `structure-data.js` is the single tag source, so an
   // independent check has to re-derive the mapping the way that module does.
-  const runs = await (await fetch(
-    `/api/projects/${document.getElementById('project-select').value}/runs`)).json();
+  const runs = await (await import('./js/state.js').then(m => fetch(
+    `/api/projects/${m.state.projectId}/runs`))).json();
   const doc = await (await fetch(
     `/api/runs/${runs[runs.length - 1].id}/structure`)).json();
   const ofElement = new Map(), ofSection = new Map();
@@ -3906,7 +4995,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}/quotes`)
         # `preset` had zero hits in the whole frontend, and the only product
         # choice anywhere was the gate kit picker — the model that decides every
         # material, size and structure below it was unreachable from the UI.
-        project_id = c.js("document.getElementById('project-select').value")
+        project_id = current_project_id(c)
         c.js("document.querySelector('#tabs button[data-tab=\"panel\"]').click(); 'ok'")
         time.sleep(1.5)
         c.js("""
@@ -4364,17 +5453,9 @@ document.querySelector('#panel-annexe .evidence-link')?.dataset.evidenceId || nu
         c.click(*c.element_center("#btn-panel-use"))
         time.sleep(1.5)
         c.shot("19-panel-slat.png")
-        c.js("location.reload(); 'ok'")
-        time.sleep(5)
-        c.js("window.confirm = () => true; window.alert = () => {}; undefined")
-        c.js(f"""
-{{
-  const sel = document.getElementById('project-select');
-  if (sel.value !== {project_id!r}) {{
-    sel.value = {project_id!r}; sel.dispatchEvent(new Event('change'));
-  }}
-}}
-'ok'""")
+        reload_page(c)
+        if current_project_id(c) != project_id:
+            open_project(c, project_id)
         time.sleep(2.5)
         stored_model = c.js(f"""
 fetch('/api/projects/{project_id}').then(r => r.json())
@@ -4482,7 +5563,7 @@ fetch('/api/knowledge').then(r => r.json())
             c.drag(ghost[0], ghost[1], *c.canvas_px(3000, 1000))  # ghost -> vertex
         time.sleep(0.5)
         n_vertices = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.topology.runs[0].interior_vertices.length)""")
         check("midpoint ghost inserts an interior vertex", n_vertices == 1)
         c.click(*c.element_center("#tool-ground"))
@@ -4492,7 +5573,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
             c.js("document.getElementById('pop-save').click(); 'ok'")
             time.sleep(1)
         anchor = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const ev = p.topology.runs[0].point_events.find(e => e.payload.kind === 'elevation_sample');
     return ev ? ev.anchor : null;
@@ -4504,7 +5585,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # --- display units: mm <-> cm (storage stays int mm) -----------------
         label_mm = c.js("document.querySelector('.run-label').textContent")
         run_len = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const run = p.topology.runs[0];
     const n = (id) => p.topology.nodes.find(x => x.id === id);
@@ -4533,7 +5614,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         check("no unsubstituted unit placeholders",
               not c.js("document.documentElement.innerHTML.includes('{u}')"))
         events_before = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.topology.runs[0].interval_events.length)""")
         c.js("""
 {
@@ -4544,7 +5625,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 'ok'""")
         time.sleep(1)
         events_after_blank = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.topology.runs[0].interval_events.length)""")
         check("a blank length field saves nothing (no null reaches the API)",
               events_after_blank == events_before
@@ -4560,7 +5641,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 'ok'""")
         time.sleep(1)
         stored_h = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const ev = p.topology.runs[0].interval_events.find(e => e.payload.kind === 'height_intent');
     return ev ? ev.payload.height_mm : null;
@@ -4578,7 +5659,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.key("Enter")        # finishes the run
         time.sleep(1.2)
         typed_len = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const run = p.topology.runs[p.topology.runs.length - 1];
     const n = (id) => p.topology.nodes.find(x => x.id === id);
@@ -4672,21 +5753,17 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         time.sleep(0.3)
         check("no unit placeholder survives once warnings are rendered",
               not c.js("document.documentElement.innerHTML.includes('{u}')"))
-        pid = c.js("document.getElementById('project-select').value")
+        pid = current_project_id(c)
         c.cmd("Page.navigate", url=f"http://localhost:{PORT}/")
         time.sleep(3)
         # the reload dropped both stubs
         c.js("window.confirm = () => true; window.alert = () => {}; undefined")
+        wait_for(c, PROJECT_LOADED_JS, timeout=20)
+        admin_on_canvas(c)
         check("the unit preference survives a reload",
               'ס"מ' in (c.js("document.getElementById('btn-units').textContent") or ""))
         # a reload opens the FIRST project in the list — come back to the smoke one
-        c.js(f"""
-{{
-  const sel = document.getElementById('project-select');
-  sel.value = {pid!r};
-  sel.dispatchEvent(new Event('change'));
-}}
-'ok'""")
+        open_project(c, pid)
         time.sleep(2)
         c.click(*c.element_center("#btn-units"))   # back to mm for the checks below
         time.sleep(0.6)
@@ -4766,7 +5843,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
 'ok'""")
         time.sleep(1.2)
         top_points = c.js(f"""
-fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${{m.state.projectId}}`))
   .then(r => r.json()).then(p => {{
     const run = p.topology.runs.find(r => r.id === {focus_id!r});
     const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
@@ -4779,7 +5856,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
         c.click(*c.element_center("#base-step"))
         time.sleep(1.2)
         stepped = c.js(f"""
-fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${{m.state.projectId}}`))
   .then(r => r.json()).then(p => {{
     const run = p.topology.runs.find(r => r.id === {focus_id!r});
     const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
@@ -4810,7 +5887,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
 'ok'""")
         time.sleep(1.2)
         locks = c.js(f"""
-fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${{m.state.projectId}}`))
   .then(r => r.json()).then(p => {{
     const run = p.topology.runs.find(r => r.id === {focus_id!r});
     const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
@@ -4821,7 +5898,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
         c.click(*c.element_center("#base-level"))
         time.sleep(1.2)
         levelled = c.js(f"""
-fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${{m.state.projectId}}`))
   .then(r => r.json()).then(p => {{
     const run = p.topology.runs.find(r => r.id === {focus_id!r});
     const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
@@ -4840,7 +5917,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
         c.key("Enter")
         time.sleep(1.2)
         neighbour_id = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const run1 = p.topology.runs[0];
     const nb = p.topology.runs.find(r => r.id !== run1.id &&
@@ -4906,7 +5983,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.click(*c.element_center("#base-match"))
         time.sleep(1.2)
         matched = c.js(f"""
-fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${{m.state.projectId}}`))
   .then(r => r.json()).then(p => {{
     const run = p.topology.runs.find(r => r.id === {focus_id!r});
     const ev = run.interval_events.find(e => e.payload.kind === 'base_top');
@@ -4931,7 +6008,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}`)
               stand is not None and stand["bottom"] < stand["ground"] - 4
               and stand["top"] < stand["bottom"])
         api_post = c.js(f"""
-fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
+import('./js/state.js').then(m => fetch(`/api/projects/${{m.state.projectId}}/runs`))
   .then(r => r.json()).then(runs =>
     fetch(`/api/runs/${{runs[runs.length - 1].id}}`).then(r => r.json()))
   .then(res => {{
@@ -5012,12 +6089,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
   });
   return orig;
 })()""")
-        c.js("""
-{
-  const sel = document.getElementById('project-select');
-  sel.dispatchEvent(new Event('change'));   // reload: re-reads the (now stale) run
-}
-'ok'""")
+        reopen_project(c)  #reload: re-reads the (now stale) run
         time.sleep(2)
         c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
         time.sleep(1.5)
@@ -5046,7 +6118,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
         # the old strategy over the new geometry
         c.js("""
 (async () => {
-  const pid = document.getElementById('project-select').value;
+  const pid = (await import('./js/state.js')).state.projectId;
   const project = await (await fetch(`/api/projects/${pid}`)).json();
   const topo = project.topology;
   topo.nodes[0].x_mm -= 500;               // the drawing moves under the run
@@ -5057,12 +6129,7 @@ fetch(`/api/projects/${{document.getElementById('project-select').value}}/runs`)
   return 'edited';
 })()""")
         time.sleep(1.2)
-        c.js("""
-{
-  const sel = document.getElementById('project-select');
-  sel.dispatchEvent(new Event('change'));   // reload: the last run comes back
-}
-'ok'""")
+        reopen_project(c)  #reload: the last run comes back
         time.sleep(3)
         c.js("document.querySelector('#tabs button[data-tab=\"structure\"]').click(); 'ok'")
         time.sleep(1.5)
@@ -5098,7 +6165,7 @@ fetch('/i18n/he.json').then(r => r.json()).then(b => b['decisions.stale'])""")
         time.sleep(1)
         draft_left = c.js("document.getElementById('g-draft').childNodes.length")
         n_runs3 = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.topology.runs.length)""")
         check("clear wipes persisted topology", n_runs3 == 0)
         check("clear wipes the draft layer too", draft_left == 0)
@@ -5116,7 +6183,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.key("Enter")
         time.sleep(1.2)
         legs = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.topology.runs.map(r => r.id))""")
         check("an L is drawn as two runs", len(legs or []) == 2)
         first_leg = (legs or [""])[0]
@@ -5187,7 +6254,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.js("document.getElementById('pop-save').click(); 'saved'")
         time.sleep(1.5)
         model_ev = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => {
     const run = p.topology.runs[0];
     return run.interval_events.filter(e => e.payload.kind === 'fence_model')
@@ -5231,9 +6298,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
       actions: [{kind: 'default_component', role: 'rail', sku: 'RAIL-SHORT'}]})});
   return 'ok';
 })()""")
-        c.js("document.getElementById('new-project-name').value = 'unsupplied'; 'ok'")
-        c.click(*c.element_center("#btn-new-project"))
-        time.sleep(1.5)
+        new_project(c, 'unsupplied')
         c.click(*c.element_center("#tool-draw"))
         c.click(*c.canvas_px(0, 0))
         c.click(*c.canvas_px(6000, 0))
@@ -5334,9 +6399,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         # against a portfolio that has one. M-LEGACY would not do — the
         # compatibility path is SYNTHESIZED per run (generator.py:652) and never
         # read from the library, so editing it changes nothing.
-        c.js("document.getElementById('new-project-name').value = 'models'; 'ok'")
-        c.click(*c.element_center("#btn-new-project"))
-        time.sleep(1.5)
+        new_project(c, 'models')
         c.click(*c.element_center("#tool-draw"))
         c.click(*c.canvas_px(0, 0))
         c.click(*c.canvas_px(6000, 0))
@@ -6337,9 +7400,7 @@ fetch('/api/knowledge', {method: 'POST',
   .then(r => r.ok)""")
         c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]').click(); 'ok'")
         time.sleep(0.5)
-        c.js("document.getElementById('new-project-name').value = 'site'; 'ok'")
-        c.click(*c.element_center("#btn-new-project"))
-        time.sleep(1.5)
+        new_project(c, 'site')
         c.click(*c.element_center("#tool-draw"))
         c.click(*c.canvas_px(0, 0))
         c.click(*c.canvas_px(6000, 0))
@@ -6411,7 +7472,7 @@ fetch('/i18n/he.json').then(r => r.json()).then(b => {
         c.click(*c.element_center("#btn-site-save"))
         time.sleep(1.5)
         said_no = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.site)""")
         check("saying NO to the hurricane zone is stored as false, not as unset",
               said_no["hvhz"] is False
@@ -6454,7 +7515,7 @@ fetch(`/api/projects/${document.getElementById('project-select').value}`)
         c.click(*c.element_center("#btn-site-save"))
         time.sleep(1.5)
         stored = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
   .then(r => r.json()).then(p => p.site)""")
         check("a depth typed in cm is stored as integer millimetres, and the rest holds",
               stored["frost_depth_mm"] == 900 and stored["exposure_category"] == "C"
@@ -6516,7 +7577,7 @@ fetch('/i18n/he.json').then(r => r.json()).then(b => {
         time.sleep(2.5)
         posts_after = c.js("document.querySelectorAll('#g-overlay circle').length")
         spans = c.js("""
-fetch(`/api/projects/${document.getElementById('project-select').value}/runs`)
+import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}/runs`))
   .then(r => r.json()).then(l => fetch(`/api/runs/${l[l.length - 1].id}`))
   .then(r => r.json()).then(o => o.strategy.spans.map(s => s.width_mm))""")
         check("an exposure category entered in the app changes the fence that is planned",
@@ -6562,7 +7623,7 @@ fetch('/i18n/he.json').then(r => r.json()).then(b => {
         time.sleep(1.0)
         refused = c.js("""
 fetch('/i18n/he.json').then(r => r.json()).then(async (b) => {
-  const id = document.getElementById('project-select').value;
+  const id = (await import('./js/state.js')).state.projectId;
   const p = await (await fetch(`/api/projects/${id}`)).json();
   const sentence = b['site.invalid_frost'];
   return {said: sentence.length > 20 && document.getElementById('site-status')
@@ -6600,7 +7661,7 @@ fetch('/i18n/he.json').then(r => r.json()).then(b => ({
         time.sleep(2.5)
         unsaid = c.js("""
 fetch('/i18n/he.json').then(r => r.json()).then(async (b) => {
-  const id = document.getElementById('project-select').value;
+  const id = (await import('./js/state.js')).state.projectId;
   const p = await (await fetch(`/api/projects/${id}`)).json();
   const stem = b['warning.site_condition_missing']
     .split('}').map(q => q.split('{')[0].trim())
@@ -6660,9 +7721,7 @@ fetch('/i18n/en.json').then(r => r.json()).then(b => {
 })()""")
         check("the two rules under the converted failure sites can be retired",
               retired == "200,200", retired)
-        c.js("document.getElementById('new-project-name').value = 'gap'; 'ok'")
-        c.click(*c.element_center("#btn-new-project"))
-        time.sleep(1.5)
+        new_project(c, 'gap')
         c.click(*c.element_center("#tool-draw"))
         c.click(*c.canvas_px(0, 0))
         c.click(*c.canvas_px(6000, 0))

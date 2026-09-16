@@ -83,9 +83,10 @@ def seed_portfolio():
 
 
 def test_open_project_refuses_to_start_in_the_wrong_world(seeded):
-    """Seeding after page load leaves the new options absent, so assigning
-    select.value silently does nothing and the persona works on the demo
-    while believing it is their own job. That contaminated run 2 wave 1."""
+    """A persona must start in the job it was seeded, never on the demo while
+    believing it is their own — that contaminated run 2 wave 1, back when a
+    header picker silently ignored a value it did not list. The picker is gone;
+    the guard stays: open, then ask the app what is open."""
     from persona_lab import seed
 
     session, made = seeded
@@ -97,6 +98,6 @@ def test_open_project_refuses_to_start_in_the_wrong_world(seeded):
     try:
         seed.open_project(session, "proj_does_not_exist")
     except RuntimeError as exc:
-        assert "not in the selector" in str(exc)
+        assert "not in the project list" in str(exc)
     else:
         raise AssertionError("a missing project was silently accepted")

@@ -196,3 +196,34 @@ def test_the_anchor_does_not_grow_with_the_note_count():
     many = Project(id="p", name="x", submitted_at=SUBMITTED,
                    annotations=[_note(f"a{i}") for i in range(200)])
     assert len(sale_anchor(few)) == len(sale_anchor(many))
+
+
+# --- with a recorded creator, WHO wrote a note decides, not when ---------------
+
+def _sold_by_dana(**kw) -> Project:
+    return Project(id="p", name="x", submitted_at=SUBMITTED, created_by="u_dana",
+                   annotations=[_note("a1")], **kw)
+
+
+def test_a_promise_she_adds_after_sending_un_reads_the_sale():
+    """The blocker the review found. Stamping `created_at` on every note made the
+    time rule exclude a promise she added after handing the job over — and the
+    note route does not stop her adding one — so the office's "read the sale"
+    stood for ever over a promise nobody had read."""
+    p = _sold_by_dana(status="planning", assignee="u_yossi")
+    p = _ack(p, "acknowledge_sale")
+    assert "sale_unread" not in _codes(p)
+    p.annotations.append(_note("late", created_at="2026-09-15T09:30:00+00:00"))
+    assert "sale_unread" in _codes(p)
+
+
+def test_the_office_note_and_the_send_back_reason_still_do_not_un_read_it():
+    p = _sold_by_dana(status="planning", assignee="u_yossi")
+    p = _ack(p, "acknowledge_sale")
+    p.annotations.append(Annotation(id="q", target_ref="run:r1", text="which side?",
+                                    author="user:u_yossi",
+                                    created_at="2026-09-14T12:00:00+00:00"))
+    assert "sale_unread" not in _codes(p)
+    p = perform("return_to_sales", {"reason": "wall height?"}, p,
+                actor="user:u_yossi", capacity="backoffice", now=NOW)
+    assert "sale_unread" not in _codes(p)

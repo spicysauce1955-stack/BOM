@@ -56,10 +56,14 @@ export const VIEWS = ["sales", "backoffice", "all"];
 // `run:<id>`, so "a post clear of that window" is recordable as a sentence the
 // back-office person must read, rather than as an override that would quietly reach
 // generation.
-export const SALES_TABS = ["canvas", "annotations"];
+//
+// `myjobs` is her HOME: the list of the jobs she sold and what the office said
+// about each (js/my-jobs.js). Reached from the header's "My jobs" button, since
+// the tab strip itself is hidden for this view.
+export const SALES_TABS = ["myjobs", "canvas", "annotations"];
 
-const ALL_TABS = ["queue", "canvas", "annotations", "knowledge", "review", "structure",
-                  "assembly", "panel", "models", "bom", "inventory"];
+const ALL_TABS = ["myjobs", "queue", "canvas", "annotations", "knowledge", "review",
+                  "structure", "assembly", "panel", "models", "bom", "inventory"];
 
 // Everything on this list answers "how is this fence BUILT?" — which is the
 // back-office person's question and the admin's, never the salesperson's.
@@ -111,6 +115,9 @@ const SALES_HIDDEN = [
 const BACKOFFICE_HIDDEN = [
   '[data-tab="knowledge"]',
   '[data-tab="review"]',
+  // A salesperson's home screen. The office's home is the queue.
+  '[data-tab="myjobs"]',
+  "#btn-my-jobs",
 ];
 
 const HIDDEN = { sales: SALES_HIDDEN, backoffice: BACKOFFICE_HIDDEN, all: [] };

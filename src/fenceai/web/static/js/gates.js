@@ -19,14 +19,15 @@ import { esc } from "./api.js";
 import { loadCatalogProducts } from "./builder-ui.js";
 import { landmarkAtAny } from "./context.js";
 import {
-  openingEdges, screenSideOf, sideProbe, slideArrow, swingLeaf,
+  isCurrentSwing, openingEdges, screenSideOf, sideProbe, slideArrow, swingLeaf,
+  swingOptions, swingOptionsShownFor, slideOptionArrow,
 } from "./gate-geom.js";
 import {
   clearGroup, el, nodeById, runById, runPoints, stationOfAnchor, toPx,
 } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
-import { on, saveTopology, state } from "./state.js";
+import { drawingLocked, on, saveTopology, state } from "./state.js";
 import { money, sentence, tu } from "./units.js";
 
 // ---------- the catalog half (moved verbatim from editor.js) ----------
@@ -174,7 +175,9 @@ export function initGates() {
   renderGates();
   wireDrawing();
   for (const ev of ["project-loaded", "topology-changed", "context-changed",
-                    "locale-changed", "units-changed", "fit-view"])
+                    "locale-changed", "units-changed", "fit-view",
+                    // the swing options follow the step and the armed tool
+                    "tool-changed", "step-changed"])
     on(ev, renderGates);
   on("project-loaded", render);
   on("topology-changed", render);
@@ -203,6 +206,7 @@ async function render() {
   host.innerHTML = `<h3>${esc(t("gates.title"))}</h3>
     ${whichHtml(kits)}
     <div class="meta">${esc(t("gates.hint"))}</div>
+    <div class="meta">${esc(t("gates.swing_hint"))}</div>
     <h4>${esc(t("gates.placed"))}</h4>
     ${placedHtml()}`;
   wire(host);
@@ -474,7 +478,62 @@ export function renderGates() {
   const gates = placedGates(state.project);
   for (const gate of gates) drawGateBodyHandle(g, gate);
   for (const gate of gates) drawGate(g, gate);
+  if (showsSwingOptions()) for (const gate of gates) drawSwingOptions(g, gate);
   for (const gate of gates) drawGateEndHandles(g, gate);
+}
+
+/** Where the faint "it could open this way" choices are drawn: wherever gates
+ *  are the work — the salesperson's gates step, the office's blanks step, or the
+ *  gate tool armed in a view with no road. Anywhere else they would be clutter
+ *  over a drawing somebody is reading for something else. */
+function showsSwingOptions() {
+  return swingOptionsShownFor(state.step, state.tool) && !drawingLocked();
+}
+
+/** Every swing this gate could have, drawn faintly, each with a round target
+ *  where the open leaf would stand. The target — not the arc — is what takes
+ *  the click: the four arcs of a single gate overlap in the middle of the
+ *  opening, and their tips never do. The swing already stated is skipped, since
+ *  it is drawn solid. */
+function drawSwingOptions(g, gate) {
+  const points = lineOf(gate);
+  if (!points || !Number.isFinite(gate.width_mm) || gate.width_mm <= 0) return;
+  for (const option of swingOptions(gate.leaf)) {
+    if (isCurrentSwing(gate, option)) continue;
+    let marks = [], target = null;
+    if (option.slides_to) {
+      const arrow = slideOptionArrow(points, gate.station_mm, gate.width_mm, option.slides_to);
+      if (!arrow) continue;
+      const from = toPx(arrow.from), to = toPx(arrow.to);
+      marks = [`M${from[0]} ${from[1]} L${to[0]} ${to[1]}`];
+      target = to;
+    } else {
+      const leaves = option.hinge
+        ? [swingLeaf(points, gate.station_mm, gate.width_mm, option.hinge, option.opens_to)]
+        : [swingLeaf(points, gate.station_mm, Math.round(gate.width_mm / 2), "start", option.opens_to),
+           swingLeaf(points, gate.station_mm + Math.round(gate.width_mm / 2),
+                     gate.width_mm - Math.round(gate.width_mm / 2), "end", option.opens_to)];
+      if (leaves.some((l) => !l)) continue;
+      const tips = [];
+      for (const leaf of leaves) {
+        const arc = leaf.arc.map(toPx), pivot = toPx(leaf.pivot), tip = toPx(leaf.tip);
+        marks.push(arc.map((p, i) => `${i ? "L" : "M"}${p[0]} ${p[1]}`).join(" ")
+                   + ` M${pivot[0]} ${pivot[1]} L${tip[0]} ${tip[1]}`);
+        tips.push(tip);
+      }
+      target = [tips.reduce((s, p) => s + p[0], 0) / tips.length,
+                tips.reduce((s, p) => s + p[1], 0) / tips.length];
+    }
+    el("path", { d: marks.join(" "), fill: "none", stroke: GATE_COLOR,
+      "stroke-width": 1, "stroke-dasharray": "2 3", opacity: 0.45,
+      class: "gate-option-ghost", "pointer-events": "none" }, g);
+    el("circle", { cx: target[0], cy: target[1], r: 8, fill: "#fff",
+      stroke: GATE_COLOR, "stroke-width": 1.5, class: "gate-option", cursor: "pointer",
+      "data-gate": gate.id, "data-kind": gate.kind, "data-run": gate.run_id || "",
+      "data-opens-to": option.opens_to ?? "", "data-hinge": option.hinge ?? "",
+      "data-slides-to": option.slides_to ?? "" }, g)
+      .append(titleEl(t("gate.choose_option")));
+  }
 }
 
 function drawGate(g, gate) {
@@ -771,6 +830,19 @@ async function flipSwing(kind, gateId, runId) {
   await saveTopology();
 }
 
+/** State the whole swing at once — side, post and slide — from one of the drawn
+ *  options. Facts the option does not carry are cleared, which is exactly the
+ *  combination the backend accepts for that leaf type. */
+async function setSwing(kind, gateId, runId, option) {
+  const rec = gateRecord(kind, gateId, runId);
+  if (!rec) return;
+  pushSnapshot("gate-swing");
+  rec.opens_to = option.opens_to;
+  rec.hinge = option.hinge;
+  rec.slides_to = option.slides_to;
+  await saveTopology();
+}
+
 async function swapHinge(kind, gateId, runId) {
   const rec = gateRecord(kind, gateId, runId);
   if (!rec || (rec.leaf ?? "single") !== "single") return;  // nothing to swap
@@ -806,6 +878,16 @@ function wireDrawing() {
   if (!g || g.dataset.wired) return;
   g.dataset.wired = "1";
   g.addEventListener("click", (ev) => {
+    if (drawingLocked()) { ev.stopPropagation(); return; }
+    const option = ev.target.closest(".gate-option");
+    if (option) {
+      ev.stopPropagation();
+      const d = option.dataset;
+      setSwing(d.kind, d.gate, d.run, {
+        opens_to: d.opensTo || null, hinge: d.hinge || null, slides_to: d.slidesTo || null,
+      });
+      return;
+    }
     const hinge = ev.target.closest(".gate-hinge");
     const arc = ev.target.closest(".gate-arc");
     const hit = hinge || arc;

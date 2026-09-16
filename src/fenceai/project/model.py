@@ -310,6 +310,24 @@ class Acknowledgement(BaseModel):
     at: str
 
 
+def is_office_note(project: Project, note: Annotation) -> bool:
+    """A note somebody OTHER than the person who created the job wrote, through
+    an account — on a salesperson's job, the office.
+
+    ONE rule, read by the handover (a question from the office is not a promise
+    of hers), the sale anchor (his note does not un-read the sale he read), her
+    home screen (`queue.my_jobs`) and the browser (`notes.js: isFromOffice`).
+    A job with no recorded creator has no office notes: there is nobody to be
+    other than, and those jobs keep the older time-based reading below."""
+    return (bool(project.created_by) and note.author.startswith("user:")
+            and note.author != f"user:{project.created_by}")
+
+
+def sale_notes(project: Project) -> list[Annotation]:
+    """What was said as part of the SALE: every note except the office's."""
+    return [a for a in project.annotations if not is_office_note(project, a)]
+
+
 def sale_anchor(project: Project) -> str:
     """What "I have read the sale" was read AGAINST.
 
@@ -351,6 +369,16 @@ def sale_anchor(project: Project) -> str:
     implementations of one anchor disagree the first time either moves, and the
     failure is silent in the worst direction — a step that reads done for ever.
     """
+    # With a recorded creator, the sale is decided by WHO wrote a note, not
+    # when: a promise she adds after sending the job IS part of the sale and
+    # must un-read it — the note route does not stop her adding one to a job on
+    # his desk, so "she cannot" was never a guarantee. The office's own notes,
+    # including the reason `return_to_sales` appends, are not the sale.
+    if project.created_by:
+        ids = sorted(a.id for a in sale_notes(project))
+        return hashlib.sha256(",".join(ids).encode()).hexdigest()[:16]
+    # No recorded creator (every job created before `created_by` was written):
+    # nothing can tell her notes from his, so the handover moment decides.
     handed_over = project.submitted_at
     ids = sorted(a.id for a in project.annotations
                  if not handed_over or not a.created_at

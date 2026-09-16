@@ -286,7 +286,7 @@ def test_each_step_keeps_the_tools_it_needs(out):
             assert tool not in out["hidden"]["sales"][step], f"{step} needs {tool}"
 
 
-MAP_STEPS = {"property", "layout", "sideview", "model", "gates", "notes"}
+MAP_STEPS = {"property", "layout", "sideview", "model", "gates", "notes", "review"}
 
 
 def test_the_generate_bar_follows_the_drawing_except_on_notes(out):
@@ -297,6 +297,8 @@ def test_the_generate_bar_follows_the_drawing_except_on_notes(out):
     sales = out["hidden"]["sales"]
     bar_shown = {s for s in sales if "#generate-toolbar" not in sales[s]}
     assert bar_shown == MAP_STEPS - {"notes"}
+    # ...and wherever the bar shows on this road, the button that recomputes is
+    # still not in it (`test_the_generate_button_is_hidden_on_every_sales_step`)
 
 
 def test_each_step_arms_a_tool_its_own_rail_offers(out):
@@ -339,12 +341,17 @@ def test_the_road_band_is_never_scoped_away(out):
 
 
 def test_the_drawing_is_scoped_to_the_steps_whose_work_is_on_it(out):
-    """Steps 2-7, and nowhere else.
+    """Steps 2-8, and nowhere else.
 
     This REVERSES the earlier rule that the drawing stays on screen throughout,
-    on instruction: steps 1 and 8 are a form and a summary, and a map behind
-    them invites a click that does nothing while making step 1 read as "draw
-    something" when the only thing to do is type an address.
+    on instruction: step 1 is a form, and a map behind it invites a click that
+    does nothing while making step 1 read as "draw something" when the only
+    thing to do is type an address.
+
+    Step 8 came BACK onto the list on a later instruction (2026-09-15): "the map
+    is not shown in the final step — he should look at it and figure out if he
+    made mistakes." The review is where she checks the drawing she is about to
+    send, and where she reads what the office pinned on it.
 
     Step 7 has since come BACK onto the list, by the same authority. A note is
     attached by clicking the thing it is about — the house, a stretch, the
@@ -389,3 +396,48 @@ def test_the_two_copies_are_equal(out):
             f"only in style.css: {css.get(step, set()) - selectors}")
     # and nothing in the stylesheet names a step no road has
     assert set(css) <= set(js)
+
+
+def test_the_generate_button_is_hidden_on_every_sales_step(out):
+    """"The Work out the fence button shouldn't be static throughout the steps."
+
+    It sat in the drawing's toolbar and followed the drawing onto every map
+    step. Pinned per step against the MODULE, not only against the stylesheet
+    copy: the equality test above passes just as happily when both copies drop
+    the entry together."""
+    for step in out["step_keys"]["sales"]:
+        assert "#btn-generate" in out["hidden"]["sales"][step], step
+
+
+def test_the_office_sees_the_generate_button_on_its_generate_step_only(out):
+    office = out["step_keys"]["backoffice"]
+    assert "generate" in office
+    assert "#btn-generate" not in out["hidden"]["backoffice"]["generate"]
+    for step in office:
+        if step != "generate":
+            assert "#btn-generate" in out["hidden"]["backoffice"][step], step
+
+
+def test_hiding_the_generate_button_leaves_the_drawing_toolbar_where_the_map_is(out):
+    """The trap the button's scoping could fall into: hiding the whole toolbar
+    also "hides the button", and takes fit-view and finish-run with it. On a
+    step that shows the drawing, the toolbar must still be there."""
+    for road, step in [("sales", "layout"), ("sales", "property"), ("backoffice", "blanks")]:
+        assert "#generate-toolbar" not in out["hidden"][road][step], (road, step)
+        assert "#btn-generate" in out["hidden"][road][step], (road, step)
+
+
+def test_the_salesperson_finishes_on_review_and_the_office_asks_on_sale_and_blanks(out):
+    """Positive pins, against the module: the equality test with the stylesheet
+    passes just as happily when both copies drop an entry together."""
+    sales, office = out["hidden"]["sales"], out["hidden"]["backoffice"]
+    for step in out["step_keys"]["sales"]:
+        assert "#desk-actions" in sales[step], step
+    for step in out["step_keys"]["backoffice"]:
+        assert "#finish-job" in office[step], step
+    assert "#finish-job" not in sales["review"]
+    assert "#notes-panel" not in sales["review"]
+    for step in ("sale", "blanks"):
+        assert "#desk-actions" not in office[step], step
+        assert "#notes-panel" not in office[step], step
+    assert "#tool-note" not in office["blanks"]

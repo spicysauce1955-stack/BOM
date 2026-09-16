@@ -27,10 +27,11 @@ STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "stat
 
 SCRIPT = """
 import {
-  DEFAULT_WIDTH_MM, GESTURE, LANDMARK_KINDS, MIN_MM, OTHER_KINDS, PRIMARY_KINDS,
-  TREE_SIDES, bandRect, circleFromMetrics, circleMetrics, circlePolygon,
-  gestureFor, metricsKind, polygonFromClicks, rectFromMetrics, rectMetrics,
-  shapeFor,
+  DEFAULT_WIDTH_MM, GESTURE, LANDMARK_KINDS, MIN_BAND_WIDTH_MM, MIN_MM, OTHER_KINDS,
+  PRIMARY_KINDS, TREE_SIDES, BEARING_SNAP_DEG, BEARING_STEP_DEG, bandAxis, bandGrips,
+  bandRect, circleFromMetrics, circleMetrics, circlePolygon, dragBandGrip, gestureFor,
+  gripKindsFor, metricsKind, polygonFromClicks, rectFromMetrics, rectMetrics, shapeFor,
+  snapBearing,
 } from "./js/landmark-shape.js";
 
 const out = {};
@@ -53,13 +54,56 @@ out.street = shapeFor("street", [0, 0], [20000, 0]);
 out.sidewalk = shapeFor("sidewalk", [0, 0], [10000, 0]);
 out.tree = shapeFor("tree", [1000, 2000], [1000, 3500]);
 out.thin_street = shapeFor("street", [0, 0], [9000, 40]);
-// the box gesture: the drag states the width itself, so no default is imposed
-out.street_box = shapeFor("street", [0, 0], [20000, 4000]);
-out.street_box_metrics = rectMetrics(out.street_box.points);
-// ...and a box dragged UP the page is a street running up the page, not a
-// two-metre street thirty metres wide
-out.street_box_tall = rectMetrics(shapeFor("street", [0, 0], [3000, 18000]).points);
-out.sidewalk_box_metrics = rectMetrics(shapeFor("sidewalk", [0, 0], [12000, 1200]).points);
+// a diagonal drag is a street at that angle, not an axis-aligned box
+out.street_diag = rectMetrics(shapeFor("street", [0, 0], [12000, 5000]).points);
+// ...and a drag a couple of degrees off a round bearing lands on it
+out.street_near_30 = rectMetrics(shapeFor("street", [0, 0], [17000, 10500]).points);
+out.street_up = rectMetrics(shapeFor("street", [0, 0], [300, 18000]).points);
+
+// ---- bearing snap ------------------------------------------------------------
+out.snap_off = snapBearing([0, 0], [10000, 3640]);      // 20.0 deg: untouched
+out.snap_on = snapBearing([0, 0], [10000, 500]);        // 2.9 deg: onto 0
+out.snap_len = Math.round(Math.hypot(...snapBearing([0, 0], [10000, 500])));
+out.snap_inside_tol = snapBearing([0, 0], [10000, 629]);   // 3.6 deg: snaps
+out.snap_outside_tol = snapBearing([0, 0], [10000, 787]);  // 4.5 deg: stays
+out.bearing_step = BEARING_STEP_DEG;
+out.bearing_snap = BEARING_SNAP_DEG;
+
+// ---- grips -------------------------------------------------------------------
+const road = bandRect([0, 0], [20000, 0], 4000);
+out.axis = bandAxis(road);
+out.axis_rebuilt = bandRect(out.axis.a, out.axis.b, out.axis.width_mm);
+out.axis_not_band = bandAxis([[0, 0], [5000, 0], [6000, 3000], [0, 3000]]);
+out.grips = bandGrips(road);
+out.swing_b = rectMetrics(dragBandGrip(road, "b", [12000, 16000]));   // 3-4-5, 53.13 deg
+out.swing_b_axis_a = bandAxis(dragBandGrip(road, "b", [12000, 16000])).a;
+out.swing_b_snapped = bandAxis(dragBandGrip(road, "b", [10000, 6200])).b;  // 31.8 deg -> 30
+// a street typed at 12 deg, stretched roughly along itself, keeps 12 deg
+const typed12 = rectFromMetrics({ center: [5000, 0], angle_deg: 12, length_mm: 10000, width_mm: 4000 });
+const ax12 = bandAxis(typed12);
+out.stretch_typed = rectMetrics(dragBandGrip(typed12, "b",
+  [ax12.a[0] + 1.3 * (ax12.b[0] - ax12.a[0]) + 80, ax12.a[1] + 1.3 * (ax12.b[1] - ax12.a[1])]));
+out.collapse_at_min = dragBandGrip(road, "b", [299, 0]);
+out.not_collapse_at_min = dragBandGrip(road, "b", [300, 0]);
+out.non_rect = [[0, 0], [5000, 0], [6000, 3000], [0, 3000]];
+out.grip_on_non_rect = dragBandGrip(out.non_rect, "a", [1, 1]);
+out.grip_null_pointer = dragBandGrip(road, "a", null);
+out.grips_street_tool = gripKindsFor("street", "property");
+out.grips_sidewalk_tool = gripKindsFor("sidewalk", "layout");
+out.grips_select_property = gripKindsFor("select", "property");
+out.grips_select_no_road = gripKindsFor("select", null);
+out.grips_select_sideview = gripKindsFor("select", "sideview");
+out.grips_select_office = gripKindsFor("select", "blanks");
+out.grips_draw_tool = gripKindsFor("draw", "property");
+out.grips_house_tool = gripKindsFor("house", "property");
+out.swing_a = bandAxis(dragBandGrip(road, "a", [-5000, 0]));
+out.widen = rectMetrics(dragBandGrip(road, "width", [9000, 3500]));
+out.widen_other_side = rectMetrics(dragBandGrip(road, "width", [9000, -3500]));
+out.too_narrow = rectMetrics(dragBandGrip(road, "width", [9000, 10]));
+out.collapse = dragBandGrip(road, "b", [100, 0]);
+out.bad_grip = dragBandGrip(road, "middle", [1, 1]);
+out.min_band_width = MIN_BAND_WIDTH_MM;
+out.road = road;
 
 // refusals
 out.tiny = shapeFor("pool", [0, 0], [100, 100]);
@@ -218,41 +262,117 @@ def test_a_street_is_a_rectangle_because_a_road_has_width(ls):
     assert ls["default_widths"] == {"street": 4000, "sidewalk": 1500}
 
 
-def test_a_street_dragged_as_a_box_takes_its_width_from_the_drag(ls):
-    """"The street has a fixed width and is not easy to place."
+def test_a_diagonal_drag_is_a_street_at_that_angle(ls):
+    """"Make the street placement more flexible (angles and such)."
 
-    So a band has two gestures now, and this is the one the complaint asked
-    for: drag the box the road occupies and BOTH numbers come out of the one
-    drag. `DEFAULT_WIDTH_MM` is never imposed on a drag that stated a width.
-    """
-    assert ls["street_box"]["closed"] is True
-    assert ls["street_box_metrics"]["length_mm"] == 20000
-    assert ls["street_box_metrics"]["width_mm"] == 4000
-    assert ls["street_box_metrics"]["angle_deg"] == 0
-    assert ls["sidewalk_box_metrics"] == {
-        "center": [6000, 600], "angle_deg": 0,
-        "length_mm": 12000, "width_mm": 1200}
+    The box gesture this replaces turned a diagonal drag into an axis-aligned
+    box, so an angled street could only be had by typing degrees. The drag is
+    the centre line now: its length is the street's length, its bearing the
+    street's angle, and the width is the default until the width grip says
+    otherwise."""
+    d = ls["street_diag"]
+    assert d["length_mm"] == 13000                      # hypot(12000, 5000)
+    assert abs(d["angle_deg"] - 22.62) < 0.05           # atan2(5, 12), not snapped
+    assert d["width_mm"] == 4000
 
 
-def test_a_box_is_wound_long_side_first_whichever_way_it_was_dragged(ls):
-    """The corner ORDER is what `rectMetrics` reads length and width off, so a
-    box wound the other way reports an 18 m street as 3 m long and 18 m wide —
-    and the panel then offers those two numbers to be typed the wrong way
-    round. The winding is the fix; the outline is identical either way."""
-    assert ls["street_box_tall"]["length_mm"] == 18000
-    assert ls["street_box_tall"]["width_mm"] == 3000
-    assert ls["street_box_tall"]["angle_deg"] == 90
+def test_a_drag_close_to_a_round_bearing_lands_on_it(ls):
+    """31.7° is within the snap of 30°, and 89° within it of 90° — a street meant
+    to run square to the page comes out square without a modifier key."""
+    assert abs(ls["street_near_30"]["angle_deg"] - 30) < 0.05
+    assert abs(ls["street_up"]["angle_deg"] - 90) < 0.05
+    assert ls["street_up"]["length_mm"] == 18002
+
+
+def test_the_bearing_snap_keeps_the_length_and_leaves_other_angles_alone(ls):
+    assert ls["snap_off"] == [10000, 3640]
+    assert ls["snap_on"][1] == 0
+    assert ls["snap_len"] == 10012                      # hypot(10000, 500)
+    assert (ls["bearing_step"], ls["bearing_snap"]) == (15, 4)
+    assert ls["snap_inside_tol"] == [10020, 0]          # 3.6° off: snaps, length kept
+    assert ls["snap_outside_tol"] == [10000, 787]       # 4.5° off: untouched
 
 
 def test_a_street_dragged_straight_along_one_axis_still_counts(ls):
     """The minimum applies per axis, not to both at once: a street IS a long
     thin thing, and requiring 300 mm of drift in the short direction would
     refuse the most ordinary gesture in this tool."""
-    assert ls["thin_street"] is not None
-    assert len(ls["thin_street"]["points"]) == 4
-    # and THIS is the branch the default width exists for: the drag stated no
-    # width, so one is supplied rather than storing a 40 mm sliver
-    assert ls["default_widths"]["street"] == 4000
+    # 0.25° off the page axis: snapped onto it, default width supplied
+    assert ls["thin_street"]["points"] == [[0, 2000], [9000, 2000],
+                                           [9000, -2000], [0, -2000]]
+
+
+# --- the street's grips ---------------------------------------------------------
+
+def test_a_band_reads_back_as_its_centre_line(ls):
+    """The grips are the centre line's two ends, so reading the line back and
+    rebuilding the band from it must give the same four corners — or grabbing
+    a grip without moving it would shift the street."""
+    assert ls["axis"] == {"a": [0, 0], "b": [20000, 0], "width_mm": 4000}
+    assert ls["axis_rebuilt"] == ls["road"]
+    assert ls["axis_not_band"] is None
+    assert ls["grips"] == {"a": [0, 0], "b": [20000, 0], "width": [10000, 2000]}
+
+
+def test_dragging_an_end_swings_the_street_about_its_other_end(ls):
+    """The far end stays where it is; the dragged end goes to the pointer, so the
+    street turns and stretches in one gesture."""
+    assert ls["swing_b_axis_a"] == [0, 0]
+    assert abs(ls["swing_b"]["angle_deg"] - 53.13) < 0.01      # not snapped: 8° off 45/60
+    assert ls["swing_b"]["length_mm"] == 20000
+    assert ls["swing_b"]["width_mm"] == 4000
+    assert ls["swing_a"]["b"] == [20000, 0]
+    assert ls["swing_a"]["a"] == [-5000, 0]
+
+
+def test_a_swung_end_lands_on_a_round_bearing_when_close_to_one(ls):
+    """Turned to 31.8°, the street lands on 30° — the same snap as drawing one."""
+    b = ls["swing_b_snapped"]
+    assert abs(b[0] - 10190) <= 1 and abs(b[1] - 5883) <= 1    # 11766 mm at 30°
+
+
+def test_stretching_a_street_along_itself_keeps_a_typed_angle(ls):
+    """A street typed at 12° and pulled roughly along its own line stays at 12°.
+    Snapping it to 15° on every stretch would undo what somebody typed — 8 of
+    every 15 whole-degree bearings sit inside a snap window."""
+    assert abs(ls["stretch_typed"]["angle_deg"] - 12) < 0.05
+    assert ls["stretch_typed"]["length_mm"] > 13000
+
+
+def test_the_width_grip_widens_both_sides_of_the_centre_line(ls):
+    """Twice the pointer's distance from the centre line, whichever side it is
+    dragged on — the road stays where it is and grows around it."""
+    assert ls["widen"]["width_mm"] == 7000
+    assert ls["widen_other_side"]["width_mm"] == 7000
+    assert ls["widen"]["center"] == [10000, 0]
+    assert ls["too_narrow"]["width_mm"] == ls["min_band_width"] == 500
+
+
+def test_a_grip_drag_that_leaves_no_street_is_refused(ls):
+    """Ends dragged onto each other, or a grip nobody draws: the band comes
+    back exactly as it was rather than saving a sliver."""
+    assert ls["collapse"] == ls["road"]
+    assert ls["bad_grip"] == ls["road"]
+    # the boundary is MIN_MM (300) between the two ends
+    assert ls["collapse_at_min"] == ls["road"]
+    assert ls["not_collapse_at_min"] != ls["road"]
+    # and a shape that is not a band, or no pointer, comes back untouched
+    assert ls["grip_on_non_rect"] == ls["non_rect"]
+    assert ls["grip_null_pointer"] == ls["road"]
+
+
+def test_grips_show_only_where_the_street_is_being_edited(ls):
+    """Grips are live hit targets. On the side-view step a grip left behind lets
+    a click meant for the ground reshape the street — which is what a
+    layout-based rule did, one step late, in the browser."""
+    assert ls["grips_street_tool"] == ["street"]
+    assert ls["grips_sidewalk_tool"] == ["sidewalk"]
+    assert ls["grips_select_property"] == ["street", "sidewalk"]
+    assert ls["grips_select_no_road"] == ["street", "sidewalk"]
+    assert ls["grips_select_sideview"] == []
+    assert ls["grips_select_office"] == []
+    assert ls["grips_draw_tool"] == []
+    assert ls["grips_house_tool"] == []
 
 
 def test_a_tree_is_dragged_out_from_its_trunk(ls):

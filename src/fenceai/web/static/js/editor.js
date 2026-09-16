@@ -17,19 +17,19 @@ import { inspect } from "./inspector.js";
 import {
   clearDraft as clearContextDraft, landmarkAt, landmarkAtAny, landmarkById,
   nextLandmarkId, render as renderContext, renderDraft as renderContextDraft,
-  renderDraftPolygon as renderContextDraftPolygon,
+  renderDraftPolygon as renderContextDraftPolygon, renderGrips as renderLandmarkGrips,
 } from "./context.js";
 import {
   chosenGateKit, gateSpanById, moveGateNodes, nextGateId, renderGates,
   repointGateEnd,
 } from "./gates.js";
 import {
-  gestureFor, LANDMARK_KINDS, MIN_MM, polygonFromClicks, shapeFor,
+  dragBandGrip, gestureFor, LANDMARK_KINDS, MIN_MM, polygonFromClicks, shapeFor,
 } from "./landmark-shape.js";
 import { openNotePopover, targetLabel } from "./notes.js";
 import { layoutWithPin, snapCandidates, violations } from "./post-drag.js";
 import {
-  addIntervalEvent, addLandmark, addPointEvent, generateStrategy, maxSpanFor, on,
+  addIntervalEvent, addLandmark, addPointEvent, drawingLocked, generateStrategy, maxSpanFor, on,
   reloadProject, saveContext, saveTopology, setSelection, setTool, state,
 } from "./state.js";
 import { tagOf } from "./structure-data.js";
@@ -263,6 +263,7 @@ function setupCanvas() {
   svg.addEventListener("click", (ev) => {
     if (suppressClick) { suppressClick = false; return; }
     if (!state.project) return;
+    if (drawingLocked()) return;          // sent: look, pan, zoom — do not change
     if (state.tool === "draw") {
       const [mx, my] = svgCoords(ev);
       const anchor = state.draftNodes.length
@@ -322,6 +323,15 @@ function setupCanvas() {
         && document.activeElement !== document.body)
       document.activeElement.blur();
     svg.focus?.({ preventScroll: true });
+    // A job she has sent is view-only: every press pans, whatever it lands on.
+    if (drawingLocked() && (ev.button === 0 || ev.button === 1)) {
+      ev.preventDefault();
+      pan = { screen: [ev.clientX, ev.clientY], view: { ...viewBox },
+        moved: false, pointerId: ev.pointerId };
+      svg.setPointerCapture(ev.pointerId);
+      svg.classList.add("panning");
+      return;
+    }
     // BEFORE the pan check, and that ordering is the whole bug this line fixes.
     // A landmark is drawn on EMPTY canvas by definition — the house goes where
     // the fence is not — so `onSomething` below is false for every one of these
@@ -337,6 +347,24 @@ function setupCanvas() {
     // tool armed on the gates step that is EVERY press a person makes on a gate
     // they have just placed: the controls would work on every step except the
     // one that shows them.
+    // A press on a street's own grip — an end to swing or stretch it, or the
+    // width. First, for the gate handles' reason: the grips answer whatever
+    // tool is armed, and they are drawn only where the property is being
+    // edited (`context.js: renderGrips`). Stores the id and the ORIGIN points,
+    // so every move is a delta from where the drag began.
+    const grip = state.project && ev.button === 0 && !ev.ctrlKey && !ev.metaKey
+      && target.closest?.(".landmark-grip");
+    if (grip) {
+      const lm = landmarkById(state.project.context?.landmarks, grip.dataset.lm);
+      if (lm) {
+        ev.preventDefault();
+        drag = { kind: "landmark-grip", landmarkId: lm.id, grip: grip.dataset.grip,
+                 origin: lm.points.map((p) => [...p]),
+                 started: false, start: [ev.clientX, ev.clientY] };
+        svg.setPointerCapture(ev.pointerId);
+        return;
+      }
+    }
     if (state.tool === "gate" && state.project && !ev.target.closest?.("#g-gates")
         && ev.button === 0 && !ev.ctrlKey && !ev.metaKey) {
       ev.preventDefault();
@@ -515,6 +543,8 @@ function setupCanvas() {
   document.addEventListener("keydown", (ev) => {
     const tag = ev.target && ev.target.tagName;
     const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    // undo, redo, delete and typed lengths all change the drawing
+    if (!typing && drawingLocked()) return;
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") {
       if (typing) return; // leave text-field undo alone
       ev.preventDefault();
@@ -633,6 +663,20 @@ function onDragMove(ev) {
       Math.round(x + dx), Math.round(y + dy),
     ]);
     renderContext();
+    renderLandmarkGrips();
+    return;
+  }
+  if (drag.kind === "landmark-grip") {
+    if (!drag.started) {
+      if (Math.hypot(ev.clientX - drag.start[0], ev.clientY - drag.start[1]) < 4) return;
+      pushSnapshot("resize-landmark");   // one per gesture, before the mutation
+      drag.started = true;
+    }
+    const lm = landmarkById(state.project.context?.landmarks, drag.landmarkId);
+    if (!lm) return; // undo/redo removed it out from under this drag
+    lm.points = dragBandGrip(drag.origin, drag.grip, [mx, my]);
+    renderContext();
+    renderLandmarkGrips();
     return;
   }
   if (!drag.started) {
@@ -736,6 +780,10 @@ function onDragEnd() {
       kind: d.landmarkKind, label: "", ...shape,
     });
     saveContext();
+    return;
+  }
+  if (d.kind === "landmark-grip") {
+    if (d.started) saveContext();       // unrevisioned, like a move
     return;
   }
   if (d.kind === "landmark-move") {

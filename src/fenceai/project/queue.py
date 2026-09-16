@@ -32,8 +32,8 @@ from typing import Callable, Literal
 from pydantic import BaseModel, Field
 
 from fenceai.core.units import Cents
-from fenceai.project.lifecycle import FINISHED_STATES, is_open
-from fenceai.project.model import Project
+from fenceai.project.lifecycle import FINISHED_STATES, is_open, sales_status
+from fenceai.project.model import Project, is_office_note
 from fenceai.report.handover import handover_gaps
 
 #: A page. Big enough that the common desk is one screenful, small enough that
@@ -349,7 +349,62 @@ def _row(p: Project, open_questions: int, now: datetime) -> QueueRow:
     )
 
 
+class MyJobRow(BaseModel):
+    """One job on a salesperson's home screen.
+
+    `office_notes` and `office_latest` are the point of the list: what the
+    office has said about this job, so she can see from the list which job needs
+    her and what it asks — and then open it and find each note where it was
+    pinned. The latest note is carried verbatim (immutable human text) and is
+    rendered escaped and `dir="auto"`; it is never summarised here.
+    """
+
+    id: str
+    label: str
+    customer: str = ""
+    town: str = ""
+    status: str
+    sales_status: str
+    submitted_at: str = ""
+    office_notes: int = 0
+    office_latest: str = ""
+
+
+#: The order her list is read in: what needs her first, then what she is still
+#: writing, then what is out of her hands.
+_ATTENTION = {"needs_info": 0, "draft": 1, "pending": 2, "accepted": 3, "rejected": 4}
+
+
+def my_jobs(projects: list[Project], user_id: str) -> list[MyJobRow]:
+    """The jobs this account created, most urgent first.
+
+    Pure. Unpaged on purpose and bounded by the one person: the per-row work is
+    a pass over that job's notes, not a handover sheet, so there is no derived
+    cost that grows with the whole database. `created_by` is written by the
+    create route from the session; a job created before that field was written
+    has none and belongs to nobody's list.
+    """
+    rows: list[MyJobRow] = []
+    for p in projects:
+        if not user_id or p.created_by != user_id:
+            continue
+        office = [a for a in p.annotations if is_office_note(p, a)]
+        latest = max(office, key=lambda a: a.created_at, default=None)
+        job = p.job
+        rows.append(MyJobRow(
+            id=p.id, label=p.display_name(),
+            customer=job.customer if job else "",
+            town=_town(job.address if job else ""),
+            status=p.status, sales_status=sales_status(p.status),
+            submitted_at=p.submitted_at,
+            office_notes=len(office),
+            office_latest=latest.text if latest else "",
+        ))
+    rows.sort(key=lambda r: (_ATTENTION[r.sales_status], r.label.casefold(), r.id))
+    return rows
+
+
 #: Re-exported so a caller rendering the Finished bucket does not have to import
 #: two modules to know which statuses it is looking at.
 __all__ = ["DEFAULT_LIMIT", "MAX_LIMIT", "FINISHED_STATES", "UNASSIGNED",
-           "QueueFilter", "QueueRow", "select_rows"]
+           "MyJobRow", "QueueFilter", "QueueRow", "my_jobs", "select_rows"]
