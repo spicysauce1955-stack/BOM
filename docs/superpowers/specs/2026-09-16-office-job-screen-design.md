@@ -388,11 +388,28 @@ section tags A, B, C and the post/bay tags `A/P3`, `A/B1`; the grouped BOM keyed
    lists today; nothing draws them on the map.
 3. **`fitToRun(runId)`** — an export from `js/editor.js`. `fitView` is private,
    takes no argument and always fits the whole job.
-4. **`drawProfile(svg, {chain, view, exag, selection})`** — the refactor.
-   `js/profile.js` exports one function, attaches its listeners inside its draw
-   calls, and mounts five mutating base-height buttons as a package. `js/elevation.js`
-   is the house style to copy: it creates and returns a detached SVG, imports no
-   state, subscribes to nothing, and takes interactivity as an opt-in callback.
+4. **`js/section-elevation.js`** — a pure module that returns a detached SVG for
+   one section, in `js/elevation.js`'s house style: creates and returns the
+   element, imports no state, subscribes to nothing, interactivity opt-in.
+
+   **Decided: the card draws a thumbnail, and `js/profile.js` is not refactored.**
+   The obvious move is to extract `drawProfile(svg, …)` from `profile.js` and
+   reuse it read-only. It is the wrong first move. `profile.js` exports one
+   function, keeps five module-level mutable singletons whose projection helpers
+   close over them, and attaches its listeners *inside* its draw calls — so
+   extracting it is a refactor of the most tangled module on the page, in the
+   same slice as a new screen.
+
+   What a card needs is also genuinely a different drawing: base top and panel
+   rectangles per bay, straight off `Section.bays[]` and `Section.ground`, at
+   thumbnail scale. That is a small pure function of the structure report, the
+   way `report/elevation.py` is a small pure function for a panel. It recomputes
+   nothing — every rectangle is a stored bay's `bottom_z_*`, `height_mm` and
+   width.
+
+   *Trigger to extract `drawProfile`: the office asking for the FULL side view —
+   dimensions, intent dashes, ground samples — inside reading mode. Until then
+   the full profile stays the road's step-2 surface, where editing lives anyway.*
 5. **The screen itself** — new DOM ids, which is also how it escapes
    `step-surfaces.js`: that machinery is a deny-list of known ids, so an id in none
    of its four maps is in no step's hide list.
