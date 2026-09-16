@@ -100,6 +100,29 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
     # a real user never sees a native confirm(); auto-accept so a modal cannot
     # wedge the tab in a state the persona has no verb to escape
     c.js("window.confirm = () => true; undefined")
+    # The app opens on a login screen and loads nothing behind it. The personas
+    # here are engineering roles evaluating the whole app, which is the admin
+    # account's `all` view — so the STACK signs in before any persona looks,
+    # the same way a lab would hand a tester an already-logged-in machine. Done
+    # through the real form, not a cookie, so a broken login fails here loudly.
+    # ...once the app has wired the form: submitted earlier, it posts natively
+    # and reloads the page instead of signing in.
+    for _ in range(60):
+        if c.js("document.documentElement.dataset.auth === 'out'"):
+            break
+        time.sleep(0.5)
+    c.js("""document.getElementById('sign-in-email').value = 'admin@example.com';
+            document.getElementById('sign-in-password').value = 'demo';
+            document.getElementById('sign-in').requestSubmit(); 'ok'""")
+    for _ in range(60):
+        if c.js("import('./js/state.js').then(m => document.documentElement"
+                ".dataset.auth === 'in' && !!m.state.project)"):
+            break
+        time.sleep(0.5)
+    else:
+        raise RuntimeError("stack could not sign in as admin@example.com")
+    # An admin lands on the Jobs queue; the personas' work starts on the drawing.
+    c.js("import('./js/tabs.js').then(m => { m.setTab('canvas'); return 'ok'; })")
 
     session = {
         "persona": persona,

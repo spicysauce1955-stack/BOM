@@ -41,7 +41,7 @@ import { clearGroup, el, toPx } from "./geom.js";
 import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import {
-  circleFromMetrics, circleMetrics, gestureFor, LANDMARK_KINDS, MIN_MM,
+  bandGrips, circleFromMetrics, circleMetrics, gestureFor, gripKindsFor, LANDMARK_KINDS, MIN_MM,
   metricsKind, rectFromMetrics, rectMetrics, shapeFor, TREE_SIDES,
 } from "./landmark-shape.js";
 import { on, state } from "./state.js";
@@ -192,6 +192,48 @@ export function render() {
                    "text-anchor": "middle", class: "context-label",
                    "pointer-events": "none" }, g).textContent = text;
     }
+  }
+}
+
+// --- grips: a street is swung, stretched and widened ON the drawing ----------
+
+const GRIP_PX = 10;
+const GRIP_COLOR = "#475569";
+
+/** Which bands show their grips right now — `landmark-shape.js:
+ *  gripKindsFor`, read from state (the armed tool and the road step), never
+ *  from whether a panel happens to be laid out. */
+function gripKinds() {
+  return new Set(gripKindsFor(state.tool, state.step));
+}
+
+/** Draw the grips. The marks are the grab targets (`.landmark-grip`, with
+ *  `data-lm` and `data-grip`); `editor.js` turns a press on one into a drag,
+ *  the same split as a gate's `.gate-handle`. */
+export function renderGrips() {
+  const g = clearGroup("g-landmark-grips");
+  if (!g) return;
+  const kinds = gripKinds();
+  if (!kinds.size) return;
+  for (const lm of state.project?.context?.landmarks || []) {
+    if (!kinds.has(lm.kind) || !lm.closed) continue;
+    const grips = bandGrips(lm.points);
+    if (!grips) continue;
+    const a = toPx(grips.a), b = toPx(grips.b), w = toPx(grips.width);
+    el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: GRIP_COLOR,
+                 "stroke-width": 1, "stroke-dasharray": "3 3",
+                 "pointer-events": "none" }, g);
+    for (const [grip, p] of [["a", a], ["b", b]]) {
+      const r = el("rect", { x: p[0] - GRIP_PX / 2, y: p[1] - GRIP_PX / 2,
+        width: GRIP_PX, height: GRIP_PX, rx: 2, fill: "#fff", stroke: GRIP_COLOR,
+        "stroke-width": 2, class: "landmark-grip", cursor: "grab",
+        "data-lm": lm.id, "data-grip": grip }, g);
+      el("title", {}, r).textContent = t("context.grip.end");
+    }
+    const c = el("circle", { cx: w[0], cy: w[1], r: GRIP_PX / 2 + 1, fill: "#fff",
+      stroke: GRIP_COLOR, "stroke-width": 2, class: "landmark-grip", cursor: "ns-resize",
+      "data-lm": lm.id, "data-grip": "width" }, g);
+    el("title", {}, c).textContent = t("context.grip.width");
   }
 }
 
@@ -424,12 +466,15 @@ export function initContext() {
   // signal that whatever was mid-gesture is over. The click-built house makes
   // this MORE likely, not less: a polygon draft has no release that ends it, so
   // "walked away half-way through" is now an ordinary way to leave one behind.
-  const redraw = () => { clearDraft(); render(); renderPanel(); };
+  const redraw = () => { clearDraft(); render(); renderPanel(); renderGrips(); };
   on("project-loaded", redraw);
   on("context-changed", redraw);
   on("locale-changed", redraw);
   on("view-changed", redraw);
-  on("fit-view", render);
+  on("fit-view", () => { render(); renderGrips(); });
+  // The grips follow the armed tool, and a road step arms one on arrival.
+  on("tool-changed", renderGrips);
+  on("step-changed", renderGrips);
   // Only the panel: the canvas draws world millimetres and does not care what
   // unit they are typed in. The fields DO hold mm rendered in the display unit,
   // so a mm↔cm flip has to re-convert them — the same reason `panel.js`

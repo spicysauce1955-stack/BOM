@@ -169,6 +169,114 @@ drawing".
 
 ---
 
+## The front door, and what the header no longer carries
+
+**Signed out, the page is the login screen and nothing else.** `index.html` ships
+`<html data-auth="pending">`; `app.js` asks `/api/me` last, after every module is
+listening, and sets `data-auth` to `out` or `in`. `style.css` hides every child of
+`body` except `#login-screen` until it reads `in`, and `pending` hides the form too,
+so a signed-in reload never flashes it. No project is fetched before sign-in: the
+workspace opens on the `signed-in` event. The account decides the view
+(`identity/model.py: default_view`) — nobody picks a role on the way in, and only an
+admin is offered `#view-select` afterwards. Signing out **reloads**, because the
+open job, its undo stack and every panel's cached answers belong to the person who
+left. This is the UI's front door, not a security boundary: the server still gates
+only `POST /projects/{id}/actions`.
+
+**No job picker and no name box in the header.** The office and the admin open a
+job from the Jobs queue; "New job" creates an untitled project and step 1 of the
+road names it. A header control that switched jobs mid-step was a second way to be
+in the wrong job. **A salesperson has no Jobs tab**, so after sign-in (and after
+every reload — signing out reloads) the app reopens the job THIS account last had
+open (`session.js: pickProject`, remembered per account in `localStorage`), falling
+back to the first job in the list. That is the only way back to an earlier job on
+the sales view today; a "my jobs" list for sales is not built.
+
+**`#btn-generate` belongs to one step.** It lived in the drawing's toolbar and so
+followed the drawing onto every map step. `step-surfaces.js` now scopes it on its
+own: the office road's `generate` step keeps it, the sales road hides it entirely
+(`ROAD_HIDES_ENTIRELY`), and the `all` view — no road — shows it as before. The
+toolbar itself (fit, finish run) still travels with the drawing.
+
+**Settled, 2026-09-16:** *"No need for the agent to be able to generate a fence."*
+Working out the fence is the office's job, on the office road's step 4, and the
+salesperson has no way to reach it. The consequence is deliberate and worth stating
+where the next reader will meet it: her Review step shows **no estimate** until the
+office has generated one, which supersedes the estimate the sales-road design
+(`specs/2026-09-06-salesperson-road-design.md`) put on that step. The sentences that
+told a reader to "press ⚙" were reworded to "generate the strategy again", because
+the button is not on every screen that shows them.
+
+**A street is dragged along its centre line, at any angle.** The bearing
+soft-snaps to 15° within 4°. A placed band shows three grips in `#g-landmark-grips`
+(`context.js: renderGrips`) by `landmark-shape.js: gripKindsFor(tool, step)`: the
+street/sidewalk tool shows that kind's grips; the select tool shows them only on the
+`property` step or in a view with no road. It reads STATE (`state.step`, published by
+`road.js` with a `step-changed` event after `data-step` is set), never layout — the
+road arms a step's tool before it scopes the screen, so a rule read from the panel's
+visibility at `tool-changed` showed the grips one step late, including live grips
+on the side-view step. The two square ends swing and stretch the street about the
+other end — pulled roughly along itself it keeps its own angle exactly, turned it
+snaps to 15° — and the round one sets the width symmetrically about the centre
+line. The geometry is `landmark-shape.js: snapBearing / bandAxis / dragBandGrip`,
+pure and node-tested; `editor.js` only turns a press on a grip into a
+`landmark-grip` drag with one undo snapshot and a `saveContext` on release. The
+earlier "drag a box and the box is the street" gesture was removed: a box is
+axis-aligned, so a diagonal drag drew a square instead of an angled street.
+
+---
+
+## A salesperson's home, and the office's question back
+
+**Her home is her jobs** (`js/my-jobs.js`, `#tab-myjobs`). A `sales` account signs in
+onto it; the header's "My jobs" returns to it; the road band hides while it is on
+screen, because no job is being walked. Each row is a job HER account created
+(`GET /api/my-jobs`) with a sales word for where it is — `needs_info · draft ·
+pending · accepted · rejected`, folded from the eight job states by
+`lifecycle.sales_status`, in that order of attention — and the office's latest note
+verbatim. Opening a job the office has written on lands on the **review step**
+(`road-go` event), because that is where a note is read beside the map it was
+pinned on; anything else opens at step 1.
+
+**The review step shows the map again.** "He should look at it and figure out if he
+made mistakes." It keeps the drawing, fit-view, the notes panel and `#finish-job`:
+*Send to the office* (`submit_job`) for a draft, *Send my answers* for a job handed
+back, and *Back to my jobs* always. Sending returns her home. The generate button
+stays hidden on this road. **A job she has sent is view-only for her**
+(`state.js: drawingLockedFor`, editable exactly where `submit_job` accepts the job):
+the tools hide (`html[data-locked]`), every press on the canvas pans, and clicks and
+keys that would change the drawing are ignored — a drag there would bump the
+topology under a run the office generated. Presentation only: the server does not
+gate topology writes by status yet.
+
+**The office asks back** (`js/desk-actions.js`, `#desk-actions`, on the office's
+`sale` and `blanks` steps): a reason and *Send back with this question* performs
+`return_to_sales`, which the desk had as a command and no screen performed. A
+question about one THING is a note pinned on it — the office's `blanks` step now
+keeps the note tool — and a note written by an account other than the job's
+creator is "from the office": marked in the notes panel and drawn larger in blue
+on the map (`notes.js: isFromOffice`, mirroring `project/model.py: is_office_note`).
+That one rule also decides what counts as **the sale**: with a recorded creator, the
+sale anchor and her "no promises" claim read her notes only, whenever she wrote
+them — a promise added after sending un-reads the office's acknowledgement, and an
+office question never contradicts her. Jobs with no recorded creator keep the older
+time-based reading.
+
+**Which way a gate opens is chosen on the drawing.** On the gates step (and the
+office's blanks step, or with the gate tool armed) every possible swing is drawn
+faintly — four for a single leaf, two for a double, two for a sliding gate
+(`gate-geom.js: swingOptions`) — each with a round target where the open leaf
+would stand, and one click states side, post and slide together. The old flow
+(click the `?`, then the arc to flip it, then the hinge dot to swap it) was two
+hidden controls on a 45 px mark; the arc and the hinge dot still work on the
+stated swing.
+
+**Site conditions beyond exposure are optional and folded** (`#site-more`): HVHZ,
+frost depth, jurisdiction and code edition start blank, the group opens by itself
+only when one has a value, and the panel no longer counts what is unstated.
+
+---
+
 ## Typed measurements
 
 A street landmark could be typed — angle, length, width — and the fence could

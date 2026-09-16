@@ -81,7 +81,7 @@ from fenceai.identity.model import (
     SYSTEM, User, actor_ref, default_view, may_choose_view, verify_password,
 )
 from fenceai.identity import session as sessions
-from fenceai.project.queue import DEFAULT_LIMIT, QueueFilter, select_rows
+from fenceai.project.queue import DEFAULT_LIMIT, QueueFilter, my_jobs, select_rows
 from fenceai.store.db import Store
 from fenceai.strategy.generator import DEFAULT_POLICY, LEGACY_MODEL_ID, generate
 from fenceai.strategy.model import PartUse
@@ -360,7 +360,12 @@ class ProjectCreate(BaseModel):
 
 @app.post("/api/projects")
 def create_project(request: Request, body: ProjectCreate) -> Project:
-    project = Project(id=new_id("proj"), name=body.name, job=body.job)
+    # Who created it, from the session and never from the body: it is what puts
+    # the job on that salesperson's home screen (`GET /api/my-jobs`), and a
+    # creator a client could name would put jobs on somebody else's list.
+    user = _signed_in(request)
+    project = Project(id=new_id("proj"), name=body.name, job=body.job,
+                      created_by=user.id if user else "")
     state.store.save_project(project, actor=_actor(request))
     return project
 
@@ -636,6 +641,19 @@ def queue(
     return {"rows": [_queue_row(r) for r in rows], "next_cursor": next_cursor}
 
 
+@app.get("/api/my-jobs")
+def my_jobs_route(request: Request) -> dict:
+    """A salesperson's home screen: the jobs this account created, what the
+    office has said about each, most urgent first.
+
+    Signed-in only, because "my" has no answer otherwise — an anonymous request
+    is a 401 rather than an empty list that reads as "you have no jobs".
+    """
+    user = _require_user(request)
+    rows = my_jobs(state.store.list_projects(), user.id)
+    return {"rows": [r.model_dump() for r in rows]}
+
+
 def actor_user_id(user: User | None) -> str:
     """`assignee=me` with nobody signed in matches nobody, which is the honest
     answer — not everybody."""
@@ -695,8 +713,12 @@ class AnnotationCreate(BaseModel):
 @app.post("/api/projects/{project_id}/annotations")
 def add_annotation(request: Request, project_id: str, body: AnnotationCreate) -> Annotation:
     project = _project(project_id)
+    # The session outranks `author` (see `_actor`), and the time is stamped: both
+    # are what let a salesperson's list tell the office's notes from her own,
+    # and let the handover tell a note made after she sent the job from the sale.
     annotation = Annotation(
-        id=new_id("ann"), target_ref=body.target_ref, text=body.text, author=body.author
+        id=new_id("ann"), target_ref=body.target_ref, text=body.text,
+        author=_actor(request, fallback=body.author), created_at=_now_iso(),
     )
     project.annotations.append(annotation)
     state.store.save_project(project, actor=_actor(request))
@@ -2092,5 +2114,23 @@ def resolve_source_refs(body: SourceRefBatchRequest) -> SourceRefBatchResponse:
     return SourceRefBatchResponse(resolved=resolved, not_found=not_found)
 
 
+class _RevalidatedStaticFiles(StaticFiles):
+    """The frontend, served so a browser ASKS before reusing a cached file.
+
+    There is no build step (ADR-0010), so file names never change between
+    versions. Without a `Cache-Control` a browser applies heuristic caching to
+    each ES module separately, and after an update it can pair a fresh
+    `app.js` with a stale `js/session.js`: the import of a name the old module
+    does not export fails, `app.js` never runs, and the page stays blank. That
+    is what a user saw the first time the login screen shipped. `no-cache`
+    means revalidate, not "do not cache" — the ETag StaticFiles already sends
+    makes an unchanged file a 304."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if WEB_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+    app.mount("/", _RevalidatedStaticFiles(directory=str(WEB_DIR), html=True), name="web")

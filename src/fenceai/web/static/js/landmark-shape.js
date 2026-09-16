@@ -38,8 +38,8 @@ export const OTHER_KINDS = ["sidewalk", "pool", "tree", "boundary", "other"];
 // things a person is actually doing:
 //   polygon — click corner, corner, corner: a building has as many corners as
 //             it has, and a drag can only ever describe four of them
-//   band    — drag the BOX the road occupies, or, if the drag is a straight
-//             line along it, a band of the default width around that line
+//   band    — drag along the road's centre line, at any angle; the width and
+//             both ends are grips on the drawing afterwards
 //   rect    — drag a box, the oldest gesture on the canvas
 //   circle  — drag from the middle outward, which is where a tree's trunk is
 export const GESTURE = {
@@ -95,25 +95,23 @@ export function shapeFor(kind, from, to, minMm = MIN_MM) {
   // gesture in this tool.
   if (Math.abs(x1 - x0) < minMm && Math.abs(y1 - y0) < minMm) return null;
   if (gesture === "band") {
-    // TWO gestures, one kind, and the user asked for the first of them: "the
-    // street has a fixed width and is not easy to place".
+    // The drag IS the centre line, at whatever angle it was dragged, and the
+    // band gets the default width around it. The width is then a grip on the
+    // drawing (`dragBandGrip`), not a second reading of the same drag.
     //
-    //   drag a BOX  -> that box is the street. Both the length and the width
-    //                  come out of the one drag, and no default is imposed.
-    //   drag a LINE -> a band of the default width along it, because dragging
-    //                  along the road is the motion the tool invites and a
-    //                  zero-width sliver is not a street.
+    // This replaces a box gesture — "drag a box and that box is the street" —
+    // which answered "the street has a fixed width" and created the next
+    // complaint: a box is axis-aligned, so a diagonal drag drew a fat square
+    // rather than a street running at that angle, and the only way to angle
+    // one was to type degrees into the side panel. "Make the street placement
+    // more flexible (angles and such)".
     //
-    // The box branch orders its corners the long side first, so `rectMetrics`
-    // reads "length" and "width" the way the person who dragged it would —
-    // a tall thin box is a street running up the page, not a 2 m street 30 m
-    // wide.
-    const minor = Math.min(Math.abs(x1 - x0), Math.abs(y1 - y0));
-    if (minor < minMm) {
-      const rect = bandRect([x0, y0], [x1, y1], DEFAULT_WIDTH_MM[kind] ?? 1500);
-      return rect ? { points: rect, closed: true } : null;
-    }
-    return { points: longSideFirstBox([x0, y0], [x1, y1]), closed: true };
+    // The bearing snaps to the nearest 15° when the drag is within a few
+    // degrees of one, so a street meant to run square to the page comes out
+    // square without anybody holding a key, and any other angle is untouched.
+    const end = snapBearing([x0, y0], [x1, y1]);
+    const rect = bandRect([x0, y0], end, DEFAULT_WIDTH_MM[kind] ?? 1500);
+    return rect ? { points: rect, closed: true } : null;
   }
   if (gesture === "circle") {
     // The drag starts at the trunk and pulls out to the canopy, so the
@@ -129,16 +127,126 @@ export function shapeFor(kind, from, to, minMm = MIN_MM) {
   return { points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], closed: true };
 }
 
-/** The dragged box, wound so that `p0 -> p1` is its LONGER side.
+// How close to a round bearing a drag has to be before it snaps onto it. Wide
+// enough that "roughly along the page" lands exactly along it, narrow enough
+// that a street deliberately at 20° stays at 20°.
+export const BEARING_STEP_DEG = 15;
+export const BEARING_SNAP_DEG = 4;
+
+// A street narrower than this is a line again, and a line cannot be grabbed.
+export const MIN_BAND_WIDTH_MM = 500;
+
+/** `to`, turned onto the nearest multiple of `stepDeg` around `from` when it is
+ *  within `tolDeg` of one — otherwise `to` unchanged. The LENGTH is kept either
+ *  way: snapping the angle must not also shorten the street. Integer mm out. */
+export function snapBearing(from, to, stepDeg = BEARING_STEP_DEG, tolDeg = BEARING_SNAP_DEG) {
+  if (!isPoint(from) || !isPoint(to)) return to;
+  const dx = to[0] - from[0], dy = to[1] - from[1];
+  const len = Math.hypot(dx, dy);
+  if (len <= 0) return [rnd(to[0]), rnd(to[1])];
+  const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const nearest = Math.round(deg / stepDeg) * stepDeg;
+  if (Math.abs(deg - nearest) > tolDeg) return [rnd(to[0]), rnd(to[1])];
+  const a = (nearest * Math.PI) / 180;
+  return [rnd(from[0] + len * Math.cos(a)), rnd(from[1] + len * Math.sin(a))];
+}
+
+/** A band read back as its CENTRE LINE: `{a, b, width_mm}`, or null when the
+ *  four points are not a rectangle.
  *
- *  Same four corners as the plain `rect` gesture; only the starting corner
- *  differs, and it differs on purpose — the corner order is what
- *  `rectMetrics` reads "length" and "width" off, so a box wound the other way
- *  would report a 30 m street as 2 m long and 30 m wide. */
-function longSideFirstBox([x0, y0], [x1, y1]) {
-  if (Math.abs(x1 - x0) >= Math.abs(y1 - y0))
-    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-  return [[x0, y0], [x0, y1], [x1, y1], [x1, y0]];
+ *  `a` is the middle of the `p3 -> p0` end and `b` the middle of `p1 -> p2`,
+ *  which is `bandRect`'s corner contract read backwards — so
+ *  `bandRect(a, b, width_mm)` rebuilds the same band. */
+export function bandAxis(points) {
+  if (!rectMetrics(points)) return null;
+  const [p0, p1, p2, p3] = points;
+  const mid = (p, q) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+  return {
+    a: mid(p0, p3),
+    b: mid(p1, p2),
+    width_mm: rnd(Math.hypot(p2[0] - p1[0], p2[1] - p1[1])),
+  };
+}
+
+/** Where a band's three grips sit, in mm: one on each end of the centre line,
+ *  and one on the middle of a long edge for the width. Null for a shape that is
+ *  not a band. */
+export function bandGrips(points) {
+  const axis = bandAxis(points);
+  if (!axis) return null;
+  const [p0, p1] = points;
+  return { a: axis.a, b: axis.b, width: [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2] };
+}
+
+/** `pointer`, projected onto the ray `from -> through`, when the bearing of
+ *  `from -> pointer` is within `tolDeg` of that ray's — otherwise null.
+ *
+ *  This is what lets a street somebody TYPED at 12° be stretched without being
+ *  re-snapped to 15°: pulling an end roughly along the street keeps the street's
+ *  own angle exactly, and only a drag that genuinely turns it is offered the
+ *  round bearings. */
+function alongOwnBearing(from, through, pointer, tolDeg = BEARING_SNAP_DEG) {
+  const ux = through[0] - from[0], uy = through[1] - from[1];
+  const len = Math.hypot(ux, uy);
+  const px = pointer[0] - from[0], py = pointer[1] - from[1];
+  const plen = Math.hypot(px, py);
+  if (len <= 0 || plen <= 0) return null;
+  const cos = (ux * px + uy * py) / (len * plen);
+  const deg = (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+  if (deg > tolDeg) return null;
+  const along = (ux * px + uy * py) / len;
+  return [rnd(from[0] + (ux / len) * along), rnd(from[1] + (uy / len) * along)];
+}
+
+/** Which landmark kinds show their grips, for the armed `tool` on road step
+ *  `step` (`null` when the view has no road — the whole app).
+ *
+ *    - the street or sidewalk tool: that kind, on any step that offers it;
+ *    - the select tool: every band kind, but only where the property is being
+ *      edited — the salesperson's `property` step, or a view with no road;
+ *    - anything else: none. Grips are live hit targets, so a grip left on the
+ *      side-view step would let a click meant for the ground reshape the street.
+ *
+ *  Decided from state, not from whether a panel happens to be laid out: the
+ *  road arms a step's tool BEFORE it scopes the screen, so a layout read at
+ *  `tool-changed` saw the previous step and showed the grips one step late. */
+export function gripKindsFor(tool, step) {
+  const bands = LANDMARK_KINDS.filter((k) => GESTURE[k] === "band");
+  if (bands.includes(tool)) return [tool];
+  if (tool === "select" && (step === "property" || step == null)) return bands;
+  return [];
+}
+
+/** The band after dragging one grip to `pointer`, from the band as it was when
+ *  the drag STARTED (`origin`) — a delta from the start, never an accumulation
+ *  of rounded moves.
+ *
+ *    grip "a" / "b" — that end of the centre line goes to the pointer and the
+ *                     other end stays put: the street swings and stretches
+ *                     about its far end. Pulled roughly along the street it
+ *                     keeps its own angle exactly; turned, it is
+ *                     bearing-snapped like drawing one.
+ *    grip "width"   — the band keeps its centre line and becomes as wide as
+ *                     twice the pointer's distance from it, so it grows on
+ *                     both sides at once and never drifts off the road.
+ *
+ *  Returns `origin` unchanged for a drag that would leave no street (ends
+ *  closer than `MIN_MM`) — refusing a bad drop rather than saving a sliver. */
+export function dragBandGrip(origin, grip, pointer) {
+  const axis = bandAxis(origin);
+  if (!axis || !isPoint(pointer)) return origin;
+  let { a, b, width_mm: width } = axis;
+  if (grip === "a") a = alongOwnBearing(b, a, pointer) ?? snapBearing(b, pointer);
+  else if (grip === "b") b = alongOwnBearing(a, b, pointer) ?? snapBearing(a, pointer);
+  else if (grip === "width") {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy);
+    if (len <= 0) return origin;
+    const off = Math.abs(((pointer[0] - a[0]) * dy - (pointer[1] - a[1]) * dx) / len);
+    width = Math.max(MIN_BAND_WIDTH_MM, rnd(off * 2));
+  } else return origin;
+  if (Math.hypot(b[0] - a[0], b[1] - a[1]) < MIN_MM) return origin;
+  return bandRect(a, b, width) ?? origin;
 }
 
 /** The rectangle of width `widthMm` centred on the segment `from -> to`.

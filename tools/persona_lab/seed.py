@@ -90,38 +90,53 @@ def seed(port: int) -> list[dict]:
 
 
 def open_project(session: dict, project_id: str, *, expect_name: str = "") -> str:
-    """Reload the tab and select a project, asserting the selection took.
+    """Reload the tab and open a project, asserting the app really has it open.
 
-    The app builds its project list at load time. Seeding after the page has
-    loaded leaves the new options absent, so assigning `select.value` silently
-    does nothing and the persona lands on the seeded demo instead — which is
-    exactly what contaminated the first wave of run 2. Reload first, then
-    verify, and fail loudly rather than starting a persona in the wrong world.
+    There is no job picker in the header any more, so this opens the project
+    through the app's own `openProject` — the same module instance the page
+    uses — and then asks the app which project is open. Reloading first still
+    matters: the session cookie signs the reloaded page straight back in, and
+    whatever the page had cached about projects before seeding is gone. Fails
+    loudly rather than starting a persona in the wrong world.
     """
     from . import driver as driver_mod
 
     d = driver_mod.Driver(session)
     try:
         d._cmd("Page.navigate", url=f"http://localhost:{session['port']}/")
-        time.sleep(4)
+        for _ in range(40):
+            if d._eval("document.documentElement.dataset.auth === 'in'"):
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(
+                "the reloaded page never signed back in — the persona would "
+                "start on the login screen, not in its project"
+            )
+        known = d._eval(
+            "fetch('/api/projects').then(r => r.json())"
+            f".then(list => list.find(p => p.id === {project_id!r}) || null)"
+        )
+        if not known:
+            raise RuntimeError(
+                f"project {project_id} is not in the project list after reload — "
+                "the persona would start in the wrong project"
+            )
         value = d._eval(
-            "(() => { const s = document.getElementById('project-select');"
-            f" s.value = {project_id!r};"
-            " s.dispatchEvent(new Event('change')); return s.value; })()"
+            "import('./js/state.js').then(async m => {"
+            f" await m.openProject({project_id!r});"
+            " (await import('./js/tabs.js')).setTab('canvas');"
+            " return m.state.projectId; })"
         )
         if value != project_id:
             raise RuntimeError(
-                f"project {project_id} is not in the selector after reload — "
-                f"got {value!r}; the persona would start in the wrong project"
+                f"project {project_id} did not open — got {value!r}; "
+                "the persona would start in the wrong project"
             )
-        time.sleep(2)
         if expect_name:
-            shown = d._eval(
-                "(() => { const s = document.getElementById('project-select');"
-                " return s.selectedOptions.length ? s.selectedOptions[0].text : ''; })()"
-            )
-            if expect_name not in (shown or ""):
-                raise RuntimeError(f"selector shows {shown!r}, expected {expect_name!r}")
+            shown = f"{known.get('label') or ''} {known.get('name') or ''}"
+            if expect_name not in shown:
+                raise RuntimeError(f"project is called {shown.strip()!r}, expected {expect_name!r}")
         return value
     finally:
         d.close()

@@ -3,6 +3,86 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-09-15 (evening): a salesperson's home, and a question back
+
+Same branch. Six pieces of user feedback after trying the login slice:
+
+* **"The map is not shown in the final step."** Sales review keeps the drawing now
+  (reversing the 2026-09 "steps 1 and 8 have no map" rule for step 8).
+* **"It is unclear how to set the open side of the gate."** Every possible swing is
+  drawn faintly on the gates step; one click on the round target states it.
+* **"The sales agent home screen should be a list of his jobs … comments or
+  demands from the office … open them and see exactly where and what."** `My jobs`
+  (`GET /api/my-jobs`, `Project.created_by` now written from the session), statuses
+  folded to five words, the office's latest note on the row, and opening lands on
+  review with office notes marked on the map and in the panel.
+* **"Pending, accepted, rejected, requesting more information."** Implemented as
+  `pending · accepted · rejected · needs_info`, plus `draft` for a job never sent.
+* **"When he chooses to finish the job he returns to his home screen."** Review's
+  *Send to the office* / *Send my answers* / *Back to my jobs*.
+* **"Site conditions … expandable and not mandatory (blank by default)."** Folded,
+  blank, no "not stated" count.
+
+Two things were missing underneath and had to be built for the above to mean
+anything: no screen could perform `submit_job` (a salesperson could not send a job)
+or `return_to_sales` (the office could not ask back). Both are now buttons.
+**Known gap:** jobs created before `created_by` was written belong to nobody's list.
+
+Both reviewers ran. `architecture-critic` found one blocker — stamping `created_at`
+on notes had quietly made a promise she added after sending never un-read the
+office's acknowledgement — fixed by deciding "the sale" by author
+(`is_office_note` / `sale_notes`) where a creator is recorded; plus office questions
+contradicting her "no promises", a sent job still editable from review (now
+view-only for her), the office's typed reason wiped by pinning a note, sliding
+swing options collapsing onto the posts of a gate beside the fence, and a header
+"New job" that did nothing visible from the home screen — all fixed. Still open:
+"office" is "another account", not a capacity; a salesperson with no remembered job
+may load a colleague's job behind her home screen. `test-reviewer`: 28 mutants;
+the survivors (creator-from-body, latest-note order, surface pins, swing-option
+rule, refusal rendering) are pinned now. The browser smoke grew to **561 green
+checks** (one round-trip case) and caught one more bug — the optional site fold stayed
+open on the next job — fixed by remembering it per job.
+
+## Checkpoint — 2026-09-15 (later): login first, no job picker, a street you can turn
+
+Branch `feat/login-first-and-street` in its own worktree (`../BOM-login-first`),
+not merged, not committed at the time of writing. Four pieces of direct user
+feedback after seeing the desk run:
+
+* **"The first view should be login with nothing else."** Signed out, the page is
+  `#login-screen` only (`html[data-auth]`); no project loads before sign-in; the
+  account decides the view; signing out reloads. UI front door only — the server
+  still gates just `/actions`.
+* **"We don't need project selection in mid project."** `#project-select` and the
+  name box are gone. "New job" makes an untitled job. Office/admin open jobs from
+  the queue; sales reopens the job its account last had open (`pickProject`). A
+  "my jobs" list for sales was the one real gap this left, and the evening
+  checkpoint above closes it; `tools/assign_jobs.py` gives the jobs that predate
+  `created_by` an owner so they reach it.
+* **"The Work out the fence button shouldn't be static throughout the steps —
+  remove it."** `#btn-generate` is kept only by the office `generate` step; sales
+  hides it on every step. **Answered 2026-09-16:** "no need for the agent to be
+  able to generate a fence" — it stays the office's. Her Review step therefore
+  shows no estimate until the office has worked one out, which supersedes the
+  estimate the sales-road design put on step 8.
+* **"Make the street placement more flexible (angles and such)."** The drag is the
+  centre line at any angle (15° soft snap); grips swing, stretch and widen a placed
+  street. **This removed the 2026-08 box gesture** ("drag a box, the box is the
+  street") that answered "the street has a fixed width" — the width grip answers
+  that now, and a box could never be angled.
+
+Both project reviewers ran before this entry. `architecture-critic`: two blockers
+(sales could not get back to a job; grips decided from layout showed one step late,
+live on the side-view step) and four defects (Generate for sales, grip drags
+re-snapping typed angles, silent blank page on a network failure, "press ⚙" text
+where no ⚙ is) — all fixed except the Generate question, which is the user's.
+`test-reviewer`: 15 mutants, 11 survived — the Generate scoping had no pytest pin
+(only JS⇄CSS equality), grip visibility and snap boundaries were untested. Pins
+added in `test_step_surfaces.py`, `test_landmark_shape_module.py`,
+`test_session_module.py` and the new `test_login_screen.py`; browser smoke extended.
+**3227 tests and 500 browser checks green** on the branch (from 3208 / 439).
+`tools/persona_lab` signs in before a persona looks.
+
 ## Checkpoint — 2026-09-15: the backoffice has a desk, and it is on main
 
 PR #5 merged. `main` is at `1a587b4`, **3208 tests and 439 browser checks green

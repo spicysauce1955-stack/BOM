@@ -340,3 +340,70 @@ export function screenSideOf(direction, side) {
   if (Math.abs(n[0]) >= Math.abs(n[1])) return n[0] > 0 ? "right" : "left";
   return n[1] > 0 ? "up" : "down";
 }
+
+/** Every way a gate of this leaf type can open, as the facts that state it.
+ *
+ *  The gate step draws each of these faintly around a placed gate and a click
+ *  on one states all of its facts at once. That replaced a flip-and-swap UI —
+ *  click the `?`, then click the arc to turn it round, then the hinge dot to
+ *  move it to the other post — that the user found tricky: two hidden controls
+ *  on a mark 45 px wide, each cycling through answers you could not see until
+ *  you had clicked past them. Here every answer is on the drawing before the
+ *  first click, and the one you want is the one you point at.
+ *
+ *  single  — 4: two sides × two posts to hang from
+ *  double  — 2: two sides (each leaf hangs from its own post)
+ *  sliding — 2: which end it retracts toward
+ */
+export function swingOptions(leaf) {
+  if (leaf === "sliding")
+    return ["start", "end"].map((to) => ({ opens_to: null, hinge: null, slides_to: to }));
+  if (leaf === "double")
+    return ["left", "right"].map((side) => ({ opens_to: side, hinge: null, slides_to: null }));
+  const out = [];
+  for (const side of ["left", "right"])
+    for (const hinge of ["start", "end"])
+      out.push({ opens_to: side, hinge, slides_to: null });
+  return out;
+}
+
+/** Is `option` the swing this gate already states? Missing facts compare as
+ *  null, so a stored gate that never set `slides_to` still matches. */
+export function isCurrentSwing(gate, option) {
+  const v = (x) => x ?? null;
+  return v(gate?.opens_to) === option.opens_to && v(gate?.hinge) === option.hinge
+    && v(gate?.slides_to) === option.slides_to;
+}
+
+/** Where the swing options are drawn: the steps whose work is gates (the
+ *  salesperson's `gates`, the office's `blanks`) or the gate tool armed. Pure,
+ *  for node — `gates.js` adds the one thing it cannot know, whether the drawing
+ *  is view-only. */
+export function swingOptionsShownFor(step, tool) {
+  return tool === "gate" || step === "gates" || step === "blanks";
+}
+
+/** The arrow a SLIDING option is drawn with: `slideArrow` when the fence runs
+ *  on past the opening, and otherwise a stub off the retracting edge.
+ *
+ *  `slideArrow` stops at the end of the polyline it is given. A gate standing
+ *  beside the fence (`GateSpan`) has a polyline that IS the opening, so both
+ *  options collapsed onto the two posts with no arrow — beside the resize grips,
+ *  saying nothing about which way either one slides. The stub carries on past
+ *  the edge along the opening's own direction, by the leaf's width capped at a
+ *  distance that stays readable on screen. */
+export function slideOptionArrow(points, startStationMm, widthMm, slidesTo) {
+  const arrow = slideArrow(points, startStationMm, widthMm, slidesTo);
+  if (arrow && Math.hypot(arrow.to[0] - arrow.from[0], arrow.to[1] - arrow.from[1]) >= 1)
+    return arrow;
+  const edges = openingEdges(polyline(points), startStationMm, widthMm);
+  if (!edges) return null;
+  const from = slidesTo === "start" ? edges.a : edges.b;
+  const away = slidesTo === "start" ? edges.b : edges.a;
+  const dx = from[0] - away[0], dy = from[1] - away[1];
+  const len = Math.hypot(dx, dy);
+  if (!(len > 0)) return null;
+  const reach = Math.min(widthMm, 1200);
+  return { from: [from[0], from[1]],
+           to: [rnd(from[0] + (dx / len) * reach), rnd(from[1] + (dy / len) * reach)] };
+}

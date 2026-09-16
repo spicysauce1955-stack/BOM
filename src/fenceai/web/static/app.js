@@ -20,26 +20,31 @@ import { initPanel } from "./js/panel.js";
 import { initProfile } from "./js/profile.js";
 import { initRoad } from "./js/road.js";
 import {
-  createProject, loadProjects, on, openProject, state,
+  createProject, emit, loadProjects, on, openProject, state,
 } from "./js/state.js";
 import { initSectionDecisions } from "./js/section-decisions.js";
 import { initSite } from "./js/site.js";
 import { initStructureData } from "./js/structure-data.js";
 import { initStructure } from "./js/structure.js";
-import { initTabs } from "./js/tabs.js";
+import { initTabs, setTab } from "./js/tabs.js";
 import { initView, setView } from "./js/view.js";
-import { loadMe, signIn, signOut } from "./js/session.js";
+import { lastProjectKey, loadMe, pickProject, signIn, signOut } from "./js/session.js";
 import { initQueue } from "./js/queue.js";
+import { initMyJobs } from "./js/my-jobs.js";
+import { initDeskActions } from "./js/desk-actions.js";
 import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
 function setupHeader() {
+  // A new job starts untitled on purpose: who it is for and where is step 1 of
+  // the road (`js/job.js`), and a second name box up here was a second place to
+  // type it that disagreed with the first.
   document.getElementById("btn-new-project").addEventListener("click", async () => {
-    const name = document.getElementById("new-project-name").value.trim() || t("project.untitled");
-    await createProject(name);
-    await refreshProjectList();
+    await createProject(t("project.untitled"));
+    // ...and SHOW it: pressed from a home screen, creating a job behind the list
+    // did nothing visible, and every press made another one.
+    setTab("canvas");
+    emit("road-go", "job");
   });
-  document.getElementById("project-select").addEventListener("change",
-    (e) => openProject(e.target.value));
   document.getElementById("btn-locale").addEventListener("click",
     () => setLocale(currentLocale() === "he" ? "en" : "he"));
   document.getElementById("btn-units").addEventListener("click", toggleUnits);
@@ -47,44 +52,33 @@ function setupHeader() {
   viewSelect.value = state.view;
   viewSelect.addEventListener("change", () => setView(viewSelect.value));
   initQueue();
+  initMyJobs();
+  initDeskActions();
   wireIdentity();
   // the unit label itself is localized: relabel the button when the language flips
   on("locale-changed", updateUnitsButton);
-  // ...and the picker is labelled by the JOB, which can be named long after the
-  // project was created.
-  on("job-changed", refreshProjectList);
-  // The picker follows whatever job is OPEN, however it was opened.
-  //
-  // It only ever rebuilt on create and on rename, so a job opened from the
-  // queue — or created by anybody else since this tab loaded — was not among
-  // its options and setting `.value` to an unknown id silently left the old
-  // one selected. The header then named a different job from the one on
-  // screen, which is the "project 7" confusion the job identity slice existed
-  // to end, arriving by a new route.
-  on("project-opened", async (id) => {
-    const sel = document.getElementById("project-select");
-    if (!sel) return;
-    if (![...sel.options].some((o) => o.value === id)) await refreshProjectList();
-    sel.value = id;
-  });
 }
 
-/** The sign-in form and the who-am-I chip.
+/** The login screen and the who-am-I chip.
  *
- *  `loadMe()` runs AFTER `initView()` rather than instead of it: a signed-out
- *  browser must reach today's app without waiting on a round trip, and a signed-in
- *  one then corrects the view. The same ordering `initView` already needs against
- *  `initI18n` — audit observation 2, where a reload in sales mode hid the right
- *  surfaces and then showed an engineer's words on them.
+ *  Signed out, the login form is the whole page (`html[data-auth="out"]`). The
+ *  account decides the view — `session.js` applies `/api/me`'s answer — so
+ *  nobody picks a role on the way in.
+ *
+ *  Signing out RELOADS rather than hiding the workspace again: the open job,
+ *  its undo stack and every panel's cached answers belong to the person who
+ *  just left, and the next person to sign in on this browser must not inherit
+ *  them.
  */
 function wireIdentity() {
   const form = document.getElementById("sign-in");
   const chip = document.getElementById("signed-in-as");
   const err = document.getElementById("sign-in-error");
+  const unreachable = document.getElementById("sign-in-unreachable");
 
   const render = () => {
     const me = state.me;
-    form.hidden = !!me;
+    document.documentElement.dataset.auth = me ? "in" : "out";
     chip.hidden = !me;
     if (!me) return;
     // `esc` is not needed for textContent, which is the point of using it: a
@@ -97,35 +91,44 @@ function wireIdentity() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     err.hidden = true;
-    const ok = await signIn(document.getElementById("sign-in-email").value,
-                            document.getElementById("sign-in-password").value);
+    unreachable.hidden = true;
+    const outcome = await signIn(document.getElementById("sign-in-email").value,
+                                 document.getElementById("sign-in-password").value);
     // One message for a wrong password and for an address with no account — the
     // server already refuses both identically, and a kinder message here would
     // undo that by telling somebody which half they got right.
-    if (!ok) err.hidden = false;
+    if (outcome === "refused") err.hidden = false;
+    else if (outcome === "unreachable") unreachable.hidden = false;
     else document.getElementById("sign-in-password").value = "";
   });
-  document.getElementById("sign-out").addEventListener("click", () => signOut());
+  document.getElementById("sign-out").addEventListener("click", async () => {
+    await signOut();
+    location.reload();
+  });
 
-  on("signed-in", render);
+  on("signed-in", async () => { render(); await openWorkspace(); });
   on("signed-out", render);
-  render();
-  loadMe();
+  // Remembered per account, so the next sign-in reopens this job.
+  on("project-opened", (id) => {
+    if (!state.me) return;
+    try { localStorage.setItem(lastProjectKey(state.me.id), id); } catch { /* storage off */ }
+  });
 }
 
-async function refreshProjectList() {
-  const list = await loadProjects();
-  const sel = document.getElementById("project-select");
-  sel.innerHTML = "";
-  for (const p of list) {
-    const o = document.createElement("option");
-    // `label` is the API's own answer (Job.label(), or the name when
-    // there is no job) — computed there so the picker and the handover
-    // cannot disagree about what a job is called.
-    o.value = p.id; o.textContent = p.label || p.name;
-    sel.appendChild(o);
-  }
-  if (state.projectId) sel.value = state.projectId;
+/** Load a job onto the screen, only for somebody signed in.
+ *
+ *  Nothing is fetched before sign-in: the login screen is the whole page, and a
+ *  project loaded behind it would be a job shown to nobody in particular. It
+ *  runs once per page because `signed-in` fires once per page — signing out
+ *  reloads. Opens the job this person last had open (`pickProject`). */
+async function openWorkspace() {
+  const health = await apiGet("/api/health");
+  document.getElementById("ai-badge").textContent = `AI: ${health.interpreter}`;
+  let remembered = null;
+  try { remembered = localStorage.getItem(lastProjectKey(state.me.id)); } catch { /* storage off */ }
+  const id = pickProject(await loadProjects(), remembered);
+  if (id) await openProject(id);
+  else await createProject(t("project.demo_name"));
 }
 
 function setupUndoButtons() {
@@ -176,13 +179,10 @@ async function main() {
   initAgentAdvice();
   setupHeader();
   setupUndoButtons();
-
-  const health = await apiGet("/api/health");
-  document.getElementById("ai-badge").textContent = `AI: ${health.interpreter}`;
-  await refreshProjectList();
-  if (!state.projectId) await createProject(t("project.demo_name"));
-  else await openProject(state.projectId);
-  await refreshProjectList();
+  // Last: `signed-in` opens the workspace, so every panel must already be
+  // listening for the project it loads.
+  if (!(await loadMe()))
+    document.getElementById("sign-in-unreachable").hidden = false;
 }
 
 main();

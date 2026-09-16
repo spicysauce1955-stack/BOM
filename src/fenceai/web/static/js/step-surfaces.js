@@ -85,7 +85,10 @@ const STEP_TOOLS = {
     // Her work, finished — the one office step that borrows the salesperson's
     // tools, because these four checks are hers and these are the tools that
     // close them.
-    blanks: ["#tool-ground", "#tool-base", "#tool-height", "#tool-model", "#tool-gate"],
+    // ...plus the note tool: a blank the office cannot fill is a QUESTION, and
+    // it is pinned on the thing it is about so the salesperson finds it there.
+    blanks: ["#tool-ground", "#tool-base", "#tool-height", "#tool-model", "#tool-gate",
+             "#tool-note"],
     questions: [],
     // A promise becomes an instruction here: "a post clear of that window" is
     // a pin, and the pin is the only tool this step offers.
@@ -115,7 +118,10 @@ const STEP_PANELS = {
     // edited.
     gates: ["#gates-panel", "#run-editing-panel"],
     notes: ["#notes-panel"],
-    review: ["#handover-panel", "#warnings", "#site-conditions"],
+    // The notes, because what the office asked is read here beside the map it
+    // was pinned on, and `#finish-job` — send it, or go back to her jobs.
+    review: ["#handover-panel", "#warnings", "#site-conditions", "#notes-panel",
+             "#finish-job"],
   },
   backoffice: {
     // `#handover-panel` is scoped to this road and kept by NO step. It renders
@@ -125,15 +131,23 @@ const STEP_PANELS = {
     // that is not the quote step 7 is about. Two surfaces answering one
     // question is the defect `road-model.js`'s header was written against; the
     // band is the office's answer, so the panel is not on this road at all.
-    sale: ["#notes-panel"],
-    blanks: ["#run-editing-panel", "#profile"],
+    // `#desk-actions` — send the job back to the salesperson with a question —
+    // on the two steps where the office finds out something is missing.
+    sale: ["#notes-panel", "#desk-actions"],
+    blanks: ["#run-editing-panel", "#profile", "#notes-panel", "#desk-actions"],
     questions: ["#choices"],
     // `#site-conditions` rides here as a COLLAPSED disclosure rather than a step
     // of its own: the dimensions published rules key on matter the day a real
     // snapshot arrives, and on a job today they are a field nobody fills in. A
     // step amber on every job for a reason nobody can act on is the
     // completeness lie inverted (spec §8).
-    generate: ["#warnings", "#inspector", "#override-list", "#site-conditions"],
+    // `#btn-generate` is kept by THIS step and no other, on either road. It
+    // sat in the drawing's toolbar and so followed the drawing onto every step
+    // that showed a map — a "work out the fence" button on the property step,
+    // the layout, the side view, the gates. The user's verdict: it should not
+    // be static throughout the steps. Working it out is this step's job.
+    generate: ["#warnings", "#inspector", "#override-list", "#site-conditions",
+               "#btn-generate"],
     materials: [],
     plan: [],
     price: [],
@@ -168,11 +182,15 @@ const STEP_DRAWING = {
     sideview: DRAWING,
     model: DRAWING,
     gates: DRAWING,
-    // The map, without the generate bar: this step attaches promises to what is
-    // already drawn, and working out the fence is step 8's business, not this
-    // one's.
+    // The map, without the toolbar above it: this step attaches promises to
+    // what is already drawn.
     notes: ["#canvas", "#statusbar"],
-    review: [],
+    // The map is back on the last step: "he should look at it and figure out if
+    // he made mistakes". The toolbar comes with it for fit-to-view; the generate
+    // button inside it is hidden on this road regardless (ROAD_HIDES_ENTIRELY).
+    // Not `#strategy-summary`: a line about a strategy she cannot generate is a
+    // caption for something that is not hers.
+    review: ["#canvas", "#generate-toolbar", "#statusbar"],
   },
   backoffice: {
     sale: ["#canvas", "#statusbar"],
@@ -230,8 +248,11 @@ const ROAD_KEYS = Object.keys(STEP_TOOLS);
  *  FROM the keeps — so it is named here, which is also the honest place: it
  *  says what the road hides rather than burying it in six empty arrays. */
 const ROAD_HIDES_ENTIRELY = {
-  sales: [],
-  backoffice: ["#handover-panel"],
+  // The salesperson records what was sold; working out the fence is the
+  // office's step 4. No sales step keeps the button, so without this entry it
+  // would not be in the sales union at all and would show on every map step.
+  sales: ["#btn-generate", "#desk-actions"],
+  backoffice: ["#handover-panel", "#finish-job"],
 };
 
 export const STEP_SCOPED = Object.fromEntries(ROAD_KEYS.map((roadKey) => [

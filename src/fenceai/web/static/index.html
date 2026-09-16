@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-auth="pending">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,12 +7,32 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- The front door. Until somebody signs in this is the ONLY thing on the
+       page: no project, no view selector, no drawing. Which screen opens after
+       it is the account's own answer (`/api/me` → view), never a choice made
+       here. `html[data-auth]` drives the hiding (style.css), `app.js` sets it. -->
+  <section id="login-screen" aria-labelledby="login-title">
+    <form id="sign-in">
+      <h1 id="login-title">Fence AI</h1>
+      <input id="sign-in-email" type="email" autocomplete="username" required
+             data-i18n-placeholder="signin.email" placeholder="Email">
+      <input id="sign-in-password" type="password" autocomplete="current-password" required
+             data-i18n-placeholder="signin.password" placeholder="Password">
+      <button type="submit" class="primary" data-i18n="signin.submit">Sign in</button>
+      <p id="sign-in-error" class="warning error" hidden data-i18n="error.sign_in_failed"></p>
+      <p id="sign-in-unreachable" class="warning error" hidden data-i18n="error.server_unreachable"></p>
+    </form>
+  </section>
+
   <header>
     <h1>Fence AI</h1>
     <div class="project-bar">
-      <select id="project-select"></select>
-      <input id="new-project-name" data-i18n-placeholder="project.new_placeholder" placeholder="new project name">
-      <button id="btn-new-project" data-i18n="project.create">Create</button>
+      <!-- No job picker here: a job is opened from the Jobs queue, and a
+           header control that switches jobs mid-step is how a salesperson
+           ends up typing one customer's address into another's drawing. -->
+      <button id="btn-new-project" data-i18n="project.create">New job</button>
+      <!-- A salesperson's way home: the list of her jobs (js/my-jobs.js). -->
+      <button id="btn-my-jobs" data-i18n="myjobs.title">My jobs</button>
       <button id="btn-locale" title="עברית / English">עב / EN</button>
       <button id="btn-units" title="mm / cm">mm</button>
       <!-- Which of the company's three people is looking. A PRESENTATION
@@ -24,17 +44,8 @@
         <option value="all" data-i18n="view.all">Everything</option>
       </select>
       <span id="ai-badge" class="badge"></span>
-      <!-- Who is signed in. Signed OUT is the ordinary state and stays today's
-           app — this block is additive, and the view selector above is merely
-           hidden for an account that may not choose. -->
-      <form id="sign-in">
-        <input id="sign-in-email" type="email" autocomplete="username"
-               data-i18n-placeholder="signin.email" placeholder="Email">
-        <input id="sign-in-password" type="password" autocomplete="current-password"
-               data-i18n-placeholder="signin.password" placeholder="Password">
-        <button type="submit" class="primary" data-i18n="signin.submit">Sign in</button>
-      </form>
-      <span id="sign-in-error" class="warning error" hidden data-i18n="error.sign_in_failed"></span>
+      <!-- Who is signed in. The view selector above is hidden for an account
+           that may not choose (only an admin may). -->
       <div id="signed-in-as" hidden>
         <span id="me-name"></span>
         <span id="me-capacity" class="badge"></span>
@@ -44,6 +55,7 @@
   </header>
 
   <nav id="tabs">
+    <button data-tab="myjobs" data-i18n="tabs.myjobs">My jobs</button>
     <button data-tab="queue" data-i18n="tabs.queue">Jobs</button>
     <button data-tab="canvas" class="active" data-i18n="tabs.canvas">Topology &amp; Strategy</button>
     <button data-tab="annotations" data-i18n="tabs.annotations">Annotations</button>
@@ -59,6 +71,11 @@
   <nav id="road" aria-label="Job steps"></nav>
 
   <main>
+    <!-- ============ my jobs — the salesperson's home screen ============ -->
+    <section id="tab-myjobs" class="tab">
+      <div id="myjobs-list"></div>
+    </section>
+
     <!-- ============ jobs tab — the backoffice's home screen ============ -->
     <section id="tab-queue" class="tab">
       <div class="queue-bar">
@@ -85,8 +102,8 @@
           <button id="tool-model" class="tool" data-i18n-title="tool.model" title="Fence model"><span class="t-icon">🧩</span><span class="t-label" data-i18n="toolbar.model">Model</span></button>
           <button id="tool-pin" class="tool" data-i18n-title="tool.pin" title="Pin post"><span class="t-icon">📍</span><span class="t-label" data-i18n="toolbar.pin">Pin</span></button>
           <!-- The property, not the fence. Click the corners of the house and
-               click the first one again to close it; drag the street and get a
-               band with a width you can then type. Below the fence tools
+               click the first one again to close it; drag the street at any angle,
+               then drag its grips to swing, stretch or widen it. Below the fence tools
                because they are the backdrop, and a salesperson draws the fence
                first. -->
           <button id="tool-house" class="tool" data-i18n-title="tool.house" title="House"><span class="t-icon">🏠</span><span class="t-label" data-i18n="toolbar.house">House</span></button>
@@ -116,6 +133,12 @@
           <button id="btn-clear" data-i18n-title="tool.clear_drawing" title="Clear the drawing"><span class="t-icon">🗑</span><span class="t-label" data-i18n="toolbar.clear">Clear</span></button>
         </div>
         <div class="canvas-col">
+          <!-- The salesperson's last word on a job: send it to the office, or go
+               back to her jobs. Owned by js/my-jobs.js; the review step keeps it. -->
+          <div class="panel" id="finish-job"></div>
+          <!-- The office's way to hand a job back with a question. Owned by
+               js/desk-actions.js; the office's sale and blanks steps keep it. -->
+          <div class="panel" id="desk-actions"></div>
           <div class="toolbar" id="generate-toolbar">
             <button id="btn-generate" class="primary" data-i18n="editor.generate">⚙ Generate strategy</button>
             <button id="btn-fit" data-i18n-title="editor.fit" title="Fit view">⤢</button>
@@ -161,6 +184,9 @@
                  before g-notes so a note marker is never hidden under a leaf. -->
             <g id="g-gates"></g>
             <g id="g-notes"></g>
+            <!-- a street's own grips (js/context.js): above the fence, because
+                 they are the thing being dragged, unlike the backdrop in g-context -->
+            <g id="g-landmark-grips"></g>
             <g id="g-snap"></g>
           </svg>
           <div id="statusbar"></div>

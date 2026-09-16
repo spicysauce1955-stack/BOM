@@ -21,6 +21,9 @@ export const state = {
   // The signed-in account, or null. Owned by `session.js`.
   me: null,
   mayChooseView: true,
+  // The road step on screen, or null when the view has no road. Owned by
+  // `road.js`, which emits "step-changed" AFTER the screen is scoped to it.
+  step: null,
   tool: "select",
   draftNodes: [],
   nodeSeq: 1,
@@ -31,7 +34,8 @@ export const state = {
 // events: "project-loaded","topology-changed","result-changed",
 //         "selection-changed","locale-changed","units-changed","tool-changed",
 //         "view-changed","job-changed","context-changed",
-//         "tab-changed","structure-loaded","fit-view","fence-models-changed"
+//         "tab-changed","structure-loaded","fit-view","fence-models-changed",
+//         "step-changed" (road.js, after data-step), "road-go" (ask road.js for a step)
 const bus = new EventTarget();
 export function on(event, fn) { bus.addEventListener(event, (e) => fn(e.detail)); }
 export function emit(event, detail) { bus.dispatchEvent(new CustomEvent(event, { detail })); }
@@ -136,6 +140,53 @@ export function addLandmark(landmark) {
   state.project.context = state.project.context || { landmarks: [] };
   state.project.context.landmarks.push(landmark);
   return true;
+}
+
+/** Job states in which a SALESPERSON may still change the drawing: hers until
+ *  she sends it, and hers again when the office hands it back. Pure, for node;
+ *  `SUBMIT_JOB.from_states` is the same set and a test pins the two. */
+export const SALES_EDITABLE = ["drafting", "returned"];
+
+/** Is the drawing view-only for the person looking? Only on the sales view: a
+ *  job she has sent is on the office's desk, and a drag there would bump the
+ *  topology revision under a run the office generated (409 topology_changed).
+ *  Presentation, like every view rule — the server does not gate topology writes
+ *  by status yet. */
+export function drawingLockedFor(view, status) {
+  return view === "sales" && !!status && !SALES_EDITABLE.includes(status);
+}
+
+export function drawingLocked() {
+  return drawingLockedFor(state.view, state.project?.status);
+}
+
+/** Perform a named command on a job — the one gated door
+ *  (`POST /projects/{id}/actions`). Resolves `{ok, project}` or
+ *  `{ok: false, code, params}`: a refusal is an answer a screen renders in the
+ *  reader's language (`error.<code>`), never a thrown alert. */
+export async function runCommand(projectId, kind, payload = {}) {
+  let r;
+  try {
+    r = await fetch(`/api/projects/${projectId}/actions`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, payload }),
+    });
+  } catch {
+    return { ok: false, code: "server_unreachable", params: {} };
+  }
+  const body = await r.json().catch(() => null);
+  if (!r.ok) {
+    const d = body?.detail;
+    // A typed refusal carries `{code, params}`. Anything else — a 422 from the
+    // request schema (a list), a plain-string 404, a body that is not JSON — is
+    // not "no action by that name", and saying so would send the reader looking
+    // for the wrong fault.
+    if (d && typeof d === "object" && !Array.isArray(d) && d.code)
+      return { ok: false, code: d.code, params: d.params || {} };
+    return { ok: false, code: r.status === 422 ? "command_payload_invalid" : "command_failed",
+             params: {} };
+  }
+  return { ok: true, project: body };
 }
 
 export async function reloadProject() {

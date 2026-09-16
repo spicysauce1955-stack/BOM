@@ -114,7 +114,8 @@ export function targetLabel(ref) {
   if (!parsed) return String(ref ?? "");
   const { kind, id } = parsed;
   try {
-    if (kind === "project") return t("notes.target.project");
+    // `job` is what `return_to_sales` writes its question against: the whole job.
+    if (kind === "project" || kind === "job") return t("notes.target.project");
     if (kind === "run") return t("notes.target.run", { id });
     if (kind === "node") return t("notes.target.node", { id });
     if (kind === "landmark") {
@@ -205,6 +206,15 @@ function centroid(points) {
 
 // ---------- the markers ------------------------------------------------------
 
+/** Was this note written by somebody other than the person who created the
+ *  job, through an account? That is "the office" on her job — the same rule
+ *  `project/queue.py: _from_office` counts on her home screen. A job with no
+ *  recorded creator has no office notes: there is nobody to be other than. */
+export function isFromOffice(ann, createdBy) {
+  const author = String(ann?.author ?? "");
+  return !!createdBy && author.startsWith("user:") && author !== `user:${createdBy}`;
+}
+
 /** One marker per TARGET, not one per note. Three promises about the same gate
  *  are one thing to look at with a 3 on it; three marks stacked on one pixel are
  *  an illegible blob that also lies about how many there are. */
@@ -214,9 +224,10 @@ function markerGroups() {
     const ref = ann.target_ref;
     const at = anchorPointFor(ref);
     if (!at) continue;               // project-wide, or a subject since deleted
+    const office = isFromOffice(ann, state.project?.created_by);
     const seen = byRef.get(ref);
-    if (seen) seen.count += 1;
-    else byRef.set(ref, { ref, at, count: 1 });
+    if (seen) { seen.count += 1; seen.office = seen.office || office; }
+    else byRef.set(ref, { ref, at, count: 1, office });
   }
   return [...byRef.values()];
 }
@@ -236,8 +247,13 @@ export function renderNoteMarkers() {
     // Quieter than the fence for the same reason — a note is an annotation on
     // the drawing, not a part of it.
     const none = { "pointer-events": "none" };
-    el("circle", { cx: x, cy: y, r: 8, fill: "#fffbeb", stroke: "#d97706",
-                   "stroke-width": 1.5, opacity: 0.9, class: "note-marker",
+    // A target the OFFICE wrote on is drawn in the office's colour and larger:
+    // it is the thing she opened this job to find.
+    el("circle", { cx: x, cy: y, r: m.office ? 10 : 8,
+                   fill: m.office ? "#dbeafe" : "#fffbeb",
+                   stroke: m.office ? "#2563eb" : "#d97706",
+                   "stroke-width": m.office ? 2.5 : 1.5, opacity: 0.95,
+                   class: m.office ? "note-marker note-marker-office" : "note-marker",
                    ...none }, g);
     el("text", { x, y: y + 3, "font-size": 9, "text-anchor": "middle",
                  class: "note-marker-glyph", ...none }, g).textContent = "📝";
@@ -376,7 +392,9 @@ function noteRow(ann) {
   // id inside a Hebrew sentence reorders without isolation. `dir="auto"` on the
   // text because the salesperson chose its language, not us — and `esc()`
   // because what a person wrote is not markup.
-  return `<li class="note-row">
+  const office = isFromOffice(ann, state.project?.created_by);
+  return `<li class="note-row${office ? " note-row-office" : ""}">
+    ${office ? `<div class="note-from-office">${esc(t("notes.from_office"))}</div>` : ""}
     <div class="meta note-target"><bdi>${esc(targetLabel(ann.target_ref))}</bdi></div>
     <div class="verbatim" dir="auto">${esc(ann.text)}</div>
   </li>`;

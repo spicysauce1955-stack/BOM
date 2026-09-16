@@ -25,7 +25,7 @@ import pytest
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
 SCRIPT = """
-import { applyMe, signedOutState } from "./js/session.js";
+import { applyMe, lastProjectKey, pickProject, signedOutState } from "./js/session.js";
 
 const out = {};
 out.sales = applyMe({user: {id: "u_dana", name: "Dana", capacity: "sales"},
@@ -35,6 +35,14 @@ out.backoffice = applyMe({user: {id: "u_y", name: "Yossi", capacity: "backoffice
 out.admin = applyMe({user: {id: "u_a", name: "Root", capacity: "admin"},
                      view: "all", may_choose_view: true});
 out.out = signedOutState();
+const list = [{id: "p_a"}, {id: "p_b"}, {id: "p_c"}];
+out.pick_remembered = pickProject(list, "p_c");
+out.pick_gone = pickProject(list, "p_deleted");
+out.pick_none_remembered = pickProject(list, null);
+out.pick_empty = pickProject([], "p_c");
+out.pick_not_a_list = pickProject(undefined, "p_c");
+out.key_dana = lastProjectKey("u_dana");
+out.key_yossi = lastProjectKey("u_yossi");
 console.log(JSON.stringify(out));
 """
 
@@ -101,3 +109,25 @@ def test_signed_out_is_todays_app_and_not_a_locked_door(out):
     change rather than an addition."""
     assert out["out"]["selector"] is True
     assert out["out"]["user"] is None
+
+
+def test_sign_in_reopens_the_job_this_person_last_had_open(out):
+    """The header picker is gone and a salesperson has no Jobs tab, so this is
+    the ONLY way back to a job she was halfway through after signing out (which
+    reloads). Before it, sign-in opened whichever project sorted first by a
+    random id — possibly somebody else's."""
+    assert out["pick_remembered"] == "p_c"
+
+
+def test_a_remembered_job_that_no_longer_exists_falls_back_to_the_list(out):
+    assert out["pick_gone"] == "p_a"
+    assert out["pick_none_remembered"] == "p_a"
+    assert out["pick_empty"] is None
+    assert out["pick_not_a_list"] is None
+
+
+def test_the_remembered_job_is_per_account(out):
+    """A shared machine: the next person to sign in must not land in the job
+    the previous one left open."""
+    assert out["key_dana"] != out["key_yossi"]
+    assert "u_dana" in out["key_dana"]

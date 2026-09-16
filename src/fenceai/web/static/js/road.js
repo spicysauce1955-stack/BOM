@@ -9,13 +9,17 @@ import { esc } from "./api.js";
 import { pushSnapshot } from "./history.js";
 import { t } from "./i18n.js";
 import { currentView } from "./view.js";
-import { on, saveStated, setTool, state } from "./state.js";
+import { emit, on, saveStated, setTool, state } from "./state.js";
 import { setTab } from "./tabs.js";
 import { panelFor, road } from "./road-model.js";
 import { defaultToolForStep } from "./step-surfaces.js";
 import { roadFor } from "./roads.js";
 
 let current = null;
+// On a home screen (a salesperson's job list) there is no job being walked, so
+// the band that navigates one is not shown. Tracked here because `render()`
+// decides the band's visibility on every refresh.
+let onHome = false;
 
 function currentRoad() {
   return roadFor(currentView());
@@ -159,6 +163,17 @@ function showStep(stepKey) {
  *  with `#tabs` hidden this band is the only navigation on the screen, so
  *  losing focus here strands a keyboard user completely. The buttons are always
  *  enabled: the road is a map, not a wizard. */
+/** Tell the rest of the app which step is on screen — AFTER `data-step` has
+ *  scoped the screen to it. `showStep` arms the step's tool before `render()`
+ *  runs, so a module deciding anything at `tool-changed` still sees the step
+ *  being left; `step-changed` is the moment the new one is true. Emitted only
+ *  on a real change, because `render()` runs on every handover refresh. */
+function publishStep(step) {
+  if (state.step === step) return;
+  state.step = step;
+  emit("step-changed", step);
+}
+
 function build(host, def) {
   // Built once PER ROAD, not once per page. `if (host.children.length) return`
   // was correct while there was one road and became a defect the moment there
@@ -228,7 +243,7 @@ export function render() {
   if (!host) return;
   const def = currentRoad();
   // A view with no road shows none — and the tab strip is what it navigates by.
-  host.hidden = def === null;
+  host.hidden = def === null || onHome;
   // `data-step` exists while there is a road with a step to show, whichever
   // road it is; a view without one gets the attribute REMOVED rather than left
   // stale, because an absent attribute matches no `html[data-step="X"]` rule in
@@ -241,9 +256,11 @@ export function render() {
   // state `step-surfaces.js` exists to end.
   if (def === null) {
     delete document.documentElement.dataset.step;
+    publishStep(null);
     return;
   }
   document.documentElement.dataset.step = stepIn(def);
+  publishStep(current);
   // BOTH sources, concatenated and never recounted. `handover_gaps` answers
   // "did the sale get captured"; `readiness` answers "can this be built and
   // priced". The engine GROUPS what they return — the moment this file computes
@@ -316,6 +333,21 @@ export function initRoad() {
   // off what they are doing.
   on("job-changed", () => {
     if (currentView() === "sales" && current === "job") advance();
+  });
+  // Another module asking for a step by name — opening a job the office wrote
+  // on lands on the review step. Ignored for a step this road does not have.
+  on("road-go", (stepKey) => {
+    const def = currentRoad();
+    if (!def || !def.steps.some((s) => s.key === stepKey)) return;
+    current = stepKey;
+    showStep(current);
+    render();
+  });
+  on("tab-changed", (name) => {
+    const home = name === "myjobs";
+    if (home === onHome) return;
+    onHome = home;
+    render();
   });
   on("view-changed", () => {
     render();

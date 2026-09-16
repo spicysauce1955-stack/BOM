@@ -13,6 +13,21 @@
 
 body { margin: 0; font-family: "Noto Sans Hebrew", system-ui, "Segoe UI", Arial, sans-serif;
   background: #f4f5f7; color: #1d2733; }
+/* The front door. `html[data-auth]` is set by app.js: `pending` until `/api/me`
+   has answered (nothing shows, so a signed-in reload never flashes the form),
+   `out` shows ONLY the login screen, `in` shows only the app. */
+html:not([data-auth="in"]) body > :not(#login-screen) { display: none; }
+html:not([data-auth="out"]) #login-screen { display: none; }
+#login-screen { min-block-size: 100vh; display: grid; place-items: center; padding: 16px;
+  background: #1d2733; }
+#login-screen form { display: flex; flex-direction: column; gap: 12px;
+  inline-size: min(100%, 340px); padding: 28px; background: #fff; border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
+#login-screen h1 { margin: 0 0 6px; font-size: 22px; text-align: center; }
+#login-screen input { font: inherit; padding: 9px 10px; border: 1px solid #cbd5e1;
+  border-radius: 6px; }
+#login-screen button { font: inherit; padding: 9px 10px; }
+#login-screen .error { margin: 0; }
 header { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: #1d2733; color: #fff; }
 header h1 { font-size: 18px; margin: 0; }
 .project-bar { display: flex; gap: 8px; align-items: center; }
@@ -831,7 +846,9 @@ html[data-selector="no"] #view-select { display: none; }
 #queue-list .queue-take { margin-inline-start: 8px; padding: 2px 8px; font-size: 12px; }
 
 html[data-view="backoffice"] #tabs button[data-tab="knowledge"],
-html[data-view="backoffice"] #tabs button[data-tab="review"] { display: none; }
+html[data-view="backoffice"] #tabs button[data-tab="review"],
+html[data-view="backoffice"] #tabs button[data-tab="myjobs"],
+html[data-view="backoffice"] #btn-my-jobs { display: none; }
 
 /* ============================================================================
    Road steps — a step shows only its OWN work.
@@ -1008,9 +1025,6 @@ html[data-step="review"] #tool-house,
 html[data-step="review"] #tool-street,
 html[data-step="review"] #tool-other,
 html[data-step="review"] #context-panel,
-html[data-step="review"] #canvas,
-html[data-step="review"] #generate-toolbar,
-html[data-step="review"] #statusbar,
 html[data-step="review"] #strategy-summary,
 html[data-step="review"] #tool-draw,
 html[data-step="review"] #tool-ground,
@@ -1022,8 +1036,7 @@ html[data-step="review"] #tool-model,
 html[data-step="review"] #model-row,
 html[data-step="review"] #tool-gate,
 html[data-step="review"] #gates-panel,
-html[data-step="review"] #tool-note,
-html[data-step="review"] #notes-panel { display: none; }
+html[data-step="review"] #tool-note { display: none; }
 
 /* The drawing belongs to the steps whose work happens ON it — 2 to 7. Steps 1
    and 8 are a form and a summary, and a map behind them is furniture: it
@@ -1203,7 +1216,6 @@ html[dir="rtl"] .actions-list li::before { content: "←"; }
    EQUALITY rather than overlap. Generated from the module, never by hand. */
 html[data-step="blanks"] #choices,
 html[data-step="blanks"] #inspector,
-html[data-step="blanks"] #notes-panel,
 html[data-step="blanks"] #override-list,
 html[data-step="blanks"] #site-conditions,
 html[data-step="blanks"] #tool-pin,
@@ -1308,8 +1320,97 @@ html[data-step="sale"] #warnings { display: none; }
    EQUALITY rather than overlap. Generated from the module, never by hand. */
 html[data-step="blanks"] #handover-panel { display: none; }
 html[data-step="generate"] #handover-panel { display: none; }
+/* `#btn-generate` — kept by the office road's `generate` step only (step-surfaces.js). */
+html[data-step="job"] #btn-generate,
+html[data-step="property"] #btn-generate,
+html[data-step="layout"] #btn-generate,
+html[data-step="sideview"] #btn-generate,
+html[data-step="model"] #btn-generate,
+html[data-step="gates"] #btn-generate,
+html[data-step="notes"] #btn-generate,
+html[data-step="review"] #btn-generate,
+html[data-step="sale"] #btn-generate,
+html[data-step="blanks"] #btn-generate,
+html[data-step="questions"] #btn-generate,
+html[data-step="materials"] #btn-generate,
+html[data-step="plan"] #btn-generate,
+html[data-step="price"] #btn-generate { display: none; }
 html[data-step="materials"] #handover-panel { display: none; }
 html[data-step="plan"] #handover-panel { display: none; }
 html[data-step="price"] #handover-panel { display: none; }
 html[data-step="questions"] #handover-panel { display: none; }
 html[data-step="sale"] #handover-panel { display: none; }
+
+/* Road-step surfaces added with the salesperson's home screen (step-surfaces.js). */
+html[data-step="blanks"] #finish-job,
+html[data-step="gates"] #desk-actions,
+html[data-step="gates"] #finish-job,
+html[data-step="generate"] #desk-actions,
+html[data-step="generate"] #finish-job,
+html[data-step="generate"] #tool-note,
+html[data-step="job"] #desk-actions,
+html[data-step="job"] #finish-job,
+html[data-step="layout"] #desk-actions,
+html[data-step="layout"] #finish-job,
+html[data-step="materials"] #desk-actions,
+html[data-step="materials"] #finish-job,
+html[data-step="materials"] #tool-note,
+html[data-step="model"] #desk-actions,
+html[data-step="model"] #finish-job,
+html[data-step="notes"] #desk-actions,
+html[data-step="notes"] #finish-job,
+html[data-step="plan"] #desk-actions,
+html[data-step="plan"] #finish-job,
+html[data-step="plan"] #tool-note,
+html[data-step="price"] #desk-actions,
+html[data-step="price"] #finish-job,
+html[data-step="price"] #tool-note,
+html[data-step="property"] #desk-actions,
+html[data-step="property"] #finish-job,
+html[data-step="questions"] #desk-actions,
+html[data-step="questions"] #finish-job,
+html[data-step="questions"] #tool-note,
+html[data-step="review"] #desk-actions,
+html[data-step="sale"] #finish-job,
+html[data-step="sale"] #tool-note,
+html[data-step="sideview"] #desk-actions,
+html[data-step="sideview"] #finish-job { display: none; }
+
+/* ---- a salesperson's home: her jobs (js/my-jobs.js) --------------------- */
+#myjobs-list { max-inline-size: 900px; margin-inline: auto; }
+.myjobs-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-block: 8px 14px; }
+.myjobs-head h2 { margin: 0; font-size: 20px; }
+.myjobs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.myjob { display: grid; grid-template-columns: 1fr auto; gap: 6px 14px; align-items: center;
+  background: #fff; border: 1px solid #d8dee6; border-inline-start: 5px solid #94a3b8;
+  border-radius: 8px; padding: 12px 14px; cursor: pointer; }
+.myjob:hover, .myjob:focus-visible { border-color: #64748b; outline: none;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .08); }
+.myjob-main { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0; }
+.myjob-status { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+  background: #e2e8f0; color: #334155; white-space: nowrap; }
+.myjob-office { grid-column: 1 / -1; background: #eff6ff; border-radius: 6px; padding: 8px 10px; }
+.myjob-office .verbatim { white-space: pre-wrap; }
+.myjob[data-status="needs_info"] { border-inline-start-color: #2563eb; }
+.myjob[data-status="needs_info"] .myjob-status { background: #dbeafe; color: #1d4ed8; }
+.myjob[data-status="draft"] .myjob-status { background: #f1f5f9; color: #475569; }
+.myjob[data-status="pending"] { border-inline-start-color: #d97706; }
+.myjob[data-status="pending"] .myjob-status { background: #fef3c7; color: #92400e; }
+.myjob[data-status="accepted"] { border-inline-start-color: #16a34a; }
+.myjob[data-status="accepted"] .myjob-status { background: #dcfce7; color: #166534; }
+.myjob[data-status="rejected"] { border-inline-start-color: #dc2626; }
+.myjob[data-status="rejected"] .myjob-status { background: #fee2e2; color: #991b1b; }
+
+/* the review step's last word, and the office's question back */
+#finish-job, #desk-actions { margin-block-end: 8px; }
+#desk-actions textarea { inline-size: 100%; font: inherit; }
+.note-row-office { border-inline-start: 3px solid #2563eb; padding-inline-start: 8px; }
+.note-from-office { font-size: 11px; font-weight: 600; color: #1d4ed8; }
+
+/* A job she has sent: the drawing is for looking at (state.drawingLocked). */
+html[data-locked="yes"] #toolbar .tool,
+html[data-locked="yes"] #btn-undo,
+html[data-locked="yes"] #btn-redo,
+html[data-locked="yes"] #btn-clear,
+html[data-locked="yes"] #draft-actions { display: none !important; }
