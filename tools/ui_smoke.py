@@ -3654,6 +3654,173 @@ def _smoke_my_jobs_round_trip(c) -> None:
           and finish_all["send"] is False, finish_all)
 
 
+def _smoke_office_job_screen(c) -> None:
+    """The office opens a job it did not draw, and the screen says what it IS.
+
+    The complaint this closes: taking a job used to land the office on step 1 of
+    an EDITING road — her customer and address in a form with a Save button, the
+    drawing pencils in the rail — with nothing on screen saying what the job was.
+    Now the side column is one reading surface beside the map, a card per
+    stretch, each with its own side view.
+
+    **The map is the CANVAS**, not a second drawing: this screen is a layout
+    around `#canvas` rather than a tab beside it, which is the only way "a map in
+    the centre" does not become a second implementation of the plan. So the check
+    that matters is that the canvas is still the thing in the middle while the
+    column beside it has changed.
+
+    On a job of its own with THREE stretches of different lengths, because one
+    run cannot show that the cards follow the drawing's order rather than an id's.
+    Every fact is read from the API, never from the rendered words, which are
+    localized.
+    """
+    sign_out(c)
+    pid = c.js("""(async () => {
+  await fetch('/api/session', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: 'dana@example.com', password: 'demo'})});
+  const p = await (await fetch('/api/projects', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: 'Reading surface'})})).json();
+  await fetch(`/api/projects/${p.id}/job`, {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({customer: 'Readme', address: 'Ha-Gderot 3, Holon',
+                          sold_by: 'Dana', sold_on: '2026-09-16'})});
+  await fetch(`/api/projects/${p.id}/topology`, {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      nodes: [{id: 'n1', x_mm: 0,    y_mm: 0,     kind: 'terminal'},
+              {id: 'n2', x_mm: 8000, y_mm: 0,     kind: 'terminal'},
+              {id: 'n3', x_mm: 8000, y_mm: -12000, kind: 'terminal'},
+              {id: 'n4', x_mm: 16000, y_mm: -12000, kind: 'terminal'}],
+      runs: [{id: 'ra', start_node_id: 'n1', end_node_id: 'n2'},
+             {id: 'rb', start_node_id: 'n2', end_node_id: 'n3'},
+             {id: 'rc', start_node_id: 'n3', end_node_id: 'n4'}]})});
+  await fetch(`/api/projects/${p.id}/actions`, {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({kind: 'submit_job', payload: {}})});
+  await fetch('/api/session', {method: 'DELETE'});
+  return p.id;
+})()""")
+    check("a three-stretch job, sold and sent to the office", bool(pid), pid)
+    if not pid:
+        sign_in(c, ADMIN)
+        return
+
+    sign_in(c, "yossi@example.com")
+    c.js("""(async () => {
+  const s = await import('/js/state.js');
+  const {setTab} = await import('/js/tabs.js');
+  await s.openProject(%s); setTab('canvas'); return 'ok'; })()""" % json.dumps(pid))
+    wait_for(c, "document.querySelectorAll('#job-sections .job-card').length === 3",
+             timeout=15)
+
+    def visible(sel):
+        return c.js("!!document.querySelector(%s)?.checkVisibility()" % json.dumps(sel))
+
+    check("the office's reading surface is on screen",
+          visible("#job-screen"), c.js("document.documentElement.dataset.jobmode"))
+
+    # The API is the source of truth for what SHOULD be on screen; the DOM is
+    # what IS. Comparing them is what makes this check survive the job changing.
+    want = c.js("fetch('/api/projects/%s/sections').then(r => r.json())"
+                ".then(d => d.sections.map(s => s.tag))" % pid)
+    got = c.js("[...document.querySelectorAll('#job-sections .job-card "
+               ".job-card-tag')].map(e => e.textContent.trim())")
+    check("one card per stretch, lettered in the drawing's order", want == got,
+          {"api": want, "screen": got})
+
+    runs = c.js("[...document.querySelectorAll('#job-sections .job-card')]"
+                ".map(e => e.dataset.run)")
+    check("each card names the stretch it is about", runs == ["ra", "rb", "rc"], runs)
+
+    elevs = c.js("document.querySelectorAll('#job-sections .job-card svg')" ".length")
+    check("every card carries a side view", elevs == 3, elevs)
+
+    # The lengths are 8 m, 12 m, 8 m — so a screen rendering raw millimetres and
+    # a screen rendering the reader's unit differ, and this says which it is.
+    meta_mm = c.js("document.querySelector('#job-sections .job-card-meta')"
+                   "?.textContent || ''")
+    c.js("document.getElementById('btn-units').click(); 'ok'")
+    time.sleep(0.6)
+    meta_cm = c.js("document.querySelector('#job-sections .job-card-meta')"
+                   "?.textContent || ''")
+    c.js("document.getElementById('btn-units').click(); 'ok'")
+    time.sleep(0.6)
+    check("a card's length follows the display unit", meta_mm != meta_cm,
+          {"mm": meta_mm, "cm": meta_cm})
+
+    check("nobody stated a height, and the card says so rather than staying blank",
+          bool(c.js("document.querySelector('#job-sections .job-card-facts dd')"
+                    "?.textContent.trim()")),
+          c.js("document.querySelector('#job-sections .job-card-facts dd')"
+               "?.textContent"))
+
+    # The map is the canvas, and it is still the middle of the screen.
+    check("the plan is still the canvas, not a second drawing",
+          visible("#canvas") and c.js(
+              "document.querySelectorAll('#tab-canvas svg#canvas').length") == 1,
+          c.js("document.querySelectorAll('#tab-canvas svg#canvas').length"))
+
+    # Reading means reading: the pencils and the engineer's panels are away.
+    check("the drawing tools are put away while reading",
+          not visible("#toolbar"), c.js("document.documentElement.dataset.jobmode"))
+    check("the side column is the reading surface alone",
+          not visible("#inspector") and not visible("#run-editing-panel"),
+          {"inspector": visible("#inspector"),
+           "run_editing": visible("#run-editing-panel")})
+
+    # The complaint this whole screen answers: the office used to land on her
+    # customer and address in an editable form with a Save button. `#job-panel`
+    # is mounted into `.canvas-col` by `js/job.js`, NOT into the side column, so
+    # a rule that emptied the side column never reached it — which is exactly
+    # how this survived the first pass and was caught by looking at a
+    # screenshot rather than at a check.
+    check("her sale is not an editable form on the office's screen",
+          not visible("#job-panel"), visible("#job-panel"))
+    check("...but what was sold is still READABLE",
+          bool(c.js("document.querySelector('.job-sale')?.innerText?.includes("
+                    "'Readme')")),
+          c.js("document.querySelector('.job-sale')?.innerText"))
+
+    # The office's own acts stay: reading mode is about not changing the
+    # DRAWING, not about being unable to do the job.
+    check("the office can still act on its own desk while reading",
+          visible("#desk-actions"), visible("#desk-actions"))
+
+    # Clicking a card selects that stretch — the same selection the side view and
+    # the section-decisions panel already follow.
+    c.js("document.querySelector('#job-sections .job-card[data-run=\"rb\"]')"
+         ".click(); 'ok'")
+    time.sleep(0.5)
+    # An async IIFE, not a bare top-level `await`: `Runtime.evaluate` compiles
+    # its expression as a classic script, where `await` outside a function is a
+    # SyntaxError — which `Cdp.js` raises, killing the case rather than failing
+    # a check.
+    selected = c.js("(async () => (await import('/js/state.js'))"
+                    ".state.selection.runId)()")
+    check("clicking a card selects that stretch", selected == "rb", selected)
+    check("the selected card says so",
+          c.js("document.querySelector('#job-sections .job-card[data-run=\"rb\"]')"
+               "?.dataset.on") == "1",
+          c.js("document.querySelector('#job-sections .job-card[data-run=\"rb\"]')"
+               "?.dataset.on"))
+
+    # A salesperson never sees this screen: it is the office's, and the sales
+    # view has its own road and its own home.
+    sign_out(c)
+    sign_in(c, ADMIN)
+    c.js("""(async () => { const {setView} = await import('/js/view.js');
+             setView('sales'); return 'ok'; })()""")
+    time.sleep(0.8)
+    check("the sales view does not get the office's reading surface",
+          not visible("#job-screen"),
+          c.js("document.documentElement.dataset.jobmode"))
+    c.js("""(async () => { const {setView} = await import('/js/view.js');
+             setView('all'); return 'ok'; })()""")
+    time.sleep(0.5)
+
+
 def _smoke_office_desk_acts(c) -> None:
     """The office's remaining desk acts, walked end to end on one job.
 
@@ -4319,6 +4486,7 @@ _CHOICE_CASES: list = [
     _smoke_account_decides,
     _smoke_my_jobs_round_trip,
     _smoke_office_desk_acts,
+    _smoke_office_job_screen,
 ]
 
 

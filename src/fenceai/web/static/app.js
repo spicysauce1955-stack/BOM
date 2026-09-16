@@ -32,6 +32,7 @@ import { lastProjectKey, loadMe, pickProject, signIn, signOut } from "./js/sessi
 import { initQueue } from "./js/queue.js";
 import { initMyJobs } from "./js/my-jobs.js";
 import { initDeskActions } from "./js/desk-actions.js";
+import { initJobScreen } from "./js/job-screen.js";
 import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
 function setupHeader() {
@@ -54,6 +55,7 @@ function setupHeader() {
   initQueue();
   initMyJobs();
   initDeskActions();
+  initJobScreen();
   wireIdentity();
   // the unit label itself is localized: relabel the button when the language flips
   on("locale-changed", updateUnitsButton);

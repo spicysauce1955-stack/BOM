@@ -1433,3 +1433,73 @@ html[data-step="questions"] #desk-actions-plan,
 html[data-step="review"] #desk-actions-plan,
 html[data-step="sale"] #desk-actions-plan,
 html[data-step="sideview"] #desk-actions-plan { display: none; }
+
+/* ============================================================================
+   The office's reading surface — js/job-screen.js.
+
+   `html[data-jobmode="read"]` empties the side column of everything but the
+   screen and puts the tools away. It is PRESENTATION and never protection:
+   hiding is CSS, `localStorage` is editable, and what an account may DO is its
+   capacity, checked on the server (identity/model.py). What gates a mutation is
+   a capacity check on a route, and most routes still have none.
+
+   Logical properties only — the cards mirror in RTL like every other list. The
+   DRAWINGS never do: the section elevation's station axis runs 0 from the left
+   in every locale, like the plan canvas and the profile, because it has to stay
+   geometrically consistent with the map beside it.
+   ========================================================================= */
+
+html[data-jobmode="read"] #toolbar,
+html[data-jobmode="read"] #profile-base-bar,
+html[data-jobmode="read"] .side-col > *:not(#job-screen) { display: none; }
+
+/* `#job-panel` is NOT in the side column — `js/job.js` mounts it into
+   `.canvas-col` ("this job" is not a side note), so the rule above never
+   reached it and the office kept landing on her customer and address in an
+   editable form with a Save button under them. That form is the whole
+   complaint this screen answers, so it is named here rather than caught by a
+   column selector that does not cover it.
+
+   `#desk-actions` deliberately STAYS. "I have read the sale", "hand it back
+   with a question" and "reject" are the office's own acts on its own desk, not
+   edits to her work — reading mode is about not changing the drawing, not
+   about being unable to do the job. */
+html[data-jobmode="read"] #job-panel { display: none; }
+
+/* What was sold, read-only, where the form used to be. */
+.job-sale { border: 1px solid #d4dae2; border-radius: 6px; padding: 8px 10px;
+            background: #f8fafc; }
+.job-sale h3 { margin: 0 0 6px; font-size: 13px; color: #475569; }
+.job-sale dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
+            margin: 0; font-size: 12px; }
+.job-sale dt { color: #64748b; }
+.job-sale dd { margin: 0; }
+
+#job-screen { display: flex; flex-direction: column; gap: 10px; }
+.job-sections-title { margin: 0 0 8px; font-size: 13px; color: #475569; }
+
+.job-card { border: 1px solid #d4dae2; border-radius: 6px; padding: 8px 10px;
+            margin-block-end: 8px; background: #fff; cursor: pointer; }
+.job-card[data-on="1"] { border-color: #2f6fed; box-shadow: 0 0 0 2px #dee8fd; }
+.job-card:focus-visible { outline: 2px solid #2f6fed; outline-offset: 2px; }
+/* Explicit, because `.panel header` elsewhere paints a dark bar and a card
+   header is not a panel header. */
+.job-card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+            background: none; color: inherit; padding: 0; margin: 0 0 4px; }
+.job-card-tag { font-weight: 700; font-size: 15px; }
+.job-card-meta { color: #64748b; font-size: 12px; }
+.job-card-facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
+            margin: 6px 0 0; font-size: 12px; }
+.job-card-facts dt { color: #64748b; }
+.job-card-facts dd { margin: 0; }
+
+/* The side view. `section-elev-nofence` is the load-bearing one: a bay carrying
+   no fence has height 0, and a zero-height rectangle is invisible — so the
+   stretch where the wall rose above the fence top would read as plain wall,
+   which is indistinguishable from a stretch nobody has looked at. */
+.section-elev { display: block; width: 100%; height: auto; }
+.section-elev-base { fill: #f0e2d8; stroke: #a9714e; stroke-width: 1; }
+.section-elev-panel { fill: #dee8fd; stroke: #2f6fed; stroke-width: 1; }
+.section-elev-ground { fill: none; stroke: #94a3b8; stroke-width: 1.5; }
+.section-elev-nofence { stroke: #a93636; stroke-width: 2; stroke-dasharray: 3 3; }
+.section-elev-hit { fill: transparent; cursor: pointer; }
