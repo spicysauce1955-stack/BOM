@@ -114,13 +114,11 @@ class GroundPoint(BaseModel):
     station_mm: Mm
     z_mm: Mm
 
-class Step(BaseModel):
-    """A cliff: where it is, and how far it jumps. A separate type from
-    GroundPoint because `delta_mm` is a DIFFERENCE and `z_mm` is a height —
-    one model carrying both would invite a renderer to draw a step at its
-    own size above the ground."""
-    station_mm: Mm
-    delta_mm: Mm
+class ModelRun(BaseModel):
+    """One stretch built to one fence model, half-open like SurfaceRun."""
+    start_mm: Mm
+    end_mm: Mm
+    model_id: str
 
 class SurfaceRun(BaseModel):
     """One stretch of one base surface, half-open [start, end)."""
@@ -136,15 +134,32 @@ class SectionFacts(BaseModel):
     base_surface: str          # the one surface, or "mixed"
     ground: list[GroundPoint]
     max_slope_permille: int
-    ground_steps: list[Step]
-    base_top_steps: list[Step]
     corner_stations: list[Mm]
-    height_intent_mm: Mm | None        # None = nobody said
+    height_intent_mm: Mm | None        # None = no SINGLE answer
     height_covered_mm: Mm              # how much of the run an intent covers
-    fence_model_id: str                # "" = the project default applies
+    models: list[ModelRun]             # empty = the project default applies
 
 def section_facts(topology: Topology) -> list[SectionFacts]: ...
 ```
+
+**No steps, and the omission is the decision.** The obvious field for a card that
+says *the wall jumps here* is a list of steps, and `station.py` has
+`ground_step_stations` and `base_top_step_stations` ready to give one. Both take a
+`min_step_mm`, and the generator says where that number comes from: *"the
+threshold is knowledge, not code (K-STEP-POST)"*. A read model that picked one
+would hard-code a rule the knowledge base owns; one that took it as an argument
+would push the same problem onto a route with no business resolving rules —
+`readiness.py` keeps no knowledge base in its signature for exactly this reason.
+
+So the SHAPE is a section fact (`ground`, and the surfaces it stands on) and the
+JUDGEMENT that a step is too big arrives after generation as `excessive_step`,
+through Task 4. Before the rules have run, nobody knows whether 1 120 mm is a
+problem.
+
+**`_uncovered_mm` becomes public `uncovered_mm` in `report/handover.py`.** Task 2
+asks the same question per stretch, and the merging rule is the whole of audit
+finding B02 — a second copy would report full coverage on overlapping events,
+which is the exact failure that docstring describes.
 
 - [ ] **Step 1: Write the failing tests**
 

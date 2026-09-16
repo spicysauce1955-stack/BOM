@@ -56,8 +56,13 @@ class HandoverGap(BaseModel):
     blocking: bool = False
 
 
-def _uncovered_mm(topo: Topology, run: Run, payload_kind: str) -> Mm:
+def uncovered_mm(topo: Topology, run: Run, payload_kind: str) -> Mm:
     """Millimetres of this run that NO interval of `payload_kind` covers.
+
+    **Public, because `report/sections.py` asks the same question per stretch.**
+    The merging rule below is the whole of audit finding B02 and it must have
+    one implementation: a second copy would report full coverage on overlapping
+    events, which is the exact failure this docstring describes.
 
     Existence is not coverage, and that distinction is the whole of audit
     finding B02 (`docs/visualizations/salesperson-mvp/sales-ui-audit.md`). The
@@ -175,7 +180,7 @@ def handover_gaps(project: Project) -> list[HandoverGap]:
     # every uncovered millimetre has no model at all — audit B02's second case,
     # where a model event over one metre of five reported nothing missing.
     if project.fence_model is None and any(
-            _uncovered_mm(topo, r, "fence_model") for r in topo.runs):
+            uncovered_mm(topo, r, "fence_model") for r in topo.runs):
         out.append(HandoverGap(code="no_model_chosen", blocking=True))
 
     out += _job_gaps(project)
@@ -207,7 +212,7 @@ def handover_gaps(project: Project) -> list[HandoverGap]:
         out.append(HandoverGap(code="gate_swing_unstated",
                                params={"gates": unstated_swings}))
 
-    bare_height = {r.id: _uncovered_mm(topo, r, "height_intent") for r in topo.runs}
+    bare_height = {r.id: uncovered_mm(topo, r, "height_intent") for r in topo.runs}
     if any(bare_height.values()):
         # The number is in the params because "no height" and "assumed 1800" are
         # different sentences, and only the second one a person can act on.
@@ -228,7 +233,7 @@ def handover_gaps(project: Project) -> list[HandoverGap]:
             "run_ids": sorted(rid for rid, v in bare_height.items() if v),
             "uncovered_mm": sum(bare_height.values())}))
 
-    bare_base = {r.id: _uncovered_mm(topo, r, "base") for r in topo.runs}
+    bare_base = {r.id: uncovered_mm(topo, r, "base") for r in topo.runs}
     if any(bare_base.values()):
         # Not in the audit, and the same defect: `base_surface_at` resolves per
         # STATION, so an uncovered remainder stands on silent `soil` exactly as
