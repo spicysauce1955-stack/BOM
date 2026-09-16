@@ -71,6 +71,7 @@ from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
 from fenceai.report.handover import handover_gaps
 from fenceai.report.readiness import readiness
+from fenceai.report.sections import section_facts
 from fenceai.project.model import (
     Annotation, Job, Project, Selection, SiteConditions, SiteContext, Stated,
 )
@@ -670,6 +671,27 @@ def get_handover(project_id: str) -> dict:
             # for a fence with no model chosen is a number with nothing behind
             # it. The handover itself is never withheld.
             "estimate_ready": not any(g.blocking for g in gaps)}
+
+
+@app.get("/api/projects/{project_id}/sections")
+def get_sections(project_id: str) -> dict:
+    """What each stretch of this fence IS — length, what it stands on, the
+    ground along it, whether anybody stated a height.
+
+    The route the office job screen opens on, and the only per-stretch view in
+    this app that **cannot go stale**. `/runs/{id}/structure` and
+    `/runs/{id}/sections/{run_id}/decisions` both refuse with 409
+    `topology_changed`, and they are right to: they describe a stored run that
+    was generated from a drawing which has since moved. This describes the
+    DRAWING. When the drawing moves it has a new answer, not a refusal — so
+    there is nothing here to guard against and a guard would be a lie about
+    what the reader is looking at.
+
+    A job with nothing drawn answers `{"sections": []}` rather than a 404: a
+    job nobody has drawn yet is a real state and the screen renders it.
+    """
+    return {"sections": [s.model_dump()
+                         for s in section_facts(_project(project_id).topology)]}
 
 
 @app.get("/api/projects")
