@@ -166,6 +166,12 @@
                  make the drawing harder to edit than it was before. -->
             <g id="g-context"></g>
             <g id="g-context-draft"></g>
+            <!-- EMPHASIS, and never anything else. Owned by js/job-layers.js:
+                 what each stretch stands on, and how tall the fence is along
+                 it. UNDER g-topology on purpose — emphasis sits beneath the
+                 fence line rather than over it, and its own PROTECTED list
+                 names everything no layer may ever affect. -->
+            <g id="g-layers"></g>
             <g id="g-topology"></g>
             <g id="g-overlay"></g>
             <g id="g-handles"></g>
@@ -229,6 +235,7 @@
                docs/superpowers/specs/2026-09-16-office-job-screen-design.md. -->
           <section id="job-screen" class="panel" hidden>
             <div id="job-mode"></div>
+            <div id="job-layers"></div>
             <div id="job-flags"></div>
             <div id="job-sections"></div>
           </section>

@@ -92,6 +92,14 @@ class JobFlag(BaseModel):
     severity: Severity
     places: list[Place]
     source: Literal["handover", "readiness", "strategy"]
+    #: The source's own English sentence, carried as a FALLBACK and nothing more
+    #: — the sentence a reader sees comes from `code` + `params` through the
+    #: locale bundles, in their language. It is here because warning codes are an
+    #: OPEN registry (adding one is not an amendment), so a code with no bundle
+    #: entry is the expected case rather than a defect, and a screen with nothing
+    #: to fall back to renders the raw key. Empty for the two read models that
+    #: never carried one: their codes are ours and always registered.
+    message: str = ""
 
 
 def _place_scope(scope: str) -> Place:
@@ -154,15 +162,30 @@ def _item_places(params: dict) -> list[Place]:
 
 
 def _warning_places(warning: StrategyWarning) -> list[Place]:
-    if warning.element_refs:
-        return [_place_element(ref) for ref in warning.element_refs]
+    """Where this warning goes, best handle first.
+
+    Element refs are preferred because they carry a station, but they do not all
+    carry coordinates: `post@node:n8` — a post on a shared node — parses to no
+    run and no station (`strategy/generator.py` builds that id shape). Returning
+    early on `element_refs` therefore threw away a `node_id` in `params` that
+    could have placed the very same warning, so a shared-node problem lost its
+    spot on the drawing while naming the node two fields away.
+
+    So: take the element places, and fall through to the params when NONE of
+    them can be drawn.
+    """
+    places = [_place_element(ref) for ref in warning.element_refs]
+    if any(p.run_id or p.station_mm is not None for p in places):
+        return places
     node_id = warning.params.get("node_id")
     if node_id:
         return [Place(kind="node", node_id=str(node_id))]
     run_id = warning.params.get("run_id")
     if run_id:
         return [Place(kind="run", run_id=str(run_id))]
-    return [Place(kind="job")]
+    # The element refs, even uncoordinated, beat nothing: a gate ref still names
+    # a thing the screen can resolve its own way.
+    return places or [Place(kind="job")]
 
 
 def job_flags(
@@ -196,14 +219,15 @@ def job_flags(
         # hard-coded, so a future blocking item is not silently downgraded here.
         out.append(JobFlag(
             code=item.code, params=item.params,
-            severity="blocking" if getattr(item, "blocking", False) else "open",
+            severity="blocking" if item.blocking else "open",
             places=_item_places(item.params), source="readiness"))
 
     for warning in warnings:
         out.append(JobFlag(
             code=warning.code, params=dict(warning.params),
             severity=_FROM_WARNING.get(warning.severity, "open"),
-            places=_warning_places(warning), source="strategy"))
+            places=_warning_places(warning), source="strategy",
+            message=warning.message))
 
     # Stable within a band: the sources keep their own order, which is the order
     # the rules fired in. Sorting by code would shuffle a run's warnings out of

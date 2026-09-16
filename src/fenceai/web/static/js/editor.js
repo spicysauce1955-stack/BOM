@@ -1775,12 +1775,34 @@ function zoomAt(ev, factor) {
   applyViewBox();
 }
 
-function fitView() {
-  const pts = [];
-  for (const n of state.project?.topology.nodes || []) pts.push(toPx([n.x_mm, n.y_mm]));
-  for (const r of state.project?.topology.runs || [])
-    for (const v of r.interior_vertices || []) pts.push(toPx(v));
-  if (!pts.length) { viewBox = { ...DEFAULT_VIEW }; applyViewBox(); return; }
+// The tightest a fit is ever allowed to be, in view px. 450 x 250 is half of
+// DEFAULT_VIEW, which at SCALE 0.045 is 10 m x 5.5 m of world — about one bay
+// of fence filling the width. This is the ONLY floor a fit has, and it is
+// deliberately tighter than the one `zoomAt` enforces (225 px, i.e. 6x): the
+// wheel may go closer than a fit will, because a wheel zoom is somebody asking
+// for that magnification by hand, whereas a fit is the machine choosing one.
+// Without the floor, a two-post stretch 1.2 m long would frame at ~54 px wide
+// — 20x magnification, a blue line across an empty grid with no landmark near
+// enough to tell you where on the property you are looking.
+const MIN_FIT_W = 450, MIN_FIT_H = 250;
+
+// Point the viewBox at a set of ALREADY-PROJECTED (view px) points: pad them,
+// restore the 900:500 aspect so nothing distorts, and refuse to zoom closer
+// than MIN_FIT_W.
+//
+// This is the shared half of `fitView` and `fitToRun`, extracted so there is
+// exactly one answer to "what does a framed view look like" — a second copy of
+// this arithmetic would drift the moment either the padding or the aspect
+// changed, and the symptom (one of the two fit buttons frames slightly
+// differently) is the kind of thing nobody files a bug about.
+//
+// The caller must pass at least one point. That is not laziness about the empty
+// case, it is the whole reason the split is here: the two callers have OPPOSITE
+// answers for "there is nothing to frame". `fitView` resets to DEFAULT_VIEW
+// (an empty project should show the empty grid you draw onto); `fitToRun` does
+// nothing at all (a stale selection must not blank a view somebody is using).
+// Folding either policy in here would silently impose it on the other.
+function frameViewOn(pts) {
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const pad = 60;
   let x = Math.min(...xs) - pad, y = Math.min(...ys) - pad;
@@ -1788,9 +1810,67 @@ function fitView() {
   // preserve the 900:500 aspect so nothing distorts
   if (w / h > 900 / 500) { const nh = w * 500 / 900; y -= (nh - h) / 2; h = nh; }
   else { const nw = h * 900 / 500; x -= (nw - w) / 2; w = nw; }
-  if (w < 450) { const nw = 450, nh = 250; x -= (nw - w) / 2; y -= (nh - h) / 2; w = nw; h = nh; }
+  if (w < MIN_FIT_W) {
+    const nw = MIN_FIT_W, nh = MIN_FIT_H;
+    x -= (nw - w) / 2; y -= (nh - h) / 2; w = nw; h = nh;
+  }
   viewBox = { x, y, w, h };
   applyViewBox();
+}
+
+function fitView() {
+  const pts = [];
+  for (const n of state.project?.topology.nodes || []) pts.push(toPx([n.x_mm, n.y_mm]));
+  for (const r of state.project?.topology.runs || [])
+    for (const v of r.interior_vertices || []) pts.push(toPx(v));
+  if (!pts.length) { viewBox = { ...DEFAULT_VIEW }; applyViewBox(); return; }
+  frameViewOn(pts);
+}
+
+/**
+ * Frame one run in the canvas. A run id that names nothing is a no-op.
+ *
+ * Why this is a second function and not `fitView(runId)`: `fitView` is wired to
+ * a button (`#btn-fit`) and to the `fit-view` event, and BOTH of those hand
+ * their listener an argument nobody wrote down — a MouseEvent from
+ * `addEventListener`, whatever payload `emit` grows later. The day `fitView`
+ * takes a first parameter, `btn-fit` starts asking it to frame a run called
+ * "[object MouseEvent]", and by rule 3 below that is a no-op: the fit button
+ * would quietly stop working, with no error anywhere. A named second capability
+ * cannot be invoked by accident. `fitView` also has three other subscribers
+ * (`notes.js`, `context.js`, `gates.js` all redraw on `fit-view`) that mean
+ * "the whole plan moved"; teaching that event to mean "and it moved to ONE run"
+ * would need each of them re-examined for a change none of them asked for.
+ *
+ * The four cases, all of which a selection-driven caller will hit:
+ *   - a run that exists  → frame it, padded, via the shared `frameViewOn`
+ *   - no id / empty id   → the whole job, by delegating to `fitView`, so a
+ *                          screen clearing its selection has one obvious call
+ *                          and does not have to know a second function name
+ *   - an id naming nothing → NOTHING HAPPENS. This is the load-bearing case.
+ *     The office job screen calls this while reacting to a selection, and a
+ *     selection can outlive what it named (the run was deleted, the project
+ *     reloaded under it, a card rendered from a stale list). Throwing would
+ *     take the click handler down mid-render; falling back to the whole job
+ *     would yank the view out from under somebody who is reading a detail and
+ *     look exactly like a bug in the pan they just did. Leaving the view alone
+ *     is the only option that is wrong about nothing.
+ *   - a run whose endpoint node is missing → also nothing, same reasoning:
+ *     `runPoints` would dereference an undefined node and throw, and a broken
+ *     topology is a stale reference by another name.
+ *
+ * Zoom limits come from `frameViewOn` (MIN_FIT_W), so a very short stretch
+ * stops at the same floor `fitView` stops at and never magnifies past it.
+ */
+export function fitToRun(runId) {
+  if (!runId) { fitView(); return; }
+  if (!state.project) return;
+  const run = runById(runId);
+  if (!run) return;
+  if (!nodeById(run.start_node_id) || !nodeById(run.end_node_id)) return;
+  // `runPoints` is the same projection the canvas itself draws the run with, so
+  // the frame can never disagree with the polyline inside it.
+  frameViewOn(runPoints(run).map(toPx));
 }
 
 function renderTopology() {

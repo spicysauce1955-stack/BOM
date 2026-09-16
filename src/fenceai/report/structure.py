@@ -26,6 +26,7 @@ from fenceai.demand.derive import DemandLine
 from fenceai.fulfillment.lines import ResolvedSupplyLine
 from fenceai.fulfillment.fulfill import Bom
 from fenceai.report.annexe import WarningPlacement
+from fenceai.report.sections import base_surface_of, section_tag
 from fenceai.report.elevation import PanelElevation, panel_elevation
 from fenceai.strategy.model import Strategy, StrategyWarning
 from fenceai.topology.model import GateEdge, GateLeaf, GateSide, Topology
@@ -360,36 +361,20 @@ def _merge_parts(parts: list[Part]) -> list[Part]:
 
 # --- the report --------------------------------------------------------------
 
-_SECTION_TAGS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-
-def section_tag(index: int) -> str:
-    """A, B, … Z, AA, AB … — sections are named, not numbered, so a bay tag (B3)
-    never reads like a section tag.
-
-    **Public, because two read models letter sections.** `report/sections.py`
-    answers what each stretch is before anything is generated; this report
-    answers what it became after. Two private copies of this would agree on
-    every job anybody has drawn and disagree on the twenty-seventh run.
-    """
-    tag = ""
-    n = index
-    while True:
-        tag = _SECTION_TAGS[n % 26] + tag
-        n = n // 26 - 1
-        if n < 0:
-            return tag
 
 
 def _base_surface(topo: Topology, run_id: str) -> str:
-    """The section's base surface — or "mixed" when it genuinely has more than
-    one, rather than whichever event happened to be authored first."""
-    run = topo.run(run_id)
-    surfaces = {iv.payload.surface for iv in run.interval_events
-                if iv.payload.kind == "base"}
-    if not surfaces:
-        return "soil"
-    return surfaces.pop() if len(surfaces) == 1 else "mixed"
+    """The section's base surface — or "mixed" when it genuinely has more than one.
+
+    **Delegated, because `report/sections.py` answers the same question before
+    a run exists.** This used to fold over the run's base EVENTS, which is the
+    existence-is-not-coverage mistake of audit finding B02: one event covering
+    half an 8 m run answered `masonry_wall` for all of it, while the
+    coverage-derived answer is `mixed`. Same drawing, same question, two
+    answers — so a card read "mixed" before Generate and "masonry" after, for a
+    fence nobody had touched.
+    """
+    return base_surface_of(topo, topo.run(run_id))
 
 
 def _post_tilt(topo: Topology, run_id: str) -> str:

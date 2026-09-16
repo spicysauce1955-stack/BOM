@@ -3041,6 +3041,7 @@ def _smoke_street_grips_by_step(c) -> None:
     switch_user(c, "yossi@example.com")
     open_project(c, pid)
     c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click(); 'ok'")
+
     wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7", timeout=15)
     office = {}
     for key in ("blanks", "generate"):
@@ -3788,6 +3789,143 @@ def _smoke_office_job_screen(c) -> None:
     check("the office can still act on its own desk while reading",
           visible("#desk-actions"), visible("#desk-actions"))
 
+    # The regression a fully green suite could not see. `data-jobmode` is set on
+    # EVERY step of the office road, so emptying the side column also took the
+    # four panels the road KEEPS — choices on the questions step, notes on sale,
+    # run editing on blanks, the inspector on generate. `test_step_surfaces.py`
+    # asserts that hidden selectors have a rule, never that a kept one is
+    # VISIBLE; and `_smoke_office_desk_acts` walks the road as an ADMIN, whose
+    # view is `all`, so this mode never turns on there. Reading and the road are
+    # exclusive now — while reading there is no step to be on.
+    check("the road is away while reading, so no step is missing its panels",
+          not visible("#road"), visible("#road"))
+    # The other half of that property — that the road STILL WORKS for an account
+    # using it — is asserted by `_smoke_office_desk_acts`, which walks all seven
+    # steps. A `check(True, ...)` here saying so would be a passing line that
+    # tests nothing, which is the failure this file has shipped before.
+
+    # --- every problem, drawn where it actually is ----------------------------
+    # Nothing has been generated yet, so the only findings are the handover
+    # sheet's — and they are about the whole job and its three stretches.
+    ungenerated = c.js("document.querySelector('#job-flags .job-flags-empty')?.textContent || ''")
+    check("a job nobody has generated says SO, rather than looking clean",
+          bool(ungenerated.strip()) or c.js(
+              "document.querySelectorAll('#job-flags .job-flag').length") > 0,
+          ungenerated)
+
+    c.js("document.getElementById('btn-generate')?.click(); 'ok'")
+    wait_for(c, "document.querySelectorAll('#g-flags .flag-mark').length > 0",
+             timeout=30)
+
+    # The API says what SHOULD be drawable; the DOM says what is. Comparing the
+    # two is what makes this survive the job changing — a hardcoded count would
+    # go stale the first time a rule fires differently.
+    drawable = c.js("""fetch('/api/projects/%s/flags').then(r => r.json()).then(d => {
+      const pts = new Set();
+      for (const f of d.flags) {
+        if (f.severity === 'answered') continue;
+        for (const p of f.places) if (p.kind !== 'job') pts.add(JSON.stringify(p));
+      }
+      return {flags: d.flags.length, placeable: pts.size};
+    })""" % pid)
+    marks = c.js("document.querySelectorAll('#g-flags .flag-mark').length")
+    check("every placeable finding is drawn on the plan",
+          marks > 0 and marks <= (drawable or {}).get("placeable", 0),
+          {"marks": marks, "api": drawable})
+
+    # EVERY finding gets a row, including the ones that are about the whole job
+    # and so have nowhere to be drawn. `or True` would make this check pass with
+    # the list deleted — the vacuous-assertion trap this repo has shipped before
+    # — so it compares two counts that can genuinely differ.
+    rows = c.js("document.querySelectorAll('#job-flags .job-flag').length")
+    check("every finding gets a row, whether or not it can be drawn",
+          rows == (drawable or {}).get("flags", -1),
+          {"rows": rows, "api_flags": (drawable or {}).get("flags")})
+
+    # Colour is not an encoding on its own: a reader who cannot tell red from
+    # amber must still be able to tell a blocker from a question.
+    glyphs = c.js("[...new Set([...document.querySelectorAll("
+                  "'#g-flags .flag-mark-glyph')].map(e => e.textContent))]")
+    check("a mark carries a glyph, not only a colour",
+          bool(glyphs) and all(g in ("!", "?") for g in glyphs), glyphs)
+
+    check("the notes layer is untouched by the flags",
+          c.js("document.querySelectorAll('#g-flags .flag-mark').length") > 0
+          and c.js("document.querySelectorAll('#g-notes .flag-mark').length") == 0,
+          c.js("document.querySelectorAll('#g-notes .flag-mark').length"))
+
+    # Click-through: a flag reaches its geometry by the same path a card does.
+    # Clear the selection first. A card is already selected from the check
+    # above, and clicking a finding about THAT SAME stretch correctly toggles it
+    # off — which is the behaviour, not a bug, and asserting "something is
+    # selected" without clearing tested the previous click instead of this one.
+    c.js("(async () => (await import('/js/state.js'))"
+         ".setSelection({runId: null}))()")
+    time.sleep(0.4)
+    wanted = c.js("document.querySelector('#job-flags .job-flag[data-run]')"
+                  "?.dataset.run")
+    before_box = c.js("document.getElementById('canvas')?.getAttribute('viewBox')")
+    c.js("""document.querySelector('#job-flags .job-flag[data-run]')?.click(); 'ok'""")
+    time.sleep(0.8)
+    after_box = c.js("document.getElementById('canvas')?.getAttribute('viewBox')")
+    picked = c.js("(async () => (await import('/js/state.js'))"
+                  ".state.selection.runId)()")
+    check("clicking a finding selects the stretch it is about",
+          bool(wanted) and picked == wanted, {"row": wanted, "selected": picked})
+    check("...and the map frames that stretch", before_box != after_box,
+          {"before": before_box, "after": after_box})
+
+    # --- layers emphasise, and the base is protected from them ----------------
+    layers = c.js("[...document.querySelectorAll('#job-layers input[data-layer]')]"
+                  ".map(e => e.dataset.layer)")
+    check("the screen offers its emphasis layers", sorted(layers or []) ==
+          ["ground", "heights"], layers)
+
+    def protected_counts():
+        return c.js("""(() => ({
+          runs: document.querySelectorAll('#g-topology .run-hit, #g-topology line,'
+                + ' #g-topology polyline').length,
+          gates: document.querySelectorAll('#g-gates *').length,
+          flags: document.querySelectorAll('#g-flags .flag-mark').length,
+        }))()""")
+
+    all_off = protected_counts()
+    c.js("""[...document.querySelectorAll('#job-layers input[data-layer]')]
+            .forEach(e => { if (!e.checked) { e.checked = true;
+              e.dispatchEvent(new Event('change', {bubbles: true})); } }); 'ok'""")
+    time.sleep(0.8)
+    on_shapes = c.js("document.querySelectorAll('#g-layers *').length")
+    check("turning a layer on draws something on the plan", on_shapes > 0, on_shapes)
+
+    all_on = protected_counts()
+    check("...and nothing in the protected base changed when it did",
+          all_on == all_off, {"off": all_off, "on": all_on})
+
+    c.js("""[...document.querySelectorAll('#job-layers input[data-layer]')]
+            .forEach(e => { if (e.checked) { e.checked = false;
+              e.dispatchEvent(new Event('change', {bubbles: true})); } }); 'ok'""")
+    time.sleep(0.8)
+    back_off = protected_counts()
+    check("turning every layer OFF hides nothing that was there",
+          back_off == all_off and
+          c.js("document.querySelectorAll('#g-layers *').length") == 0,
+          {"protected": back_off, "layers": c.js(
+              "document.querySelectorAll('#g-layers *').length")})
+
+    # --- what gets cut, per stretch ------------------------------------------
+    mats = c.js("document.querySelectorAll('#job-sections .section-materials').length")
+    check("every card says what gets cut for its stretch",
+          mats == c.js("document.querySelectorAll('#job-sections .job-card').length"),
+          mats)
+
+    # Money is pooled across the job, so a price on a card would be an
+    # apportionment nothing measured — the refusal tabs.js already makes.
+    money = c.js("""(() => {
+      const t = document.getElementById('job-sections')?.innerText || '';
+      return /[₪$€]|\d+\.\d\d(?!\d)/.test(t);
+    })()""")
+    check("...and never what it costs", money is False, money)
+
     # Clicking a card selects that stretch — the same selection the side view and
     # the section-decisions panel already follow.
     c.js("document.querySelector('#job-sections .job-card[data-run=\"rb\"]')"
@@ -4021,6 +4159,24 @@ def _smoke_office_desk_acts(c) -> None:
                    ".then(o => !!o.ok)")
     open_project(c, pid)
     c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click(); 'ok'")
+    # AFTER the job is open, not after sign-in: opening a job returns the
+    # office to reading (a mode is a decision about the job in front of
+    # you), so a toggle clicked before the job loads is undone by it.
+    # The office now LANDS in reading, so the road is away until somebody asks
+    # for it. Turning it on is the product owner's own requirement — "can edit,
+    # but needs to toggle something for it" — and this is where the rest of this
+    # case proves the road still works whole once it is on.
+    wait_for(c, "!!document.getElementById('job-mode-toggle')", timeout=15)
+    check("the office road is away until editing is turned on",
+          not c.js("!!document.getElementById('road')?.checkVisibility()"),
+          c.js("document.documentElement.dataset.jobmode"))
+    c.js("document.getElementById('job-mode-toggle')?.click(); 'ok'")
+    time.sleep(0.8)
+    check("turning editing on brings the road back, whole",
+          c.js("!!document.getElementById('road')?.checkVisibility()")
+          and c.js("document.querySelectorAll('#road [data-step]').length") == 7,
+          {"road": c.js("!!document.getElementById('road')?.checkVisibility()"),
+           "steps": c.js("document.querySelectorAll('#road [data-step]').length")})
     seven = wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7",
                      timeout=15)
     check("the office takes the job and walks into it on a road of seven steps",

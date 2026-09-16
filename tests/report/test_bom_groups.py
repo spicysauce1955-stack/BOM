@@ -397,6 +397,192 @@ def test_a_line_pegged_to_nothing_lands_in_unassigned():
         "an orphan must not be invented into a section"
 
 
+def _two_sections():
+    """Two runs, so a piece can belong to both. `straight_topology` has one run,
+    and a fixture with one run cannot tell "shared with the other stretch" from
+    "shared with the next bay" — which is exactly the distinction a section card
+    is asking about."""
+    from fenceai.topology.model import Node, Run, Topology
+
+    catalog = demo_catalog()
+    topo = Topology(
+        nodes=[Node(id="n1", x_mm=0, y_mm=0), Node(id="n2", x_mm=3000, y_mm=0),
+               Node(id="n3", x_mm=0, y_mm=4000), Node(id="n4", x_mm=3000, y_mm=4000)],
+        runs=[Run(id="rA", start_node_id="n1", end_node_id="n2"),
+              Run(id="rB", start_node_id="n3", end_node_id="n4")],
+    )
+    result = generate(topo, demo_knowledge(), catalog, parts=PARTS,
+                      models=FenceModelLibrary(models=[M_SLAT]),
+                      default_model=FenceModelChoice(model_id="M-SLAT"))
+    return result, price_strategy(result.strategy, catalog,
+                                  demand_skus=result.run.demand_skus)
+
+
+def _crossing(result, *, id: str = "cont1", qty: int = 2):
+    """One demand line pegged to a bay of rA and BOTH bays of rB: the shape a
+    member derived continuous has (obligation 14 — one line, pegged to every bay
+    the piece crosses), reaching across the section boundary.
+
+    rB's two bays are pegged in reverse order on purpose. The pegs are the demand
+    line's own answer about where the piece goes, and re-ordering them here would
+    be a second derivation of something already decided — invisible while every
+    fixture shares a piece with exactly one element."""
+    a = next(s for s in result.strategy.spans if s.run_ref == "rA")
+    bs = sorted((s.id for s in result.strategy.spans if s.run_ref == "rB"),
+                reverse=True)
+    return a, bs, ResolvedSupplyLine.of(
+        DemandLine(id=id, engineering_qty=qty, role="rail", slot_key="rail",
+                   pegs=[a.id, *bs], cut_length_mm=2900, length_basis="width"),
+        sku="RAIL-3000", unit="cut")
+
+
+def test_a_piece_that_crosses_two_sections_says_so_on_both_cards():
+    """One physical piece, two section groups — and, until this field, two full
+    rows with nothing saying they are the same rail. The office's section card
+    reads `kind="section"` groups, so a stretch that shares a rail with the next
+    one must be able to name what it shares it WITH, or the card reads as if the
+    piece were bought for it alone.
+
+    `shared_with` names the other side's ELEMENTS (the bays the piece also
+    serves), not the other run: it is the demand line's own pegs, inverted, which
+    is the only thing a read model may do with them — and the same statement
+    `structure.Part.shared_with` makes on the setting-out sheet."""
+    result, priced = _two_sections()
+    a, bs, crossing = _crossing(result)
+    grouped = group_bom(result.strategy, [*priced.requirements, crossing],
+                        priced.bom, priced.decisions)
+
+    def rail(element_id):
+        group = next(g for g in grouped.groups if g.element_id == element_id)
+        return next(x for x in group.lines if x.cut_length_mm == 2900)
+
+    # in the pegs' own order, which is NOT sorted order here
+    assert rail("rA").shared_with == bs != sorted(bs)
+    assert rail("rB").shared_with == [a.id]
+    # ...and the quantity is untouched: this view states demand and counts
+    # nothing, so marking the sharing must not also apportion it
+    assert (rail("rA").qty, rail("rB").qty) == (2, 2)
+
+
+def test_a_piece_confined_to_one_section_is_shared_with_nothing_THERE():
+    """"Other" is not "another element" for a section group. A rail derived
+    continuous across three bays of ONE stretch is a piece that stretch owns
+    whole; a card calling it shared would send the reader looking for another
+    stretch holding half of his rail. So a peg is judged by the run it stands on,
+    never by its id.
+
+    The bay groups, which partition nothing and show parts per element, make the
+    opposite statement about the very same line — the one `structure.py` makes —
+    and that difference is the test."""
+    result, priced = _priced()
+    bays = sorted((s.id for s in result.strategy.spans))[:2]
+    continuous = ResolvedSupplyLine.of(
+        DemandLine(id="cont1", engineering_qty=2, role="rail", slot_key="rail",
+                   pegs=bays, cut_length_mm=2900, length_basis="width"),
+        sku="RAIL-3000", unit="cut")
+    reqs = [*priced.requirements, continuous]
+    # a BOM computed from the SAME lines, so the balance below is a real one
+    bom = fulfill(reqs, demo_catalog())
+    grouped = group_bom(result.strategy, reqs, bom, priced.decisions)
+
+    section = next(g for g in grouped.groups if g.element_id == "run1")
+    assert next(x for x in section.lines if x.cut_length_mm == 2900).qty == 2
+    assert all(x.shared_with == [] for x in section.lines), \
+        "one stretch's own bays are not another stretch"
+    first = next(g for g in grouped.groups if g.element_id == bays[0])
+    assert next(x for x in first.lines if x.cut_length_mm == 2900).shared_with \
+        == [bays[1]], "a bay meets the same piece the next bay does"
+    assert all(x.shared_with == [] for x in first.lines
+               if x.cut_length_mm != 2900), \
+        "a per-bay part claims no sharing"
+    _assert_balances(grouped, bom)
+
+
+def test_two_lines_that_differ_only_in_what_they_share_stay_two_rows():
+    """Same sku, unit, role, slot, cut length and basis — and one of them is half
+    of the next stretch's rail. Merged, the single row would claim the sharing on
+    behalf of both, and a crew told "2 rails, shared" would leave one uncut.
+
+    So `shared_with` is in the merge key, exactly as it is in
+    `structure.py::_merge_parts`."""
+    result, priced = _two_sections()
+    a, bs, crossing = _crossing(result, qty=1)
+    own = ResolvedSupplyLine.of(
+        DemandLine(id="own1", engineering_qty=1, role="rail", slot_key="rail",
+                   pegs=[a.id], cut_length_mm=2900, length_basis="width"),
+        sku="RAIL-3000", unit="cut")
+    grouped = group_bom(result.strategy, [*priced.requirements, crossing, own],
+                        priced.bom, priced.decisions)
+    section = next(g for g in grouped.groups if g.element_id == "rA")
+    assert sorted((x.qty, tuple(x.shared_with)) for x in section.lines
+                  if x.cut_length_mm == 2900) == [(1, ()), (1, tuple(bs))]
+
+
+def test_a_gate_beside_the_runs_names_the_other_gate_it_shares_a_piece_with():
+    """A standalone gate is a group of exactly ONE element, so "outside the
+    group" and "another element" are the same set there and it reads like a bay.
+    Nothing in a demo run pegs one line to two gates, which is precisely why the
+    branch needs a test: its rule was otherwise unobservable, and a gate group
+    that quietly reported no sharing at all would look identical."""
+    from fenceai.topology.model import GateSpan, Node, Run, Topology
+
+    catalog = demo_catalog()
+    topo = Topology(
+        nodes=[Node(id=f"n{i}", x_mm=x, y_mm=0) for i, x in enumerate(
+            [0, 5000, 6000, 11000, 12000, 17000], start=1)],
+        runs=[Run(id="rA", start_node_id="n1", end_node_id="n2"),
+              Run(id="rB", start_node_id="n3", end_node_id="n4"),
+              Run(id="rC", start_node_id="n5", end_node_id="n6")],
+        gates=[GateSpan(id="g1", start_node_id="n2", end_node_id="n3"),
+               GateSpan(id="g2", start_node_id="n4", end_node_id="n5")],
+    )
+    result = generate(topo, demo_knowledge(), catalog, parts=PARTS,
+                      models=FenceModelLibrary(models=[M_SLAT]),
+                      default_model=FenceModelChoice(model_id="M-SLAT"))
+    gates = [g.id for g in result.strategy.gates if g.run_ref is None]
+    assert gates == ["gate@g1", "gate@g2"], \
+        "the fixture needs two gates beside the runs"
+    priced = price_strategy(result.strategy, catalog,
+                            demand_skus=result.run.demand_skus)
+    shared = ResolvedSupplyLine.of(
+        DemandLine(id="hdr1", engineering_qty=1, role="rail", slot_key="header",
+                   pegs=gates, cut_length_mm=2900, length_basis="width"),
+        sku="RAIL-3000", unit="cut")
+    grouped = group_bom(result.strategy, [*priced.requirements, shared],
+                        priced.bom, priced.decisions)
+    by_gate = {g.element_id: g for g in grouped.groups if g.kind == "gate"}
+    assert [x.shared_with for x in by_gate["gate@g1"].lines if x.slot_key == "header"] \
+        == [["gate@g2"]]
+    assert [x.shared_with for x in by_gate["gate@g2"].lines if x.slot_key == "header"] \
+        == [["gate@g1"]]
+    assert all(x.shared_with == [] for g in by_gate.values() for x in g.lines
+               if x.slot_key != "header"), "a gate's own kit is shared with nothing"
+
+
+def test_a_decision_group_claims_no_sharing():
+    """Deliberately empty, and not for want of data. A decision group is a CAUSE,
+    not a place on the fence: it is collected by requirement id and holds every
+    line it bought whole, so there is no other side for a piece to be shared
+    with. Filled with the line's pegs — the obvious shortcut, since the pegs are
+    right there — it would answer "where does this piece go" under a name that
+    means something else, and the section card renders both the same way.
+
+    The line under test is the cross-section one, so a shortcut would have
+    something to show."""
+    from fenceai.fulfillment.supply import SupplyDecision
+
+    result, priced = _two_sections()
+    _a, _b, crossing = _crossing(result)
+    decision = SupplyDecision(requirement_ids=["cont1"], pegs=list(crossing.pegs),
+                              slot_key="rail", role="rail", chosen="RAIL-3000")
+    grouped = group_bom(result.strategy, [*priced.requirements, crossing],
+                        priced.bom, [*priced.decisions, decision])
+    groups = [g for g in grouped.groups if g.kind == "decision"]
+    assert any(x.cut_length_mm == 2900 for g in groups for x in g.lines), \
+        "the fixture must put the shared piece in a decision group"
+    assert all(x.shared_with == [] for g in groups for x in g.lines)
+
+
 def test_no_group_carries_money():
     """Deliberate, and the reason this view is honest. A purchase is pooled per
     sku across the whole run — one bar is cut for two bays — so a per-section

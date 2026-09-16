@@ -55,6 +55,53 @@ function topOf(bay) {
   return bottomOf(bay) + (Number(bay.height_mm) || 0);
 }
 
+
+/** The ground elevation at a station, from the section's own samples.
+ *
+ *  Mirrors `station.ground_z`: piecewise-linear between samples, and where two
+ *  samples share a station (a cliff) the RIGHT side wins — the same rule the
+ *  backend uses, so a wall drawn here sits where the generator will build it.
+ *  Flat beyond either end rather than extrapolated: a guess about ground nobody
+ *  measured is a guess drawn to scale.
+ */
+function groundZAt(ground, station) {
+  if (!ground.length) return 0;
+  let z = Number(ground[0].z_mm) || 0;
+  for (let i = 0; i < ground.length - 1; i += 1) {
+    const s0 = Number(ground[i].station_mm) || 0, z0 = Number(ground[i].z_mm) || 0;
+    const s1 = Number(ground[i + 1].station_mm) || 0, z1 = Number(ground[i + 1].z_mm) || 0;
+    if (station === s0) z = z0;
+    if (station > s0 && station <= s1) {
+      z = s1 === s0 ? z1 : z0 + ((z1 - z0) * (station - s0)) / (s1 - s0);
+    }
+  }
+  const last = ground[ground.length - 1];
+  if (station >= (Number(last.station_mm) || 0)) z = Number(last.z_mm) || 0;
+  return z;
+}
+
+/** The built base's top, as ABSOLUTE elevation.
+ *
+ *  `SectionFacts.base_top` carries height ABOVE LOCAL GROUND — the event's own
+ *  convention, and the one `station.base_top_at` answers in — because a base
+ *  top that is linear above sloping ground is not a straight line in absolute
+ *  terms, so storing it absolutely would force a resample at every ground
+ *  breakpoint. The drawing needs absolute, so the addition happens HERE, once,
+ *  where the ground polyline is already to hand.
+ *
+ *  Two points at one station is a STEP and must survive: it is how a
+ *  threshold-free profile says the wall jumps, and collapsing it would erase
+ *  the one fact the demo job's section A exists to show.
+ */
+function absoluteBaseTop(section) {
+  const ground = section.ground || [];
+  return (section.base_top || []).map((pt) => {
+    const station = Number(pt.station_mm) || 0;
+    return { station_mm: station,
+             z_mm: groundZAt(ground, station) + (Number(pt.z_mm) || 0) };
+  });
+}
+
 /** The vertical range this drawing has to hold: ground at its lowest, fence at
  *  its highest. Zero is always included, because the ground line is the reader's
  *  reference and a drawing that cropped it would float. */
@@ -63,6 +110,7 @@ function zRange(section) {
   const ground = section.ground || [];
   const zs = [0];
   for (const g of ground) zs.push(Number(g.z_mm) || 0);
+  for (const w of absoluteBaseTop(section)) zs.push(w.z_mm);
   for (const b of bays) { zs.push(bottomOf(b)); zs.push(topOf(b)); }
   // A stretch with a stated height and no bays still wants room for it, or a
   // pre-generation card draws a flat line and says nothing.
@@ -128,7 +176,13 @@ export function bayRects(section, width, height) {
     y: yOf(Number(g.z_mm) || 0),
   }));
 
-  return { bays, ground, width, height, pad };
+  // The wall, where one is built. Empty is the honest answer for a stretch
+  // standing on soil — a flat line at zero would draw a wall that is not there.
+  const baseTop = absoluteBaseTop(section).map((w) => ({
+    x: xOf(w.station_mm), y: yOf(w.z_mm),
+  }));
+
+  return { bays, ground, baseTop, width, height, pad };
 }
 
 const NS = "http://www.w3.org/2000/svg";
@@ -194,6 +248,13 @@ export function renderSectionElevation(section, opts = {}) {
       hit.addEventListener("click", () => opts.onSelectBay(bay.elementId));
       svg.appendChild(hit);
     }
+  }
+
+  if (geom.baseTop.length > 1) {
+    svg.appendChild(el("polyline", {
+      class: "section-elev-basetop",
+      points: geom.baseTop.map((p) => `${p.x},${p.y}`).join(" "),
+    }));
   }
 
   if (geom.ground.length > 1) {

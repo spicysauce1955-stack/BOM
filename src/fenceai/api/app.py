@@ -688,7 +688,26 @@ def get_flags(project_id: str, run_id: str = "") -> dict:
             # Which run this answer was read from — "" when there is none, so a
             # screen can tell "nothing has been generated" from "generated and
             # clean" instead of reading an empty list as either.
-            "run_id": result.run.id if result else ""}
+            "run_id": result.run.id if result else "",
+            # ...and WHICH DRAWING that run was laid out against, beside the one
+            # the reader is looking at. Without this pair the answer is unsafe:
+            # a `strategy` flag's place is a STATION minted against the run's
+            # topology, so after an edit the screen would draw a red `!` at
+            # station 4000 of a run that is now 3000 mm long — confidently, at a
+            # spot that does not exist.
+            #
+            # It is a pair of facts rather than a refusal on purpose (this route
+            # must not 409 — it is how somebody finds out the drawing moved) and
+            # rather than a boolean, because "stale" is the READER's conclusion
+            # from two revisions and a screen that disagrees with the server
+            # about which is which should be able to say so.
+            #
+            # `readiness`'s `plan_stale` does NOT cover this: it is a claim about
+            # the COMMITTED run only, so in the ordinary office loop — generate,
+            # edit the drawing, nothing committed yet — nothing else in this
+            # answer mentions that the latest run no longer describes the fence.
+            "run_topology_revision": result.run.topology_revision if result else 0,
+            "topology_revision": project.topology.revision}
 
 
 @app.get("/api/projects/{project_id}/readiness")

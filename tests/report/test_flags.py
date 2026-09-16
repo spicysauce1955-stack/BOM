@@ -16,12 +16,14 @@ Two properties it must never lose:
 
 from __future__ import annotations
 
+import copy
 import inspect
 
 from fenceai.core.warnings import DocumentWarning
 from fenceai.report.flags import job_flags
 from fenceai.report.handover import HandoverGap
 from fenceai.report.readiness import ReadinessItem
+from fenceai.strategy.choices import ChoiceSet
 from fenceai.strategy.model import StrategyWarning
 
 
@@ -159,9 +161,18 @@ def test_a_quoted_document_warning_cannot_even_be_offered():
     assert accepted == {"gaps", "items", "warnings", "choice_sets"}, (
         "job_flags grew a parameter — if a DocumentWarning can reach it, the "
         "annexe rule (contract §3.3.5) is now a filter somebody can remove")
-    # And the type is genuinely foreign to every accepted list: nothing here
-    # holds one, so there is no path for a quoted sentence to become a mark.
-    assert DocumentWarning not in (HandoverGap, ReadinessItem, StrategyWarning)
+
+    # And no accepted type can CARRY one. The first version of this asserted
+    # `DocumentWarning not in (HandoverGap, ReadinessItem, StrategyWarning)`,
+    # which compares a class object against a tuple of class objects and is
+    # true of any four unrelated classes — it would have passed with a
+    # `DocumentWarning` field on every one of them.
+    for model in (HandoverGap, ReadinessItem, StrategyWarning, ChoiceSet):
+        for name, field in model.model_fields.items():
+            rendered = str(field.annotation)
+            assert "DocumentWarning" not in rendered, (
+                f"{model.__name__}.{name} can carry a quoted warning into "
+                f"job_flags; contract §3.3.5 says it may never reach a mark")
 
 
 def test_blocking_comes_first_then_open_then_answered():
@@ -178,3 +189,52 @@ def test_it_is_stable_for_equal_inputs():
                                   params={"run_ids": ["run2", "run1"]})],
                 items=[], warnings=[], choice_sets=[])
     assert job_flags(**args) == job_flags(**args)
+
+
+def test_a_blocking_readiness_item_stays_blocking():
+    """The mapping, not the fixture.
+
+    `test_no_readiness_item_is_ever_blocking` asserts a property of the items it
+    builds — none of them sets `blocking` — so hard-coding `severity="open"`
+    for every readiness item passed the whole suite. `ReadinessItem.blocking` is
+    a real field, and `flags.py` reads it precisely so a future blocking item is
+    not silently downgraded. This is what makes that true.
+    """
+    item = ReadinessItem(code="hypothetical", params={}, blocking=True)
+    (flag,) = job_flags(gaps=[], items=[item], warnings=[], choice_sets=[])
+    assert flag.severity == "blocking"
+
+
+def test_within_a_band_the_rules_own_order_survives():
+    """Sorted by severity ALONE, so equal severities keep source order — which
+    is the order the rules fired in. Re-sorting by code passed every test,
+    because no test ever had two flags in one band."""
+    codes = ["zulu", "alpha", "mike"]
+    warnings = [StrategyWarning(code=c, severity="warning", message="x")
+                for c in codes]
+    flags = job_flags(gaps=[], items=[], warnings=warnings, choice_sets=[])
+    assert [f.code for f in flags] == codes, "not alphabetised, not shuffled"
+
+
+def test_a_warnings_english_sentence_rides_along_as_a_fallback():
+    """Codes are an OPEN registry, so a code with no bundle entry is expected
+    rather than broken — and this is the only thing between the reader and a raw
+    key on screen. Our own codes carry none: they are always registered."""
+    warning = StrategyWarning(code="unregistered_yet", severity="warning",
+                              message="Something specific happened at 4000 mm.")
+    (flag,) = job_flags(gaps=[], items=[], warnings=[warning], choice_sets=[])
+    assert flag.message == "Something specific happened at 4000 mm."
+
+    (gap_flag,) = job_flags(gaps=[HandoverGap(code="customer_missing", params={})],
+                            items=[], warnings=[], choice_sets=[])
+    assert gap_flag.message == ""
+
+
+def test_it_does_not_mutate_what_it_is_given():
+    """The purity check the sections tests do properly. Calling twice with the
+    SAME list objects cannot detect an in-place sort — both calls would agree."""
+    gaps = [HandoverGap(code="height_assumed",
+                        params={"run_ids": ["run2", "run1"]})]
+    before = copy.deepcopy(gaps)
+    job_flags(gaps=gaps, items=[], warnings=[], choice_sets=[])
+    assert gaps == before, "reading a finding must not reorder it"
