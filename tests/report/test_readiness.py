@@ -21,7 +21,7 @@ from fenceai.demand.derive import DemandLine
 from fenceai.fulfillment.fulfill import Bom
 from fenceai.fulfillment.quote import Quote
 from fenceai.fulfillment.supply import SupplyResolution
-from fenceai.project.model import Annotation, Project, Selection
+from fenceai.project.model import Annotation, Project, Selection, SiteConditions
 from fenceai.report.readiness import (
     READINESS_CODES, ReadinessItem, readiness, sale_anchor,
 )
@@ -309,6 +309,43 @@ def test_it_claims_no_staleness_it_cannot_see():
     codes = _codes(p, run=_run())
     assert "plan_stale" not in codes
     assert "no_plan_committed" not in codes
+
+
+def test_the_id_check_is_what_answers_not_the_revision():
+    """The identity test at the top of the staleness branch, exercised where the
+    revision cannot answer for it: handed a run that LOOKS stale but is not the
+    committed one, it must still say nothing. Asserted with the same revision on
+    both sides, the revision check alone suppresses `plan_stale` and the id check
+    is never reached — which is how it survived being deleted."""
+    p = _Office(id="p", name="x", committed_run_id="run_1")
+    p.topology.revision = 9
+    other = _run("run_2", topology_revision=3)     # stale-looking, wrong id
+    assert "plan_stale" not in _codes(p, run=other, committed_run=other)
+    mine = _run("run_1", topology_revision=3)
+    assert "plan_stale" in _codes(p, run=mine, committed_run=mine)
+
+
+def test_a_committed_id_this_job_has_no_run_for_is_nothing_committed():
+    """The caller looked and there is no such run — a plan nobody can open."""
+    p = _Office(id="p", name="x", committed_run_id="ghost")
+    codes = _codes(p, run=_run(), committed_missing=True)
+    assert "no_plan_committed" in codes
+    assert "plan_stale" not in codes
+
+
+def test_the_two_drifts_the_commit_door_refuses_are_reported_too():
+    """Step 6 read done on drift that would refuse a fresh commit: the site
+    moving under a committed plan, and a newer run superseding it."""
+    p = _Office(id="p", name="x", committed_run_id="run_1")
+    p.site = SiteConditions(exposure_category="D")
+    committed = _run("run_1", topology_revision=p.topology.revision)
+    assert "plan_site_moved" in _codes(p, run=committed, committed_run=committed)
+
+    p.site = SiteConditions()
+    fresh = _run("run_1", topology_revision=p.topology.revision)
+    assert "plan_superseded" not in _codes(p, run=fresh, committed_run=fresh)
+    newer = _run("run_2", topology_revision=p.topology.revision)
+    assert "plan_superseded" in _codes(p, run=newer, committed_run=fresh)
 
 
 def test_staleness_is_judged_on_the_committed_run_and_on_no_other():

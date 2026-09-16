@@ -32,7 +32,7 @@ the place permissions live.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from fenceai.commands.model import CommandSpec
 from fenceai.commands.registry import register
@@ -57,6 +57,26 @@ class NoPayload(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
+
+
+class CommitPlan(BaseModel):
+    """Say which run is the one people build from."""
+
+    model_config = {"extra": "forbid"}
+
+    # Named explicitly, never "the latest": by the time this arrives the latest
+    # run may be a newer one than the person was looking at, and a plan committed
+    # to a document nobody read is the defect `AcknowledgeWarnings` names one
+    # screen over. The run is checked against the project, and against the
+    # drawing, catalog and site it was generated from, by the ROUTE — this
+    # package may not reach the store (spec §7: committing takes the strict
+    # staleness guards, because somebody else reads it later and builds from it).
+    #
+    # Non-blank HERE, like `ReturnToSales.reason` and for the identical reason: an
+    # agent proposing the row meets the same floor a button does. Without it,
+    # `{"run_id": ""}` committed nothing, moved the job to `planned`, and left it
+    # there naming no plan at all.
+    run_id: str = Field(min_length=1)
 
 
 class AssignJob(BaseModel):
@@ -168,6 +188,7 @@ def _return_to_sales(payload: ReturnToSales, project: Project, *,
     """
     _move(project, "returned", now=now)
     project.assignee = None
+    _clear_plan(project)
     project.annotations.append(Annotation(
         id=new_id("ann"), target_ref="job", text=payload.reason,
         author=actor, created_at=now,
@@ -187,6 +208,17 @@ def _cancel(payload: BaseModel, project: Project, *, actor: str, now: str) -> Pr
     return project
 
 
+def _clear_plan(project: Project) -> None:
+    """Forget which run was committed.
+
+    A job that leaves the office's hands — reopened after a rejection, handed
+    back to the salesperson — must not come back still naming a plan committed in
+    a previous life: step 6 would read green for a job nobody has re-planned, and
+    the run it names was committed against a drawing that has since been answered.
+    """
+    project.committed_run_id = ""
+
+
 def _reopen(payload: BaseModel, project: Project, *, actor: str, now: str) -> Project:
     """It is happening after all.
 
@@ -196,6 +228,7 @@ def _reopen(payload: BaseModel, project: Project, *, actor: str, now: str) -> Pr
     """
     _move(project, "waiting", now=now)
     project.assignee = None
+    _clear_plan(project)
     return project
 
 
@@ -263,6 +296,61 @@ CANCEL_JOB = register(CommandSpec(
     capacities=DESK,
     from_states=frozenset(OPEN_STATES),
     materialize=_cancel,
+))
+
+def _commit_plan(payload: CommitPlan, project: Project, *, actor: str, now: str) -> Project:
+    """This run is the plan, and the job is planned.
+
+    Two things in one act, like `claim_job`: in the office they ARE one — saying
+    which run is real is what finishing the planning means. Re-committing from
+    `planned` is deliberately not allowed here; changing the answer goes back
+    through `planning` (the transition table already permits it), so a plan
+    somebody may be building from cannot be swapped underneath them by one click.
+    """
+    project.committed_run_id = payload.run_id
+    _move(project, "planned", now=now)
+    return project
+
+
+COMMIT_PLAN = register(CommandSpec(
+    kind="commit_plan",
+    payload_model=CommitPlan,
+    rung="directive",
+    i18n_key="command.commit_plan",
+    capacities=DESK,
+    from_states=frozenset({"planning"}),
+    materialize=_commit_plan,
+))
+
+def _revise_plan(payload: BaseModel, project: Project, *, actor: str, now: str) -> Project:
+    """Take the committed plan back, so it can be planned again.
+
+    The other half of `commit_plan`, and not optional: `planned` was otherwise a
+    one-way door. `plan_stale` can be reported on a committed plan the moment the
+    office edits the drawing — which spec §8 says it may and should — and without
+    this the only way out was Reject and Reopen, which shows the salesperson her
+    job as REJECTED to correct an office decision.
+
+    The id is CLEARED rather than left in place: a job back in planning names no
+    plan, which is what step 6 then says.
+    """
+    project.committed_run_id = ""
+    _move(project, "planning", now=now)
+    return project
+
+
+REVISE_PLAN = register(CommandSpec(
+    kind="revise_plan",
+    payload_model=NoPayload,
+    rung="directive",
+    i18n_key="command.revise_plan",
+    capacities=DESK,
+    # `quoted` too: a quote is a document somebody stood behind and it stays on
+    # the record (quotes are immutable), but the DESIGN can still be taken back
+    # for re-planning — which is exactly the `quoted -> planning` edge the
+    # transition table already carries.
+    from_states=frozenset({"planned", "quoted"}),
+    materialize=_revise_plan,
 ))
 
 REOPEN_JOB = register(CommandSpec(

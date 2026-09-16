@@ -42,9 +42,13 @@ export function stepToOpen(row) {
  *  a question. Everything else is out of her hands, and the panel says where it
  *  is instead of offering a button the server would refuse. */
 export function finishOffer(status) {
-  if (status === "drafting") return { send: true, sendKey: "myjobs.send" };
-  if (status === "returned") return { send: true, sendKey: "myjobs.send_answers" };
-  return { send: false, sendKey: null };
+  if (status === "drafting") return { send: true, sendKey: "myjobs.send", note: null };
+  if (status === "returned") return { send: true, sendKey: "myjobs.send_answers", note: null };
+  // A rejected job is not "with the office" — saying the drawing is there to
+  // look at while the line above it reads REJECTED is two answers to one
+  // question.
+  if (status === "cancelled") return { send: false, sendKey: null, note: "myjobs.rejected" };
+  return { send: false, sendKey: null, note: "myjobs.locked" };
 }
 
 /** A refusal from the command door, in the reader's words. The job's status
@@ -131,7 +135,7 @@ function renderFinish() {
   host.hidden = false;
   const offer = finishOffer(status);
   host.innerHTML = `<h3>${esc(t("myjobs.finish_title"))}</h3>
-    ${offer.send ? "" : `<div class="meta">${esc(t("myjobs.locked"))}</div>`}
+    ${offer.note ? `<div class="meta">${esc(t(offer.note))}</div>` : ""}
     <div class="meta">${esc(t("myjobs.where", {
       status: statusWord(salesWordFor(status)) }))}</div>
     <div class="toolbar">

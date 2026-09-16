@@ -441,6 +441,16 @@ class Project(BaseModel):
     closed_at: str = ""
     # What somebody has said they READ. See `Acknowledgement`.
     acknowledgements: list[Acknowledgement] = []
+    # WHICH RUN IS THE REAL ONE. Generating is cheap and repeated; committing is
+    # the decision, and until this field existed a project accumulated runs with
+    # none marked as the one people build from (backoffice design §7).
+    #
+    # It names a `GenerationRun` — the DESIGN, pure and reproducible for ever —
+    # and never a price: what it costs is a `SupplyRun`, and a `Quote` is a
+    # supply run somebody stood behind. It is NOT an input to generation and must
+    # never enter the run digest, or committing a plan would change the id of the
+    # run it commits.
+    committed_run_id: str = ""
 
     def display_name(self) -> str:
         """What to call this project on any surface a person reads.

@@ -17,14 +17,21 @@ from pathlib import Path
 
 import pytest
 
-from fenceai.commands.desk import DESK, RETURN_TO_SALES, SUBMIT_JOB
+from fenceai.commands.desk import (
+    CANCEL_JOB, COMMIT_PLAN, DESK, REOPEN_JOB, RETURN_TO_SALES, REVISE_PLAN,
+    SUBMIT_JOB,
+)
 from fenceai.project.lifecycle import SALES_STATUS
 
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
 SCRIPT = """
 import { SALES_STATUSES, SALES_WORD, finishOffer, stepToOpen } from "./js/my-jobs.js";
-import { RETURNABLE, canSendBack } from "./js/desk-actions.js";
+import {
+  CANCELLABLE, COMMITTABLE, HOSTS, REVISABLE, RETURNABLE, canSendBack, deskActs,
+  hostIdFor, isDeskUser,
+} from "./js/desk-actions.js";
+import { reopenable } from "./js/queue.js";
 import { isFromOffice } from "./js/notes.js";
 import { isCurrentSwing, slideOptionArrow, swingOptions, swingOptionsShownFor } from "./js/gate-geom.js";
 import { SALES_EDITABLE, drawingLockedFor, runCommand } from "./js/state.js";
@@ -39,6 +46,33 @@ out.open_plain = stepToOpen({ office_notes: 0, sales_status: "draft" });
 out.open_none = stepToOpen(null);
 out.offer = Object.fromEntries(Object.keys(SALES_WORD).map((s) => [s, finishOffer(s)]));
 out.returnable = RETURNABLE;
+out.committable = COMMITTABLE;
+out.cancellable = CANCELLABLE;
+out.revisable = REVISABLE;
+out.hosts = HOSTS;
+out.host_for = { plan: hostIdFor("plan"), generate: hostIdFor("generate"),
+                 sale: hostIdFor("sale"), unknown: hostIdFor("nowhere") };
+out.desk_user = {
+  office: isDeskUser("backoffice", "backoffice"), admin: isDeskUser("all", "admin"),
+  sales_view: isDeskUser("sales", "admin"), sales_account: isDeskUser("backoffice", "sales"),
+};
+out.acts = {
+  sale: deskActs("sale", "planning", false),
+  blanks: deskActs("blanks", "planning", true),
+  questions: deskActs("questions", "planning", true),
+  generate_with_run: deskActs("generate", "planning", true),
+  generate_no_run: deskActs("generate", "planning", false),
+  plan_committable: deskActs("plan", "planning", true),
+  plan_already: deskActs("plan", "planned", true),
+  plan_quoted: deskActs("plan", "quoted", false),
+  sale_of_a_cancelled_job: deskActs("sale", "cancelled", true),
+  sale_of_a_returned_job: deskActs("sale", "returned", true),
+  plan_no_run: deskActs("plan", "planning", false),
+  sale_of_a_finished_job: deskActs("sale", "delivered", true),
+  materials: deskActs("materials", "planning", true),
+};
+out.reopen = { cancelled: reopenable("cancelled"), delivered: reopenable("delivered"),
+               planning: reopenable("planning") };
 out.send_back = {
   office_planning: canSendBack("backoffice", "backoffice", "planning"),
   admin_all_waiting: canSendBack("all", "admin", "waiting"),
@@ -235,3 +269,53 @@ def test_the_optional_fold_is_remembered_per_job_not_per_page(out):
     assert f["opened_elsewhere"] is False
     assert f["closed_here_with_value"] is True
     assert f["never_touched"] is False
+
+
+def test_each_office_step_offers_its_own_act(out):
+    """One panel, keyed on the step. The acts are the commands the office road's
+    steps turn on, and a step with nothing of its own offers nothing rather than
+    a button the server would refuse."""
+    a = out["acts"]
+    assert a["sale"] == ["acknowledge_sale", "return_to_sales", "cancel_job"]
+    assert a["blanks"] == ["return_to_sales", "cancel_job"]
+    assert a["generate_with_run"] == ["acknowledge_warnings", "cancel_job"]
+    assert a["plan_committable"] == ["commit_plan", "cancel_job"]
+    # nothing to act on, or nothing this step does
+    assert a["questions"] == [] and a["materials"] == []
+    assert a["generate_no_run"] == [] and a["plan_no_run"] == []
+    # a job already planned is not committed again from here — it is taken BACK
+    # to planning, which is the only way out of `planned` that does not show the
+    # salesperson a rejection
+    assert a["plan_already"] == ["revise_plan", "cancel_job"]
+    assert a["plan_quoted"] == ["revise_plan", "cancel_job"]
+    # ...and a finished job is not read, sent back or rejected: there is no work
+    # left on it for an acknowledgement to be part of
+    assert a["sale_of_a_finished_job"] == []
+    assert a["sale_of_a_cancelled_job"] == []
+    # a job handed back to her is still open — read and rejectable — but not
+    # sent back again: it is already with her (`RETURNABLE`)
+    assert a["sale_of_a_returned_job"] == ["acknowledge_sale", "cancel_job"]
+
+
+def test_the_browser_offers_commit_exactly_where_the_command_accepts_it(out):
+    assert set(out["committable"]) == set(COMMIT_PLAN.from_states)
+    assert set(out["reopen"]) == {"cancelled", "delivered", "planning"}
+    assert out["reopen"]["cancelled"] is True
+    assert {s for s, ok in out["reopen"].items() if ok} == set(REOPEN_JOB.from_states)
+    assert set(out["cancellable"]) == set(CANCEL_JOB.from_states)
+    assert set(out["revisable"]) == set(REVISE_PLAN.from_states)
+
+
+def test_only_an_office_account_on_an_office_view_sees_the_desk(out):
+    d = out["desk_user"]
+    assert d["office"] and d["admin"]
+    assert not (d["sales_view"] or d["sales_account"])
+
+
+def test_the_plan_step_draws_its_act_on_the_sheet_it_is_read_on(out):
+    """Two hosts, one module: step 6 is read on the structure sheet and every
+    other step on the canvas, where a panel in the canvas column is simply not on
+    screen — which is how the commit button failed to appear at all."""
+    assert out["host_for"] == {"plan": "desk-actions-plan", "generate": "desk-actions",
+                               "sale": "desk-actions", "unknown": "desk-actions"}
+    assert set(out["hosts"]) == set(out["host_for"].values())

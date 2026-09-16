@@ -249,9 +249,21 @@ keys that would change the drawing are ignored — a drag there would bump the
 topology under a run the office generated. Presentation only: the server does not
 gate topology writes by status yet.
 
-**The office asks back** (`js/desk-actions.js`, `#desk-actions`, on the office's
-`sale` and `blanks` steps): a reason and *Send back with this question* performs
-`return_to_sales`, which the desk had as a command and no screen performed. A
+**The office's step controls** (`js/desk-actions.js`) are one panel keyed on the
+step, not four panels: *I have read what she sold* (`acknowledge_sale`, step 1),
+*I have read these warnings* (`acknowledge_warnings`, step 4), *Commit this plan*
+(`commit_plan`, step 6) with *Take the plan back* (`revise_plan`) once it is
+committed, and, wherever an open job is on screen, *Send back with this question*
+and *Reject this job*. Each act that FINISHES a step also advances the road
+(`road-advance`), because those steps suppress the road's own Done button on the
+grounds that they have a control of their own — suppressing it without advancing
+leaves three steps with no way forward. Each was a command with no screen — which is
+why steps 1, 4 and 6 read amber on every job — and each step's `commits: true`
+was flipped in the commit that shipped its button, never before. It has TWO hosts,
+because step 6 is read on the structure sheet and every other step on the canvas
+(`#desk-actions-plan` there, `#desk-actions` here); the one not in use is emptied,
+so an act cannot be drawn twice. Rejecting is undone from the finished queue's
+*Reopen*, the one place that lists the jobs it applies to. A
 question about one THING is a note pinned on it — the office's `blanks` step now
 keeps the note tool — and a note written by an account other than the job's
 creator is "from the office": marked in the notes panel and drawn larger in blue

@@ -16,7 +16,8 @@ from fenceai.commands.model import CommandRefused, CommandSpec
 from fenceai.commands.registry import parse_payload, spec_for
 
 
-def perform(kind: str, data: dict, project, *, actor: str, capacity: str, now: str):
+def perform(kind: str, data: dict, project, *, actor: str, capacity: str, now: str,
+            precondition=None):
     """Run one command against one job, or refuse it.
 
     **The order is the design.** Capacity is asked FIRST so a refusal never leaks
@@ -25,6 +26,14 @@ def perform(kind: str, data: dict, project, *, actor: str, capacity: str, now: s
     there to take. Then whether this row is something a hand performs at all,
     which is a fact about the table and tells the asker nothing about the job.
     Then the state, then the payload.
+
+    `precondition` is how a row states something only the CALLER can check — a
+    run belonging to this job, a drawing that has not moved since it was
+    generated. It is asked LAST, after capacity, performability, state and
+    payload, for the same reason capacity is asked first: answered earlier, it
+    would tell a salesperson which runs exist and how far a job has got, through
+    a door that should only ever say "not your account". It takes the PARSED
+    payload, so a precondition never re-reads a raw dict.
 
     Nothing is persisted here and nothing is logged: the caller owns the store,
     and a pure `perform` is what lets the desk tests drive all six rows through
@@ -46,4 +55,6 @@ def perform(kind: str, data: dict, project, *, actor: str, capacity: str, now: s
         raise CommandRefused(code="command_wrong_state", kind=kind,
                              status=project.status)
     payload = parse_payload(kind, data)
+    if precondition is not None:
+        precondition(kind, payload, project)
     return spec.materialize(payload, project, actor=actor, now=now)

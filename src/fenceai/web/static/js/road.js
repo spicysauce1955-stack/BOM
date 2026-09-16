@@ -334,6 +334,13 @@ export function initRoad() {
   on("job-changed", () => {
     if (currentView() === "sales" && current === "job") advance();
   });
+  // The step's own control finished its act (`js/desk-actions.js`: read the
+  // sale, read the warnings, commit the plan). Those steps suppress the road's
+  // Done button on the grounds that they HAVE a control, so the control has to
+  // do what Done did — or the road stops moving forward on three of its steps.
+  on("road-advance", () => {
+    if (currentRoad()) advance();
+  });
   // Another module asking for a step by name — opening a job the office wrote
   // on lands on the review step. Ignored for a step this road does not have.
   on("road-go", (stepKey) => {
