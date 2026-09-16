@@ -51,6 +51,7 @@ from fenceai.fencemodel.vocabulary import vocabularies
 from fenceai.fulfillment.fulfill import Inventory
 from fenceai.fulfillment.pipeline import PricedRun, price_strategy
 from fenceai.fulfillment.quote import Quote
+from fenceai.fulfillment.supply import SupplyResolution
 from fenceai.fulfillment.supply_run import (
     SUPPLY_BEHAVIOR_VERSION, SupplyRun, inventory_hash, supply_id,
 )
@@ -474,6 +475,50 @@ def _refuse_unknown_assignee(body: CommandBody) -> None:
         })
 
 
+def _command_precondition(kind: str, payload, project: Project) -> None:
+    """The strict staleness guards, for the one command that freezes a decision.
+
+    `commands/` is pure over a `Project` and may not reach the store, so what a
+    row needs from the store is stated here and handed to `perform` as its
+    `precondition` — the seam `CommandSpec`'s `assignee` comment names.
+
+    `commit_plan` takes STRICTER guards than any working view, and stricter than
+    `create_quote`'s (which checks the site, the catalog and unresolved supply but
+    not the topology revision): a working view that renders something stale is a
+    screen somebody re-reads, while a committed plan is read later by somebody who
+    builds from it. Unresolved supply is NOT a refusal here — a design can be
+    complete while the yard cannot fill it; that stays a readiness item and the
+    quote stays the hard stop.
+    """
+    if kind != "commit_plan":
+        return
+    # Non-blank by the payload model (`CommitPlan.run_id`), which has already
+    # parsed by the time a precondition is asked.
+    #
+    # A run nobody has ever stored and a run belonging to somebody else are ONE
+    # fact from here: it is not this job's plan. `_run`'s bare 404 would reach
+    # the office as "the action failed" (`state.js` has no code to render), and
+    # would answer, to anybody allowed this far, which run ids exist.
+    result = state.store.load_run(payload.run_id)
+    if result is None or result.run.project_id != project.id:
+        raise HTTPException(422, {
+            "code": "run_not_on_this_job", "params": {"run_id": payload.run_id},
+        })
+    if project.topology.revision != result.run.topology_revision:
+        raise HTTPException(409, {
+            "code": "topology_changed",
+            "run_topology_revision": result.run.topology_revision,
+            "project_topology_revision": project.topology.revision,
+        })
+    _refuse_moved_site(project, result)
+    # ...and the catalog, through the check every other reader of a stored run
+    # makes. NOT `_priced`: pricing would drag the objective preset — a fact
+    # about what it costs — into an act that commits the design and never a
+    # price, and would refuse on fulfillment grounds one line under a comment
+    # promising it does not.
+    _fresh_catalog(result)
+
+
 @app.post("/api/projects/{project_id}/actions")
 def perform_command(request: Request, project_id: str, body: CommandBody) -> Project:
     """Perform one command against one job, or refuse it in a sentence.
@@ -493,6 +538,11 @@ def perform_command(request: Request, project_id: str, body: CommandBody) -> Pro
         changed = commands.perform(
             body.kind, body.payload, project,
             actor=actor_ref(user), capacity=user.capacity, now=_now_iso(),
+            # What only this layer can check — the run a `commit_plan` names, and
+            # the drawing, catalog and site it was generated from. Asked by
+            # `perform` AFTER capacity and state, so a salesperson who may not
+            # commit is told that and learns nothing about which runs exist.
+            precondition=_command_precondition,
         )
     except KeyError as unknown:
         raise HTTPException(404, {
@@ -519,6 +569,33 @@ def perform_command(request: Request, project_id: str, body: CommandBody) -> Pro
     return changed
 
 
+def _readiness_supply(result) -> SupplyResolution | None:
+    """What supply says about this run, or `None` when it cannot be asked.
+
+    `None` is not silence: `readiness` turns it into `supply_unknown`, which is
+    the honest answer for a run whose catalog or site has moved under it —
+    reported here instead of raised, because the road is the screen people open
+    to find out what is wrong with a job.
+
+    The SITE is checked explicitly, because `_priced` does not: it checks the
+    catalog alone. Without it step 5 read "the yard can fill this" for a run laid
+    out under conditions the project no longer states, while step 7's quote door
+    refuses that same run on `site_conditions_changed` — the road saying go and
+    the next door saying no, with nothing on the road mentioning the site. The
+    DRAWING is deliberately not checked: supply answers the demand this run
+    already recorded, and a moved drawing is what `plan_stale` is for.
+    """
+    if result is None:
+        return None
+    try:
+        _refuse_moved_site(_project(result.run.project_id), result)
+        _, _, priced = _priced(result, _live_preset(result.run.project_id))
+    except HTTPException:
+        return None
+    return SupplyResolution(requirements=priced.requirements,
+                            unresolved=priced.unresolved)
+
+
 @app.get("/api/projects/{project_id}/readiness")
 def get_readiness(project_id: str) -> dict:
     """What the OFFICE still has to do — the run-scoped sibling of `/handover`.
@@ -540,6 +617,7 @@ def get_readiness(project_id: str) -> dict:
     """
     project = _project(project_id)
     runs = state.store.list_runs(project_id)
+    _has_run = any(r["id"] == project.committed_run_id for r in runs)
     # The LATEST run, because that is the one the office is looking at. An older
     # one is a document somebody may still read, but "what is left to do" is a
     # question about the fence as it stands now.
@@ -548,7 +626,26 @@ def get_readiness(project_id: str) -> dict:
         project,
         run=result.run if result else None,
         strategy=result.strategy if result else None,
+        # Step 5 is about what the YARD can fill, which only the supply pass can
+        # answer. Unwired, `readiness` reported `supply_unknown` on every job
+        # with a run — "nobody worked it out", which was true and meant step 5
+        # could never read done. It stays that way for a run too stale to price:
+        # a moved drawing or catalog makes the question unanswerable rather than
+        # answered, and this read model must never be the thing that 409s the
+        # road on the screen somebody opened to find out what is wrong.
+        supply=_readiness_supply(result),
         choice_sets=result.choice_sets if result else None,
+        # The committed run is a DIFFERENT document from the latest one, and
+        # `plan_stale` is a claim about the committed one alone (readiness.py):
+        # handed the latest, it would judge the plan by a run that is not it.
+        # `None` for an id this project has no run for — readiness reads that as
+        # nothing committed, which is the honest answer and the one thing it
+        # never does is stay silent.
+        committed_run=(state.store.load_run(project.committed_run_id).run
+                       if project.committed_run_id and _has_run else None),
+        # ...and this says we LOOKED: an id naming no run of this job is nothing
+        # committed, which is different from a caller that simply did not pass one.
+        committed_missing=bool(project.committed_run_id) and not _has_run,
         quotes=state.store.list_quotes(project_id),
     )
     return {"items": [i.model_dump() for i in items]}

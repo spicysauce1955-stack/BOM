@@ -3,6 +3,55 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-09-16: the office can finish a job, and reject one
+
+Branch `feat/office-desk-actions`, not merged at the time of writing. The slice the
+merged one implied: her home screen shows five statuses and the office could reach
+two of them, because three commands had no screen.
+
+* **`commit_plan`** — "say which run is the one people build from" (spec §7), which
+  is what steps 6 and 7 of the office road were amber for. It commits the DESIGN,
+  never a price; its guards are the strictest in the app and are asked as a
+  `precondition` AFTER capacity and state, so the door cannot be used to enumerate
+  run ids. `revise_plan` is the way back — without it `planned` was a one-way door
+  and a stale plan could only be fixed by REJECTING the job, which the salesperson
+  reads as a rejection for an office decision.
+* **The two acknowledgements** — steps 1 and 4 turned on facts nothing can derive,
+  and had no button. Each of the three steps that claims `commits: true` now has a
+  control that also ADVANCES the road, because suppressing Done without advancing
+  leaves a step with no way forward.
+* **Reject and reopen** — `cancel_job` from the job's own screen, undone from the
+  finished queue, which is what makes `rejected` reachable on her list at all.
+* `readiness` reports the two drifts the commit door refuses and step 6 used to
+  read done through: `plan_site_moved` and `plan_superseded`.
+* **Step 5 could never read done either**, and for a different reason the browser
+  smoke found: the readiness route never resolved supply, so every job with a run
+  reported `supply_unknown` — "nobody worked it out", true and permanent. It
+  resolves now, and still answers `supply_unknown` (rather than 409ing the road)
+  for a run whose catalog or site has moved under it.
+
+**One thing the browser smoke taught about itself:** two cases in `main()` retire
+rules the demo knowledge base rests on (`K-POST-DEFAULT`, `K-RAIL-SHORT`) and
+nothing puts them back, so every case registered in `_CHOICE_CASES` runs in a world
+where posts have no product. A step-5 check cannot be asked there at all. The new
+case repairs those defaults through the app's own authoring door for its own
+duration and asserts the knowledge base is left as it was found; a case added after
+it pays the same tax until the ordering comment in `main()` is dealt with.
+
+Both reviewers ran. `architecture-critic`: two blockers (a one-way `planned`, and a
+blank `run_id` that committed nothing yet marked the job planned) and four majors
+(the guard answering before the capacity check, `commits: true` without advancing,
+the desk panel printing on the crew's sheet, `plan_stale` narrower than the commit
+door) — all fixed. `test-reviewer`: 3 surviving mutants and an existing test whose
+claim was asserted where the guard it names is inert; pinned now, including that
+committing changes no run id.
+
+**Deliberate, and recorded rather than fixed:** any backoffice account may commit a
+plan on a job assigned to somebody else — consistent with `assign_job` and
+`cancel_job`, and "nothing here is a lock" (`commands/desk.py`). Commit is the one
+act with real consequences downstream, so if an assignee check is ever wanted, this
+is the row to put it on.
+
 ## Checkpoint — 2026-09-15 (evening): a salesperson's home, and a question back
 
 Same branch. Six pieces of user feedback after trying the login slice:

@@ -108,7 +108,11 @@ export const OFFICE_ROAD = {
     // the acknowledge buttons are not built yet, so claiming it left the step
     // with no way to be finished at all. It flips to true in the commit that
     // ships the button, not before.
-    { key: "sale", panel: "canvas", commits: false,
+    // `commits: true` now that each of these steps has its own control:
+    // "I have read the sale", "I have read these warnings", "Commit this plan"
+    // (`js/desk-actions.js`). The road's own Done button steps aside rather than
+    // sitting beside a button that does the real thing.
+    { key: "sale", panel: "canvas", commits: true,
       requires: ["no_fence_drawn", "sale_unread", "promises_contradicted",
                  "gates_contradicted"],
       wants: ["customer_missing", "address_missing", "sold_by_missing",
@@ -121,12 +125,12 @@ export const OFFICE_ROAD = {
       requires: ["choices_unanswered"], wants: [], satisfiedBy: null },
     // Generate itself is this step's control, but "I have read the warnings"
     // is not built — same reasoning as step 1.
-    { key: "generate", panel: "canvas", commits: false,
+    { key: "generate", panel: "canvas", commits: true,
       requires: ["no_run", "warnings_unreviewed"], wants: [], satisfiedBy: null },
     { key: "materials", panel: "bom",
       requires: ["supply_unresolved", "supply_unknown"], wants: [],
       satisfiedBy: null },
-    { key: "plan", panel: "structure", commits: false,
+    { key: "plan", panel: "structure", commits: true,
       requires: ["no_plan_committed", "plan_stale"], wants: [], satisfiedBy: null },
     { key: "price", panel: "bom", commits: false,
       requires: ["not_priced"], wants: [], satisfiedBy: null },

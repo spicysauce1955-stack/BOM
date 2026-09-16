@@ -705,6 +705,10 @@ svg#canvas.panning, svg#canvas.panning * { cursor: grabbing !important; }
   body { background: #fff; }
   header, nav#tabs, #toolbar, .side-col, #statusbar, #warnings,
   #draft-actions, .profile-header, .profile-base-bar, #structure-head .toolbar,
+  /* the office's own controls, which live ON the setting-out sheet (the plan
+     step is read there) and must never print on the page the crew builds from:
+     "Commit this plan" and "Reject this job" are not part of a fence drawing */
+  #desk-actions-plan, #road,
   #strategy-summary a, .canvas-col > .toolbar { display: none !important; }
   /* the sheet is the drawings AND the schedules, whichever tab is on screen */
   .tab { display: none !important; }
@@ -1345,7 +1349,6 @@ html[data-step="sale"] #handover-panel { display: none; }
 html[data-step="blanks"] #finish-job,
 html[data-step="gates"] #desk-actions,
 html[data-step="gates"] #finish-job,
-html[data-step="generate"] #desk-actions,
 html[data-step="generate"] #finish-job,
 html[data-step="generate"] #tool-note,
 html[data-step="job"] #desk-actions,
@@ -1359,7 +1362,6 @@ html[data-step="model"] #desk-actions,
 html[data-step="model"] #finish-job,
 html[data-step="notes"] #desk-actions,
 html[data-step="notes"] #finish-job,
-html[data-step="plan"] #desk-actions,
 html[data-step="plan"] #finish-job,
 html[data-step="plan"] #tool-note,
 html[data-step="price"] #desk-actions,
@@ -1414,3 +1416,20 @@ html[data-locked="yes"] #btn-undo,
 html[data-locked="yes"] #btn-redo,
 html[data-locked="yes"] #btn-clear,
 html[data-locked="yes"] #draft-actions { display: none !important; }
+
+/* The plan step's own host, on the structure sheet (js/desk-actions.js). */
+html[data-step="blanks"] #desk-actions-plan,
+html[data-step="gates"] #desk-actions-plan,
+html[data-step="generate"] #desk-actions-plan,
+html[data-step="job"] #desk-actions-plan,
+html[data-step="layout"] #desk-actions-plan,
+html[data-step="materials"] #desk-actions-plan,
+html[data-step="model"] #desk-actions-plan,
+html[data-step="notes"] #desk-actions-plan,
+html[data-step="plan"] #desk-actions,
+html[data-step="price"] #desk-actions-plan,
+html[data-step="property"] #desk-actions-plan,
+html[data-step="questions"] #desk-actions-plan,
+html[data-step="review"] #desk-actions-plan,
+html[data-step="sale"] #desk-actions-plan,
+html[data-step="sideview"] #desk-actions-plan { display: none; }

@@ -117,6 +117,7 @@ def readiness(
     choice_sets: list[ChoiceSet] | None = None,
     supply: SupplyResolution | None = None,
     committed_run: GenerationRun | None = None,
+    committed_missing: bool = False,
     quotes: list[Quote] | None = None,
     quoted_warnings: list[DocumentWarning] | None = None,
 ) -> list[ReadinessItem]:
@@ -217,13 +218,23 @@ def readiness(
                                  params={"n": len(supply.unresolved)}))
 
     # --- step 6: the plan ---------------------------------------------------
-    # `commit_plan` is out of scope for this plan, so `committed_run_id` does not
-    # exist on `Project` yet and this reads as "nothing committed" on every job.
-    # That is the honest answer and the reason it was left visible: a step that
-    # reports what is genuinely undone is the road working, where a step that
-    # read done because the field was missing would be the completeness lie.
+    # `commit_plan` ships now (`commands/desk.py`, pressed from the plan step's
+    # own panel), so this reads a field a job can actually carry. It read
+    # "nothing committed" on every job while the command was unbuilt, which was
+    # the honest answer and the reason it was left visible: a step reporting what
+    # is genuinely undone is the road working. `getattr` stays for the jobs
+    # stored before the field existed.
     committed = getattr(project, "committed_run_id", "")
-    if not committed:
+    # `committed_missing` is the caller saying it LOOKED and this job has no such
+    # run — a committed id naming a run from another job, or one no longer
+    # stored. A plan nobody can open is not a plan, and without this the step
+    # read done on the strength of a string.
+    #
+    # It is a separate argument from `committed_run=None`, which means only "I am
+    # not telling you": a caller that passes no run at all gets the silence the
+    # test below is written for, because guessing from an absent document would
+    # report a plan nobody has touched as stale.
+    if not committed or committed_missing:
         out.append(ReadinessItem(code="no_plan_committed"))
     elif (committed_run is not None and committed_run.id == committed
           and committed_run.topology_revision != project.topology.revision):
@@ -240,6 +251,17 @@ def readiness(
         out.append(ReadinessItem(code="plan_stale", params={
             "committed_revision": committed_run.topology_revision,
             "revision": project.topology.revision}))
+    elif committed_run is not None and committed_run.id == committed:
+        # Two more kinds of drift, and both were silent while step 6 read done.
+        # The commit door refuses each of them (`_command_precondition`), so a
+        # plan that could not be committed today must not read as committed.
+        if committed_run.site_facts != project.site.facts():
+            out.append(ReadinessItem(code="plan_site_moved"))
+        elif run is not None and run.id != committed:
+            # A newer run exists. The office loops — generate, read a warning,
+            # pin a post, generate again (spec §8) — and every other surface is
+            # showing that newer run while step 6 names an older one.
+            out.append(ReadinessItem(code="plan_superseded"))
 
     # --- step 7: the price --------------------------------------------------
     # The quote has to name the run this job stands behind. A quote for some
@@ -271,5 +293,7 @@ READINESS_CODES = [
     "supply_unknown",
     "no_plan_committed",
     "plan_stale",
+    "plan_site_moved",
+    "plan_superseded",
     "not_priced",
 ]

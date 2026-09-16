@@ -294,6 +294,18 @@ def test_every_road_claims_every_code_it_is_actually_fed(out):
         assert unclaimed == [], f"{road_key} claims no step for: {unclaimed}"
 
 
+def test_each_road_says_which_steps_carry_their_own_control(out):
+    """Pinned in BOTH directions. The allowlist test below only looks at steps
+    where `commits` is TRUE, so flipping one back to false — which is exactly
+    what shipping a control undoes — makes its loop skip the step entirely."""
+    assert out["commits"]["sales"] == {
+        "job": True, "property": False, "layout": False, "sideview": False,
+        "model": False, "gates": False, "notes": False, "review": False}
+    assert out["commits"]["backoffice"] == {
+        "sale": True, "blanks": False, "questions": False, "generate": True,
+        "materials": False, "plan": True, "price": False}
+
+
 def test_no_step_suppresses_the_done_button_without_having_its_own(out):
     """`commits: true` hides the road's Done button, on the grounds that the
     step "already has an explicit I-have-finished control of its own".
@@ -310,5 +322,11 @@ def test_no_step_suppresses_the_done_button_without_having_its_own(out):
         for step, commits in steps.items():
             if not commits:
                 continue
-            assert (road_key, step) in {("sales", "job")}, (
+            assert (road_key, step) in {
+                ("sales", "job"),          # #job-panel's Save, which advances
+                # `js/desk-actions.js`, shipped 2026-09-16 with these three:
+                ("backoffice", "sale"),      # "I have read what she sold"
+                ("backoffice", "generate"),  # "I have read these warnings"
+                ("backoffice", "plan"),      # "Commit this plan"
+            }, (
                 f"{road_key}/{step} suppresses Done and has no control of its own")

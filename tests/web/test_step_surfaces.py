@@ -441,3 +441,16 @@ def test_the_salesperson_finishes_on_review_and_the_office_asks_on_sale_and_blan
         assert "#desk-actions" not in office[step], step
         assert "#notes-panel" not in office[step], step
     assert "#tool-note" not in office["blanks"]
+
+
+def test_the_plan_steps_own_host_is_scoped_like_every_other_surface(out):
+    """`#desk-actions-plan` lives on the structure sheet, which no other step
+    shows — so it is the one surface a wrong keep-list would leave on screen
+    everywhere without a stylesheet disagreement to catch it."""
+    sales, office = out["hidden"]["sales"], out["hidden"]["backoffice"]
+    assert "#desk-actions-plan" not in office["plan"]
+    for step in out["step_keys"]["backoffice"]:
+        if step != "plan":
+            assert "#desk-actions-plan" in office[step], step
+    for step in out["step_keys"]["sales"]:
+        assert "#desk-actions-plan" in sales[step], step

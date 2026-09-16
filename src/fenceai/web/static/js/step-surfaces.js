@@ -147,9 +147,11 @@ const STEP_PANELS = {
     // the layout, the side view, the gates. The user's verdict: it should not
     // be static throughout the steps. Working it out is this step's job.
     generate: ["#warnings", "#inspector", "#override-list", "#site-conditions",
-               "#btn-generate"],
+               "#btn-generate", "#desk-actions"],
     materials: [],
-    plan: [],
+    // Saying which run is the real one is this step's whole act — and it is read
+    // on the structure sheet, so its host is the one that lives there.
+    plan: ["#desk-actions-plan"],
     price: [],
   },
 };
@@ -251,7 +253,7 @@ const ROAD_HIDES_ENTIRELY = {
   // The salesperson records what was sold; working out the fence is the
   // office's step 4. No sales step keeps the button, so without this entry it
   // would not be in the sales union at all and would show on every map step.
-  sales: ["#btn-generate", "#desk-actions"],
+  sales: ["#btn-generate", "#desk-actions", "#desk-actions-plan"],
   backoffice: ["#handover-panel", "#finish-job"],
 };
 

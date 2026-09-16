@@ -256,6 +256,10 @@ REFUSAL_CODES = [
     "not_signed_in",
     # -- the queue and the one door ---------------------------------------------
     "assignee_unknown",
+    # Committing names a run explicitly (never "the latest"), so a payload can
+    # name one from another job — refused at the route, which is the only layer
+    # that can tell (`commands/` may not reach the store).
+    "run_not_on_this_job",
     "queue_cursor_invalid",
     "queue_filter_invalid",
     # -- the one door (backoffice design §10) ------------------------------------

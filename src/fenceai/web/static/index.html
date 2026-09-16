@@ -269,6 +269,11 @@
     <!-- ============ structure tab ============ -->
     <section id="tab-structure" class="tab">
       <div id="print-title" class="print-title"></div>
+      <!-- The office's act for the PLAN step, which is read on this sheet rather
+           than on the canvas: "say which run is the one people build from".
+           Owned by js/desk-actions.js, like #desk-actions in the canvas column —
+           one module, one host per tab it has an act on. -->
+      <div class="panel" id="desk-actions-plan"></div>
       <div class="panel" id="structure-head">
         <h3 data-i18n="structure.title">Structure</h3>
         <div class="toolbar">

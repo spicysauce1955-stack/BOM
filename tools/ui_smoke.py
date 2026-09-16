@@ -3654,6 +3654,652 @@ def _smoke_my_jobs_round_trip(c) -> None:
           and finish_all["send"] is False, finish_all)
 
 
+def _smoke_office_desk_acts(c) -> None:
+    """The office's remaining desk acts, walked end to end on one job.
+
+    Everything the office could not do from a screen until this slice: say it
+    has READ what the salesperson sold, say it has read the warnings the run
+    came back with, COMMIT one run as the plan people build from, take that plan
+    BACK when the drawing moves under it, reject a job and reopen one that was
+    rejected by mistake.
+
+    Three of those FINISH a step, so `roads.js` marks `sale`, `generate` and
+    `plan` `commits: true` and the road's own Done button steps aside there.
+    That makes this case the only thing that can say the road still moves
+    forward on steps 1, 4 and 6 — the model tests can say the button is absent
+    and cannot say anything took its place.
+
+    The panel has TWO hosts and that is the fact no node test settles: the plan
+    step is read on the setting-out sheet, so its act is drawn into
+    `#desk-actions-plan` inside `#tab-structure` while `#desk-actions` in the
+    canvas column is emptied. A browser is what can say the button is on the
+    screen the office is actually looking at, and that the other host is not
+    quietly holding the previous step's act.
+
+    On its own job, created by Dana through the API while nobody is signed in
+    (`_smoke_backoffice_queue`'s pattern), and carrying a fence AND a gate on
+    purpose: the gate is what makes the run come back with a warning, and
+    without one `warnings_unreviewed` is never reported and step 4's button
+    would be pressed against nothing.
+
+    **Generating again does not make a newer run.** `generate()` is pure and
+    deterministic (ADR-0004), so a second generation over unchanged inputs
+    returns the SAME run id — which is why `plan_superseded` here is provoked by
+    ANSWERING the step-3 question and generating again: a real input change that
+    is neither the drawing nor the site, so it cannot be mistaken for the two
+    codes that outrank it.
+
+    It also walks step 5, whose whole answer comes from the supply pass the
+    readiness route now runs: green on a run the yard can fill, and back to
+    "nobody could work it out" when the CATALOG moves under the stored run —
+    reported, never raised, because the road is the screen somebody opens to
+    find out what is wrong with a job. That needs one piece of housekeeping,
+    explained where it happens: an earlier case leaves an unsuppliable rail
+    default published, and this case retires it for its own duration and puts it
+    back.
+
+    Every status, run id and readiness code is read from the API, never from the
+    rendered words, which are localized. Starts and ends signed in as the admin,
+    puts the queue back on its open bucket, and leaves the catalog and the
+    knowledge base as it found them.
+    """
+    # --- a job of its own, sold and sent ---------------------------------------
+    sign_out(c)
+    pid = c.js("""(async () => {
+  await fetch('/api/session', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: 'dana@example.com', password: 'demo'})});
+  const p = await (await fetch('/api/projects', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: 'Desk acts'})})).json();
+  await fetch(`/api/projects/${p.id}/job`, {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({customer: 'Deskacts', address: 'Herzl 9, Holon',
+                          sold_by: 'Dana', sold_on: '2026-09-15'})});
+  await fetch(`/api/projects/${p.id}/topology`, {method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      nodes: [{id: 'n1', x_mm: 0, y_mm: 0, kind: 'terminal'},
+              {id: 'n2', x_mm: 6000, y_mm: 0, kind: 'terminal'},
+              {id: 'n3', x_mm: 7200, y_mm: 0, kind: 'terminal'}],
+      runs: [{id: 'run1', start_node_id: 'n1', end_node_id: 'n2'}],
+      gates: [{id: 'g1', start_node_id: 'n2', end_node_id: 'n3', leaf: 'single'}]})});
+  await fetch(`/api/projects/${p.id}/actions`, {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({kind: 'submit_job', payload: {}})});
+  await fetch('/api/session', {method: 'DELETE'});
+  return p.id;
+})()""")
+    check("a job with a fence and a gate beside it, sold and sent to the office",
+          bool(pid), pid)
+    if not pid:
+        sign_in(c, ADMIN)
+        return
+
+    def visible(sel):
+        return c.js("!!document.querySelector(%s)?.checkVisibility()" % json.dumps(sel))
+
+    def present(sel):
+        return c.js("!!document.querySelector(%s)" % json.dumps(sel))
+
+    def step(key):
+        c.js("document.querySelector('#road [data-step=\"%s\"]')?.click(); 'ok'" % key)
+        time.sleep(0.8)
+
+    def at_step():
+        return c.js("document.documentElement.dataset.step")
+
+    def wait_step(key, timeout=15):
+        return wait_for(c, "document.documentElement.dataset.step === %s && %s"
+                        % (json.dumps(key), json.dumps(key)), timeout=timeout)
+
+    def codes():
+        return c.js("fetch('/api/projects/%s/readiness').then(r => r.json())"
+                    ".then(d => (d.items || []).map(i => i.code))" % pid) or []
+
+    def readiness_call():
+        """The codes AND the status, for the checks about a job something is
+        wrong with: this read model must report a broken job rather than refuse
+        to answer about one, so "still 200" is half of what is being asked."""
+        return c.js("fetch('/api/projects/%s/readiness')"
+                    ".then(r => r.json().then(d => ({status: r.status,"
+                    " codes: (d.items || []).map(i => i.code)})))" % pid) or {}
+
+    def band(key):
+        """A road step's own state badge — `missing`/`blocked` are the amber
+        ones (`style.css` colours those two and no other)."""
+        return c.js("document.querySelector('#road [data-step=%s]')?.dataset.state ?? null"
+                    % json.dumps(key))
+
+    def reread_readiness():
+        """What the road does for itself on `project-loaded` and `result-changed`.
+        Asked explicitly here because the catalog moving under a run is neither
+        of those: nothing on this screen changed, and the answer did."""
+        c.js("import('./js/road.js').then(m => m.loadReadiness()).then(() => 'ok')")
+        time.sleep(0.5)
+
+    def job():
+        return c.js("fetch('/api/projects/%s').then(r => r.json()).then(p => ({"
+                    " status: p.status, committed: p.committed_run_id,"
+                    " revision: p.topology.revision}))" % pid) or {}
+
+    def generate(previous=None):
+        """Press the office's own generate button and wait for a run that is not
+        the one already on screen. `previous` matters because a re-generation
+        that changed nothing returns the SAME id, so `wait_for` on "there is a
+        run" would be satisfied by the run from three steps ago."""
+        c.click(*c.element_center("#btn-generate"))
+        return wait_for(c, f"{STATE_JS}.then(m => {{ const id = m.state.result?.run?.id;"
+                           f" return (id && id !== {json.dumps(previous)}) ? id : null; }})",
+                        timeout=30)
+
+    def plan_codes(all_codes):
+        """Only step 6's half of the list, so a check that means "the plan is
+        settled" is not quietly answered by `not_priced` or `supply_unknown`."""
+        return [k for k in all_codes if k in ("no_plan_committed", "plan_stale",
+                                              "plan_site_moved", "plan_superseded")]
+
+    sign_in(c, "yossi@example.com")
+    # THE KNOWLEDGE BASE THIS CASE INHERITS IS DELIBERATELY HOLED, twice over,
+    # and step 5 cannot be read against it:
+    #
+    #   * `main()`'s "a part nothing can supply" case publishes `K-RAIL-SHORT`,
+    #     an 800 mm stock length aimed at the rail role, and never retires it;
+    #   * its last case retires `K-MAXSPAN` and `K-POST-DEFAULT` on purpose ("it
+    #     retires a rule the whole demo knowledge base rests on and nothing in
+    #     the UI puts one back") so that a gap can be SHOWN as a named hole.
+    #
+    # Both are that case's subject and neither is a defect. But together they
+    # mean every run generated afterwards stands on posts with no product and
+    # buys a rail nothing stocks — so `supply_unresolved` is permanent, step 5 is
+    # permanently amber, and "does the route resolve supply at all" cannot be
+    # asked. So this case makes the two component defaults whole for its own
+    # duration, through the app's own authoring door (a new version retires the
+    # previous one), and puts both back before it ends. `K-MAXSPAN` is left
+    # retired: it holes the plan, not the supply.
+    fixture = c.js("""(async () => {
+  const versions = await (await fetch('/api/knowledge')).json();
+  const active = (id) => versions.filter(v => v.object_id === id
+                                              && v.status === 'active').pop() || null;
+  const post = async (body) => {
+    const r = await fetch('/api/knowledge', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    return {status: r.status, body: await r.json()};
+  };
+  const out = {};
+  const rail = active('K-RAIL-SHORT');
+  if (rail) {
+    const r = await post({object_id: 'K-RAIL-SHORT', type: rail.type,
+                          title: rail.title, actions: []});
+    out.rail = {status: r.status, type: rail.type, title: rail.title,
+                actions: rail.actions};
+  }
+  // Retired, so there is no active version to read the shape off: it is the
+  // demo base's own row (`knowledge/demo.py`, K-POST-DEFAULT), respelled here.
+  const ground = active('K-POST-DEFAULT');
+  if (!ground) {
+    const r = await post({object_id: 'K-POST-DEFAULT', type: 'fact',
+      title: 'Default ground post product',
+      actions: [{kind: 'default_component', role: 'post_ground', sku: 'POST-S'}]});
+    out.post = {status: r.status, version: r.body.version};
+  }
+  return out;
+})()""")
+    check("the two component defaults earlier cases hole are made whole for this one",
+          bool(fixture) and (fixture.get("rail") or {}).get("status") == 200
+          and bool((fixture.get("rail") or {}).get("actions"))
+          and (fixture.get("post") or {}).get("status") == 200
+          and bool((fixture.get("post") or {}).get("version")), fixture)
+    claimed = c.js(f"{STATE_JS}.then(m => m.runCommand({json.dumps(pid)}, 'claim_job', {{}}))"
+                   ".then(o => !!o.ok)")
+    open_project(c, pid)
+    c.js("document.querySelector('#tabs button[data-tab=\"canvas\"]')?.click(); 'ok'")
+    seven = wait_for(c, "document.querySelectorAll('#road [data-step]').length === 7",
+                     timeout=15)
+    check("the office takes the job and walks into it on a road of seven steps",
+          claimed is True and bool(seven) and job().get("status") == "planning",
+          {"claimed": claimed, "job": job()})
+
+    # --- 1. the sale step: read it, and the road moves on ----------------------
+    step("sale")
+    sale = {"step": at_step(), "ack": visible("#desk-ack-sale"),
+            "send_back": visible("#desk-send-back"), "cancel": visible("#desk-cancel"),
+            "panel": visible("#desk-actions"),
+            "plan_host": c.js("""(() => {
+  const el = document.getElementById('desk-actions-plan');
+  return {hidden: el.hidden, html: el.innerHTML.trim()};
+})()""")}
+    check("the office's sale step offers: I have read it, send it back, reject it",
+          sale["step"] == "sale" and sale["ack"] is True
+          and sale["send_back"] is True and sale["cancel"] is True
+          and sale["panel"] is True, sale)
+    check("...drawn in the canvas column's host, with the sheet's host empty",
+          sale["plan_host"]["hidden"] is True and sale["plan_host"]["html"] == "",
+          sale["plan_host"])
+    before_ack = codes()
+    c.js("document.getElementById('desk-ack-sale')?.click(); 'ok'")
+    advanced = wait_step("blanks")
+    after_ack = codes()
+    check("saying the sale has been read clears `sale_unread` AND moves the road on",
+          "sale_unread" in before_ack and "sale_unread" not in after_ack
+          and advanced == "blanks",
+          {"before": before_ack, "after": after_ack, "step": at_step()})
+
+    # --- 2. the generate step: nothing to read until there is a run ------------
+    step("generate")
+    empty = {"step": at_step(), "ack": present("#desk-ack-warnings"),
+             "panel_visible": visible("#desk-actions"),
+             "panel_hidden": c.js("document.getElementById('desk-actions').hidden")}
+    check("with no run yet, the generate step offers nothing to acknowledge",
+          empty["step"] == "generate" and empty["ack"] is False
+          and empty["panel_visible"] is False and empty["panel_hidden"] is True, empty)
+    run_a = generate()
+    with_run = {"ack": visible("#desk-ack-warnings"), "codes": codes()}
+    check("the run comes back with a warning nobody has read, and a button that says so",
+          bool(run_a) and with_run["ack"] is True
+          and "warnings_unreviewed" in with_run["codes"],
+          {"run": run_a, **with_run})
+    c.js("document.getElementById('desk-ack-warnings')?.click(); 'ok'")
+    moved_on = wait_step("materials")
+    after_warn = codes()
+    check("reading the warnings clears `warnings_unreviewed` AND moves the road on",
+          "warnings_unreviewed" not in after_warn and moved_on == "materials",
+          {"codes": after_warn, "step": at_step()})
+
+    # --- 5. the materials step: what the YARD can fill -------------------------
+    # The step asks supply, and the route did not resolve it — so `readiness`
+    # answered `supply_unknown` ("nobody worked it out") on every job with a run
+    # and step 5 could never read anything but amber. What a browser can say,
+    # and the API tests cannot, is that the BAND goes green: the step's badge is
+    # the whole point of wiring it.
+    #
+    # Then the catalog moves under the stored run, which is what actually stops
+    # it being priced, and two things have to be true at once — the step says so
+    # again, AND the road still renders. A read model that 409'd here would take
+    # out the one screen somebody opens to find out what is wrong with a job.
+    reread_readiness()
+    filled = readiness_call()
+    # A failure here has to name the line the yard could not fill, or the reader
+    # has to re-run a thirteen-minute suite to find out which one it was.
+    unfilled = c.js("""fetch('/api/runs/%s/bom').then(r => r.ok ? r.json() : null)
+  .then(d => d ? (d.unresolved || []).map(u => u.role + '@' + (u.pegs || []).join('/'))
+                   .slice(0, 4)
+               : 'the bom route refused this run')""" % run_a)
+    check("with a fresh run, step 5 knows what the yard can fill and reads done",
+          at_step() == "materials" and filled.get("status") == 200
+          and "supply_unknown" not in filled.get("codes", [])
+          and "supply_unresolved" not in filled.get("codes", [])
+          and band("materials") == "done",
+          {"step": at_step(), "band": band("materials"), "unfilled": unfilled, **filled})
+
+    # The sku is taken from the run's OWN stamped set, not guessed: `_fresh_catalog`
+    # hashes the catalog over exactly those, so repricing anything else would move
+    # a catalog the run never looked at and prove nothing.
+    repriced = c.js("""(async () => {
+  const d = await (await fetch('/api/runs/%s')).json();
+  const cat = await (await fetch('/api/catalog')).json();
+  const sku = (d.run.catalog_skus || [])[0] || Object.keys(cat.products)[0];
+  const product = {...cat.products[sku]};
+  const was = product.price_cents;
+  product.price_cents = was + 111;
+  const r = await fetch('/api/catalog/products', {method: 'PUT',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(product)});
+  return {status: r.status, sku, was};
+})()""" % run_a)
+    reread_readiness()
+    unpriceable = readiness_call()
+    road_up = c.js("""({steps: document.querySelectorAll('#road [data-step]').length,
+  shown: !!document.getElementById('road')?.checkVisibility()})""")
+    check("a catalog that moved under the run puts step 5 back to 'nobody worked it out'",
+          repriced and repriced["status"] == 200
+          and "supply_unknown" in unpriceable.get("codes", [])
+          and band("materials") == "missing",
+          {"repriced": repriced, "band": band("materials"), **unpriceable})
+    check("...reported rather than raised: the road still answers, and still renders",
+          unpriceable.get("status") == 200 and road_up["steps"] == 7
+          and road_up["shown"] is True, {**road_up, "status": unpriceable.get("status")})
+
+    # Put the price back — the catalog is shared by every later check here, and
+    # `commit_plan`'s own precondition refuses a run whose catalog has moved.
+    restored = c.js("""(async () => {
+  const cat = await (await fetch('/api/catalog')).json();
+  const was = cat.products[%s];
+  if (!was) return 0;
+  const product = {...was, price_cents: %d};
+  const r = await fetch('/api/catalog/products', {method: 'PUT',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(product)});
+  return r.status;
+})()""" % (json.dumps((repriced or {}).get("sku")), (repriced or {}).get("was") or 0))
+    reread_readiness()
+    priceable_again = readiness_call()
+    check("putting the price back makes the run priceable again and step 5 green again",
+          restored == 200 and "supply_unknown" not in priceable_again.get("codes", [])
+          and band("materials") == "done",
+          {"restored": restored, "band": band("materials"), **priceable_again})
+
+    # --- 3. the plan step: one act, on the sheet where the plan is read --------
+    step("plan")
+    on_sheet = c.js("""(() => {
+  const canvas = document.getElementById('desk-actions');
+  return {
+    tab: document.querySelector('#tabs button.active')?.dataset.tab,
+    commit: !!document.getElementById('desk-commit')?.checkVisibility(),
+    host: document.getElementById('desk-commit')?.closest('.panel')?.id,
+    sheet_host: !!document.getElementById('desk-actions-plan')?.checkVisibility(),
+    canvas_hidden: canvas.hidden,
+    canvas_html: canvas.innerHTML.trim(),
+    canvas_visible: !!canvas.checkVisibility()};
+})()""")
+    check("the plan step's commit button is on the setting-out sheet, in the sheet's host",
+          at_step() == "plan" and on_sheet["tab"] == "structure"
+          and on_sheet["commit"] is True and on_sheet["host"] == "desk-actions-plan"
+          and on_sheet["sheet_host"] is True, on_sheet)
+    check("...and the canvas column's host is emptied rather than left holding step 4's act",
+          on_sheet["canvas_hidden"] is True and on_sheet["canvas_html"] == ""
+          and on_sheet["canvas_visible"] is False, on_sheet)
+    c.shot("65-desk-commit-on-the-sheet.png")
+
+    c.js("document.getElementById('desk-commit')?.click(); 'ok'")
+    priced = wait_step("price")
+    committed = job()
+    settled = codes()
+    check("committing names the run as the plan, moves the job to planned, and steps on",
+          committed.get("status") == "planned" and committed.get("committed") == run_a
+          and plan_codes(settled) == [] and priced == "price",
+          {"job": committed, "run": run_a, "codes": settled, "step": at_step()})
+
+    step("plan")
+    said = c.js("""(() => ({
+  committed: document.querySelector('.desk-committed')?.textContent.trim() || null,
+  revise: !!document.getElementById('desk-revise')?.checkVisibility(),
+  commit: !!document.getElementById('desk-commit')}))()""")
+    check("stepping back, the plan step names the committed run and offers to take it back",
+          bool(said["committed"]) and run_a in said["committed"]
+          and said["revise"] is True and said["commit"] is False, said)
+    c.shot("66-desk-plan-committed.png")
+
+    # --- 8. the printed sheet carries neither the panel nor the road -----------
+    # `window.matchMedia` cannot be forced from the page, so the emulation is
+    # asked of the browser. `#tab-structure` stays visible under it on purpose:
+    # without that half, "the panel is hidden" would be satisfied by a print
+    # rule that hid the whole sheet, which is the opposite of what it says.
+    c.cmd("Emulation.setEmulatedMedia", media="print")
+    time.sleep(0.5)
+    printed = c.js("""({
+  sheet: !!document.getElementById('tab-structure')?.checkVisibility(),
+  desk: !!document.getElementById('desk-actions-plan')?.checkVisibility(),
+  road: !!document.getElementById('road')?.checkVisibility()})""")
+    c.cmd("Emulation.setEmulatedMedia", media="")
+    time.sleep(0.5)
+    on_screen = c.js("""({
+  desk: !!document.getElementById('desk-actions-plan')?.checkVisibility(),
+  road: !!document.getElementById('road')?.checkVisibility()})""")
+    check("on paper the crew gets the sheet without Commit this plan or the road",
+          printed["sheet"] is True and printed["desk"] is False
+          and printed["road"] is False, printed)
+    check("...and both come back on screen when the page is not being printed",
+          on_screen["desk"] is True and on_screen["road"] is True, on_screen)
+
+    # --- taking the plan back does NOT move the road --------------------------
+    c.js("document.getElementById('desk-revise')?.click(); 'ok'")
+    revised = wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                          ".then(p => p.status === 'planning' && p.committed_run_id === ''"
+                          " && 'revised')" % pid, timeout=12)
+    time.sleep(0.8)
+    check("taking the plan back returns the job to planning and names no plan",
+          revised == "revised" and at_step() == "plan"
+          and "no_plan_committed" in codes(), {"revised": revised, "step": at_step(),
+                                               "codes": plan_codes(codes())})
+    check("...and it is the one act here that does not step the road on",
+          at_step() == "plan" and visible("#desk-commit") is True, at_step())
+
+    c.js("document.getElementById('desk-commit')?.click(); 'ok'")
+    wait_step("price")
+    again = job()
+    check("committing it again puts the same run back as the plan",
+          again.get("status") == "planned" and again.get("committed") == run_a
+          and plan_codes(codes()) == [], {"job": again, "codes": plan_codes(codes())})
+
+    # --- 4. the drawing moves under a committed plan --------------------------
+    # Through the app's own mutation path — snapshot, mutate, save — because a
+    # raw PUT would bump the revision without the screen ever knowing, and the
+    # thing being checked is that the office is TOLD.
+    revision = c.js("""Promise.all([import('./js/state.js'), import('./js/history.js')])
+  .then(async ([s, h]) => {
+    h.pushSnapshot('smoke-desk-move');
+    s.state.project.topology.nodes.find(n => n.id === 'n1').y_mm = 2000;
+    await s.saveTopology();
+    return s.state.project.topology.revision;
+  })""")
+    stale = codes()
+    check("moving the drawing under a committed plan reports it stale, not done",
+          bool(revision) and "plan_stale" in stale
+          and revision != committed.get("revision"),
+          {"revision": revision, "was": committed.get("revision"),
+           "codes": plan_codes(stale)})
+
+    # --- 5. the refusal, said where the button is -----------------------------
+    step("plan")
+    c.js("document.getElementById('desk-revise')?.click(); 'ok'")
+    wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                ".then(p => p.status === 'planning' && 'back')" % pid, timeout=12)
+    # `saveTopology` drops the run from the screen; re-opening the job puts the
+    # LATEST stored run back on it — which is the stale one. That is exactly the
+    # office's position: a run on screen, generated before the drawing moved.
+    reopen_project(c)
+    time.sleep(0.8)
+    step("plan")
+    offered = visible("#desk-commit")
+    c.js("document.getElementById('desk-commit')?.click(); 'ok'")
+    refused = wait_for(c, "(() => { const e = document.getElementById('desk-error');"
+                          " return e && !e.hidden && e.textContent.trim(); })()", timeout=10)
+    expected = c.js("""fetch('/i18n/' + document.documentElement.lang + '.json')
+  .then(r => r.json()).then(b => b['error.topology_changed'])""")
+    still = job()
+    check("committing a plan the drawing has outrun is refused in a sentence, by the button",
+          offered is True and bool(refused) and refused == expected
+          and still.get("status") == "planning" and still.get("committed") == "",
+          {"error": refused, "expected": expected, "job": still})
+    # A refusal that reached the office as `topology_changed` would satisfy the
+    # check above (it IS the code, and `refusalText` would have rendered it as
+    # the key when the bundle lacked an entry), so the raw spelling is refused
+    # separately: no code, and no snake_case at all.
+    check("...and the sentence carries no raw code or state key",
+          bool(refused) and "_" not in refused and "topology_changed" not in refused,
+          refused)
+
+    # --- the office loops: generate over the new drawing, commit that ---------
+    step("generate")
+    run_b = generate(run_a)
+    step("plan")
+    c.js("document.getElementById('desk-commit')?.click(); 'ok'")
+    wait_step("price")
+    fresh = job()
+    check("generating over the drawing as it now is, and committing that, settles step 6",
+          bool(run_b) and run_b != run_a and fresh.get("committed") == run_b
+          and fresh.get("status") == "planned" and plan_codes(codes()) == [],
+          {"run": run_b, "job": fresh, "codes": plan_codes(codes())})
+
+    # --- a NEWER run than the committed one ------------------------------------
+    # Answering the open question, not pressing generate twice: an unchanged
+    # re-generation returns the same run id, so the only way a newer run exists
+    # is that some input moved — and this one is neither the drawing nor the
+    # site, which are the two codes that outrank `plan_superseded`.
+    step("questions")
+    wait_for(c, "document.querySelectorAll('#choices .choice-point').length > 1", timeout=15)
+    picked = c.js("""(() => {
+  const other = [...document.querySelectorAll('#choices .choice-point')]
+    .find(p => !p.querySelector('.tag.active'));
+  if (!other) return null;
+  other.click();
+  return other.textContent.replace(/\\s+/g, ' ').trim();
+})()""")
+    answered = wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                           ".then(p => p.choices.length === 1 && 'answered')" % pid,
+                        timeout=10)
+    step("generate")
+    run_c = generate(run_b)
+    superseded = codes()
+    check("answering the open question and generating again supersedes the committed plan",
+          bool(picked) and answered == "answered" and bool(run_c) and run_c != run_b
+          and plan_codes(superseded) == ["plan_superseded"]
+          and job().get("committed") == run_b,
+          {"picked": picked, "run": run_c, "was": run_b,
+           "codes": plan_codes(superseded)})
+
+    # --- and the site moving, which outranks it -------------------------------
+    site = c.js("""fetch('/api/projects/%s/site', {method: 'PUT',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({frost_depth_mm: 700})}).then(r => r.status)""" % pid)
+    moved_site = codes()
+    check("moving the site conditions under the committed plan says THAT, and only that",
+          site == 200 and plan_codes(moved_site) == ["plan_site_moved"],
+          {"site": site, "codes": plan_codes(moved_site)})
+
+    reopen_project(c)
+    time.sleep(0.6)
+    step("plan")
+    c.js("document.getElementById('desk-revise')?.click(); 'ok'")
+    wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                ".then(p => p.status === 'planning' && 'back')" % pid, timeout=12)
+    step("generate")
+    run_d = generate(run_c)
+    step("plan")
+    c.js("document.getElementById('desk-commit')?.click(); 'ok'")
+    wait_step("price")
+    final = job()
+    check("re-planning against the site as it now is leaves step 6 with nothing to report",
+          bool(run_d) and final.get("committed") == run_d
+          and final.get("status") == "planned" and plan_codes(codes()) == [],
+          {"run": run_d, "job": final, "codes": plan_codes(codes())})
+
+    # --- 6. rejecting, and 7. what the salesperson then reads -----------------
+    step("sale")
+    on_planned = {"ack": visible("#desk-ack-sale"), "cancel": visible("#desk-cancel"),
+                  "send_back": present("#desk-send-back")}
+    check("a planned job can still be rejected, but not sent back to the salesperson",
+          on_planned["ack"] is True and on_planned["cancel"] is True
+          and on_planned["send_back"] is False, on_planned)
+    # `window.confirm` is stubbed true by `sign_in`/`reload_page`, so the guard
+    # is exercised rather than bypassed: a panel that stopped asking would pass
+    # this check and a panel that never wired the button would not.
+    c.js("document.getElementById('desk-cancel')?.click(); 'ok'")
+    rejected = wait_for(c, "fetch('/api/projects/%s').then(r => r.json())"
+                           ".then(p => p.status === 'cancelled'"
+                           " && document.querySelector('#tabs button.active')?.dataset.tab"
+                           " === 'queue' && 'rejected')" % pid, timeout=15)
+    check("rejecting the job closes it and leaves the desk for the queue",
+          rejected == "rejected", {"job": job(),
+                                   "tab": c.js("document.querySelector('#tabs button.active')"
+                                               "?.dataset.tab")})
+
+    switch_user(c, "dana@example.com")
+    wait_for(c, "document.querySelector('#myjobs-list li.myjob[data-id=\"%s\"]')" % pid,
+             timeout=15)
+    row = c.js("""(() => {
+  const li = document.querySelector('#myjobs-list li.myjob[data-id=%s]');
+  li.click();
+  return li.dataset.status;
+})()""" % json.dumps(pid))
+    wait_for(c, "document.querySelector('#tabs button.active')?.dataset.tab === 'canvas'",
+             timeout=10)
+    c.js(f"{STATE_JS}.then(m => m.emit('road-go', 'review')).then(() => 'ok')")
+    time.sleep(1.0)
+    words = c.js("""fetch('/i18n/' + document.documentElement.lang + '.json')
+  .then(r => r.json()).then(b => ({
+    rejected: b['myjobs.rejected'], locked: b['myjobs.locked'],
+    text: document.getElementById('finish-job')?.textContent || '',
+    shown: !!document.getElementById('finish-job')?.checkVisibility(),
+    send: !!document.getElementById('finish-send')}))""")
+    check("her list calls the job rejected", row == "rejected", row)
+    check("...and its finish panel says so instead of 'the drawing is with the office'",
+          words["shown"] is True and words["rejected"] in words["text"]
+          and words["locked"] not in words["text"] and words["send"] is False,
+          {k: v for k, v in words.items() if k != "text"})
+
+    # --- the undo for the one act that has none on the job's own screen -------
+    switch_user(c, "yossi@example.com")
+    open_project(c, pid)
+    c.js("document.querySelector('#tabs button[data-tab=\"queue\"]')?.click(); 'ok'")
+    time.sleep(0.6)
+    c.js("document.getElementById('queue-finished').click(); 'ok'")
+    wait_for(c, "document.querySelectorAll('#queue-list tr[data-id]').length > 0", timeout=15)
+    # `delivered` is the other finished state and NOTHING can reach it — the
+    # transition table gives `quoted -> delivered` and no command performs it —
+    # so the "not on a delivered row" half is pinned in node
+    # (`tests/web/test_my_jobs_module.py` calls `reopenable('delivered')`). What
+    # a browser can say is that the button is on the cancelled rows and on no
+    # row of the open list, which is where every other status lives.
+    finished = c.js("""fetch('/api/queue?bucket=finished').then(r => r.json()).then(d => ({
+  rows: d.rows.length,
+  cancelled: d.rows.filter(r => r.status === 'cancelled').length,
+  other: d.rows.filter(r => r.status !== 'cancelled').map(r => r.status)}))""")
+    buttons = c.js("document.querySelectorAll('#queue-list .queue-reopen').length")
+    mine = c.js("!!document.querySelector('#queue-list tr[data-id=%s] .queue-reopen')"
+                % json.dumps(pid))
+    check("the Finished list offers Reopen on the rejected rows and on no other",
+          mine is True and buttons == finished["cancelled"] and buttons >= 1
+          and finished["rows"] == finished["cancelled"] + len(finished["other"]),
+          {**finished, "buttons": buttons})
+    c.shot("67-queue-reopen.png")
+
+    c.js("document.querySelector('#queue-list tr[data-id=%s] .queue-reopen')?.click(); 'ok'"
+         % json.dumps(pid))
+    back = wait_for(c, f"{STATE_JS}.then(m => m.state.project?.status === 'waiting'"
+                       " && 'waiting')", timeout=15)
+    reopened = job()
+    check("reopening puts the job back on the open list and the open screen follows it",
+          back == "waiting" and reopened.get("status") == "waiting"
+          and reopened.get("committed") == "",
+          {"screen": back, "job": reopened})
+
+    # Put the queue back on the bucket every other case reads, and check the
+    # open list — which carries every status that is not finished — offers
+    # Reopen nowhere.
+    c.js("document.getElementById('queue-open').click(); 'ok'")
+    wait_for(c, "document.querySelectorAll('#queue-list tr[data-id]').length > 0", timeout=15)
+    open_list = c.js("""({rows: document.querySelectorAll('#queue-list tr[data-id]').length,
+  reopen: document.querySelectorAll('#queue-list .queue-reopen').length})""")
+    check("the open list offers Reopen on nothing, and the reopened job is on it",
+          open_list["rows"] > 0 and open_list["reopen"] == 0
+          and c.js("!!document.querySelector('#queue-list tr[data-id=%s]')"
+                   % json.dumps(pid)) is True, open_list)
+
+    # The knowledge base back as this case found it — holed. The rail default
+    # returns as another VERSION (versions are immutable; superseding is the only
+    # way to change what is active), and the ground-post default this case
+    # published is retired again, which is the state the gap case left behind and
+    # the state its screenshots describe.
+    rail_was = (fixture or {}).get("rail")
+    post_was = (fixture or {}).get("post")
+    if rail_was:
+        put_back = c.js("""fetch('/api/knowledge', {method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({object_id: 'K-RAIL-SHORT', type: %s, title: %s,
+                        actions: %s})}).then(r => r.status)"""
+                        % (json.dumps(rail_was["type"]), json.dumps(rail_was["title"]),
+                           json.dumps(rail_was["actions"])))
+    else:
+        put_back = None
+    if post_was:
+        retired_again = c.js("fetch('/api/knowledge/K-POST-DEFAULT/%d/retire',"
+                             " {method: 'POST'}).then(r => r.status)"
+                             % post_was["version"])
+    else:
+        retired_again = None
+    left = c.js("""fetch('/api/knowledge').then(r => r.json()).then(vs => ({
+  rail: vs.filter(v => v.object_id === 'K-RAIL-SHORT' && v.status === 'active')
+          .map(v => v.actions.length),
+  post: vs.filter(v => v.object_id === 'K-POST-DEFAULT' && v.status === 'active')
+          .length}))""")
+    check("the knowledge base is left exactly as this case found it: holed",
+          put_back == 200 and retired_again == 200
+          and left["rail"] == [1] and left["post"] == 0,
+          {"rail": put_back, "post": retired_again, "left": left})
+
+    switch_user(c, ADMIN)
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
@@ -3672,6 +4318,7 @@ _CHOICE_CASES: list = [
     _smoke_street_grips_by_step,
     _smoke_account_decides,
     _smoke_my_jobs_round_trip,
+    _smoke_office_desk_acts,
 ]
 
 

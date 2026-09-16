@@ -86,6 +86,14 @@ function rowHtml(row, meId) {
   </tr>`;
 }
 
+/** A cancelled job can come back; a delivered one cannot (`TRANSITIONS` gives
+ *  `delivered` no way out — a plan that has been priced and handed on is
+ *  finished, and un-finishing one would make the word untrustworthy). Pure, so
+ *  the rule is testable where the button is not. */
+export function reopenable(status) {
+  return status === "cancelled";
+}
+
 function finishedRowHtml(row) {
   return `<tr data-id="${esc(row.id)}">
     <td><strong>${esc(row.customer || row.label)}</strong></td>
@@ -93,7 +101,9 @@ function finishedRowHtml(row) {
     <td>${esc(row.sold_by)}</td>
     <td class="num">${esc((row.closed_at || "").slice(0, 10))}</td>
     <td><span class="badge">${esc(t(`queue.status.${row.status}`))}</span></td>
-    <td>${esc(row.assignee || "")}</td>
+    <td>${esc(row.assignee || "")}
+      ${reopenable(row.status)
+        ? `<button class="queue-reopen">${esc(t("queue.reopen"))}</button>` : ""}</td>
   </tr>`;
 }
 
@@ -159,6 +169,28 @@ export function initQueue() {
     // intentions, and doing both would open a job somebody only meant to claim
     // — which on a list you are working down is the difference between keeping
     // your place and losing it.
+    const reopen = e.target.closest(".queue-reopen");
+    if (reopen) {
+      // Back onto the open list, where somebody can take it again. Rejecting is
+      // the one act with no undo on the job's own screen, so its undo lives
+      // here, beside the jobs it applies to.
+      const { reloadProject, runCommand, state: shared } = await import("./state.js");
+      const id = reopen.closest("tr").dataset.id;
+      const out = await runCommand(id, "reopen_job");
+      if (!out.ok) {
+        // A refusal re-rendered the identical row and said nothing at all.
+        const { refusalText } = await import("./my-jobs.js");
+        document.getElementById("queue-list").insertAdjacentHTML("afterbegin",
+          `<p class="warning error">${esc(refusalText(out))}</p>`);
+        return;
+      }
+      // The job just reopened may be the one still OPEN on every other screen —
+      // rejecting drops you on this queue with it loaded — and those screens
+      // would go on reading `cancelled`.
+      if (id === shared.projectId) await reloadProject();
+      render();
+      return;
+    }
     const btn = e.target.closest(".queue-take");
     const row = e.target.closest("tr[data-id]");
     if (!btn && row) {
