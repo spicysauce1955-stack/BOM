@@ -69,6 +69,7 @@ from fenceai.learning.impact import (
 from fenceai.learning.model import Correction, ReviewAction
 from fenceai.learning.review import apply_review
 from fenceai.project.intents import confirm_intent
+from fenceai.report.flags import job_flags
 from fenceai.report.handover import handover_gaps
 from fenceai.report.readiness import readiness
 from fenceai.report.sections import section_facts
@@ -597,32 +598,26 @@ def _readiness_supply(result) -> SupplyResolution | None:
                             unresolved=priced.unresolved)
 
 
-@app.get("/api/projects/{project_id}/readiness")
-def get_readiness(project_id: str) -> dict:
-    """What the OFFICE still has to do — the run-scoped sibling of `/handover`.
+def _readiness_for(project: Project, result=None):
+    """`readiness(...)` over this project's latest run, and the run it read.
 
-    Two read models and deliberately not one. `/handover` is a pure function of
-    the PROJECT and must stay one: that is what lets it catch the silent 1800 mm
-    height before a strategy exists to make it look decided. These questions are
-    about a run, so folding them in would drag a run into a function whose whole
-    value is not needing one.
+    Extracted because TWO routes need it — `/readiness` renders the office
+    road's list and `/flags` places the same items on the drawing — and the
+    loading below is not boilerplate: which run, which committed run, and the
+    difference between "no id" and "an id naming no run of this job" each carry
+    a comment explaining what goes wrong when it is done the other way. A second
+    copy would be a second set of those decisions, drifting.
 
-    The road reads both and GROUPS them. It never recounts — three surfaces
-    answering "what is left" and disagreeing is the defect this repo already
-    paid for once.
-
-    **Reads the STORED run and never re-evaluates.** No knowledge base is loaded
-    here and `readiness()` takes none, so there is nothing in scope to resolve
-    against: re-running the evaluator would re-resolve to "current" (contract
-    3.2.1) and recompute a quantity in a read model (foundation §15).
+    `result` lets a caller that has already resolved a run (because the caller
+    was asked for a specific one) hand it in rather than re-reading the latest.
     """
-    project = _project(project_id)
-    runs = state.store.list_runs(project_id)
+    runs = state.store.list_runs(project.id)
+    if result is None:
+        # The LATEST run, because that is the one the office is looking at. An
+        # older one is a document somebody may still read, but "what is left to
+        # do" is a question about the fence as it stands now.
+        result = _run(runs[-1]["id"]) if runs else None
     _has_run = any(r["id"] == project.committed_run_id for r in runs)
-    # The LATEST run, because that is the one the office is looking at. An older
-    # one is a document somebody may still read, but "what is left to do" is a
-    # question about the fence as it stands now.
-    result = _run(runs[-1]["id"]) if runs else None
     items = readiness(
         project,
         run=result.run if result else None,
@@ -647,8 +642,79 @@ def get_readiness(project_id: str) -> dict:
         # ...and this says we LOOKED: an id naming no run of this job is nothing
         # committed, which is different from a caller that simply did not pass one.
         committed_missing=bool(project.committed_run_id) and not _has_run,
-        quotes=state.store.list_quotes(project_id),
+        quotes=state.store.list_quotes(project.id),
     )
+    return items, result
+
+
+@app.get("/api/projects/{project_id}/flags")
+def get_flags(project_id: str, run_id: str = "") -> dict:
+    """Every problem on this job, each carrying where it belongs on the drawing.
+
+    The office job screen's second route. It finds nothing: `handover_gaps`,
+    `readiness` and the stored run's own warnings found all of it, and this
+    places them so a mark can be drawn at the thing each one is about.
+
+    **It does not refuse a stale run, and that is the decision.**
+    `/runs/{id}/structure` answers 409 `topology_changed` because it describes a
+    fence laid out against a drawing that has since moved. This route is the
+    screen that TELLS somebody that happened — `plan_stale` is one of the items
+    it carries — so refusing here would hide the answer behind the very problem
+    it exists to report.
+
+    A `run_id` naming a run of a different job is 422 `run_not_on_this_job`,
+    the same refusal the command door gives, rather than a bare 404: it is not
+    that the run does not exist, it is that it is not this job's.
+    """
+    project = _project(project_id)
+    result = None
+    if run_id:
+        result = state.store.load_run(run_id)
+        if result is None or result.run.project_id != project.id:
+            raise HTTPException(422, {
+                "code": "run_not_on_this_job", "params": {"run_id": run_id},
+            })
+    items, result = _readiness_for(project, result)
+    flags = job_flags(
+        gaps=handover_gaps(project),
+        items=items,
+        # The STORED run's warnings, never re-evaluated: re-running the
+        # evaluator would re-resolve to "current" (contract 3.2.1) and recompute
+        # a quantity inside a read model (foundation §15).
+        warnings=result.strategy.warnings if result else [],
+        choice_sets=result.choice_sets if result else [],
+    )
+    return {"flags": [f.model_dump() for f in flags],
+            # Which run this answer was read from — "" when there is none, so a
+            # screen can tell "nothing has been generated" from "generated and
+            # clean" instead of reading an empty list as either.
+            "run_id": result.run.id if result else ""}
+
+
+@app.get("/api/projects/{project_id}/readiness")
+def get_readiness(project_id: str) -> dict:
+    """What the OFFICE still has to do — the run-scoped sibling of `/handover`.
+
+    Two read models and deliberately not one. `/handover` is a pure function of
+    the PROJECT and must stay one: that is what lets it catch the silent 1800 mm
+    height before a strategy exists to make it look decided. These questions are
+    about a run, so folding them in would drag a run into a function whose whole
+    value is not needing one.
+
+    The road reads both and GROUPS them. It never recounts — three surfaces
+    answering "what is left" and disagreeing is the defect this repo already
+    paid for once.
+
+    **Reads the STORED run and never re-evaluates.** No knowledge base is loaded
+    here and `readiness()` takes none, so there is nothing in scope to resolve
+    against: re-running the evaluator would re-resolve to "current" (contract
+    3.2.1) and recompute a quantity in a read model (foundation §15).
+
+    The loading lives in `_readiness_for` because `/flags` needs the same items
+    to place them on the drawing, and the choices it makes — which run, which
+    committed run — are decisions rather than boilerplate.
+    """
+    items, _ = _readiness_for(_project(project_id))
     return {"items": [i.model_dump() for i in items]}
 
 
