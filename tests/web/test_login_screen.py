@@ -39,7 +39,7 @@ def test_only_a_signed_in_page_shows_the_app_and_only_a_signed_out_one_the_form(
 def test_the_login_screen_holds_the_form_and_the_header_does_not():
     html = (STATIC / "index.html").read_text()
     screen = html[html.index('<section id="login-screen"'):html.index("</section>")]
-    for el in ('id="sign-in"', 'id="sign-in-email"', 'id="sign-in-password"',
+    for el in ('id="sign-in"', 'id="sign-in-email"',
                'id="sign-in-error"', 'id="sign-in-unreachable"'):
         assert el in screen, el
     header = html[html.index("<header>"):html.index("</header>")]
@@ -79,3 +79,24 @@ def test_the_frontend_is_served_revalidated_so_an_update_cannot_mix_modules():
             r = client.get(path)
             assert r.status_code == 200, path
             assert r.headers.get("cache-control") == "no-cache", path
+
+
+def test_the_front_door_asks_for_no_password():
+    """There is none. A field for one would be asking for a secret the system
+    cannot check and must never store."""
+    html = (STATIC / "index.html").read_text()
+    assert 'type="password"' not in html
+    assert "sign-in-password" not in html
+
+
+def test_a_refused_arrival_gets_a_screen_of_their_own():
+    """Not a blank app and not the picker again. IAP let them to the door;
+    this is the screen that tells them what to ask for."""
+    html = (STATIC / "index.html").read_text()
+    assert 'id="no-access"' in html
+    assert 'data-i18n="noaccess.body"' in html
+    css = _css()
+    assert re.search(
+        r'html:not\(\[data-auth="denied"\]\)\s+#no-access\s*\{\s*display:\s*none', css)
+    assert re.search(
+        r'html\[data-auth="denied"\]\s+body\s*>\s*:not\(#no-access\)\s*\{\s*display:\s*none', css)

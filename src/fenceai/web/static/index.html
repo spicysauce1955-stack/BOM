@@ -7,21 +7,28 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- The front door. Until somebody signs in this is the ONLY thing on the
-       page: no project, no view selector, no drawing. Which screen opens after
-       it is the account's own answer (`/api/me` → view), never a choice made
-       here. `html[data-auth]` drives the hiding (style.css), `app.js` sets it. -->
+  <!-- The front door. Google decides who reaches it; a capacity row decides
+       what they may do once inside. Under `dev` this is a picker with no
+       password — an impersonation switch, and named as one. `html[data-auth]`
+       drives the hiding (style.css), `app.js` sets it. -->
   <section id="login-screen" aria-labelledby="login-title">
     <form id="sign-in">
       <h1 id="login-title">Fence AI</h1>
       <input id="sign-in-email" type="email" autocomplete="username" required
              data-i18n-placeholder="signin.email" placeholder="Email">
-      <input id="sign-in-password" type="password" autocomplete="current-password" required
-             data-i18n-placeholder="signin.password" placeholder="Password">
-      <button type="submit" class="primary" data-i18n="signin.submit">Sign in</button>
-      <p id="sign-in-error" class="warning error" hidden data-i18n="error.sign_in_failed"></p>
+      <button type="submit" class="primary" data-i18n="signin.become">Continue</button>
+      <p id="sign-in-error" class="warning error" hidden data-i18n="error.no_identity"></p>
       <p id="sign-in-unreachable" class="warning error" hidden data-i18n="error.server_unreachable"></p>
     </form>
+  </section>
+
+  <!-- IAP let them to the door; nobody has said what they may do inside. -->
+  <section id="no-access" aria-labelledby="no-access-title" hidden>
+    <h1 id="no-access-title" data-i18n="noaccess.title">No access yet</h1>
+    <p data-i18n="noaccess.body">Ask an administrator to give this address access.</p>
+    <p><span data-i18n="noaccess.signed_in_as">Signed in as</span>
+       <bdi id="no-access-email" class="sku"></bdi></p>
+    <button id="no-access-signout" data-i18n="signin.out">Sign out</button>
   </section>
 
   <header>
