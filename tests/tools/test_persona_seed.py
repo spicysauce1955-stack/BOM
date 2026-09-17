@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import shutil
 import sys
-import urllib.request
 import json
 from pathlib import Path
 
@@ -55,9 +54,17 @@ def test_the_briefs_named_jobs_exist(seeded):
 
 
 def test_the_portfolio_is_visible_to_the_app(seeded):
+    from persona_lab import seed
+
     session, made = seeded
 
-    listed = json.load(urllib.request.urlopen(
+    # A bare `urlopen` carries no cookie, and the server no longer hands out
+    # an identity for free (that used to be `FENCEAI_DEV_USER`, removed from
+    # `stack.py`'s env because it also silently pre-authenticated the browser
+    # tab, which is what raced the canvas tab into place). Sign in for this
+    # check the same way `seed.seed()` does for its own writes.
+    opener = seed.sign_in(session["port"])
+    listed = json.load(opener.open(
         f"http://localhost:{session['port']}/api/projects", timeout=10))
     names = {p["name"] for p in listed}
 
@@ -66,10 +73,13 @@ def test_the_portfolio_is_visible_to_the_app(seeded):
 
 
 def test_accepted_quotes_give_a_baseline_to_diff_against(seeded):
+    from persona_lab import seed
+
     session, made = seeded
 
     delivered = next(e for e in made if e.get("quote_id"))
-    quotes = json.load(urllib.request.urlopen(
+    opener = seed.sign_in(session["port"])
+    quotes = json.load(opener.open(
         f"http://localhost:{session['port']}/api/projects/{delivered['project_id']}/quotes",
         timeout=10))
 

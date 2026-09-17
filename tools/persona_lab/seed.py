@@ -11,9 +11,21 @@ is reachable exactly the way a user's own work would be.
 
 from __future__ import annotations
 
+import http.cookiejar
 import json
 import time
 import urllib.request
+
+# Relative, not `stack.py`'s own `sys.path`-then-bare-import trick: that trick
+# is for reaching `cdp.py`, a SIBLING of the `persona_lab` package, one level
+# up. `stack` is a sibling MODULE inside this same package, so the ordinary
+# package-relative import is both correct and avoids loading `stack.py` twice
+# under two different module names (once as `persona_lab.stack`, once as a
+# bare `stack`) the way copying that trick here would have. Every current
+# caller reaches this module as `from persona_lab import seed, ...` (the
+# tests) — nothing runs `python seed.py` directly — so this is not a
+# regression against anything that works today.
+from .stack import ADMIN_EMAIL
 
 # The jobs the run-2 briefs refer to by name, in the state the briefs describe.
 # `accepted` is what makes a job "delivered": the knowledge owner must be able
@@ -31,13 +43,44 @@ PORTFOLIO = [
 ]
 
 
-def _post(port: int, path: str, body: dict | None = None, method: str = "POST"):
+def sign_in(port: int, email: str = ADMIN_EMAIL) -> urllib.request.OpenerDirector:
+    """Present an identity the way a browser tab does, and keep the cookie.
+
+    Every route but a handful in `auth.EXEMPT_PATHS` — `/api/dev/identity`
+    among them — 401s `no_identity` for a caller with no cookie. `stack.py`
+    used to paper over that for this module specifically by handing the whole
+    server process a `FENCEAI_DEV_USER` default, which authenticated every
+    cookie-less caller, not just this one — including the browser's own first
+    `GET /api/session`, before it ever reached the real sign-in form. That
+    made the form's own sign-in redundant when it ran anyway, and the
+    redundant sign-in was the thing racing the app's tab placement.
+    Signing in for OURSELVES, the same way the browser does, means the server
+    can go back to only trusting a cookie, which is what makes the browser's
+    sign-in path exercised — and able to fail loudly — on every run.
+
+    Returns an opener carrying the `fenceai_dev_user` cookie `POST
+    /api/dev/identity` sets; every subsequent call this module makes must go
+    through it, not through a bare `urlopen`.
+    """
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    req = urllib.request.Request(
+        f"http://localhost:{port}/api/dev/identity",
+        data=json.dumps({"email": email}).encode(),
+        method="POST", headers={"Content-Type": "application/json"},
+    )
+    opener.open(req, timeout=10).close()
+    return opener
+
+
+def _post(opener: urllib.request.OpenerDirector, port: int, path: str,
+          body: dict | None = None, method: str = "POST"):
     data = json.dumps(body or {}).encode() if body is not None else b"{}"
     req = urllib.request.Request(
         f"http://localhost:{port}{path}", data=data, method=method,
         headers={"Content-Type": "application/json"},
     )
-    return json.load(urllib.request.urlopen(req, timeout=30))
+    return json.load(opener.open(req, timeout=30))
 
 
 def _topology(points: list[tuple[int, int, int]], surface: str | None) -> dict:
@@ -62,7 +105,7 @@ def _topology(points: list[tuple[int, int, int]], surface: str | None) -> dict:
     return {"nodes": nodes, "runs": runs}
 
 
-def seed(port: int) -> list[dict]:
+def seed(port: int, *, email: str = ADMIN_EMAIL) -> list[dict]:
     """Create the portfolio, generate a strategy for each, quote the delivered
     ones and accept those quotes.
 
@@ -71,19 +114,20 @@ def seed(port: int) -> list[dict]:
     carry no accepted quote, which is exactly the distinction the knowledge
     owner has to be able to act on.
     """
+    opener = sign_in(port, email)
     made = []
     for name, points, surface, accepted in PORTFOLIO:
-        project = _post(port, "/api/projects", {"name": name})
-        _post(port, f"/api/projects/{project['id']}/topology",
+        project = _post(opener, port, "/api/projects", {"name": name})
+        _post(opener, port, f"/api/projects/{project['id']}/topology",
               _topology(points, surface), method="PUT")
-        generated = _post(port, f"/api/projects/{project['id']}/generate")
+        generated = _post(opener, port, f"/api/projects/{project['id']}/generate")
         run_id = generated["result"]["run"]["id"]
         entry = {"project_id": project["id"], "name": name, "run_id": run_id,
                  "accepted": accepted}
         if accepted:
-            quote = _post(port, f"/api/runs/{run_id}/quote",
+            quote = _post(opener, port, f"/api/runs/{run_id}/quote",
                           {"label": f"הצעה ללקוח — {name}", "author": "seed"})
-            _post(port, f"/api/quotes/{quote['id']}/accept")
+            _post(opener, port, f"/api/quotes/{quote['id']}/accept")
             entry["quote_id"] = quote["id"]
         made.append(entry)
     return made
