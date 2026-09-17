@@ -72,6 +72,7 @@
     <button data-tab="assembly" data-i18n="tabs.assembly">Assembly</button>
     <button data-tab="panel" data-i18n="tabs.panel">Panel</button>
     <button data-tab="models" data-i18n="tabs.models">Models</button>
+    <button data-tab="people" data-i18n="tabs.people">People</button>
     <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
     <button data-tab="inventory" data-i18n="tabs.inventory">Inventory</button>
   </nav>
@@ -495,6 +496,33 @@
           <div class="panel" id="model-preview-controls"></div>
           <div id="model-preview-body"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ============ people tab ============
+         Who may use this, and what each of them may do. Rendered entirely by
+         js/people.js, which owns this section and nothing outside it — the
+         only screen in the app that WRITES a capacity.
+
+         Hiding this tab from anybody but an admin is presentation only: the
+         server checks the capacity on POST/PATCH, and that check is the one
+         that matters (js/view.js carries the same paragraph). -->
+    <section id="tab-people" class="tab">
+      <div class="panel">
+        <h2 data-i18n="people.title">Who may use this</h2>
+        <table id="people-table"></table>
+        <form id="people-add-form" class="inline-form">
+          <input id="people-new-name" type="text" dir="auto" size="20" required
+                 data-i18n-placeholder="people.name" placeholder="Name">
+          <input id="people-new-email" type="email" dir="ltr" size="24" required
+                 data-i18n-placeholder="people.email" placeholder="Email">
+          <select id="people-new-capacity">
+            <option value="sales" data-i18n="signin.capacity.sales">Sales</option>
+            <option value="backoffice" data-i18n="signin.capacity.backoffice">Back office</option>
+            <option value="admin" data-i18n="signin.capacity.admin">Admin</option>
+          </select>
+          <button type="submit" class="primary" data-i18n="people.add">Give somebody access</button>
+        </form>
       </div>
     </section>
 
