@@ -7,9 +7,12 @@ on a laptop with nothing installed.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from fenceai.store.dialect import POSTGRES, SQLITE, Conn, dialect_for
+from tests.conftest import postgres_available
 
 
 def test_sqlite_leaves_question_marks_alone():
@@ -96,3 +99,19 @@ def test_a_postgres_conn_round_trips_a_row_through_rewritten_placeholders(pg_dsn
     row = conn.execute("SELECT doc FROM t WHERE id=?", ("a",)).fetchone()
     assert row[0] == "{}"
     conn.close()
+
+
+def test_ci_must_have_a_postgres():
+    """In CI, a skipped Postgres half is a broken gate, not a quiet pass.
+
+    This is the one test that asserts something about the ENVIRONMENT rather
+    than the code, and it earns that because the failure it catches is
+    invisible: a dual-run suite with no server does not fail, it succeeds at
+    half the work.
+    """
+    if os.environ.get("CI") != "true":
+        pytest.skip("only meaningful in CI")
+    assert postgres_available(), (
+        "CI must provide FENCEAI_TEST_POSTGRES and the postgres extra; "
+        "without them every Postgres test skips and the gate proves nothing"
+    )
