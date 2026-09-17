@@ -104,10 +104,19 @@ export function initPeople() {
     // was revoked mid-session, or a 404 if somebody else just removed the
     // row) goes through the app's one write-refusal path: `apiSend` alerts
     // `t("error."+code)` itself, exactly as every other write on this app
-    // does. Re-rendering after either outcome shows the server's real state,
-    // which undoes the select's own optimistic change on a refusal.
-    await apiSend("PATCH", `/api/users/${id}`, { capacity: sel.value });
-    render();
+    // does — and then RE-THROWS. The browser has already moved the
+    // `<select>` to the rejected value the instant the person picked it, so
+    // `finally` (not a bare call after `await`) is load-bearing here: without
+    // it a refusal leaves the control lying about who holds the capacity
+    // until an unrelated redraw happens to fix it. `render()` in `finally`
+    // runs on both outcomes and repaints from the server's real state either
+    // way, which is what undoes the select's own optimistic change on a
+    // refusal.
+    try {
+      await apiSend("PATCH", `/api/users/${id}`, { capacity: sel.value });
+    } finally {
+      render();
+    }
   });
 
   table.addEventListener("click", async (e) => {
