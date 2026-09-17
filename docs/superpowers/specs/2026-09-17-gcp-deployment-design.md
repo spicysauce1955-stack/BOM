@@ -125,20 +125,41 @@ already Postgres-compatible: 9 statements use `ON CONFLICT … DO UPDATE SET
 x=excluded.x`, which is Postgres syntax SQLite adopted, and is byte-identical in
 both.
 
-The real divergence is five things, and they live behind a `_Dialect` object
+The real divergence is four things, and they live behind a `Dialect` object
 rather than forking `Store` into two classes:
 
 | | SQLite | Postgres |
 |---|---|---|
 | placeholders | `?` | `%s` |
-| ignore-duplicate | `INSERT OR IGNORE` (2 sites) | `ON CONFLICT DO NOTHING` |
 | JSON field | `json_extract(doc,'$.created_at')` | `doc::jsonb ->> 'created_at'` |
-| audit sequence | `INTEGER PRIMARY KEY AUTOINCREMENT` | `GENERATED ALWAYS AS IDENTITY` |
+| audit sequence | `INTEGER PRIMARY KEY AUTOINCREMENT` | `BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY` |
 | journal | `PRAGMA journal_mode=WAL` | — |
 
+> **Amendment (Task 5, implemented 2026-09-17).** This table originally listed
+> five differences, one of them `INSERT OR IGNORE` (2 sites) translating to
+> `ON CONFLICT DO NOTHING`. It no longer needs to: SQLite has accepted
+> `ON CONFLICT DO NOTHING` since 3.24 and ships 3.45 in this repo, so both
+> statements were rewritten into the form both databases already understand —
+> one fewer difference to carry is better than one more translation to trust.
+> A fifth difference turned up instead, and it is not in this table because it
+> is not translated: `sqlite3.IntegrityError` and `psycopg.IntegrityError`
+> share no base beyond `Exception`. It is owned by the drivers, handled in
+> exactly one test (`tests/fulfillment/test_quotes.py::test_quote_ids_are_append_only`),
+> and no code under `src/` catches a driver exception at all — hoisting a
+> shared type into `Dialect` would add a shim seam with no consumer.
+
 `FENCEAI_DB` gains a URL form: a value beginning `postgres://` selects the
-Postgres dialect and a connection pool; a bare path stays SQLite and keeps the
-single connection and its lock. Local and deployed then differ by one variable.
+Postgres dialect; a bare path stays SQLite. Local and deployed then differ by
+one variable.
+
+> **Amendment (Task 1, implemented 2026-09-17).** This section originally said
+> a `postgres://` URL selects "the Postgres dialect and a connection pool." It
+> does not: `store/dialect.py`'s `Conn` opens a single connection, deliberately
+> not a pool. §3's `@_serialized` funnels every public `Store` call through one
+> process-wide `RLock`, so a second connection could never be in use while the
+> pin holds — a pool would be a moving part with no reachable purpose. Both
+> backends keep the single-connection-and-lock shape; only the SQL dialect
+> changes.
 
 **Both backends stay.** Deleting SQLite would mean that running the app, or the
 suite, requires a database daemon — spending the offline property for nothing.
@@ -320,10 +341,13 @@ lands nearer $30–40.
 Each ends somewhere a person can watch it work. Green tests are not the
 checkpoint.
 
-1. **Dialect shim and dual-run tests.** No GCP at all. `Store` gains
-   `_Dialect`, `FENCEAI_DB` accepts a URL, the ~350 persistence tests run against
-   both backends. *Checkpoint:* suite green both ways; the app still boots on
-   SQLite with zero setup.
+1. **Dialect shim, dual-run tests, and a test-only CI workflow.** No GCP at
+   all. `Store` gains `Dialect`, `FENCEAI_DB` accepts a URL, the ~350
+   persistence and API tests run against both backends, and a GitHub Actions
+   workflow runs the full suite against a Postgres service container on every
+   push and PR. *Checkpoint:* suite green both ways, proven in CI rather than
+   only on the implementer's laptop; the app still boots on SQLite with zero
+   setup.
 
 2. **Identity becomes Google's.** The port, `DevIdentity`, every deletion in
    §5.2, `User.subject`, the bootstrap admin, `GET /api/session`, the frontend
@@ -341,9 +365,17 @@ checkpoint.
    with Google, arrives as admin via bootstrap, and grants someone else a
    capacity.
 
-5. **CI/CD, and a restore actually performed.** The Actions pipeline, uptime
-   check, budget alert, and a backup restored into a scratch instance. A backup
-   nobody has restored is a hope, not a backup.
+5. **Build, deploy, and a restore actually performed.** Build and push to
+   Artifact Registry, `gcloud run deploy` added to the workflow slice 1
+   started, uptime check, budget alert, and a backup restored into a scratch
+   instance. A backup nobody has restored is a hope, not a backup.
+
+> **Amendment (Task 7, implemented 2026-09-17).** This section originally put
+> all of CI in slice 5, alongside build, registry and deploy. Slice 1 now owns
+> a test-only workflow instead, because a dual-run that nothing runs proves
+> nothing — the four tasks that built the shim needed that proof before slice
+> 2 could trust it, long before there was a GCP project to deploy to. Build,
+> registry and deploy stay in slice 5: they need one.
 
 **Slice 2 is a product change, not a deployment change.** It alters how people
 sign in, deletes a working mechanism, and touches `tests/identity/`,

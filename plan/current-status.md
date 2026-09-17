@@ -3,6 +3,41 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-09-17: the store speaks two dialects, and CI proves it
+
+Branch `worktree-store-dialect-shim`, eight tasks (commits 7b05cab..649905d, plus this
+documentation task). `store/dialect.py` is new: a `Dialect` object that translates
+`store/db.py`'s 63 SQL statements between SQLite and Postgres, so nothing outside
+`store/` needed to learn a second database existed. This is slice 1 of
+`docs/superpowers/specs/2026-09-17-gcp-deployment-design.md`.
+
+Four differences are translated: placeholders (`?` → `%s`), the JSON field
+(`json_extract(doc,'$.k')` → `doc::jsonb->>'k'`), the audit sequence
+(`INTEGER PRIMARY KEY AUTOINCREMENT` → `BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY
+KEY`), and the prelude (`PRAGMA journal_mode=WAL;` → none). `INSERT OR IGNORE` is no
+longer one of them — SQLite has accepted `ON CONFLICT DO NOTHING` since 3.24 and ships
+3.45 here, so both statements were rewritten into the form both databases already
+understand. A fifth difference surfaced during Task 5 and is deliberately NOT
+translated: `sqlite3.IntegrityError` and `psycopg.IntegrityError` share no base beyond
+`Exception`. It is owned by the drivers, handled in exactly one test
+(`tests/fulfillment/test_quotes.py`), and no code under `src/` catches a driver
+exception at all — hoisting it into `Dialect` would add a shim seam with no consumer.
+
+`Conn` opens a single connection, never a pool: `store/db.py`'s `@_serialized` funnels
+every public call through one process-wide `RLock`, so a second connection could never
+be in use. Eleven store test files that had pinned themselves to one backend, and every
+API test file, now run against both — genuinely Postgres-backed API tests went from 121
+to 276. Task 7 added the repository's first CI workflow
+(`.github/workflows/tests.yml`): a Postgres service container, the full suite, then the
+release gate, on every push and pull request.
+
+**Measured, not estimated:** full suite with Postgres — 3806 passed (~148s). Full suite
+offline — 3461 passed, 346 skipped (~98s), unchanged from before this slice: the
+zero-setup laptop path did not get slower. Release gate — 310 passed.
+
+Push deliberately withheld at the end of Task 7: a repository another session shares, so
+sending it is the repository owner's call, not this loop's.
+
 ## Checkpoint — 2026-09-16: the office can finish a job, and reject one
 
 Branch `feat/office-desk-actions`, not merged at the time of writing. The slice the
