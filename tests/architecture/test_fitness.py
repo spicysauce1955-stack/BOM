@@ -295,6 +295,29 @@ def test_the_agent_never_reaches_the_store_or_the_generator():
     assert not generator_offenders, generator_offenders
 
 
+def test_every_api_route_is_gated_by_the_app_itself():
+    """Not route by route. Seventy routes were born ungated by omission, and
+    the only fix that cannot be forgotten is one dependency on the app."""
+    from fenceai.api.app import app
+    assert app.router.dependencies, "the app carries no gate"
+
+
+def test_the_exempt_list_is_exactly_what_it_should_be():
+    """An exemption is a hole, so adding one is a deliberate edit HERE as well
+    as there. Each of these three has a sentence in `api/auth.py` saying why."""
+    from fenceai.api.auth import EXEMPT_PATHS
+    assert EXEMPT_PATHS == frozenset({
+        "/api/health", "/api/session", "/api/dev/identity",
+    })
+
+
+def test_every_exempt_path_is_a_route_that_exists():
+    """An exemption for a path nobody serves is a stale hole waiting for a
+    route to be added onto it."""
+    from fenceai.api.auth import EXEMPT_PATHS
+    assert EXEMPT_PATHS <= _route_paths()
+
+
 def test_nothing_outside_the_store_writes_an_audit_row_privately():
     """`Store._audit` is private and unguarded on purpose: it is re-entrant
     inside a guarded public call and does not commit, because its caller is

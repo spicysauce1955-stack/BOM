@@ -277,9 +277,17 @@ because it was never about passwords.
   failures are quiet."* Same argument, same answer, failing at startup rather
   than per request.
 
-- **`FENCEAI_BOOTSTRAP_ADMIN=owner@company.com`** — if there is no admin yet and
-  that address signs in, it becomes one. Self-disabling the moment an admin
-  exists. This is what replaces three seeded strangers.
+- **`FENCEAI_BOOTSTRAP_ADMIN=owner@company.com`** — if no admin is currently
+  ACTIVE and that address signs in, it becomes one. Self-disabling the moment
+  an admin is active — not the moment one exists. [Corrected — see A3 in
+  `.superpowers/sdd/2026-09-17-identity-is-googles/task-10-brief.md`: counting
+  only active admins is what lets a deployment whose sole admin was later
+  deactivated be recovered by redeploying with this variable still set, rather
+  than locked out for ever. The consequence is that **while this variable is
+  set, the address it names is a live re-entry path for as long as no admin is
+  active**, so removing it after the first deploy (§6) is load-bearing for
+  that recovery path as well as for the ordinary demotion guard, not merely
+  best practice.] This is what replaces three seeded strangers.
 
 - **`GET /api/session`** answering *who am I* from the verified identity, since
   the frontend can no longer learn it by POSTing credentials.
@@ -320,9 +328,12 @@ ever ships.
 
 **Config.** `FENCEAI_DB` as a `postgres://` URL. `FENCEAI_AI=claude`.
 `FENCEAI_IDENTITY=iap`. `FENCEAI_BOOTSTRAP_ADMIN` set for the first deploy and
-removed after. `ANTHROPIC_API_KEY` mounted as a Secret Manager reference, never
-an env literal in the service YAML. `.env.example` gains `FENCEAI_IDENTITY=dev`
-and `FENCEAI_DEV_USER=`.
+**removed after — this is load-bearing, not hygiene**: it self-disables only
+while an admin is active (§5.2, corrected), so left set it remains a live
+re-entry path for whatever address it names the moment no admin is active,
+including an accidental deactivation of the only one. `ANTHROPIC_API_KEY`
+mounted as a Secret Manager reference, never an env literal in the service
+YAML. `.env.example` gains `FENCEAI_IDENTITY=dev` and `FENCEAI_DEV_USER=`.
 
 **Release.** GitHub Actions on merge to `main`: `uv run pytest -q` — all 3114,
 with the ~350 dual-run against a Postgres service container — then build, push to
