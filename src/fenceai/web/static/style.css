@@ -13,11 +13,26 @@
 
 body { margin: 0; font-family: "Noto Sans Hebrew", system-ui, "Segoe UI", Arial, sans-serif;
   background: #f4f5f7; color: #1d2733; }
-/* The front door. `html[data-auth]` is set by app.js: `pending` until `/api/me`
-   has answered (nothing shows, so a signed-in reload never flashes the form),
-   `out` shows ONLY the login screen, `in` shows only the app. */
+/* The front door. `html[data-auth]` is set by app.js: `pending` until
+   `/api/session` has answered (nothing shows, so a signed-in reload never
+   flashes the form), `out` shows ONLY the login screen, `in` shows only the
+   app, `denied` shows only the no-access screen. */
 html:not([data-auth="in"]) body > :not(#login-screen) { display: none; }
 html:not([data-auth="out"]) #login-screen { display: none; }
+/* Three states now, not two. Keyed on :not() for the reason the other two
+   are: a rule written as [data-auth="denied"] #no-access would flash the
+   refusal on every signed-in reload. */
+html:not([data-auth="denied"]) #no-access { display: none; }
+html[data-auth="denied"] body > :not(#no-access) { display: none; }
+/* The two rules above are not enough on their own: the pre-existing rule at
+   the top of this block (`:not([data-auth="in"]) body > :not(#login-screen)`)
+   carries an extra element (`body >`) that the "hide #no-access by default"
+   rule above does not, so IT wins the specificity tie and keeps #no-access at
+   display:none even while denied — verified in a headless browser, not just
+   reasoned about. This rule matches that same specificity (one more `body >`
+   than "hide #no-access by default" has) and is declared after it, so the
+   cascade's tiebreak — last declared wins a tie — finally shows the screen. */
+html[data-auth="denied"] body > #no-access { display: grid; }
 #login-screen { min-block-size: 100vh; display: grid; place-items: center; padding: 16px;
   background: #1d2733; }
 #login-screen form { display: flex; flex-direction: column; gap: 12px;
@@ -28,6 +43,13 @@ html:not([data-auth="out"]) #login-screen { display: none; }
   border-radius: 6px; }
 #login-screen button { font: inherit; padding: 9px 10px; }
 #login-screen .error { margin: 0; }
+/* Same card language as #login-screen, on purpose: the person did not do
+   anything wrong to land here, so this should not look like a dead end. */
+#no-access { min-block-size: 100vh; place-items: center; padding: 16px;
+  background: #1d2733; }
+#no-access > * { inline-size: min(100%, 340px); }
+#no-access h1, #no-access p { margin: 0 0 12px; color: #fff; text-align: center; }
+#no-access button { font: inherit; padding: 9px 10px; margin-block-start: 8px; }
 header { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: #1d2733; color: #fff; }
 header h1 { font-size: 18px; margin: 0; }
 .project-bar { display: flex; gap: 8px; align-items: center; }

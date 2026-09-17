@@ -39,7 +39,7 @@ def test_only_a_signed_in_page_shows_the_app_and_only_a_signed_out_one_the_form(
 def test_the_login_screen_holds_the_form_and_the_header_does_not():
     html = (STATIC / "index.html").read_text()
     screen = html[html.index('<section id="login-screen"'):html.index("</section>")]
-    for el in ('id="sign-in"', 'id="sign-in-email"', 'id="sign-in-password"',
+    for el in ('id="sign-in"', 'id="sign-in-email"',
                'id="sign-in-error"', 'id="sign-in-unreachable"'):
         assert el in screen, el
     header = html[html.index("<header>"):html.index("</header>")]
@@ -79,3 +79,56 @@ def test_the_frontend_is_served_revalidated_so_an_update_cannot_mix_modules():
             r = client.get(path)
             assert r.status_code == 200, path
             assert r.headers.get("cache-control") == "no-cache", path
+
+
+def test_the_front_door_asks_for_no_password():
+    """There is none. A field for one would be asking for a secret the system
+    cannot check and must never store."""
+    html = (STATIC / "index.html").read_text()
+    assert 'type="password"' not in html
+    assert "sign-in-password" not in html
+
+
+def test_a_refused_arrival_gets_a_screen_of_their_own():
+    """Not a blank app and not the picker again. IAP let them to the door;
+    this is the screen that tells them what to ask for."""
+    html = (STATIC / "index.html").read_text()
+    assert 'id="no-access"' in html
+    assert 'data-i18n="noaccess.body"' in html
+    css = _css()
+    assert re.search(
+        r'html:not\(\[data-auth="denied"\]\)\s+#no-access\s*\{\s*display:\s*none', css)
+    assert re.search(
+        r'html\[data-auth="denied"\]\s+body\s*>\s*:not\(#no-access\)\s*\{\s*display:\s*none', css)
+
+
+def test_the_no_access_screen_actually_renders_and_is_not_just_declared():
+    """The two rules above are not enough by themselves, and this is not
+    hypothetical — verified in a headless browser. The PRE-EXISTING rule
+    `html:not([data-auth="in"]) body > :not(#login-screen))` (unchanged by
+    this feature) has HIGHER specificity than the "hide #no-access by
+    default" rule above (an extra `body >` element), and it still matches
+    `#no-access` whenever `data-auth` is not `"in"` — including `"denied"`.
+    Without a third rule of the SAME specificity declared AFTER it, the
+    cascade's tiebreak (last declared wins a tie) never runs in `#no-access`'s
+    favour, and the whole feature renders as a blank page for every denied
+    user, silently, with the two assertions above still green.
+
+    So this checks two things, not one: that the revealing rule exists, and
+    that it is declared AFTER the rule it has to out-order — a text-only pin
+    would still pass if somebody moved it above that rule (or above whichever
+    rule around it, in the future, is fighting for the same element), and the
+    regression this guards against does not throw; it just goes quiet.
+    """
+    css = _css()
+    competitor = re.search(
+        r'html:not\(\[data-auth="in"\]\)\s+body\s*>\s*:not\(#login-screen\)', css)
+    assert competitor, "the rule the reveal has to out-order is gone too"
+    reveal = re.search(
+        r'html\[data-auth="denied"\]\s+body\s*>\s*#no-access\s*\{\s*display:\s*(?:grid|block|flex)',
+        css)
+    assert reveal, 'no rule sets #no-access visible under data-auth="denied"'
+    assert reveal.start() > competitor.start(), (
+        "the reveal rule must be declared AFTER the competing rule above — "
+        "equal specificity is a tie broken by source order, so moved earlier "
+        "it loses and #no-access goes back to display:none while denied")

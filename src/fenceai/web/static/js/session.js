@@ -1,44 +1,32 @@
-// Who is signed in. The ONE module that talks to `/api/session` and `/api/me` —
-// everything else reads `state.me` or listens for `signed-in` / `signed-out`.
+// Who is signed in. The ONE module that talks to `/api/session` — everything
+// else reads `state.me` or listens for `signed-in` / `signed-out`.
 //
-// **Signed out, the page is the login screen and nothing else** (`app.js`,
-// `html[data-auth]`). That is the front door of the UI and not a security
-// boundary: nothing on the server refuses an unsigned request (yet), apart from
-// `POST /projects/{id}/actions`. This layer records who is asking; the server is
-// what may one day gate.
+// **Google holds the identity; we hold the capacity.** There is no password
+// here and no session cookie of ours. Under `iap` a signed assertion names the
+// person before the request reaches the app; under `dev` a credential-less
+// cookie does, set by the picker below. Either way this module asks one
+// question — `GET /api/session` — and the server answers who, which view, and
+// whether there is a capacity row at all.
 //
-// **The view comes from the server, not from a rule here.** `/api/me` answers it,
-// because the thing that decides which view you open on is the same thing that
-// can refuse an action, and a second copy of the rule in JS is a copy that
-// drifts. `identity/model.py: default_view` is the one implementation.
-//
-// And the selector being hidden is a PRESENTATION fact, never protection: hiding
-// is CSS and `localStorage` is editable, so an account that forces itself into
-// another view has changed what it SEES and none of what it may DO.
+// **Every API route now refuses a caller with no capacity row.** The screen is
+// no longer the only thing between somebody and the data, which is what it
+// was when it shipped.
 
 import { emit, state } from "./state.js";
 
-/** What a `/api/me` answer means for the screen.
- *
- *  Pure, so node can test the decision without a browser — `base-top.js`'s split
- *  applied again. It carries no capability list and decides nothing about what
- *  may be done; it answers two presentation questions and stops.
- */
-export function applyMe(me) {
-  return { user: me.user, view: me.view, selector: me.may_choose_view };
+/** What a `/api/session` answer means for the screen. Pure, for node. */
+export function sessionState(body) {
+  const ok = body.status === "ok";
+  return {
+    status: body.status,
+    email: body.email || "",
+    user: ok ? body.user : null,
+    view: ok ? body.view : null,
+    selector: ok ? body.may_choose_view : true,
+  };
 }
 
-/** Nobody signed in — and **no opinion about the view**.
- *
- *  `view: null` means *leave it alone*. Signed out, the page is the login screen
- *  and shows no view at all, so there is nothing to set; only a signed-in account
- *  names a view, because only then is there somebody whose account says which.
- */
-export function signedOutState() {
-  return { user: null, view: null, selector: true };
-}
-
-/** Write one of those two shapes to the page.
+/** Write one of those shapes to the page.
  *
  *  `view.js` is imported lazily rather than at the top, and that is deliberate:
  *  `view.js` imports `i18n.js` which imports `state.js`, and a static import here
@@ -48,6 +36,8 @@ export function signedOutState() {
 async function apply(shape) {
   state.me = shape.user;
   state.mayChooseView = shape.selector;
+  state.authStatus = shape.status;
+  state.authEmail = shape.email;
   document.documentElement.dataset.selector = shape.selector ? "yes" : "no";
   // Only when somebody named one. A null view leaves whatever `initView()`
   // restored from storage, which is what keeps a signed-out reload on the view
@@ -59,39 +49,42 @@ async function apply(shape) {
   emit(shape.user ? "signed-in" : "signed-out", shape.user);
 }
 
-/** Ask who we are. A 401 is the ordinary answer, not an error.
- *
+/** Ask who we are.
  *  @returns false when the server could not be reached at all — the caller
- *  must SAY so, because the page is otherwise a login form that silently does
- *  nothing, or (before this answered) a blank screen. */
-export async function loadMe() {
+ *  must SAY so, or the page is a picker that silently does nothing. */
+export async function loadSession() {
   let r;
   try {
-    r = await fetch("/api/me");
+    r = await fetch("/api/session");
   } catch {
-    await apply(signedOutState());
+    await apply(sessionState({ status: "no_identity", user: null }));
     return false;
   }
-  await apply(r.ok ? applyMe(await r.json()) : signedOutState());
+  if (!r.ok) {
+    await apply(sessionState({ status: "no_identity", user: null }));
+    return true;
+  }
+  await apply(sessionState(await r.json()));
   return true;
 }
 
-/** @returns `"ok"`, `"refused"` (wrong email or password — one answer for
- *  both, as the server gives), or `"unreachable"`. */
-export async function signIn(email, password) {
+/** Become somebody, on a laptop. There is no credential: `POST
+ *  /api/dev/identity` exists only under `FENCEAI_IDENTITY=dev`, and under
+ *  `iap` this returns "refused" because the route is not there.
+ *  @returns `"ok"`, `"refused"`, or `"unreachable"`. */
+export async function become(email) {
   let r;
   try {
-    r = await fetch("/api/session", {
+    r = await fetch("/api/dev/identity", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email }),
     });
   } catch {
     return "unreachable";
   }
   if (!r.ok) return "refused";
-  await apply(applyMe(await r.json()));
-  return "ok";
+  return (await loadSession()) ? "ok" : "unreachable";
 }
 
 /** Where this browser remembers the job a person last had open. Per ACCOUNT,
@@ -114,9 +107,16 @@ export function pickProject(list, rememberedId) {
   return list[0].id;
 }
 
+/** Signing out stops being ours.
+ *
+ *  IAP keeps the promise better than a row we delete — revoking access is
+ *  removing the grant, centrally, for every device at once — but the APP
+ *  cannot do it. So this is a redirect, not a DELETE. Under `dev` there is a
+ *  cookie to clear and nothing to revoke.
+ */
 export async function signOut() {
-  await fetch("/api/session", { method: "DELETE" });
-  await apply(signedOutState());
+  try { await fetch("/api/dev/identity", { method: "DELETE" }); } catch { /* iap */ }
+  location.href = "/?gcp-iap-mode=CLEAR_LOGIN_COOKIE";
 }
 
 export const currentUser = () => state.me;
