@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 import pytest
+from fastapi.routing import APIRoute
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "fenceai"
 DOCS = Path(__file__).resolve().parents[2] / "docs" / "architecture"
@@ -295,11 +296,67 @@ def test_the_agent_never_reaches_the_store_or_the_generator():
     assert not generator_offenders, generator_offenders
 
 
-def test_every_api_route_is_gated_by_the_app_itself():
-    """Not route by route. Seventy routes were born ungated by omission, and
-    the only fix that cannot be forgotten is one dependency on the app."""
+def test_every_api_route_actually_carries_the_gate():
+    """`app.router.dependencies` being non-empty proves nothing about any
+    PARTICULAR route — it is a property of the app object, and no bypassing
+    registration can ever falsify it. A raw Starlette `Route` pushed onto
+    `app.router.routes` (bypassing `add_api_route`, which is what actually
+    copies the router's `dependencies` onto each route's own dependant at
+    registration time) answers with no identity and leaves that assertion
+    untouched. This app already shipped exactly that escape once:
+    `/openapi.json`, `/docs` and `/redoc` answered anonymously for several
+    commits because FastAPI registers them with `Starlette.add_route`, so
+    they are plain `Route`s the router's dependencies never reach.
+
+    So this inspects each `/api` `APIRoute`'s OWN `dependant.dependencies` —
+    what a bypassing `add_route` call would fail to populate — rather than
+    asking the app a question every route answers alike regardless of how it
+    was registered."""
+    from fenceai.api.app import _gate, app
+
+    api_routes = [r for r in app.routes
+                  if isinstance(r, APIRoute) and r.path.startswith("/api")]
+    assert api_routes, "no APIRoutes found under /api — this test has stopped looking at anything"
+    ungated = [r.path for r in api_routes
+               if _gate not in (d.call for d in r.dependant.dependencies)]
+    assert not ungated, (
+        f"these /api routes do not carry the gate on their own dependant "
+        f"(only the app's, which a bypassing registration would skip): {ungated}")
+
+
+def test_nothing_under_api_escapes_being_a_gated_api_route():
+    """The test above only inspects `APIRoute`s, so it is blind to the OTHER
+    escape: a `Mount`ed sub-app under `/api` would answer with no identity
+    and never appear in it. It is invisible to `_route_paths()` too —
+    `getattr(mount, "methods", None)` is `None` — so the route-count and
+    doc-table tests would not catch it either.
+
+    This walks every entry FastAPI actually serves and asserts that anything
+    whose path is `/api` or starts with `/api/` is a gated `APIRoute` — the
+    one shape this app is allowed to answer there with. The static UI mount
+    is the sole named exception, and it is safe for a specific reason: a
+    `Mount` is not a route the router's `dependencies` reach, so it could
+    never be gated even if it needed to be — and serving the UI to an
+    unidentified visitor is deliberate, because the "ask an admin" screen has
+    to render for exactly that visitor."""
+    from starlette.routing import Mount
+
     from fenceai.api.app import app
-    assert app.router.dependencies, "the app carries no gate"
+
+    shadowing_mounts = [r.path for r in app.routes
+                        if isinstance(r, Mount)
+                        and (r.path == "/api" or r.path.startswith("/api/"))]
+    assert not shadowing_mounts, f"a Mount shadows an /api path: {shadowing_mounts}"
+
+    non_api_route_entries = [
+        (r.path, type(r).__name__) for r in app.routes
+        if not isinstance(r, Mount)
+        and (r.path == "/api" or r.path.startswith("/api/"))
+        and not isinstance(r, APIRoute)
+    ]
+    assert not non_api_route_entries, (
+        f"non-APIRoute entries under /api, which the gate cannot reach: "
+        f"{non_api_route_entries}")
 
 
 def test_the_exempt_list_is_exactly_what_it_should_be():
