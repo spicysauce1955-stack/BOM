@@ -27,7 +27,6 @@ from fenceai.parts.model import Part, PartLibrary
 from fenceai.fulfillment.supply_run import SupplyRun
 from fenceai.project.model import Project
 from fenceai.identity.model import User
-from fenceai.identity.session import Session
 from fenceai.store.dialect import Conn
 from fenceai.strategy.model import GenerationResult
 
@@ -78,11 +77,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- who have left and every one of those rows must keep resolving to a name.
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
--- Signed-in browsers. The token is the key and the row IS the session, so
--- signing out deletes it and it stops working everywhere at once — which a
--- self-describing token could not promise.
-CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY, user_id TEXT NOT NULL, doc TEXT NOT NULL);
 """
 
 
@@ -925,8 +919,12 @@ class Store:
         self._audit(actor, action, ref)
         self._conn.commit()
 
-    # -- accounts and sessions -------------------------------------------------
+    # -- capacity assignments ---------------------------------------------------
 
+    # The `users` table is no longer an account store. Google holds the
+    # identity; a row here says what an identity may DO. `sessions` was deleted
+    # with the password store — an existing SQLite file keeps the table, which
+    # nothing creates or reads.
     @_serialized
     def save_user(self, user: User, actor: str = "system") -> None:
         self._conn.execute(
@@ -957,37 +955,6 @@ class Store:
     def list_users(self) -> list[User]:
         rows = self._conn.execute("SELECT doc FROM users ORDER BY id").fetchall()
         return [User.model_validate_json(r[0]) for r in rows]
-
-    @_serialized
-    def save_session(self, session: Session) -> None:
-        self._conn.execute(
-            "INSERT INTO sessions (token, user_id, doc) VALUES (?,?,?) "
-            "ON CONFLICT(token) DO UPDATE SET doc=excluded.doc",
-            (session.token, session.user_id, session.model_dump_json()),
-        )
-        self._conn.commit()
-
-    @_serialized
-    def session(self, token: str) -> Session | None:
-        row = self._conn.execute(
-            "SELECT doc FROM sessions WHERE token=?", (token,)).fetchone()
-        return Session.model_validate_json(row[0]) if row else None
-
-    @_serialized
-    def delete_session(self, token: str) -> None:
-        self._conn.execute("DELETE FROM sessions WHERE token=?", (token,))
-        self._conn.commit()
-
-    @_serialized
-    def delete_sessions_for(self, user_id: str) -> int:
-        """Every browser this account is signed in on, at once.
-
-        What `active=False` would otherwise fail to mean: deactivating an
-        account that is still signed in somewhere is a label, not a revocation.
-        """
-        cur = self._conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
-        self._conn.commit()
-        return cur.rowcount
 
     @_serialized
     def log(self, actor: str, action: str, ref: str) -> None:

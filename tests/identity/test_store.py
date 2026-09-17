@@ -1,17 +1,15 @@
-"""Accounts and sessions in the store."""
+"""Accounts in the store. There are no sessions any more — see
+`test_the_store_no_longer_keeps_sessions`."""
 
 from __future__ import annotations
 
 from fenceai.identity.model import User
-from fenceai.identity.session import start
 
 
 def _user(**kw) -> User:
     base = dict(id="u_yossi", name="Yossi", email="yossi@example.com",
                 capacity="backoffice")
-    u = User(**{**base, **kw})
-    u.set_password("pw")
-    return u
+    return User(**{**base, **kw})
 
 
 def test_an_account_is_found_by_any_casing_of_its_address(store):
@@ -41,38 +39,16 @@ def test_saving_an_account_again_updates_it_rather_than_duplicating(store):
     assert store.user("u_yossi").capacity == "admin"
 
 
-def test_the_password_hash_survives_the_round_trip(store):
-    """It is on the model, so it rides in the document. If it did not, every
-    stored account would silently become one that can never be signed in to."""
-    from fenceai.identity.model import verify_password
+def test_the_store_no_longer_keeps_sessions():
+    """The row WAS the session, and there are no sessions. An existing SQLite
+    file keeps its table — dropping it from the baseline does not remove it,
+    and per the deployment spec §4 that is not worth a migration — but nothing
+    creates or reads one."""
+    from fenceai.store import db
 
-    store.save_user(_user())
-    assert verify_password(store.user("u_yossi"), "pw") is True
-
-
-def test_a_session_resolves_to_its_account_and_stops_when_deleted(store):
-    store.save_user(_user())
-    sess = start("u_yossi")
-    store.save_session(sess)
-    assert store.session(sess.token).user_id == "u_yossi"
-    store.delete_session(sess.token)
-    assert store.session(sess.token) is None
-
-
-def test_deactivating_can_take_every_browser_with_it(store):
-    """`active=False` on its own is a label somebody is still signed in behind.
-    Revoking the sessions is the other half, and the store has to be able to do
-    it in one call or the caller will do it in a loop and miss one."""
-    store.save_user(_user())
-    for _ in range(3):
-        store.save_session(start("u_yossi"))
-    store.save_session(start("u_dana"))
-    assert store.delete_sessions_for("u_yossi") == 3
-    assert store.delete_sessions_for("u_yossi") == 0
-
-
-def test_an_unknown_token_is_none_and_never_a_stranger(store):
-    assert store.session("not-a-real-token") is None
+    assert "CREATE TABLE IF NOT EXISTS sessions" not in db._SCHEMA
+    for name in ("save_session", "session", "delete_session", "delete_sessions_for"):
+        assert not hasattr(db.Store, name), name
 
 
 def test_saving_an_account_names_who_did_it_in_the_audit_log(store):

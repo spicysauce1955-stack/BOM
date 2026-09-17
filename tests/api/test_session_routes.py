@@ -64,10 +64,9 @@ def test_an_ungranted_address_is_named_but_not_admitted(client):
 
 
 def test_the_password_hash_never_crosses_the_wire(client):
-    """Not secret in the sense that it unlocks anything, and still not something
-    to hand out: it is the one field on the record that is worth attacking
-    offline, and no screen has a use for it. The field outlives this task by one
-    commit, so the exclusion has to outlive it too."""
+    """The field is gone from `User` now; this pins the wire shape rather than
+    the model's current fields, so a hash re-added for any reason still never
+    reaches this route."""
     _row("yossi@example.com", "backoffice", id="u_yossi")
     _as(client, "yossi@example.com")
     assert "password_hash" not in client.get("/api/session").json()["user"]
@@ -114,3 +113,18 @@ def test_the_people_list_is_for_the_assignee_picker_and_carries_no_hashes(client
     rows = client.get("/api/users").json()
     assert any(u["name"] == "Picker" for u in rows)
     assert all("password_hash" not in u for u in rows)
+
+
+def test_the_people_list_says_whether_google_is_bound_never_the_id(client):
+    """`subject` is Google's stable account id, and every signed-in capacity —
+    not only an admin — can reach this route. A colleague's raw Google id has
+    no consumer here and no reason to leave the server; `subject_bound` answers
+    the only question a people panel actually needs."""
+    _row("bound@example.com", "backoffice", id="u_bound", subject="sub-123")
+    _row("unbound@example.com", "backoffice", id="u_unbound")
+    _as(client, "bound@example.com")
+    rows = {u["email"]: u for u in client.get("/api/users").json()}
+    assert rows["bound@example.com"]["subject_bound"] is True
+    assert rows["unbound@example.com"]["subject_bound"] is False
+    assert "subject" not in rows["bound@example.com"]
+    assert "subject" not in rows["unbound@example.com"]

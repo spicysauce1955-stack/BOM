@@ -234,7 +234,7 @@ is safer for `min_rail_separation_mm`.
 
 ## Persistence
 
-Fifteen tables — fourteen document stores plus the append-only `audit_log`. Documents are
+Fourteen tables — thirteen document stores plus the append-only `audit_log`. Documents are
 stored as JSON `doc` columns; the schema holds only what is queried or ordered by.
 
 ```sql
@@ -252,7 +252,6 @@ knowledge_snapshots(snapshot_id, loaded_at, doc)      -- the published document
 active_snapshot(only_row, snapshot_id)                -- CHECK (only_row = 1)
 audit_log(seq, at, actor, action, ref)
 users(id, email, doc)                                 -- email UNIQUE
-sessions(token, user_id, doc)                         -- the token IS the key
 ```
 
 **`email` is UNIQUE and `User.email` normalises.** It is what somebody signs in with, so
@@ -263,14 +262,16 @@ the machine that created it.
 
 **An account is deactivated, never deleted.** `audit_log.actor` names people who have left
 the company and every one of those rows must keep resolving to a name. `active=False` is
-the company's move, `verify_password` refuses it, and `delete_sessions_for` is the other
-half — without it, deactivating is a label somebody is still signed in behind.
+the company's move, and `api/auth.py`'s gate refuses it on the very next request — IAP
+revokes access centrally and this process cannot, so the local half has to bite on a
+browser that is already open.
 
-**The session token IS the row.** Opaque and looked up server-side rather than
-self-describing and merely validated, so signing out actually signs out: the row is
-deleted and the token stops working everywhere at once. A token carrying its own claims
-would stay valid in a pocket until it expired, which makes both "sign me out" and
-"deactivate this account" promises the server cannot keep.
+**There is no session table.** Identity is Google's: IAP verifies the transport in
+production and a cookie stands in for it on a laptop, so there is nothing here to look up
+server-side and nothing to revoke — the row `users` keeps is the whole story. An existing
+SQLite file that predates this may still carry an unused `sessions` table; dropping it
+from the schema above does not drop it from a file already on disk, and per the deployment
+spec §4 that is not worth a migration.
 
 **The published snapshot is stored as the DOCUMENT, and what we make of it is not.**
 `knowledge_snapshots` keeps the bytes the Knowledge Platform sent, keyed by its own
