@@ -258,6 +258,14 @@ REFUSAL_CODES = [
     "account_deactivated",
     "subject_mismatch",
     "capacity_insufficient",
+    # -- granting a capacity (`POST /api/users`, `PATCH /api/users/{id}`) -------
+    # The first routes that create a user or change a capacity. `user_exists`
+    # and `user_not_found` are ordinary lookup refusals; `last_admin` is the
+    # guard that refuses the one edit whose only cure is
+    # `FENCEAI_BOOTSTRAP_ADMIN` and a redeploy.
+    "user_exists",
+    "user_not_found",
+    "last_admin",
     # -- the queue and the one door ---------------------------------------------
     "assignee_unknown",
     # Committing names a run explicitly (never "the latest"), so a payload can

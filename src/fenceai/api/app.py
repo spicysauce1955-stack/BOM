@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -81,7 +82,7 @@ from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
 from fenceai.identity.model import (
-    SYSTEM, User, actor_ref, default_view, may_choose_view,
+    SYSTEM, Capacity, User, actor_ref, default_view, may_choose_view,
 )
 from fenceai.identity.dev import DEV_COOKIE
 from fenceai.identity.provider import build_provider
@@ -2326,6 +2327,72 @@ def list_users(request: Request) -> list[dict]:
     # stands, which is the point of it.
     current_user(request)
     return [_public(u) for u in state.store.list_users()]
+
+
+class GrantRequest(BaseModel):
+    email: str
+    name: str
+    capacity: Capacity
+
+
+class AmendRequest(BaseModel):
+    capacity: Capacity | None = None
+    active: bool | None = None
+
+
+def _would_strand_the_admins(target: User, body: AmendRequest) -> bool:
+    """Is this the edit that leaves nobody able to grant anything?
+
+    Asked before the write, because after it the only cure is
+    `FENCEAI_BOOTSTRAP_ADMIN` and a redeploy — and that variable is removed
+    after the first deploy precisely so it is not a standing way in.
+    """
+    losing_admin = (body.capacity is not None and body.capacity != "admin") \
+        or body.active is False
+    if target.capacity != "admin" or not losing_admin:
+        return False
+    others = [u for u in state.store.list_users()
+              if u.id != target.id and u.capacity == "admin" and u.active]
+    return not others
+
+
+@app.post("/api/users", status_code=201)
+def grant_capacity(request: Request, body: GrantRequest) -> dict:
+    """Give an address a capacity, before its owner has ever signed in.
+
+    That order is the point: an admin grants Dana her capacity on Monday and
+    Dana arrives on Tuesday, at which moment her Google `sub` binds to this row.
+    """
+    admin = require_admin(request)
+    if state.store.user_by_email(body.email) is not None:
+        raise HTTPException(409, {"code": "user_exists"})
+    user = User(id=f"u_{uuid.uuid4().hex[:8]}", name=body.name,
+                email=body.email, capacity=body.capacity)
+    state.store.save_user(user, actor=actor_ref(admin))
+    state.store.log(actor_ref(admin), "grant_capacity", user.id)
+    return _public(user)
+
+
+@app.patch("/api/users/{user_id}")
+def amend_capacity(request: Request, user_id: str, body: AmendRequest) -> dict:
+    """Change what somebody may do, or stop them doing anything.
+
+    Deactivated, never deleted — the audit log names people who have left, so a
+    row must keep resolving to a name for ever.
+    """
+    admin = require_admin(request)
+    user = state.store.user(user_id)
+    if user is None:
+        raise HTTPException(404, {"code": "user_not_found"})
+    if _would_strand_the_admins(user, body):
+        raise HTTPException(409, {"code": "last_admin"})
+    if body.capacity is not None:
+        user.capacity = body.capacity
+    if body.active is not None:
+        user.active = body.active
+    state.store.save_user(user, actor=actor_ref(admin))
+    state.store.log(actor_ref(admin), "amend_capacity", user.id)
+    return _public(user)
 
 
 @app.get("/api/audit")
