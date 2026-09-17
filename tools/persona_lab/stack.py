@@ -36,6 +36,13 @@ PERSONAS = [
 DEFAULT_PORT_BASE = 8800
 DEFAULT_CDP_BASE = 9400
 
+#: The account the stack signs in as before any persona looks (see `start()`).
+#: Named once because `DevIdentity` (cookie first, env second — `identity/dev.py`)
+#: means this same string also has to reach the server as `FENCEAI_DEV_USER`;
+#: letting the two spellings drift is exactly how the "always already this
+#: account" fact below would stop being true silently.
+ADMIN_EMAIL = "admin@example.com"
+
 
 def ports_for(index: int) -> tuple[int, int]:
     """The two ports this persona's stack listens on.
@@ -93,7 +100,7 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
         # added refuses every one of those calls with 401 `no_identity` before
         # a single project can be seeded.
         env={**os.environ, "FENCEAI_DB": db, "FENCEAI_AI": "stub",
-             "FENCEAI_DEV_USER": "admin@example.com"},
+             "FENCEAI_DEV_USER": ADMIN_EMAIL},
         cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
@@ -112,24 +119,65 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
     # The app opens on a login screen and loads nothing behind it. The personas
     # here are engineering roles evaluating the whole app, which is the admin
     # account's `all` view — so the STACK signs in before any persona looks,
-    # the same way a lab would hand a tester an already-logged-in machine. Done
-    # through the real form, not a cookie, so a broken login fails here loudly.
-    # ...once the app has wired the form: submitted earlier, it posts natively
-    # and reloads the page instead of signing in.
+    # the same way a lab would hand a tester an already-logged-in machine.
+    #
+    # `DevIdentity` is cookie-first, env-second (`identity/dev.py`), and this
+    # process's own `FENCEAI_DEV_USER` above is `ADMIN_EMAIL` — so the very
+    # FIRST `GET /api/session` the page makes, before this function does
+    # anything at all, already resolves to admin with no cookie in play. By
+    # the time `dataset.auth` is readable it has gone `pending` -> `in`
+    # directly; it never passes through `out`, and a loop waiting for `out`
+    # spins for nothing.
+    #
+    # That matters for more than a wasted 30s: the ONE thing that shoves an
+    # admin/backoffice account onto the Jobs queue tab (`queue.js`'s
+    # `on("signed-in", ...)`) fires once per completed sign-in cascade. If this
+    # function ALSO submits the form unconditionally, that is a SECOND,
+    # redundant sign-in for the same identity, racing the first: `state.project`
+    # is often already truthy from the first (automatic) sign-in by the time
+    # this function checks it, so it proceeds to set the canvas tab while the
+    # second (explicit) sign-in's own async chain — `become()` -> `POST
+    # /api/dev/identity` -> `GET /api/session` -> `emit("signed-in", ...)` — is
+    # still in flight, and queue.js's synchronous listener on THAT emission
+    # flips the tab back to "queue" a few milliseconds later. Confirmed live: a
+    # CDP-instrumented run of this exact sequence showed the active tab go
+    # canvas -> queue 21ms after `setTab('canvas')` returned, timed to the
+    # explicit sign-in's completion, not to anything `openWorkspace()` was
+    # still doing.
+    #
+    # So: only drive the real form (still through it, not a cookie, so a
+    # genuinely broken login fails here loudly) when the automatic identity
+    # did NOT already land us on the right account. That is the common case
+    # today and it means exactly one "signed-in" cascade happens, so nothing
+    # is left to race the tab placement below.
     for _ in range(60):
-        if c.js("document.documentElement.dataset.auth === 'out'"):
+        if c.js("document.documentElement.dataset.auth") != "pending":
             break
         time.sleep(0.5)
-    c.js("""document.getElementById('sign-in-email').value = 'admin@example.com';
-            document.getElementById('sign-in').requestSubmit(); 'ok'""")
+    already = c.js(
+        "import('./js/state.js').then(m => document.documentElement"
+        f".dataset.auth === 'in' && m.state.me?.email === {ADMIN_EMAIL!r})"
+    )
+    if not already:
+        for _ in range(60):
+            if c.js("document.documentElement.dataset.auth === 'out'"):
+                break
+            time.sleep(0.5)
+        c.js(f"""document.getElementById('sign-in-email').value = {ADMIN_EMAIL!r};
+                document.getElementById('sign-in').requestSubmit(); 'ok'""")
     for _ in range(60):
-        if c.js("import('./js/state.js').then(m => document.documentElement"
-                ".dataset.auth === 'in' && !!m.state.project)"):
+        if c.js(
+            "import('./js/state.js').then(m => document.documentElement"
+            f".dataset.auth === 'in' && m.state.me?.email === {ADMIN_EMAIL!r}"
+            " && !!m.state.project)"
+        ):
             break
         time.sleep(0.5)
     else:
-        raise RuntimeError("stack could not sign in as admin@example.com")
-    # An admin lands on the Jobs queue; the personas' work starts on the drawing.
+        raise RuntimeError(f"stack could not sign in as {ADMIN_EMAIL}")
+    # An admin lands on the Jobs queue; the personas' work starts on the
+    # drawing. Nothing after this point can send it back to "queue": the one
+    # sign-in cascade able to do that has already completed above.
     c.js("import('./js/tabs.js').then(m => { m.setTab('canvas'); return 'ok'; })")
 
     session = {
