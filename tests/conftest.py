@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from functools import lru_cache
 
 import pytest
 
@@ -71,12 +72,20 @@ def postgres_base_dsn() -> str | None:
     return os.environ.get(_PG_ENV) or None
 
 
+@lru_cache(maxsize=1)
 def postgres_available() -> bool:
     """Is there a server AND a driver? Both, or the answer is no.
 
     Checked by connecting rather than by reading the variable, so a stale
     export pointing at a container somebody stopped skips cleanly instead of
     failing 350 tests with a connection error apiece.
+
+    Cached for the session: `backend` and `dsn` each call this once per
+    test, so an uncached probe would pay a TCP round-trip twice per test
+    once every store test runs through it. Caching also makes the answer
+    CONSISTENT for the whole run — a server that dies partway through
+    cannot make some tests skip and others error, which would be a
+    confusing red with no single cause.
     """
     dsn = postgres_base_dsn()
     if dsn is None:
