@@ -2209,7 +2209,6 @@ DEMO_ACCOUNTS = [
     ("u_yossi", "Yossi", "yossi@example.com", "backoffice"),
     ("u_admin", "Admin", "admin@example.com", "admin"),
 ]
-DEMO_PASSWORD = "demo"
 
 
 def _seed_demo_accounts() -> None:
@@ -2219,9 +2218,8 @@ def _seed_demo_accounts() -> None:
     if state.store.list_users():
         return
     for uid, name, email, capacity in DEMO_ACCOUNTS:
-        user = User(id=uid, name=name, email=email, capacity=capacity)
-        user.set_password(DEMO_PASSWORD)
-        state.store.save_user(user, actor="seed")
+        state.store.save_user(
+            User(id=uid, name=name, email=email, capacity=capacity), actor="seed")
 
 
 # -- who is asking -------------------------------------------------------------
@@ -2239,12 +2237,20 @@ def _actor(request: Request, fallback: str = SYSTEM) -> str:
 
 
 def _public(user: User) -> dict:
-    """An account as a screen may see it — everything except the hash.
+    """An account as a screen may see it.
 
-    Not a secret that unlocks anything, and still the one field on the record
-    worth attacking offline, with no surface that needs it.
+    `subject` is Google's stable account id, and this function feeds two
+    routes: `GET /api/session` (this account, to itself) and `GET /api/users`
+    (every account, to any signed-in capacity — not only an admin). The second
+    of those has no reason to hand a colleague's Google id to whoever asked;
+    the people panel only needs to know WHETHER an address has completed a
+    real Google sign-in, never which account it landed on. `subject_bound`
+    answers that question and the raw id stays server-side, in the row
+    `identity/binding.py` compares against.
     """
-    return user.model_dump(exclude={"password_hash"})
+    data = user.model_dump(exclude={"subject"})
+    data["subject_bound"] = bool(user.subject)
+    return data
 
 
 @app.get("/api/session")

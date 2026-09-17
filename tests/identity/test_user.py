@@ -11,9 +11,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fenceai.identity.model import (
-    CAPACITIES, SYSTEM, User, actor_ref, is_agent, verify_password,
-)
+from fenceai.identity.model import CAPACITIES, SYSTEM, User, actor_ref, is_agent
 
 
 def _user(**kw) -> User:
@@ -76,52 +74,28 @@ def test_a_user_id_that_would_forge_another_kind_is_refused():
         _user(id="a:b")
 
 
-# --- passwords ---------------------------------------------------------------
+# --- no credential ------------------------------------------------------------
 
-def test_a_stored_password_is_not_the_password():
-    """Nothing here is a novel scheme — it is the stdlib's KDF with a per-user
-    salt. What this test pins is that the plaintext never reaches the record,
-    which is the property a later refactor could quietly lose."""
-    u = _user()
-    u.set_password("correct horse battery")
-    assert u.password_hash
-    assert "correct horse battery" not in u.password_hash
-    assert u.password_hash != _user().model_dump().get("password_hash", "")
-
-
-def test_the_same_password_hashes_differently_for_two_accounts():
-    """Per-user salt. Two people who choose the same password must not be
-    visibly the same in the table."""
-    a, b = _user(id="u_a"), _user(id="u_b")
-    a.set_password("same")
-    b.set_password("same")
-    assert a.password_hash != b.password_hash
+def test_an_account_carries_no_credential_at_all():
+    """Not "an empty password" — no field. Google holds the identity; this row
+    holds what that identity may do. A credential here would be the second
+    password this slice exists to delete."""
+    u = User(id="u_dana", name="Dana", email="dana@example.com", capacity="sales")
+    assert not hasattr(u, "password_hash")
+    assert not hasattr(u, "set_password")
+    assert "password" not in u.model_dump()
 
 
-def test_verify_accepts_the_password_and_rejects_everything_else():
-    u = _user()
-    u.set_password("correct horse battery")
-    assert verify_password(u, "correct horse battery") is True
-    assert verify_password(u, "correct horse batterY") is False
-    assert verify_password(u, "") is False
+def test_the_model_module_offers_no_way_to_verify_one():
+    import fenceai.identity.model as model
+    assert not hasattr(model, "verify_password")
 
 
-def test_an_account_with_no_password_set_can_never_be_signed_in_to():
-    """A blank hash must refuse rather than accept a blank password — the
-    difference between "not set up yet" and "open to anybody who sends ''"."""
-    u = _user()
-    assert u.password_hash == ""
-    assert verify_password(u, "") is False
-    assert verify_password(u, "anything") is False
+def test_there_is_no_session_module_left():
+    import importlib
 
-
-def test_a_deactivated_account_fails_verification_whatever_it_sends():
-    """Deactivating is what a company does instead of deleting, because the
-    audit log must keep naming somebody who has left. It has to stop being a
-    way in at the same moment."""
-    u = _user(active=False)
-    u.set_password("correct horse battery")
-    assert verify_password(u, "correct horse battery") is False
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("fenceai.identity.session")
 
 
 # --- the view a capacity opens on --------------------------------------------

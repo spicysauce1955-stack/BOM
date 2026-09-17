@@ -151,9 +151,10 @@ def test_the_session_route_answers_who_and_which_view(client):
 
 
 def test_the_session_route_never_answers_with_a_password_hash(client):
-    """The hash is still on the record until its own task deletes it, and this
-    is the route the browser calls on every load. `_public` is what keeps it off
-    the wire in the meantime."""
+    """The field is gone from the model now, but this pins the shape of what
+    the browser gets on every load rather than the accident of what fields
+    `User` happens to carry — a hash field re-added here for any reason must
+    still never reach this route."""
     _row("dana@example.com", "sales")
     _as(client, "dana@example.com")
     assert "password_hash" not in client.get("/api/session").json()["user"]

@@ -21,13 +21,10 @@ ask a view what somebody is allowed to do.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import os
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 Capacity = Literal["sales", "backoffice", "admin"]
 
@@ -45,20 +42,19 @@ SYSTEM = "system"
 # another KIND of actor. See `_no_colon`.
 _ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
-# scrypt parameters. The stdlib's KDF at its documented interactive settings —
-# this is not a scheme of our own, and it is not meant to be.
-_SCRYPT = dict(n=2**14, r=8, p=1)
-_SALT_BYTES = 16
-
 
 class User(BaseModel):
     """A person with an account.
 
     **Deactivated, never deleted.** The audit log names people who have left the
     company, so a row has to keep resolving to a name for ever. `active=False`
-    is what a company does instead, and `verify_password` refuses it — the two
-    halves of that decision belong together or deactivating becomes a label
-    somebody still logs in behind.
+    is what a company does instead, and `api/auth.py`'s gate refuses it — the
+    two halves of that decision belong together or deactivating becomes a label
+    somebody still signs in behind.
+
+    **There is no credential here.** Google holds the identity; this row holds
+    what that identity may DO. `subject` records which Google account it was
+    bound to and is never used to find the row.
     """
 
     id: str
@@ -74,9 +70,6 @@ class User(BaseModel):
     #: see `identity/binding.py`. Empty means nobody has arrived yet.
     subject: str = ""
     active: bool = True
-    # Empty means "no password set yet" — which `verify_password` treats as
-    # "can never be signed in to", never as "accepts the empty password".
-    password_hash: str = Field(default="", repr=False)
 
     @field_validator("email")
     @classmethod
@@ -105,31 +98,6 @@ class User(BaseModel):
             raise ValueError(
                 f"user id must be letters, digits, _ . or -, got {v!r}")
         return v
-
-    def set_password(self, plaintext: str) -> None:
-        salt = os.urandom(_SALT_BYTES)
-        digest = hashlib.scrypt(plaintext.encode("utf-8"), salt=salt, **_SCRYPT)
-        self.password_hash = f"scrypt${salt.hex()}${digest.hex()}"
-
-
-def verify_password(user: User, plaintext: str) -> bool:
-    """Does this plaintext sign this account in?
-
-    Answers **no** for an inactive account and for an account with no password,
-    before looking at the plaintext at all — so neither state can be reached
-    through a lucky guess, including the empty-string guess.
-    """
-    if not user.active or not user.password_hash:
-        return False
-    try:
-        scheme, salt_hex, want_hex = user.password_hash.split("$")
-    except ValueError:
-        return False
-    if scheme != "scrypt":
-        return False
-    got = hashlib.scrypt(
-        plaintext.encode("utf-8"), salt=bytes.fromhex(salt_hex), **_SCRYPT)
-    return hmac.compare_digest(got.hex(), want_hex)
 
 
 def actor_ref(user: User) -> str:

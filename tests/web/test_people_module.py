@@ -25,11 +25,11 @@ SCRIPT = """
 import { peopleRows } from "./js/people.js";
 console.log(JSON.stringify(peopleRows([
   {id:"u1", name:"Dana", email:"d@e.com", capacity:"sales",
-   active:true, subject:"sub-1"},
+   active:true, subject_bound:true},
   {id:"u2", name:"New", email:"n@e.com", capacity:"sales",
-   active:true, subject:""},
+   active:true, subject_bound:false},
   {id:"u3", name:"Gone", email:"g@e.com", capacity:"backoffice",
-   active:false, subject:"sub-3"},
+   active:false, subject_bound:true},
 ])));
 """
 
@@ -48,9 +48,11 @@ def rows():
 
 
 def test_a_grant_nobody_has_used_says_so(rows):
-    """An empty `subject` is a row an admin made that nobody has signed in
+    """`subject_bound: false` is a row an admin made that nobody has signed in
     against yet — the normal state between granting and arriving, and the one
-    an admin hunting a mistyped address has to be able to see."""
+    an admin hunting a mistyped address has to be able to see. The API never
+    sends the raw Google `subject` id itself (`_public`, `api/app.py`); this
+    is the boolean it sends instead."""
     assert [r["bound"] for r in rows] == [True, False, True]
 
 
@@ -70,6 +72,44 @@ def test_every_field_the_row_needs_is_carried_and_nothing_extra(rows):
     assert rows[0]["id"] == "u1"
     assert rows[0]["email"] == "d@e.com"
     assert rows[0]["capacity"] == "sales"
+
+
+def test_every_field_peoplerows_reads_is_one_public_actually_sends():
+    """The contract this module has with the server, pinned from the Python
+    side because that is where both halves are reachable in one test.
+
+    `peopleRows` (this file) reads `u.<field>` off whatever `GET /api/users`
+    returns; that response is `_public(user)` for every row (`api/app.py`).
+    Nothing else ties the two together — the node tests above feed a fixture
+    that agrees with whichever shape *this test's author* believes the API
+    sends, which is exactly how `u.subject` kept being read here for a full
+    review cycle after `_public` stopped sending it: `bound` silently went
+    `false` for every account, on the one screen whose job is to say who may
+    do what, and nothing failed.
+
+    Reading `peopleRows`'s own source (rather than hand-maintaining a second
+    list of field names in Python) is what makes this fail on EITHER side
+    moving: a field renamed in `people.js` with no matching change in
+    `_public`, or the reverse.
+    """
+    import re
+
+    from fenceai.api.app import _public
+    from fenceai.identity.model import User
+
+    src = (STATIC / "js" / "people.js").read_text()
+    start = src.index("export function peopleRows")
+    body = src[start:start + src[start:].index("\n}")]
+    read_fields = set(re.findall(r"\bu\.(\w+)", body))
+    assert read_fields, "no `u.<field>` reads found in peopleRows — did it move or get renamed?"
+
+    sent = _public(User(id="u1", name="Dana", email="dana@example.com",
+                        capacity="sales", subject="sub-1"))
+    missing = read_fields - set(sent)
+    assert not missing, (
+        f"people.js's peopleRows reads {sorted(missing)} off a user row that "
+        f"_public() never sends (it sends {sorted(sent)}) — the people panel "
+        "will silently misread whatever depends on the missing field")
 
 
 EDGE_SCRIPT = """

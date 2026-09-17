@@ -30,7 +30,11 @@ export function peopleRows(users) {
     active: u.active,
     // Bound means somebody has actually signed in against this row. An admin
     // hunting a mistyped address needs to see which grants nobody has used.
-    bound: Boolean(u.subject),
+    // `_public` (api/app.py) never sends the raw Google `subject` id itself —
+    // no screen has a use for a colleague's account id, and every signed-in
+    // capacity can reach this row — so it answers with `subject_bound`
+    // instead, and that is the field this reads.
+    bound: Boolean(u.subject_bound),
   }));
 }
 
