@@ -209,15 +209,27 @@ _CI_MARKERS = (
 )
 
 
+#: The values that mean "no" even though the variable is set. `CI=false` is a
+#: real idiom — it is how a developer says *not here* to tooling that keys on
+#: `CI` — and reading it as presence turns that into one red test on their
+#: laptop, which is precisely the failure this guard was widened to avoid.
+_CI_DENIALS = frozenset({"0", "false", "no", "off"})
+
+
 def running_in_ci() -> bool:
     """CI is anything that says so, not just GitHub.
 
-    Presence rather than a value: `CI=true` is a GitHub Actions convention,
-    while Cloud Build's `BUILD_ID` carries a uuid and Azure's `TF_BUILD` says
-    `True` with a capital T. Asking for one exact string is how the guard
-    became specific to one provider in the first place.
+    Presence rather than a value, with one exception: `CI=true` is a GitHub
+    Actions convention, while Cloud Build's `BUILD_ID` carries a uuid and
+    Azure's `TF_BUILD` says `True` with a capital T. Asking for one exact
+    string is how the guard became specific to one provider in the first
+    place. But a variable set to a word that SPELLS no is a denial, not a
+    uuid, and honouring it costs nothing that a build agent would ever send.
     """
-    return any(os.environ.get(name) for name in _CI_MARKERS)
+    return any(
+        value.strip() and value.strip().lower() not in _CI_DENIALS
+        for value in (os.environ.get(name, "") for name in _CI_MARKERS)
+    )
 
 
 def test_ci_must_have_a_postgres():
@@ -253,3 +265,18 @@ def test_the_ci_guard_recognises_more_than_github(monkeypatch):
         monkeypatch.setenv(name, "some-build-4711")
         assert running_in_ci(), f"{name} must be recognised as CI"
         monkeypatch.delenv(name)
+
+
+def test_a_variable_that_spells_no_is_not_ci(monkeypatch):
+    """`CI=false` is a developer saying *not here*, and must be believed.
+
+    Read as mere presence it did the opposite of what it says, and the person
+    it went red for was the one developer careful enough to set it.
+    """
+    for name in _CI_MARKERS:
+        monkeypatch.delenv(name, raising=False)
+    for denial in ("0", "false", "False", "no", "off", "  FALSE  ", ""):
+        monkeypatch.setenv("CI", denial)
+        assert not running_in_ci(), f"CI={denial!r} must not read as CI"
+    monkeypatch.setenv("CI", "true")
+    assert running_in_ci()

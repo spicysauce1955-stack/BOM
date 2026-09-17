@@ -294,7 +294,7 @@ ever. `supply_runs` holds what it costs to build from a particular yard, at
 particular prices, under a particular objective; that is a statement about a moment
 and is legitimately different tomorrow. One design has many supply runs, and a
 `Quote` is a supply run somebody decided to stand behind. Both tables are append-only
-and idempotent by digest — the id IS the content, so `INSERT OR IGNORE` means a
+and idempotent by digest — the id IS the content, so `ON CONFLICT DO NOTHING` means a
 repeated read of an unchanged yard writes nothing.
 
 **Versioned rows are append-only.** A knowledge version and a published fence-model
