@@ -107,3 +107,150 @@ def test_an_assertion_with_no_email_is_nobody(provider, keys):
     treating it as a principal would send an empty string to `user_by_email`."""
     private, _ = keys
     assert provider.principal({IAP_HEADER: _token(private, email="")}, {}) is None
+
+
+def test_an_assertion_missing_exp_is_nobody(provider, keys):
+    """PyJWT only checks a claim's VALUE when the claim is present — `exp`
+    absent is not the same failure as `exp` expired, and without `require` it
+    verifies fine. A correctly signed assertion that simply omits `exp` would
+    otherwise be trusted forever instead of for the hour Google intends."""
+    private, _ = keys
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+    }
+    tok = jwt.encode(claims, private, algorithm="ES256", headers={"kid": KID})
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+def test_an_hs256_token_signed_with_the_public_key_is_nobody(provider, keys):
+    """The classic asymmetric-to-symmetric confusion attack: anyone who knows
+    the EC public key can mint an HS256 token whose "signature" is just an
+    HMAC over that same public key, and a verifier that trusts the token's own
+    `alg` header would accept it as genuinely Google's. `algorithms=["ES256"]`
+    is hard-coded in `principal()`, never read off the token, so this must
+    fail — this is the regression net for that pin, not for a live hole today.
+
+    Forged by hand rather than via `jwt.encode`: PyJWT's OWN encoder now
+    refuses to use a PEM-shaped key as an HMAC secret, which would silently
+    launder this test into testing PyJWT's encoder instead of OUR decoder. An
+    attacker computing the HMAC directly is not stopped by that guard — only
+    the fixed `algorithms` list on our side is.
+    """
+    import base64
+    import hashlib
+    import hmac as hmac_mod
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+
+    _, public = keys
+    pem = public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo)
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    header = {"alg": "HS256", "typ": "JWT", "kid": KID}
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+        "exp": int(time.time()) + 600,
+    }
+    signing_input = (b64url(json.dumps(header, separators=(",", ":")).encode())
+                      + "." + b64url(json.dumps(claims, separators=(",", ":")).encode()))
+    signature = hmac_mod.new(pem, signing_input.encode(), hashlib.sha256).digest()
+    forged = signing_input + "." + b64url(signature)
+
+    assert provider.principal({IAP_HEADER: forged}, {}) is None
+
+
+def test_an_alg_none_token_is_nobody(provider):
+    """The other classic JWT attack: a token that declares it needs no
+    signature at all. `algorithms=["ES256"]` being hard-coded rather than
+    read off the token's own header is what refuses it."""
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+        "exp": int(time.time()) + 600,
+    }
+    tok = jwt.encode(claims, None, algorithm="none", headers={"kid": KID})
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+def test_fetch_keys_returning_a_pem_string_still_resolves(keys):
+    """Production gets PEM STRINGS back from gstatic's JSON response; every
+    other test in this file hands `IapIdentity` the `cryptography` object
+    directly, which is not the shape the real endpoint ever produces. This is
+    the one test that drives `_fetch_google_keys`'s actual return type."""
+    private, public = keys
+    from cryptography.hazmat.primitives import serialization
+    pem = public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+    prov = IapIdentity(audience=AUD, fetch_keys=lambda: {KID: pem})
+    p = prov.principal({IAP_HEADER: _token(private)}, {})
+    assert p is not None
+    assert p.email == "dana@example.com"
+
+
+def test_a_stale_key_fetch_failure_still_resolves_within_the_grace_window(monkeypatch, keys):
+    """A gstatic blip must not turn into "nobody" for every caller while the
+    keys already cached are still the ones that verified a signature moments
+    ago. Only the grace window's expiry — not the TTL alone — should."""
+    private, public = keys
+    calls = {"n": 0}
+
+    def flaky_fetch():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {KID: public}
+        raise RuntimeError("gstatic blip")
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr("fenceai.identity.iap.time.monotonic", lambda: clock["t"])
+
+    prov = IapIdentity(audience=AUD, fetch_keys=flaky_fetch)
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is not None
+
+    # Past the TTL, comfortably inside the grace window: the refresh this
+    # triggers fails, and the still-good cached key must still be served.
+    clock["t"] = 3600 + 60 + 1
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is not None
+    assert calls["n"] == 2
+
+
+def test_a_stale_key_fetch_failure_refuses_once_past_the_grace_window(monkeypatch, keys):
+    """Past the grace window, a key Google may since have rotated away is no
+    longer trustworthy enough to accept a signature against — the fallback
+    that keeps a blip from locking everyone out must not become a fallback
+    that never expires."""
+    private, public = keys
+    calls = {"n": 0}
+
+    def flaky_fetch():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {KID: public}
+        raise RuntimeError("gstatic blip")
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr("fenceai.identity.iap.time.monotonic", lambda: clock["t"])
+
+    prov = IapIdentity(audience=AUD, fetch_keys=flaky_fetch)
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is not None
+
+    # Far enough past the TTL that the grace window itself has elapsed.
+    clock["t"] = 3600 + 6 * 3600 + 1
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is None
