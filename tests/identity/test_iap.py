@@ -130,15 +130,31 @@ def test_an_hs256_token_signed_with_the_public_key_is_nobody(provider, keys):
     """The classic asymmetric-to-symmetric confusion attack: anyone who knows
     the EC public key can mint an HS256 token whose "signature" is just an
     HMAC over that same public key, and a verifier that trusts the token's own
-    `alg` header would accept it as genuinely Google's. `algorithms=["ES256"]`
-    is hard-coded in `principal()`, never read off the token, so this must
-    fail — this is the regression net for that pin, not for a live hole today.
+    `alg` header would accept it as genuinely Google's.
 
-    Forged by hand rather than via `jwt.encode`: PyJWT's OWN encoder now
-    refuses to use a PEM-shaped key as an HMAC secret, which would silently
-    launder this test into testing PyJWT's encoder instead of OUR decoder. An
-    attacker computing the HMAC directly is not stopped by that guard — only
-    the fixed `algorithms` list on our side is.
+    **This test proves the end-to-end refusal, not that `algorithms=["ES256"]`
+    is what causes it — it is NOT the pin's regression net.** Confirmed by
+    widening `iap.py`'s `algorithms=["ES256"]` to include `"HS256"` and
+    re-running this test: it still passes, but refused for the wrong reason —
+    the `provider` fixture's `_key_for` hands `jwt.decode` a `cryptography` EC
+    key OBJECT (not the PEM string production actually gets from gstatic), and
+    with HS256 now permitted PyJWT raises `TypeError: Expected a string value`
+    trying to HMAC an object it can't treat as key material. Handed a PEM
+    STRING instead (`test_fetch_keys_returning_a_pem_string_still_resolves`'s
+    shape), the same widened list raises PyJWT's OWN
+    `InvalidKeyError: ... should not be used as an HMAC secret` instead — a
+    different guard, still not this file's pin. Either way, the refusal
+    survives widening the algorithm list, so this test alone cannot detect
+    that regression. `test_the_algorithm_pin_is_exactly_es256` below is the
+    one that actually depends on the pin.
+
+    Forged by hand rather than via `jwt.encode`: PyJWT's encoder applies that
+    same PEM-as-HMAC-secret guard at encode time too, which would have
+    prevented constructing the forged token in the first place rather than
+    testing what `principal()` does with one already in hand. An attacker
+    computing the HMAC directly bypasses the encoder-side guard; only the
+    decoder-side ones (and, if they were ever removed, the algorithm pin)
+    stand between that forged token and a `Principal`.
     """
     import base64
     import hashlib
@@ -174,8 +190,19 @@ def test_an_hs256_token_signed_with_the_public_key_is_nobody(provider, keys):
 
 def test_an_alg_none_token_is_nobody(provider):
     """The other classic JWT attack: a token that declares it needs no
-    signature at all. `algorithms=["ES256"]` being hard-coded rather than
-    read off the token's own header is what refuses it."""
+    signature at all.
+
+    **This is not the pin's regression net either.** Confirmed by widening
+    `iap.py`'s `algorithms` to include `"none"` and re-running: still passes,
+    but refused by PyJWT's own
+    `InvalidKeyError: When alg = "none", key value must be None` — `_key_for`
+    hands `jwt.decode` a real key, and PyJWT refuses to pair `alg: none` with
+    a non-`None` key regardless of whether `"none"` is an allowed algorithm.
+    The refusal here is end-to-end and worth keeping, but it is PyJWT's guard
+    doing the work, not this file's pin — see
+    `test_the_algorithm_pin_is_exactly_es256` for the test that depends on
+    the pin itself.
+    """
     claims = {
         "iss": "https://cloud.google.com/iap",
         "aud": AUD,
@@ -186,6 +213,33 @@ def test_an_alg_none_token_is_nobody(provider):
     }
     tok = jwt.encode(claims, None, algorithm="none", headers={"kid": KID})
     assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+def test_the_algorithm_pin_is_exactly_es256(provider, keys, monkeypatch):
+    """The actual regression net for `algorithms=["ES256"]` in `principal()`.
+
+    The two attack tests above (`..._hs256_..._is_nobody`,
+    `..._alg_none_token_is_nobody`) prove the end-to-end refusal, but PyJWT's
+    own key-type guards do that work for them — both keep passing even when
+    `algorithms` is widened to include `"HS256"` and `"none"` (verified; see
+    the fix report). This test is the one that is actually sensitive to the
+    pin: it captures the `algorithms` keyword `principal()` passes into
+    `jwt.decode` and asserts it is exactly `["ES256"]`, which is the only
+    thing that fails if that list is ever widened, independent of whether
+    PyJWT's own guards happen to catch a given forged token anyway.
+    """
+    private, _ = keys
+    captured: dict[str, object] = {}
+    real_decode = jwt.decode
+
+    def spy(*args, **kwargs):
+        captured["algorithms"] = kwargs.get("algorithms")
+        return real_decode(*args, **kwargs)
+
+    monkeypatch.setattr(jwt, "decode", spy)
+
+    assert provider.principal({IAP_HEADER: _token(private)}, {}) is not None
+    assert captured["algorithms"] == ["ES256"]
 
 
 def test_fetch_keys_returning_a_pem_string_still_resolves(keys):
