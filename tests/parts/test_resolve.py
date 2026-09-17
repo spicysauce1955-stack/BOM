@@ -115,31 +115,25 @@ def test_a_part_with_no_active_version_is_refused_by_name():
         resolve_model_parts(model(), lib)
 
 
-def test_retiring_a_part_a_published_model_names_is_refused(tmp_path):
+def test_retiring_a_part_a_published_model_names_is_refused(store):
     """Refused at authoring time, where it is actionable — the moment
     `validate_model` already refuses a slot no product can fill. Retiring silently
     would leave every model naming it resolving to nothing at its next generation."""
-    from fenceai.store.db import Store
-    store = Store(str(tmp_path / "t.db"))
     store.save_part(rail())
     store.save_fence_model(model())
     with pytest.raises(ValueError, match="rail-38.*still named"):
         store.set_part_status("rail-38", 1, "retired")
 
 
-def test_retiring_is_allowed_once_nothing_names_it(tmp_path):
-    from fenceai.store.db import Store
-    store = Store(str(tmp_path / "t.db"))
+def test_retiring_is_allowed_once_nothing_names_it(store):
     store.save_part(rail())
     store.set_part_status("rail-38", 1, "retired")
     assert store.load_part("rail-38", 1).status == "retired"
 
 
-def test_a_draft_model_does_not_block_a_retirement(tmp_path):
+def test_a_draft_model_does_not_block_a_retirement(store):
     """A draft naming a part it is about to stop naming must not hold the library
     hostage. Only ACTIVE models count."""
-    from fenceai.store.db import Store
-    store = Store(str(tmp_path / "t.db"))
     store.save_part(rail())
     draft = model()
     draft.status = "draft"

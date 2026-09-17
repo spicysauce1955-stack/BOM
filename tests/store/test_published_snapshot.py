@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 from fenceai.knowledge.snapshot import Snapshot, SnapshotRefused, ingest, load
-from fenceai.store.db import Store
 
 FIXTURE = (Path(__file__).resolve().parents[2]
            / "docs" / "integration-contract" / "fixtures" / "snapshot-example.json")
@@ -25,11 +24,6 @@ FIXTURE = (Path(__file__).resolve().parents[2]
 @pytest.fixture()
 def raw() -> dict:
     return json.loads(FIXTURE.read_text())
-
-
-@pytest.fixture()
-def store() -> Store:
-    return Store(":memory:")
 
 
 def test_no_snapshot_loaded_is_an_ordinary_state(store):

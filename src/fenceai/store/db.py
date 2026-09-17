@@ -10,7 +10,6 @@ from __future__ import annotations
 import functools
 import inspect
 import json
-import sqlite3
 import threading
 from datetime import datetime, timezone
 
@@ -29,6 +28,7 @@ from fenceai.fulfillment.supply_run import SupplyRun
 from fenceai.project.model import Project
 from fenceai.identity.model import User
 from fenceai.identity.session import Session
+from fenceai.store.dialect import Conn
 from fenceai.strategy.model import GenerationResult
 
 _SCHEMA = """
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS knowledge_snapshots (
 CREATE TABLE IF NOT EXISTS active_snapshot (
     only_row INTEGER PRIMARY KEY CHECK (only_row = 1), snapshot_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_log (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
+    seq __SERIAL_PK__, at TEXT NOT NULL, actor TEXT NOT NULL,
     action TEXT NOT NULL, ref TEXT NOT NULL);
 -- Accounts. `email` is UNIQUE because it is what somebody signs in with, and two
 -- rows answering one address is a lookup with no right answer. Deactivated
@@ -163,9 +163,11 @@ class Store:
         # because TestClient serialises requests. The browser smoke suite was the
         # only detector, and it was red here while green on main.
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.executescript("PRAGMA journal_mode=WAL;" + _SCHEMA)
-        self._conn.commit()
+        self._conn = Conn(path)
+        self._conn.executescript(
+            self._conn.dialect.prelude
+            + _SCHEMA.replace("__SERIAL_PK__", self._conn.dialect.serial_pk)
+        )
         # Parts BEFORE models: a seeded model names a part_id, and a store whose
         # models arrived first would, for the length of one call, hold a published
         # model that resolves to nothing. Nothing reads the store between the two
@@ -700,8 +702,8 @@ class Store:
 
     def save_run(self, result: GenerationResult, actor: str = "system") -> None:
         self._conn.execute(
-            "INSERT OR IGNORE INTO generation_runs (id, project_id, created_at, doc) "
-            "VALUES (?,?,?,?)",
+            "INSERT INTO generation_runs (id, project_id, created_at, doc) "
+            "VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
             (result.run.id, result.run.project_id, _now(), result.model_dump_json()),
         )
         self._audit(actor, "save_run", result.run.id)
@@ -723,7 +725,7 @@ class Store:
     # -- supply runs (append-only) ----------------------------------------------
 
     def save_supply_run(self, s: SupplyRun, actor: str = "system") -> SupplyRun:
-        """INSERT OR IGNORE, for `save_run`'s reason: the id IS the content, so a
+        """ON CONFLICT DO NOTHING, for `save_run`'s reason: the id IS the content, so a
         second write of the same id is the same fact arriving again. /bom
         resolves supply on every read, and an unchanged yard must not accumulate
         a row per read.
@@ -743,8 +745,8 @@ class Store:
         """
         s.created_at = s.created_at or _now()
         self._conn.execute(
-            "INSERT OR IGNORE INTO supply_runs (id, design_id, created_at, doc) "
-            "VALUES (?,?,?,?)",
+            "INSERT INTO supply_runs (id, design_id, created_at, doc) "
+            "VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
             (s.id, s.design_id, s.created_at, s.model_dump_json()),
         )
         self._audit(actor, "save_supply_run", s.id)
@@ -795,8 +797,16 @@ class Store:
         second must not swap between two reads. A row written before the stamp
         existed sorts first, which is where it belongs, being older than
         anything stamped.
+
+        `NULLS FIRST` is spelled out because the two databases disagree by
+        DEFAULT: SQLite sorts NULLs first ascending, Postgres sorts them last.
+        Left implicit, importing the pilot's SQLite data into Cloud SQL — the
+        entire point of the dialect shim — would silently move every unstamped
+        turn from the top of its thread to the bottom. Both databases accept
+        the explicit form, so this is one spelling, not a dialect difference.
         """
-        order = "ORDER BY json_extract(doc, '$.created_at'), id"
+        stamp = self._conn.dialect.json_field("doc", "created_at")
+        order = f"ORDER BY {stamp} NULLS FIRST, id"
         if project_id:
             rows = self._conn.execute(
                 f"SELECT doc FROM corrections WHERE project_id=? {order}", (project_id,)

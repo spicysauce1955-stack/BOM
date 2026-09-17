@@ -4,11 +4,6 @@ from __future__ import annotations
 
 from fenceai.identity.model import User
 from fenceai.identity.session import start
-from fenceai.store.db import Store
-
-
-def _store() -> Store:
-    return Store(":memory:")
 
 
 def _user(**kw) -> User:
@@ -19,7 +14,7 @@ def _user(**kw) -> User:
     return u
 
 
-def test_an_account_is_found_by_any_casing_of_its_address():
+def test_an_account_is_found_by_any_casing_of_its_address(store):
     """The bug this test was written against: the model kept the address as
     typed, the store lower-cased on write and stripped on read, and the two
     normalisations disagreed — so an account created with a trailing space was
@@ -28,68 +23,62 @@ def test_an_account_is_found_by_any_casing_of_its_address():
     Normalising in `User.email` is what makes one spelling exist; this asserts
     the whole round trip rather than the validator alone.
     """
-    s = _store()
-    s.save_user(_user(email="  Yossi@Example.COM "))
+    store.save_user(_user(email="  Yossi@Example.COM "))
     for spelling in ("yossi@example.com", "YOSSI@EXAMPLE.COM", " Yossi@Example.com "):
-        assert s.user_by_email(spelling) is not None, spelling
+        assert store.user_by_email(spelling) is not None, spelling
 
 
-def test_an_unknown_address_is_none_rather_than_an_error():
-    assert _store().user_by_email("nobody@example.com") is None
+def test_an_unknown_address_is_none_rather_than_an_error(store):
+    assert store.user_by_email("nobody@example.com") is None
 
 
-def test_saving_an_account_again_updates_it_rather_than_duplicating():
-    s = _store()
-    s.save_user(_user())
-    u = s.user("u_yossi")
+def test_saving_an_account_again_updates_it_rather_than_duplicating(store):
+    store.save_user(_user())
+    u = store.user("u_yossi")
     u.capacity = "admin"
-    s.save_user(u)
-    assert len(s.list_users()) == 1
-    assert s.user("u_yossi").capacity == "admin"
+    store.save_user(u)
+    assert len(store.list_users()) == 1
+    assert store.user("u_yossi").capacity == "admin"
 
 
-def test_the_password_hash_survives_the_round_trip():
+def test_the_password_hash_survives_the_round_trip(store):
     """It is on the model, so it rides in the document. If it did not, every
     stored account would silently become one that can never be signed in to."""
     from fenceai.identity.model import verify_password
 
-    s = _store()
-    s.save_user(_user())
-    assert verify_password(s.user("u_yossi"), "pw") is True
+    store.save_user(_user())
+    assert verify_password(store.user("u_yossi"), "pw") is True
 
 
-def test_a_session_resolves_to_its_account_and_stops_when_deleted():
-    s = _store()
-    s.save_user(_user())
+def test_a_session_resolves_to_its_account_and_stops_when_deleted(store):
+    store.save_user(_user())
     sess = start("u_yossi")
-    s.save_session(sess)
-    assert s.session(sess.token).user_id == "u_yossi"
-    s.delete_session(sess.token)
-    assert s.session(sess.token) is None
+    store.save_session(sess)
+    assert store.session(sess.token).user_id == "u_yossi"
+    store.delete_session(sess.token)
+    assert store.session(sess.token) is None
 
 
-def test_deactivating_can_take_every_browser_with_it():
+def test_deactivating_can_take_every_browser_with_it(store):
     """`active=False` on its own is a label somebody is still signed in behind.
     Revoking the sessions is the other half, and the store has to be able to do
     it in one call or the caller will do it in a loop and miss one."""
-    s = _store()
-    s.save_user(_user())
+    store.save_user(_user())
     for _ in range(3):
-        s.save_session(start("u_yossi"))
-    s.save_session(start("u_dana"))
-    assert s.delete_sessions_for("u_yossi") == 3
-    assert s.delete_sessions_for("u_yossi") == 0
+        store.save_session(start("u_yossi"))
+    store.save_session(start("u_dana"))
+    assert store.delete_sessions_for("u_yossi") == 3
+    assert store.delete_sessions_for("u_yossi") == 0
 
 
-def test_an_unknown_token_is_none_and_never_a_stranger():
-    assert _store().session("not-a-real-token") is None
+def test_an_unknown_token_is_none_and_never_a_stranger(store):
+    assert store.session("not-a-real-token") is None
 
 
-def test_saving_an_account_names_who_did_it_in_the_audit_log():
+def test_saving_an_account_names_who_did_it_in_the_audit_log(store):
     """The column has always been there and has always said `system`. This is
     the first row that can say a person instead."""
-    s = _store()
-    s.save_user(_user(), actor="user:u_admin")
-    entry = [e for e in s.audit_entries(50) if e["action"] == "save_user"][0]
+    store.save_user(_user(), actor="user:u_admin")
+    entry = [e for e in store.audit_entries(50) if e["action"] == "save_user"][0]
     assert entry["actor"] == "user:u_admin"
     assert entry["ref"] == "u_yossi"

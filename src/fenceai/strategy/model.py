@@ -198,7 +198,7 @@ class ModelUse(BaseModel):
 
     `content_hash` is here because `(id, version)` is not enough: a draft version's
     document may be edited in place under a fixed ref, so without the hash a model
-    edit leaves the run-id digest untouched and `INSERT OR IGNORE` serves the old
+    edit leaves the run-id digest untouched and `ON CONFLICT DO NOTHING` serves the old
     stored document under a reused id — two views of one run disagreeing forever.
     `options` are in for the same reason: pick a different colour and the SKUs
     beneath it change.
@@ -231,7 +231,7 @@ class PartUse(BaseModel):
     What a run CAN observe is two libraries that both call something
     `rail-3000@v1` and mean different documents — a restored database, an import,
     a seed that diverged from the one a run was generated against. Without the
-    hash those two runs share a digest, the second `INSERT OR IGNORE` drops
+    hash those two runs share a digest, the second `ON CONFLICT DO NOTHING` drops
     silently, and every later read serves the first run's answer for the second
     run's fence. That is the failure, and it is the reason the field is a digest
     input rather than a decoration. Defensive, in the honest sense: nothing in
@@ -274,7 +274,7 @@ class GenerationRun(BaseModel):
     # A counter could not do this job, and the way it failed is worth keeping.
     # The digest hashes the FACTS — two runs of one fence must share an id — so
     # re-saving IDENTICAL site conditions bumped the revision, regenerated to the
-    # same run id, and `INSERT OR IGNORE` kept the stored document carrying the
+    # same run id, and `ON CONFLICT DO NOTHING` kept the stored document carrying the
     # old number. Every derived view then answered 409 for ever, with no user
     # action able to repair it; the generate response even reported the new
     # revision while the store held the old one. Guard and digest have to agree
@@ -309,7 +309,7 @@ class GenerationRun(BaseModel):
     # which supply-resolution preset this run was GENERATED under. Reported, not
     # identity: it left the digest in digest-v3, because a design is what it is
     # regardless of how it will be bought. It is also NOT the source of truth for
-    # a read — `save_run` is INSERT OR IGNORE, so on an unchanged fence this
+    # a read — `save_run` is ON CONFLICT DO NOTHING, so on an unchanged fence this
     # field is frozen at the FIRST generation for ever. Read paths take the live
     # preset from the project's policy and record it on the SupplyRun.
     objective_preset: str = "least_cost"

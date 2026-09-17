@@ -14,12 +14,12 @@ from fenceai.api.app import app
 
 # A fixture, not a module-level `client = TestClient(app)`: the store lives on
 # `state.store` and is only populated inside `app`'s lifespan, which a bare
-# TestClient never enters. Matches the `client(tmp_path, monkeypatch)` fixture
+# TestClient never enters. Matches the `client(dsn, monkeypatch)` fixture
 # every other file in this directory uses, so each test also gets its own
 # scratch DB instead of writing into the repo's `fenceai.db`.
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "test.db"))
+def client(dsn, monkeypatch):
+    monkeypatch.setenv("FENCEAI_DB", dsn)
     monkeypatch.setenv("FENCEAI_AI", "stub")
     with TestClient(app) as c:
         yield c

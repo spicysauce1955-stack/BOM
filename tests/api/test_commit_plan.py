@@ -17,8 +17,8 @@ from fenceai.identity.model import User
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "test.db"))
+def client(dsn, monkeypatch):
+    monkeypatch.setenv("FENCEAI_DB", dsn)
     monkeypatch.setenv("FENCEAI_AI", "stub")
     with TestClient(app) as c:
         yield c

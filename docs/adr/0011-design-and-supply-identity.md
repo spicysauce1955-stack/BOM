@@ -57,7 +57,8 @@ switching the preset used to strand a thread EVERY time it was switched — the 
 one bounded discontinuity for the removal of a recurring one.
 
 **`GenerationRun.objective_preset` is now reported, never read for a decision.** This is
-the non-obvious part and the main reason this ADR exists. `save_run` is `INSERT OR IGNORE`,
+the non-obvious part and the main reason this ADR exists. `save_run` is
+`ON CONFLICT DO NOTHING`,
 and the preset is no longer a digest input — so an unchanged fence regenerates to the same
 id and the stored document is the FIRST one for ever. Its `objective_preset` is frozen at
 first generation. Anything reading it for a decision would price under an objective the
@@ -66,7 +67,8 @@ policy (`api/app.py::_live_preset`). A poisoned preset on a stored run is now in
 it used to 400 every read of that run with no user action able to repair it.
 
 **`/bom` writes.** Safe because the id is the content: the same design against the same
-inventory, catalog and preset digests to the same `supply_id`, and `INSERT OR IGNORE` does
+inventory, catalog and preset digests to the same `supply_id`, and `ON CONFLICT DO NOTHING`
+does
 not write twice. Growth tracks real changes to the yard, not read volume. `save_supply_run`
 returns the STORED row rather than the caller's object, because `created_at` is the one
 field two otherwise-identical supply runs can differ by, and echoing the argument made two

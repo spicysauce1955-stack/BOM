@@ -26,6 +26,13 @@ Deliberately NOT a guard that fails when `FENCEAI_DB` is unset. That would have
 been a test about tests, and it would have gone red in exactly the situation
 where a fresh contributor is least able to read it — while leaving the ambient
 database one forgotten fixture away from being read again.
+
+Since the GCP port it also chooses the BACKEND. The `dsn` fixture is
+parameterized over SQLite and Postgres, so every test in this directory runs
+once per database wherever a server is configured — which is what makes the
+dialect shim in `store/dialect.py` an asserted property rather than a
+reviewed one. With no server, the Postgres half skips and this directory
+behaves exactly as it did before.
 """
 
 from __future__ import annotations
@@ -34,8 +41,8 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolated_store(tmp_path, monkeypatch):
-    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "api-test.db"))
+def _isolated_store(dsn, monkeypatch):
+    monkeypatch.setenv("FENCEAI_DB", dsn)
     # The stub AI port too, for the same reason: a test that reaches an
     # interpretation must not depend on what the ambient environment configured.
     # `fenceai/ai/` keeps the whole system working offline and the stub is what

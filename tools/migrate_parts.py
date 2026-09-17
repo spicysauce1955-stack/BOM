@@ -218,63 +218,69 @@ def main(argv: list[str] | None = None) -> int:
     from fenceai.store.db import Store
 
     store = Store(args.db)
-    models = store.fence_model_library().models
+    try:
+        models = store.fence_model_library().models
 
-    conflicts = width_conflicts(models)
-    conflicts.update(thickness_conflicts(models))
-    losses = approval_losses(models)
-    if conflicts or losses:
-        for sku, drawn in sorted(conflicts.items()):
-            print(f"REFUSED {sku}: drawn at {sorted(drawn)} by "
-                  f"{sorted({r for refs in drawn.values() for r in refs})}",
-                  file=sys.stderr)
-        for ref, key, sku in losses:
-            print(f"REFUSED {ref} slot {key!r}: {sku} is suggest_only — promoting it "
-                  "to auto would let the system substitute a product a human said "
-                  "needs sign-off", file=sys.stderr)
-        print("nothing written", file=sys.stderr)
-        return 1
+        conflicts = width_conflicts(models)
+        conflicts.update(thickness_conflicts(models))
+        losses = approval_losses(models)
+        if conflicts or losses:
+            for sku, drawn in sorted(conflicts.items()):
+                print(f"REFUSED {sku}: drawn at {sorted(drawn)} by "
+                      f"{sorted({r for refs in drawn.values() for r in refs})}",
+                      file=sys.stderr)
+            for ref, key, sku in losses:
+                print(f"REFUSED {ref} slot {key!r}: {sku} is suggest_only — promoting it "
+                      "to auto would let the system substitute a product a human said "
+                      "needs sign-off", file=sys.stderr)
+            print("nothing written", file=sys.stderr)
+            return 1
 
-    parts = parts_for(models)
-    rewritten = rewrite(models, parts)
-    print(f"{len(models)} models -> {len(parts)} parts")
-    for key, part in sorted(parts.items(), key=lambda kv: kv[1].id):
-        print(f"  {part.id:<24} {[f.value for f in part.spec if f.key == 'sku']}")
-    if not args.write:
-        print("dry run — pass --write to apply")
+        parts = parts_for(models)
+        rewritten = rewrite(models, parts)
+        print(f"{len(models)} models -> {len(parts)} parts")
+        for key, part in sorted(parts.items(), key=lambda kv: kv[1].id):
+            print(f"  {part.id:<24} {[f.value for f in part.spec if f.key == 'sku']}")
+        if not args.write:
+            print("dry run — pass --write to apply")
+            return 0
+        written = 0
+        for part in parts.values():
+            # A published version is frozen, and this database may already hold the part
+            # — the built-ins are SEEDED. An id whose spec already says what migration
+            # would write is left alone; one that says something else gets a NEW version
+            # rather than an overwrite, because a run stamped the old one.
+            existing = store.part_library().latest_active(part.id)
+            if existing is not None and existing.spec == part.spec:
+                print(f"  {part.id}: already {existing.ref}, unchanged")
+                continue
+            version = store.next_part_version(part.id)
+            # Saved as a DRAFT and then activated, never saved active. A part id with
+            # an existing active version would otherwise end with two, and `save_part`
+            # refuses that: activation is the act that retires the predecessor, and it
+            # is the only one that does. Unconditional rather than branched on
+            # `version > 1` — the branch is what left the second-version path untested
+            # on every fresh database, and it aborted AFTER committing the second active
+            # row on every database that was not.
+            store.save_part(
+                part.model_copy(update={"version": version, "status": "draft"}),
+                actor="migrate_parts")
+            store.set_part_status(part.id, version, "active", actor="migrate_parts")
+            written += 1
+        for model in rewritten:
+            store._conn.execute(
+                "UPDATE fence_models SET doc=? WHERE model_id=? AND version=?",
+                (model.model_dump_json(), model.id, model.version),
+            )
+            store.log("migrate_parts", "migrate_fence_model", model.ref)
+        store._conn.commit()
+        print(f"wrote {written} parts and rewrote {len(rewritten)} models")
         return 0
-    written = 0
-    for part in parts.values():
-        # A published version is frozen, and this database may already hold the part
-        # — the built-ins are SEEDED. An id whose spec already says what migration
-        # would write is left alone; one that says something else gets a NEW version
-        # rather than an overwrite, because a run stamped the old one.
-        existing = store.part_library().latest_active(part.id)
-        if existing is not None and existing.spec == part.spec:
-            print(f"  {part.id}: already {existing.ref}, unchanged")
-            continue
-        version = store.next_part_version(part.id)
-        # Saved as a DRAFT and then activated, never saved active. A part id with
-        # an existing active version would otherwise end with two, and `save_part`
-        # refuses that: activation is the act that retires the predecessor, and it
-        # is the only one that does. Unconditional rather than branched on
-        # `version > 1` — the branch is what left the second-version path untested
-        # on every fresh database, and it aborted AFTER committing the second active
-        # row on every database that was not.
-        store.save_part(
-            part.model_copy(update={"version": version, "status": "draft"}),
-            actor="migrate_parts")
-        store.set_part_status(part.id, version, "active", actor="migrate_parts")
-        written += 1
-    for model in rewritten:
-        store._conn.execute(
-            "UPDATE fence_models SET doc=? WHERE model_id=? AND version=?",
-            (model.model_dump_json(), model.id, model.version),
-        )
-        store.log("migrate_parts", "migrate_fence_model", model.ref)
-    store._conn.commit()
-    print(f"wrote {written} parts and rewrote {len(rewritten)} models")
-    return 0
+    finally:
+        # Every exit closes it, including the two REFUSED returns and any
+        # exception. Against Postgres an abandoned connection is not just an
+        # untidy handle: it holds the schema open against a later DROP.
+        store.close()
 
 
 if __name__ == "__main__":       # pragma: no cover

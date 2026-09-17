@@ -4,13 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Fence AI** — visual fence-construction topology → explainable strategy generation → BOM
 optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
-(`src/fenceai/`), FastAPI + Pydantic v2, SQLite. Frontend: vanilla ES modules + SVG
+(`src/fenceai/`), FastAPI + Pydantic v2, SQLite by default (a `postgres://` `FENCEAI_DB`
+selects Postgres instead, via `store/dialect.py`). Frontend: vanilla ES modules + SVG
 (no build step), Hebrew-first RTL with an EN toggle.
 
 ## Commands
 
-- `uv sync` — install deps (creates `.venv`)
+- `uv sync` — install deps (creates `.venv`); SQLite only, zero setup
+- `uv sync --extra postgres` — also install the Postgres driver, for the dialect below
 - `uv run pytest -q` — full test suite; single test: `uv run pytest tests/path/test_x.py::test_name -q`
+- `FENCEAI_TEST_POSTGRES=postgresql://... uv run pytest -q` — dual-runs the ~350
+  persistence/API tests against Postgres too (3806 passed vs. 3461 passed + 346 skipped
+  offline); unset, they skip and the suite stays fully offline
 - `uv run pytest tests/scenarios -q` — golden scenarios S01–S14 + invariants (the release gate)
 - `uv run uvicorn fenceai.api.app:app --reload` — run the app (UI at http://localhost:8000, opens in Hebrew)
 - `uv run --with websocket-client python tools/ui_smoke.py` — browser smoke suite (CDP-driven; run at UI milestones; needs google-chrome)
@@ -31,6 +36,12 @@ optimization, with expert-in-the-loop learning. Python 3.12 modular monolith
 
 - **Integer millimeters and cents at rest; float only transient** (ADR-0002). Exactly two
   named tolerances live in `fenceai/core/units.py`.
+- **One set of SQL, two databases.** `store/db.py` is written in SQLite's spelling and
+  `store/dialect.py` translates it; the four translated differences live there and
+  nowhere else. A SQL string containing a literal `?` or `%` breaks that translation — if
+  you need one, it becomes a new `Dialect` member with its own test, never a branch in
+  `db.py`. Driver exception classes are a separate, untranslated difference owned by the
+  drivers themselves.
 - **`generate()` is pure and deterministic**; overrides are patches anchored to
   `(run_id, station, kind)`, never to generated element identity (ADR-0004).
 - **Hard constraint ≠ preference ≠ objective ≠ override** — distinct types, distinct handling.
