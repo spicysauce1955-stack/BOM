@@ -23,6 +23,7 @@ difference to carry is better than one more translation to trust.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 
 
@@ -72,3 +73,52 @@ def dialect_for(dsn: str) -> Dialect:
     and the address and the two can never disagree.
     """
     return POSTGRES if dsn.startswith(_POSTGRES_SCHEMES) else SQLITE
+
+
+class Conn:
+    """One connection, and the one place SQL is translated.
+
+    Deliberately NOT a pool. `store/db.py`'s `@_serialized` funnels every
+    public call through a single `RLock`, so a second connection could never
+    be in use — a pool here would add a moving part whose only effect is to
+    make that guarantee harder to see. When Postgres arrives in production,
+    reconnection after a dropped socket belongs here; see the plan's
+    "Deferred" section for why it is not built yet.
+    """
+
+    def __init__(self, dsn: str):
+        self.dialect = dialect_for(dsn)
+        if self.dialect is SQLITE:
+            # `check_same_thread=False` only silences sqlite3's guard; the
+            # `RLock` in `Store` is what actually makes this safe. See
+            # `store/db.py`'s `_serialized` docstring.
+            self._raw = sqlite3.connect(dsn, check_same_thread=False)
+        else:
+            import psycopg  # imported here so SQLite users need not install it
+
+            self._raw = psycopg.connect(dsn)
+
+    def execute(self, sql: str, params: tuple = ()):
+        return self._raw.execute(self.dialect.placeholders(sql), params)
+
+    def executescript(self, sql: str) -> None:
+        """Several statements at once, for schema creation only.
+
+        `sqlite3` has `executescript`; psycopg does not, but accepts several
+        statements in one `execute` when there are no parameters — which
+        schema DDL never has.
+        """
+        if self.dialect is SQLITE:
+            self._raw.executescript(sql)
+        else:
+            self._raw.execute(sql)
+        self._raw.commit()
+
+    def commit(self) -> None:
+        self._raw.commit()
+
+    def rollback(self) -> None:
+        self._raw.rollback()
+
+    def close(self) -> None:
+        self._raw.close()
