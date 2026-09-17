@@ -78,3 +78,21 @@ def test_executescript_applies_the_prelude_and_the_schema_together(tmp_path):
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
     assert mode.lower() == "wal"
     conn.close()
+
+
+def test_a_postgres_conn_round_trips_a_row_through_rewritten_placeholders(pg_dsn):
+    """The same assertions as the SQLite round-trip, against a real server.
+
+    Worth its own test rather than a parameterised one: this is the first
+    moment `?` -> `%s` is checked against a database that would reject the
+    untranslated form, which is the only thing that proves the translation
+    is doing work rather than being consistent with itself.
+    """
+    conn = Conn(pg_dsn)
+    assert conn.dialect is POSTGRES
+    conn.executescript("CREATE TABLE t (id TEXT PRIMARY KEY, doc TEXT);")
+    conn.execute("INSERT INTO t (id, doc) VALUES (?,?)", ("a", "{}"))
+    conn.commit()
+    row = conn.execute("SELECT doc FROM t WHERE id=?", ("a",)).fetchone()
+    assert row[0] == "{}"
+    conn.close()

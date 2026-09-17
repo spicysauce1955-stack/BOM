@@ -10,6 +10,12 @@ dependencies = [
     "anthropic>=0.40",
 ]
 
+[project.optional-dependencies]
+# Only a deployment needs this. `uv sync` without it keeps the offline
+# property CLAUDE.md states: the app and the whole suite run on SQLite with
+# nothing installed and nothing running.
+postgres = ["psycopg[binary]>=3.2,<4"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",
@@ -27,4 +33,7 @@ packages = ["src/fenceai"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-markers = ["live: tests requiring a live Anthropic API key"]
+markers = [
+    "live: tests requiring a live Anthropic API key",
+    "postgres: tests requiring a reachable Postgres server (FENCEAI_TEST_POSTGRES)",
+]
