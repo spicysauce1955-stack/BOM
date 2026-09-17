@@ -1,7 +1,8 @@
 # 04 — Backend
 
-Python 3.12, FastAPI, Pydantic v2, SQLite. One process, no queue, no cache tier, no
-ORM. ADR-0001, -0008.
+Python 3.12, FastAPI, Pydantic v2. One process, no queue, no cache tier, no ORM.
+The database is SQLite or Postgres — the same SQL either way, translated by
+`store/dialect.py`, chosen by `FENCEAI_DB`'s URL scheme. ADR-0001, -0008, -0012.
 
 ---
 
@@ -301,9 +302,10 @@ version are never updated in place; `DELETE` on a fence model is refused **in th
 store** for a published version, because an immutable document any route could delete
 is not immutable.
 
-**The store is serialized** (ADR-0008). `Store` holds one `sqlite3.Connection` opened
-`check_same_thread=False`, and FastAPI serves sync endpoints from a threadpool — so
-overlapping requests interleaved statements on one connection. The visible half was a
+**The store is serialized** (ADR-0008, and unchanged by ADR-0012). `Store` holds one
+connection — a `sqlite3.Connection` opened `check_same_thread=False`, or one psycopg
+connection — and FastAPI serves sync endpoints from a threadpool, so overlapping
+requests interleaved statements on it. The visible half was a
 500 from `GET /inventory` while a draft was saving, reproduced at **48 failures in
 ~540 overlapping requests**. The silent half is worse: half of `Store`'s methods are
 read-then-write sequences, and another thread's `commit()` landing inside one commits
@@ -313,6 +315,13 @@ Every public method now takes a re-entrant lock, held for the **whole call**. A
 per-thread connection was rejected because it would give every `Store(":memory:")`
 test its own empty database. What this does **not** cover is recorded in the ADR:
 route-level read-then-write is still a TOCTOU window.
+
+**One connection means one failure is everyone's failure.** A statement the database
+REFUSES aborts psycopg's implicit transaction, and every later statement on that
+connection — reads included — then raises `InFailedSqlTransaction` until somebody rolls
+back. With one process-wide connection and one Cloud Run instance, a single duplicate
+quote id would have turned the app into a 500 machine until the container was replaced.
+`Conn.execute` rolls back before re-raising, on both backends (ADR-0012).
 
 **`TestClient` serialises requests**, so no pytest test can see this class of bug.
 The browser smoke suite was the only detector — red there, green on main. That is why
