@@ -40,7 +40,13 @@ do*. Google says who you are; we say what you may do; nothing is stored twice.
 2. The app looks their address up in our list. The list is empty and their
    address is `FENCEAI_BOOTSTRAP_ADMIN` → they become the admin. That is the only
    way anybody is admitted uninvited, and it switches itself off the moment an
-   admin exists.
+   admin is ACTIVE — not the moment one exists. [Corrected — see A3 in
+   `.superpowers/sdd/2026-09-17-identity-is-googles/task-10-brief.md`:
+   `_bootstrap` counts only active admins, so that a deployment whose only
+   admin was later deactivated can still be recovered. While
+   `FENCEAI_BOOTSTRAP_ADMIN` stays set, the address it names is a live
+   re-entry path whenever no admin is active — unsetting it after the first
+   deploy is load-bearing for that recovery path, not merely hygiene.]
 3. The owner opens the people screen and adds `dana@company.com` as *sales*.
 4. Dana opens the URL, signs in with Google, lands on the sales view.
 5. Somebody else at the company signs in. Google lets them to the door; our list
@@ -236,10 +242,25 @@ it later would mean granting a capacity by hand-aiming a request through IAP at 
 Cloud Run URL, during the slice where nothing else works yet either.
 
 **`FENCEAI_BOOTSTRAP_ADMIN`** is consulted inside `_gate`, and requires all three
-of: no admin row exists anywhere, the principal's address matches, and no row
+of: no admin row is ACTIVE anywhere, the principal's address matches, and no row
 exists for that address. So it cannot promote an existing `sales` row, and it
-self-disables the moment any admin exists. It is set for the first deploy and
-removed after.
+self-disables the moment any admin is active — not the moment one exists.
+[Corrected — see A3 in
+`.superpowers/sdd/2026-09-17-identity-is-googles/task-10-brief.md`.] Counting
+only ACTIVE admins is deliberate: a deployment whose only admin row was later
+deactivated would otherwise be locked out for ever, with no cure even after
+redeploying with this variable set, because `_bootstrap` would see the
+deactivated row and refuse to fire. This cannot resurrect the deactivated
+admin's OWN address — `resolve()` only calls `_bootstrap` for an email with no
+existing row at all, so that address still hits its inactive row and is still
+refused with `account_deactivated`. The only address this can ever seat is a
+*different*, row-less one matching `FENCEAI_BOOTSTRAP_ADMIN` while zero admins
+are active — which is exactly why leaving the variable set after the first
+deploy is a standing second door, not merely hygiene: **while it is set, any
+address it names is a live re-entry path whenever no admin is active.** It is
+set for the first deploy and removed after, and that removal is load-bearing
+for the deactivation recovery path as well as the demotion guard, not just
+best practice.
 
 ## 7. Binding `subject`
 

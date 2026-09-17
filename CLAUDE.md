@@ -17,7 +17,10 @@ selects Postgres instead, via `store/dialect.py`). Frontend: vanilla ES modules 
   persistence/API tests against Postgres too (3806 passed vs. 3461 passed + 346 skipped
   offline); unset, they skip and the suite stays fully offline
 - `uv run pytest tests/scenarios -q` — golden scenarios S01–S14 + invariants (the release gate)
-- `uv run uvicorn fenceai.api.app:app --reload` — run the app (UI at http://localhost:8000, opens in Hebrew)
+- `FENCEAI_IDENTITY=dev uv run uvicorn fenceai.api.app:app --reload` — run the app (UI at
+  http://localhost:8000, opens in Hebrew). `FENCEAI_IDENTITY` has no default — `dev` needs
+  no Google and opens as `FENCEAI_DEV_USER` (default `admin@example.com`, see `.env.example`);
+  `iap` also needs `FENCEAI_IAP_AUDIENCE` and a real IAP-fronted deployment
 - `uv run --with websocket-client python tools/ui_smoke.py` — browser smoke suite (CDP-driven; run at UI milestones; needs google-chrome)
 
 ## Where truth lives

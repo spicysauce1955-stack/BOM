@@ -15,9 +15,12 @@ uv run pytest tests/scenarios -q   # golden scenarios S01-S14 + invariants (rele
 ## Run
 
 ```bash
-uv run uvicorn fenceai.api.app:app --reload
+FENCEAI_IDENTITY=dev uv run uvicorn fenceai.api.app:app --reload
 # open http://localhost:8000
 ```
+
+`FENCEAI_IDENTITY` has no default — the app refuses to boot without it. `dev` needs no
+Google and opens as `FENCEAI_DEV_USER` (default `admin@example.com`).
 
 Configuration: copy `.env.example` to `.env` in the repo root and fill in your
 values (easiest way to set the Anthropic key). The real `.env` is gitignored;

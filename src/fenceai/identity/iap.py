@@ -14,11 +14,17 @@ only a deployment ever constructs.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any, Callable, Mapping
 
 from fenceai.identity.ports import Principal
+
+#: A total key-fetch outage otherwise reads as "everyone is nobody" — every
+#: request fails closed correctly, but nothing an operator can read says WHY.
+#: This is the one line that turns that silence into a diagnosable outage.
+_log = logging.getLogger(__name__)
 
 IAP_HEADER = "x-goog-iap-jwt-assertion"
 _ISSUER = "https://cloud.google.com/iap"
@@ -82,7 +88,12 @@ class IapIdentity:
             # Nothing cached yet, so there is no stale copy to fall back to —
             # a failure here has to propagate. `principal()` turns it into
             # "nobody", the same answer as any other unverifiable token.
-            self._keys = self._fetch()
+            try:
+                self._keys = self._fetch()
+            except Exception:
+                _log.error("IAP: initial key fetch failed; every caller will "
+                           "be refused as unidentified until this recovers")
+                raise
             self._fetched_at = now
             self._last_attempt_at = now
         elif now - self._fetched_at > _KEY_TTL_SECONDS:
@@ -94,7 +105,7 @@ class IapIdentity:
                 try:
                     self._keys = self._fetch()
                     self._fetched_at = now
-                except Exception:
+                except Exception as exc:
                     # The keys we already have were themselves fetched from
                     # Google and have verified signatures before; they just
                     # are not provably CURRENT any more. Keep serving them —
@@ -102,7 +113,12 @@ class IapIdentity:
                     # since have rotated away is no longer trustworthy enough
                     # to accept a signature against.
                     if now - self._fetched_at > _KEY_TTL_SECONDS + _KEY_STALE_GRACE_SECONDS:
+                        _log.error("IAP: key refresh has failed past the "
+                                   "grace window (%s); refusing every caller "
+                                   "until this recovers", exc)
                         raise
+                    _log.warning("IAP: key refresh failed (%s); serving "
+                                 "cached keys within the grace window", exc)
         return self._keys.get(kid)
 
     def principal(self, headers: Mapping[str, str],

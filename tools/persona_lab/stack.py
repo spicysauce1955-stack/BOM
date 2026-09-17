@@ -194,6 +194,14 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
             break
         time.sleep(0.5)
     else:
+        # A broken sign-in must fail LOUDLY, not leak a server and a browser
+        # behind it: the exception below used to leave both processes running,
+        # holding `port` and `cdp_port` open for whoever ran this next.
+        for pid in (server.pid, chrome.pid):
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except Exception:
+                pass
         raise RuntimeError(f"stack could not sign in as {ADMIN_EMAIL}")
     # An admin lands on the Jobs queue; the personas' work starts on the
     # drawing. Nothing after this point can send it back to "queue": the one

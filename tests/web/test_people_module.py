@@ -99,6 +99,9 @@ def test_every_field_peoplerows_reads_is_one_public_actually_sends():
 
     src = (STATIC / "js" / "people.js").read_text()
     start = src.index("export function peopleRows")
+    # Textual, not a parser: this bounds the function body only because it has
+    # no column-0 closing brace before its own — true today, and worth
+    # re-checking if this function ever grows a nested top-level block.
     body = src[start:start + src[start:].index("\n}")]
     read_fields = set(re.findall(r"\bu\.(\w+)", body))
     assert read_fields, "no `u.<field>` reads found in peopleRows — did it move or get renamed?"
