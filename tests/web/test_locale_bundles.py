@@ -251,11 +251,13 @@ REFUSAL_CODES = [
     # -- getting in -------------------------------------------------------------
     # `sign_in_failed` and `not_signed_in` were here while this app kept its own
     # passwords and sessions. Identity is Google's now: there is nothing to fail
-    # a password against, and the gate's refusals — `no_identity`,
-    # `no_capacity`, `account_deactivated`, `subject_mismatch`,
-    # `capacity_insufficient` — are raised in `src/fenceai/api/auth.py`, which is
-    # NOT on the scanned list above. Putting the five here and the file there is
-    # one edit, owed together with their `error.<code>` entries in both bundles.
+    # a password against, and the gate's refusals below are raised in
+    # `src/fenceai/api/auth.py`, which is now on the scanned list above.
+    "no_identity",
+    "no_capacity",
+    "account_deactivated",
+    "subject_mismatch",
+    "capacity_insufficient",
     # -- the queue and the one door ---------------------------------------------
     "assignee_unknown",
     # Committing names a run explicitly (never "the latest"), so a payload can
@@ -502,6 +504,10 @@ def test_backend_code_list_is_current():
         # invisible to this guard twice over: the file was not scanned, and a
         # route writes `"code": "x"` rather than `code="x"`. Both forms now.
         src / "api" / "app.py",
+        # the gate that resolves who is asking, before any route runs: five
+        # refusal codes raised as `HTTPException(status, {"code": "x"})`, the
+        # same blind spot `api/app.py` had until it was added above.
+        src / "api" / "auth.py",
         # the one door refuses in `fenceai.commands`, not at the route, because
         # the three checks are pure and the route only carries the session. So
         # the file that RAISES is not the file that answers — the same blind
@@ -552,8 +558,19 @@ def test_backend_code_list_is_current():
     # `HANDOVER_CODES`; they are exempt only from the "listed but gone"
     # direction, and `test_the_handover_code_list_is_current` names all four
     # explicitly so they are not merely unchecked.
+    # `auth.py`'s gate maps three of its five refusals through a dict
+    # (`_REFUSAL_CODE = {"no_capacity": "no_capacity", "deactivated":
+    # "account_deactivated", "subject_mismatch": "subject_mismatch"}`) and
+    # raises `_REFUSAL_CODE.get(status, status)` — a variable, the same shape
+    # as continuity's `code=note.code` and the handover fields above. The
+    # table regex cannot see it either: `_REFUSAL_CODE` does not match the
+    # `[A-Z][A-Z0-9_]*CODES` shape that closes such tables by name. They are
+    # real codes, stay in `REFUSAL_CODES`, and `test_refusal_codes_have_locale_entries`
+    # still demands their bundle entries; only the "listed but gone" direction
+    # is exempted here.
     unscannable = {"customer_missing", "address_missing", "sold_by_missing",
-                   "sold_on_missing"}
+                   "sold_on_missing", "no_capacity", "account_deactivated",
+                   "subject_mismatch"}
     assert emitted == known - unscannable, {
         "unlisted": sorted(emitted - known),
         "listed_but_gone": sorted(known - unscannable - emitted)}
