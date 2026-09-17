@@ -36,11 +36,9 @@ PERSONAS = [
 DEFAULT_PORT_BASE = 8800
 DEFAULT_CDP_BASE = 9400
 
-#: The account the stack signs in as before any persona looks (see `start()`).
-#: Named once because `DevIdentity` (cookie first, env second — `identity/dev.py`)
-#: means this same string also has to reach the server as `FENCEAI_DEV_USER`;
-#: letting the two spellings drift is exactly how the "always already this
-#: account" fact below would stop being true silently.
+#: The account the stack signs in as before any persona looks (see `start()`),
+#: and the account `seed.py` signs itself in as (`seed.sign_in`'s default) to
+#: write the portfolio it seeds. Named once so the two never drift apart.
 ADMIN_EMAIL = "admin@example.com"
 
 
@@ -91,16 +89,36 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
 
     server = subprocess.Popen(
         ["uv", "run", "uvicorn", "fenceai.api.app:app", "--port", str(port)],
-        # `FENCEAI_DEV_USER` is what `DevIdentity` resolves a caller to when NO
-        # cookie is presented (see `identity/dev.py`) — the same fallback
-        # `tests/conftest.py` sets for the whole test suite. Every browser tab
-        # this stack drives signs in for itself through the real form below,
-        # but `seed.py` talks to this server over plain `urllib`, with no
-        # cookie jar at all; without this, the default-deny gate this slice
-        # added refuses every one of those calls with 401 `no_identity` before
-        # a single project can be seeded.
-        env={**os.environ, "FENCEAI_DB": db, "FENCEAI_AI": "stub",
-             "FENCEAI_DEV_USER": ADMIN_EMAIL},
+        # No `FENCEAI_DEV_USER` here, deliberately: `DevIdentity` is
+        # cookie-first, env-second (`identity/dev.py`), and an env default
+        # authenticates EVERY request that carries no cookie — including the
+        # browser's own first `GET /api/session`, before this function submits
+        # anything. That used to make the real sign-in form below redundant
+        # (the page was already `in` as admin), which raced its own tab
+        # placement against `queue.js`'s `on("signed-in", ...)` — see the
+        # comment below `start()` continues with. Leaving this unset means the
+        # page genuinely starts signed OUT, so the form is exercised on every
+        # run and a broken interactive login path fails here loudly, not just
+        # in the atypical case.
+        #
+        # `**os.environ` is NOT enough by itself: `tests/conftest.py`'s
+        # autouse `_dev_identity` fixture `monkeypatch.setenv`s exactly this
+        # variable, for every test in the suite, including whichever test's
+        # `os.environ` this line spreads — so under pytest this dict would
+        # silently inherit it right back even though nothing here sets it.
+        # Popping it is what actually keeps this process's `os.environ` from
+        # deciding what the spawned server does; two agents confirmed the
+        # RACE was fixed by this file alone before this popped, and the
+        # deliberate-break check that is supposed to fail loudly here instead
+        # passed silently under `pytest` for exactly this reason.
+        #
+        # `seed.py` used to be the reason this existed — its `urllib` calls
+        # carry no cookie jar by default and the default-deny gate this slice
+        # added refuses them with 401 `no_identity`. It now signs itself in
+        # (`seed.sign_in`), the same way the browser does, and carries the
+        # cookie it gets back — so nothing here needs to authenticate it.
+        env={**{k: v for k, v in os.environ.items() if k != "FENCEAI_DEV_USER"},
+             "FENCEAI_DB": db, "FENCEAI_AI": "stub"},
         cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
@@ -120,36 +138,30 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
     # here are engineering roles evaluating the whole app, which is the admin
     # account's `all` view — so the STACK signs in before any persona looks,
     # the same way a lab would hand a tester an already-logged-in machine.
+    # Done through the real form, not a cookie, so a broken interactive login
+    # — `wireIdentity()`'s submit handler, `become()`, or the
+    # `POST /api/dev/identity` route itself — fails here loudly.
     #
-    # `DevIdentity` is cookie-first, env-second (`identity/dev.py`), and this
-    # process's own `FENCEAI_DEV_USER` above is `ADMIN_EMAIL` — so the very
-    # FIRST `GET /api/session` the page makes, before this function does
-    # anything at all, already resolves to admin with no cookie in play. By
-    # the time `dataset.auth` is readable it has gone `pending` -> `in`
-    # directly; it never passes through `out`, and a loop waiting for `out`
-    # spins for nothing.
+    # With no `FENCEAI_DEV_USER` set above, the page genuinely starts signed
+    # OUT: `dataset.auth` goes `pending` -> `out`, so this is now the normal
+    # path taken on every run.
     #
-    # That matters for more than a wasted 30s: the ONE thing that shoves an
-    # admin/backoffice account onto the Jobs queue tab (`queue.js`'s
-    # `on("signed-in", ...)`) fires once per completed sign-in cascade. If this
-    # function ALSO submits the form unconditionally, that is a SECOND,
-    # redundant sign-in for the same identity, racing the first: `state.project`
-    # is often already truthy from the first (automatic) sign-in by the time
-    # this function checks it, so it proceeds to set the canvas tab while the
-    # second (explicit) sign-in's own async chain — `become()` -> `POST
-    # /api/dev/identity` -> `GET /api/session` -> `emit("signed-in", ...)` — is
-    # still in flight, and queue.js's synchronous listener on THAT emission
-    # flips the tab back to "queue" a few milliseconds later. Confirmed live: a
-    # CDP-instrumented run of this exact sequence showed the active tab go
-    # canvas -> queue 21ms after `setTab('canvas')` returned, timed to the
-    # explicit sign-in's completion, not to anything `openWorkspace()` was
-    # still doing.
-    #
-    # So: only drive the real form (still through it, not a cookie, so a
-    # genuinely broken login fails here loudly) when the automatic identity
-    # did NOT already land us on the right account. That is the common case
-    # today and it means exactly one "signed-in" cascade happens, so nothing
-    # is left to race the tab placement below.
+    # The `already`-signed-in check below stays anyway, as defensive code, not
+    # as the common path: a leftover `fenceai_dev_user` cookie in Chrome's
+    # profile from an earlier run (this launches plain `google-chrome`, not a
+    # fresh profile per stack) can still land the page `in` before this
+    # function touches anything. Skipping a REDUNDANT sign-in for the identity
+    # already in place matters because a second, unnecessary one is exactly
+    # what raced this stack's own tab placement before: `state.project` can
+    # already be truthy from the first sign-in by the time this function
+    # checks it, so it would proceed to set the canvas tab while the second
+    # sign-in's own async chain — `become()` -> `POST /api/dev/identity` ->
+    # `GET /api/session` -> `emit("signed-in", ...)` — is still in flight, and
+    # `queue.js`'s synchronous listener on THAT emission flips the tab back to
+    # "queue" a few milliseconds later. Confirmed live with a CDP-instrumented
+    # timeline: canvas -> queue 21ms after `setTab('canvas')` returned, timed
+    # to the redundant sign-in's completion, not to anything `openWorkspace()`
+    # was still doing.
     for _ in range(60):
         if c.js("document.documentElement.dataset.auth") != "pending":
             break
@@ -159,8 +171,16 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
         f".dataset.auth === 'in' && m.state.me?.email === {ADMIN_EMAIL!r})"
     )
     if not already:
+        # Wait for whatever `dataset.auth` resolved to above to settle into
+        # something that is not the wrong account still signed in — `out` (the
+        # expected case now) or `denied` both qualify, and neither one is
+        # going to spontaneously become `out` on its own, so there is nothing
+        # to gain waiting specifically for that exact string the way the
+        # original loop did (it spun for the full timeout on `denied`, which
+        # is exactly the latency the `!= "pending"` check above already fixed
+        # for the ordinary case).
         for _ in range(60):
-            if c.js("document.documentElement.dataset.auth === 'out'"):
+            if c.js("document.documentElement.dataset.auth") != "in":
                 break
             time.sleep(0.5)
         c.js(f"""document.getElementById('sign-in-email').value = {ADMIN_EMAIL!r};
