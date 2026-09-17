@@ -48,7 +48,13 @@ EXEMPT_PATHS = frozenset({
 #: read in a log — where `deactivated` alone would not say deactivated *what*.
 #: The design's refusal table names them, so the mapping is written out rather
 #: than assumed.
-_REFUSAL_CODE = {
+#: Named `REFUSAL_STATUS_CODES` — capitalised and ending in `CODES` — rather
+#: than the private `_REFUSAL_CODE` it replaces, so the locale scanner's table
+#: regex in `tests/web/test_locale_bundles.py`
+#: (`^[A-Z][A-Z0-9_]*CODES\b[^=]*=\s*\{(.*?)^\}`) sees this dict BY SHAPE and
+#: reads its three values as codes on its own — no more hand-maintained
+#: exemption for `no_capacity` / `account_deactivated` / `subject_mismatch`.
+REFUSAL_STATUS_CODES = {
     "no_capacity": "no_capacity",
     "deactivated": "account_deactivated",
     "subject_mismatch": "subject_mismatch",
@@ -102,15 +108,36 @@ def resolve(store, principal: Principal) -> tuple[User | None, str]:
 def _bootstrap(store, principal: Principal) -> User | None:
     """The first admin, and only the first.
 
-    Three conditions, all of them: no admin row exists anywhere, the address
-    matches `FENCEAI_BOOTSTRAP_ADMIN`, and no row exists for that address. So it
-    cannot promote an existing `sales` row, and it self-disables the moment any
-    admin exists. This is what replaces three seeded strangers with a password.
+    Three conditions, all of them: no ACTIVE admin row exists anywhere, the
+    address matches `FENCEAI_BOOTSTRAP_ADMIN`, and no row exists for that
+    address. So it cannot promote an existing `sales` row, and it self-disables
+    the moment any admin is active. This is what replaces three seeded
+    strangers with a password.
+
+    Counting only active admins (symmetric with `app.py`'s
+    `_would_strand_the_admins`, which counts only active admins as "others who
+    could still act") is deliberate, not cosmetic: a deployment whose only
+    admin row has since been deactivated — a restore, a manual edit, any future
+    path, even though the API's own routes cannot reach it — would otherwise be
+    locked out for ever. `_bootstrap` would see an admin row and refuse to
+    fire, and no human could sign in to reactivate it, even with
+    `FENCEAI_BOOTSTRAP_ADMIN` set and the deployment redeployed.
+
+    This cannot resurrect or re-promote the deactivated admin's OWN address:
+    `resolve()` only calls `_bootstrap` for an email with no existing row at
+    all, so that address still resolves to its existing inactive row and is
+    still refused with `account_deactivated`, exactly as before this change.
+    The only address this can ever seat is a different, row-less one that
+    matches `FENCEAI_BOOTSTRAP_ADMIN` while zero admins are active — which is
+    precisely why unsetting `FENCEAI_BOOTSTRAP_ADMIN` after the first deploy is
+    load-bearing for BOTH the demotion guard in `app.py` and this deactivation
+    recovery path, not merely deployment hygiene: left set, it is a standing
+    second door for exactly the moment an admin is deactivated.
     """
     wanted = _bootstrap_address()
     if not wanted or principal.email != wanted:
         return None
-    if any(u.capacity == "admin" for u in store.list_users()):
+    if any(u.capacity == "admin" and u.active for u in store.list_users()):
         return None
     user = User(id=f"u_{uuid.uuid4().hex[:8]}", name=principal.email.split("@")[0],
                 email=principal.email, capacity="admin",
@@ -142,7 +169,7 @@ def make_gate(provider_of, store_of):
             # is "we know who you are and the answer is still no". A 401 would
             # invite a browser to re-authenticate against an answer that will
             # not change until an admin changes it.
-            raise HTTPException(403, {"code": _REFUSAL_CODE.get(status, status)})
+            raise HTTPException(403, {"code": REFUSAL_STATUS_CODES.get(status, status)})
         request.state.user = user
 
     return gate

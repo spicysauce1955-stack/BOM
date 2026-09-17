@@ -566,19 +566,17 @@ def test_backend_code_list_is_current():
     # `HANDOVER_CODES`; they are exempt only from the "listed but gone"
     # direction, and `test_the_handover_code_list_is_current` names all four
     # explicitly so they are not merely unchecked.
-    # `auth.py`'s gate maps three of its five refusals through a dict
-    # (`_REFUSAL_CODE = {"no_capacity": "no_capacity", "deactivated":
-    # "account_deactivated", "subject_mismatch": "subject_mismatch"}`) and
-    # raises `_REFUSAL_CODE.get(status, status)` — a variable, the same shape
-    # as continuity's `code=note.code` and the handover fields above. The
-    # table regex cannot see it either: `_REFUSAL_CODE` does not match the
-    # `[A-Z][A-Z0-9_]*CODES` shape that closes such tables by name. They are
-    # real codes, stay in `REFUSAL_CODES`, and `test_refusal_codes_have_locale_entries`
-    # still demands their bundle entries; only the "listed but gone" direction
-    # is exempted here.
+    # `auth.py`'s gate used to map three of its five refusals through a dict
+    # named `_REFUSAL_CODE` — invisible to both the literal scans (a variable,
+    # the same shape as continuity's `code=note.code`) and the table regex
+    # (leading underscore, and no `CODES` suffix). It is now
+    # `REFUSAL_STATUS_CODES`, which the table regex reads by SHAPE — see the
+    # comment beside its definition in `auth.py` — so those three codes are no
+    # longer hand-carried here; they reach `known - unscannable` (and
+    # `REFUSAL_CODES`, per `test_refusal_codes_have_locale_entries`) the same
+    # way every other scanned code does.
     unscannable = {"customer_missing", "address_missing", "sold_by_missing",
-                   "sold_on_missing", "no_capacity", "account_deactivated",
-                   "subject_mismatch"}
+                   "sold_on_missing"}
     assert emitted == known - unscannable, {
         "unlisted": sorted(emitted - known),
         "listed_but_gone": sorted(known - unscannable - emitted)}
