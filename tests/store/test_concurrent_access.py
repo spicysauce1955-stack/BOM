@@ -1,3 +1,7 @@
+# Deliberately SQLite-only. The hazard measured here is interleaved
+# statements on one `sqlite3.Connection`; Postgres does not have it, so a
+# green run there would assert nothing. The `RLock` this file defends is
+# backend-independent and is exercised on both by every other store test.
 """One connection, one caller at a time.
 
 FastAPI runs sync endpoints in a threadpool, so one process serves several
@@ -19,11 +23,6 @@ These tests drive real concurrency rather than asserting that a lock exists,
 because the invariant is "no interleaving", not "there is a lock attribute":
 an implementation that dropped the guard from one method would keep the
 attribute and fail here.
-
-# Deliberately SQLite-only. The hazard measured here is interleaved
-# statements on one `sqlite3.Connection`; Postgres does not have it, so a
-# green run there would assert nothing. The `RLock` this file defends is
-# backend-independent and is exercised on both by every other store test.
 """
 
 from __future__ import annotations

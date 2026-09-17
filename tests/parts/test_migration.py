@@ -310,14 +310,19 @@ def test_reopening_a_store_does_not_overwrite_an_edited_part(dsn):
     """
     from fenceai.store.db import Store
     store = Store(dsn)
-    store.save_part(store.load_part("rail-rail-3000", 1)
-                    .model_copy(update={"version": 2, "status": "draft"}))
-    store.set_part_status("rail-rail-3000", 2, "active")
-    store.close()
+    try:
+        store.save_part(store.load_part("rail-rail-3000", 1)
+                        .model_copy(update={"version": 2, "status": "draft"}))
+        store.set_part_status("rail-rail-3000", 2, "active")
+    finally:
+        store.close()
 
     reopened = Store(dsn)
-    assert reopened.load_part("rail-rail-3000", 1).status == "retired"
-    assert reopened.part_library().latest_active("rail-rail-3000").version == 2
+    try:
+        assert reopened.load_part("rail-rail-3000", 1).status == "retired"
+        assert reopened.part_library().latest_active("rail-rail-3000").version == 2
+    finally:
+        reopened.close()
 
 
 # --- the CLI, over a real database -------------------------------------------
@@ -335,21 +340,30 @@ def test_the_tool_migrates_a_stored_model_and_leaves_it_resolvable(dsn):
     from tools.migrate_parts import main
 
     store = Store(dsn)
-    store.save_fence_model(_pre_migration_model("M-OLD", "SLAT-100", 100))
-    store.close()
+    try:
+        store.save_fence_model(_pre_migration_model("M-OLD", "SLAT-100", 100))
+    finally:
+        store.close()
 
     assert main([dsn]) == 0                       # dry run writes nothing
-    assert Store(dsn).load_fence_model("M-OLD", 1) \
-        .default_spec.frame[0].requirement.part_id == ""
+    dry_run_check = Store(dsn)
+    try:
+        assert dry_run_check.load_fence_model("M-OLD", 1) \
+            .default_spec.frame[0].requirement.part_id == ""
+    finally:
+        dry_run_check.close()
 
     assert main([dsn, "--write"]) == 0
     store = Store(dsn)
-    migrated = store.load_fence_model("M-OLD", 1)
-    named = {key: req.part_id for key, req in part_requirements(migrated)}
-    assert named == {"rail": "rail-rail-3000", "slat": "infill-slat-100"}
-    assert all(not req.eligibility.members
-               for _key, req in part_requirements(migrated))
-    resolve_model_parts(migrated, store.part_library())
+    try:
+        migrated = store.load_fence_model("M-OLD", 1)
+        named = {key: req.part_id for key, req in part_requirements(migrated)}
+        assert named == {"rail": "rail-rail-3000", "slat": "infill-slat-100"}
+        assert all(not req.eligibility.members
+                   for _key, req in part_requirements(migrated))
+        resolve_model_parts(migrated, store.part_library())
+    finally:
+        store.close()
 
 
 def test_the_tool_refuses_a_contradiction_and_writes_nothing(dsn):
@@ -362,16 +376,21 @@ def test_the_tool_refuses_a_contradiction_and_writes_nothing(dsn):
     from tools.migrate_parts import main
 
     store = Store(dsn)
-    store.save_fence_model(_pre_migration_model("M-A", "SLAT-100", 100))
-    store.save_fence_model(_pre_migration_model("M-B", "SLAT-100", 120))
-    store.close()
+    try:
+        store.save_fence_model(_pre_migration_model("M-A", "SLAT-100", 100))
+        store.save_fence_model(_pre_migration_model("M-B", "SLAT-100", 120))
+    finally:
+        store.close()
 
     assert main([dsn, "--write"]) == 1
     reopened = Store(dsn)
-    for model_id in ("M-A", "M-B"):
-        stored = reopened.load_fence_model(model_id, 1)
-        assert all(req.part_id == "" for _key, req in part_requirements(stored)), \
-            f"{model_id} was rewritten behind a refusal"
+    try:
+        for model_id in ("M-A", "M-B"):
+            stored = reopened.load_fence_model(model_id, 1)
+            assert all(req.part_id == "" for _key, req in part_requirements(stored)), \
+                f"{model_id} was rewritten behind a refusal"
+    finally:
+        reopened.close()
 
 
 def test_the_tool_publishes_a_second_version_without_leaving_two_active(dsn):
@@ -391,23 +410,28 @@ def test_the_tool_publishes_a_second_version_without_leaving_two_active(dsn):
     from tools.migrate_parts import main
 
     store = Store(dsn)
-    # the store's seeded `rail-rail-3000@v1` says exactly what migration would
-    # write, so move it: v2 declares a material the migrated spec does not
-    seeded = store.load_part("rail-rail-3000", 1)
-    store.save_part(seeded.model_copy(update={
-        "version": 2, "status": "draft",
-        "spec": [*seeded.spec, SpecField(key="material", value="aluminium")]}))
-    store.set_part_status("rail-rail-3000", 2, "active")
-    store.save_fence_model(_pre_migration_model("M-OLD", "SLAT-100", 100))
-    store.close()
+    try:
+        # the store's seeded `rail-rail-3000@v1` says exactly what migration would
+        # write, so move it: v2 declares a material the migrated spec does not
+        seeded = store.load_part("rail-rail-3000", 1)
+        store.save_part(seeded.model_copy(update={
+            "version": 2, "status": "draft",
+            "spec": [*seeded.spec, SpecField(key="material", value="aluminium")]}))
+        store.set_part_status("rail-rail-3000", 2, "active")
+        store.save_fence_model(_pre_migration_model("M-OLD", "SLAT-100", 100))
+    finally:
+        store.close()
 
     assert main([dsn, "--write"]) == 0
     store = Store(dsn)
-    versions = {p.version: p.status for p in store.part_library().parts
-                if p.id == "rail-rail-3000"}
-    assert versions == {1: "retired", 2: "retired", 3: "active"}
-    # and the models really were rewritten, which is what the abort used to lose
-    migrated = store.load_fence_model("M-OLD", 1)
-    assert {key: req.part_id for key, req in part_requirements(migrated)} == {
-        "rail": "rail-rail-3000", "slat": "infill-slat-100"}
-    resolve_model_parts(migrated, store.part_library())
+    try:
+        versions = {p.version: p.status for p in store.part_library().parts
+                    if p.id == "rail-rail-3000"}
+        assert versions == {1: "retired", 2: "retired", 3: "active"}
+        # and the models really were rewritten, which is what the abort used to lose
+        migrated = store.load_fence_model("M-OLD", 1)
+        assert {key: req.part_id for key, req in part_requirements(migrated)} == {
+            "rail": "rail-rail-3000", "slat": "infill-slat-100"}
+        resolve_model_parts(migrated, store.part_library())
+    finally:
+        store.close()

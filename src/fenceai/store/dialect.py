@@ -19,6 +19,15 @@ Four differences, and they are the whole list:
 NOTHING` since 3.24 and ships 3.45 here, so both statements that needed it
 were rewritten into the form both databases already understand — one fewer
 difference to carry is better than one more translation to trust.
+
+Four differences in the SQL this module translates — a fifth exists, but is
+not ours to translate: `sqlite3` and `psycopg` name their own exception
+classes, with no shared base beyond `Exception` (`sqlite3.IntegrityError` is
+not a `psycopg.IntegrityError` and vice versa). That is a fact about the two
+driver libraries, not a SQL difference, so a caller that needs to catch a
+constraint violation across both backends picks the class per backend
+itself rather than asking this module for one — see
+`tests/fulfillment/test_quotes.py::test_quote_ids_are_append_only`.
 """
 
 from __future__ import annotations
