@@ -387,6 +387,59 @@ def test_an_admin_anywhere_disables_the_bootstrap(under_iap, monkeypatch):
     assert state.store.user_by_email("founder@example.com") is None
 
 
+def test_a_deactivated_only_admin_deployment_is_recovered_by_the_bootstrap(
+        under_iap, monkeypatch):
+    """The bug: `_bootstrap` used to count EVERY admin row, active or not, as
+    blocking — so a deployment whose only admin has been deactivated (a
+    restore, a manual edit, any future path) was locked out for ever. No human
+    could reach a route that reactivates the row, because `make_gate` refuses
+    everybody it cannot resolve, and `_bootstrap` would not fire because an
+    admin row still exists.
+
+    Counting only ACTIVE admins as blocking is symmetric with `app.py`'s
+    `_would_strand_the_admins`, which already treats an inactive admin as
+    nobody who "could still act". A different, row-less address matching
+    `FENCEAI_BOOTSTRAP_ADMIN` must now be seated as a fresh admin while the
+    only admin on file is inactive."""
+    client, provider = under_iap
+    state.store.save_user(User(id="u_gone", name="Gone",
+                               email="gone@example.com", capacity="admin",
+                               active=False))
+    monkeypatch.setenv("FENCEAI_BOOTSTRAP_ADMIN", "founder@example.com")
+    provider.email = "founder@example.com"
+
+    assert client.get("/api/projects").status_code == 200
+    row = state.store.user_by_email("founder@example.com")
+    assert row is not None and row.capacity == "admin"
+    assert any(e["action"] == "bootstrap_admin"
+               for e in state.store.audit_entries(50))
+
+
+def test_the_deactivated_admins_own_address_is_still_refused_not_resurrected(
+        under_iap, monkeypatch):
+    """The half that matters: the deactivated admin's OWN address must not be
+    quietly re-promoted just because the bootstrap can now fire for somebody
+    else. `resolve()` only calls `_bootstrap` for an email with NO existing row
+    at all, so `gone@example.com` still resolves to its existing inactive row
+    and is still refused with `account_deactivated` — even if, by coincidence
+    or attack, `FENCEAI_BOOTSTRAP_ADMIN` were set to that same address. Get
+    this wrong and deactivation stops meaning anything."""
+    client, provider = under_iap
+    state.store.save_user(User(id="u_gone", name="Gone",
+                               email="gone@example.com", capacity="admin",
+                               active=False))
+    monkeypatch.setenv("FENCEAI_BOOTSTRAP_ADMIN", "gone@example.com")
+    provider.email = "gone@example.com"
+
+    r = client.get("/api/projects")
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "account_deactivated"
+    row = state.store.user_by_email("gone@example.com")
+    assert row.active is False and row.capacity == "admin"
+    assert not any(e["action"] == "bootstrap_admin"
+                   for e in state.store.audit_entries(50))
+
+
 def test_an_existing_row_on_that_address_is_not_promoted(under_iap, monkeypatch):
     """The narrow case that would be a privilege escalation: a `sales` account
     already exists at the named address. It resolves as itself — the bootstrap
