@@ -9,7 +9,6 @@ from fenceai.core.ids import new_id
 from fenceai.fulfillment.pipeline import price_strategy
 from fenceai.fulfillment.quote import Quote
 from fenceai.knowledge.demo import demo_knowledge
-from fenceai.store.db import Store
 from fenceai.strategy.generator import generate
 from tests.conftest import straight_topology
 
@@ -30,8 +29,7 @@ def make_quote(project_id="p1", label="") -> Quote:
     )
 
 
-def test_quote_roundtrip_is_lossless():
-    store = Store(":memory:")
+def test_quote_roundtrip_is_lossless(store):
     q = make_quote(label="first offer")
     store.save_quote(q)
     loaded = store.load_quote(q.id)
@@ -40,8 +38,7 @@ def test_quote_roundtrip_is_lossless():
     assert loaded.requirements  # full pegged demand travels with the quote
 
 
-def test_accept_supersedes_previous_accepted():
-    store = Store(":memory:")
+def test_accept_supersedes_previous_accepted(store):
     q1, q2 = make_quote(), make_quote()
     store.save_quote(q1)
     store.save_quote(q2)
@@ -57,8 +54,7 @@ def test_accept_supersedes_previous_accepted():
         store.accept_quote("quote_missing")
 
 
-def test_accept_scoped_per_project():
-    store = Store(":memory:")
+def test_accept_scoped_per_project(store):
     a, b = make_quote(project_id="pa"), make_quote(project_id="pb")
     store.save_quote(a)
     store.save_quote(b)
@@ -68,11 +64,20 @@ def test_accept_scoped_per_project():
     assert store.load_quote(b.id).status == "accepted"
 
 
-def test_quote_ids_are_append_only():
-    store = Store(":memory:")
+def test_quote_ids_are_append_only(store, backend):
+    """`id` is `PRIMARY KEY` with a plain `INSERT` (no `OR IGNORE` / `ON
+    CONFLICT`), so a repeat is refused rather than silently accepted — but the
+    two drivers name that refusal with unrelated exception classes (there is
+    no shared base between `sqlite3` and `psycopg`), so which one to expect
+    is a fact about the backend, not about the store."""
     q = make_quote()
     store.save_quote(q)
-    import sqlite3
+    if backend == "sqlite":
+        import sqlite3
+        error = sqlite3.IntegrityError
+    else:
+        import psycopg
+        error = psycopg.IntegrityError
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(error):
         store.save_quote(q)  # same id can never be overwritten

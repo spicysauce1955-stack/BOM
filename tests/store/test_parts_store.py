@@ -5,12 +5,6 @@ predecessor."""
 import pytest
 
 from fenceai.parts.model import Part, SpecField
-from fenceai.store.db import Store
-
-
-@pytest.fixture
-def store(tmp_path):
-    return Store(str(tmp_path / "t.db"))
 
 
 def rail(version=1, status="active", width=38) -> Part:

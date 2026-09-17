@@ -12,11 +12,6 @@ the domain stays free of `datetime.now()` and a caller cannot forget.
 from __future__ import annotations
 
 from fenceai.learning.model import Correction
-from fenceai.store.db import Store
-
-
-def _store() -> Store:
-    return Store(":memory:")
 
 
 def _corr(cid: str, comment: str, created_at: str = "") -> Correction:
@@ -24,29 +19,26 @@ def _corr(cid: str, comment: str, created_at: str = "") -> Correction:
                       comment=comment, created_at=created_at)
 
 
-def test_the_store_stamps_when_a_correction_was_made():
+def test_the_store_stamps_when_a_correction_was_made(store):
     """The domain never calls a clock; the store does, as it already does for a
     quote. A caller that forgot would leave a comment with no place in time."""
-    store = _store()
     store.save_correction(_corr("corr_a", "first"))
     [got] = store.list_corrections("p1")
     assert got.created_at, "a correction with no timestamp cannot be threaded"
 
 
-def test_a_stamp_the_caller_supplied_is_kept():
+def test_a_stamp_the_caller_supplied_is_kept(store):
     """Same rule `save_quote` follows: the store fills a BLANK, it does not
     overwrite a time somebody else established."""
-    store = _store()
     store.save_correction(_corr("corr_a", "first", created_at="2020-01-01T00:00:00+00:00"))
     [got] = store.list_corrections("p1")
     assert got.created_at == "2020-01-01T00:00:00+00:00"
 
 
-def test_corrections_come_back_in_the_order_they_were_MADE():
+def test_corrections_come_back_in_the_order_they_were_MADE(store):
     """THE defect. `ORDER BY id` on a uuid is a shuffle, and the ids below are
     deliberately in the reverse of their real order — sorted by id they read
     backwards, which is what a reader would have seen."""
-    store = _store()
     store.save_correction(_corr("corr_zzz", "first", "2026-01-01T00:00:00+00:00"))
     store.save_correction(_corr("corr_aaa", "second", "2026-01-02T00:00:00+00:00"))
     store.save_correction(_corr("corr_mmm", "third", "2026-01-03T00:00:00+00:00"))
@@ -54,12 +46,11 @@ def test_corrections_come_back_in_the_order_they_were_MADE():
         ["first", "second", "third"]
 
 
-def test_a_correction_with_no_stamp_still_has_a_place():
+def test_a_correction_with_no_stamp_still_has_a_place(store):
     """Rows written before the stamp existed must not vanish or jump to the end
     of every thread. Sorting on (created_at, id) puts them first — which is
     where they belong, being older than anything stamped — and keeps the order
     total, so two comments in the same second cannot swap between two reads."""
-    store = _store()
     store.save_correction(Correction(id="corr_old", project_id="p1",
                                      generation_run_id="run_1", comment="ancient",
                                      created_at=""))
@@ -72,12 +63,11 @@ def test_a_correction_with_no_stamp_still_has_a_place():
     assert [c.comment for c in store.list_corrections("p1")] == ["ancient", "recent"]
 
 
-def test_two_turns_in_the_same_instant_keep_a_stable_order():
+def test_two_turns_in_the_same_instant_keep_a_stable_order(store):
     """The docstring above claims the order is TOTAL; nothing tested it, because
     no fixture had two equal stamps. Equal times fall back to the id, so two
     reads cannot disagree — a thread that reshuffled between renders would be a
     conversation nobody could quote."""
-    store = _store()
     same = "2026-01-01T00:00:00+00:00"
     store.save_correction(_corr("corr_zzz", "written first", same))
     store.save_correction(_corr("corr_aaa", "written second", same))
@@ -86,13 +76,12 @@ def test_two_turns_in_the_same_instant_keep_a_stable_order():
     assert once == twice == ["corr_aaa", "corr_zzz"]
 
 
-def test_two_writers_do_not_lose_a_turn():
+def test_two_writers_do_not_lose_a_turn(store):
     """`Store` serialises every public method and nothing proved it for this
     table. A conversation that dropped a turn under two writers would lose
     evidence, which is the one thing this system never does."""
     import threading
 
-    store = _store()
     def write(tag: str):
         for i in range(20):
             store.save_correction(_corr(f"corr_{tag}{i:02d}", f"{tag}{i}"))
