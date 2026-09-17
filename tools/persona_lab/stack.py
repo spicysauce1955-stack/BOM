@@ -84,7 +84,16 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
 
     server = subprocess.Popen(
         ["uv", "run", "uvicorn", "fenceai.api.app:app", "--port", str(port)],
-        env={**os.environ, "FENCEAI_DB": db, "FENCEAI_AI": "stub"},
+        # `FENCEAI_DEV_USER` is what `DevIdentity` resolves a caller to when NO
+        # cookie is presented (see `identity/dev.py`) — the same fallback
+        # `tests/conftest.py` sets for the whole test suite. Every browser tab
+        # this stack drives signs in for itself through the real form below,
+        # but `seed.py` talks to this server over plain `urllib`, with no
+        # cookie jar at all; without this, the default-deny gate this slice
+        # added refuses every one of those calls with 401 `no_identity` before
+        # a single project can be seeded.
+        env={**os.environ, "FENCEAI_DB": db, "FENCEAI_AI": "stub",
+             "FENCEAI_DEV_USER": "admin@example.com"},
         cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
@@ -112,7 +121,6 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
             break
         time.sleep(0.5)
     c.js("""document.getElementById('sign-in-email').value = 'admin@example.com';
-            document.getElementById('sign-in-password').value = 'demo';
             document.getElementById('sign-in').requestSubmit(); 'ok'""")
     for _ in range(60):
         if c.js("import('./js/state.js').then(m => document.documentElement"
