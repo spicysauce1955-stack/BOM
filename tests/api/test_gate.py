@@ -408,6 +408,110 @@ def test_the_demo_accounts_are_a_dev_thing(client):
             "admin@example.com"} <= emails
 
 
+# --- E3: a boot-time notice when nobody can ever become the first admin ------
+#
+# Unset is the SAFE state — every deployment past its first admin runs that
+# way for the rest of its life — so this is a log line an operator can grep
+# for, never a refusal to boot. `capsys` reads the same stdout `print(...,
+# flush=True)` already used for "[fenceai] identity provider: …", which
+# `TestClient.__enter__` triggers by running `lifespan`.
+
+def test_a_forgotten_bootstrap_variable_is_named_at_boot(monkeypatch, capsys):
+    """A fresh `iap` deployment with no admin row and no
+    `FENCEAI_BOOTSTRAP_ADMIN` set boots happily and would otherwise refuse
+    everybody with `no_capacity` forever, with nothing telling the operator
+    what to set. The notice names the variable LITERALLY, so it is
+    greppable.
+
+    Built inline rather than from the `under_iap` fixture: `capsys` only
+    captures a test's `call` phase, and a fixture's own `TestClient` runs
+    `lifespan` — and therefore this print — during `setup`, before `capsys`
+    would see it (visible instead under pytest's separate "Captured stdout
+    setup" section). This caught itself: the first version of this test used
+    `under_iap` and failed with an empty string although the notice was
+    firing correctly."""
+    provider = _NotDev()
+    monkeypatch.setattr("fenceai.api.app.build_provider", lambda: provider)
+    with TestClient(app):
+        pass
+    out = capsys.readouterr().out
+    assert "FENCEAI_BOOTSTRAP_ADMIN" in out
+
+
+def test_the_notice_is_silent_once_the_variable_is_set(monkeypatch, capsys):
+    """Unset is what triggers it — not an empty table by itself. A deployment
+    that correctly set the variable and simply has not had its first admin
+    arrive yet must not be told it forgot something it did not forget."""
+    monkeypatch.setenv("FENCEAI_BOOTSTRAP_ADMIN", "founder@example.com")
+    provider = _NotDev()
+    monkeypatch.setattr("fenceai.api.app.build_provider", lambda: provider)
+    with TestClient(app):
+        pass
+    out = capsys.readouterr().out
+    assert "FENCEAI_BOOTSTRAP_ADMIN" not in out
+
+
+def test_the_notice_is_silent_once_an_admin_exists(under_iap, capsys, monkeypatch):
+    """And not once the table already has one — the variable being unset is
+    only a problem while it is the only door in."""
+    capsys.readouterr()  # discard the first boot's output
+    _client, provider = under_iap
+    state.store.save_user(User(id="u_admin2", name="Admin Two",
+                               email="admin2@example.com", capacity="admin"))
+    provider.email = "admin2@example.com"
+    with TestClient(app):
+        pass
+    out = capsys.readouterr().out
+    assert "FENCEAI_BOOTSTRAP_ADMIN" not in out
+
+
+def test_a_boot_with_no_capacity_row_still_refuses(under_iap):
+    """E3 is a LOG LINE, not a refusal to boot — the no-capacity wall a
+    stranger sees is unchanged."""
+    client, provider = under_iap
+    provider.email = "stranger@example.com"
+    r = client.get("/api/projects")
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "no_capacity"
+
+
+# --- E4: import-time and lifespan-time identity readings can disagree --------
+#
+# In a real process the two reads of `FENCEAI_IDENTITY` are nil apart and can
+# never disagree. `under_iap` substitutes the PROVIDER rather than the
+# environment, so `_DEV` (read once, at import, under the suite's own
+# `FENCEAI_IDENTITY=dev`) stays `True` while `state.provider.provider_id`
+# becomes `"iap"` at `lifespan` — manufacturing, deliberately, the exact
+# mismatch E4 exists to warn about.
+
+def test_a_provider_swapped_underneath_the_import_reading_warns(monkeypatch, capsys):
+    """Built inline, not from `under_iap` — see the note on the bootstrap
+    version of this test for why a fixture's own boot print is invisible to
+    `capsys` here."""
+    provider = _NotDev()
+    monkeypatch.setattr("fenceai.api.app.build_provider", lambda: provider)
+    with TestClient(app):
+        pass
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "dev" in out and "iap" in out
+
+
+def test_no_warning_when_the_two_readings_agree(capsys):
+    """The ordinary case — the whole suite runs under `dev` at both import and
+    startup — must stay quiet, or the warning is noise nobody can act on.
+
+    Built inline rather than from the `client` fixture, and for the same
+    reason as the two tests above: a fixture's own boot print happens during
+    `setup`, which `capsys` does not see, so checking it there would pass
+    vacuously whether or not the line was ever suppressed."""
+    with TestClient(app):
+        pass
+    out = capsys.readouterr().out
+    assert "[fenceai] identity provider: dev" in out
+    assert "WARNING" not in out
+
+
 # --- what is not there at all under `iap` -------------------------------------
 
 def _app_module_under(monkeypatch, identity: str):

@@ -119,6 +119,23 @@ async def lifespan(app: FastAPI):
     # behave strangely — an impersonation switch nobody noticed is the one way
     # this arrangement fails silently.
     print(f"[fenceai] identity provider: {state.provider.provider_id}", flush=True)
+    # `_DEV` was read at IMPORT (needed then, to decide route registration and
+    # the docs switch, both of which must exist before any request can arrive).
+    # `state.provider.provider_id` is read HERE, at startup, from the same
+    # `FENCEAI_IDENTITY`. In a real process the two reads are nil apart and can
+    # never disagree; a test that swaps the provider at the port (or changes the
+    # environment between import and this call) can make them disagree, and the
+    # failure mode is fail-OPEN in one direction — import saw `dev` and left
+    # `/openapi.json` registered, while startup built `iap` and would otherwise
+    # give no sign that the whole API surface is sitting behind a live URL. A
+    # WARNING, not a raise: several tests deliberately construct exactly this
+    # mismatch to exercise the `iap`-shaped path without reloading the module.
+    if _DEV != (state.provider.provider_id == "dev"):
+        print("[fenceai] WARNING: identity provider at import "
+              f"({'dev' if _DEV else state.provider.provider_id!r}) disagrees "
+              f"with identity provider at startup ({state.provider.provider_id!r}) "
+              "— dev-only routes and the docs switch were fixed at import time "
+              "and will not match this process's actual provider", flush=True)
     state.interpreter = build_interpreter()
     state.proposer = StubProposer()
     state.critic = StubCritic()
@@ -139,6 +156,17 @@ async def lifespan(app: FastAPI):
     # can become anybody; production never wants three inert strangers.
     if state.provider.provider_id == "dev":
         _seed_demo_accounts()
+    # Unset is the SAFE state, and the normal one for every deployment past its
+    # first admin — so this is a log line, not a refusal to boot. A deployment
+    # that forgot the variable on its very first boot would otherwise seat
+    # nobody and give the operator nothing to grep for; refusing to boot would
+    # instead turn a legitimate, permanent configuration (bootstrap disabled
+    # once an admin exists) into a restart loop under a supervisor.
+    if not state.store.list_users() and not os.environ.get(
+            "FENCEAI_BOOTSTRAP_ADMIN", "").strip():
+        print("[fenceai] no users exist and FENCEAI_BOOTSTRAP_ADMIN is unset — "
+              "nobody can sign in until it names the first admin's address",
+              flush=True)
     yield
     state.store.close()
 
@@ -2266,6 +2294,18 @@ if _DEV:
         response.set_cookie(DEV_COOKIE, body.email.strip().lower(),
                             httponly=True, samesite="lax",
                             max_age=30 * 24 * 3600)
+        return response
+
+    @app.delete("/api/dev/identity", status_code=204)
+    def stop_being_dev() -> Response:
+        """Stop being anybody, on a laptop. Registered on the same
+        module-level condition as the POST above, for the same reason: under
+        `iap` there is no cookie of ours to clear, and `js/session.js`'s
+        `signOut()` already calls this inside a try/catch for exactly that
+        case. `EXEMPT_PATHS` matches by path, not by method, so this needs no
+        entry of its own."""
+        response = Response(status_code=204)
+        response.delete_cookie(DEV_COOKIE)
         return response
 
 
