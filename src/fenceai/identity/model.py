@@ -67,6 +67,12 @@ class User(BaseModel):
     # No default. There is no safe one: the narrowest silently locks somebody
     # out, the widest silently lets them in, and both failures are quiet.
     capacity: Capacity
+    #: Google's stable `sub` claim, bound on this person's first arrival and
+    #: never used to FIND them. Rows are created by email, because an admin
+    #: grants Dana her capacity before Dana has ever signed in. This is the
+    #: field that then answers "is this still the same Google account?" —
+    #: see `identity/binding.py`. Empty means nobody has arrived yet.
+    subject: str = ""
     active: bool = True
     # Empty means "no password set yet" — which `verify_password` treats as
     # "can never be signed in to", never as "accepts the empty password".
