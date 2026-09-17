@@ -82,7 +82,7 @@ from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
 from fenceai.identity.model import (
-    SYSTEM, Capacity, User, actor_ref, default_view, may_choose_view,
+    Capacity, User, actor_ref, default_view, may_choose_view,
 )
 from fenceai.identity.dev import DEV_COOKIE
 from fenceai.identity.provider import build_provider
@@ -975,18 +975,18 @@ def put_topology(request: Request, project_id: str, topology: Topology) -> Proje
 class AnnotationCreate(BaseModel):
     target_ref: str
     text: str
-    author: str = "user"
 
 
 @app.post("/api/projects/{project_id}/annotations")
 def add_annotation(request: Request, project_id: str, body: AnnotationCreate) -> Annotation:
     project = _project(project_id)
-    # The session outranks `author` (see `_actor`), and the time is stamped: both
-    # are what let a salesperson's list tell the office's notes from her own,
-    # and let the handover tell a note made after she sent the job from the sale.
+    # The author is the session, full stop — there is no client-supplied
+    # `author` left to outrank (Task 7) — and the time is stamped: both are
+    # what let a salesperson's list tell the office's notes from her own, and
+    # let the handover tell a note made after she sent the job from the sale.
     annotation = Annotation(
         id=new_id("ann"), target_ref=body.target_ref, text=body.text,
-        author=_actor(request, fallback=body.author), created_at=_now_iso(),
+        author=_actor(request), created_at=_now_iso(),
     )
     project.annotations.append(annotation)
     state.store.save_project(project, actor=_actor(request))
@@ -1276,7 +1276,6 @@ def get_advice(run_id: str):
 
 class QuoteCreate(BaseModel):
     label: str = ""
-    author: str = "user"
 
 
 @app.post("/api/runs/{run_id}/quote")
@@ -1314,7 +1313,7 @@ def create_quote(request: Request, run_id: str, body: QuoteCreate) -> Quote:
     # as well because a quote may be the first thing a project ever asks for, and
     # the document it stands behind must exist.
     supply = state.store.save_supply_run(
-        _supply_run_for(result, preset, priced, inventory), actor=_actor(request, body.author))
+        _supply_run_for(result, preset, priced, inventory), actor=_actor(request))
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
         label=body.label,
@@ -1330,7 +1329,7 @@ def create_quote(request: Request, run_id: str, body: QuoteCreate) -> Quote:
         requirements=priced.requirements, bom=priced.bom,
         total_cents=priced.bom.total_cents,
     )
-    state.store.save_quote(quote, actor=_actor(request, body.author))
+    state.store.save_quote(quote, actor=_actor(request))
     return quote
 
 
@@ -1353,9 +1352,9 @@ def get_quote(quote_id: str) -> Quote:
 
 
 @app.post("/api/quotes/{quote_id}/accept")
-def accept_quote(request: Request, quote_id: str, author: str = "user") -> Quote:
+def accept_quote(request: Request, quote_id: str) -> Quote:
     try:
-        return state.store.accept_quote(quote_id, actor=_actor(request, author))
+        return state.store.accept_quote(quote_id, actor=_actor(request))
     except KeyError:
         raise HTTPException(404, f"quote {quote_id} not found")
     except ValueError as e:
@@ -1448,14 +1447,16 @@ class CorrectionCreate(BaseModel):
     before: dict = {}
     after: dict = {}
     comment: str | None = None
-    author: str = "expert"
 
 
 @app.post("/api/projects/{project_id}/corrections")
 def add_correction(request: Request, project_id: str, body: CorrectionCreate) -> Correction:
     _project(project_id)
-    correction = Correction(id=new_id("corr"), project_id=project_id, **body.model_dump())
-    state.store.save_correction(correction, actor=_actor(request, body.author))
+    correction = Correction(
+        id=new_id("corr"), project_id=project_id, author=_actor(request),
+        **body.model_dump(),
+    )
+    state.store.save_correction(correction, actor=_actor(request))
     return correction
 
 
@@ -1687,7 +1688,6 @@ class KnowledgeCreate(BaseModel):
     condition: dict | None = None
     actions: list[dict] = []
     source_text: str | None = None
-    author: str = "user"
 
 
 @app.post("/api/knowledge")
@@ -1699,11 +1699,11 @@ def upsert_knowledge(request: Request, body: KnowledgeCreate):
         type=body.type,  # type: ignore[arg-type]
         title=body.title, scope=body.scope,
         condition=body.condition, actions=body.actions,  # type: ignore[arg-type]
-        source_text=body.source_text, attributed_to=body.author,
+        source_text=body.source_text, attributed_to=_actor(request),
         derived_from=[f"{body.object_id}@v{version_no - 1}"] if version_no > 1 else [],
         status="active",
     )
-    state.store.replace_active_version(v, actor=_actor(request, body.author))
+    state.store.replace_active_version(v, actor=_actor(request))
     return v
 
 
@@ -1735,7 +1735,7 @@ def preview_knowledge_impact(body: "KnowledgeCreate") -> ImpactReport:
         type=body.type,  # type: ignore[arg-type]
         title=body.title, scope=body.scope,
         condition=body.condition, actions=body.actions,  # type: ignore[arg-type]
-        attributed_to=body.author, status="draft",
+        status="draft",
     )
     return preview_impact(hypo, state.store.knowledge_base(), state.store.load_catalog(),
                           _impact_cases(), state.store.fence_model_library(),
@@ -1758,9 +1758,9 @@ def preview_candidate_impact(object_id: str, version: int) -> ImpactReport:
 
 
 @app.post("/api/knowledge/{object_id}/{version}/retire")
-def retire_knowledge(request: Request, object_id: str, version: int, author: str = "user"):
+def retire_knowledge(request: Request, object_id: str, version: int):
     try:
-        state.store.update_knowledge_status(object_id, version, "retired", actor=_actor(request, author))
+        state.store.update_knowledge_status(object_id, version, "retired", actor=_actor(request))
     except KeyError:
         raise HTTPException(404, f"{object_id}@v{version} not found")
     except ValueError as e:
@@ -1824,7 +1824,7 @@ def get_fence_model(model_id: str, version: int) -> FenceModel:
 
 
 @app.post("/api/fence-models")
-def create_fence_model(request: Request, model: FenceModel, author: str = "user"):
+def create_fence_model(request: Request, model: FenceModel):
     """A new model always arrives as a draft at the next free version.
 
     A draft may be saved INVALID, and its errors are returned rather than
@@ -1839,12 +1839,12 @@ def create_fence_model(request: Request, model: FenceModel, author: str = "user"
         "version": state.store.next_fence_model_version(model.id),
         "status": "draft",
     })
-    state.store.save_fence_model(draft, actor=_actor(request, author))
+    state.store.save_fence_model(draft, actor=_actor(request))
     return {"model": draft, "invalid": _model_errors(draft)}
 
 
 @app.put("/api/fence-models/{model_id}/draft")
-def put_fence_model_draft(request: Request, model_id: str, model: FenceModel, author: str = "user"):
+def put_fence_model_draft(request: Request, model_id: str, model: FenceModel):
     _reserved(model_id)
     library = state.store.fence_model_library()
     # the HIGHEST draft, which is the one `listing()` reports and therefore the
@@ -1856,7 +1856,7 @@ def put_fence_model_draft(request: Request, model_id: str, model: FenceModel, au
     version = existing.version if existing else state.store.next_fence_model_version(model_id)
     draft = model.model_copy(update={"id": model_id, "version": version, "status": "draft"})
     try:
-        state.store.save_fence_model(draft, actor=_actor(request, author))
+        state.store.save_fence_model(draft, actor=_actor(request))
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"model": draft, "invalid": _model_errors(draft)}
@@ -1879,7 +1879,7 @@ def preview_fence_model_impact(model: FenceModel) -> ImpactReport:
 
 
 @app.delete("/api/fence-models/{model_id}/{version}")
-def discard_fence_model_draft(request: Request, model_id: str, version: int, author: str = "user"):
+def discard_fence_model_draft(request: Request, model_id: str, version: int):
     """Throw a draft away. ONLY a draft.
 
     Without this, every abandoned attempt stayed in the library for ever — and
@@ -1897,12 +1897,12 @@ def discard_fence_model_draft(request: Request, model_id: str, version: int, aut
             "code": "fence_model_not_a_draft",
             "params": {"model_ref": model.ref, "status": model.status},
         })
-    state.store.delete_fence_model_draft(model_id, version, actor=_actor(request, author))
+    state.store.delete_fence_model_draft(model_id, version, actor=_actor(request))
     return {"discarded": model.ref}
 
 
 @app.post("/api/fence-models/{model_id}/{version}/publish")
-def publish_fence_model(request: Request, model_id: str, version: int, author: str = "user"):
+def publish_fence_model(request: Request, model_id: str, version: int):
     """Freeze a draft. This is the gate a draft save deliberately is not: from
     here the document is immutable and projects may select it."""
     model = state.store.load_fence_model(model_id, version)
@@ -1913,7 +1913,7 @@ def publish_fence_model(request: Request, model_id: str, version: int, author: s
     invalid = _model_errors(model)
     if invalid:
         raise HTTPException(422, invalid)
-    state.store.set_fence_model_status(model_id, version, "active", actor=_actor(request, author))
+    state.store.set_fence_model_status(model_id, version, "active", actor=_actor(request))
     return state.store.load_fence_model(model_id, version)
 
 
@@ -1921,10 +1921,9 @@ def publish_fence_model(request: Request, model_id: str, version: int, author: s
 def set_fence_model_status(
     request: Request,
     model_id: str, version: int, status: Literal["active", "retired"],
-    author: str = "user",
 ):
     try:
-        state.store.set_fence_model_status(model_id, version, status, actor=_actor(request, author))
+        state.store.set_fence_model_status(model_id, version, status, actor=_actor(request))
     except KeyError:
         raise HTTPException(404, f"{model_id}@v{version} not found")
     except ValueError as e:
@@ -2226,13 +2225,16 @@ def _seed_demo_accounts() -> None:
 # -- who is asking -------------------------------------------------------------
 
 
-def _actor(request: Request, fallback: str = SYSTEM) -> str:
+def _actor(request: Request) -> str:
     """Who to write in the log.
 
-    There is no unsigned case left: the gate resolved somebody before any route
-    ran. `fallback` survives for the store's own default and for the seed, not
-    for a caller — an actor a client can NAME was never an audit trail, and the
-    `?author=` parameters still passing one in are deleted in their own task.
+    There is no unsigned case left: the gate resolved somebody before any
+    route ran, so the resolved caller is the only answer. This used to take a
+    `fallback` for the eleven `?author=`-style parameters that let a client
+    NAME the actor instead — that was never an audit trail, and default-deny
+    deleted the unsigned case `fallback` existed for, so it was already dead
+    (unread in this body) before it was removed here along with the last of
+    those parameters.
     """
     return actor_ref(current_user(request))
 
