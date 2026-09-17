@@ -1,7 +1,10 @@
 # Deliberately SQLite-only. The hazard measured here is interleaved
 # statements on one `sqlite3.Connection`; Postgres does not have it, so a
-# green run there would assert nothing. The `RLock` this file defends is
-# backend-independent and is exercised on both by every other store test.
+# green run there would assert nothing. That makes this file the ONLY place
+# in the suite where removing the `RLock` turns anything red: every other
+# store test is single-threaded and would pass with the guard deleted. Read
+# the SQLite-only marking as narrow coverage, then, not as redundancy — and
+# do not delete this file on the strength of the dual-run existing.
 """One connection, one caller at a time.
 
 FastAPI runs sync endpoints in a threadpool, so one process serves several

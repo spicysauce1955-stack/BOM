@@ -233,7 +233,7 @@ def _live_preset(project_id: str) -> str:
 
     NOT `result.run.objective_preset`. A stored run's preset is frozen at its
     FIRST generation: since digest-v3 the preset is not a digest input, so an
-    unchanged fence regenerates to the same id and `save_run`'s INSERT OR IGNORE
+    unchanged fence regenerates to the same id and `save_run`'s ON CONFLICT DO NOTHING
     keeps the first document for ever. Reading the preset off it would price
     every later read under an objective the user has since changed, silently and
     with no way to see it. The preset is a supply input, sourced from now,
@@ -1080,14 +1080,14 @@ def get_bom(run_id: str):
 
     Writing here is safe because the id IS the content: the same design against
     the same inventory, catalog and preset digests to the same `supply_id` and
-    `save_supply_run`'s INSERT OR IGNORE does not write twice. Growth tracks real
+    `save_supply_run`'s ON CONFLICT DO NOTHING does not write twice. Growth tracks real
     changes to the yard, not read volume, which is why no retention policy is
     needed yet (spec §7.2).
     """
     result = _run(run_id)
     preset = _live_preset(result.run.project_id)
     _, inventory, priced = _priced(result, preset)
-    # the STORED row, not the one just built: on a repeat read INSERT OR IGNORE
+    # the STORED row, not the one just built: on a repeat read ON CONFLICT DO NOTHING
     # keeps the first, and echoing our own object would report a `created_at` the
     # database does not have — making two reads of an unchanged fence differ
     supply = state.store.save_supply_run(_supply_run_for(result, preset, priced, inventory))
@@ -1122,7 +1122,7 @@ def _refuse_moved_site(project: Project, result) -> None:
 
     Compares the FACTS, not the revision. A revision counts saves, so guarding on
     it meant that re-saving identical site conditions bricked the run: the digest
-    hashes facts, so regeneration returned the same id, `INSERT OR IGNORE` kept
+    hashes facts, so regeneration returned the same id, `ON CONFLICT DO NOTHING` kept
     the stored document with the old counter, and no user action could repair it.
 
     It names the dimensions that moved, because "the site conditions changed" on

@@ -119,14 +119,24 @@ def test_seeding_never_overwrites_what_is_already_there(dsn):
     first one's database, so this cannot take the `store` fixture — it has
     to close and reopen the same `dsn` itself."""
     store = Store(dsn)
-    model_id, seeded = next(iter(demo_models().items()))
-    edited = seeded.model_copy(update={"version": seeded.version + 1, "status": "draft"})
-    store.save_fence_model(edited)
-    before = [m.ref for m in store.fence_model_library().models]
-    store.close()
+    try:
+        model_id, seeded = next(iter(demo_models().items()))
+        edited = seeded.model_copy(
+            update={"version": seeded.version + 1, "status": "draft"}
+        )
+        store.save_fence_model(edited)
+        before = [m.ref for m in store.fence_model_library().models]
+    finally:
+        # `try/finally`, not a bare `close()`: a failed assertion above would
+        # otherwise leak an open connection into the schema `pg_dsn` is about
+        # to `DROP SCHEMA ... CASCADE`, and the drop BLOCKS — so the run hangs
+        # instead of showing which assertion failed.
+        store.close()
 
     reopened = Store(dsn)
-    lib = reopened.fence_model_library()
-    assert [m.ref for m in lib.models] == before      # no duplicate rows
-    assert lib.get(model_id, edited.version).status == "draft"
-    reopened.close()
+    try:
+        lib = reopened.fence_model_library()
+        assert [m.ref for m in lib.models] == before      # no duplicate rows
+        assert lib.get(model_id, edited.version).status == "draft"
+    finally:
+        reopened.close()

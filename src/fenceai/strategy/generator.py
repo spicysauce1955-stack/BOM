@@ -114,7 +114,7 @@ DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_co
 # The digest held data versions — topology, knowledge, models, catalog — and no
 # algorithm version at all, so a legitimate change to how a fence is laid out
 # produced a different strategy under the SAME id, and `save_run`'s
-# INSERT OR IGNORE then served the old stored document for ever. Deliberately not
+# ON CONFLICT DO NOTHING then served the old stored document for ever. Deliberately not
 # a git commit: most commits change nothing a run means, and an identity that
 # churns on every push makes every stored run unreadable for no reason.
 #
@@ -134,7 +134,7 @@ DEFAULT_POLICY: dict = {"default_height_mm": 1800, "objective_preset": "least_co
 # the elevation derives where the fasteners land. Panel resolution's OUTPUT
 # therefore changed for unchanged inputs, which is exactly what this constant is
 # for — without the bump an existing project regenerates to the same run id,
-# `save_run`'s INSERT OR IGNORE keeps the document that predates the fields, and
+# `save_run`'s ON CONFLICT DO NOTHING keeps the document that predates the fields, and
 # its bays draw no fasteners for ever with no user action able to repair it.
 PLANNING_BEHAVIOR_VERSION = "planning-v4"
 # v4: `specificity()` counts the field paths a rule's CONDITION tests, not only
@@ -150,7 +150,7 @@ PLANNING_BEHAVIOR_VERSION = "planning-v4"
 # v2: `part_snapshot` joined the digest's inputs. A model names a part_id and not a
 # version, so two runs of the identical model document — same id, same content hash
 # — are different fences once a part moves under them. Without the bump they hash
-# the same and `save_run`'s INSERT OR IGNORE serves the first one's document for the
+# the same and `save_run`'s ON CONFLICT DO NOTHING serves the first one's document for the
 # second one's fence.
 # v3: `objective_preset` LEFT the digest, from BOTH places it occupied — by name,
 # and inside `policy`, which DEFAULT_POLICY always populates. A design is what it
@@ -478,7 +478,7 @@ def generate(
         demand_skus=demand_skus,
     )
     # anything that changes what the run MEANS belongs in the digest, or
-    # INSERT OR IGNORE (store/db.py) serves a stale document under a reused id:
+    # ON CONFLICT DO NOTHING (store/db.py) serves a stale document under a reused id:
     # - model_snapshot: which fence model(s)/versions the run actually drew from
     # - catalog_hash: the catalog content the run resolved products against
     #
@@ -530,7 +530,7 @@ def generate(
             # project_id is BOUND AS A SCOPE DIMENSION (bind_scope, above), so a
             # project-scoped rule changes the fence without changing any other
             # digest input. Two projects with the same topology then collide, and
-            # `save_run`'s INSERT OR IGNORE drops the second silently: its user
+            # `save_run`'s ON CONFLICT DO NOTHING drops the second silently: its user
             # presses Generate, sees their own answer in the response, and every
             # later read serves the other project's fence.
             [project_id, topology.model_dump(), run_meta.knowledge_snapshot,
@@ -541,7 +541,7 @@ def generate(
              # moves when somebody saves the form, so hashing it would split the
              # digest between two runs of an identical fence; the facts are what
              # actually changed the answer. Exposure B and C are different
-             # fences, and `save_run` is INSERT OR IGNORE — without this they
+             # fences, and `save_run` is ON CONFLICT DO NOTHING — without this they
              # share an id and every later read of the second serves the first.
              site_facts,
              PLANNING_BEHAVIOR_VERSION, RUN_DIGEST_VERSION,
