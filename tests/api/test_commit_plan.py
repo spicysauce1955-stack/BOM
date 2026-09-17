@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fenceai.api.app import app, state
+from fenceai.identity.dev import DEV_COOKIE
 from fenceai.identity.model import User
 
 
@@ -24,11 +25,12 @@ def client(dsn, monkeypatch):
         yield c
 
 
-def _sign_in(client, uid: str, capacity: str):
+def _as(client, uid: str, capacity: str):
+    """Become this person. No password: the identity comes from the provider,
+    and the row carries only what the account may DO."""
     u = User(id=uid, name=uid, email=f"{uid}@example.com", capacity=capacity)
-    u.set_password("pw")
     state.store.save_user(u)
-    client.post("/api/session", json={"email": f"{uid}@example.com", "password": "pw"})
+    client.cookies.set(DEV_COOKIE, u.email)
 
 
 TOPOLOGY = {
@@ -39,11 +41,11 @@ TOPOLOGY = {
 
 def _planning_job(client) -> tuple[str, str]:
     """A job on the office's desk with one run on it."""
-    _sign_in(client, "u_dana", "sales")
+    _as(client, "u_dana", "sales")
     pid = client.post("/api/projects", json={"name": "job"}).json()["id"]
     client.put(f"/api/projects/{pid}/topology", json=TOPOLOGY)
     client.post(f"/api/projects/{pid}/actions", json={"kind": "submit_job", "payload": {}})
-    _sign_in(client, "u_yossi", "backoffice")
+    _as(client, "u_yossi", "backoffice")
     client.post(f"/api/projects/{pid}/actions", json={"kind": "claim_job", "payload": {}})
     run_id = client.post(f"/api/projects/{pid}/generate").json()["result"]["run"]["id"]
     return pid, run_id
@@ -71,7 +73,7 @@ def test_committing_names_the_run_and_moves_the_job_to_planned(client):
 
 def test_a_salesperson_may_not_commit_a_plan(client):
     pid, run_id = _planning_job(client)
-    _sign_in(client, "u_dana", "sales")
+    _as(client, "u_dana", "sales")
     r = _commit(client, pid, run_id)
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "command_not_permitted"
@@ -165,7 +167,7 @@ def test_a_salesperson_is_told_about_her_account_and_nothing_about_our_runs(clie
     account" cannot be used to enumerate run ids or read how far a job has got."""
     pid, run_id = _planning_job(client)
     client.put(f"/api/projects/{pid}/topology", json=MOVED)     # the run is now stale
-    _sign_in(client, "u_dana", "sales")
+    _as(client, "u_dana", "sales")
 
     stale = _commit(client, pid, run_id)
     assert stale.status_code == 403
