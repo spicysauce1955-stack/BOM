@@ -86,7 +86,8 @@ from fenceai.identity.model import (
 from fenceai.identity.dev import DEV_COOKIE
 from fenceai.identity.provider import build_provider
 from fenceai.api.auth import (
-    EXEMPT_PATHS, current_user, make_gate, require_admin, resolve as auth_resolve,
+    EXEMPT_PATHS, current_user, dev_mode, make_gate, require_admin,
+    resolve as auth_resolve,
 )
 from fenceai.project.queue import DEFAULT_LIMIT, QueueFilter, my_jobs, select_rows
 from fenceai.store.db import Store
@@ -129,7 +130,15 @@ async def lifespan(app: FastAPI):
             state.store.insert_knowledge_version(v, actor="seed")
     if not state.store.list_projects():
         state.store.save_project(_sample_project(), actor="seed")
-    _seed_demo_accounts()
+    # The demo accounts are a DEV-MODE thing, and the condition is the whole
+    # reason `FENCEAI_BOOTSTRAP_ADMIN` can ever fire: seeding `u_admin`
+    # unconditionally put an admin row in every fresh database before the first
+    # request arrived, which permanently disabled the bootstrap and left a real
+    # company's first admin with no way in at all — in the slice that deletes
+    # the password path. Dev mode never needs the bootstrap, because the picker
+    # can become anybody; production never wants three inert strangers.
+    if state.provider.provider_id == "dev":
+        _seed_demo_accounts()
     yield
     state.store.close()
 
@@ -180,8 +189,21 @@ def _sample_project() -> Project:
 #: reads `state` at request time because the provider and the store are both
 #: built in `lifespan`, after this line has run.
 _gate = make_gate(lambda: state.provider, lambda: state.store)
+
+#: `/openapi.json`, `/docs`, `/docs/oauth2-redirect` and `/redoc` are OUTSIDE
+#: the gate and cannot be brought inside it: FastAPI registers them with
+#: `Starlette.add_route`, so they are plain `Route`s rather than `APIRoute`s and
+#: the router's dependencies never reach them. Left on, they hand the entire API
+#: surface — including the account-administration routes — to anybody who
+#: reaches the service, which is the exact thing verifying IAP's assertion
+#: exists to stop. Off outside dev, where the convenience is worth nothing to a
+#: stranger because there is nobody to be a stranger to.
+_DEV = dev_mode()
 app = FastAPI(title="Fence AI", version="0.1.0", lifespan=lifespan,
-              dependencies=[Depends(_gate)])
+              dependencies=[Depends(_gate)],
+              openapi_url="/openapi.json" if _DEV else None,
+              docs_url="/docs" if _DEV else None,
+              redoc_url="/redoc" if _DEV else None)
 
 
 def _now_iso() -> str:
@@ -2150,10 +2172,10 @@ def put_inventory(project_id: str, inventory: Inventory) -> Inventory:
     return inventory
 
 
-#: One account per capacity, so the sign-in screen has something to sign in AS
-#: on a fresh database. A shared password, because these are demo rows on a demo
-#: database and pretending otherwise would be theatre — a real deployment seeds
-#: its own accounts and these three never exist.
+#: One account per capacity, so a laptop and the browser smoke have somebody to
+#: BE on a fresh database. Written only under `FENCEAI_IDENTITY=dev` (see
+#: `lifespan`), so a real deployment never sees them and its first admin arrives
+#: through `FENCEAI_BOOTSTRAP_ADMIN` instead.
 DEMO_ACCOUNTS = [
     ("u_dana", "Dana", "dana@example.com", "sales"),
     ("u_yossi", "Yossi", "yossi@example.com", "backoffice"),
@@ -2163,8 +2185,9 @@ DEMO_PASSWORD = "demo"
 
 
 def _seed_demo_accounts() -> None:
-    """Only on an empty table. A company that has made its own accounts must
-    never find three strangers in the list after an upgrade."""
+    """Only on an empty table, and only in dev. A company that has made its own
+    accounts must never find three strangers in the list after an upgrade — and
+    under `iap` it must never find them at all."""
     if state.store.list_users():
         return
     for uid, name, email, capacity in DEMO_ACCOUNTS:
@@ -2228,7 +2251,7 @@ class BecomeRequest(BaseModel):
     email: str
 
 
-if os.environ.get("FENCEAI_IDENTITY", "").strip().lower() == "dev":
+if _DEV:
 
     @app.post("/api/dev/identity", status_code=204)
     def become(body: BecomeRequest) -> Response:
@@ -2250,6 +2273,11 @@ if os.environ.get("FENCEAI_IDENTITY", "").strip().lower() == "dev":
 def list_users(request: Request) -> list[dict]:
     """The people, for the assignee picker, the “sold by” filter and the
     admin's own panel."""
+    # Belt and braces, and kept deliberately although the gate has already
+    # resolved this caller: the day somebody adds a path to `EXEMPT_PATHS`, the
+    # route that hands out every account in the company is the one that must not
+    # quietly start answering. Nothing can assert this line while the gate
+    # stands, which is the point of it.
     current_user(request)
     return [_public(u) for u in state.store.list_users()]
 

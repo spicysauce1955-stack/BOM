@@ -55,6 +55,17 @@ _REFUSAL_CODE = {
 }
 
 
+def dev_mode() -> bool:
+    """Is this process running the stand-in identity?
+
+    Read at IMPORT by `api/app.py` for the two decisions that must be absences
+    rather than refusals — the impersonation route and the OpenAPI/docs routes.
+    A 404 for a route that exists still tells a stranger the shape of the thing
+    they found; a route that was never registered tells them nothing.
+    """
+    return os.environ.get("FENCEAI_IDENTITY", "").strip().lower() == "dev"
+
+
 def _bootstrap_address() -> str:
     return os.environ.get("FENCEAI_BOOTSTRAP_ADMIN", "").strip().lower()
 
