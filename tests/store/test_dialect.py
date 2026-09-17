@@ -57,6 +57,36 @@ def test_anything_else_is_a_sqlite_path(dsn):
     assert dialect_for(dsn) is SQLITE
 
 
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql+psycopg://u@h/db",  # a SQLAlchemy-style driver suffix
+        "postgre://u@h/db",  # a typo one character from working
+        "mysql://u@h/db",  # a database we do not speak
+        "https://example.invalid/db",  # a stale value from somewhere else
+    ],
+)
+def test_a_url_with_an_unknown_scheme_is_refused_not_read_as_a_filename(dsn):
+    """The failure this prevents does not look like a failure.
+
+    Treated as a SQLite path, every one of these boots a healthy, fully
+    seeded app on an empty file on the container's ephemeral disk: it serves
+    nobody's data and loses every write on redeploy, with nothing in any log
+    saying so. A refusal at startup is the cheap version of that news.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        dialect_for(dsn)
+    assert dsn.split("://")[0] in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "dsn", ["fenceai.db", "./data/x.db", "/var/lib/fenceai/x.db", ":memory:"]
+)
+def test_a_bare_path_is_still_a_path(dsn):
+    """The refusal keys on `<scheme>://`, so nothing without one is touched."""
+    assert dialect_for(dsn) is SQLITE
+
+
 def test_a_sqlite_conn_round_trips_a_row_through_question_marks():
     conn = Conn(":memory:")
     assert conn.dialect is SQLITE
@@ -163,6 +193,33 @@ def test_a_failing_rollback_never_hides_the_statement_that_failed():
         conn.execute("SELECT 1")
 
 
+#: Variables whose mere PRESENCE means "this is an automated build".
+#: `CI` alone was a GitHub Actions assumption: Cloud Build — the CI of the
+#: deployment this whole slice exists for — does not set it, so the guard
+#: below would have been silently inert in exactly the pipeline that matters
+#: most. Every name here is one no build agent leaves unset and no laptop
+#: sets, which is the property that keeps a developer's run green.
+_CI_MARKERS = (
+    "CI",                    # GitHub Actions, GitLab, CircleCI, Travis, and most others
+    "CONTINUOUS_INTEGRATION",
+    "BUILD_ID",              # Cloud Build, Jenkins
+    "GITHUB_ACTIONS",
+    "TF_BUILD",              # Azure Pipelines
+    "TEAMCITY_VERSION",
+)
+
+
+def running_in_ci() -> bool:
+    """CI is anything that says so, not just GitHub.
+
+    Presence rather than a value: `CI=true` is a GitHub Actions convention,
+    while Cloud Build's `BUILD_ID` carries a uuid and Azure's `TF_BUILD` says
+    `True` with a capital T. Asking for one exact string is how the guard
+    became specific to one provider in the first place.
+    """
+    return any(os.environ.get(name) for name in _CI_MARKERS)
+
+
 def test_ci_must_have_a_postgres():
     """In CI, a skipped Postgres half is a broken gate, not a quiet pass.
 
@@ -171,9 +228,28 @@ def test_ci_must_have_a_postgres():
     invisible: a dual-run suite with no server does not fail, it succeeds at
     half the work.
     """
-    if os.environ.get("CI") != "true":
+    if not running_in_ci():
         pytest.skip("only meaningful in CI")
     assert postgres_available(), (
         "CI must provide FENCEAI_TEST_POSTGRES and the postgres extra; "
         "without them every Postgres test skips and the gate proves nothing"
     )
+
+
+def test_the_ci_guard_recognises_more_than_github(monkeypatch):
+    """The guard is only worth having where it actually fires.
+
+    Keyed on `CI == "true"`, it skipped silently under Cloud Build, which is
+    this deployment's own pipeline — a gate that proves nothing and says
+    nothing. The other half of the property is asserted too: a laptop with
+    none of these set must still skip, or every developer's run goes red for
+    an environment they never claimed to be in.
+    """
+    for name in _CI_MARKERS:
+        monkeypatch.delenv(name, raising=False)
+    assert not running_in_ci()          # a laptop is never CI
+
+    for name in _CI_MARKERS:
+        monkeypatch.setenv(name, "some-build-4711")
+        assert running_in_ci(), f"{name} must be recognised as CI"
+        monkeypatch.delenv(name)

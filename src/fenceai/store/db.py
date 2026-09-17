@@ -797,8 +797,16 @@ class Store:
         second must not swap between two reads. A row written before the stamp
         existed sorts first, which is where it belongs, being older than
         anything stamped.
+
+        `NULLS FIRST` is spelled out because the two databases disagree by
+        DEFAULT: SQLite sorts NULLs first ascending, Postgres sorts them last.
+        Left implicit, importing the pilot's SQLite data into Cloud SQL — the
+        entire point of the dialect shim — would silently move every unstamped
+        turn from the top of its thread to the bottom. Both databases accept
+        the explicit form, so this is one spelling, not a dialect difference.
         """
-        order = f"ORDER BY {self._conn.dialect.json_field('doc', 'created_at')}, id"
+        stamp = self._conn.dialect.json_field("doc", "created_at")
+        order = f"ORDER BY {stamp} NULLS FIRST, id"
         if project_id:
             rows = self._conn.execute(
                 f"SELECT doc FROM corrections WHERE project_id=? {order}", (project_id,)

@@ -43,14 +43,17 @@ class Dialect:
     serial_pk: str
     #: Statements run before the schema, if any.
     prelude: str
-    #: True when `?` must become `%s`.
-    _rewrite_placeholders: bool
+    #: Which database this is. Named for the DATABASE rather than for one
+    #: of its consequences: it decides two independent things — whether
+    #: `?` becomes `%s` AND which JSON operator to write — and a name
+    #: describing only the first makes the second read like a bug.
+    is_postgres: bool
 
     def placeholders(self, sql: str) -> str:
-        return sql.replace("?", "%s") if self._rewrite_placeholders else sql
+        return sql.replace("?", "%s") if self.is_postgres else sql
 
     def json_field(self, col: str, key: str) -> str:
-        if self._rewrite_placeholders:
+        if self.is_postgres:
             return f"{col}::jsonb->>'{key}'"
         # Concatenated rather than an f-string: `$` immediately before `{`
         # reads as a bug every time somebody re-reads it.
@@ -61,14 +64,14 @@ SQLITE = Dialect(
     name="sqlite",
     serial_pk="INTEGER PRIMARY KEY AUTOINCREMENT",
     prelude="PRAGMA journal_mode=WAL;",
-    _rewrite_placeholders=False,
+    is_postgres=False,
 )
 
 POSTGRES = Dialect(
     name="postgres",
     serial_pk="BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY",
     prelude="",
-    _rewrite_placeholders=True,
+    is_postgres=True,
 )
 
 #: What `FENCEAI_DB` looks like when it names a server rather than a file.
@@ -80,7 +83,21 @@ def dialect_for(dsn: str) -> Dialect:
 
     A URL scheme rather than a flag, so one variable carries both the choice
     and the address and the two can never disagree.
+
+    A DSN that LOOKS like a URL but names a scheme this module does not know
+    is refused rather than read as a filename. `postgresql+psycopg://…`, a
+    typo, or a stale value would otherwise be taken for a relative SQLite
+    path: the app boots healthy, seeds itself onto the container's ephemeral
+    disk, serves nobody's data, and loses every write at the next redeploy —
+    a silent wrong answer where a refusal at startup costs one line in a log.
+    A bare path is still a path; only `<scheme>://` triggers the check.
     """
+    scheme, sep, _ = dsn.partition("://")
+    if sep and f"{scheme}://" not in _POSTGRES_SCHEMES:
+        raise ValueError(
+            f"unknown database URL scheme {scheme!r}: expected one of "
+            f"{', '.join(_POSTGRES_SCHEMES)} or a SQLite file path"
+        )
     return POSTGRES if dsn.startswith(_POSTGRES_SCHEMES) else SQLITE
 
 
@@ -128,6 +145,23 @@ class Conn:
 
         The error always propagates; a rollback that fails itself is
         swallowed so it cannot stand in front of the exception that matters.
+
+        Handing back the driver's raw cursor — rather than wrapping it — is
+        safe while four things hold, and each is checkable by reading
+        `store/db.py`:
+
+        1. every column is TEXT or INTEGER, so no type adapter differs
+           between the drivers (no DATE, NUMERIC, BLOB or JSON column);
+        2. `fetchone()`/`fetchall()` is called only on a statement that
+           returns rows — psycopg raises on a non-returning one where
+           `sqlite3` answers `None`;
+        3. `rowcount` is read only after DML, never after a SELECT, where
+           psycopg reports it before the rows have been consumed;
+        4. `Conn` stays one cursor per `execute`, so no two result sets are
+           ever live at once and a cursor is never reused after the next
+           statement has moved on.
+
+        Break any of them and the wrapper stops being optional.
         """
         try:
             return self._raw.execute(self.dialect.placeholders(sql), params)
