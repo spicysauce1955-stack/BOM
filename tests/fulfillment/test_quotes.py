@@ -81,3 +81,16 @@ def test_quote_ids_are_append_only(store, backend):
 
     with pytest.raises(error):
         store.save_quote(q)  # same id can never be overwritten
+
+    # A refused write must cost the caller that one write and nothing else.
+    # psycopg runs an implicit transaction and an error ABORTS it: until
+    # somebody rolls back, every later statement — reads included — raises
+    # `InFailedSqlTransaction`. `Store` holds one process-wide connection, so
+    # without the rollback in `Conn.execute` a single duplicate id turns the
+    # whole app into a 500 machine until the process is replaced. Asserted
+    # after the refusal rather than at `pytest.raises`, because a suite that
+    # stops at the exception is exactly how that survived 3806 green tests.
+    assert store.load_quote(q.id).id == q.id  # a read still works
+    fresh = make_quote(label="after the refusal")
+    store.save_quote(fresh)  # and a legitimate write still lands
+    assert store.load_quote(fresh.id).label == "after the refusal"

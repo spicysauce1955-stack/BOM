@@ -101,6 +101,68 @@ def test_a_postgres_conn_round_trips_a_row_through_rewritten_placeholders(pg_dsn
     conn.close()
 
 
+def _refused_insert_leaves_the_connection_usable(conn):
+    """One refused statement, then a read and a write that must still work.
+
+    Shared by both backends on purpose: this is a PARITY claim, not a
+    Postgres workaround. The rollback in `Conn.execute` is what makes the
+    claim true on Postgres (where the aborted transaction would otherwise
+    refuse every later statement) and what makes it honest on SQLite (where
+    the pending insert would otherwise ride into a later `commit()`).
+    """
+    conn.executescript("CREATE TABLE t (id TEXT PRIMARY KEY, doc TEXT);")
+    conn.execute("INSERT INTO t (id, doc) VALUES (?,?)", ("a", "first"))
+    conn.commit()
+
+    with pytest.raises(Exception):  # each driver names it differently
+        conn.execute("INSERT INTO t (id, doc) VALUES (?,?)", ("a", "dupe"))
+
+    assert conn.execute("SELECT doc FROM t WHERE id=?", ("a",)).fetchone()[0] == "first"
+    conn.execute("INSERT INTO t (id, doc) VALUES (?,?)", ("b", "second"))
+    conn.commit()
+    assert conn.execute("SELECT doc FROM t WHERE id=?", ("b",)).fetchone()[0] == "second"
+    # The refused row is not resurrected by the later commit.
+    assert conn.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 2
+
+
+def test_a_refused_statement_does_not_brick_a_sqlite_conn(tmp_path):
+    conn = Conn(str(tmp_path / "refused.db"))
+    try:
+        _refused_insert_leaves_the_connection_usable(conn)
+    finally:
+        conn.close()
+
+
+def test_a_refused_statement_does_not_brick_a_postgres_conn(pg_dsn):
+    """Without the rollback this raises `InFailedSqlTransaction` on the READ.
+
+    `Store` holds one connection for the life of the process, so that
+    exception is not one bad request — it is every request after it.
+    """
+    conn = Conn(pg_dsn)
+    try:
+        _refused_insert_leaves_the_connection_usable(conn)
+    finally:
+        conn.close()
+
+
+def test_a_failing_rollback_never_hides_the_statement_that_failed():
+    """The original error is the one worth reporting, always."""
+
+    class Broken:
+        def execute(self, sql, params):
+            raise RuntimeError("the statement the caller needs to hear about")
+
+        def rollback(self):
+            raise RuntimeError("and a rollback that fails on top of it")
+
+    conn = Conn(":memory:")
+    conn._raw.close()
+    conn._raw = Broken()
+    with pytest.raises(RuntimeError, match="the caller needs to hear about"):
+        conn.execute("SELECT 1")
+
+
 def test_ci_must_have_a_postgres():
     """In CI, a skipped Postgres half is a broken gate, not a quiet pass.
 

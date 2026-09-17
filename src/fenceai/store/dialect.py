@@ -108,7 +108,35 @@ class Conn:
             self._raw = psycopg.connect(dsn)
 
     def execute(self, sql: str, params: tuple = ()):
-        return self._raw.execute(self.dialect.placeholders(sql), params)
+        """Run one statement, and roll back if it is refused.
+
+        The rollback is not tidiness, it is the difference between one failed
+        write and a dead process. psycopg runs an implicit transaction and an
+        error ABORTS it: every later statement, reads included, then raises
+        `InFailedSqlTransaction: current transaction is aborted, commands
+        ignored until end of transaction block` until somebody rolls back.
+        `Store` holds ONE connection for the whole process and the deployment
+        pins Cloud Run to one instance, so without this a single duplicate
+        quote id or repeated email would turn the app into a 500 machine —
+        for reads too — until the container was replaced.
+
+        It earns its place on SQLite as well, where the failure is quieter
+        and worse: a refused statement leaves whatever was uncommitted before
+        it still pending, to be swept into some LATER call's `commit()` as if
+        it had been asked for. Rolling back here means a refused write costs
+        the caller that write and nothing else, on both databases.
+
+        The error always propagates; a rollback that fails itself is
+        swallowed so it cannot stand in front of the exception that matters.
+        """
+        try:
+            return self._raw.execute(self.dialect.placeholders(sql), params)
+        except Exception:
+            try:
+                self._raw.rollback()
+            except Exception:
+                pass  # never let a failed rollback hide the real failure
+            raise
 
     def executescript(self, sql: str) -> None:
         """Several statements at once, for schema creation only.
