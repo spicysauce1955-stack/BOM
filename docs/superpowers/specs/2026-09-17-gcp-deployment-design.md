@@ -202,6 +202,16 @@ architecture decision taken under pressure.
 > sites. A login screen in front of an open API is worse than none, because it
 > answers "is this protected?" with a convincing yes.
 
+> **Expanded, 2026-09-17.** This section is now the deployment-level summary.
+> The full design is `2026-09-17-identity-is-googles-design.md`, which is bigger
+> than what follows in three ways decided with the product owner: slice 2 also
+> closes the other 70 routes with one app-level dependency; `DevIdentity` reads a
+> dev-only cookie set by a no-password picker, not just an env var; and the slice
+> ships the two routes and the screen that let an admin grant a capacity, without
+> which the bootstrap admin is the only person who could ever use the system.
+> `IapIdentity` moves from slice 4 to slice 2 with it. Where the two documents
+> disagree, that one is newer and wins.
+
 The perimeter answer is **Identity-Aware Proxy**: nobody reaches the app without
 a Google account the company has allowed. That alone would have been enough to
 deploy safely. The product owner asked for more, and was right to:
@@ -232,8 +242,12 @@ spoken for, and this document does not borrow it.
 
 **Leaves:** `password_hash`, `set_password`, `verify_password`, the `sessions`
 table, `identity/session.py`, the `fenceai_session` cookie, `POST /api/session`,
-`DELETE /api/session`, the sign-in form in `web/static/js/session.js`, and
-`_seed_demo_accounts` with its shared `demo` password. This is a net deletion:
+`DELETE /api/session`, the sign-in form in `web/static/js/session.js`, and the shared `demo`
+password. (`_seed_demo_accounts` itself was on this list and has since been
+taken off it: the expanded design keeps the three rows, passwordless, because
+the objection was the shared password and a credential-less row is inert under
+IAP — `example.com` is IANA-reserved, so nobody can ever authenticate as one.
+They are what keeps a fresh laptop and the browser smoke in personas.) This is a net deletion:
 the hardening that block would otherwise have needed stops being necessary
 rather than getting done.
 
@@ -349,11 +363,16 @@ checkpoint.
    only on the implementer's laptop; the app still boots on SQLite with zero
    setup.
 
-2. **Identity becomes Google's.** The port, `DevIdentity`, every deletion in
-   §5.2, `User.subject`, the bootstrap admin, `GET /api/session`, the frontend
-   sign-in screen becoming an identity banner, and both locale bundles.
-   *Checkpoint:* locally, `FENCEAI_DEV_USER=dana@…` opens on the sales view; an
-   unknown address is refused; no password exists anywhere in the codebase.
+2. **Identity becomes Google's, and the doors lock.** The port, `DevIdentity`
+   *and* `IapIdentity`, every deletion in §5.2, `User.subject`, the bootstrap
+   admin, `GET /api/session`, the sign-in form becoming a no-password picker,
+   both locale bundles — plus the app-level dependency that closes the other 70
+   routes, and the two routes and panel by which an admin grants a capacity.
+   Designed in full in `2026-09-17-identity-is-googles-design.md`.
+   *Checkpoint:* locally, the picker opens Dana on the sales view; an unknown
+   address is refused to a screen that says to ask an admin; an admin grants a
+   capacity and the person it was granted to gets in; no password exists
+   anywhere in the codebase.
 
 3. **Container and local Postgres.** Dockerfile, `$PORT`, run against a real
    Postgres on the machine. *Checkpoint:* build a fence and generate a run, on
@@ -394,9 +413,12 @@ as surprises:
 - **Unpinning `max-instances`.** Prerequisite: the fourteen read-modify-write
   sites of §3 become conditional updates that 409 on a stale write. Until that exists, the
   pin is load-bearing and must not be raised "to see if it helps".
-- **Gating the other 68 routes.** IAP is a perimeter, not authorization. The app
-  is not safe on its own, and `capacity` is read by 4 routes out of 74. This is
-  what makes a second company possible, and it is a slice of its own.
+- **Per-capacity authorization.** Closing the routes is slice 2's; deciding
+  which capacity each route wants is not. IAP is a perimeter and default-deny is
+  a door — neither says a salesperson may not do what the backoffice does. The
+  dependency, the refusal codes and the fitness test exist after slice 2, so
+  this becomes a matter of naming a capacity per route. It is what makes a
+  second company possible, and it is a slice of its own.
 - **Multi-tenancy.** There is no tenant concept in the data model. A second
   company is a product change before it is a deployment change, and every
   decision in §2 would be reconsidered.
