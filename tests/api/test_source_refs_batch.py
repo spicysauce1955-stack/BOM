@@ -24,8 +24,8 @@ REF_7 = "sref_00000000000000000000000000000007"  # derived, no document, no imag
 # Same fixture pattern as tests/api/test_parts_routes.py: the store only exists
 # inside the app's lifespan, and each test gets its own scratch DB.
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "test.db"))
+def client(dsn, monkeypatch):
+    monkeypatch.setenv("FENCEAI_DB", dsn)
     monkeypatch.setenv("FENCEAI_AI", "stub")
     with TestClient(app) as c:
         yield c

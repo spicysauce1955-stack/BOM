@@ -22,7 +22,7 @@ from fenceai.api.app import app
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
+def client(dsn, monkeypatch):
     """Its own database, and NOT because this test writes anything unusual.
 
     `seed_fence_models` is keyed on `(id, version)` and never overwrites, which
@@ -33,7 +33,7 @@ def client(tmp_path, monkeypatch):
     recorded: its red was not evidence and neither was its green. Writing this
     test found the same store serving a stale document, in under a minute.
     """
-    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "quoted.db"))
+    monkeypatch.setenv("FENCEAI_DB", dsn)
     monkeypatch.setenv("FENCEAI_AI", "stub")
     with TestClient(app) as c:
         yield c

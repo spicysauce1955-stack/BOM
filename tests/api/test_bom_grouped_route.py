@@ -76,11 +76,11 @@ def test_the_grouped_bom_survives_a_topology_the_run_was_not_generated_from():
 
 
 @pytest.fixture()
-def isolated_client(tmp_path, monkeypatch):
+def isolated_client(dsn, monkeypatch):
     """Own database, because the test below EDITS the catalog and the knowledge
     base — a product with an 800 mm stock length left in the shared demo store
     would change what every later test priced."""
-    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "grouped.db"))
+    monkeypatch.setenv("FENCEAI_DB", dsn)
     monkeypatch.setenv("FENCEAI_AI", "stub")
     with TestClient(app) as c:
         yield c
