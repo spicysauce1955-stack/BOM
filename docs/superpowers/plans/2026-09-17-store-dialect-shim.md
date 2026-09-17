@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let `Store` speak Postgres as well as SQLite, with the ~350 tests that open a database running against both, so the deployed dialect cannot drift from the tested one.
+**Goal:** Let `Store` speak Postgres as well as SQLite, with the ~390 tests that open a database running against both, so the deployed dialect cannot drift from the tested one.
 
 **Architecture:** One `Dialect` value object holds the four places the two databases disagree, and one `Conn` wrapper owns the connection and translates SQL on the way through. `store/db.py` keeps all 63 of its SQL strings exactly as written — the `?` placeholders included — because no SQL string in the file contains a literal `?` or `%`, so translation at a single choke point is safe. `FENCEAI_DB` picks the backend: a value starting `postgres://` or `postgresql://` means Postgres, anything else is a SQLite path.
 
@@ -15,6 +15,7 @@
 - **Integer millimetres and cents at rest** (ADR-0002). This port introduces no numeric type conversion anywhere: every `doc` column is JSON text today and stays JSON text.
 - **No behaviour change on SQLite.** After every task, `uv run pytest -q` must be green with no Postgres server present. SQLite remains the zero-setup default — CLAUDE.md's offline property is not spent here.
 - **`@_serialized` stays.** Every public `Store` method is wrapped by the class decorator so each call is atomic under one `RLock`. Nothing in this plan removes, weakens or bypasses that. See `store/db.py:100-153` for why it exists.
+- **Measured against `origin/main` at `f4c2fb4`** on 2026-09-17. `store/db.py` is byte-identical to the tree the spec was written from, so every count in this plan about the store holds; the suite-wide counts were re-measured (3114 test functions, 28 `TestClient` files, ~340 API tests).
 - **One connection, not a pool.** See "Deviations from the spec" below.
 - **Commit after every task.** Do not batch.
 - **Never `git add -A`** — another session commits in this repo. Stage the exact paths each task names.
@@ -41,7 +42,7 @@ Two things in the spec do not survive contact with the code. Both are flagged he
 | `src/fenceai/store/db.py` **(modify)** | Uses `Conn` instead of `sqlite3.connect`. Its 63 SQL strings are untouched except two `INSERT OR IGNORE` and one `json_extract`. |
 | `tests/store/test_dialect.py` **(create)** | The dialect's string behaviour — pure, no database, no server. |
 | `tests/conftest.py` **(modify)** | `postgres_available()`, and the `pg_dsn`, `backend` and `dsn` fixtures. Shared by every directory that opens a database. |
-| `tests/api/conftest.py` **(modify)** | The existing autouse `_isolated_store` gains the backend parameter — the single seam through which all ~297 API tests dual-run. |
+| `tests/api/conftest.py` **(modify)** | The existing autouse `_isolated_store` gains the backend parameter — the single seam through which all ~340 API tests dual-run. |
 | `tests/store/conftest.py` **(create)** | A `store` fixture so the nine dual-running files stop calling `Store(":memory:")` themselves. |
 | `pyproject.toml` **(modify)** | `postgres` optional extra; `postgres` pytest marker. |
 | `.github/workflows/tests.yml` **(create, Task 7)** | Runs the suite twice-over with a Postgres service container. |
@@ -869,7 +870,7 @@ git commit -m "test: the store suites run on both backends"
 
 ---
 
-## Task 6: The ~297 API tests dual-run
+## Task 6: The ~340 API tests dual-run
 
 One fixture is the seam for all of them.
 
@@ -918,7 +919,7 @@ Expected: the same passes as before, plus an equal number of skips.
 uv run pytest tests/api -q
 ```
 
-Expected: roughly 594 passing. Watch for tests that set `FENCEAI_DB` themselves — the original docstring says a test wanting particular contents "still sets `FENCEAI_DB` itself in its own fixture; `monkeypatch` is function-scoped and the later setting wins". Any such test now pins itself to SQLite while still running twice, so its Postgres run is a duplicate rather than a failure. Find them and decide per test:
+Expected: roughly 680 passing. Watch for tests that set `FENCEAI_DB` themselves — the original docstring says a test wanting particular contents "still sets `FENCEAI_DB` itself in its own fixture; `monkeypatch` is function-scoped and the later setting wins". Any such test now pins itself to SQLite while still running twice, so its Postgres run is a duplicate rather than a failure. Find them and decide per test:
 
 ```bash
 grep -rn "FENCEAI_DB" tests/api/

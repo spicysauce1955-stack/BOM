@@ -13,7 +13,7 @@ reinvent.
 
 ## Why this document exists
 
-The engine runs on a laptop. It has 71 routes, 2880 tests, a golden-scenario
+The engine runs on a laptop. It has 74 routes, 3114 tests, a golden-scenario
 gate and a frozen integration contract — and no way for a fencing company to
 open it. This says how it gets to GCP, what has to change in the code before it
 can go, and what each of those changes costs.
@@ -142,9 +142,9 @@ single connection and its lock. Local and deployed then differ by one variable.
 
 **Both backends stay.** Deleting SQLite would mean that running the app, or the
 suite, requires a database daemon — spending the offline property for nothing.
-The numbers make keeping it cheap: of 2880 test functions, only 23 files spin the
-app through `TestClient` (~297 tests) and 10 files touch `Store` directly. About
-350 tests — 12% — ever open a database. The other ~2500 are pure domain tests
+The numbers make keeping it cheap: of 3114 test functions, only 28 files spin the
+app through `TestClient` (~340 tests) and 10 files touch `Store` directly. About
+390 tests — 12% — ever open a database. The other ~2700 are pure domain tests
 that will not notice a port at all.
 
 So: those ~350 are parameterized over both backends. SQLite in-memory always;
@@ -165,13 +165,21 @@ architecture decision taken under pressure.
 > a `__Host`-prefixed cookie" and that "all 71 routes answer anyone who knows the
 > URL." Both are wrong. The cookie is named `fenceai_session` — a plain name
 > prefix, not the browser's `__Host-` prefix — and is set without `secure=True`.
-> And `_require_user` gates **3** of 71 routes, not none. The substance survives
+> And `_require_user` gates **4** of 74 routes, not none. The substance survives
 > both errors: every project, topology, run and quote route is among the other
-> 68, and `api/app.py:1947` says so outright — *"Most routes are still open —
+> 70, and `api/app.py:2173` says so outright — *"Most routes are still open —
 > accounts RECORD here, they do not yet gate."* On a laptop that is a sensible
 > stage. On a public URL holding a company's real customer sites it is the
 > blocker, and no test would catch it, because every test is already "signed in"
 > in the only sense the app has.
+>
+> **Re-measured on 2026-09-17** against a main that was 18 commits newer than
+> the one the first draft read. The counts above are the current ones. The
+> finding got sharper, not weaker: PR #6 ("login-first and street") shipped a
+> front door, so the app now *shows* a sign-in screen. That screen is a page,
+> not a guard — still no middleware, no `Depends`, four `_require_user` call
+> sites. A login screen in front of an open API is worse than none, because it
+> answers "is this protected?" with a convincing yes.
 
 The perimeter answer is **Identity-Aware Proxy**: nobody reaches the app without
 a Google account the company has allowed. That alone would have been enough to
@@ -281,7 +289,7 @@ removed after. `ANTHROPIC_API_KEY` mounted as a Secret Manager reference, never
 an env literal in the service YAML. `.env.example` gains `FENCEAI_IDENTITY=dev`
 and `FENCEAI_DEV_USER=`.
 
-**Release.** GitHub Actions on merge to `main`: `uv run pytest -q` — all 2880,
+**Release.** GitHub Actions on merge to `main`: `uv run pytest -q` — all 3114,
 with the ~350 dual-run against a Postgres service container — then build, push to
 Artifact Registry, `gcloud run deploy`. The scenario suite is the gate it already
 is; deploying is simply what happens after green. Cloud Run retains the previous
@@ -355,7 +363,7 @@ as surprises:
   sites of §3 become conditional updates that 409 on a stale write. Until that exists, the
   pin is load-bearing and must not be raised "to see if it helps".
 - **Gating the other 68 routes.** IAP is a perimeter, not authorization. The app
-  is not safe on its own, and `capacity` is read by 3 routes out of 71. This is
+  is not safe on its own, and `capacity` is read by 4 routes out of 74. This is
   what makes a second company possible, and it is a slice of its own.
 - **Multi-tenancy.** There is no tenant concept in the data model. A second
   company is a product change before it is a deployment change, and every
