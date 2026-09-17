@@ -239,7 +239,18 @@ No Postgres yet. The whole suite must stay green, which is what proves the refac
 
 **Interfaces:**
 - Consumes: `Dialect`, `SQLITE`, `POSTGRES`, `dialect_for` from Task 1.
-- Produces: `Conn(dsn: str)` with attributes `dialect: Dialect` and methods `execute(sql: str, params: tuple = ()) -> cursor`, `executescript(sql: str) -> None`, `commit() -> None`, `close() -> None`. `Store.__init__` keeps its signature `(self, path: str = ":memory:")`.
+- Produces: `Conn(dsn: str)` with attributes `dialect: Dialect` and methods `execute(sql: str, params: tuple = ()) -> cursor`, `executescript(sql: str) -> None`, `commit() -> None`, `rollback() -> None`, `close() -> None`. `Store.__init__` keeps its signature `(self, path: str = ":memory:")`.
+
+> **`rollback()` was missing from this list when the plan was written, and the
+> full suite is what found it.** `db.py` calls `self._conn.rollback()` in four
+> error-handling paths (lines 269, 288, 654, 891) — `replace_active_version`,
+> `apply_review_outcome`, `set_part_status` and `accept_quote` all wrap a
+> read-then-write in `try/except/rollback`. A `Conn` without it raises
+> `AttributeError` inside an exception handler, which is the worst place to
+> learn about it: the original error is replaced by a confusing one. The
+> reproducing test was
+> `test_a_failed_activation_leaves_no_retired_predecessor_behind`. Delegate it
+> exactly as `commit` and `close` delegate.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -842,9 +853,12 @@ def store(dsn):
         s.close()
 ```
 
-- [ ] **Step 3: Replace each `Store(":memory:")` with the fixture**
+- [ ] **Step 3: Convert each construction site — but there are TWO shapes, not one**
 
-In each of the nine test files, delete the local construction and take `store` as a parameter. A test that reads
+A survey of the 43 `Store(...)` call sites found two distinct patterns, and only
+the first takes the `store` fixture.
+
+**Shape A — one store, used and discarded.** These take `store`:
 
 ```python
 def test_something():
@@ -859,7 +873,49 @@ def test_something(store):
     store.save_part(...)
 ```
 
-Where a file builds a `Store` inside its own fixture, change that fixture to depend on `store` and return it rather than constructing one. Remove the now-unused `from fenceai.store.db import Store` import from any file that no longer names it.
+Where a file builds its `Store` inside its own fixture, change that fixture to
+depend on `store` and return it rather than constructing one. Remove the
+now-unused `from fenceai.store.db import Store` import from any file that no
+longer names it.
+
+**Shape B — close, then reopen the same database.** These CANNOT take `store`,
+because the thing under test is what a second `Store` sees in the first one's
+database:
+
+```python
+def test_reopening_a_store_does_not_overwrite_an_edited_part(tmp_path):
+    path = str(tmp_path / "t.db")
+    store = Store(path)
+    ...
+    store.close()
+    reopened = Store(path)
+    assert reopened.load_part("rail-rail-3000", 1).status == "retired"
+```
+
+These take **`dsn`** instead and keep building their own stores:
+
+```python
+def test_reopening_a_store_does_not_overwrite_an_edited_part(dsn):
+    store = Store(dsn)
+    ...
+    store.close()
+    reopened = Store(dsn)
+    assert reopened.load_part("rail-rail-3000", 1).status == "retired"
+```
+
+This works on both backends: `pg_dsn` hands out a schema that outlives any one
+connection and is dropped only when the test ends. It is also the more valuable
+half of the dual-run — seeding idempotence across a reopen is exactly where a
+second database could diverge, since `seed_parts` and `seed_fence_models` run
+in every `Store.__init__`.
+
+Known Shape B sites: `tests/parts/test_migration.py` (lines ~310, ~316, ~330,
+~335, ~355, ~361) and `tests/store/test_fence_models.py` (~104, ~132, ~139).
+Verify by reading rather than trusting these line numbers — the files move.
+
+Files whose sites are already file-backed (`Store(str(tmp_path / "t.db"))`) but
+never reopen — `tests/parts/test_resolve.py`, `tests/store/test_parts_store.py`
+— are Shape A: the `tmp_path` was isolation, not persistence.
 
 - [ ] **Step 4: Leave `tests/store/test_concurrent_access.py` on SQLite**
 
@@ -947,20 +1003,71 @@ Expected: the same passes as before, plus an equal number of skips.
 uv run pytest tests/api -q
 ```
 
-Expected: roughly 680 passing. Watch for tests that set `FENCEAI_DB` themselves — the original docstring says a test wanting particular contents "still sets `FENCEAI_DB` itself in its own fixture; `monkeypatch` is function-scoped and the later setting wins". Any such test now pins itself to SQLite while still running twice, so its Postgres run is a duplicate rather than a failure. Find them and decide per test:
+Expected: roughly 680 passing — but it will NOT be, until Step 5 is done. Read on.
 
-```bash
-grep -rn "FENCEAI_DB" tests/api/
+The original docstring says a test wanting particular contents "still sets
+`FENCEAI_DB` itself in its own fixture; `monkeypatch` is function-scoped and the
+later setting wins". Eleven files in `tests/api/` do exactly that, each in its own
+`client` fixture. Those tests now run twice and pin themselves to SQLite both
+times — a duplicate, not a failure, which is the worst kind of green: the test
+count doubles while the Postgres coverage does not.
+
+- [ ] **Step 5: Convert the eleven self-pinning API files**
+
+One shape, eleven times. Each has a fixture like:
+
+```python
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("FENCEAI_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("FENCEAI_AI", "stub")
+    with TestClient(app) as c:
+        yield c
 ```
 
-- [ ] **Step 5: Run the whole suite and the gate**
+Take `dsn` instead of building a path:
+
+```python
+@pytest.fixture()
+def client(dsn, monkeypatch):
+    monkeypatch.setenv("FENCEAI_DB", dsn)
+    monkeypatch.setenv("FENCEAI_AI", "stub")
+    with TestClient(app) as c:
+        yield c
+```
+
+Drop `tmp_path` from the signature only if nothing else in the fixture uses it.
+
+The eleven, found with `grep -rn "FENCEAI_DB" tests/api/`:
+`test_api.py`, `test_parts_routes.py`, `test_bay_preview.py`, `test_stated_route.py`,
+`test_bom_grouped_route.py`, `test_catalog_staleness.py`, `test_quoted_warnings_routes.py`,
+`test_authoring_gaps.py`, `test_source_refs_batch.py`, `test_fence_model_routes.py`,
+`test_commit_plan.py`.
+
+Four files OUTSIDE `tests/api/` also pin `FENCEAI_DB` — `tests/decisions/
+test_supply_explanation.py`, `tests/scenarios/test_s17_section_conversation.py`,
+`tests/web/test_panel_model_module.py`, `tests/strategy/test_review_regressions.py`.
+**Leave all four alone.** They are not under `tests/api/conftest.py`, so they were
+never dual-running; converting them would pull the scenario gate and the web
+suite onto a database they have no reason to need. `test_s17` in particular
+carries a docstring about having been burned by an ambient database once already.
+
+- [ ] **Step 6: Re-run the API suite on both**
+
+```bash
+uv run pytest tests/api -q
+```
+
+Expected: roughly 680 passing, and now genuinely half of them on Postgres.
+
+- [ ] **Step 7: Run the whole suite and the gate**
 
 ```bash
 uv run pytest -q
 uv run pytest tests/scenarios -q
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add tests/api
