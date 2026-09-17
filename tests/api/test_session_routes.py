@@ -82,17 +82,35 @@ def _last_actor_for(action: str) -> str:
 
 def test_the_identity_names_the_actor_and_the_query_string_cannot(client):
     """The rule this is here to hold: an actor a client can NAME is not an audit
-    trail. Twelve routes took `?author=` and handed it straight to the store, so
-    anybody could sign the log as anybody. The resolved caller outranks it —
-    and, now that there is no anonymous case, is the only answer."""
+    trail. Before Task 7, eleven routes took `author` — either as a `?author=`
+    query parameter, or as an `author` field on a request DTO
+    (`AnnotationCreate`, `QuoteCreate`, `CorrectionCreate`, `KnowledgeCreate`)
+    — and handed it straight to `_actor`'s `fallback` argument, so a client
+    could try to sign the log as anybody. That argument is gone now, along with
+    all eleven parameters, so a client naming an actor is not merely
+    outranked, it lands on nothing: FastAPI silently drops an unrecognised
+    query parameter, and pydantic silently drops an unrecognised body field
+    (its default `extra="ignore"`) — neither is a 422, and neither reaches
+    the store."""
     _row("writer@example.com", "admin", id="u_writer")
     _as(client, "writer@example.com")
 
     project = client.post("/api/projects", json={"name": "actor test"}).json()
+
+    # The query-string shape, on a route that never had an `author` parameter.
     r = client.put(f"/api/projects/{project['id']}/site",
                    json={"exposure_category": "C"}, params={"author": "somebody-else"})
     assert r.status_code == 200
     assert _last_actor_for("save_project") == "user:u_writer"
+
+    # The body-field shape: `AnnotationCreate.author` used to feed the same
+    # dead fallback and was deleted in Task 7. A client naming one in the JSON
+    # body is silently ignored, never honoured as the annotation's author.
+    ann = client.post(f"/api/projects/{project['id']}/annotations",
+                       json={"target_ref": "run:r1", "text": "note",
+                             "author": "somebody-else"})
+    assert ann.status_code == 200
+    assert ann.json()["author"] == "user:u_writer"
 
 
 def test_the_creator_is_the_caller_so_the_job_lands_on_their_own_screen(client):

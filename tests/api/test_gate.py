@@ -626,3 +626,32 @@ def test_dev_keeps_the_schema_and_the_switch(monkeypatch):
     dev = _app_module_under(monkeypatch, "dev")
     assert dev.app.openapi_url == "/openapi.json"
     assert {"/openapi.json", "/docs", "/redoc", "/api/dev/identity"} <= _paths(dev)
+
+
+def test_no_route_still_lets_a_caller_name_the_actor():
+    """`_actor`'s docstring called it: "an actor a client can NAME is not an
+    audit trail". The parameter survived only as the fallback for the
+    unsigned-in case, and default-deny deleted that case.
+
+    Checks both shapes this took: a bare `author: str = "..."` route
+    parameter (read from the query string), and an `author` field on one of
+    app.py's own request DTOs (`AnnotationCreate`, `QuoteCreate`,
+    `CorrectionCreate`, `KnowledgeCreate`) that was spread or passed into
+    `_actor`'s now-dead `fallback` argument. It does NOT flag `Override.author`
+    or `Selection.author` — those are genuine domain fields (who chose or
+    overrode something) that never touched `_actor` and must survive; a check
+    that flagged every model with a field named "author" would be too broad to
+    mean anything and would have to be silenced rather than satisfied."""
+    import inspect
+    offenders = []
+    for route in app_module.app.routes:
+        fn = getattr(route, "endpoint", None)
+        if fn is None:
+            continue
+        if "author" in inspect.signature(fn).parameters:
+            offenders.append(f"{route.path} ({fn.__name__}): param 'author'")
+    for dto_name in ("AnnotationCreate", "QuoteCreate", "CorrectionCreate", "KnowledgeCreate"):
+        dto = getattr(app_module, dto_name)
+        if "author" in dto.model_fields:
+            offenders.append(f"{dto_name}.author")
+    assert not offenders, offenders
