@@ -80,10 +80,25 @@ answers with two different owners.
 because that is exactly how this repository arrived at 70 of 74 routes silently
 unprotected: retrofitting a cross-cutting concern one call site at a time is how
 a feature outruns its own enforcement, and the next route added after this ADR
-would need the same discipline reapplied by memory. One `Depends` on the app
-means a route is gated by construction, and `test_every_api_route_is_gated_by_the_app_itself`
-plus the exempt-list tests are what keep that true structurally instead of by
-habit.
+would need the same discipline reapplied by memory. One `Depends` on the app is
+what makes a route gated *by construction* — but keeping that true structurally,
+rather than by habit, took two separate fitness tests, not one, and the reason
+it took two is itself worth recording: an app-level assertion
+(`app.router.dependencies` is non-empty) is a property of the app object, true
+regardless of how any particular route got registered, so it cannot by itself
+catch a route that bypassed the normal path. This slice shipped exactly that
+gap once — `/openapi.json`, `/docs` and `/redoc` answered anonymously for
+several commits, because FastAPI registers them with `Starlette.add_route`
+rather than `add_api_route`, so they are plain `Route`s the app-level dependency
+never reaches. `tests/architecture/test_fitness.py` now closes this with two
+tests that inspect what got registered rather than what the app was configured
+with: `test_every_api_route_actually_carries_the_gate` checks that every `/api`
+`APIRoute` carries the gate on its OWN dependant, and
+`test_nothing_under_api_escapes_being_a_gated_api_route` checks that nothing
+under `/api` is anything OTHER than a gated `APIRoute` — no `Mount` shadows an
+`/api` path, no plain `Route` sits under one — with the static UI mount at `/`
+named as the sole, reasoned exception. Together with the exempt-list tests,
+this is what keeps "a route is gated by construction" true structurally.
 
 ## Consequences
 
