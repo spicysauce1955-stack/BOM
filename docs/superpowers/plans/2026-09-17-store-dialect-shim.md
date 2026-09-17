@@ -703,39 +703,59 @@ from __future__ import annotations
 from fenceai.project.model import Project
 
 
-def test_a_project_survives_a_round_trip(store, backend):
-    project = Project(id="p1")
-    store.save_project(project, actor="user:dana")
+def test_a_project_survives_a_round_trip(store):
+    store.save_project(Project(id="p1", name="Test job"), actor="user:dana")
     loaded = store.load_project("p1")
     assert loaded is not None
     assert loaded.id == "p1"
+    assert loaded.name == "Test job"
 
 
 def test_saving_twice_updates_rather_than_duplicates(store):
-    store.save_project(Project(id="p1"))
-    store.save_project(Project(id="p1"))
-    assert store.load_project("p1") is not None
-    assert len([r for r in store.audit_entries(100) if r["ref"] == "p1"]) == 2
+    store.save_project(Project(id="p1", name="Test job"))
+    store.save_project(Project(id="p1", name="Renamed"))
+    assert len(store.list_projects()) == 1
+    assert store.load_project("p1").name == "Renamed"
+    assert sum(1 for r in store.audit_entries(100) if r["ref"] == "p1") == 2
 
 
 def test_an_unknown_project_is_None_not_an_error(store):
     assert store.load_project("nope") is None
 
 
-def test_the_audit_sequence_increases(store):
-    store.save_project(Project(id="p1"))
-    store.save_project(Project(id="p2"))
-    seqs = [r["seq"] for r in store.audit_entries(100)]
-    assert seqs == sorted(seqs, reverse=True) or seqs == sorted(seqs)
+def test_the_audit_log_is_newest_first_with_a_unique_sequence(store):
+    store.save_project(Project(id="p1", name="One"))
+    store.save_project(Project(id="p2", name="Two"))
+    entries = store.audit_entries(100)
+    seqs = [r["seq"] for r in entries]
+    assert seqs == sorted(seqs, reverse=True)
     assert len(set(seqs)) == len(seqs)
+    assert entries[0]["ref"] == "p2"
 
 
 def test_the_seeds_are_present_on_a_fresh_store(store):
-    assert store.list_parts()
-    assert store.list_fence_models()
+    assert len(store.part_library().parts) == 8
+    assert store.fence_model_library().listing()
 ```
 
-**These assertions are written without having run them.** `audit_entries`, `list_parts` and `list_fence_models` are real methods on `Store`, but their exact return shape — dicts versus models, key names, sort direction — has not been verified here. Before implementing, run `uv run python -c "from fenceai.store.db import Store; s=Store(); print(s.audit_entries(5)); print(type(s.list_parts()))"` and correct the assertions to match what the store actually returns. Do not weaken an assertion to make it pass; fix it to assert the real behaviour.
+**These five assertions were executed against a real `Store` before this plan
+was committed, and three of them were wrong on the first writing.** The
+corrections are worth naming, because each is a trap the next person writing a
+store test will walk into:
+
+- `Project(id="p1")` does not validate — `name` is required.
+- `Store` has no `list_parts` or `list_fence_models`. The real accessors are
+  `part_library()` returning a `PartLibrary` with `.parts` (8 seeded rows on a
+  fresh store) and `fence_model_library()` returning a `FenceModelLibrary`
+  with `.listing()`.
+- `audit_entries` returns `list[dict]` with keys `seq, at, actor, action, ref`,
+  ordered **newest first**. The original assertion allowed either direction,
+  which would have passed against a store that had silently reversed it —
+  an assertion that cannot fail is not a test.
+
+A fresh store already holds 15 audit rows from `seed_parts` and
+`seed_fence_models`, which is why the duplicate-save test counts only rows
+whose `ref` is `p1` rather than counting the whole log.
 
 - [ ] **Step 2: Run it on SQLite and watch it pass or tell you the shapes are wrong**
 
@@ -745,21 +765,29 @@ env -u FENCEAI_TEST_POSTGRES uv run pytest tests/store/test_both_backends.py -q
 
 Expected: 5 passed, 5 skipped. If an assertion is wrong about a return shape, fix the assertion here — this run is what that fix is for.
 
-- [ ] **Step 3: Run it on Postgres and watch it fail**
+- [ ] **Step 3: Run it on Postgres**
 
 ```bash
 uv run pytest tests/store/test_both_backends.py -q
 ```
 
-Expected: the Postgres half fails. The likely first failure is the `__SERIAL_PK__` schema or a type mismatch in the seeds. Read the error; do not guess.
+The Postgres half may well pass first time. Every mechanism it depends on was
+probed against a live Postgres 16.15 before this plan was executed: the
+`search_path` DSN, multi-statement DDL in one `execute`, `BIGINT GENERATED
+ALWAYS AS IDENTITY PRIMARY KEY`, `ON CONFLICT … DO UPDATE SET x=excluded.x`
+unchanged from its SQLite spelling, `ON CONFLICT DO NOTHING`, `doc::jsonb->>'k'`
+returning a plain `str`, and `cur.rowcount`. Rows come back as plain `tuple`s
+with `str` columns, so `db.py`'s positional `row[0]` access needs no change —
+the type-coercion failure this step originally expected is ruled out.
 
 - [ ] **Step 4: Fix what the failures name**
 
-No code is prescribed here because the failures are not yet known. Expected candidates, in likelihood order:
+If Step 3 was green, skip this step. If it was not, the two candidates that remain after the pre-flight probe are:
 
-1. `_SCHEMA` still containing a SQLite-only spelling other than the four in `Dialect` — if so, that is a fifth difference and it belongs in `Dialect` with a test in `tests/store/test_dialect.py`, not patched inline.
+1. `_SCHEMA` containing a SQLite-only spelling other than the four in `Dialect` — if so, that is a fifth difference and it belongs in `Dialect` with a test in `tests/store/test_dialect.py`, not patched inline.
 2. A `commit()` missing where SQLite's looser transaction handling hid it.
-3. `psycopg` returning `memoryview` or `datetime` where `sqlite3` returned `str` — if so, the fix belongs at the `Conn` boundary so `db.py` keeps one spelling.
+
+The third original candidate — `psycopg` returning `memoryview` or `datetime` where `sqlite3` returned `str` — was ruled out by the pre-flight probe and should not be chased.
 
 Whatever the cause, the rule is the same: a difference between the databases goes in `Dialect` or `Conn` with its own test; it never goes in `db.py` as a branch.
 
