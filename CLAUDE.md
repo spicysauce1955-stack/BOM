@@ -36,6 +36,12 @@ selects Postgres instead, via `store/dialect.py`). Frontend: vanilla ES modules 
 
 - **Integer millimeters and cents at rest; float only transient** (ADR-0002). Exactly two
   named tolerances live in `fenceai/core/units.py`.
+- **One set of SQL, two databases.** `store/db.py` is written in SQLite's spelling and
+  `store/dialect.py` translates it; the four translated differences live there and
+  nowhere else. A SQL string containing a literal `?` or `%` breaks that translation — if
+  you need one, it becomes a new `Dialect` member with its own test, never a branch in
+  `db.py`. Driver exception classes are a separate, untranslated difference owned by the
+  drivers themselves.
 - **`generate()` is pure and deterministic**; overrides are patches anchored to
   `(run_id, station, kind)`, never to generated element identity (ADR-0004).
 - **Hard constraint ≠ preference ≠ objective ≠ override** — distinct types, distinct handling.
