@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -81,9 +81,13 @@ from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
 from fenceai.identity.model import (
-    SYSTEM, User, actor_ref, default_view, may_choose_view, verify_password,
+    SYSTEM, User, actor_ref, default_view, may_choose_view,
 )
-from fenceai.identity import session as sessions
+from fenceai.identity.dev import DEV_COOKIE
+from fenceai.identity.provider import build_provider
+from fenceai.api.auth import (
+    EXEMPT_PATHS, current_user, make_gate, require_admin, resolve as auth_resolve,
+)
 from fenceai.project.queue import DEFAULT_LIMIT, QueueFilter, my_jobs, select_rows
 from fenceai.store.db import Store
 from fenceai.strategy.generator import DEFAULT_POLICY, LEGACY_MODEL_ID, generate
@@ -96,6 +100,7 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "static"
 
 class AppState:
     store: Store
+    provider = None
     interpreter = None
     proposer = None
     critic = None
@@ -108,6 +113,11 @@ state = AppState()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state.store = Store(os.environ.get("FENCEAI_DB", "fenceai.db"))
+    state.provider = build_provider()
+    # Loud, once. A machine running `dev` by accident should say so rather than
+    # behave strangely — an impersonation switch nobody noticed is the one way
+    # this arrangement fails silently.
+    print(f"[fenceai] identity provider: {state.provider.provider_id}", flush=True)
     state.interpreter = build_interpreter()
     state.proposer = StubProposer()
     state.critic = StubCritic()
@@ -164,7 +174,14 @@ def _sample_project() -> Project:
     return Project(id=new_id("proj"), name="פרויקט לדוגמה", topology=topology)
 
 
-app = FastAPI(title="Fence AI", version="0.1.0", lifespan=lifespan)
+#: Default-deny, declared once rather than on seventy routes. A dependency on
+#: the app covers every route the router serves — including one added tomorrow
+#: by somebody who never read this file, which is the whole point. The closure
+#: reads `state` at request time because the provider and the store are both
+#: built in `lifespan`, after this line has run.
+_gate = make_gate(lambda: state.provider, lambda: state.store)
+app = FastAPI(title="Fence AI", version="0.1.0", lifespan=lifespan,
+              dependencies=[Depends(_gate)])
 
 
 def _now_iso() -> str:
@@ -363,12 +380,12 @@ class ProjectCreate(BaseModel):
 
 @app.post("/api/projects")
 def create_project(request: Request, body: ProjectCreate) -> Project:
-    # Who created it, from the session and never from the body: it is what puts
+    # Who created it, from the identity and never from the body: it is what puts
     # the job on that salesperson's home screen (`GET /api/my-jobs`), and a
     # creator a client could name would put jobs on somebody else's list.
-    user = _signed_in(request)
+    user = current_user(request)
     project = Project(id=new_id("proj"), name=body.name, job=body.job,
-                      created_by=user.id if user else "")
+                      created_by=user.id)
     state.store.save_project(project, actor=_actor(request))
     return project
 
@@ -433,11 +450,12 @@ def put_context(request: Request, project_id: str, context: SiteContext) -> Proj
 # typing an address is not a command, and forcing it to be one turns the design
 # into ceremony.
 #
-# It is also the FIRST gated route in this app, and deliberately the only one.
-# Retrofitting capacity onto the other sixty-eight in the same slice that
-# introduces the mechanism is how the choice-set feature ran away on 2026-09-03;
-# a request with no session stays the ordinary case everywhere else and still
-# writes `system`.
+# It was the FIRST gated route in this app and is no longer the only one: the
+# app-level gate now resolves every caller to a capacity row before any route
+# runs. What stays particular here is the CAPACITY check — "may this account
+# perform this command on a job in this state" — which lives in
+# `fenceai.commands` and is a different question from "may this person reach the
+# API at all".
 
 
 class CommandBody(BaseModel):
@@ -533,7 +551,7 @@ def perform_command(request: Request, project_id: str, body: CommandBody) -> Pro
     The row is written only on success. A log that recorded every attempt would
     make "who did what" a list of things nobody did.
     """
-    user = _require_user(request)
+    user = current_user(request)
     project = _project(project_id)
     _refuse_unknown_assignee(body)
     try:
@@ -817,12 +835,12 @@ def queue(
     row: deriving it for twenty-five is free and for an unbounded list is what
     would make "read models are derived, never stored" unaffordable.
     """
-    user = _signed_in(request)
+    user = current_user(request)
     # `me` is resolved HERE and never passed through. `select_rows` refuses the
     # literal string on purpose: matched as an id it would return an empty page
     # that reads as "you have nothing to do", which is the most misleading answer
     # a queue can give.
-    who = actor_user_id(user) if assignee == "me" else assignee
+    who = user.id if assignee == "me" else assignee
     try:
         f = QueueFilter(
             bucket=bucket,
@@ -850,18 +868,13 @@ def my_jobs_route(request: Request) -> dict:
     """A salesperson's home screen: the jobs this account created, what the
     office has said about each, most urgent first.
 
-    Signed-in only, because "my" has no answer otherwise — an anonymous request
-    is a 401 rather than an empty list that reads as "you have no jobs".
+    "My" has no answer for a caller nobody can name, which is why an unresolved
+    request is refused by the gate rather than shown an empty list that reads as
+    "you have no jobs".
     """
-    user = _require_user(request)
+    user = current_user(request)
     rows = my_jobs(state.store.list_projects(), user.id)
     return {"rows": [r.model_dump() for r in rows]}
-
-
-def actor_user_id(user: User | None) -> str:
-    """`assignee=me` with nobody signed in matches nobody, which is the honest
-    answer — not everybody."""
-    return user.id if user else "\x00-nobody"
 
 
 def _queue_row(row) -> dict:
@@ -2161,47 +2174,17 @@ def _seed_demo_accounts() -> None:
 
 
 # -- who is asking -------------------------------------------------------------
-#
-# The cookie name is prefixed because a browser sends every cookie on the origin
-# and a bare `session` collides with whatever else is served there one day.
-SESSION_COOKIE = "fenceai_session"
-
-
-def _signed_in(request: Request) -> User | None:
-    """The account this request is signed in as, or None.
-
-    Never raises. Most routes are still open — accounts RECORD here, they do not
-    yet gate — so "nobody is signed in" has to be an ordinary answer rather than
-    an error every caller must catch.
-    """
-    token = request.cookies.get(SESSION_COOKIE)
-    if not token:
-        return None
-    sess = state.store.session(token)
-    if sess is None or not sessions.is_live(sess):
-        return None
-    user = state.store.user(sess.user_id)
-    return user if user and user.active else None
 
 
 def _actor(request: Request, fallback: str = SYSTEM) -> str:
     """Who to write in the log.
 
-    **A session outranks anything the caller said.** Twelve routes take
-    `?author=` and hand it to the store, which makes the log a thing anybody can
-    sign as anybody — an actor a client can NAME is not an audit trail. The
-    parameter survives only as the fallback for the unsigned-in case, which is
-    every existing test and the whole browser smoke.
+    There is no unsigned case left: the gate resolved somebody before any route
+    ran. `fallback` survives for the store's own default and for the seed, not
+    for a caller — an actor a client can NAME was never an audit trail, and the
+    `?author=` parameters still passing one in are deleted in their own task.
     """
-    user = _signed_in(request)
-    return actor_ref(user) if user else fallback
-
-
-def _require_user(request: Request) -> User:
-    user = _signed_in(request)
-    if user is None:
-        raise HTTPException(401, {"code": "not_signed_in"})
-    return user
+    return actor_ref(current_user(request))
 
 
 def _public(user: User) -> dict:
@@ -2213,67 +2196,61 @@ def _public(user: User) -> dict:
     return user.model_dump(exclude={"password_hash"})
 
 
-class SignIn(BaseModel):
-    email: str
-    password: str
-
-
-@app.post("/api/session")
-def sign_in(body: SignIn, response: Response) -> dict:
-    """Start a session.
-
-    One refusal for a wrong password and for an address with no account, with
-    the same words: two answers would turn this form into a way of asking
-    whether somebody has an account here.
-    """
-    user = state.store.user_by_email(body.email)
-    if user is None or not verify_password(user, body.password):
-        raise HTTPException(401, {"code": "sign_in_failed"})
-    sess = sessions.start(user.id)
-    state.store.save_session(sess)
-    response.set_cookie(
-        SESSION_COOKIE, sess.token, httponly=True, samesite="lax",
-        max_age=sessions.SESSION_DAYS * 24 * 3600,
-    )
-    state.store.log(actor_ref(user), "sign_in", user.id)
-    return {"user": _public(user), "view": default_view(user.capacity),
-            "may_choose_view": may_choose_view(user.capacity)}
-
-
-@app.delete("/api/session", status_code=204)
-def sign_out(request: Request, response: Response) -> Response:
-    """End it, server-side.
-
-    The row IS the session, so deleting it stops the token working everywhere at
-    once — which is the property an opaque token buys and a self-describing one
-    could not.
-    """
-    token = request.cookies.get(SESSION_COOKIE)
-    if token:
-        state.store.delete_session(token)
-    response.delete_cookie(SESSION_COOKIE)
-    return Response(status_code=204)
-
-
-@app.get("/api/me")
-def me(request: Request) -> dict:
+@app.get("/api/session")
+def session(request: Request) -> dict:
     """Who am I, which view do I open on, and am I offered the selector.
 
-    The view is answered HERE rather than defaulted in the browser: that is the
-    safe way to flip the default the salesperson MVP deliberately left at `all`,
-    because nobody has to change a global setting for Dana to land on her own
-    screen — and the browser smoke signs in as an admin and keeps seeing today's
-    app.
+    **The one route that answers without a capacity row.** A person IAP let
+    through but nobody has granted anything reaches a screen telling them to ask
+    an admin, and that screen has to be able to name them to the admin they are
+    about to ask. Hence the exemption in `auth.EXEMPT_PATHS` and hence the
+    `status` field: this route reports the refusal the rest of the API performs.
+
+    The view is answered HERE rather than defaulted in the browser, which is the
+    safe way to flip the default the salesperson MVP left at `all`: nobody edits
+    a global setting, Dana lands on her own screen because of who she is.
     """
-    user = _require_user(request)
-    return {"user": _public(user), "view": default_view(user.capacity),
+    principal = state.provider.principal(
+        dict(request.headers), dict(request.cookies))
+    if principal is None:
+        return {"status": "no_identity", "email": "", "user": None,
+                "view": None, "may_choose_view": True}
+    user, status = auth_resolve(state.store, principal)
+    if status != "ok":
+        return {"status": status, "email": principal.email, "user": None,
+                "view": None, "may_choose_view": True}
+    return {"status": "ok", "email": principal.email, "user": _public(user),
+            "view": default_view(user.capacity),
             "may_choose_view": may_choose_view(user.capacity)}
+
+
+class BecomeRequest(BaseModel):
+    email: str
+
+
+if os.environ.get("FENCEAI_IDENTITY", "").strip().lower() == "dev":
+
+    @app.post("/api/dev/identity", status_code=204)
+    def become(body: BecomeRequest) -> Response:
+        """Become somebody, with no credential, on a laptop.
+
+        Registered ONLY under `FENCEAI_IDENTITY=dev`, so under `iap` this route
+        does not exist to be found — which is why the condition is read here, at
+        import, rather than checked inside the handler. It is an impersonation
+        switch and is named as one: no secret, no session row, no expiry.
+        """
+        response = Response(status_code=204)
+        response.set_cookie(DEV_COOKIE, body.email.strip().lower(),
+                            httponly=True, samesite="lax",
+                            max_age=30 * 24 * 3600)
+        return response
 
 
 @app.get("/api/users")
 def list_users(request: Request) -> list[dict]:
-    """The people, for the assignee picker and the “sold by” filter."""
-    _require_user(request)
+    """The people, for the assignee picker, the “sold by” filter and the
+    admin's own panel."""
+    current_user(request)
     return [_public(u) for u in state.store.list_users()]
 
 

@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fenceai.api.app import app, state
+from fenceai.identity.dev import DEV_COOKIE
 from fenceai.identity.model import User
 
 
@@ -22,14 +23,15 @@ def client():
 
 def _account(uid: str, capacity: str) -> User:
     u = User(id=uid, name=uid, email=f"{uid}@example.com", capacity=capacity)
-    u.set_password("pw")
     state.store.save_user(u)
     return u
 
 
-def _sign_in(client, uid: str, capacity: str):
+def _as(client, uid: str, capacity: str):
+    """Become this person. No password: the identity comes from the provider,
+    and the row carries only what the account may DO."""
     _account(uid, capacity)
-    client.post("/api/session", json={"email": f"{uid}@example.com", "password": "pw"})
+    client.cookies.set(DEV_COOKIE, f"{uid}@example.com")
 
 
 def _job(client, name: str, status: str, assignee: str | None = None):
@@ -55,27 +57,31 @@ def test_the_picker_is_still_a_bare_list_of_three_fields(client):
 
 # --- me -----------------------------------------------------------------------
 
-def test_me_resolves_to_the_session_and_never_matches_literally(client):
+def test_me_resolves_to_the_caller_and_never_matches_literally(client):
     """`select_rows` REFUSES the literal string, because matched as an id it
     returns an empty page that reads as "you have nothing to do" — the most
     misleading answer a queue can give. The route resolves it first."""
-    _sign_in(client, "u_yossi", "backoffice")
+    _as(client, "u_yossi", "backoffice")
     mine = _job(client, "mine", "planning", assignee="u_yossi")
     _job(client, "theirs", "planning", assignee="u_maya")
     rows = client.get("/api/queue", params={"assignee": "me"}).json()["rows"]
     assert [r["id"] for r in rows] == [mine]
 
 
-def test_me_with_nobody_signed_in_matches_nobody_rather_than_everybody(client):
-    """The honest answer to "what is on my desk" when there is no me."""
-    client.cookies.clear()
+def test_me_is_empty_rather_than_everybody_when_nothing_is_mine(client):
+    """The failure mode the resolution exists to avoid is the OPPOSITE of an
+    empty page: `me` falling through to "no filter" and showing one person the
+    whole office's desk. There is no anonymous caller left to test that with —
+    the gate refuses one — so the case is a resolved caller with nothing
+    assigned to them."""
+    _as(client, "u_idle", "backoffice")
     _job(client, "someones", "planning", assignee="u_yossi")
     rows = client.get("/api/queue", params={"assignee": "me"}).json()["rows"]
     assert rows == []
 
 
 def test_nobody_has_taken_it_is_a_different_question_from_mine(client):
-    _sign_in(client, "u_y2", "backoffice")
+    _as(client, "u_y2", "backoffice")
     untaken = _job(client, "untaken", "waiting")
     _job(client, "taken", "planning", assignee="u_y2")
     rows = client.get("/api/queue", params={"assignee": "none"}).json()["rows"]
@@ -85,7 +91,7 @@ def test_nobody_has_taken_it_is_a_different_question_from_mine(client):
 # --- the two buckets ----------------------------------------------------------
 
 def test_the_two_buckets_are_the_two_lists(client):
-    _sign_in(client, "u_y3", "backoffice")
+    _as(client, "u_y3", "backoffice")
     open_id = _job(client, "open one", "waiting")
     done_id = _job(client, "done one", "delivered")
     rows = client.get("/api/queue", params={"bucket": "open"}).json()["rows"]
@@ -97,7 +103,7 @@ def test_the_two_buckets_are_the_two_lists(client):
 
 def test_a_draft_is_the_salespersons_and_not_on_the_backoffice_queue(client):
     """A job she has not submitted is not work anybody else can pick up."""
-    _sign_in(client, "u_y4", "backoffice")
+    _as(client, "u_y4", "backoffice")
     draft = _job(client, "hers", "drafting")
     rows = client.get("/api/queue").json()["rows"]
     assert draft not in [r["id"] for r in rows]
@@ -107,7 +113,7 @@ def test_a_draft_is_the_salespersons_and_not_on_the_backoffice_queue(client):
 
 def test_an_unreadable_cursor_refuses_rather_than_starting_over(client):
     """Ignoring it would make a paging loop run for ever, quietly."""
-    _sign_in(client, "u_y5", "backoffice")
+    _as(client, "u_y5", "backoffice")
     r = client.get("/api/queue", params={"cursor": "not-a-cursor"})
     assert r.status_code == 400
     assert r.json()["detail"]["code"] == "queue_cursor_invalid"
@@ -115,7 +121,7 @@ def test_an_unreadable_cursor_refuses_rather_than_starting_over(client):
 
 def test_too_large_a_page_refuses_rather_than_clamping(client):
     """Clamping would answer a question nobody asked and look like it worked."""
-    _sign_in(client, "u_y6", "backoffice")
+    _as(client, "u_y6", "backoffice")
     r = client.get("/api/queue", params={"limit": 5000})
     assert r.status_code == 422
     assert r.json()["detail"]["code"] == "queue_filter_invalid"
@@ -131,7 +137,7 @@ def test_a_page_hands_back_a_cursor_only_when_there_is_more(client):
     store, and the hedge is what made it vacuous; the fix is to isolate the rows
     instead, with a status nothing else in this file uses.
     """
-    _sign_in(client, "u_y7", "backoffice")
+    _as(client, "u_y7", "backoffice")
     for i in range(3):
         _job(client, f"cursor-{i}", "returned")
     params = {"limit": 2, "status": "returned"}
@@ -157,7 +163,7 @@ def test_a_typo_in_the_assignee_is_refused_rather_than_losing_the_job(client):
 
     The failure it prevents: a job on a desk nobody has, off every list at once,
     with nothing refusing and no way back but reading the database."""
-    _sign_in(client, "u_assign", "backoffice")
+    _as(client, "u_assign", "backoffice")
     job = _job(client, "typo target", "waiting")
     r = client.post(f"/api/projects/{job}/actions",
                     json={"kind": "assign_job", "payload": {"user_id": "u_typo"}})
@@ -169,7 +175,7 @@ def test_a_typo_in_the_assignee_is_refused_rather_than_losing_the_job(client):
 def test_a_deactivated_account_cannot_be_handed_a_job(client):
     """Deactivated is what a company does instead of deleting. Handing work to
     one is the same lost job as a typo."""
-    _sign_in(client, "u_assign2", "backoffice")
+    _as(client, "u_assign2", "backoffice")
     gone = _account("u_gone", "backoffice")
     gone.active = False
     state.store.save_user(gone)
@@ -182,7 +188,7 @@ def test_a_deactivated_account_cannot_be_handed_a_job(client):
 def test_assigning_to_a_real_person_works(client):
     """The other half. A guard that refused everything would pass the two tests
     above and be worse than no guard."""
-    _sign_in(client, "u_assign3", "backoffice")
+    _as(client, "u_assign3", "backoffice")
     _account("u_maya2", "backoffice")
     job = _job(client, "to maya", "waiting")
     r = client.post(f"/api/projects/{job}/actions",
@@ -195,7 +201,7 @@ def test_the_finished_list_carries_the_quote_and_the_closing_date(client):
     """Both columns a pure function could not fill. The route's own docstring
     promised they were answered here and only `me` was tested — replacing
     `_queue_row` with a bare dump passed 327 tests."""
-    _sign_in(client, "u_q", "backoffice")
+    _as(client, "u_q", "backoffice")
     job = _job(client, "priced", "quoted")
     stored = state.store.load_project(job)
     stored.closed_at = "2026-09-15T12:00:00+00:00"
@@ -207,15 +213,18 @@ def test_the_finished_list_carries_the_quote_and_the_closing_date(client):
     assert "quote_total_cents" in row
 
 
-def test_deactivating_an_account_ends_a_session_that_is_already_open(client):
-    """The whole justification for opaque server-side tokens is that a
-    self-describing one makes "deactivate this account" a promise the server
-    cannot keep. The half that keeps it on an ALREADY-ISSUED cookie was
-    unpinned: dropping `and user.active` from `_signed_in` passed 591 tests."""
-    _sign_in(client, "u_bye2", "backoffice")
-    assert client.get("/api/me").status_code == 200
+def test_deactivating_an_account_refuses_the_very_next_request(client):
+    """IAP revokes access centrally and we cannot; `active=False` is the local
+    half, and it has to bite on a browser that is already open. It was unpinned
+    before — dropping `and user.active` from the old `_signed_in` passed 591
+    tests — so the check is asserted at the gate, which is where it lives now.
+    """
+    _as(client, "u_bye2", "backoffice")
+    assert client.get("/api/queue").status_code == 200
 
     user = state.store.user("u_bye2")
     user.active = False
     state.store.save_user(user)
-    assert client.get("/api/me").status_code == 401
+    r = client.get("/api/queue")
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "account_deactivated"

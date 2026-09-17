@@ -248,12 +248,14 @@ REFUSAL_CODES = [
     # field-level check would notice, because every field is still well-formed.
     "snapshot_id_mismatch",
     "run_predates_fence_model",
-    # -- signing in -------------------------------------------------------------
-    # `sign_in_failed` is deliberately ONE code for a wrong password and for an
-    # address with no account: two answers would turn the form into a way of
-    # asking whether somebody has an account here.
-    "sign_in_failed",
-    "not_signed_in",
+    # -- getting in -------------------------------------------------------------
+    # `sign_in_failed` and `not_signed_in` were here while this app kept its own
+    # passwords and sessions. Identity is Google's now: there is nothing to fail
+    # a password against, and the gate's refusals — `no_identity`,
+    # `no_capacity`, `account_deactivated`, `subject_mismatch`,
+    # `capacity_insufficient` — are raised in `src/fenceai/api/auth.py`, which is
+    # NOT on the scanned list above. Putting the five here and the file there is
+    # one edit, owed together with their `error.<code>` entries in both bundles.
     # -- the queue and the one door ---------------------------------------------
     "assignee_unknown",
     # Committing names a run explicitly (never "the latest"), so a payload can
