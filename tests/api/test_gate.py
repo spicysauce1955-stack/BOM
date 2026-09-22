@@ -643,12 +643,21 @@ def test_no_route_still_lets_a_caller_name_the_actor():
     DEFINED IN `api/app.py` and refuses any field that names a person as the
     one who acted.
 
-    It deliberately does not reach domain models defined elsewhere:
-    `Override.author` and `Selection.author` are genuine domain fields (who
-    chose or overrode something) which the server fills from `_actor`, and a
-    check that flagged every field named "author" anywhere would have to be
-    silenced rather than satisfied. The boundary this guards is the one place
-    a client's own bytes become an actor: app.py's request bodies."""
+    It does not reach domain models defined elsewhere, and one of them is a
+    KNOWN GAP rather than a thing this check decided was fine. `Override.author`
+    and `Selection.author` are genuine domain fields — who chose or overrode
+    something, not who to write in the audit log — but the server does NOT fill
+    them today: `put_choice` and `add_override` store the body's value verbatim,
+    `js/choices.js` sends the literal "user", and `strategy/generator.py` puts
+    both into decision-graph nodes as `author` / `chosen_by`, where the decision
+    graph IS the explanation. So a caller can still name who chose. That is the
+    next slice's, tracked openly rather than excused here — an earlier version of
+    this docstring said the server filled them from `_actor`, which was never
+    true, and a guard test that records a false fact as its reason for not
+    looking is how the next reviewer stops looking too.
+
+    The boundary this check does hold is the one place a client's own bytes
+    become an AUDIT actor: app.py's request bodies."""
     import inspect
     from pydantic import BaseModel
 
@@ -761,6 +770,15 @@ def test_the_swapped_account_is_told_which_refusal_this_is(under_iap):
     body = client.get("/api/session").json()
     assert (body["status"], body["code"]) == ("subject_mismatch", "subject_mismatch")
     assert body["email"] == "goog@example.com" and body["user"] is None
+
+    # The row says the SYSTEM refused an arrival, not that Goog did something.
+    # `actor` means who performed (`identity/model.py`), and this used to write
+    # the innocent account's own ref — an accusation in an append-only table,
+    # against the one person who did nothing.
+    row = next(e for e in state.store.audit_entries(50)
+               if e["action"] == "subject_mismatch")
+    assert row["actor"] == "system", row
+    assert row["ref"] == "u_goog|sub-2", row  # the row AND what failed to match
 
 
 def test_a_refusal_status_nobody_mapped_still_answers(under_iap, monkeypatch):

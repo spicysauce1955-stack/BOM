@@ -148,11 +148,21 @@ class IapIdentity:
                 # all six; requiring them costs nothing against a real
                 # assertion and closes the gap against an oddly-minted one.
                 options={"require": ["exp", "iat", "aud", "iss", "sub", "email"]})
-        except Exception:
+        except Exception as exc:
             # A token we cannot verify is nobody. Not an error the caller must
             # distinguish: "bad signature" and "no header" are the same answer
             # to "who is this", and telling them apart on the wire would say
             # more than a refusal should.
+            #
+            # The OPERATOR is a different audience from the caller, and used to
+            # get nothing at all: a misconfiguration that refuses every employee
+            # — a padded `FENCEAI_IAP_AUDIENCE` does exactly that, against
+            # perfectly valid assertions — looked identical to nobody visiting.
+            # The wire answer is unchanged; this is the line somebody on call
+            # reads. `exception` name only, never the token.
+            _log.warning("IAP: assertion rejected (%s: %s); if this is every "
+                         "caller, check FENCEAI_IAP_AUDIENCE",
+                         type(exc).__name__, exc)
             return None
         email = str(claims.get("email", ""))
         subject = str(claims.get("sub", ""))
@@ -162,4 +172,20 @@ class IapIdentity:
 
 
 def iap_identity_from_env() -> IapIdentity:
-    return IapIdentity(audience=os.environ.get("FENCEAI_IAP_AUDIENCE", ""))
+    """`.strip()` because `build_provider` validates the STRIPPED value.
+
+    A secret or a YAML block scalar routinely carries a trailing newline, and
+    without this the app booted clean, announced `identity provider: iap`, and
+    refused every correctly-signed assertion Google sent — because `aud` was
+    compared against a string with a newline on the end.
+
+    `import jwt` eagerly, for the reason `provider.py` has no default: the
+    container recipe builds with `uv sync --frozen` and the `iap` extra is what
+    puts PyJWT in it. Imported lazily inside `principal()`, a missing extra
+    boots a healthy-looking server that 500s on every route including
+    `/api/session`. A missing dependency is a deployment error, and a
+    deployment error belongs at boot.
+    """
+    import jwt  # noqa: F401  — presence check; `principal()` imports it for use
+
+    return IapIdentity(audience=os.environ.get("FENCEAI_IAP_AUDIENCE", "").strip())

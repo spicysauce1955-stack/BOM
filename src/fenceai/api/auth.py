@@ -17,6 +17,7 @@ not involved.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 
@@ -76,6 +77,33 @@ def _bootstrap_address() -> str:
     return os.environ.get("FENCEAI_BOOTSTRAP_ADMIN", "").strip().lower()
 
 
+_log = logging.getLogger(__name__)
+
+def _log_mismatch(store, user: User, subject: str) -> None:
+    """Record a swapped Google account against the ROW, not against its owner.
+
+    `actor` means who PERFORMED the action (`identity/model.py`), and this used
+    to write `actor_ref(user)` — so the log said Dana performed
+    `subject_mismatch` when Dana did nothing and somebody else arrived on her
+    address. An append-only table cannot retract that later. The actor is the
+    system, which is what actually acted, and the ref carries both the row and
+    the subject that did not match it, so the row still says everything an
+    investigator needs and says it about the right party.
+
+    Written on EVERY mismatch rather than deduplicated, after trying the other
+    way: a process-global "already logged" set made the write order-dependent
+    (it silently swallowed the second backend's row in a dual-run test) and
+    would have hidden a repeat that an investigator wants to see. The volume is
+    bounded by the door itself — reaching this line at all takes an assertion
+    GOOGLE SIGNED for an address that already has a row bound to a different
+    account, so it is not a vector an anonymous caller can pump. The warning
+    beside it is for whoever is on call; the row is for whoever asks later.
+    """
+    _log.warning("identity: %s arrived on %s, which is bound to another Google "
+                 "account; refused", subject or "(no subject)", user.email)
+    store.log("system", "subject_mismatch", f"{user.id}|{subject}")
+
+
 def resolve(store, principal: Principal) -> tuple[User | None, str]:
     """The row this principal is, and what to do about it.
 
@@ -95,7 +123,7 @@ def resolve(store, principal: Principal) -> tuple[User | None, str]:
     # the mismatch that is supposed to catch a swapped Google account would
     # never have a stored subject to catch it against.
     if outcome == "mismatch":
-        store.log(actor_ref(user), "subject_mismatch", user.id)
+        _log_mismatch(store, user, principal.subject)
         return user, "subject_mismatch"
     if outcome == "bound":
         store.save_user(user, actor=actor_ref(user))

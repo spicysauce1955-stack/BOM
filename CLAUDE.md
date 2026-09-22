@@ -12,6 +12,9 @@ selects Postgres instead, via `store/dialect.py`). Frontend: vanilla ES modules 
 
 - `uv sync` — install deps (creates `.venv`); SQLite only, zero setup
 - `uv sync --extra postgres` — also install the Postgres driver, for the dialect below
+- `uv sync --extra postgres --extra iap` — everything; `iap` is PyJWT, and without
+  it the 22 tests in `tests/identity/test_iap.py` SKIP rather than fail, so the
+  full-suite count below is only reproducible with it
 - `uv run pytest -q` — full test suite; single test: `uv run pytest tests/path/test_x.py::test_name -q`
 - `FENCEAI_TEST_POSTGRES=postgresql://... uv run pytest -q` — dual-runs the ~350
   persistence/API tests against Postgres too (3806 passed vs. 3461 passed + 346 skipped

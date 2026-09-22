@@ -319,12 +319,21 @@ only. Either one alone is a hole.
 
 ## 6. Container, config, release
 
-**Container.** Two stages: `uv sync --frozen` into a venv, then a slim runtime
+**Container.** Two stages: `uv sync --frozen --extra postgres --extra iap` into a
+venv, then a slim runtime
 layer carrying `src/fenceai` and its static assets. `CMD` must honour Cloud Run's
 injected `$PORT` rather than hardcoding 8000 — the most common first-deploy
 failure there is. `core/env.py`'s `load_dotenv()` already prefers real
 environment variables, so it becomes a harmless no-op in the container; no `.env`
 ever ships.
+
+Both extras are load-bearing and neither is optional here: `postgres` is the
+driver Cloud SQL needs, and `iap` is PyJWT, without which `FENCEAI_IDENTITY=iap`
+now refuses to BOOT. That refusal is deliberate — `iap_identity_from_env()`
+imports `jwt` eagerly for it. Built with a bare `uv sync --frozen`, the app used
+to come up healthy, announce `identity provider: iap`, and then raise
+`ModuleNotFoundError` out of the gate on every route including `/api/session`:
+a server that passes its own health check and answers nobody.
 
 **Config.** `FENCEAI_DB` as a `postgres://` URL. `FENCEAI_AI=claude`.
 `FENCEAI_IDENTITY=iap`. `FENCEAI_BOOTSTRAP_ADMIN` set for the first deploy and

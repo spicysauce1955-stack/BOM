@@ -345,3 +345,52 @@ def test_a_stale_key_fetch_failure_refuses_once_past_the_grace_window(monkeypatc
     # Far enough past the TTL that the grace window itself has elapsed.
     clock["t"] = 3600 + 6 * 3600 + 1
     assert prov.principal({IAP_HEADER: _token(private)}, {}) is None
+
+
+# --- the two ways this refuses everybody while looking healthy ------------------
+
+def test_a_padded_audience_still_matches(monkeypatch):
+    """A secret or a YAML block scalar routinely carries a trailing newline.
+
+    `build_provider` validates `FENCEAI_IAP_AUDIENCE.strip()`, so a padded value
+    passes the boot check — and the provider then compared `aud` against the
+    string WITH the newline still on it. The app came up clean, announced
+    `identity provider: iap`, and refused every correctly-signed assertion
+    Google sent, with nothing anywhere saying why. This is the single most
+    likely first-contact misconfiguration on a path that has never met a real
+    Google."""
+    from fenceai.identity.iap import iap_identity_from_env
+
+    monkeypatch.setenv("FENCEAI_IAP_AUDIENCE", f"  {AUD}\n")
+    assert iap_identity_from_env()._audience == AUD
+
+
+def test_a_missing_pyjwt_is_a_BOOT_failure_not_a_per_request_one(monkeypatch):
+    """`provider.py` has no default so that a misconfiguration fails at boot.
+    The dependency that doctrine rests on was exempt from it: `principal()`
+    imports `jwt` lazily, so a container built with a bare `uv sync --frozen`
+    — which is what the deployment spec prescribed — booted a healthy-looking
+    server that raised `ModuleNotFoundError` out of the gate on EVERY route,
+    including the one that tells a person why they are not getting in."""
+    import sys
+    from fenceai.identity.iap import iap_identity_from_env
+
+    monkeypatch.setenv("FENCEAI_IAP_AUDIENCE", AUD)
+    monkeypatch.setitem(sys.modules, "jwt", None)
+    with pytest.raises(ImportError):
+        iap_identity_from_env()
+
+
+def test_a_rejected_assertion_says_something_to_the_operator(provider, keys, caplog):
+    """The caller still learns nothing — "bad signature" and "no header" are
+    the same answer to "who is this". The OPERATOR is a different audience, and
+    used to get nothing at all: every employee refused, and not one line to
+    read. The token itself never reaches the log."""
+    import logging
+
+    private, _ = keys
+    tok = _token(private, aud="/projects/9/global/backendServices/9")
+    with caplog.at_level(logging.WARNING, logger="fenceai.identity.iap"):
+        assert provider.principal({IAP_HEADER: tok}, {}) is None
+    assert any("FENCEAI_IAP_AUDIENCE" in r.getMessage() for r in caplog.records), caplog.text
+    assert tok not in caplog.text

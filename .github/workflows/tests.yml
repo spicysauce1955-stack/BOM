@@ -27,7 +27,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --extra postgres
+      # `--extra iap` for the same reason as `--extra postgres` above: without
+      # it `tests/identity/test_iap.py` is skipped whole by its
+      # `pytest.importorskip("jwt")` — 22 tests, the entire signature /
+      # audience / issuer / algorithm-pin / key-rotation suite standing behind
+      # the one adapter that meets real Google — and the merge gate goes green
+      # having proved nothing about it.
+      - run: uv sync --extra postgres --extra iap
       - name: Full suite, both backends
         run: uv run pytest -q
       - name: Release gate
