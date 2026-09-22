@@ -94,3 +94,58 @@ def test_the_spawned_server_is_told_which_identity_to_run():
         "the spawned server inherits FENCEAI_IDENTITY instead of being told it; "
         "the lab then runs only under pytest"
     )
+
+
+def test_a_stack_that_does_not_come_up_says_which_half_did_not():
+    """The failure that cost a whole CI run, and named the wrong thing.
+
+    `start()` used to `time.sleep(4)` and then make one unguarded request to
+    Chrome's debugging port. On a cold runner four seconds is not enough, the
+    connection was refused, and the exception left the server holding its port
+    — so every later test in the file failed with `port NNNN is already in
+    use`. Twenty-two errors, all of them reporting a port collision, none of
+    them mentioning a browser that had not finished starting.
+
+    So this asserts the diagnosis, not just the failure: the message has to
+    name the half that never answered."""
+    from persona_lab import stack
+
+    class _Running:
+        pid = -1                      # killpg on a negative pid is swallowed
+        returncode = None
+
+        def poll(self):
+            return None
+
+    with pytest.raises(RuntimeError) as err:
+        stack._wait_for_both(_Running(), _Running(), 1, 2, timeout=0.5)
+
+    message = str(err.value)
+    assert "the app on :1" in message, message
+    assert "chrome's debugging port :2" in message, message
+
+
+def test_a_process_that_dies_is_reported_as_dead_not_as_slow():
+    """Waiting out the full timeout for something that already exited turns a
+    clear error into a slow, vague one."""
+    from persona_lab import stack
+
+    class _Running:
+        pid = -1
+        returncode = None
+
+        def poll(self):
+            return None
+
+    class _Dead:
+        pid = -1
+        returncode = 3
+
+        def poll(self):
+            return 3
+
+    with pytest.raises(RuntimeError, match=r"app exited with code 3"):
+        stack._wait_for_both(_Dead(), _Running(), 1, 2, timeout=30)
+
+    with pytest.raises(RuntimeError, match=r"chrome exited with code 3"):
+        stack._wait_for_both(_Running(), _Dead(), 1, 2, timeout=30)

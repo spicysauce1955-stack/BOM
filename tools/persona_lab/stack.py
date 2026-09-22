@@ -78,6 +78,68 @@ def _port_free(port: int) -> bool:
         return True
 
 
+def _wait_for_both(server, chrome, port: int, cdp_port: int, timeout: float = 60.0) -> None:
+    """Wait until the app AND Chrome's debugging port answer, or say which did not.
+
+    This was `time.sleep(4)` followed by a single unguarded request to the CDP
+    endpoint — a race with a fixed budget, which is fine on a warm workstation
+    and loses on a cold CI runner. It lost silently and expensively: the CDP
+    connection was refused, the exception left the server holding its port, and
+    every later test in the file failed with `port NNNN is already in use`, so
+    22 errors reported a port collision and none of them named a browser that
+    had not finished starting.
+
+    Condition-based, like every other wait in this lab, and it kills both
+    process groups before raising so one slow start cannot poison the rest of
+    the run.
+    """
+    deadline = time.monotonic() + timeout
+    app_up = cdp_up = False
+    while time.monotonic() < deadline:
+        if server.poll() is not None:
+            _kill_both(server, chrome)
+            raise RuntimeError(
+                f"the app exited with code {server.returncode} before serving "
+                f"port {port} — run it by hand to see why")
+        if chrome.poll() is not None:
+            _kill_both(server, chrome)
+            raise RuntimeError(
+                f"google-chrome exited with code {chrome.returncode} before "
+                f"opening port {cdp_port}")
+        if not app_up:
+            app_up = _answers(f"http://localhost:{port}/api/health")
+        if not cdp_up:
+            cdp_up = _answers(f"http://localhost:{cdp_port}/json/version")
+        if app_up and cdp_up:
+            return
+        time.sleep(0.2)
+
+    _kill_both(server, chrome)
+    missing = []
+    if not app_up:
+        missing.append(f"the app on :{port}")
+    if not cdp_up:
+        missing.append(f"chrome's debugging port :{cdp_port}")
+    raise RuntimeError(f"stack did not come up within {timeout:g}s — "
+                       f"{' and '.join(missing)} never answered")
+
+
+def _answers(url: str) -> bool:
+    try:
+        urllib.request.urlopen(url, timeout=1).read()
+        return True
+    except Exception:
+        return False
+
+
+def _kill_both(server, chrome) -> None:
+    for proc in (server, chrome):
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except Exception:
+            pass
+
+
 def start(persona: str, index: int, run_dir: Path) -> dict:
     port, cdp_port = ports_for(index)
     if not _port_free(port):
@@ -128,12 +190,17 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
         start_new_session=True,
     )
     chrome = subprocess.Popen(
+        # `--disable-dev-shm-usage`: a container's /dev/shm is typically 64 MB,
+        # and Chrome renderers die on startup without ever opening the
+        # debugging port. It costs nothing on a workstation.
         ["google-chrome", "--headless", "--disable-gpu", "--no-sandbox",
+         "--disable-dev-shm-usage",
+         f"--user-data-dir={run_dir / 'chrome-profile'}",
          f"--remote-debugging-port={cdp_port}", "--remote-allow-origins=*",
          "--window-size=1400,950", "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
-    time.sleep(4)
+    _wait_for_both(server, chrome, port, cdp_port)
 
     c = Cdp(f"http://localhost:{port}/", cdp_port=cdp_port, out_dir=str(run_dir / "shots"))
     # a real user never sees a native confirm(); auto-accept so a modal cannot
@@ -202,11 +269,7 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
         # A broken sign-in must fail LOUDLY, not leak a server and a browser
         # behind it: the exception below used to leave both processes running,
         # holding `port` and `cdp_port` open for whoever ran this next.
-        for pid in (server.pid, chrome.pid):
-            try:
-                os.killpg(pid, signal.SIGTERM)
-            except Exception:
-                pass
+        _kill_both(server, chrome)
         raise RuntimeError(f"stack could not sign in as {ADMIN_EMAIL}")
     # An admin lands on the Jobs queue; the personas' work starts on the
     # drawing. Nothing after this point can send it back to "queue": the one
