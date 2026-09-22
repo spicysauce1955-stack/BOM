@@ -25,7 +25,12 @@
   <!-- IAP let them to the door; nobody has said what they may do inside. -->
   <section id="no-access" aria-labelledby="no-access-title" hidden>
     <h1 id="no-access-title" data-i18n="noaccess.title">No access yet</h1>
-    <p data-i18n="noaccess.body">Ask an administrator to give this address access.</p>
+    <!-- Filled by app.js from the refusal code: the three refusals are NOT the
+         same problem, and "ask an administrator for access" is the cure for
+         only one of them. No `data-i18n` on the reason, because the applier
+         would overwrite it with a fixed key on every locale change. -->
+    <p id="no-access-reason"></p>
+    <p id="no-access-advice" data-i18n="noaccess.body">Ask an administrator to give this address access.</p>
     <p><span data-i18n="noaccess.signed_in_as">Signed in as</span>
        <bdi id="no-access-email" class="sku"></bdi></p>
     <button id="no-access-signout" data-i18n="signin.out">Sign out</button>

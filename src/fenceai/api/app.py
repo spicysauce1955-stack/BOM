@@ -87,8 +87,8 @@ from fenceai.identity.model import (
 from fenceai.identity.dev import DEV_COOKIE
 from fenceai.identity.provider import build_provider
 from fenceai.api.auth import (
-    EXEMPT_PATHS, current_user, dev_mode, make_gate, require_admin,
-    resolve as auth_resolve,
+    EXEMPT_PATHS, REFUSAL_STATUS_CODES, current_user, dev_mode, make_gate,
+    require_admin, resolve as auth_resolve,
 )
 from fenceai.project.queue import DEFAULT_LIMIT, QueueFilter, my_jobs, select_rows
 from fenceai.store.db import Store
@@ -1528,26 +1528,37 @@ def list_candidates():
 
 
 class ReviewBody(BaseModel):
+    """No `reviewer` field, deliberately.
+
+    Approving a candidate writes `attributed_to` on the version that becomes
+    ACTIVE and generates every later project's fence — domain provenance, not
+    just an audit fallback. A client-supplied reviewer let any caller sign a
+    rule change as anyone, including another real account. The reviewer is the
+    resolved caller, like every other actor in this app; a body that still
+    sends one is ignored rather than rejected, because the field was never
+    load-bearing for anything but the forgery.
+    """
+
     action: str
-    reviewer: str
     reason: str | None = None
     edited_scope: dict[str, str] | None = None
 
 
 @app.post("/api/candidates/{object_id}/{version}/review")
-def review_candidate(object_id: str, version: int, body: ReviewBody):
+def review_candidate(request: Request, object_id: str, version: int, body: ReviewBody):
     kb = state.store.knowledge_base()
     cand = next(
         (v for v in kb.versions if v.object_id == object_id and v.version == version), None
     )
     if cand is None or cand.status != "proposed":
         raise HTTPException(404, "candidate not found or not reviewable")
+    actor = _actor(request)
     try:
-        outcome = apply_review(cand, ReviewAction(**body.model_dump()))
+        outcome = apply_review(cand, ReviewAction(**body.model_dump(), reviewer=actor))
     except ValueError as e:
         raise HTTPException(400, str(e))
     approved = outcome if outcome is not cand else None
-    state.store.apply_review_outcome(cand, approved, actor=body.reviewer)
+    state.store.apply_review_outcome(cand, approved, actor=actor)
     return outcome
 
 
@@ -2273,13 +2284,21 @@ def session(request: Request) -> dict:
     principal = state.provider.principal(
         dict(request.headers), dict(request.cookies))
     if principal is None:
-        return {"status": "no_identity", "email": "", "user": None,
-                "view": None, "may_choose_view": True}
+        return {"status": "no_identity", "code": "no_identity", "email": "",
+                "user": None, "view": None, "may_choose_view": True}
     user, status = auth_resolve(state.store, principal)
     if status != "ok":
-        return {"status": status, "email": principal.email, "user": None,
+        # `code` rather than a second mapping in the browser: `status` is a
+        # STATE for a screen and the code is the platform refusal a person may
+        # read in a log, and the two differ for exactly one value
+        # (`deactivated` / `account_deactivated`). `REFUSAL_STATUS_CODES` is
+        # where that difference is decided; a copy of it in JavaScript would be
+        # a second place to forget.
+        return {"status": status, "code": REFUSAL_STATUS_CODES[status],
+                "email": principal.email, "user": None,
                 "view": None, "may_choose_view": True}
-    return {"status": "ok", "email": principal.email, "user": _public(user),
+    return {"status": "ok", "code": None, "email": principal.email,
+            "user": _public(user),
             "view": default_view(user.capacity),
             "may_choose_view": may_choose_view(user.capacity)}
 

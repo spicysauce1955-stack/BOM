@@ -146,3 +146,36 @@ def test_the_people_list_says_whether_google_is_bound_never_the_id(client):
     assert rows["unbound@example.com"]["subject_bound"] is False
     assert "subject" not in rows["bound@example.com"]
     assert "subject" not in rows["unbound@example.com"]
+
+
+# --- which refusal, not just that there was one -------------------------------
+
+def test_each_refusal_names_itself_to_the_screen(client):
+    """The no-access screen renders this `code` as the sentence a refused
+    person reads. Before it, all three refusals rendered one line — "ask an
+    administrator to give this address access" — which is the cure for exactly
+    one of them: a deactivated person, and a person whose address is bound to a
+    different Google account, were both sent to an admin who finds a row that
+    already exists.
+
+    `deactivated` and `account_deactivated` differ on purpose (see
+    `REFUSAL_STATUS_CODES`): the status is a state for a screen, the code is
+    the platform refusal a person may read in a log. This pins the mapping at
+    the boundary where the browser reads it, so the browser needs no copy of
+    it."""
+    _as(client, "stranger@example.com")
+    body = client.get("/api/session").json()
+    assert (body["status"], body["code"]) == ("no_capacity", "no_capacity")
+
+    _row("gone@example.com", "sales", id="u_gone", active=False)
+    _as(client, "gone@example.com")
+    body = client.get("/api/session").json()
+    assert (body["status"], body["code"]) == ("deactivated", "account_deactivated")
+
+
+def test_a_resolved_caller_carries_no_refusal_code(client):
+    """Present and null rather than absent, so the browser reads one shape."""
+    _row("dana@example.com", "sales", id="u_dana", name="Dana")
+    _as(client, "dana@example.com")
+    body = client.get("/api/session").json()
+    assert body["status"] == "ok" and body["code"] is None

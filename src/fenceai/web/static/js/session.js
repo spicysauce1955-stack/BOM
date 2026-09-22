@@ -19,6 +19,7 @@ export function sessionState(body) {
   const ok = body.status === "ok";
   return {
     status: body.status,
+    code: body.code || null,
     email: body.email || "",
     user: ok ? body.user : null,
     view: ok ? body.view : null,
@@ -37,6 +38,7 @@ async function apply(shape) {
   state.me = shape.user;
   state.mayChooseView = shape.selector;
   state.authStatus = shape.status;
+  state.authCode = shape.code;
   state.authEmail = shape.email;
   document.documentElement.dataset.selector = shape.selector ? "yes" : "no";
   // Only when somebody named one. A null view leaves whatever `initView()`

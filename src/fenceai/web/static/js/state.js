@@ -27,6 +27,14 @@ export const state = {
   // The signed-in account, or null. Owned by `session.js`.
   me: null,
   mayChooseView: true,
+  // What `GET /api/session` answered about this browser, owned by `session.js`
+  // and read by `app.js` to choose between the picker and the no-access screen.
+  // Declared here for the same reason `officeReading` and `view` are: a field
+  // created dynamically by its writer is invisible to every other reader until
+  // it is too late.
+  authStatus: null,   // ok | no_identity | no_capacity | deactivated | subject_mismatch
+  authCode: null,     // the PLATFORM refusal code for that status, or null
+  authEmail: "",      // who IAP says this is, even when they have no access
   // The road step on screen, or null when the view has no road. Owned by
   // `road.js`, which emits "step-changed" AFTER the screen is scoped to it.
   step: null,

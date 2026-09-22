@@ -900,8 +900,10 @@ async function renderCandidates() {
       renderImpactReport(out, report);
     });
     const submitReview = async (body) => {
-      await apiSend("POST", `/api/candidates/${c.object_id}/${c.version}/review`,
-        { reviewer: "expert-admin", ...body });
+      // No `reviewer` in the body: the server attributes the approved version
+      // to the signed-in caller. This used to send the literal "expert-admin",
+      // which signed every rule change in the product with a name nobody owns.
+      await apiSend("POST", `/api/candidates/${c.object_id}/${c.version}/review`, body);
       renderCandidates(); renderKnowledgeRules();
     };
     const rejectForm = card.querySelector('[data-form="reject"]');

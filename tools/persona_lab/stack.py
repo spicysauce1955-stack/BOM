@@ -117,8 +117,13 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
         # added refuses them with 401 `no_identity`. It now signs itself in
         # (`seed.sign_in`), the same way the browser does, and carries the
         # cookie it gets back — so nothing here needs to authenticate it.
+        # `FENCEAI_IDENTITY` is set rather than inherited: it has no default and
+        # the app refuses to boot without it, and the only reason this worked was
+        # that `tests/conftest.py` puts it in the environment process-wide — so
+        # the lab ran under pytest and died from a bare shell. `tools/ui_smoke.py`
+        # sets it for the same reason.
         env={**{k: v for k, v in os.environ.items() if k != "FENCEAI_DEV_USER"},
-             "FENCEAI_DB": db, "FENCEAI_AI": "stub"},
+             "FENCEAI_IDENTITY": "dev", "FENCEAI_DB": db, "FENCEAI_AI": "stub"},
         cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )

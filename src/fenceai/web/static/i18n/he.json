@@ -1388,8 +1388,6 @@
   "warning.uncovered_rails_per_span": "אין כלל הקובע כמה קורות מקבל מפתח של {model_ref} בקטע {run_id}; {n} מפתחים נבנו עם {value} קורות כל אחד — אשרו לפני הזמנה",
   "warning.uncovered_screws_per_span": "אין כלל הקובע כמה ברגים מקבל מפתח של {model_ref} בקטע {run_id}; {n} מפתחים נבנו עם {value} ברגים כל אחד — אשרו לפני הזמנה",
   "warning.unknown_product": "ערכת השער {sku} אינה בקטלוג; בכתב הכמויות היא תתומחר באפס.",
-  "error.sign_in_failed": "האימייל והסיסמה אינם תואמים לחשבון.",
-  "error.not_signed_in": "יש להתחבר כדי לבצע פעולה זו.",
   "signin.email": "אימייל",
   "signin.become": "המשך",
   "signin.out": "התנתקות",

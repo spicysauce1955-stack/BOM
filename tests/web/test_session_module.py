@@ -107,8 +107,14 @@ def test_the_selector_being_hidden_is_not_a_permission(ss):
     protection, this is what should have stopped them. `sessionState` carries
     no capability list and decides nothing about what may be DONE — hiding is
     CSS and `localStorage` is editable, so an account that forces itself into
-    another view has changed what it SEES and none of what it may DO."""
-    assert set(ss["ok"]) == {"status", "email", "user", "view", "selector"}
+    another view has changed what it SEES and none of what it may DO.
+
+    `code` is in the set and is not a counter-example: it is the refusal code
+    for a status that is NOT `ok` (null here), a string the no-access screen
+    renders as a sentence. It grants nothing and is read by nothing that
+    decides anything."""
+    assert set(ss["ok"]) == {"status", "code", "email", "user", "view", "selector"}
+    assert ss["ok"]["code"] is None
 
 
 def test_sign_in_reopens_the_job_this_person_last_had_open(ss):

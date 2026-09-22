@@ -633,16 +633,31 @@ def test_no_route_still_lets_a_caller_name_the_actor():
     audit trail". The parameter survived only as the fallback for the
     unsigned-in case, and default-deny deleted that case.
 
-    Checks both shapes this took: a bare `author: str = "..."` route
-    parameter (read from the query string), and an `author` field on one of
-    app.py's own request DTOs (`AnnotationCreate`, `QuoteCreate`,
-    `CorrectionCreate`, `KnowledgeCreate`) that was spread or passed into
-    `_actor`'s now-dead `fallback` argument. It does NOT flag `Override.author`
-    or `Selection.author` — those are genuine domain fields (who chose or
-    overrode something) that never touched `_actor` and must survive; a check
-    that flagged every model with a field named "author" would be too broad to
-    mean anything and would have to be silenced rather than satisfied."""
+    This check is a PROPERTY of every request DTO, not a list of the spellings
+    we happened to remember. It used to name four models (`AnnotationCreate`,
+    `QuoteCreate`, `CorrectionCreate`, `KnowledgeCreate`) and one field name,
+    and it passed for months over `ReviewBody.reviewer` — which spread into
+    `KnowledgeVersion.attributed_to` and the audit actor, so a caller could
+    sign a rule change as another real account. An allow-list of names cannot
+    catch the name nobody thought of, so this enumerates every `BaseModel`
+    DEFINED IN `api/app.py` and refuses any field that names a person as the
+    one who acted.
+
+    It deliberately does not reach domain models defined elsewhere:
+    `Override.author` and `Selection.author` are genuine domain fields (who
+    chose or overrode something) which the server fills from `_actor`, and a
+    check that flagged every field named "author" anywhere would have to be
+    silenced rather than satisfied. The boundary this guards is the one place
+    a client's own bytes become an actor: app.py's request bodies."""
     import inspect
+    from pydantic import BaseModel
+
+    #: Words that answer "who did this". A field named any of these on a
+    #: request DTO is a client naming the actor, which is the defect.
+    ACTOR_NAMES = {
+        "actor", "author", "reviewer", "attributed_to", "editor",
+        "approved_by", "created_by", "signed_by", "on_behalf_of", "as_user",
+    }
     offenders = []
     for route in app_module.app.routes:
         fn = getattr(route, "endpoint", None)
@@ -650,8 +665,50 @@ def test_no_route_still_lets_a_caller_name_the_actor():
             continue
         if "author" in inspect.signature(fn).parameters:
             offenders.append(f"{route.path} ({fn.__name__}): param 'author'")
-    for dto_name in ("AnnotationCreate", "QuoteCreate", "CorrectionCreate", "KnowledgeCreate"):
-        dto = getattr(app_module, dto_name)
-        if "author" in dto.model_fields:
-            offenders.append(f"{dto_name}.author")
+    for name, obj in vars(app_module).items():
+        if not (isinstance(obj, type) and issubclass(obj, BaseModel)):
+            continue
+        if obj.__module__ != app_module.__name__:
+            continue  # imported domain model, not a request DTO defined here
+        for field in obj.model_fields:
+            if field in ACTOR_NAMES:
+                offenders.append(f"{name}.{field}")
     assert not offenders, offenders
+
+
+def test_approving_a_rule_is_signed_by_the_caller_not_by_the_body(client):
+    """The forgery this closes, asked end to end.
+
+    Approval mints the ACTIVE version that generates every later project's
+    fence, and stamps `attributed_to` on it — domain provenance, not only an
+    audit fallback. While `ReviewBody` carried a `reviewer`, the body below
+    made the store record "Ministry of Standards" as the expert who approved
+    it, and a caller could equally spell another real account's actor ref.
+
+    The body still SENDS the field, deliberately: being ignored is the
+    property under test, so this fails if anyone reinstates it."""
+    from fenceai.knowledge.model import KnowledgeVersion
+
+    cand = KnowledgeVersion(
+        object_id="K-FORGE", version=1, type="candidate",
+        scope={"series": "S"}, actions=[],
+        title="a candidate awaiting review", status="proposed",
+    )
+    state.store.insert_knowledge_version(cand, actor="system")
+
+    outcome = client.post(
+        "/api/candidates/K-FORGE/1/review",
+        json={"action": "approve", "reviewer": "Ministry of Standards"},
+    )
+    assert outcome.status_code == 200, outcome.text
+    approved = outcome.json()
+
+    assert approved["attributed_to"] == "user:u_admin", (
+        "the approved version is signed by the body, not by the caller: "
+        f"{approved['attributed_to']}"
+    )
+    rows = [r for r in client.get("/api/audit").json() if r["ref"].startswith("K-FORGE")]
+    # "system" is this test's own setup insert; every row the REVIEW wrote is
+    # the caller, and nothing anywhere carries the string the body asked for.
+    assert {r["actor"] for r in rows} == {"system", "user:u_admin"}, rows
+    assert {r["actor"] for r in rows if r["ref"] == "K-FORGE@v2"} == {"user:u_admin"}, rows

@@ -132,3 +132,40 @@ def test_the_no_access_screen_actually_renders_and_is_not_just_declared():
         "the reveal rule must be declared AFTER the competing rule above — "
         "equal specificity is a tie broken by source order, so moved earlier "
         "it loses and #no-access goes back to display:none while denied")
+
+
+def test_the_no_access_screen_says_which_refusal_this_is():
+    """Three different refusals used to render one sentence.
+
+    `noaccess.body` — "ask an administrator to give this address access" — is
+    the cure for `no_capacity` alone. A deactivated account and an address
+    bound to a different Google account both read it too, and both sent the
+    person to an admin who finds a row already there. The reason line carries
+    NO `data-i18n`, deliberately: the applier would overwrite it with one fixed
+    key on every locale change, which is how it would silently become one
+    sentence again."""
+    html = (STATIC / "index.html").read_text()
+    app = (STATIC / "app.js").read_text()
+
+    reason = re.search(r'<p id="no-access-reason"([^>]*)>', html)
+    assert reason, "the no-access screen has no reason line"
+    assert "data-i18n" not in reason.group(1)
+    assert re.search(r'<p id="no-access-advice"[^>]*data-i18n="noaccess\.body"', html)
+
+    # The reason is the refusal code, rendered through the locale bundle.
+    assert re.search(r'no-access-reason"\)\.textContent\s*=\s*\n?\s*t\(`error\.\$\{state\.authCode', app)
+    # The generic advice is shown for the one refusal it actually answers.
+    assert re.search(r'no-access-advice"\)\.hidden\s*=\s*\n?\s*state\.authCode\s*!==\s*"no_capacity"', app)
+
+
+def test_an_unrecognised_refusal_is_still_a_refusal():
+    """Written as the complement of "in" and "out" rather than as a list of the
+    three codes that exist today. A fourth `resolve` status matched by neither
+    branch would fall through to `out` and show the sign-in picker to somebody
+    Google has already signed in — "try again" for something trying again
+    cannot fix."""
+    app = (STATIC / "app.js").read_text()
+    assert re.search(
+        r'const refused\s*=\s*!!state\.authStatus\s*&&\s*\n?\s*state\.authStatus\s*!==\s*"ok"\s*&&\s*'
+        r'\n?\s*state\.authStatus\s*!==\s*"no_identity"', app), (
+        "the refusal test enumerates codes again instead of complementing ok/no_identity")
