@@ -2294,7 +2294,14 @@ def session(request: Request) -> dict:
         # (`deactivated` / `account_deactivated`). `REFUSAL_STATUS_CODES` is
         # where that difference is decided; a copy of it in JavaScript would be
         # a second place to forget.
-        return {"status": status, "code": REFUSAL_STATUS_CODES[status],
+        return {"status": status,
+                # `.get(status, status)`, exactly like the gate at
+                # `auth.make_gate`: a subscript here would make THIS route —
+                # the one route whose whole purpose is to answer somebody the
+                # rest of the API refuses — the only one that 500s on a refusal
+                # status nobody has mapped yet. An unmapped status carries its
+                # own name, which is a code a person can still read.
+                "code": REFUSAL_STATUS_CODES.get(status, status),
                 "email": principal.email, "user": None,
                 "view": None, "may_choose_view": True}
     return {"status": "ok", "code": None, "email": principal.email,

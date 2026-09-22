@@ -26,7 +26,8 @@ import pytest
 STATIC = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static"
 
 SCRIPT = """
-import { lastProjectKey, pickProject, sessionState } from "./js/session.js";
+import { isRefused, lastProjectKey, pickProject, refusalTextKey,
+         sessionState, showsAskAnAdmin } from "./js/session.js";
 
 const out = {};
 out.ok = sessionState({status:"ok", email:"d@e.com",
@@ -38,6 +39,19 @@ out.admin = sessionState({status:"ok", email:"a@e.com",
 out.none = sessionState({status:"no_capacity", email:"s@e.com", user:null});
 out.off = sessionState({status:"deactivated", email:"g@e.com", user:null});
 out.anon = sessionState({status:"no_identity", email:"", user:null});
+
+// The no-access screen's three decisions, over every status the server can
+// answer with plus one it cannot answer with yet.
+out.refused = {};
+for (const st of ["ok", "no_identity", "no_capacity", "deactivated",
+                  "subject_mismatch", "quarantined", "", null, undefined])
+  out.refused[String(st)] = isRefused(st);
+out.text = {};
+out.advice = {};
+for (const code of ["no_capacity", "account_deactivated", "subject_mismatch",
+                    "quarantined", null])
+  { out.text[String(code)] = refusalTextKey(code);
+    out.advice[String(code)] = showsAskAnAdmin(code); }
 
 const list = [{id: "p_a"}, {id: "p_b"}, {id: "p_c"}];
 out.pick_remembered = pickProject(list, "p_c");
@@ -137,3 +151,46 @@ def test_the_remembered_job_is_per_account(ss):
     the previous one left open."""
     assert ss["key_dana"] != ss["key_yossi"]
     assert "u_dana" in ss["key_dana"]
+
+
+# --- the no-access screen's decisions, executed rather than pattern-matched ------
+
+def test_every_refusal_is_a_refusal_including_one_we_have_not_invented(ss):
+    """`isRefused` is the complement of signed-in and signed-out.
+
+    Written this way, and tested over a status that does not exist yet, because
+    the failure it prevents is silent: a fourth `resolve` status matched by
+    neither branch falls through to `out`, and the person Google already signed
+    in is shown the sign-in picker and told to try again. This replaces a regex
+    over `app.js` source text that pinned the same property by how it was
+    SPELLED — it failed when the two `!==` operands were swapped, which changes
+    nothing, and would have passed a rewrite that changed everything."""
+    assert ss["refused"]["ok"] is False
+    assert ss["refused"]["no_identity"] is False
+    for status in ("no_capacity", "deactivated", "subject_mismatch", "quarantined"):
+        assert ss["refused"][status] is True, status
+    # Nothing answered yet is not a refusal: the page is still `pending`.
+    for nothing in ("", "null", "undefined"):
+        assert ss["refused"][nothing] is False, nothing
+
+
+def test_each_refusal_reads_its_own_sentence_and_only_one_gets_the_advice(ss):
+    """"Ask an administrator to give this address access" is the cure for
+    `no_capacity` and for nothing else — a deactivated person and one whose
+    address is bound to a different Google account were both sent to an admin
+    who finds a row already there.
+
+    Both answers default the same way, which is the bug this shape removes: the
+    reason line used to fall back to `no_capacity` while the advice compared
+    the raw code, so a code-less refusal read the `no_capacity` sentence with
+    its advice hidden."""
+    assert ss["text"]["no_capacity"] == "error.no_capacity"
+    assert ss["text"]["account_deactivated"] == "error.account_deactivated"
+    assert ss["text"]["subject_mismatch"] == "error.subject_mismatch"
+    assert ss["text"]["quarantined"] == "error.quarantined"
+    assert ss["text"]["null"] == "error.no_capacity"
+
+    assert ss["advice"]["no_capacity"] is True
+    assert ss["advice"]["null"] is True  # same default as the sentence above
+    for code in ("account_deactivated", "subject_mismatch", "quarantined"):
+        assert ss["advice"][code] is False, code

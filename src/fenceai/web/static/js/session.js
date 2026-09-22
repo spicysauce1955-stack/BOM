@@ -27,6 +27,37 @@ export function sessionState(body) {
   };
 }
 
+/** Is this answer a refusal — somebody Google knows, who may not come in?
+ *
+ *  The complement of "signed in" and "not signed in", NOT a list of the three
+ *  refusals that exist today: a fourth `resolve` status matched by neither
+ *  branch would otherwise fall through to the sign-in picker and tell somebody
+ *  Google has already signed in to try again, which is a thing trying again
+ *  cannot fix. Pure, so node checks it over every status rather than a regex
+ *  checking that the source still reads a particular way. */
+export function isRefused(status) {
+  return !!status && status !== "ok" && status !== "no_identity";
+}
+
+/** The locale key for the sentence a refused person reads.
+ *
+ *  `no_capacity` is the fallback for a refusal that carried no code, because
+ *  it is the one refusal that can happen to somebody who has done nothing
+ *  unusual — an address IAP admits that nobody has granted anything yet. */
+export function refusalTextKey(code) {
+  return `error.${code || "no_capacity"}`;
+}
+
+/** Does "ask an administrator to give this address access" answer THIS
+ *  refusal? For `no_capacity` it is the cure. For a deactivated account, or an
+ *  address bound to a different Google account, it sends the person to an
+ *  admin who finds a row already there. Defaults with `refusalTextKey`, so a
+ *  code-less refusal cannot read one sentence and hide the advice for another.
+ */
+export function showsAskAnAdmin(code) {
+  return (code || "no_capacity") === "no_capacity";
+}
+
 /** Write one of those shapes to the page.
  *
  *  `view.js` is imported lazily rather than at the top, and that is deliberate:

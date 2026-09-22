@@ -38,7 +38,10 @@ def test_only_a_signed_in_page_shows_the_app_and_only_a_signed_out_one_the_form(
 
 def test_the_login_screen_holds_the_form_and_the_header_does_not():
     html = (STATIC / "index.html").read_text()
-    screen = html[html.index('<section id="login-screen"'):html.index("</section>")]
+    start = html.index('<section id="login-screen"')
+    # `.index` from `start`, not from 0: the first `</section>` in the whole
+    # document is this one only for as long as this is the first section.
+    screen = html[start:html.index("</section>", start)]
     for el in ('id="sign-in"', 'id="sign-in-email"',
                'id="sign-in-error"', 'id="sign-in-unreachable"'):
         assert el in screen, el
@@ -134,38 +137,17 @@ def test_the_no_access_screen_actually_renders_and_is_not_just_declared():
         "it loses and #no-access goes back to display:none while denied")
 
 
-def test_the_no_access_screen_says_which_refusal_this_is():
-    """Three different refusals used to render one sentence.
+def test_the_no_access_screen_has_a_reason_line_and_a_conditional_advice_line():
+    """Markup only — what these two lines SAY is decided in `session.js` and
+    executed in node (`test_session_module.py`), because a regex over `app.js`
+    pins how an expression is spelled rather than what it answers.
 
-    `noaccess.body` — "ask an administrator to give this address access" — is
-    the cure for `no_capacity` alone. A deactivated account and an address
-    bound to a different Google account both read it too, and both sent the
-    person to an admin who finds a row already there. The reason line carries
-    NO `data-i18n`, deliberately: the applier would overwrite it with one fixed
-    key on every locale change, which is how it would silently become one
-    sentence again."""
+    The reason line carries NO `data-i18n`, deliberately: the applier would
+    overwrite it with one fixed key on every locale change, which is exactly
+    how three different refusals would silently become one sentence again."""
     html = (STATIC / "index.html").read_text()
-    app = (STATIC / "app.js").read_text()
 
     reason = re.search(r'<p id="no-access-reason"([^>]*)>', html)
     assert reason, "the no-access screen has no reason line"
     assert "data-i18n" not in reason.group(1)
     assert re.search(r'<p id="no-access-advice"[^>]*data-i18n="noaccess\.body"', html)
-
-    # The reason is the refusal code, rendered through the locale bundle.
-    assert re.search(r'no-access-reason"\)\.textContent\s*=\s*\n?\s*t\(`error\.\$\{state\.authCode', app)
-    # The generic advice is shown for the one refusal it actually answers.
-    assert re.search(r'no-access-advice"\)\.hidden\s*=\s*\n?\s*state\.authCode\s*!==\s*"no_capacity"', app)
-
-
-def test_an_unrecognised_refusal_is_still_a_refusal():
-    """Written as the complement of "in" and "out" rather than as a list of the
-    three codes that exist today. A fourth `resolve` status matched by neither
-    branch would fall through to `out` and show the sign-in picker to somebody
-    Google has already signed in — "try again" for something trying again
-    cannot fix."""
-    app = (STATIC / "app.js").read_text()
-    assert re.search(
-        r'const refused\s*=\s*!!state\.authStatus\s*&&\s*\n?\s*state\.authStatus\s*!==\s*"ok"\s*&&\s*'
-        r'\n?\s*state\.authStatus\s*!==\s*"no_identity"', app), (
-        "the refusal test enumerates codes again instead of complementing ok/no_identity")

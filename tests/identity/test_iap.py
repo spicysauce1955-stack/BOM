@@ -94,12 +94,23 @@ def test_an_assertion_from_another_issuer_is_nobody(provider, keys):
 
 
 def test_an_unknown_key_id_is_nobody(provider, keys):
+    """The token is complete apart from its `kid`, and that is the whole point.
+
+    This test used to hand-build a claim set with no `iat` — which is in the
+    `require` list, so PyJWT refused it before `_key_for` was ever consulted,
+    and a `_key_for` that fell back to "any key we happen to hold" on an
+    unknown `kid` passed it. Proved: with the incomplete claims the provider
+    answered None either way; with a complete set and a bogus `kid` the
+    fallback resolved a Principal. The positive control below is what keeps
+    this honest — same claims, real `kid`, admitted — so a token refused for
+    some unrelated reason cannot masquerade as a `kid` check."""
     private, _ = keys
-    tok = jwt.encode({"iss": "https://cloud.google.com/iap", "aud": AUD,
-                      "email": "x@y.com", "sub": "1",
-                      "exp": int(time.time()) + 60},
-                     private, algorithm="ES256", headers={"kid": "rotated-away"})
-    assert provider.principal({IAP_HEADER: tok}, {}) is None
+    tok = _token(private)  # every required claim present
+    bogus = jwt.encode(jwt.decode(tok, options={"verify_signature": False}),
+                       private, algorithm="ES256", headers={"kid": "rotated-away"})
+    assert provider.principal({IAP_HEADER: bogus}, {}) is None
+    # Positive control: identical claims, the key id we actually hold.
+    assert provider.principal({IAP_HEADER: tok}, {}) is not None
 
 
 def test_an_assertion_with_no_email_is_nobody(provider, keys):
@@ -122,6 +133,32 @@ def test_an_assertion_missing_exp_is_nobody(provider, keys):
         "sub": "accounts.google.com:117",
         "iat": int(time.time()) - 5,
     }
+    tok = jwt.encode(claims, private, algorithm="ES256", headers={"kid": KID})
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+@pytest.mark.parametrize("missing", ["exp", "iat", "aud", "iss", "sub", "email"])
+def test_every_required_claim_is_actually_required(provider, keys, missing):
+    """All six, not just `exp`.
+
+    Deleting the whole `options={"require": [...]}` line failed exactly one
+    test before this existed, because four of the six are guarded a second time
+    anyway — `aud` and `iss` by PyJWT's own verification, `sub` and `email` by
+    the emptiness check in `principal`. `iat` is guarded by nothing else at
+    all, so its silent removal from the list was invisible. The point of a
+    require list is that it holds for every claim on it, so it is tested that
+    way rather than through the one member whose absence happens to be the
+    scariest."""
+    private, _ = keys
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+        "exp": int(time.time()) + 600,
+    }
+    del claims[missing]
     tok = jwt.encode(claims, private, algorithm="ES256", headers={"kid": KID})
     assert provider.principal({IAP_HEADER: tok}, {}) is None
 

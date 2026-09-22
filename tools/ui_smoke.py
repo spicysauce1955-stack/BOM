@@ -2676,6 +2676,18 @@ def _smoke_backoffice_queue(c):
               == "nobody@example.com",
           {"auth": c.js("document.documentElement.dataset.auth"),
            "email": c.js("document.getElementById('no-access-email')?.textContent")})
+    # WHICH refusal it is, not just that there was one. The three refusals read
+    # three different sentences and only `no_capacity` gets the generic "ask an
+    # administrator" advice — the branch that HIDES that advice cannot be driven
+    # from here (it needs a deactivated row or a swapped Google subject, both of
+    # which the picker cannot produce), so this pins the one case a browser can
+    # reach and `tests/web/test_session_module.py` executes the other three.
+    reason = c.js("document.getElementById('no-access-reason')?.textContent")
+    check("the no-access screen says which refusal this is, in words",
+          bool(reason) and reason.strip() != ""
+          and c.js("!!document.getElementById('no-access-advice')?.checkVisibility()"),
+          {"reason": reason,
+           "advice": c.js("!!document.getElementById('no-access-advice')?.checkVisibility()")})
     c.js("document.getElementById('no-access-signout').click(); 'ok'")
     wait_for(c, "document.documentElement.dataset.auth === 'out'", timeout=10)
 

@@ -712,3 +712,72 @@ def test_approving_a_rule_is_signed_by_the_caller_not_by_the_body(client):
     # the caller, and nothing anywhere carries the string the body asked for.
     assert {r["actor"] for r in rows} == {"system", "user:u_admin"}, rows
     assert {r["actor"] for r in rows if r["ref"] == "K-FORGE@v2"} == {"user:u_admin"}, rows
+
+
+# --- the refusal that was only ever asked as a function ------------------------
+
+def test_a_swapped_google_account_is_refused_BY_THE_GATE(under_iap):
+    """`resolve()` returning `subject_mismatch` is not the property that keeps
+    anybody out — the gate acting on it is.
+
+    Every other refusal code is asked for through a request somewhere. This one
+    was asked only as a direct call to `resolve()`, with `make_gate` nowhere in
+    the path, so widening the gate to
+    `if status not in ("ok", "subject_mismatch")` handed every route in the app
+    to an address bound to a different Google account, and the whole suite
+    stayed green — 3968 passed. This file's own docstring says a refusal nobody
+    has seen fire is a refusal nobody has tested; this is that refusal."""
+    client, provider = under_iap
+    provider.email = "goog@example.com"
+    state.store.save_user(User(id="u_goog", name="Goog",
+                               email="goog@example.com", capacity="sales"))
+
+    # First arrival binds this provider's subject to the row.
+    assert client.get("/api/projects").status_code == 200
+    assert state.store.user_by_email("goog@example.com").subject == "sub-goog@example.com"
+
+    # The same address, a different Google account behind it.
+    provider.principal = lambda headers, cookies: Principal(
+        email="goog@example.com", subject="sub-somebody-else")
+
+    r = client.get("/api/projects")
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "subject_mismatch"
+    # The stored subject is left as it was: rebinding would hand the row to
+    # whoever holds the address today, which is the attack this refuses.
+    assert state.store.user_by_email("goog@example.com").subject == "sub-goog@example.com"
+
+
+def test_the_swapped_account_is_told_which_refusal_this_is(under_iap):
+    """`GET /api/session` is exempt from the gate, so it answers this caller on
+    its own — and the no-access screen renders the code it returns."""
+    client, provider = under_iap
+    provider.email = "goog@example.com"
+    state.store.save_user(User(id="u_goog", name="Goog", email="goog@example.com",
+                               capacity="sales", subject="sub-1"))
+    provider.principal = lambda headers, cookies: Principal(
+        email="goog@example.com", subject="sub-2")
+
+    body = client.get("/api/session").json()
+    assert (body["status"], body["code"]) == ("subject_mismatch", "subject_mismatch")
+    assert body["email"] == "goog@example.com" and body["user"] is None
+
+
+def test_a_refusal_status_nobody_mapped_still_answers(under_iap, monkeypatch):
+    """The session route must not be the one route that 500s on a refusal.
+
+    It maps the status to a platform code, and a fourth `resolve` status with no
+    entry in `REFUSAL_STATUS_CODES` used to raise `KeyError` here while the gate
+    — which uses `.get` — refused it correctly. The browser already handles an
+    unrecognised refusal (`test_an_unrecognised_refusal_is_still_a_refusal`);
+    this is the half that has to reach it."""
+    client, provider = under_iap
+    provider.email = "quarantined@example.com"
+    monkeypatch.setattr("fenceai.api.app.auth_resolve",
+                        lambda store, principal: (None, "quarantined"))
+
+    body = client.get("/api/session")
+    assert body.status_code == 200
+    assert body.json()["status"] == "quarantined"
+    assert body.json()["code"] == "quarantined"  # its own name, not a crash
+    assert client.get("/api/projects").status_code == 403

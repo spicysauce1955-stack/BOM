@@ -28,7 +28,8 @@ import { initStructureData } from "./js/structure-data.js";
 import { initStructure } from "./js/structure.js";
 import { initTabs, setTab } from "./js/tabs.js";
 import { initView, setView } from "./js/view.js";
-import { become, lastProjectKey, loadSession, pickProject, signOut } from "./js/session.js";
+import { become, isRefused, lastProjectKey, loadSession, pickProject,
+         refusalTextKey, showsAskAnAdmin, signOut } from "./js/session.js";
 import { initQueue } from "./js/queue.js";
 import { initMyJobs } from "./js/my-jobs.js";
 import { initDeskActions } from "./js/desk-actions.js";
@@ -87,14 +88,9 @@ function wireIdentity() {
 
   const render = () => {
     const me = state.me;
-    // Anything that is not "signed in" and not "not signed in" is a refusal.
-    // Written as the complement rather than as a list of the three codes we
-    // have today: a fourth `resolve` status would otherwise fall through to
-    // "out" and show the sign-in picker to somebody Google already signed in,
-    // which reads as "try again" for a thing trying again cannot fix.
-    const refused = !!state.authStatus &&
-                    state.authStatus !== "ok" &&
-                    state.authStatus !== "no_identity";
+    // The three decisions here are `session.js`'s, where node can execute them
+    // over every status; this function only writes the answers to the DOM.
+    const refused = isRefused(state.authStatus);
     document.documentElement.dataset.auth = me ? "in" : (refused ? "denied" : "out");
     chip.hidden = !me;
     noAccess.hidden = !refused;
@@ -102,15 +98,10 @@ function wireIdentity() {
     // person's own address is user text and never reaches innerHTML here.
     if (refused) {
       document.getElementById("no-access-email").textContent = state.authEmail;
-      // Which refusal this is. A deactivated account and an address bound to a
-      // different Google account both used to read "ask an administrator to
-      // give this address access" — advice that cannot resolve either case, and
-      // that sends the person to an admin who finds a row already there.
       document.getElementById("no-access-reason").textContent =
-        t(`error.${state.authCode || "no_capacity"}`);
-      // The generic advice is the cure for exactly one of them.
+        t(refusalTextKey(state.authCode));
       document.getElementById("no-access-advice").hidden =
-        state.authCode !== "no_capacity";
+        !showsAskAnAdmin(state.authCode);
     }
     if (!me) return;
     document.getElementById("me-name").textContent = me.name;
