@@ -23,7 +23,8 @@
   </section>
 
   <!-- IAP let them to the door; nobody has said what they may do inside. -->
-  <section id="no-access" aria-labelledby="no-access-title" hidden>
+  <section id="no-access" aria-labelledby="no-access-title" role="alert"
+           tabindex="-1" hidden>
     <h1 id="no-access-title" data-i18n="noaccess.title">No access yet</h1>
     <!-- Filled by app.js from the refusal code: the three refusals are NOT the
          same problem, and "ask an administrator for access" is the cure for
@@ -34,6 +35,11 @@
     <p><span data-i18n="noaccess.signed_in_as">Signed in as</span>
        <bdi id="no-access-email" class="sku"></bdi></p>
     <button id="no-access-signout" data-i18n="signin.out">Sign out</button>
+    <!-- The header holds the only other language toggle, and the header is
+         hidden on this screen. Without this, somebody whose FIRST arrival is
+         refused reads the refusal in whichever language the app defaults to
+         (Hebrew) with no way to change it and nothing to do but sign out. -->
+    <button id="no-access-locale" title="עברית / English">עב / EN</button>
   </section>
 
   <header>

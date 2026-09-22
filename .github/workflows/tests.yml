@@ -29,7 +29,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       # `--extra iap` for the same reason as `--extra postgres` above: without
       # it `tests/identity/test_iap.py` is skipped whole by its
-      # `pytest.importorskip("jwt")` — 22 tests, the entire signature /
+      # `pytest.importorskip("jwt")` — 25 collected tests, the entire signature /
       # audience / issuer / algorithm-pin / key-rotation suite standing behind
       # the one adapter that meets real Google — and the merge gate goes green
       # having proved nothing about it.

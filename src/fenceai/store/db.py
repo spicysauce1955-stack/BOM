@@ -26,7 +26,7 @@ from fenceai.learning.model import Correction
 from fenceai.parts.model import Part, PartLibrary
 from fenceai.fulfillment.supply_run import SupplyRun
 from fenceai.project.model import Project
-from fenceai.identity.model import User
+from fenceai.identity.model import User, would_strand_the_admins
 from fenceai.store.dialect import Conn
 from fenceai.strategy.model import GenerationResult
 
@@ -933,6 +933,75 @@ class Store:
             (user.id, user.email, user.model_dump_json()),
         )
         self._audit(actor, "save_user", user.id)
+        self._conn.commit()
+
+    @_serialized
+    def amend_user_guarded(self, user_id: str, capacity: str | None,
+                           active: bool | None, actor: str) -> tuple[User | None, str]:
+        """Read, check the last-admin guard, and write — under ONE lock.
+
+        Returns `(user, "ok")`, `(None, "user_not_found")`, or
+        `(None, "last_admin")`.
+
+        A method rather than three calls from the route, for the reason
+        `@_serialized`'s own docstring gives: each CALL is atomic, a route that
+        reads and then writes across two is still a TOCTOU window. That window
+        is usually a lost update. Here it is a company locked out of its own
+        deployment: two concurrent `PATCH`es, one demoting each of the last two
+        admins, each saw the OTHER as the admin still standing and both
+        committed. Measured before this existed — 41 of 60 unassisted trials —
+        and unrecoverable afterwards, because `_bootstrap` only admits an
+        address with no row at all. `apply_review_outcome` above is the same
+        shape for the same reason.
+        """
+        row = self._conn.execute(
+            "SELECT doc FROM users WHERE id=?", (user_id,)).fetchone()
+        if row is None:
+            return None, "user_not_found"
+        user = User.model_validate_json(row[0])
+
+        everyone = [User.model_validate_json(r[0]) for r in
+                    self._conn.execute("SELECT doc FROM users").fetchall()]
+        if would_strand_the_admins(everyone, user, capacity, active):
+            return None, "last_admin"
+
+        if capacity is not None:
+            user.capacity = capacity
+        if active is not None:
+            user.active = active
+        self._conn.execute(
+            "INSERT INTO users (id, email, doc) VALUES (?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET email=excluded.email, doc=excluded.doc",
+            (user.id, user.email, user.model_dump_json()),
+        )
+        self._audit(actor, "save_user", user.id)
+        self._audit(actor, "amend_capacity", user.id)
+        self._conn.commit()
+        return user, "ok"
+
+    @_serialized
+    def bind_subject(self, user_id: str, subject: str, actor: str) -> None:
+        """Persist ONLY the subject, re-read under the lock.
+
+        `resolve` used to write the whole row back from a snapshot taken before
+        `bind` mutated it, so an admin PATCH landing in that window was silently
+        reverted: the admin was told the deactivation worked, the row on disk
+        said otherwise, and the person kept full access. Measured before this
+        existed — 15 of 60 unassisted trials. It only ever fires on a FIRST
+        arrival, which is exactly when a freshly granted row is most likely to
+        be edited.
+        """
+        row = self._conn.execute(
+            "SELECT doc FROM users WHERE id=?", (user_id,)).fetchone()
+        if row is None:
+            return
+        user = User.model_validate_json(row[0])
+        if user.subject:
+            return  # somebody bound it while we were deciding to
+        user.subject = subject
+        self._conn.execute("UPDATE users SET doc=? WHERE id=?",
+                           (user.model_dump_json(), user.id))
+        self._audit(actor, "identity_bound", user.id)
         self._conn.commit()
 
     @_serialized

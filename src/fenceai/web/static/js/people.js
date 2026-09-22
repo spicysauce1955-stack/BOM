@@ -152,8 +152,19 @@ export function initPeople() {
   // sight: nobody but an admin ever opens this tab, so drawing it on every
   // sign-in would fetch the whole user list for two capacities that can never
   // see it.
-  on("tab-changed", (name) => { if (name === "people") render(); });
+  let drawnOnce = false;
+  on("tab-changed", (name) => {
+    if (name !== "people") return;
+    drawnOnce = true;
+    render();
+  });
   // A capacity word ("Sales" / "Admin") is prose, not an id — it has to be
-  // redrawn in the new language exactly as `queue.js`'s own list is.
-  on("locale-changed", render);
+  // redrawn in the new language exactly as `queue.js`'s own list is. But only
+  // if this tab has ever been drawn: unconditionally, a locale flip undid the
+  // laziness three lines above, fetched `/api/users`, and materialised the
+  // whole company roster — names, addresses, capacities — into the DOM of a
+  // salesperson who can never open this tab. `GET /api/users` is open to every
+  // capacity by design (it feeds the assignee picker), so this was never a
+  // server hole; it was us putting it on their page anyway.
+  on("locale-changed", () => { if (drawnOnce) render(); });
 }

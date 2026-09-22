@@ -40,8 +40,9 @@ do*. Google says who you are; we say what you may do; nothing is stored twice.
 2. The app looks their address up in our list. The list is empty and their
    address is `FENCEAI_BOOTSTRAP_ADMIN` → they become the admin. That is the only
    way anybody is admitted uninvited, and it switches itself off the moment an
-   admin is ACTIVE — not the moment one exists. [Corrected — see A3 in
-   `.superpowers/sdd/2026-09-17-identity-is-googles/task-10-brief.md`:
+   admin is ACTIVE — not the moment one exists. [Corrected — the authority is ADR-0013 and `api/auth.py::_bootstrap`, not the
+   working note this used to cite, which is gitignored and unreadable to
+   anyone but its author:
    `_bootstrap` counts only active admins, so that a deployment whose only
    admin was later deactivated can still be recovered. While
    `FENCEAI_BOOTSTRAP_ADMIN` stays set, the address it names is a live
@@ -245,8 +246,7 @@ Cloud Run URL, during the slice where nothing else works yet either.
 of: no admin row is ACTIVE anywhere, the principal's address matches, and no row
 exists for that address. So it cannot promote an existing `sales` row, and it
 self-disables the moment any admin is active — not the moment one exists.
-[Corrected — see A3 in
-`.superpowers/sdd/2026-09-17-identity-is-googles/task-10-brief.md`.] Counting
+[Corrected — the authority is ADR-0013 and `api/auth.py::_bootstrap`.] Counting
 only ACTIVE admins is deliberate: a deployment whose only admin row was later
 deactivated would otherwise be locked out for ever, with no cure even after
 redeploying with this variable set, because `_bootstrap` would see the

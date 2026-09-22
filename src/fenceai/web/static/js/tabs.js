@@ -97,7 +97,11 @@ export function initTabs() {
     return {
       object_id: document.getElementById("k-object").value.trim(),
       type: document.getElementById("k-type").value,
-      title: document.getElementById("k-title").value, actions, author: "expert-admin",
+      // No `author`: the route sets `attributed_to` from the signed-in caller.
+      // `KnowledgeCreate` has no such field, so this was already ignored — but
+      // it was the literal "expert-admin", the thirteenth spelling of a client
+      // naming itself, waiting for somebody to add the field back.
+      title: document.getElementById("k-title").value, actions,
     };
   };
   initKnowledgeBuilder();

@@ -172,3 +172,56 @@ def test_granting_is_written_to_the_log(client):
     rows = client.get("/api/audit?limit=20").json()
     assert any(r["actor"] == "user:u_boss" and r["action"] == "grant_capacity"
                for r in rows)
+
+
+# --- the guard under concurrency, which is how it was actually defeated --------
+
+def test_two_admins_cannot_strand_the_deployment_by_leaving_at_once(client):
+    """The last-admin guard, raced.
+
+    Sequentially it holds — the tests above prove that. Across two concurrent
+    `PATCH`es it did not: the check read `list_users()` and the write was a
+    second store call, so with two admins and two in-flight demotions each
+    request saw the OTHER as the admin still standing, and both committed.
+    Reproduced 41 times in 60 unassisted trials before the fix.
+
+    What makes it worth a threaded test rather than a note: the result is
+    unrecoverable. `_bootstrap` only admits an address with NO row, so
+    `FENCEAI_BOOTSTRAP_ADMIN` cannot rescue either of the two admins it
+    stranded — the cure is a brand-new address and a redeploy, or somebody with
+    database access.
+    """
+    import threading
+
+    # The caller (`admin@example.com` = `u_admin`, seeded) is one of the two,
+    # so these really are the only active admins — a third would make either
+    # demotion legitimate and the race unobservable.
+    state.store.save_user(User(id="u_b", name="B", email="b@example.com",
+                               capacity="admin"))
+    assert sorted(u.id for u in state.store.list_users()
+                  if u.capacity == "admin" and u.active) == ["u_admin", "u_b"]
+
+    results: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def demote(uid: str) -> None:
+        barrier.wait()          # start both inside the same window
+        r = client.patch(f"/api/users/{uid}", json={"active": False})
+        results.append(r.status_code)
+
+    threads = [threading.Thread(target=demote, args=(u,))
+               for u in ("u_admin", "u_b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    still_standing = [u for u in state.store.list_users()
+                      if u.capacity == "admin" and u.active]
+    assert still_standing, (
+        "both demotions committed and the deployment has no active admin left; "
+        f"responses were {results}")
+    # At most one may be allowed through. The loser is refused with 409
+    # `last_admin`, or — if it arrived after the caller's own row went
+    # inactive — 403 by the gate. Either is a refusal; two 200s is the defect.
+    assert results.count(200) <= 1, results

@@ -172,16 +172,29 @@ drawing".
 ## The front door, and what the header no longer carries
 
 **Signed out, the page is the login screen and nothing else.** `index.html` ships
-`<html data-auth="pending">`; `app.js` asks `/api/me` last, after every module is
-listening, and sets `data-auth` to `out` or `in`. `style.css` hides every child of
-`body` except `#login-screen` until it reads `in`, and `pending` hides the form too,
-so a signed-in reload never flashes it. No project is fetched before sign-in: the
-workspace opens on the `signed-in` event. The account decides the view
-(`identity/model.py: default_view`) — nobody picks a role on the way in, and only an
-admin is offered `#view-select` afterwards. Signing out **reloads**, because the
-open job, its undo stack and every panel's cached answers belong to the person who
-left. This is the UI's front door, not a security boundary: the server still gates
-only `POST /projects/{id}/actions`.
+`<html data-auth="pending">`; `app.js` asks `GET /api/session` last, after every
+module is listening, and sets `data-auth` to `out`, `in`, or `denied`. `style.css`
+hides every child of `body` except `#login-screen` until it reads `in`, and
+`pending` hides the form too, so a signed-in reload never flashes it. No project is
+fetched before sign-in: the workspace opens on the `signed-in` event. The account
+decides the view (`identity/model.py: default_view`) — nobody picks a role on the
+way in, and only an admin is offered `#view-select` afterwards. Signing out is a
+**redirect** to IAP's logout (`?gcp-iap-mode=CLEAR_LOGIN_COOKIE`), not a reload:
+revoking access is central and for every device at once, which this app could never
+promise by deleting a row of its own. The page it lands on is fresh either way,
+which is what the open job, its undo stack and every panel's cached answers need.
+
+**`denied` is the third state, and it is new.** Google admits somebody the app has
+no capacity row for; `#no-access` names them to the admin they are about to ask,
+says WHICH refusal this is (`session.js: refusalTextKey`), and offers the generic
+"ask an administrator" advice only for `no_capacity` — the one refusal it answers.
+It carries its own language toggle because the header is hidden on that screen.
+
+**This is no longer only the UI's front door.** Every route the app serves is gated
+server-side by one app-level dependency (`api/auth.py: make_gate`, ADR-0013); the
+screen state above is presentation over a door that is now actually locked. What
+the server does NOT yet check per route is CAPACITY — that is asked at
+`POST /projects/{id}/actions` and the two user-admin routes, and nowhere else.
 
 **No job picker and no name box in the header.** The office and the admin open a
 job from the Jobs queue; "New job" creates an untitled project and step 1 of the

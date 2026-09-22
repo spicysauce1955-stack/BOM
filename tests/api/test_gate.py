@@ -756,6 +756,15 @@ def test_a_swapped_google_account_is_refused_BY_THE_GATE(under_iap):
     # whoever holds the address today, which is the attack this refuses.
     assert state.store.user_by_email("goog@example.com").subject == "sub-goog@example.com"
 
+    # The row says the SYSTEM refused an arrival, not that Goog did something.
+    # `actor` means who performed (`identity/model.py`), and this used to write
+    # the innocent account's own ref — an accusation in an append-only table,
+    # against the one person who did nothing.
+    row = next(e for e in state.store.audit_entries(50)
+               if e["action"] == "subject_mismatch")
+    assert row["actor"] == "system", row
+    assert row["ref"] == "u_goog|sub-somebody-else", row  # the row AND what failed
+
 
 def test_the_swapped_account_is_told_which_refusal_this_is(under_iap):
     """`GET /api/session` is exempt from the gate, so it answers this caller on
@@ -771,14 +780,16 @@ def test_the_swapped_account_is_told_which_refusal_this_is(under_iap):
     assert (body["status"], body["code"]) == ("subject_mismatch", "subject_mismatch")
     assert body["email"] == "goog@example.com" and body["user"] is None
 
-    # The row says the SYSTEM refused an arrival, not that Goog did something.
-    # `actor` means who performed (`identity/model.py`), and this used to write
-    # the innocent account's own ref — an accusation in an append-only table,
-    # against the one person who did nothing.
-    row = next(e for e in state.store.audit_entries(50)
-               if e["action"] == "subject_mismatch")
-    assert row["actor"] == "system", row
-    assert row["ref"] == "u_goog|sub-2", row  # the row AND what failed to match
+    # And it writes NOTHING while saying so. This route is exempt from the
+    # gate, so it answers 200 and costs a refused caller nothing — and the
+    # no-access screen fetches it on every load. Auditing here turned a reload
+    # loop into an append-only table growing at request rate: measured before
+    # the fix, 50 polls wrote 50 rows. Recording a refusal is the gate's job,
+    # and the gate runs once per request the caller actually tried to make.
+    for _ in range(9):
+        client.get("/api/session")
+    assert [e for e in state.store.audit_entries(50)
+            if e["action"] == "subject_mismatch"] == []
 
 
 def test_a_refusal_status_nobody_mapped_still_answers(under_iap, monkeypatch):
@@ -792,10 +803,44 @@ def test_a_refusal_status_nobody_mapped_still_answers(under_iap, monkeypatch):
     client, provider = under_iap
     provider.email = "quarantined@example.com"
     monkeypatch.setattr("fenceai.api.app.auth_resolve",
-                        lambda store, principal: (None, "quarantined"))
+                        lambda store, principal, **kw: (None, "quarantined"))
 
     body = client.get("/api/session")
     assert body.status_code == 200
     assert body.json()["status"] == "quarantined"
     assert body.json()["code"] == "quarantined"  # its own name, not a crash
     assert client.get("/api/projects").status_code == 403
+
+
+def test_a_first_arrival_cannot_undo_an_admin_edit_it_never_saw(client):
+    """Binding writes the subject column, not the whole row.
+
+    `resolve` reads the row, `bind` mutates the copy, and the write used to
+    send that entire copy back — a snapshot taken before an admin's PATCH
+    landed. So a deactivation made while somebody was signing in for the FIRST
+    time was silently reverted: the admin got a 200 and a People panel showing
+    them deactivated, and the row on disk said `active: true`. Measured at 15
+    of 60 unassisted trials; the window is a first arrival, which is exactly
+    when a freshly granted row is most likely to be edited.
+
+    Written without threads on purpose — the interleaving is the whole content
+    of the bug, so it is staged rather than raced, and it fails every time."""
+    row = _row("late@example.com", "sales", id="u_late")
+    assert row.subject == ""
+
+    # What `resolve` holds: the row as it was before anybody edited it.
+    stale = state.store.user("u_late")
+    assert stale is not None and stale.active is True
+
+    # The admin deactivates them while that snapshot is in flight.
+    assert client.patch("/api/users/u_late", json={"active": False}).status_code == 200
+
+    # Now the arrival persists its binding, from the stale copy.
+    stale.subject = "sub-late"
+    state.store.bind_subject(stale.id, stale.subject, actor="user:u_late")
+
+    after = state.store.user("u_late")
+    assert after.subject == "sub-late", "the binding did not persist at all"
+    assert after.active is False, (
+        "the first arrival resurrected a deactivated account: the admin was "
+        "told the deactivation worked and it did not")

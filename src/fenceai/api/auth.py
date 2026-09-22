@@ -24,7 +24,7 @@ import uuid
 from fastapi import HTTPException, Request
 
 from fenceai.identity.binding import bind
-from fenceai.identity.model import User, actor_ref
+from fenceai.identity.model import SYSTEM, User, actor_ref
 from fenceai.identity.ports import IdentityProvider, Principal
 
 #: Routes that answer without a capacity row. An explicit list of exceptions
@@ -99,12 +99,15 @@ def _log_mismatch(store, user: User, subject: str) -> None:
     account, so it is not a vector an anonymous caller can pump. The warning
     beside it is for whoever is on call; the row is for whoever asks later.
     """
-    _log.warning("identity: %s arrived on %s, which is bound to another Google "
-                 "account; refused", subject or "(no subject)", user.email)
-    store.log("system", "subject_mismatch", f"{user.id}|{subject}")
+    # The row id, not the address: `User.email` is strip+lowercased and never
+    # format-validated, so a stored address carrying a newline would be a
+    # second way into this line. The audit row below carries both.
+    _log.warning("identity: a different Google account arrived on %s; refused",
+                 user.id)
+    store.log(SYSTEM, "subject_mismatch", f"{user.id}|{subject}")
 
 
-def resolve(store, principal: Principal) -> tuple[User | None, str]:
+def resolve(store, principal: Principal, *, audit: bool = True) -> tuple[User | None, str]:
     """The row this principal is, and what to do about it.
 
     Returns `(user, status)` with status one of `ok` · `no_capacity` ·
@@ -123,11 +126,26 @@ def resolve(store, principal: Principal) -> tuple[User | None, str]:
     # the mismatch that is supposed to catch a swapped Google account would
     # never have a stored subject to catch it against.
     if outcome == "mismatch":
-        _log_mismatch(store, user, principal.subject)
+        # `audit=False` for the one caller that is REPORTING a refusal rather
+        # than performing one. `GET /api/session` is exempt from the gate, so
+        # it answers 200 and costs a refused caller nothing — and the no-access
+        # screen fetches it on every load. Measured before this: 50 polls, 50
+        # audit rows. Recording the refusal is the gate's job; it happens once
+        # per request the caller actually tried to make, and the screen that
+        # tells them why is not one of those.
+        if audit:
+            _log_mismatch(store, user, principal.subject)
         return user, "subject_mismatch"
     if outcome == "bound":
-        store.save_user(user, actor=actor_ref(user))
-        store.log(actor_ref(user), "identity_bound", user.id)
+        # Only the subject column, re-read under the store's lock. Writing the
+        # whole row back from a snapshot taken before `bind` mutated it
+        # silently reverted an admin edit that landed in between — the admin
+        # was told the deactivation worked and the person kept full access.
+        # `bind_subject` writes the `identity_bound` row itself, inside the
+        # same lock as the write it describes — an audit row for a write that
+        # did not happen (the row was bound by somebody else first) would be a
+        # second thing to keep true.
+        store.bind_subject(user.id, user.subject, actor=actor_ref(user))
     if not user.active:
         return user, "deactivated"
     return user, "ok"

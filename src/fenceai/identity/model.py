@@ -38,6 +38,23 @@ CAPACITIES: tuple[str, ...] = ("sales", "backoffice", "admin")
 #: there is nobody to name.
 SYSTEM = "system"
 
+
+def would_strand_the_admins(users: list["User"], target: "User",
+                            capacity: str | None, active: bool | None) -> bool:
+    """Is this the edit that leaves nobody able to grant anything?
+
+    Pure, and separate from the route, because the CHECK and the WRITE have to
+    happen inside one lock — see `Store.amend_user_guarded`. Asked before the
+    write, because after it the only cure is `FENCEAI_BOOTSTRAP_ADMIN` and a
+    redeploy, and `_bootstrap` only fires for an address with NO row, so it
+    cannot rescue either of the admins this would strand.
+    """
+    losing_admin = (capacity is not None and capacity != "admin") or active is False
+    if target.capacity != "admin" or not losing_admin:
+        return False
+    return not [u for u in users
+                if u.id != target.id and u.capacity == "admin" and u.active]
+
 # An id may not contain the separator `actor_ref` builds with, or it could spell
 # another KIND of actor. See `_no_colon`.
 _ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")

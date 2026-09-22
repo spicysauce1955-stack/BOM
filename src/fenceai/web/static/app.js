@@ -48,8 +48,10 @@ function setupHeader() {
     setTab("canvas");
     emit("road-go", "job");
   });
-  document.getElementById("btn-locale").addEventListener("click",
-    () => setLocale(currentLocale() === "he" ? "en" : "he"));
+  const flipLocale = () => setLocale(currentLocale() === "he" ? "en" : "he");
+  document.getElementById("btn-locale").addEventListener("click", flipLocale);
+  // The same control on the refusal screen, which the header does not reach.
+  document.getElementById("no-access-locale").addEventListener("click", flipLocale);
   document.getElementById("btn-units").addEventListener("click", toggleUnits);
   const viewSelect = document.getElementById("view-select");
   viewSelect.value = state.view;
@@ -97,6 +99,12 @@ function wireIdentity() {
     // `esc` is not needed for textContent, which is the point of using it: a
     // person's own address is user text and never reaches innerHTML here.
     if (refused) {
+      // The page changes completely and asynchronously, after `/api/session`
+      // answers. A sighted person sees that; without moving focus, a screen
+      // reader user got silence and a `BODY` focus on the old page.
+      // Only when nothing else holds focus, so a re-render (a locale flip)
+      // does not yank it back off the button somebody just tabbed to.
+      if (document.activeElement === document.body) noAccess.focus();
       document.getElementById("no-access-email").textContent = state.authEmail;
       document.getElementById("no-access-reason").textContent =
         t(refusalTextKey(state.authCode));

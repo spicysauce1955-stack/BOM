@@ -2286,7 +2286,7 @@ def session(request: Request) -> dict:
     if principal is None:
         return {"status": "no_identity", "code": "no_identity", "email": "",
                 "user": None, "view": None, "may_choose_view": True}
-    user, status = auth_resolve(state.store, principal)
+    user, status = auth_resolve(state.store, principal, audit=False)
     if status != "ok":
         # `code` rather than a second mapping in the browser: `status` is a
         # STATE for a screen and the code is the platform refusal a person may
@@ -2368,20 +2368,9 @@ class AmendRequest(BaseModel):
     active: bool | None = None
 
 
-def _would_strand_the_admins(target: User, body: AmendRequest) -> bool:
-    """Is this the edit that leaves nobody able to grant anything?
-
-    Asked before the write, because after it the only cure is
-    `FENCEAI_BOOTSTRAP_ADMIN` and a redeploy — and that variable is removed
-    after the first deploy precisely so it is not a standing way in.
-    """
-    losing_admin = (body.capacity is not None and body.capacity != "admin") \
-        or body.active is False
-    if target.capacity != "admin" or not losing_admin:
-        return False
-    others = [u for u in state.store.list_users()
-              if u.id != target.id and u.capacity == "admin" and u.active]
-    return not others
+# `_would_strand_the_admins` moved to `identity/model.py` as a pure function and
+# is applied inside `Store.amend_user_guarded`, because the check and the write
+# have to be one atomic operation — asked here and answered there, they raced.
 
 
 @app.post("/api/users", status_code=201)
@@ -2409,17 +2398,17 @@ def amend_capacity(request: Request, user_id: str, body: AmendRequest) -> dict:
     row must keep resolving to a name for ever.
     """
     admin = require_admin(request)
-    user = state.store.user(user_id)
-    if user is None:
+    # One store call, not a read then a check then a write. Across three, two
+    # concurrent PATCHes each saw the other admin as the one still standing and
+    # both committed, leaving a deployment with no active admin and no cure —
+    # `_bootstrap` only admits an address with NO row, so it cannot rescue
+    # either of them. See `Store.amend_user_guarded`.
+    user, status = state.store.amend_user_guarded(
+        user_id, body.capacity, body.active, actor=actor_ref(admin))
+    if status == "user_not_found":
         raise HTTPException(404, {"code": "user_not_found"})
-    if _would_strand_the_admins(user, body):
+    if status == "last_admin":
         raise HTTPException(409, {"code": "last_admin"})
-    if body.capacity is not None:
-        user.capacity = body.capacity
-    if body.active is not None:
-        user.active = body.active
-    state.store.save_user(user, actor=actor_ref(admin))
-    state.store.log(actor_ref(admin), "amend_capacity", user.id)
     return _public(user)
 
 

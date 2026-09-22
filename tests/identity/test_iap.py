@@ -394,3 +394,57 @@ def test_a_rejected_assertion_says_something_to_the_operator(provider, keys, cap
         assert provider.principal({IAP_HEADER: tok}, {}) is None
     assert any("FENCEAI_IAP_AUDIENCE" in r.getMessage() for r in caplog.records), caplog.text
     assert tok not in caplog.text
+
+
+def test_a_rejected_assertion_cannot_write_into_the_log(provider, keys, caplog):
+    """The operator line logs the exception's TYPE, never its message.
+
+    PyJWT's error for an unsupported `crit` header interpolates that header's
+    value verbatim, and the header is read BEFORE the signature is checked — so
+    logging `str(exc)` let anyone who can reach this service write arbitrary
+    multi-line text into our WARNING log, formatted to impersonate our own
+    logger at whatever level they chose. An on-call operator reading a forged
+    ERROR line during an incident is the harm.
+
+    The token below is signed with a key that is NOT the one the provider
+    holds, which is the point: it never has to be valid to reach the line."""
+    import logging
+
+    private, _ = keys
+    forged = jwt.encode(
+        {"iss": "https://cloud.google.com/iap", "aud": AUD, "email": "a@b.com",
+         "sub": "1", "iat": int(time.time()) - 5, "exp": int(time.time()) + 600},
+        private, algorithm="ES256",
+        headers={"kid": KID, "crit": ["FORGED\nERROR fenceai: nothing to see"]})
+
+    with caplog.at_level(logging.WARNING, logger="fenceai.identity.iap"):
+        assert provider.principal({IAP_HEADER: forged}, {}) is None
+
+    assert "FORGED" not in caplog.text, caplog.text
+    assert "nothing to see" not in caplog.text, caplog.text
+    # PyJWT reads `crit` while parsing the header, so this lands on the
+    # header line rather than the verification one — which is why BOTH log
+    # only the exception type. The operator still gets a diagnosis.
+    assert any("InvalidTokenError" in r.getMessage() for r in caplog.records), caplog.text
+    assert all("\n" not in r.getMessage() for r in caplog.records), caplog.text
+
+
+def test_a_key_outage_does_not_send_the_operator_to_the_wrong_lever(keys, caplog):
+    """A gstatic outage used to produce the correct ERROR immediately followed
+    by a WARNING telling the operator to check `FENCEAI_IAP_AUDIENCE` — the one
+    thing that is not wrong during a key-endpoint outage, in the commit whose
+    whole purpose was on-call diagnosability. The key fetch lives outside the
+    verification `try` so each failure names its own lever."""
+    import logging
+
+    private, _ = keys
+
+    def _down():
+        raise OSError("gstatic unreachable")
+
+    provider = IapIdentity(audience=AUD, fetch_keys=_down)
+    with caplog.at_level(logging.WARNING, logger="fenceai.identity.iap"):
+        assert provider.principal({IAP_HEADER: _token(private)}, {}) is None
+
+    assert not any("FENCEAI_IAP_AUDIENCE" in r.getMessage() for r in caplog.records), caplog.text
+    assert any("key fetch failed" in r.getMessage() for r in caplog.records), caplog.text

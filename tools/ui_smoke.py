@@ -1093,6 +1093,19 @@ def _smoke_sales_mode(c) -> None:
               for k in ("generate", "tab1", "height_label")), he)
     check("switching language does not un-hide the engineering surfaces",
           he["pin"] == "hidden" and he["knowledge"] == "hidden", he)
+    # The People tab is drawn lazily, because nobody but an admin opens it and
+    # `GET /api/users` returns the whole company. Subscribing its redraw to
+    # "locale-changed" UNCONDITIONALLY undid that: a language flip fetched the
+    # roster and put every colleague's name, address and capacity into the DOM
+    # of a page whose owner cannot open the tab. The flip above is the trigger;
+    # this is the assertion. Nothing else in this suite opens that tab, so an
+    # empty table here means it was never drawn, not that it was drawn empty.
+    check("a language flip does not draw the company roster for somebody who "
+          "cannot open it",
+          not c.js("(document.getElementById('people-table')?.innerHTML || '')"
+                   ".includes('<tr')"),
+          {"table": c.js("(document.getElementById('people-table')?.innerHTML || '')"
+                         ".slice(0, 120)")})
     c.js("document.getElementById('btn-locale').click(); 'ok'")
     time.sleep(0.8)
 
@@ -2688,6 +2701,25 @@ def _smoke_backoffice_queue(c):
           and c.js("!!document.getElementById('no-access-advice')?.checkVisibility()"),
           {"reason": reason,
            "advice": c.js("!!document.getElementById('no-access-advice')?.checkVisibility()")})
+    # The reason sentence is `t()` output written into `textContent`, NOT
+    # `data-i18n` — the applier would overwrite it with one fixed key — so a
+    # locale flip only reaches it because `app.js` subscribes `render` to
+    # "locale-changed". Nothing tested that line: deleting it left the suite
+    # green with the refusal frozen in whichever language the page loaded in.
+    # The button is on this screen because the header one is hidden here, and
+    # somebody whose first arrival is refused would otherwise have no way to
+    # read it in their own language.
+    before = c.js("document.getElementById('no-access-reason')?.textContent")
+    c.js("document.getElementById('no-access-locale').click(); 'ok'")
+    wait_for(c,
+             "document.getElementById('no-access-reason')?.textContent !== "
+             + repr(before), timeout=10)
+    after = c.js("document.getElementById('no-access-reason')?.textContent")
+    check("the refusal sentence follows the language toggle on the screen it is on",
+          bool(after) and after != before
+          and c.js("!!document.getElementById('no-access')?.checkVisibility()"),
+          {"before": before, "after": after})
+    c.js("document.getElementById('no-access-locale').click(); 'ok'")
     c.js("document.getElementById('no-access-signout').click(); 'ok'")
     wait_for(c, "document.documentElement.dataset.auth === 'out'", timeout=10)
 

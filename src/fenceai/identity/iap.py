@@ -134,9 +134,28 @@ class IapIdentity:
             return None
         try:
             kid = jwt.get_unverified_header(token).get("kid", "")
+        except Exception as exc:
+            # Unreadable before it is even unverified. A different lever from
+            # the one below, so a different line.
+            _log.warning("IAP: unreadable assertion header (%s)",
+                         type(exc).__name__)
+            return None
+
+        try:
             key = self._key_for(kid)
-            if key is None:
-                return None
+        except Exception:
+            # `_key_for` has already logged this, and logged it naming the
+            # RIGHT lever (the key endpoint, not the audience). Kept out of the
+            # verification `try` below for exactly that reason: a gstatic
+            # outage used to produce the correct ERROR followed immediately by
+            # a WARNING telling the operator to go and check
+            # `FENCEAI_IAP_AUDIENCE`, which is the wrong thing to go and check
+            # during an outage.
+            return None
+        if key is None:
+            return None
+
+        try:
             claims = jwt.decode(
                 token, key, algorithms=["ES256"],
                 audience=self._audience, issuer=_ISSUER,
@@ -159,10 +178,19 @@ class IapIdentity:
             # — a padded `FENCEAI_IAP_AUDIENCE` does exactly that, against
             # perfectly valid assertions — looked identical to nobody visiting.
             # The wire answer is unchanged; this is the line somebody on call
-            # reads. `exception` name only, never the token.
-            _log.warning("IAP: assertion rejected (%s: %s); if this is every "
+            # reads.
+            #
+            # The exception's TYPE NAME only, never `str(exc)`. PyJWT's message
+            # for an unsupported `crit` header interpolates that header's value
+            # verbatim, and it is read BEFORE the signature is checked — so
+            # anyone who can reach this service could write arbitrary
+            # multi-line text into this log, formatted to look like our own
+            # logger at whatever level they chose. The type name is the
+            # diagnosis anyway: `InvalidAudienceError` says more than
+            # "Audience doesn't match" does.
+            _log.warning("IAP: assertion rejected (%s); if this is every "
                          "caller, check FENCEAI_IAP_AUDIENCE",
-                         type(exc).__name__, exc)
+                         type(exc).__name__)
             return None
         email = str(claims.get("email", ""))
         subject = str(claims.get("sub", ""))

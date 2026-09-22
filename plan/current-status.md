@@ -5,7 +5,7 @@
 
 ## Checkpoint — 2026-09-22: identity is Google's, and the doors actually lock
 
-Branch `feat/identity-is-googles`, 39 commits on `origin/main` (e44377b), not merged at the
+Branch `feat/identity-is-googles` on `origin/main` (e44377b), not merged at the
 time of writing. This is slice 2 of `docs/superpowers/specs/2026-09-17-gcp-deployment-design.md`,
 and the decision it records is ADR-0013: **this app does not authenticate anybody.**
 
@@ -60,7 +60,7 @@ admin is ACTIVE — active, not merely present, so a deployment whose only admin
 deactivated has a way back in. That asymmetry was a deliberate fix, and it means the variable
 left set after first deploy is load-bearing for recovery rather than just untidy.
 
-**Measured, not estimated:** full suite against Postgres — **3981 passed, 1 skipped**
+**Measured, not estimated:** full suite against Postgres — **3984 passed, 1 skipped**
 (the CI-only guard), up from 3821 before the slice. Browser smoke — **644/644 checks**.
 `tests/tools` — 89, its pre-slice bar, after a regression that hid behind
 `--ignore=tests/tools` for two review cycles and turned out to be one dead selector in the

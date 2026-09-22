@@ -279,8 +279,7 @@ because it was never about passwords.
 
 - **`FENCEAI_BOOTSTRAP_ADMIN=owner@company.com`** — if no admin is currently
   ACTIVE and that address signs in, it becomes one. Self-disabling the moment
-  an admin is active — not the moment one exists. [Corrected — see A3 in
-  `.superpowers/sdd/2026-09-17-identity-is-googles/task-10-brief.md`: counting
+  an admin is active — not the moment one exists. [Corrected — the authority is ADR-0013 and `api/auth.py::_bootstrap`: counting
   only active admins is what lets a deployment whose sole admin was later
   deactivated be recovered by redeploying with this variable still set, rather
   than locked out for ever. The consequence is that **while this variable is
