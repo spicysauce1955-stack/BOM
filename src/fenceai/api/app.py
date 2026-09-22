@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -81,9 +82,14 @@ from fenceai.report.bom_groups import group_bom
 from fenceai.report.section_decisions import decisions_for_section
 from fenceai.report.structure import build_structure
 from fenceai.identity.model import (
-    SYSTEM, User, actor_ref, default_view, may_choose_view, verify_password,
+    Capacity, User, actor_ref, default_view, may_choose_view,
 )
-from fenceai.identity import session as sessions
+from fenceai.identity.dev import DEV_COOKIE
+from fenceai.identity.provider import build_provider
+from fenceai.api.auth import (
+    EXEMPT_PATHS, REFUSAL_STATUS_CODES, current_user, dev_mode, make_gate,
+    require_admin, resolve as auth_resolve,
+)
 from fenceai.project.queue import DEFAULT_LIMIT, QueueFilter, my_jobs, select_rows
 from fenceai.store.db import Store
 from fenceai.strategy.generator import DEFAULT_POLICY, LEGACY_MODEL_ID, generate
@@ -96,6 +102,7 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "static"
 
 class AppState:
     store: Store
+    provider = None
     interpreter = None
     proposer = None
     critic = None
@@ -108,6 +115,28 @@ state = AppState()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state.store = Store(os.environ.get("FENCEAI_DB", "fenceai.db"))
+    state.provider = build_provider()
+    # Loud, once. A machine running `dev` by accident should say so rather than
+    # behave strangely — an impersonation switch nobody noticed is the one way
+    # this arrangement fails silently.
+    print(f"[fenceai] identity provider: {state.provider.provider_id}", flush=True)
+    # `_DEV` was read at IMPORT (needed then, to decide route registration and
+    # the docs switch, both of which must exist before any request can arrive).
+    # `state.provider.provider_id` is read HERE, at startup, from the same
+    # `FENCEAI_IDENTITY`. In a real process the two reads are nil apart and can
+    # never disagree; a test that swaps the provider at the port (or changes the
+    # environment between import and this call) can make them disagree, and the
+    # failure mode is fail-OPEN in one direction — import saw `dev` and left
+    # `/openapi.json` registered, while startup built `iap` and would otherwise
+    # give no sign that the whole API surface is sitting behind a live URL. A
+    # WARNING, not a raise: several tests deliberately construct exactly this
+    # mismatch to exercise the `iap`-shaped path without reloading the module.
+    if _DEV != (state.provider.provider_id == "dev"):
+        print("[fenceai] WARNING: identity provider at import "
+              f"({'dev' if _DEV else state.provider.provider_id!r}) disagrees "
+              f"with identity provider at startup ({state.provider.provider_id!r}) "
+              "— dev-only routes and the docs switch were fixed at import time "
+              "and will not match this process's actual provider", flush=True)
     state.interpreter = build_interpreter()
     state.proposer = StubProposer()
     state.critic = StubCritic()
@@ -119,7 +148,26 @@ async def lifespan(app: FastAPI):
             state.store.insert_knowledge_version(v, actor="seed")
     if not state.store.list_projects():
         state.store.save_project(_sample_project(), actor="seed")
-    _seed_demo_accounts()
+    # The demo accounts are a DEV-MODE thing, and the condition is the whole
+    # reason `FENCEAI_BOOTSTRAP_ADMIN` can ever fire: seeding `u_admin`
+    # unconditionally put an admin row in every fresh database before the first
+    # request arrived, which permanently disabled the bootstrap and left a real
+    # company's first admin with no way in at all — in the slice that deletes
+    # the password path. Dev mode never needs the bootstrap, because the picker
+    # can become anybody; production never wants three inert strangers.
+    if state.provider.provider_id == "dev":
+        _seed_demo_accounts()
+    # Unset is the SAFE state, and the normal one for every deployment past its
+    # first admin — so this is a log line, not a refusal to boot. A deployment
+    # that forgot the variable on its very first boot would otherwise seat
+    # nobody and give the operator nothing to grep for; refusing to boot would
+    # instead turn a legitimate, permanent configuration (bootstrap disabled
+    # once an admin exists) into a restart loop under a supervisor.
+    if not state.store.list_users() and not os.environ.get(
+            "FENCEAI_BOOTSTRAP_ADMIN", "").strip():
+        print("[fenceai] no users exist and FENCEAI_BOOTSTRAP_ADMIN is unset — "
+              "nobody can sign in until it names the first admin's address",
+              flush=True)
     yield
     state.store.close()
 
@@ -164,7 +212,27 @@ def _sample_project() -> Project:
     return Project(id=new_id("proj"), name="פרויקט לדוגמה", topology=topology)
 
 
-app = FastAPI(title="Fence AI", version="0.1.0", lifespan=lifespan)
+#: Default-deny, declared once rather than on seventy routes. A dependency on
+#: the app covers every route the router serves — including one added tomorrow
+#: by somebody who never read this file, which is the whole point. The closure
+#: reads `state` at request time because the provider and the store are both
+#: built in `lifespan`, after this line has run.
+_gate = make_gate(lambda: state.provider, lambda: state.store)
+
+#: `/openapi.json`, `/docs`, `/docs/oauth2-redirect` and `/redoc` are OUTSIDE
+#: the gate and cannot be brought inside it: FastAPI registers them with
+#: `Starlette.add_route`, so they are plain `Route`s rather than `APIRoute`s and
+#: the router's dependencies never reach them. Left on, they hand the entire API
+#: surface — including the account-administration routes — to anybody who
+#: reaches the service, which is the exact thing verifying IAP's assertion
+#: exists to stop. Off outside dev, where the convenience is worth nothing to a
+#: stranger because there is nobody to be a stranger to.
+_DEV = dev_mode()
+app = FastAPI(title="Fence AI", version="0.1.0", lifespan=lifespan,
+              dependencies=[Depends(_gate)],
+              openapi_url="/openapi.json" if _DEV else None,
+              docs_url="/docs" if _DEV else None,
+              redoc_url="/redoc" if _DEV else None)
 
 
 def _now_iso() -> str:
@@ -363,12 +431,12 @@ class ProjectCreate(BaseModel):
 
 @app.post("/api/projects")
 def create_project(request: Request, body: ProjectCreate) -> Project:
-    # Who created it, from the session and never from the body: it is what puts
+    # Who created it, from the identity and never from the body: it is what puts
     # the job on that salesperson's home screen (`GET /api/my-jobs`), and a
     # creator a client could name would put jobs on somebody else's list.
-    user = _signed_in(request)
+    user = current_user(request)
     project = Project(id=new_id("proj"), name=body.name, job=body.job,
-                      created_by=user.id if user else "")
+                      created_by=user.id)
     state.store.save_project(project, actor=_actor(request))
     return project
 
@@ -433,11 +501,12 @@ def put_context(request: Request, project_id: str, context: SiteContext) -> Proj
 # typing an address is not a command, and forcing it to be one turns the design
 # into ceremony.
 #
-# It is also the FIRST gated route in this app, and deliberately the only one.
-# Retrofitting capacity onto the other sixty-eight in the same slice that
-# introduces the mechanism is how the choice-set feature ran away on 2026-09-03;
-# a request with no session stays the ordinary case everywhere else and still
-# writes `system`.
+# It was the FIRST gated route in this app and is no longer the only one: the
+# app-level gate now resolves every caller to a capacity row before any route
+# runs. What stays particular here is the CAPACITY check — "may this account
+# perform this command on a job in this state" — which lives in
+# `fenceai.commands` and is a different question from "may this person reach the
+# API at all".
 
 
 class CommandBody(BaseModel):
@@ -533,7 +602,7 @@ def perform_command(request: Request, project_id: str, body: CommandBody) -> Pro
     The row is written only on success. A log that recorded every attempt would
     make "who did what" a list of things nobody did.
     """
-    user = _require_user(request)
+    user = current_user(request)
     project = _project(project_id)
     _refuse_unknown_assignee(body)
     try:
@@ -817,12 +886,12 @@ def queue(
     row: deriving it for twenty-five is free and for an unbounded list is what
     would make "read models are derived, never stored" unaffordable.
     """
-    user = _signed_in(request)
+    user = current_user(request)
     # `me` is resolved HERE and never passed through. `select_rows` refuses the
     # literal string on purpose: matched as an id it would return an empty page
     # that reads as "you have nothing to do", which is the most misleading answer
     # a queue can give.
-    who = actor_user_id(user) if assignee == "me" else assignee
+    who = user.id if assignee == "me" else assignee
     try:
         f = QueueFilter(
             bucket=bucket,
@@ -850,18 +919,13 @@ def my_jobs_route(request: Request) -> dict:
     """A salesperson's home screen: the jobs this account created, what the
     office has said about each, most urgent first.
 
-    Signed-in only, because "my" has no answer otherwise — an anonymous request
-    is a 401 rather than an empty list that reads as "you have no jobs".
+    "My" has no answer for a caller nobody can name, which is why an unresolved
+    request is refused by the gate rather than shown an empty list that reads as
+    "you have no jobs".
     """
-    user = _require_user(request)
+    user = current_user(request)
     rows = my_jobs(state.store.list_projects(), user.id)
     return {"rows": [r.model_dump() for r in rows]}
-
-
-def actor_user_id(user: User | None) -> str:
-    """`assignee=me` with nobody signed in matches nobody, which is the honest
-    answer — not everybody."""
-    return user.id if user else "\x00-nobody"
 
 
 def _queue_row(row) -> dict:
@@ -911,18 +975,18 @@ def put_topology(request: Request, project_id: str, topology: Topology) -> Proje
 class AnnotationCreate(BaseModel):
     target_ref: str
     text: str
-    author: str = "user"
 
 
 @app.post("/api/projects/{project_id}/annotations")
 def add_annotation(request: Request, project_id: str, body: AnnotationCreate) -> Annotation:
     project = _project(project_id)
-    # The session outranks `author` (see `_actor`), and the time is stamped: both
-    # are what let a salesperson's list tell the office's notes from her own,
-    # and let the handover tell a note made after she sent the job from the sale.
+    # The author is the session, full stop — there is no client-supplied
+    # `author` left to outrank (Task 7) — and the time is stamped: both are
+    # what let a salesperson's list tell the office's notes from her own, and
+    # let the handover tell a note made after she sent the job from the sale.
     annotation = Annotation(
         id=new_id("ann"), target_ref=body.target_ref, text=body.text,
-        author=_actor(request, fallback=body.author), created_at=_now_iso(),
+        author=_actor(request), created_at=_now_iso(),
     )
     project.annotations.append(annotation)
     state.store.save_project(project, actor=_actor(request))
@@ -1212,7 +1276,6 @@ def get_advice(run_id: str):
 
 class QuoteCreate(BaseModel):
     label: str = ""
-    author: str = "user"
 
 
 @app.post("/api/runs/{run_id}/quote")
@@ -1250,7 +1313,7 @@ def create_quote(request: Request, run_id: str, body: QuoteCreate) -> Quote:
     # as well because a quote may be the first thing a project ever asks for, and
     # the document it stands behind must exist.
     supply = state.store.save_supply_run(
-        _supply_run_for(result, preset, priced, inventory), actor=_actor(request, body.author))
+        _supply_run_for(result, preset, priced, inventory), actor=_actor(request))
     quote = Quote(
         id=new_id("quote"), project_id=result.run.project_id, run_id=run_id,
         label=body.label,
@@ -1266,7 +1329,7 @@ def create_quote(request: Request, run_id: str, body: QuoteCreate) -> Quote:
         requirements=priced.requirements, bom=priced.bom,
         total_cents=priced.bom.total_cents,
     )
-    state.store.save_quote(quote, actor=_actor(request, body.author))
+    state.store.save_quote(quote, actor=_actor(request))
     return quote
 
 
@@ -1289,9 +1352,9 @@ def get_quote(quote_id: str) -> Quote:
 
 
 @app.post("/api/quotes/{quote_id}/accept")
-def accept_quote(request: Request, quote_id: str, author: str = "user") -> Quote:
+def accept_quote(request: Request, quote_id: str) -> Quote:
     try:
-        return state.store.accept_quote(quote_id, actor=_actor(request, author))
+        return state.store.accept_quote(quote_id, actor=_actor(request))
     except KeyError:
         raise HTTPException(404, f"quote {quote_id} not found")
     except ValueError as e:
@@ -1384,14 +1447,16 @@ class CorrectionCreate(BaseModel):
     before: dict = {}
     after: dict = {}
     comment: str | None = None
-    author: str = "expert"
 
 
 @app.post("/api/projects/{project_id}/corrections")
 def add_correction(request: Request, project_id: str, body: CorrectionCreate) -> Correction:
     _project(project_id)
-    correction = Correction(id=new_id("corr"), project_id=project_id, **body.model_dump())
-    state.store.save_correction(correction, actor=_actor(request, body.author))
+    correction = Correction(
+        id=new_id("corr"), project_id=project_id, author=_actor(request),
+        **body.model_dump(),
+    )
+    state.store.save_correction(correction, actor=_actor(request))
     return correction
 
 
@@ -1463,26 +1528,37 @@ def list_candidates():
 
 
 class ReviewBody(BaseModel):
+    """No `reviewer` field, deliberately.
+
+    Approving a candidate writes `attributed_to` on the version that becomes
+    ACTIVE and generates every later project's fence — domain provenance, not
+    just an audit fallback. A client-supplied reviewer let any caller sign a
+    rule change as anyone, including another real account. The reviewer is the
+    resolved caller, like every other actor in this app; a body that still
+    sends one is ignored rather than rejected, because the field was never
+    load-bearing for anything but the forgery.
+    """
+
     action: str
-    reviewer: str
     reason: str | None = None
     edited_scope: dict[str, str] | None = None
 
 
 @app.post("/api/candidates/{object_id}/{version}/review")
-def review_candidate(object_id: str, version: int, body: ReviewBody):
+def review_candidate(request: Request, object_id: str, version: int, body: ReviewBody):
     kb = state.store.knowledge_base()
     cand = next(
         (v for v in kb.versions if v.object_id == object_id and v.version == version), None
     )
     if cand is None or cand.status != "proposed":
         raise HTTPException(404, "candidate not found or not reviewable")
+    actor = _actor(request)
     try:
-        outcome = apply_review(cand, ReviewAction(**body.model_dump()))
+        outcome = apply_review(cand, ReviewAction(**body.model_dump(), reviewer=actor))
     except ValueError as e:
         raise HTTPException(400, str(e))
     approved = outcome if outcome is not cand else None
-    state.store.apply_review_outcome(cand, approved, actor=body.reviewer)
+    state.store.apply_review_outcome(cand, approved, actor=actor)
     return outcome
 
 
@@ -1623,7 +1699,6 @@ class KnowledgeCreate(BaseModel):
     condition: dict | None = None
     actions: list[dict] = []
     source_text: str | None = None
-    author: str = "user"
 
 
 @app.post("/api/knowledge")
@@ -1635,11 +1710,11 @@ def upsert_knowledge(request: Request, body: KnowledgeCreate):
         type=body.type,  # type: ignore[arg-type]
         title=body.title, scope=body.scope,
         condition=body.condition, actions=body.actions,  # type: ignore[arg-type]
-        source_text=body.source_text, attributed_to=body.author,
+        source_text=body.source_text, attributed_to=_actor(request),
         derived_from=[f"{body.object_id}@v{version_no - 1}"] if version_no > 1 else [],
         status="active",
     )
-    state.store.replace_active_version(v, actor=_actor(request, body.author))
+    state.store.replace_active_version(v, actor=_actor(request))
     return v
 
 
@@ -1671,7 +1746,7 @@ def preview_knowledge_impact(body: "KnowledgeCreate") -> ImpactReport:
         type=body.type,  # type: ignore[arg-type]
         title=body.title, scope=body.scope,
         condition=body.condition, actions=body.actions,  # type: ignore[arg-type]
-        attributed_to=body.author, status="draft",
+        status="draft",
     )
     return preview_impact(hypo, state.store.knowledge_base(), state.store.load_catalog(),
                           _impact_cases(), state.store.fence_model_library(),
@@ -1694,9 +1769,9 @@ def preview_candidate_impact(object_id: str, version: int) -> ImpactReport:
 
 
 @app.post("/api/knowledge/{object_id}/{version}/retire")
-def retire_knowledge(request: Request, object_id: str, version: int, author: str = "user"):
+def retire_knowledge(request: Request, object_id: str, version: int):
     try:
-        state.store.update_knowledge_status(object_id, version, "retired", actor=_actor(request, author))
+        state.store.update_knowledge_status(object_id, version, "retired", actor=_actor(request))
     except KeyError:
         raise HTTPException(404, f"{object_id}@v{version} not found")
     except ValueError as e:
@@ -1760,7 +1835,7 @@ def get_fence_model(model_id: str, version: int) -> FenceModel:
 
 
 @app.post("/api/fence-models")
-def create_fence_model(request: Request, model: FenceModel, author: str = "user"):
+def create_fence_model(request: Request, model: FenceModel):
     """A new model always arrives as a draft at the next free version.
 
     A draft may be saved INVALID, and its errors are returned rather than
@@ -1775,12 +1850,12 @@ def create_fence_model(request: Request, model: FenceModel, author: str = "user"
         "version": state.store.next_fence_model_version(model.id),
         "status": "draft",
     })
-    state.store.save_fence_model(draft, actor=_actor(request, author))
+    state.store.save_fence_model(draft, actor=_actor(request))
     return {"model": draft, "invalid": _model_errors(draft)}
 
 
 @app.put("/api/fence-models/{model_id}/draft")
-def put_fence_model_draft(request: Request, model_id: str, model: FenceModel, author: str = "user"):
+def put_fence_model_draft(request: Request, model_id: str, model: FenceModel):
     _reserved(model_id)
     library = state.store.fence_model_library()
     # the HIGHEST draft, which is the one `listing()` reports and therefore the
@@ -1792,7 +1867,7 @@ def put_fence_model_draft(request: Request, model_id: str, model: FenceModel, au
     version = existing.version if existing else state.store.next_fence_model_version(model_id)
     draft = model.model_copy(update={"id": model_id, "version": version, "status": "draft"})
     try:
-        state.store.save_fence_model(draft, actor=_actor(request, author))
+        state.store.save_fence_model(draft, actor=_actor(request))
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"model": draft, "invalid": _model_errors(draft)}
@@ -1815,7 +1890,7 @@ def preview_fence_model_impact(model: FenceModel) -> ImpactReport:
 
 
 @app.delete("/api/fence-models/{model_id}/{version}")
-def discard_fence_model_draft(request: Request, model_id: str, version: int, author: str = "user"):
+def discard_fence_model_draft(request: Request, model_id: str, version: int):
     """Throw a draft away. ONLY a draft.
 
     Without this, every abandoned attempt stayed in the library for ever — and
@@ -1833,12 +1908,12 @@ def discard_fence_model_draft(request: Request, model_id: str, version: int, aut
             "code": "fence_model_not_a_draft",
             "params": {"model_ref": model.ref, "status": model.status},
         })
-    state.store.delete_fence_model_draft(model_id, version, actor=_actor(request, author))
+    state.store.delete_fence_model_draft(model_id, version, actor=_actor(request))
     return {"discarded": model.ref}
 
 
 @app.post("/api/fence-models/{model_id}/{version}/publish")
-def publish_fence_model(request: Request, model_id: str, version: int, author: str = "user"):
+def publish_fence_model(request: Request, model_id: str, version: int):
     """Freeze a draft. This is the gate a draft save deliberately is not: from
     here the document is immutable and projects may select it."""
     model = state.store.load_fence_model(model_id, version)
@@ -1849,7 +1924,7 @@ def publish_fence_model(request: Request, model_id: str, version: int, author: s
     invalid = _model_errors(model)
     if invalid:
         raise HTTPException(422, invalid)
-    state.store.set_fence_model_status(model_id, version, "active", actor=_actor(request, author))
+    state.store.set_fence_model_status(model_id, version, "active", actor=_actor(request))
     return state.store.load_fence_model(model_id, version)
 
 
@@ -1857,10 +1932,9 @@ def publish_fence_model(request: Request, model_id: str, version: int, author: s
 def set_fence_model_status(
     request: Request,
     model_id: str, version: int, status: Literal["active", "retired"],
-    author: str = "user",
 ):
     try:
-        state.store.set_fence_model_status(model_id, version, status, actor=_actor(request, author))
+        state.store.set_fence_model_status(model_id, version, status, actor=_actor(request))
     except KeyError:
         raise HTTPException(404, f"{model_id}@v{version} not found")
     except ValueError as e:
@@ -2137,144 +2211,205 @@ def put_inventory(project_id: str, inventory: Inventory) -> Inventory:
     return inventory
 
 
-#: One account per capacity, so the sign-in screen has something to sign in AS
-#: on a fresh database. A shared password, because these are demo rows on a demo
-#: database and pretending otherwise would be theatre — a real deployment seeds
-#: its own accounts and these three never exist.
+#: One account per capacity, so a laptop and the browser smoke have somebody to
+#: BE on a fresh database. Written only under `FENCEAI_IDENTITY=dev` (see
+#: `lifespan`), so a real deployment never sees them and its first admin arrives
+#: through `FENCEAI_BOOTSTRAP_ADMIN` instead.
 DEMO_ACCOUNTS = [
     ("u_dana", "Dana", "dana@example.com", "sales"),
     ("u_yossi", "Yossi", "yossi@example.com", "backoffice"),
     ("u_admin", "Admin", "admin@example.com", "admin"),
 ]
-DEMO_PASSWORD = "demo"
 
 
 def _seed_demo_accounts() -> None:
-    """Only on an empty table. A company that has made its own accounts must
-    never find three strangers in the list after an upgrade."""
+    """Only on an empty table, and only in dev. A company that has made its own
+    accounts must never find three strangers in the list after an upgrade — and
+    under `iap` it must never find them at all."""
     if state.store.list_users():
         return
     for uid, name, email, capacity in DEMO_ACCOUNTS:
-        user = User(id=uid, name=name, email=email, capacity=capacity)
-        user.set_password(DEMO_PASSWORD)
-        state.store.save_user(user, actor="seed")
+        state.store.save_user(
+            User(id=uid, name=name, email=email, capacity=capacity), actor="seed")
 
 
 # -- who is asking -------------------------------------------------------------
-#
-# The cookie name is prefixed because a browser sends every cookie on the origin
-# and a bare `session` collides with whatever else is served there one day.
-SESSION_COOKIE = "fenceai_session"
 
 
-def _signed_in(request: Request) -> User | None:
-    """The account this request is signed in as, or None.
-
-    Never raises. Most routes are still open — accounts RECORD here, they do not
-    yet gate — so "nobody is signed in" has to be an ordinary answer rather than
-    an error every caller must catch.
-    """
-    token = request.cookies.get(SESSION_COOKIE)
-    if not token:
-        return None
-    sess = state.store.session(token)
-    if sess is None or not sessions.is_live(sess):
-        return None
-    user = state.store.user(sess.user_id)
-    return user if user and user.active else None
-
-
-def _actor(request: Request, fallback: str = SYSTEM) -> str:
+def _actor(request: Request) -> str:
     """Who to write in the log.
 
-    **A session outranks anything the caller said.** Twelve routes take
-    `?author=` and hand it to the store, which makes the log a thing anybody can
-    sign as anybody — an actor a client can NAME is not an audit trail. The
-    parameter survives only as the fallback for the unsigned-in case, which is
-    every existing test and the whole browser smoke.
+    There is no unsigned case left: the gate resolved somebody before any
+    route ran, so the resolved caller is the only answer. This used to take a
+    `fallback` for the eleven `?author=`-style parameters that let a client
+    NAME the actor instead — that was never an audit trail, and default-deny
+    deleted the unsigned case `fallback` existed for, so it was already dead
+    (unread in this body) before it was removed here along with the last of
+    those parameters.
     """
-    user = _signed_in(request)
-    return actor_ref(user) if user else fallback
-
-
-def _require_user(request: Request) -> User:
-    user = _signed_in(request)
-    if user is None:
-        raise HTTPException(401, {"code": "not_signed_in"})
-    return user
+    return actor_ref(current_user(request))
 
 
 def _public(user: User) -> dict:
-    """An account as a screen may see it — everything except the hash.
+    """An account as a screen may see it.
 
-    Not a secret that unlocks anything, and still the one field on the record
-    worth attacking offline, with no surface that needs it.
+    `subject` is Google's stable account id, and this function feeds two
+    routes: `GET /api/session` (this account, to itself) and `GET /api/users`
+    (every account, to any signed-in capacity — not only an admin). The second
+    of those has no reason to hand a colleague's Google id to whoever asked;
+    the people panel only needs to know WHETHER an address has completed a
+    real Google sign-in, never which account it landed on. `subject_bound`
+    answers that question and the raw id stays server-side, in the row
+    `identity/binding.py` compares against.
     """
-    return user.model_dump(exclude={"password_hash"})
+    data = user.model_dump(exclude={"subject"})
+    data["subject_bound"] = bool(user.subject)
+    return data
 
 
-class SignIn(BaseModel):
-    email: str
-    password: str
-
-
-@app.post("/api/session")
-def sign_in(body: SignIn, response: Response) -> dict:
-    """Start a session.
-
-    One refusal for a wrong password and for an address with no account, with
-    the same words: two answers would turn this form into a way of asking
-    whether somebody has an account here.
-    """
-    user = state.store.user_by_email(body.email)
-    if user is None or not verify_password(user, body.password):
-        raise HTTPException(401, {"code": "sign_in_failed"})
-    sess = sessions.start(user.id)
-    state.store.save_session(sess)
-    response.set_cookie(
-        SESSION_COOKIE, sess.token, httponly=True, samesite="lax",
-        max_age=sessions.SESSION_DAYS * 24 * 3600,
-    )
-    state.store.log(actor_ref(user), "sign_in", user.id)
-    return {"user": _public(user), "view": default_view(user.capacity),
-            "may_choose_view": may_choose_view(user.capacity)}
-
-
-@app.delete("/api/session", status_code=204)
-def sign_out(request: Request, response: Response) -> Response:
-    """End it, server-side.
-
-    The row IS the session, so deleting it stops the token working everywhere at
-    once — which is the property an opaque token buys and a self-describing one
-    could not.
-    """
-    token = request.cookies.get(SESSION_COOKIE)
-    if token:
-        state.store.delete_session(token)
-    response.delete_cookie(SESSION_COOKIE)
-    return Response(status_code=204)
-
-
-@app.get("/api/me")
-def me(request: Request) -> dict:
+@app.get("/api/session")
+def session(request: Request) -> dict:
     """Who am I, which view do I open on, and am I offered the selector.
 
-    The view is answered HERE rather than defaulted in the browser: that is the
-    safe way to flip the default the salesperson MVP deliberately left at `all`,
-    because nobody has to change a global setting for Dana to land on her own
-    screen — and the browser smoke signs in as an admin and keeps seeing today's
-    app.
+    **The one route that answers without a capacity row.** A person IAP let
+    through but nobody has granted anything reaches a screen telling them to ask
+    an admin, and that screen has to be able to name them to the admin they are
+    about to ask. Hence the exemption in `auth.EXEMPT_PATHS` and hence the
+    `status` field: this route reports the refusal the rest of the API performs.
+
+    The view is answered HERE rather than defaulted in the browser, which is the
+    safe way to flip the default the salesperson MVP left at `all`: nobody edits
+    a global setting, Dana lands on her own screen because of who she is.
     """
-    user = _require_user(request)
-    return {"user": _public(user), "view": default_view(user.capacity),
+    principal = state.provider.principal(
+        dict(request.headers), dict(request.cookies))
+    if principal is None:
+        return {"status": "no_identity", "code": "no_identity", "email": "",
+                "user": None, "view": None, "may_choose_view": True}
+    user, status = auth_resolve(state.store, principal, audit=False)
+    if status != "ok":
+        # `code` rather than a second mapping in the browser: `status` is a
+        # STATE for a screen and the code is the platform refusal a person may
+        # read in a log, and the two differ for exactly one value
+        # (`deactivated` / `account_deactivated`). `REFUSAL_STATUS_CODES` is
+        # where that difference is decided; a copy of it in JavaScript would be
+        # a second place to forget.
+        return {"status": status,
+                # `.get(status, status)`, exactly like the gate at
+                # `auth.make_gate`: a subscript here would make THIS route —
+                # the one route whose whole purpose is to answer somebody the
+                # rest of the API refuses — the only one that 500s on a refusal
+                # status nobody has mapped yet. An unmapped status carries its
+                # own name, which is a code a person can still read.
+                "code": REFUSAL_STATUS_CODES.get(status, status),
+                "email": principal.email, "user": None,
+                "view": None, "may_choose_view": True}
+    return {"status": "ok", "code": None, "email": principal.email,
+            "user": _public(user),
+            "view": default_view(user.capacity),
             "may_choose_view": may_choose_view(user.capacity)}
+
+
+class BecomeRequest(BaseModel):
+    email: str
+
+
+if _DEV:
+
+    @app.post("/api/dev/identity", status_code=204)
+    def become(body: BecomeRequest) -> Response:
+        """Become somebody, with no credential, on a laptop.
+
+        Registered ONLY under `FENCEAI_IDENTITY=dev`, so under `iap` this route
+        does not exist to be found — which is why the condition is read here, at
+        import, rather than checked inside the handler. It is an impersonation
+        switch and is named as one: no secret, no session row, no expiry.
+        """
+        response = Response(status_code=204)
+        response.set_cookie(DEV_COOKIE, body.email.strip().lower(),
+                            httponly=True, samesite="lax",
+                            max_age=30 * 24 * 3600)
+        return response
+
+    @app.delete("/api/dev/identity", status_code=204)
+    def stop_being_dev() -> Response:
+        """Stop being anybody, on a laptop. Registered on the same
+        module-level condition as the POST above, for the same reason: under
+        `iap` there is no cookie of ours to clear, and `js/session.js`'s
+        `signOut()` already calls this inside a try/catch for exactly that
+        case. `EXEMPT_PATHS` matches by path, not by method, so this needs no
+        entry of its own."""
+        response = Response(status_code=204)
+        response.delete_cookie(DEV_COOKIE)
+        return response
 
 
 @app.get("/api/users")
 def list_users(request: Request) -> list[dict]:
-    """The people, for the assignee picker and the “sold by” filter."""
-    _require_user(request)
+    """The people, for the assignee picker, the “sold by” filter and the
+    admin's own panel."""
+    # Belt and braces, and kept deliberately although the gate has already
+    # resolved this caller: the day somebody adds a path to `EXEMPT_PATHS`, the
+    # route that hands out every account in the company is the one that must not
+    # quietly start answering. Nothing can assert this line while the gate
+    # stands, which is the point of it.
+    current_user(request)
     return [_public(u) for u in state.store.list_users()]
+
+
+class GrantRequest(BaseModel):
+    email: str
+    name: str
+    capacity: Capacity
+
+
+class AmendRequest(BaseModel):
+    capacity: Capacity | None = None
+    active: bool | None = None
+
+
+# `_would_strand_the_admins` moved to `identity/model.py` as a pure function and
+# is applied inside `Store.amend_user_guarded`, because the check and the write
+# have to be one atomic operation — asked here and answered there, they raced.
+
+
+@app.post("/api/users", status_code=201)
+def grant_capacity(request: Request, body: GrantRequest) -> dict:
+    """Give an address a capacity, before its owner has ever signed in.
+
+    That order is the point: an admin grants Dana her capacity on Monday and
+    Dana arrives on Tuesday, at which moment her Google `sub` binds to this row.
+    """
+    admin = require_admin(request)
+    if state.store.user_by_email(body.email) is not None:
+        raise HTTPException(409, {"code": "user_exists"})
+    user = User(id=f"u_{uuid.uuid4().hex[:8]}", name=body.name,
+                email=body.email, capacity=body.capacity)
+    state.store.save_user(user, actor=actor_ref(admin))
+    state.store.log(actor_ref(admin), "grant_capacity", user.id)
+    return _public(user)
+
+
+@app.patch("/api/users/{user_id}")
+def amend_capacity(request: Request, user_id: str, body: AmendRequest) -> dict:
+    """Change what somebody may do, or stop them doing anything.
+
+    Deactivated, never deleted — the audit log names people who have left, so a
+    row must keep resolving to a name for ever.
+    """
+    admin = require_admin(request)
+    # One store call, not a read then a check then a write. Across three, two
+    # concurrent PATCHes each saw the other admin as the one still standing and
+    # both committed, leaving a deployment with no active admin and no cure —
+    # `_bootstrap` only admits an address with NO row, so it cannot rescue
+    # either of them. See `Store.amend_user_guarded`.
+    user, status = state.store.amend_user_guarded(
+        user_id, body.capacity, body.active, actor=actor_ref(admin))
+    if status == "user_not_found":
+        raise HTTPException(404, {"code": "user_not_found"})
+    if status == "last_admin":
+        raise HTTPException(409, {"code": "last_admin"})
+    return _public(user)
 
 
 @app.get("/api/audit")

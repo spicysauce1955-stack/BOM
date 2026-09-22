@@ -36,6 +36,11 @@ PERSONAS = [
 DEFAULT_PORT_BASE = 8800
 DEFAULT_CDP_BASE = 9400
 
+#: The account the stack signs in as before any persona looks (see `start()`),
+#: and the account `seed.py` signs itself in as (`seed.sign_in`'s default) to
+#: write the portfolio it seeds. Named once so the two never drift apart.
+ADMIN_EMAIL = "admin@example.com"
+
 
 def ports_for(index: int) -> tuple[int, int]:
     """The two ports this persona's stack listens on.
@@ -73,6 +78,68 @@ def _port_free(port: int) -> bool:
         return True
 
 
+def _wait_for_both(server, chrome, port: int, cdp_port: int, timeout: float = 60.0) -> None:
+    """Wait until the app AND Chrome's debugging port answer, or say which did not.
+
+    This was `time.sleep(4)` followed by a single unguarded request to the CDP
+    endpoint — a race with a fixed budget, which is fine on a warm workstation
+    and loses on a cold CI runner. It lost silently and expensively: the CDP
+    connection was refused, the exception left the server holding its port, and
+    every later test in the file failed with `port NNNN is already in use`, so
+    22 errors reported a port collision and none of them named a browser that
+    had not finished starting.
+
+    Condition-based, like every other wait in this lab, and it kills both
+    process groups before raising so one slow start cannot poison the rest of
+    the run.
+    """
+    deadline = time.monotonic() + timeout
+    app_up = cdp_up = False
+    while time.monotonic() < deadline:
+        if server.poll() is not None:
+            _kill_both(server, chrome)
+            raise RuntimeError(
+                f"the app exited with code {server.returncode} before serving "
+                f"port {port} — run it by hand to see why")
+        if chrome.poll() is not None:
+            _kill_both(server, chrome)
+            raise RuntimeError(
+                f"google-chrome exited with code {chrome.returncode} before "
+                f"opening port {cdp_port}")
+        if not app_up:
+            app_up = _answers(f"http://localhost:{port}/api/health")
+        if not cdp_up:
+            cdp_up = _answers(f"http://localhost:{cdp_port}/json/version")
+        if app_up and cdp_up:
+            return
+        time.sleep(0.2)
+
+    _kill_both(server, chrome)
+    missing = []
+    if not app_up:
+        missing.append(f"the app on :{port}")
+    if not cdp_up:
+        missing.append(f"chrome's debugging port :{cdp_port}")
+    raise RuntimeError(f"stack did not come up within {timeout:g}s — "
+                       f"{' and '.join(missing)} never answered")
+
+
+def _answers(url: str) -> bool:
+    try:
+        urllib.request.urlopen(url, timeout=1).read()
+        return True
+    except Exception:
+        return False
+
+
+def _kill_both(server, chrome) -> None:
+    for proc in (server, chrome):
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except Exception:
+            pass
+
+
 def start(persona: str, index: int, run_dir: Path) -> dict:
     port, cdp_port = ports_for(index)
     if not _port_free(port):
@@ -84,17 +151,56 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
 
     server = subprocess.Popen(
         ["uv", "run", "uvicorn", "fenceai.api.app:app", "--port", str(port)],
-        env={**os.environ, "FENCEAI_DB": db, "FENCEAI_AI": "stub"},
+        # No `FENCEAI_DEV_USER` here, deliberately: `DevIdentity` is
+        # cookie-first, env-second (`identity/dev.py`), and an env default
+        # authenticates EVERY request that carries no cookie — including the
+        # browser's own first `GET /api/session`, before this function submits
+        # anything. That used to make the real sign-in form below redundant
+        # (the page was already `in` as admin), which raced its own tab
+        # placement against `queue.js`'s `on("signed-in", ...)` — see the
+        # comment below `start()` continues with. Leaving this unset means the
+        # page genuinely starts signed OUT, so the form is exercised on every
+        # run and a broken interactive login path fails here loudly, not just
+        # in the atypical case.
+        #
+        # `**os.environ` is NOT enough by itself: `tests/conftest.py`'s
+        # autouse `_dev_identity` fixture `monkeypatch.setenv`s exactly this
+        # variable, for every test in the suite, including whichever test's
+        # `os.environ` this line spreads — so under pytest this dict would
+        # silently inherit it right back even though nothing here sets it.
+        # Popping it is what actually keeps this process's `os.environ` from
+        # deciding what the spawned server does; two agents confirmed the
+        # RACE was fixed by this file alone before this popped, and the
+        # deliberate-break check that is supposed to fail loudly here instead
+        # passed silently under `pytest` for exactly this reason.
+        #
+        # `seed.py` used to be the reason this existed — its `urllib` calls
+        # carry no cookie jar by default and the default-deny gate this slice
+        # added refuses them with 401 `no_identity`. It now signs itself in
+        # (`seed.sign_in`), the same way the browser does, and carries the
+        # cookie it gets back — so nothing here needs to authenticate it.
+        # `FENCEAI_IDENTITY` is set rather than inherited: it has no default and
+        # the app refuses to boot without it, and the only reason this worked was
+        # that `tests/conftest.py` puts it in the environment process-wide — so
+        # the lab ran under pytest and died from a bare shell. `tools/ui_smoke.py`
+        # sets it for the same reason.
+        env={**{k: v for k, v in os.environ.items() if k != "FENCEAI_DEV_USER"},
+             "FENCEAI_IDENTITY": "dev", "FENCEAI_DB": db, "FENCEAI_AI": "stub"},
         cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
     chrome = subprocess.Popen(
+        # `--disable-dev-shm-usage`: a container's /dev/shm is typically 64 MB,
+        # and Chrome renderers die on startup without ever opening the
+        # debugging port. It costs nothing on a workstation.
         ["google-chrome", "--headless", "--disable-gpu", "--no-sandbox",
+         "--disable-dev-shm-usage",
+         f"--user-data-dir={run_dir / 'chrome-profile'}",
          f"--remote-debugging-port={cdp_port}", "--remote-allow-origins=*",
          "--window-size=1400,950", "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
-    time.sleep(4)
+    _wait_for_both(server, chrome, port, cdp_port)
 
     c = Cdp(f"http://localhost:{port}/", cdp_port=cdp_port, out_dir=str(run_dir / "shots"))
     # a real user never sees a native confirm(); auto-accept so a modal cannot
@@ -103,25 +209,71 @@ def start(persona: str, index: int, run_dir: Path) -> dict:
     # The app opens on a login screen and loads nothing behind it. The personas
     # here are engineering roles evaluating the whole app, which is the admin
     # account's `all` view — so the STACK signs in before any persona looks,
-    # the same way a lab would hand a tester an already-logged-in machine. Done
-    # through the real form, not a cookie, so a broken login fails here loudly.
-    # ...once the app has wired the form: submitted earlier, it posts natively
-    # and reloads the page instead of signing in.
+    # the same way a lab would hand a tester an already-logged-in machine.
+    # Done through the real form, not a cookie, so a broken interactive login
+    # — `wireIdentity()`'s submit handler, `become()`, or the
+    # `POST /api/dev/identity` route itself — fails here loudly.
+    #
+    # With no `FENCEAI_DEV_USER` set above, the page genuinely starts signed
+    # OUT: `dataset.auth` goes `pending` -> `out`, so this is now the normal
+    # path taken on every run.
+    #
+    # The `already`-signed-in check below stays anyway, as defensive code, not
+    # as the common path: a leftover `fenceai_dev_user` cookie in Chrome's
+    # profile from an earlier run (this launches plain `google-chrome`, not a
+    # fresh profile per stack) can still land the page `in` before this
+    # function touches anything. Skipping a REDUNDANT sign-in for the identity
+    # already in place matters because a second, unnecessary one is exactly
+    # what raced this stack's own tab placement before: `state.project` can
+    # already be truthy from the first sign-in by the time this function
+    # checks it, so it would proceed to set the canvas tab while the second
+    # sign-in's own async chain — `become()` -> `POST /api/dev/identity` ->
+    # `GET /api/session` -> `emit("signed-in", ...)` — is still in flight, and
+    # `queue.js`'s synchronous listener on THAT emission flips the tab back to
+    # "queue" a few milliseconds later. Confirmed live with a CDP-instrumented
+    # timeline: canvas -> queue 21ms after `setTab('canvas')` returned, timed
+    # to the redundant sign-in's completion, not to anything `openWorkspace()`
+    # was still doing.
     for _ in range(60):
-        if c.js("document.documentElement.dataset.auth === 'out'"):
+        if c.js("document.documentElement.dataset.auth") != "pending":
             break
         time.sleep(0.5)
-    c.js("""document.getElementById('sign-in-email').value = 'admin@example.com';
-            document.getElementById('sign-in-password').value = 'demo';
-            document.getElementById('sign-in').requestSubmit(); 'ok'""")
+    already = c.js(
+        "import('./js/state.js').then(m => document.documentElement"
+        f".dataset.auth === 'in' && m.state.me?.email === {ADMIN_EMAIL!r})"
+    )
+    if not already:
+        # Wait for whatever `dataset.auth` resolved to above to settle into
+        # something that is not the wrong account still signed in — `out` (the
+        # expected case now) or `denied` both qualify, and neither one is
+        # going to spontaneously become `out` on its own, so there is nothing
+        # to gain waiting specifically for that exact string the way the
+        # original loop did (it spun for the full timeout on `denied`, which
+        # is exactly the latency the `!= "pending"` check above already fixed
+        # for the ordinary case).
+        for _ in range(60):
+            if c.js("document.documentElement.dataset.auth") != "in":
+                break
+            time.sleep(0.5)
+        c.js(f"""document.getElementById('sign-in-email').value = {ADMIN_EMAIL!r};
+                document.getElementById('sign-in').requestSubmit(); 'ok'""")
     for _ in range(60):
-        if c.js("import('./js/state.js').then(m => document.documentElement"
-                ".dataset.auth === 'in' && !!m.state.project)"):
+        if c.js(
+            "import('./js/state.js').then(m => document.documentElement"
+            f".dataset.auth === 'in' && m.state.me?.email === {ADMIN_EMAIL!r}"
+            " && !!m.state.project)"
+        ):
             break
         time.sleep(0.5)
     else:
-        raise RuntimeError("stack could not sign in as admin@example.com")
-    # An admin lands on the Jobs queue; the personas' work starts on the drawing.
+        # A broken sign-in must fail LOUDLY, not leak a server and a browser
+        # behind it: the exception below used to leave both processes running,
+        # holding `port` and `cdp_port` open for whoever ran this next.
+        _kill_both(server, chrome)
+        raise RuntimeError(f"stack could not sign in as {ADMIN_EMAIL}")
+    # An admin lands on the Jobs queue; the personas' work starts on the
+    # drawing. Nothing after this point can send it back to "queue": the one
+    # sign-in cascade able to do that has already completed above.
     c.js("import('./js/tabs.js').then(m => { m.setTab('canvas'); return 'ok'; })")
 
     session = {

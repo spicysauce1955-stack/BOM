@@ -76,7 +76,7 @@ async function renderList() {
   try {
     const r = await fetch("/api/my-jobs");
     if (!r.ok) {
-      const code = (await r.json().catch(() => ({})))?.detail?.code || "not_signed_in";
+      const code = (await r.json().catch(() => ({})))?.detail?.code || "no_identity";
       host.innerHTML = `<p class="warning error">${esc(t(`error.${code}`))}</p>`;
       return;
     }

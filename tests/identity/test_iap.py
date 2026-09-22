@@ -1,0 +1,450 @@
+"""Real signature verification, fabricated issuer.
+
+A test that needed Google to run would not be run, so these generate an ES256
+key pair and hand the public half to `IapIdentity`. What is under test is the
+actual `jwt.decode` path — signature, audience, issuer, expiry — with only the
+key source replaced.
+"""
+
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from fenceai.identity.iap import IAP_HEADER, IapIdentity
+
+jwt = pytest.importorskip("jwt", reason="the `iap` extra is not installed")
+pytest.importorskip("cryptography")
+
+AUD = "/projects/1/global/backendServices/2"
+KID = "test-key"
+
+
+@pytest.fixture(scope="module")
+def keys():
+    from cryptography.hazmat.primitives.asymmetric import ec
+    private = ec.generate_private_key(ec.SECP256R1())
+    return private, private.public_key()
+
+
+@pytest.fixture()
+def provider(keys):
+    _, public = keys
+    return IapIdentity(audience=AUD, fetch_keys=lambda: {KID: public})
+
+
+def _token(private, **overrides):
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+        "exp": int(time.time()) + 600,
+    }
+    claims.update(overrides)
+    return jwt.encode(claims, private, algorithm="ES256", headers={"kid": KID})
+
+
+def test_a_good_assertion_names_the_person(provider, keys):
+    private, _ = keys
+    p = provider.principal({IAP_HEADER: _token(private)}, {})
+    assert p is not None
+    assert p.email == "dana@example.com"
+    assert p.subject == "accounts.google.com:117"
+
+
+def test_no_header_is_nobody(provider):
+    assert provider.principal({}, {}) is None
+
+
+def test_a_header_under_any_casing_is_found(provider, keys):
+    """ASGI lower-cases header names and a test client may not. Reading the
+    map case-sensitively would work in every test and fail in production."""
+    private, _ = keys
+    assert provider.principal({"X-Goog-IAP-JWT-Assertion": _token(private)}, {})
+
+
+def test_an_assertion_signed_by_somebody_else_is_nobody(provider):
+    from cryptography.hazmat.primitives.asymmetric import ec
+    other = ec.generate_private_key(ec.SECP256R1())
+    assert provider.principal({IAP_HEADER: _token(other)}, {}) is None
+
+
+def test_an_assertion_for_another_service_is_nobody(provider, keys):
+    """The difference between "Google signed this" and "Google signed this FOR
+    US". Without the `aud` check, any other IAP-protected service's token is a
+    way in."""
+    private, _ = keys
+    tok = _token(private, aud="/projects/9/global/backendServices/9")
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+def test_an_expired_assertion_is_nobody(provider, keys):
+    private, _ = keys
+    tok = _token(private, exp=int(time.time()) - 10)
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+def test_an_assertion_from_another_issuer_is_nobody(provider, keys):
+    private, _ = keys
+    tok = _token(private, iss="https://example.com/not-iap")
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+def test_an_unknown_key_id_is_nobody(provider, keys):
+    """The token is complete apart from its `kid`, and that is the whole point.
+
+    This test used to hand-build a claim set with no `iat` — which is in the
+    `require` list, so PyJWT refused it before `_key_for` was ever consulted,
+    and a `_key_for` that fell back to "any key we happen to hold" on an
+    unknown `kid` passed it. Proved: with the incomplete claims the provider
+    answered None either way; with a complete set and a bogus `kid` the
+    fallback resolved a Principal. The positive control below is what keeps
+    this honest — same claims, real `kid`, admitted — so a token refused for
+    some unrelated reason cannot masquerade as a `kid` check."""
+    private, _ = keys
+    tok = _token(private)  # every required claim present
+    bogus = jwt.encode(jwt.decode(tok, options={"verify_signature": False}),
+                       private, algorithm="ES256", headers={"kid": "rotated-away"})
+    assert provider.principal({IAP_HEADER: bogus}, {}) is None
+    # Positive control: identical claims, the key id we actually hold.
+    assert provider.principal({IAP_HEADER: tok}, {}) is not None
+
+
+def test_an_assertion_with_no_email_is_nobody(provider, keys):
+    """A verified token that names nobody cannot be resolved to a row, and
+    treating it as a principal would send an empty string to `user_by_email`."""
+    private, _ = keys
+    assert provider.principal({IAP_HEADER: _token(private, email="")}, {}) is None
+
+
+def test_an_assertion_missing_exp_is_nobody(provider, keys):
+    """PyJWT only checks a claim's VALUE when the claim is present — `exp`
+    absent is not the same failure as `exp` expired, and without `require` it
+    verifies fine. A correctly signed assertion that simply omits `exp` would
+    otherwise be trusted forever instead of for the hour Google intends."""
+    private, _ = keys
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+    }
+    tok = jwt.encode(claims, private, algorithm="ES256", headers={"kid": KID})
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+@pytest.mark.parametrize("missing", ["exp", "iat", "aud", "iss", "sub", "email"])
+def test_every_required_claim_is_actually_required(provider, keys, missing):
+    """All six, not just `exp`.
+
+    Deleting the whole `options={"require": [...]}` line failed exactly one
+    test before this existed, because four of the six are guarded a second time
+    anyway — `aud` and `iss` by PyJWT's own verification, `sub` and `email` by
+    the emptiness check in `principal`. `iat` is guarded by nothing else at
+    all, so its silent removal from the list was invisible. The point of a
+    require list is that it holds for every claim on it, so it is tested that
+    way rather than through the one member whose absence happens to be the
+    scariest."""
+    private, _ = keys
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+        "exp": int(time.time()) + 600,
+    }
+    del claims[missing]
+    tok = jwt.encode(claims, private, algorithm="ES256", headers={"kid": KID})
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+def test_an_hs256_token_signed_with_the_public_key_is_nobody(provider, keys):
+    """The classic asymmetric-to-symmetric confusion attack: anyone who knows
+    the EC public key can mint an HS256 token whose "signature" is just an
+    HMAC over that same public key, and a verifier that trusts the token's own
+    `alg` header would accept it as genuinely Google's.
+
+    **This test proves the end-to-end refusal, not that `algorithms=["ES256"]`
+    is what causes it — it is NOT the pin's regression net.** Confirmed by
+    widening `iap.py`'s `algorithms=["ES256"]` to include `"HS256"` and
+    re-running this test: it still passes, but refused for the wrong reason —
+    the `provider` fixture's `_key_for` hands `jwt.decode` a `cryptography` EC
+    key OBJECT (not the PEM string production actually gets from gstatic), and
+    with HS256 now permitted PyJWT raises `TypeError: Expected a string value`
+    trying to HMAC an object it can't treat as key material. Handed a PEM
+    STRING instead (`test_fetch_keys_returning_a_pem_string_still_resolves`'s
+    shape), the same widened list raises PyJWT's OWN
+    `InvalidKeyError: ... should not be used as an HMAC secret` instead — a
+    different guard, still not this file's pin. Either way, the refusal
+    survives widening the algorithm list, so this test alone cannot detect
+    that regression. `test_the_algorithm_pin_is_exactly_es256` below is the
+    one that actually depends on the pin.
+
+    Forged by hand rather than via `jwt.encode`: PyJWT's encoder applies that
+    same PEM-as-HMAC-secret guard at encode time too, which would have
+    prevented constructing the forged token in the first place rather than
+    testing what `principal()` does with one already in hand. An attacker
+    computing the HMAC directly bypasses the encoder-side guard; only the
+    decoder-side ones (and, if they were ever removed, the algorithm pin)
+    stand between that forged token and a `Principal`.
+    """
+    import base64
+    import hashlib
+    import hmac as hmac_mod
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+
+    _, public = keys
+    pem = public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo)
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    header = {"alg": "HS256", "typ": "JWT", "kid": KID}
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+        "exp": int(time.time()) + 600,
+    }
+    signing_input = (b64url(json.dumps(header, separators=(",", ":")).encode())
+                      + "." + b64url(json.dumps(claims, separators=(",", ":")).encode()))
+    signature = hmac_mod.new(pem, signing_input.encode(), hashlib.sha256).digest()
+    forged = signing_input + "." + b64url(signature)
+
+    assert provider.principal({IAP_HEADER: forged}, {}) is None
+
+
+def test_an_alg_none_token_is_nobody(provider):
+    """The other classic JWT attack: a token that declares it needs no
+    signature at all.
+
+    **This is not the pin's regression net either.** Confirmed by widening
+    `iap.py`'s `algorithms` to include `"none"` and re-running: still passes,
+    but refused by PyJWT's own
+    `InvalidKeyError: When alg = "none", key value must be None` — `_key_for`
+    hands `jwt.decode` a real key, and PyJWT refuses to pair `alg: none` with
+    a non-`None` key regardless of whether `"none"` is an allowed algorithm.
+    The refusal here is end-to-end and worth keeping, but it is PyJWT's guard
+    doing the work, not this file's pin — see
+    `test_the_algorithm_pin_is_exactly_es256` for the test that depends on
+    the pin itself.
+    """
+    claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": AUD,
+        "email": "dana@example.com",
+        "sub": "accounts.google.com:117",
+        "iat": int(time.time()) - 5,
+        "exp": int(time.time()) + 600,
+    }
+    tok = jwt.encode(claims, None, algorithm="none", headers={"kid": KID})
+    assert provider.principal({IAP_HEADER: tok}, {}) is None
+
+
+def test_the_algorithm_pin_is_exactly_es256(provider, keys, monkeypatch):
+    """The actual regression net for `algorithms=["ES256"]` in `principal()`.
+
+    The two attack tests above (`..._hs256_..._is_nobody`,
+    `..._alg_none_token_is_nobody`) prove the end-to-end refusal, but PyJWT's
+    own key-type guards do that work for them — both keep passing even when
+    `algorithms` is widened to include `"HS256"` and `"none"` (verified; see
+    the fix report). This test is the one that is actually sensitive to the
+    pin: it captures the `algorithms` keyword `principal()` passes into
+    `jwt.decode` and asserts it is exactly `["ES256"]`, which is the only
+    thing that fails if that list is ever widened, independent of whether
+    PyJWT's own guards happen to catch a given forged token anyway.
+    """
+    private, _ = keys
+    captured: dict[str, object] = {}
+    real_decode = jwt.decode
+
+    def spy(*args, **kwargs):
+        captured["algorithms"] = kwargs.get("algorithms")
+        return real_decode(*args, **kwargs)
+
+    monkeypatch.setattr(jwt, "decode", spy)
+
+    assert provider.principal({IAP_HEADER: _token(private)}, {}) is not None
+    assert captured["algorithms"] == ["ES256"]
+
+
+def test_fetch_keys_returning_a_pem_string_still_resolves(keys):
+    """Production gets PEM STRINGS back from gstatic's JSON response; every
+    other test in this file hands `IapIdentity` the `cryptography` object
+    directly, which is not the shape the real endpoint ever produces. This is
+    the one test that drives `_fetch_google_keys`'s actual return type."""
+    private, public = keys
+    from cryptography.hazmat.primitives import serialization
+    pem = public.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+    prov = IapIdentity(audience=AUD, fetch_keys=lambda: {KID: pem})
+    p = prov.principal({IAP_HEADER: _token(private)}, {})
+    assert p is not None
+    assert p.email == "dana@example.com"
+
+
+def test_a_stale_key_fetch_failure_still_resolves_within_the_grace_window(monkeypatch, keys):
+    """A gstatic blip must not turn into "nobody" for every caller while the
+    keys already cached are still the ones that verified a signature moments
+    ago. Only the grace window's expiry — not the TTL alone — should."""
+    private, public = keys
+    calls = {"n": 0}
+
+    def flaky_fetch():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {KID: public}
+        raise RuntimeError("gstatic blip")
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr("fenceai.identity.iap.time.monotonic", lambda: clock["t"])
+
+    prov = IapIdentity(audience=AUD, fetch_keys=flaky_fetch)
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is not None
+
+    # Past the TTL, comfortably inside the grace window: the refresh this
+    # triggers fails, and the still-good cached key must still be served.
+    clock["t"] = 3600 + 60 + 1
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is not None
+    assert calls["n"] == 2
+
+
+def test_a_stale_key_fetch_failure_refuses_once_past_the_grace_window(monkeypatch, keys):
+    """Past the grace window, a key Google may since have rotated away is no
+    longer trustworthy enough to accept a signature against — the fallback
+    that keeps a blip from locking everyone out must not become a fallback
+    that never expires."""
+    private, public = keys
+    calls = {"n": 0}
+
+    def flaky_fetch():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {KID: public}
+        raise RuntimeError("gstatic blip")
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr("fenceai.identity.iap.time.monotonic", lambda: clock["t"])
+
+    prov = IapIdentity(audience=AUD, fetch_keys=flaky_fetch)
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is not None
+
+    # Far enough past the TTL that the grace window itself has elapsed.
+    clock["t"] = 3600 + 6 * 3600 + 1
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is None
+
+
+# --- the two ways this refuses everybody while looking healthy ------------------
+
+def test_a_padded_audience_still_matches(monkeypatch):
+    """A secret or a YAML block scalar routinely carries a trailing newline.
+
+    `build_provider` validates `FENCEAI_IAP_AUDIENCE.strip()`, so a padded value
+    passes the boot check — and the provider then compared `aud` against the
+    string WITH the newline still on it. The app came up clean, announced
+    `identity provider: iap`, and refused every correctly-signed assertion
+    Google sent, with nothing anywhere saying why. This is the single most
+    likely first-contact misconfiguration on a path that has never met a real
+    Google."""
+    from fenceai.identity.iap import iap_identity_from_env
+
+    monkeypatch.setenv("FENCEAI_IAP_AUDIENCE", f"  {AUD}\n")
+    assert iap_identity_from_env()._audience == AUD
+
+
+def test_a_missing_pyjwt_is_a_BOOT_failure_not_a_per_request_one(monkeypatch):
+    """`provider.py` has no default so that a misconfiguration fails at boot.
+    The dependency that doctrine rests on was exempt from it: `principal()`
+    imports `jwt` lazily, so a container built with a bare `uv sync --frozen`
+    — which is what the deployment spec prescribed — booted a healthy-looking
+    server that raised `ModuleNotFoundError` out of the gate on EVERY route,
+    including the one that tells a person why they are not getting in."""
+    import sys
+    from fenceai.identity.iap import iap_identity_from_env
+
+    monkeypatch.setenv("FENCEAI_IAP_AUDIENCE", AUD)
+    monkeypatch.setitem(sys.modules, "jwt", None)
+    with pytest.raises(ImportError):
+        iap_identity_from_env()
+
+
+def test_a_rejected_assertion_says_something_to_the_operator(provider, keys, caplog):
+    """The caller still learns nothing — "bad signature" and "no header" are
+    the same answer to "who is this". The OPERATOR is a different audience, and
+    used to get nothing at all: every employee refused, and not one line to
+    read. The token itself never reaches the log."""
+    import logging
+
+    private, _ = keys
+    tok = _token(private, aud="/projects/9/global/backendServices/9")
+    with caplog.at_level(logging.WARNING, logger="fenceai.identity.iap"):
+        assert provider.principal({IAP_HEADER: tok}, {}) is None
+    assert any("FENCEAI_IAP_AUDIENCE" in r.getMessage() for r in caplog.records), caplog.text
+    assert tok not in caplog.text
+
+
+def test_a_rejected_assertion_cannot_write_into_the_log(provider, keys, caplog):
+    """The operator line logs the exception's TYPE, never its message.
+
+    PyJWT's error for an unsupported `crit` header interpolates that header's
+    value verbatim, and the header is read BEFORE the signature is checked — so
+    logging `str(exc)` let anyone who can reach this service write arbitrary
+    multi-line text into our WARNING log, formatted to impersonate our own
+    logger at whatever level they chose. An on-call operator reading a forged
+    ERROR line during an incident is the harm.
+
+    The token below is signed with a key that is NOT the one the provider
+    holds, which is the point: it never has to be valid to reach the line."""
+    import logging
+
+    private, _ = keys
+    forged = jwt.encode(
+        {"iss": "https://cloud.google.com/iap", "aud": AUD, "email": "a@b.com",
+         "sub": "1", "iat": int(time.time()) - 5, "exp": int(time.time()) + 600},
+        private, algorithm="ES256",
+        headers={"kid": KID, "crit": ["FORGED\nERROR fenceai: nothing to see"]})
+
+    with caplog.at_level(logging.WARNING, logger="fenceai.identity.iap"):
+        assert provider.principal({IAP_HEADER: forged}, {}) is None
+
+    assert "FORGED" not in caplog.text, caplog.text
+    assert "nothing to see" not in caplog.text, caplog.text
+    # PyJWT reads `crit` while parsing the header, so this lands on the
+    # header line rather than the verification one — which is why BOTH log
+    # only the exception type. The operator still gets a diagnosis.
+    assert any("InvalidTokenError" in r.getMessage() for r in caplog.records), caplog.text
+    assert all("\n" not in r.getMessage() for r in caplog.records), caplog.text
+
+
+def test_a_key_outage_does_not_send_the_operator_to_the_wrong_lever(keys, caplog):
+    """A gstatic outage used to produce the correct ERROR immediately followed
+    by a WARNING telling the operator to check `FENCEAI_IAP_AUDIENCE` — the one
+    thing that is not wrong during a key-endpoint outage, in the commit whose
+    whole purpose was on-call diagnosability. The key fetch lives outside the
+    verification `try` so each failure names its own lever."""
+    import logging
+
+    private, _ = keys
+
+    def _down():
+        raise OSError("gstatic unreachable")
+
+    provider = IapIdentity(audience=AUD, fetch_keys=_down)
+    with caplog.at_level(logging.WARNING, logger="fenceai.identity.iap"):
+        assert provider.principal({IAP_HEADER: _token(private)}, {}) is None
+
+    assert not any("FENCEAI_IAP_AUDIENCE" in r.getMessage() for r in caplog.records), caplog.text
+    assert any("key fetch failed" in r.getMessage() for r in caplog.records), caplog.text

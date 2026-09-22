@@ -281,8 +281,7 @@ def select_rows(projects: list[Project], filter: QueueFilter, *,
     """One page of the queue, and the cursor for the next one (`None` at the end).
 
     `now` is injected rather than read from the clock so that "waited nine days"
-    is a fact a test can state instead of a wait it has to sit through — the same
-    call `identity/session.py` makes.
+    is a fact a test can state instead of a wait it has to sit through.
     """
     if filter.assignee == _ME:
         # Matched literally, `me` finds no user, returns an empty page, and

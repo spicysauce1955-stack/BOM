@@ -12,12 +12,23 @@ selects Postgres instead, via `store/dialect.py`). Frontend: vanilla ES modules 
 
 - `uv sync` — install deps (creates `.venv`); SQLite only, zero setup
 - `uv sync --extra postgres` — also install the Postgres driver, for the dialect below
+- `uv sync --extra postgres --extra iap` — everything; `iap` is PyJWT, and without
+  it `tests/identity/test_iap.py` SKIPS whole rather than failing (its
+  `importorskip`), so the full-suite count below is only reproducible with it
 - `uv run pytest -q` — full test suite; single test: `uv run pytest tests/path/test_x.py::test_name -q`
 - `FENCEAI_TEST_POSTGRES=postgresql://... uv run pytest -q` — dual-runs the ~350
-  persistence/API tests against Postgres too (3806 passed vs. 3461 passed + 346 skipped
-  offline); unset, they skip and the suite stays fully offline
+  persistence/API tests against Postgres too. Measured at 48b1f17: **3990 passed,
+  1 skipped** with Postgres; **3584 passed, 407 skipped** offline, where every skip
+  is Postgres-gated. Unset, they skip and the suite stays fully offline. The commit
+  is named because the numbers move with every slice — a count with no vintage goes
+  quietly stale, which is how the previous three in this file did
 - `uv run pytest tests/scenarios -q` — golden scenarios S01–S14 + invariants (the release gate)
-- `uv run uvicorn fenceai.api.app:app --reload` — run the app (UI at http://localhost:8000, opens in Hebrew)
+- `FENCEAI_IDENTITY=dev uv run uvicorn fenceai.api.app:app --reload` — run the app (UI at
+  http://localhost:8000, opens in Hebrew). `FENCEAI_IDENTITY` has no default — `dev` needs
+  no Google and opens AS `FENCEAI_DEV_USER`, which has no code default either: unset, the
+  page opens on the persona picker. `.env.example` sets it to `admin@example.com`, so copy
+  that to `.env` first if you want to land signed in;
+  `iap` also needs `FENCEAI_IAP_AUDIENCE` and a real IAP-fronted deployment
 - `uv run --with websocket-client python tools/ui_smoke.py` — browser smoke suite (CDP-driven; run at UI milestones; needs google-chrome)
 
 ## Where truth lives

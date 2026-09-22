@@ -8,16 +8,21 @@
 
 ```bash
 uv sync                    # creates .venv with pinned deps
-uv run pytest -q           # full suite (~140 tests, all offline)
+uv run pytest -q           # full suite, all offline (see CLAUDE.md for counts)
 uv run pytest tests/scenarios -q   # golden scenarios S01-S14 + invariants (release gate)
 ```
 
 ## Run
 
 ```bash
-uv run uvicorn fenceai.api.app:app --reload
+FENCEAI_IDENTITY=dev uv run uvicorn fenceai.api.app:app --reload
 # open http://localhost:8000
 ```
+
+`FENCEAI_IDENTITY` has no default — the app refuses to boot without it. `dev` needs no
+Google. With `FENCEAI_DEV_USER` set, the app opens AS that address; with it unset there is
+no code default, so the page opens on the persona picker and you choose. `.env.example`
+sets it to `admin@example.com`, which is why the step below is worth doing first.
 
 Configuration: copy `.env.example` to `.env` in the repo root and fill in your
 values (easiest way to set the Anthropic key). The real `.env` is gitignored;
@@ -30,6 +35,10 @@ Environment:
 | `FENCEAI_DB` | `fenceai.db` | SQLite path (`:memory:` for throwaway) |
 | `FENCEAI_AI` | `stub` | `claude` opts into the live interpreter (needs `ANTHROPIC_API_KEY`); anything else = deterministic stub |
 | `FENCEAI_AI_MODEL` | `claude-opus-5` | model for the Claude adapter |
+| `FENCEAI_IDENTITY` | **none** | `dev` \| `iap`. No default on purpose: the app refuses to boot rather than guess who may in |
+| `FENCEAI_DEV_USER` | none | `dev` only — the address a bare `uvicorn` opens as. Unset, the page opens on the picker |
+| `FENCEAI_IAP_AUDIENCE` | none | `iap` only, and required with it — without it `aud` goes unchecked and an assertion Google minted for another service is accepted |
+| `FENCEAI_BOOTSTRAP_ADMIN` | none | admits one named address as admin while NO admin is active. Load-bearing for recovery, not just first deploy: see ADR-0013 |
 
 First start seeds the demo catalog and knowledge base automatically.
 

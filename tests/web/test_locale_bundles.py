@@ -248,12 +248,24 @@ REFUSAL_CODES = [
     # field-level check would notice, because every field is still well-formed.
     "snapshot_id_mismatch",
     "run_predates_fence_model",
-    # -- signing in -------------------------------------------------------------
-    # `sign_in_failed` is deliberately ONE code for a wrong password and for an
-    # address with no account: two answers would turn the form into a way of
-    # asking whether somebody has an account here.
-    "sign_in_failed",
-    "not_signed_in",
+    # -- getting in -------------------------------------------------------------
+    # `sign_in_failed` and `not_signed_in` were here while this app kept its own
+    # passwords and sessions. Identity is Google's now: there is nothing to fail
+    # a password against, and the gate's refusals below are raised in
+    # `src/fenceai/api/auth.py`, which is now on the scanned list above.
+    "no_identity",
+    "no_capacity",
+    "account_deactivated",
+    "subject_mismatch",
+    "capacity_insufficient",
+    # -- granting a capacity (`POST /api/users`, `PATCH /api/users/{id}`) -------
+    # The first routes that create a user or change a capacity. `user_exists`
+    # and `user_not_found` are ordinary lookup refusals; `last_admin` is the
+    # guard that refuses the one edit whose only cure is
+    # `FENCEAI_BOOTSTRAP_ADMIN` and a redeploy.
+    "user_exists",
+    "user_not_found",
+    "last_admin",
     # -- the queue and the one door ---------------------------------------------
     "assignee_unknown",
     # Committing names a run explicitly (never "the latest"), so a payload can
@@ -500,6 +512,10 @@ def test_backend_code_list_is_current():
         # invisible to this guard twice over: the file was not scanned, and a
         # route writes `"code": "x"` rather than `code="x"`. Both forms now.
         src / "api" / "app.py",
+        # the gate that resolves who is asking, before any route runs: five
+        # refusal codes raised as `HTTPException(status, {"code": "x"})`, the
+        # same blind spot `api/app.py` had until it was added above.
+        src / "api" / "auth.py",
         # the one door refuses in `fenceai.commands`, not at the route, because
         # the three checks are pure and the route only carries the session. So
         # the file that RAISES is not the file that answers — the same blind
@@ -550,6 +566,15 @@ def test_backend_code_list_is_current():
     # `HANDOVER_CODES`; they are exempt only from the "listed but gone"
     # direction, and `test_the_handover_code_list_is_current` names all four
     # explicitly so they are not merely unchecked.
+    # `auth.py`'s gate used to map three of its five refusals through a dict
+    # named `_REFUSAL_CODE` — invisible to both the literal scans (a variable,
+    # the same shape as continuity's `code=note.code`) and the table regex
+    # (leading underscore, and no `CODES` suffix). It is now
+    # `REFUSAL_STATUS_CODES`, which the table regex reads by SHAPE — see the
+    # comment beside its definition in `auth.py` — so those three codes are no
+    # longer hand-carried here; they reach `known - unscannable` (and
+    # `REFUSAL_CODES`, per `test_refusal_codes_have_locale_entries`) the same
+    # way every other scanned code does.
     unscannable = {"customer_missing", "address_missing", "sold_by_missing",
                    "sold_on_missing"}
     assert emitted == known - unscannable, {

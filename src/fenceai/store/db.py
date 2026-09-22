@@ -26,8 +26,7 @@ from fenceai.learning.model import Correction
 from fenceai.parts.model import Part, PartLibrary
 from fenceai.fulfillment.supply_run import SupplyRun
 from fenceai.project.model import Project
-from fenceai.identity.model import User
-from fenceai.identity.session import Session
+from fenceai.identity.model import User, would_strand_the_admins
 from fenceai.store.dialect import Conn
 from fenceai.strategy.model import GenerationResult
 
@@ -78,11 +77,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- who have left and every one of those rows must keep resolving to a name.
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
--- Signed-in browsers. The token is the key and the row IS the session, so
--- signing out deletes it and it stops working everywhere at once — which a
--- self-describing token could not promise.
-CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY, user_id TEXT NOT NULL, doc TEXT NOT NULL);
 """
 
 
@@ -925,8 +919,12 @@ class Store:
         self._audit(actor, action, ref)
         self._conn.commit()
 
-    # -- accounts and sessions -------------------------------------------------
+    # -- capacity assignments ---------------------------------------------------
 
+    # The `users` table is no longer an account store. Google holds the
+    # identity; a row here says what an identity may DO. `sessions` was deleted
+    # with the password store — an existing SQLite file keeps the table, which
+    # nothing creates or reads.
     @_serialized
     def save_user(self, user: User, actor: str = "system") -> None:
         self._conn.execute(
@@ -935,6 +933,75 @@ class Store:
             (user.id, user.email, user.model_dump_json()),
         )
         self._audit(actor, "save_user", user.id)
+        self._conn.commit()
+
+    @_serialized
+    def amend_user_guarded(self, user_id: str, capacity: str | None,
+                           active: bool | None, actor: str) -> tuple[User | None, str]:
+        """Read, check the last-admin guard, and write — under ONE lock.
+
+        Returns `(user, "ok")`, `(None, "user_not_found")`, or
+        `(None, "last_admin")`.
+
+        A method rather than three calls from the route, for the reason
+        `@_serialized`'s own docstring gives: each CALL is atomic, a route that
+        reads and then writes across two is still a TOCTOU window. That window
+        is usually a lost update. Here it is a company locked out of its own
+        deployment: two concurrent `PATCH`es, one demoting each of the last two
+        admins, each saw the OTHER as the admin still standing and both
+        committed. Measured before this existed — 41 of 60 unassisted trials —
+        and unrecoverable afterwards, because `_bootstrap` only admits an
+        address with no row at all. `apply_review_outcome` above is the same
+        shape for the same reason.
+        """
+        row = self._conn.execute(
+            "SELECT doc FROM users WHERE id=?", (user_id,)).fetchone()
+        if row is None:
+            return None, "user_not_found"
+        user = User.model_validate_json(row[0])
+
+        everyone = [User.model_validate_json(r[0]) for r in
+                    self._conn.execute("SELECT doc FROM users").fetchall()]
+        if would_strand_the_admins(everyone, user, capacity, active):
+            return None, "last_admin"
+
+        if capacity is not None:
+            user.capacity = capacity
+        if active is not None:
+            user.active = active
+        self._conn.execute(
+            "INSERT INTO users (id, email, doc) VALUES (?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET email=excluded.email, doc=excluded.doc",
+            (user.id, user.email, user.model_dump_json()),
+        )
+        self._audit(actor, "save_user", user.id)
+        self._audit(actor, "amend_capacity", user.id)
+        self._conn.commit()
+        return user, "ok"
+
+    @_serialized
+    def bind_subject(self, user_id: str, subject: str, actor: str) -> None:
+        """Persist ONLY the subject, re-read under the lock.
+
+        `resolve` used to write the whole row back from a snapshot taken before
+        `bind` mutated it, so an admin PATCH landing in that window was silently
+        reverted: the admin was told the deactivation worked, the row on disk
+        said otherwise, and the person kept full access. Measured before this
+        existed — 15 of 60 unassisted trials. It only ever fires on a FIRST
+        arrival, which is exactly when a freshly granted row is most likely to
+        be edited.
+        """
+        row = self._conn.execute(
+            "SELECT doc FROM users WHERE id=?", (user_id,)).fetchone()
+        if row is None:
+            return
+        user = User.model_validate_json(row[0])
+        if user.subject:
+            return  # somebody bound it while we were deciding to
+        user.subject = subject
+        self._conn.execute("UPDATE users SET doc=? WHERE id=?",
+                           (user.model_dump_json(), user.id))
+        self._audit(actor, "identity_bound", user.id)
         self._conn.commit()
 
     @_serialized
@@ -957,37 +1024,6 @@ class Store:
     def list_users(self) -> list[User]:
         rows = self._conn.execute("SELECT doc FROM users ORDER BY id").fetchall()
         return [User.model_validate_json(r[0]) for r in rows]
-
-    @_serialized
-    def save_session(self, session: Session) -> None:
-        self._conn.execute(
-            "INSERT INTO sessions (token, user_id, doc) VALUES (?,?,?) "
-            "ON CONFLICT(token) DO UPDATE SET doc=excluded.doc",
-            (session.token, session.user_id, session.model_dump_json()),
-        )
-        self._conn.commit()
-
-    @_serialized
-    def session(self, token: str) -> Session | None:
-        row = self._conn.execute(
-            "SELECT doc FROM sessions WHERE token=?", (token,)).fetchone()
-        return Session.model_validate_json(row[0]) if row else None
-
-    @_serialized
-    def delete_session(self, token: str) -> None:
-        self._conn.execute("DELETE FROM sessions WHERE token=?", (token,))
-        self._conn.commit()
-
-    @_serialized
-    def delete_sessions_for(self, user_id: str) -> int:
-        """Every browser this account is signed in on, at once.
-
-        What `active=False` would otherwise fail to mean: deactivating an
-        account that is still signed in somewhere is a label, not a revocation.
-        """
-        cur = self._conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
-        self._conn.commit()
-        return cur.rowcount
 
     @_serialized
     def log(self, actor: str, action: str, ref: str) -> None:

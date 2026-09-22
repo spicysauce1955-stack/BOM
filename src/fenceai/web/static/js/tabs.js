@@ -97,7 +97,11 @@ export function initTabs() {
     return {
       object_id: document.getElementById("k-object").value.trim(),
       type: document.getElementById("k-type").value,
-      title: document.getElementById("k-title").value, actions, author: "expert-admin",
+      // No `author`: the route sets `attributed_to` from the signed-in caller.
+      // `KnowledgeCreate` has no such field, so this was already ignored — but
+      // it was the literal "expert-admin", the thirteenth spelling of a client
+      // naming itself, waiting for somebody to add the field back.
+      title: document.getElementById("k-title").value, actions,
     };
   };
   initKnowledgeBuilder();
@@ -900,8 +904,10 @@ async function renderCandidates() {
       renderImpactReport(out, report);
     });
     const submitReview = async (body) => {
-      await apiSend("POST", `/api/candidates/${c.object_id}/${c.version}/review`,
-        { reviewer: "expert-admin", ...body });
+      // No `reviewer` in the body: the server attributes the approved version
+      // to the signed-in caller. This used to send the literal "expert-admin",
+      // which signed every rule change in the product with a name nobody owns.
+      await apiSend("POST", `/api/candidates/${c.object_id}/${c.version}/review`, body);
       renderCandidates(); renderKnowledgeRules();
     };
     const rejectForm = card.querySelector('[data-form="reject"]');

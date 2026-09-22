@@ -7,21 +7,39 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- The front door. Until somebody signs in this is the ONLY thing on the
-       page: no project, no view selector, no drawing. Which screen opens after
-       it is the account's own answer (`/api/me` → view), never a choice made
-       here. `html[data-auth]` drives the hiding (style.css), `app.js` sets it. -->
+  <!-- The front door. Google decides who reaches it; a capacity row decides
+       what they may do once inside. Under `dev` this is a picker with no
+       password — an impersonation switch, and named as one. `html[data-auth]`
+       drives the hiding (style.css), `app.js` sets it. -->
   <section id="login-screen" aria-labelledby="login-title">
     <form id="sign-in">
       <h1 id="login-title">Fence AI</h1>
       <input id="sign-in-email" type="email" autocomplete="username" required
              data-i18n-placeholder="signin.email" placeholder="Email">
-      <input id="sign-in-password" type="password" autocomplete="current-password" required
-             data-i18n-placeholder="signin.password" placeholder="Password">
-      <button type="submit" class="primary" data-i18n="signin.submit">Sign in</button>
-      <p id="sign-in-error" class="warning error" hidden data-i18n="error.sign_in_failed"></p>
+      <button type="submit" class="primary" data-i18n="signin.become">Continue</button>
+      <p id="sign-in-error" class="warning error" hidden data-i18n="error.no_identity"></p>
       <p id="sign-in-unreachable" class="warning error" hidden data-i18n="error.server_unreachable"></p>
     </form>
+  </section>
+
+  <!-- IAP let them to the door; nobody has said what they may do inside. -->
+  <section id="no-access" aria-labelledby="no-access-title" role="alert"
+           tabindex="-1" hidden>
+    <h1 id="no-access-title" data-i18n="noaccess.title">No access yet</h1>
+    <!-- Filled by app.js from the refusal code: the three refusals are NOT the
+         same problem, and "ask an administrator for access" is the cure for
+         only one of them. No `data-i18n` on the reason, because the applier
+         would overwrite it with a fixed key on every locale change. -->
+    <p id="no-access-reason"></p>
+    <p id="no-access-advice" data-i18n="noaccess.body">Ask an administrator to give this address access.</p>
+    <p><span data-i18n="noaccess.signed_in_as">Signed in as</span>
+       <bdi id="no-access-email" class="sku"></bdi></p>
+    <button id="no-access-signout" data-i18n="signin.out">Sign out</button>
+    <!-- The header holds the only other language toggle, and the header is
+         hidden on this screen. Without this, somebody whose FIRST arrival is
+         refused reads the refusal in whichever language the app defaults to
+         (Hebrew) with no way to change it and nothing to do but sign out. -->
+    <button id="no-access-locale" title="עברית / English">עב / EN</button>
   </section>
 
   <header>
@@ -65,6 +83,7 @@
     <button data-tab="assembly" data-i18n="tabs.assembly">Assembly</button>
     <button data-tab="panel" data-i18n="tabs.panel">Panel</button>
     <button data-tab="models" data-i18n="tabs.models">Models</button>
+    <button data-tab="people" data-i18n="tabs.people">People</button>
     <button data-tab="bom" data-i18n="tabs.bom">BOM</button>
     <button data-tab="inventory" data-i18n="tabs.inventory">Inventory</button>
   </nav>
@@ -488,6 +507,33 @@
           <div class="panel" id="model-preview-controls"></div>
           <div id="model-preview-body"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ============ people tab ============
+         Who may use this, and what each of them may do. Rendered entirely by
+         js/people.js, which owns this section and nothing outside it — the
+         only screen in the app that WRITES a capacity.
+
+         Hiding this tab from anybody but an admin is presentation only: the
+         server checks the capacity on POST/PATCH, and that check is the one
+         that matters (js/view.js carries the same paragraph). -->
+    <section id="tab-people" class="tab">
+      <div class="panel">
+        <h2 data-i18n="people.title">Who may use this</h2>
+        <table id="people-table"></table>
+        <form id="people-add-form" class="inline-form">
+          <input id="people-new-name" type="text" dir="auto" size="20" required
+                 data-i18n-placeholder="people.name" placeholder="Name">
+          <input id="people-new-email" type="email" dir="ltr" size="24" required
+                 data-i18n-placeholder="people.email" placeholder="Email">
+          <select id="people-new-capacity">
+            <option value="sales" data-i18n="signin.capacity.sales">Sales</option>
+            <option value="backoffice" data-i18n="signin.capacity.backoffice">Back office</option>
+            <option value="admin" data-i18n="signin.capacity.admin">Admin</option>
+          </select>
+          <button type="submit" class="primary" data-i18n="people.add">Give somebody access</button>
+        </form>
       </div>
     </section>
 

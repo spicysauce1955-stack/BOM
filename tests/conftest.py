@@ -62,6 +62,35 @@ def add_interval_event(
     )
 
 
+#: The suite runs on the dev identity, decided HERE at conftest import rather
+#: than only in the fixture below, because `api/app.py` registers
+#: `POST /api/dev/identity` on an import-time reading of this variable — so that
+#: under `iap` the route does not exist to be found. conftest is imported before
+#: any test module, and therefore before `fenceai.api.app` is first imported, so
+#: this is what makes the route inventory the same on every machine. Set rather
+#: than defaulted: a developer with `FENCEAI_IDENTITY=iap` exported would
+#: otherwise run a different app than everybody else.
+os.environ["FENCEAI_IDENTITY"] = "dev"
+
+
+@pytest.fixture(autouse=True)
+def _dev_identity(monkeypatch):
+    """Every test is somebody.
+
+    `FENCEAI_IDENTITY` has no default and the gate refuses an unresolved caller,
+    so without this the whole suite would be testing the refusal. The seeded
+    `admin@example.com` row is what makes it resolve — which is why the demo
+    accounts survive this slice, passwordless.
+
+    `monkeypatch` is function-scoped and the later setting wins, so a test that
+    wants to be nobody (or somebody else) still just sets its own — but note
+    that `DevIdentity` reads `FENCEAI_DEV_USER` once, when `lifespan` builds the
+    provider, so a test changing it must build its own `TestClient` afterwards.
+    """
+    monkeypatch.setenv("FENCEAI_IDENTITY", "dev")
+    monkeypatch.setenv("FENCEAI_DEV_USER", "admin@example.com")
+
+
 #: A Postgres the suite may use. Unset on a laptop with nothing installed,
 #: which is the case that must stay comfortable: the Postgres parameter
 #: skips and SQLite carries the whole suite.

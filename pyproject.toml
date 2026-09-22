@@ -15,6 +15,10 @@ dependencies = [
 # property CLAUDE.md states: the app and the whole suite run on SQLite with
 # nothing installed and nothing running.
 postgres = ["psycopg[binary]>=3.2,<4"]
+# Only an IAP deployment needs this. Imported inside `identity/iap.py`, never
+# at module scope, so `uv sync` with no extras keeps the offline property
+# CLAUDE.md states: the app and the whole suite run with nothing installed.
+iap = ["pyjwt[crypto]>=2.9,<3"]
 
 [dependency-groups]
 dev = [

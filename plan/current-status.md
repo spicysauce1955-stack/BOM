@@ -3,6 +3,83 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-09-22: identity is Google's, and the doors actually lock
+
+Branch `feat/identity-is-googles` on `origin/main` (e44377b), not merged at the
+time of writing. This is slice 2 of `docs/superpowers/specs/2026-09-17-gcp-deployment-design.md`,
+and the decision it records is ADR-0013: **this app does not authenticate anybody.**
+
+The password store, the `sessions` table and the session cookie are gone — not disabled,
+deleted, with tests that assert their absence (`tests/identity/test_user.py::test_an_account_carries_no_credential_at_all`,
+`::test_there_is_no_session_module_left`). What replaced them is a port. Google's IAP puts a
+signed ES256 assertion on the request; `identity/iap.py` verifies it (audience, issuer,
+algorithm pinned to ES256, all six claims required, keys cached with a grace window) and
+answers with a `Principal`, or with nobody. A `dev` provider answers the same question from
+a cookie with no credential at all, which is what keeps a laptop and the browser smoke
+working offline. Nothing outside `identity/` and `api/` imports either one.
+
+**The door is one dependency, not seventy.** `auth.make_gate` runs before every `APIRoute`
+and refuses any caller it cannot resolve to an ACTIVE capacity row. Before this slice, 70 of
+74 routes answered anybody who knew the URL while a login screen stood in front of them —
+which answers "is this protected?" with a convincing yes. Three paths are exempt and the
+list is pinned by equality: `/api/health`, `/api/session`, `/api/dev/identity`.
+
+Two things about that gate are worth writing down, because both were found by breaking it
+rather than by reading it:
+
+* **The fitness test that guarded it was decoration.** It asserted `app.router.dependencies`
+  is non-empty — a property of the app object that no bypassing route could ever falsify. A
+  reviewer proved it by inserting a raw Starlette `Route` under `/api` that returned real
+  project data anonymously while the test stayed green, and again with a mounted sub-app,
+  which is additionally invisible to the route-count and doc-table tests. It is now two tests
+  that assert a property of every ROUTE. This was not hypothetical: `/openapi.json`, `/docs`
+  and `/redoc` answered anonymously on this very branch for several commits, for exactly that
+  reason. They are dev-only absences now.
+* **`subject_mismatch` was never refused through a request.** An address can be reissued; a
+  Google `sub` cannot, so a row bound to one account must refuse another arriving on the same
+  address. Three tests looked like they covered it and all three called `resolve()` or
+  `bind()` as plain functions, with the gate nowhere in the path. Opening the gate to a
+  swapped Google account left all 3968 tests green.
+
+**Who did it.** Eleven routes let a client NAME the actor in the audit log, as a `?author=`
+parameter or a DTO field — a fallback for the unsigned case that default-deny then deleted.
+All eleven are gone and the actor is the resolved caller. Two of them were writing
+client-supplied strings into domain PROVENANCE rather than the audit fallback
+(`Correction.author`, `KnowledgeVersion.attributed_to`), which the plan had not noticed. A
+twelfth, `ReviewBody.reviewer`, survived the sweep and the review that followed it, because
+the guard test enumerated four DTO names and the field name `author` — written from a grep
+of what had already been fixed, so it could not catch the name nobody thought of. It signed
+the ACTIVE knowledge version that generates every later project's fence. The product itself
+forged it: `tabs.js` sent the literal `"expert-admin"` on every approval, so no rule change
+in this app had ever been signed by the person who made it.
+
+**An admin grants access, and cannot lock the company out.** `POST /api/users` and
+`PATCH /api/users/{id}` are the only capacity-checked routes; a guard refuses any edit that
+would leave no active admin. `FENCEAI_BOOTSTRAP_ADMIN` admits one named address while no
+admin is ACTIVE — active, not merely present, so a deployment whose only admin was
+deactivated has a way back in. That asymmetry was a deliberate fix, and it means the variable
+left set after first deploy is load-bearing for recovery rather than just untidy.
+
+**Measured, not estimated:** full suite against Postgres — **3984 passed, 1 skipped**
+(the CI-only guard), up from 3821 before the slice. Browser smoke — **644/644 checks**.
+`tests/tools` — 89, its pre-slice bar, after a regression that hid behind
+`--ignore=tests/tools` for two review cycles and turned out to be one dead selector in the
+persona lab.
+
+**Both project reviewers ran, and a third whole-branch review after them.**
+`architecture-critic`: SOUND-WITH-FIXES — the port is a real port, `generate()` purity is
+untouched, `capacity` is the domain's own vocabulary rather than an authz vocabulary bolted
+beside it; one Important (the twelfth actor site) and five minors, all fixed.
+`test-reviewer`: 26 mutations, 22 caught with the catching test named for each; four real
+gaps, all fixed. One of its findings was a defect introduced an hour earlier BY a fix for an
+earlier finding — `GET /api/session` would have 500'd on a refusal status nobody had mapped,
+while a browser test written in the same commit asserted that case was handled.
+
+**What this slice deliberately does NOT do:** per-capacity authorization. A `sales` account
+is refused nothing except granting capacities — it can still reach `/api/audit` and rewrite
+the knowledge base. ADR-0013's Consequences section says so plainly rather than implying
+otherwise, and it is the first thing the next slice should take, ahead of the read routes.
+
 ## Checkpoint — 2026-09-17: the store speaks two dialects, and CI proves it
 
 Branch `worktree-store-dialect-shim`, eight tasks (commits 7b05cab..649905d, plus this

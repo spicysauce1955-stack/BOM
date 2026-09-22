@@ -277,9 +277,16 @@ because it was never about passwords.
   failures are quiet."* Same argument, same answer, failing at startup rather
   than per request.
 
-- **`FENCEAI_BOOTSTRAP_ADMIN=owner@company.com`** — if there is no admin yet and
-  that address signs in, it becomes one. Self-disabling the moment an admin
-  exists. This is what replaces three seeded strangers.
+- **`FENCEAI_BOOTSTRAP_ADMIN=owner@company.com`** — if no admin is currently
+  ACTIVE and that address signs in, it becomes one. Self-disabling the moment
+  an admin is active — not the moment one exists. [Corrected — the authority is ADR-0013 and `api/auth.py::_bootstrap`: counting
+  only active admins is what lets a deployment whose sole admin was later
+  deactivated be recovered by redeploying with this variable still set, rather
+  than locked out for ever. The consequence is that **while this variable is
+  set, the address it names is a live re-entry path for as long as no admin is
+  active**, so removing it after the first deploy (§6) is load-bearing for
+  that recovery path as well as for the ordinary demotion guard, not merely
+  best practice.] This is what replaces three seeded strangers.
 
 - **`GET /api/session`** answering *who am I* from the verified identity, since
   the frontend can no longer learn it by POSTing credentials.
@@ -311,18 +318,30 @@ only. Either one alone is a hole.
 
 ## 6. Container, config, release
 
-**Container.** Two stages: `uv sync --frozen` into a venv, then a slim runtime
+**Container.** Two stages: `uv sync --frozen --extra postgres --extra iap` into a
+venv, then a slim runtime
 layer carrying `src/fenceai` and its static assets. `CMD` must honour Cloud Run's
 injected `$PORT` rather than hardcoding 8000 — the most common first-deploy
 failure there is. `core/env.py`'s `load_dotenv()` already prefers real
 environment variables, so it becomes a harmless no-op in the container; no `.env`
 ever ships.
 
+Both extras are load-bearing and neither is optional here: `postgres` is the
+driver Cloud SQL needs, and `iap` is PyJWT, without which `FENCEAI_IDENTITY=iap`
+now refuses to BOOT. That refusal is deliberate — `iap_identity_from_env()`
+imports `jwt` eagerly for it. Built with a bare `uv sync --frozen`, the app used
+to come up healthy, announce `identity provider: iap`, and then raise
+`ModuleNotFoundError` out of the gate on every route including `/api/session`:
+a server that passes its own health check and answers nobody.
+
 **Config.** `FENCEAI_DB` as a `postgres://` URL. `FENCEAI_AI=claude`.
 `FENCEAI_IDENTITY=iap`. `FENCEAI_BOOTSTRAP_ADMIN` set for the first deploy and
-removed after. `ANTHROPIC_API_KEY` mounted as a Secret Manager reference, never
-an env literal in the service YAML. `.env.example` gains `FENCEAI_IDENTITY=dev`
-and `FENCEAI_DEV_USER=`.
+**removed after — this is load-bearing, not hygiene**: it self-disables only
+while an admin is active (§5.2, corrected), so left set it remains a live
+re-entry path for whatever address it names the moment no admin is active,
+including an accidental deactivation of the only one. `ANTHROPIC_API_KEY`
+mounted as a Secret Manager reference, never an env literal in the service
+YAML. `.env.example` gains `FENCEAI_IDENTITY=dev` and `FENCEAI_DEV_USER=`.
 
 **Release.** GitHub Actions on merge to `main`: `uv run pytest -q` — all 3114,
 with the ~350 dual-run against a Postgres service container — then build, push to

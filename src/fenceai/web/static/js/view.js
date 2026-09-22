@@ -63,7 +63,7 @@ export const VIEWS = ["sales", "backoffice", "all"];
 export const SALES_TABS = ["myjobs", "canvas", "annotations"];
 
 const ALL_TABS = ["myjobs", "queue", "canvas", "annotations", "knowledge", "review",
-                  "structure", "assembly", "panel", "models", "bom", "inventory"];
+                  "structure", "assembly", "panel", "models", "people", "bom", "inventory"];
 
 // Everything on this list answers "how is this fence BUILT?" — which is the
 // back-office person's question and the admin's, never the salesperson's.
@@ -118,6 +118,11 @@ const BACKOFFICE_HIDDEN = [
   // A salesperson's home screen. The office's home is the queue.
   '[data-tab="myjobs"]',
   "#btn-my-jobs",
+  // Granting a capacity is the admin's bench, not the office's — `people`
+  // being ABSENT from `ALL_TABS.filter(...)`'s complement would only hide it
+  // from sales, since this list (unlike `SALES_HIDDEN`) is not derived from
+  // `ALL_TABS` and has to name it directly.
+  '[data-tab="people"]',
 ];
 
 const HIDDEN = { sales: SALES_HIDDEN, backoffice: BACKOFFICE_HIDDEN, all: [] };

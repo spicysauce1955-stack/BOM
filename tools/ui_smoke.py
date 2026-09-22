@@ -151,16 +151,17 @@ def sign_out(c) -> None:
           {"out": out, "auth": c.js("document.documentElement.dataset.auth")})
 
 
-def sign_in(c, email: str, password: str = "demo") -> bool:
-    """Through the real login form, then wait for the workspace to open.
+def sign_in(c, email: str) -> bool:
+    """Through the real login form (email only — there is no password any
+    more, `identity/dev.py`'s picker is credential-less by design), then wait
+    for the workspace to open.
 
     Only valid on the login screen: call `sign_out` first when somebody is in."""
     c.js("""(() => {
   document.getElementById('sign-in-email').value = %s;
-  document.getElementById('sign-in-password').value = %s;
   document.getElementById('sign-in').requestSubmit();
   return 'ok';
-})()""" % (json.dumps(email), json.dumps(password)))
+})()""" % json.dumps(email))
     ok = wait_for(c, PROJECT_LOADED_JS, timeout=20)
     c.js("window.confirm = () => true; window.alert = () => {}; undefined")
     screen = c.js("""({
@@ -173,9 +174,9 @@ def sign_in(c, email: str, password: str = "demo") -> bool:
     return bool(ok)
 
 
-def switch_user(c, email: str, password: str = "demo") -> bool:
+def switch_user(c, email: str) -> bool:
     sign_out(c)
-    return sign_in(c, email, password)
+    return sign_in(c, email)
 
 
 def _smoke_choices_panel(c) -> None:
@@ -1092,6 +1093,19 @@ def _smoke_sales_mode(c) -> None:
               for k in ("generate", "tab1", "height_label")), he)
     check("switching language does not un-hide the engineering surfaces",
           he["pin"] == "hidden" and he["knowledge"] == "hidden", he)
+    # The People tab is drawn lazily, because nobody but an admin opens it and
+    # `GET /api/users` returns the whole company. Subscribing its redraw to
+    # "locale-changed" UNCONDITIONALLY undid that: a language flip fetched the
+    # roster and put every colleague's name, address and capacity into the DOM
+    # of a page whose owner cannot open the tab. The flip above is the trigger;
+    # this is the assertion. Nothing else in this suite opens that tab, so an
+    # empty table here means it was never drawn, not that it was drawn empty.
+    check("a language flip does not draw the company roster for somebody who "
+          "cannot open it",
+          not c.js("(document.getElementById('people-table')?.innerHTML || '')"
+                   ".includes('<tr')"),
+          {"table": c.js("(document.getElementById('people-table')?.innerHTML || '')"
+                         ".slice(0, 120)")})
     c.js("document.getElementById('btn-locale').click(); 'ok'")
     time.sleep(0.8)
 
@@ -2658,21 +2672,61 @@ def _smoke_backoffice_queue(c):
           front and front["auth"] == "out" and front["login"]
           and not front["header"] and not front["canvas"]
           and front["project"] is None, front)
+    # There is no password to get wrong any more (`identity/dev.py`'s picker
+    # is credential-less): the real form's own refusal case is an address
+    # with no capacity row, and this is the only place a browser drives it —
+    # so this exercises the no-access screen, not a login-form error.
     c.js("""(() => {
-  document.getElementById('sign-in-email').value = 'dana@example.com';
-  document.getElementById('sign-in-password').value = 'wrong';
+  document.getElementById('sign-in-email').value = 'nobody@example.com';
   document.getElementById('sign-in').requestSubmit();
   return 'ok';
 })()""")
-    refused = wait_for(c, "!document.getElementById('sign-in-error').hidden", timeout=10)
-    check("a wrong password keeps the login screen and says so",
-          bool(refused) and c.js("document.documentElement.dataset.auth") == "out",
-          c.js("document.documentElement.dataset.auth"))
+    denied = wait_for(c, "document.documentElement.dataset.auth === 'denied'", timeout=10)
+    check("an address with no capacity row reaches the no-access screen, named to itself",
+          bool(denied)
+          and c.js("!!document.getElementById('no-access')?.checkVisibility()")
+          and c.js("document.getElementById('no-access-email')?.textContent")
+              == "nobody@example.com",
+          {"auth": c.js("document.documentElement.dataset.auth"),
+           "email": c.js("document.getElementById('no-access-email')?.textContent")})
+    # WHICH refusal it is, not just that there was one. The three refusals read
+    # three different sentences and only `no_capacity` gets the generic "ask an
+    # administrator" advice — the branch that HIDES that advice cannot be driven
+    # from here (it needs a deactivated row or a swapped Google subject, both of
+    # which the picker cannot produce), so this pins the one case a browser can
+    # reach and `tests/web/test_session_module.py` executes the other three.
+    reason = c.js("document.getElementById('no-access-reason')?.textContent")
+    check("the no-access screen says which refusal this is, in words",
+          bool(reason) and reason.strip() != ""
+          and c.js("!!document.getElementById('no-access-advice')?.checkVisibility()"),
+          {"reason": reason,
+           "advice": c.js("!!document.getElementById('no-access-advice')?.checkVisibility()")})
+    # The reason sentence is `t()` output written into `textContent`, NOT
+    # `data-i18n` — the applier would overwrite it with one fixed key — so a
+    # locale flip only reaches it because `app.js` subscribes `render` to
+    # "locale-changed". Nothing tested that line: deleting it left the suite
+    # green with the refusal frozen in whichever language the page loaded in.
+    # The button is on this screen because the header one is hidden here, and
+    # somebody whose first arrival is refused would otherwise have no way to
+    # read it in their own language.
+    before = c.js("document.getElementById('no-access-reason')?.textContent")
+    c.js("document.getElementById('no-access-locale').click(); 'ok'")
+    wait_for(c,
+             "document.getElementById('no-access-reason')?.textContent !== "
+             + repr(before), timeout=10)
+    after = c.js("document.getElementById('no-access-reason')?.textContent")
+    check("the refusal sentence follows the language toggle on the screen it is on",
+          bool(after) and after != before
+          and c.js("!!document.getElementById('no-access')?.checkVisibility()"),
+          {"before": before, "after": after})
+    c.js("document.getElementById('no-access-locale').click(); 'ok'")
+    c.js("document.getElementById('no-access-signout').click(); 'ok'")
+    wait_for(c, "document.documentElement.dataset.auth === 'out'", timeout=10)
 
     made = c.js("""(async () => {
-  await fetch('/api/session', {method: 'POST',
+  await fetch('/api/dev/identity', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({email: 'dana@example.com', password: 'demo'})});
+    body: JSON.stringify({email: 'dana@example.com'})});
   const ids = [];
   for (const name of ['Levi', 'Cohen']) {
     const p = await (await fetch('/api/projects', {method: 'POST',
@@ -2687,7 +2741,7 @@ def _smoke_backoffice_queue(c):
       body: JSON.stringify({kind: 'submit_job', payload: {}})});
     ids.push(p.id);
   }
-  await fetch('/api/session', {method: 'DELETE'});
+  await fetch('/api/dev/identity', {method: 'DELETE'});
   return ids.length;
 })()""")
     check("two jobs to put on the queue", made == 2, made)
@@ -3677,9 +3731,9 @@ def _smoke_office_job_screen(c) -> None:
     """
     sign_out(c)
     pid = c.js("""(async () => {
-  await fetch('/api/session', {method: 'POST',
+  await fetch('/api/dev/identity', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({email: 'dana@example.com', password: 'demo'})});
+    body: JSON.stringify({email: 'dana@example.com'})});
   const p = await (await fetch('/api/projects', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name: 'Reading surface'})})).json();
@@ -3734,7 +3788,7 @@ def _smoke_office_job_screen(c) -> None:
   await fetch(`/api/projects/${p.id}/actions`, {method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({kind: 'submit_job', payload: {}})});
-  await fetch('/api/session', {method: 'DELETE'});
+  await fetch('/api/dev/identity', {method: 'DELETE'});
   return p.id;
 })()""")
     check("a three-stretch job, sold and sent to the office", bool(pid), pid)
@@ -4133,9 +4187,9 @@ def _smoke_office_desk_acts(c) -> None:
     # --- a job of its own, sold and sent ---------------------------------------
     sign_out(c)
     pid = c.js("""(async () => {
-  await fetch('/api/session', {method: 'POST',
+  await fetch('/api/dev/identity', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({email: 'dana@example.com', password: 'demo'})});
+    body: JSON.stringify({email: 'dana@example.com'})});
   const p = await (await fetch('/api/projects', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name: 'Desk acts'})})).json();
@@ -4154,7 +4208,7 @@ def _smoke_office_desk_acts(c) -> None:
   await fetch(`/api/projects/${p.id}/actions`, {method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({kind: 'submit_job', payload: {}})});
-  await fetch('/api/session', {method: 'DELETE'});
+  await fetch('/api/dev/identity', {method: 'DELETE'});
   return p.id;
 })()""")
     check("a job with a fence and a gate beside it, sold and sent to the office",
@@ -4798,7 +4852,20 @@ def main() -> int:
         pass  # port free, good
 
     db = tempfile.mktemp(suffix=".db")
-    env = {**os.environ, "FENCEAI_DB": db, "FENCEAI_AI": "stub"}
+    # `FENCEAI_IDENTITY` has no default (`identity/provider.py`) — the app
+    # refuses to boot without it. `FENCEAI_DEV_USER` is deliberately EXCLUDED
+    # rather than left unset-by-omission: `DevIdentity` is cookie-first,
+    # env-second, and an env default would authenticate the page's own first
+    # `GET /api/session` before the login form below ever runs, making the
+    # form's sign-in redundant and racing its own tab placement against
+    # `queue.js` — the exact defect `tools/persona_lab/stack.py` diagnoses and
+    # fixes the same way. `tests/conftest.py`'s autouse `_dev_identity`
+    # fixture `monkeypatch.setenv`s this variable for every pytest test, so a
+    # bare `**os.environ` would silently re-inherit it if this were ever
+    # invoked from inside a pytest process; excluding it by name is what keeps
+    # this hermetic regardless of how it is invoked.
+    env = {**{k: v for k, v in os.environ.items() if k != "FENCEAI_DEV_USER"},
+           "FENCEAI_DB": db, "FENCEAI_AI": "stub", "FENCEAI_IDENTITY": "dev"}
     server = subprocess.Popen(
         ["uv", "run", "uvicorn", "fenceai.api.app:app", "--port", str(PORT)],
         env=env, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -7596,8 +7663,10 @@ import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
         # rule that reads a member's base/top refs, which a slot has none of), so
         # the expected set is the served vocabulary minus that one — narrowing a
         # served list is allowed, inventing one is not.
-        served = json.loads(urllib.request.urlopen(
-            f"http://localhost:{PORT}/api/vocabularies", timeout=5).read())
+        # A raw `urllib` call carries no cookie, and `/api/vocabularies` is
+        # gated like every other route now — fetched from PAGE CONTEXT instead,
+        # the same origin the browser is already signed in on.
+        served = c.js("fetch('/api/vocabularies').then(r => r.json())")
         rule_select = c.js("""
 {
   const rule = document.querySelector('#model-inspector [data-f="length_rule"]');
@@ -8027,8 +8096,10 @@ document.querySelector('#model-elements [data-element^="fixing:"]').click(); 'ok
     labels: [...b.options].map((o) => o.textContent),
     disabled: b.disabled});
 }""")
-        served_bases = json.loads(urllib.request.urlopen(
-            f"http://localhost:{PORT}/api/vocabularies", timeout=5).read())["fixing_bases"]
+        # Same reason as above: fetched in-page so the gate sees the
+        # browser's own signed-in cookie, not a bare unauthenticated request.
+        served_bases = c.js(
+            "fetch('/api/vocabularies').then(r => r.json())")["fixing_bases"]
         check("the fixing basis select is populated from /api/vocabularies",
               basis_select["disabled"] is False
               and basis_select["options"] == served_bases,

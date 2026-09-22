@@ -123,7 +123,7 @@ async function render() {
   if (!r.ok) {
     // A refusal here is a code the bundles carry, never a raw status.
     const body = await r.json().catch(() => ({}));
-    const code = body?.detail?.code || "not_signed_in";
+    const code = body?.detail?.code || "no_identity";
     host.innerHTML = `<p class="warning error">${esc(t(`error.${code}`))}</p>`;
     return;
   }
