@@ -122,21 +122,31 @@ down the assumption this app's safety currently depends on.
 Documentation, not code — and therefore the one most easily forgotten,
 because there is no failing test to remind anyone it is still open.
 
-## 6. `Selection.author` and `Override.author` are client-named
+## 6. `Selection.author`, `Override.author` and `IntentConfirm.confirmed_by` are client-named
 
-**Finding.** Two DTOs still accept a client-supplied `author` field and
-write it into the decision graph as `author`/`chosen_by`, the same shape of
-bug slice 2 fixed for eleven other routes (see slice 2's checkpoint entry in
-`plan/current-status.md`) — but these two were not in the sweep that found
-the others.
+**Finding.** Three DTOs still accept a client-supplied actor field and carry
+it into the decision graph as `author`/`chosen_by`, the same shape of bug
+slice 2 fixed for eleven other routes (see slice 2's checkpoint entry in
+`plan/current-status.md`) — but these three were not in the sweep that found
+the others. Two sites: `Selection.author` and `Override.author`. A third:
+`IntentConfirm.confirmed_by` (`src/fenceai/api/app.py:1032-1035`, the DTO
+field; `src/fenceai/api/app.py:1043`, passed unchanged into
+`confirm_intent`), which reaches the decision graph the same way —
+`src/fenceai/project/intents.py:73` writes it as `author=confirmed_by` on a
+materialized `Override`, and `:82` stamps it onto `intent.confirmed_by`.
 
-**How it was found.** A grep for `author=` and `chosen_by=` against the DTOs,
-run specifically because finding 1's probing raised the question "who else
-can a client claim to be."
+**How it was found.** The two DTO fields were found by a grep for `author=`
+and `chosen_by=` against the DTOs, run specifically because finding 1's
+probing raised the question "who else can a client claim to be" — that was
+slice 2's review round. The third site, `IntentConfirm.confirmed_by`, was
+found later, during slice 3, by `architecture-critic` reading the code
+rather than running it — worth saying plainly, since this document opens by
+claiming every finding in it was found by running the code, and this one
+site was not.
 
 **What it costs.** The same claim-forging risk slice 2 fixed elsewhere: the
-decision graph can attribute a selection or override to somebody who never
-made it.
+decision graph can attribute a selection, an override, or a confirmed
+intent to somebody who never made it.
 
 **Disposition.** With finding 1 — same surface, who the actor is.
 `tests/api/test_gate.py`'s guard docstring records it rather than pretending
