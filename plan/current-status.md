@@ -3,6 +3,123 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-09-23: a fence built and a run generated, on Postgres
+
+Branch `worktree-slice3-container-postgres`, task 7 of slice 3 of
+`docs/superpowers/specs/2026-09-17-gcp-deployment-design.md` — the checkpoint task
+that runs nothing new and writes no code. `docker compose down -v` then
+`up -d --build --wait` brought both `db` and `app` up healthy from an empty
+volume, so the run that follows starts from a database as fresh as the SQLite
+file the browser suite would otherwise have made for itself.
+
+**646/646 browser checks passed** against the container on Postgres
+(`FENCEAI_SMOKE_BASE_URL=http://localhost:8080`), including the checks that
+draw a fence and generate a run — the checkpoint spec §8 asks for. The
+attached run dirtied 30 tracked reference PNGs under `tools/smoke-out/`;
+they were reverted with `git checkout -- tools/smoke-out` and never
+committed.
+
+**The data really landed in Postgres:** `select count(*) from projects` → 24;
+`select count(*) from generation_runs` → 20. Both non-zero, which is this
+slice's whole claim.
+
+**Task 4's refusal reproduces on this very database.** The stack's database
+was created by a dev-mode boot, so booting the same image under
+`FENCEAI_IDENTITY=iap` against it is exactly the trap Task 4 built the guard
+for. It does: `docker compose run --rm -e FENCEAI_IDENTITY=iap
+-e FENCEAI_IAP_AUDIENCE=/projects/1/global/backendServices/2 app` exits
+non-zero (exit code 3) and prints, verbatim:
+
+> `[fenceai] refusing to serve this database under FENCEAI_IDENTITY=iap: it
+> holds the row(s) u_admin (admin@example.com), u_dana (dana@example.com),
+> u_yossi (yossi@example.com) — the accounts a dev-mode boot seeds, recognised
+> by the ids it mints and by the IANA-reserved addresses it gives them. While
+> any seeded admin row is active, FENCEAI_BOOTSTRAP_ADMIN stays disabled, so no
+> real first admin can be seated; and no Google account can ever hold an
+> example.com address. Either way every request is refused for ever. Point
+> FENCEAI_DB at a database that has never been booted in dev mode, or remove
+> these rows.`
+
+The one-off `run` did not disturb the long-running `app` service — it stayed
+`Up (healthy)` throughout and kept answering 200 on `/`.
+
+**Full suite, both ways, foreground, measured at commit `2a38ae3`.** Offline
+(no `FENCEAI_TEST_POSTGRES`): **3609 passed, 413 skipped**, 0 failed — every
+skip is Postgres-gated or the one CI-only dialect test. Dual-run
+(`FENCEAI_TEST_POSTGRES=postgresql://postgres:test@localhost:5432/postgres`,
+the standalone `fenceai-test-pg` container on 5432, never the compose stack's
+own `db`): **4017 passed, 5 skipped**, 0 failed. `--ignore=tests/tools` was
+not used.
+
+4017 is correct, not a discrepancy against the plan's earlier expectation of
+4013 — that expectation was stale. The full accounting, so nobody has to
+re-derive it: 3992 baseline + 6 (Task 1) + 3 (Task 3) + 10 (Task 4) + 2
+(Task 4's fix round) + 4 (Task 5) = 4017; skips are 1 baseline + 4
+Docker-gated = 5; total collected 4022, reconciling with offline's
+3609 + 413. A count with no vintage goes stale silently — three counts in
+the previous slice did exactly that, which is why this one names its commit.
+
+Full detail, every command and its literal output, is in
+`.superpowers/sdd/2026-09-23-container-and-local-postgres/task-7-report.md`.
+
+**Stack left up and healthy at http://localhost:8080.** Working tree clean;
+nothing committed by this task.
+
+## Checkpoint — 2026-09-23: slice 3 complete — docs, and the triage of what it does not fix
+
+Task 8 of slice 3, the last task. No code changes; this is the documentation
+and triage task that closes the slice. Slice 3
+(`docs/superpowers/specs/2026-09-17-gcp-deployment-design.md`) is **complete**:
+a two-stage container image that honours `$PORT` and ships no `.env` (Task 1),
+a compose stack running the app against its own Postgres (Task 3), a boot
+refusal for a dev-seeded database served under `iap` (Task 4), a seam that
+lets the browser suite attach to an already-running server (Task 5), a CI job
+that builds and runs the image on every PR (Task 6), and the checkpoint above
+that ran a real fence-build-and-generate against the container on Postgres
+(Task 7). The two suite counts, the 646/646 smoke result, the Postgres row
+counts and the refusal's exact message are all recorded in the checkpoint
+entry directly above this one, measured at commit `2a38ae3`.
+
+**Eleven findings carried forward, triaged, not fixed.** Running slice 2's
+code — not reading it — turned up twelve findings beyond what that slice
+itself set out to fix; finding 3 (a dev-seeded database served under `iap`
+locks out forever) is the one this slice fixes
+(`identity/dev.py:dev_seed_lockout`). The other eleven, each with what was
+found, how, what it costs, and where it goes next, are triaged in
+`docs/reviews/2026-09-23-slice-2-carried-findings.md`. **Slice 4 inherits
+findings 2, 4 and 5** — all three live in the IAP adapter
+(`identity/iap.py`) and in ADR-0013: an unknown `kid` not forcing a key
+refresh (up to an hour of company-wide refusal on a real Google key
+rotation), the key grace window not enforced between retries, and the
+absence of a CSRF/Origin/CORS layer of this app's own, documented as a
+stated assumption resting on IAP's cookie `SameSite` behaviour.
+
+**Slice 2's ledger is now durable.** `docs/superpowers/ledgers/2026-09-17-identity-is-googles/`
+holds the full pre-flight scan, validation battery and merge record for slice
+2 — it was gitignored in the worktree that produced it, so it has been copied
+into the tracked tree rather than lost when that worktree is eventually
+removed.
+
+**What slice 3 itself defers, for the next session to inherit rather than
+rediscover:**
+
+- The close guard in `api/app.py` has no committed regression test; it was
+  proven twice by throwaway scripts that were then deleted. A refactor
+  removing the `try/except` would leave the suite green. This repository has
+  already paid for exactly that failure once, in the previous slice.
+- `build_provider()` raises after `Store(...)` has opened, leaking the same
+  idle transaction on other pre-`yield` paths. Pre-existing and harmless in
+  production, since the process exits.
+- After a refusal, module-level `state.store` is closed while
+  `state.interpreter` and friends still belong to the previous boot.
+- An attached browser run rewrites the tracked reference PNGs under
+  `tools/smoke-out/`; they must be regenerated unattached before any commit
+  that includes them.
+
+**Stack still up and healthy at http://localhost:8080**, `fenceai-test-pg`
+on 5432 untouched. Working tree: this task's own doc and status edits, staged
+by name.
+
 ## Checkpoint — 2026-09-22: identity is Google's, and the doors actually lock
 
 Branch `feat/identity-is-googles` on `origin/main` (e44377b), not merged at the

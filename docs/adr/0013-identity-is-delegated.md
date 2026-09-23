@@ -133,5 +133,28 @@ mistake. Unsetting it after the first deploy is load-bearing for that
 recovery path as well as for the ordinary demotion guard in `api/app.py`, not
 merely deployment cleanliness.
 
+**A database booted in `dev` mode refuses to serve under `iap`, and the
+refusal was found by running the code, not by reading it.** `dev` mode seeds
+three fixed-id, `@example.com` rows; nothing stopped that same database from
+later being pointed at by an `iap` boot, where those addresses can never be
+reached by a real Google account and `FENCEAI_BOOTSTRAP_ADMIN` stays disabled
+while a seeded admin row is active — so the deployment is locked out forever
+with no path back in, discovered only when someone actually tries to sign in.
+`identity/dev.py:dev_seed_lockout` closes it: booting under `iap` against a
+database carrying any dev-seeded row refuses to start at all (exit 3), naming
+the offending rows and the remedy, rather than letting the app come up and
+refuse every request one at a time. Its strictness is deliberate — it refuses
+on ANY seeded row present, not only an admin one, because a seeded non-admin
+row is just as much evidence the database was never meant for `iap` as a
+seeded admin row is, and checking only the admin row would let the same trap
+reopen through a seeded `sales` or `backoffice` account instead.
+
+This ADR does not otherwise expand what it covers. `docs/reviews/2026-09-23-slice-2-carried-findings.md`
+records the eleven other findings this identity work surfaced by running,
+rather than reading, the code — including three (findings 1, 6, 7) that
+belong to the per-capacity authorization slice above and two (findings 2, 4)
+that live in `identity/iap.py` alongside this same lockout — and their
+dispositions; none of the eleven are addressed by this ADR.
+
 Spec: `docs/superpowers/specs/2026-09-17-identity-is-googles-design.md`.
 Plan: `docs/superpowers/plans/2026-09-17-identity-is-googles.md`.
