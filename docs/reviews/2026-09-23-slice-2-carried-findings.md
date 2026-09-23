@@ -269,7 +269,8 @@ can't I log in" question that the UI itself could have answered correctly.
 | Slice | Findings |
 |---|---|
 | Slice 3 (this slice) | 3 — done |
-| Slice 4 (IAP adapter / ADR-0013) | 1 (opens it), 2, 4, 5, 6 (opens it), 7 (opens it) |
+| Per-capacity authorization slice (next) | 1 (opens it), 6 (opens it), 7 (opens it) |
+| Slice 4 (IAP adapter / ADR-0013) | 2, 4, 5 |
 | Next slice (quick) | 8, 9 |
 | Next frontend slice | 11, 12 |
 | Deferred, contingent | 10 |

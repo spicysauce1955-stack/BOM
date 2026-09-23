@@ -266,6 +266,11 @@ REFUSAL_CODES = [
     "user_exists",
     "user_not_found",
     "last_admin",
+    # `POST /api/users` closing the write that could otherwise trigger
+    # `dev_seed_lockout` on a later boot (Cloud Run's `lifespan` runs per
+    # instance, not per deploy) — an admin granting a demo-seeded/reserved
+    # address is refused here, immediately and correctably.
+    "reserved_address",
     # -- the queue and the one door ---------------------------------------------
     "assignee_unknown",
     # Committing names a run explicitly (never "the latest"), so a payload can

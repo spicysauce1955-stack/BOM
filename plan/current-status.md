@@ -87,12 +87,13 @@ locks out forever) is the one this slice fixes
 (`identity/dev.py:dev_seed_lockout`). The other eleven, each with what was
 found, how, what it costs, and where it goes next, are triaged in
 `docs/reviews/2026-09-23-slice-2-carried-findings.md`. **Slice 4 inherits
-findings 2, 4 and 5** — all three live in the IAP adapter
-(`identity/iap.py`) and in ADR-0013: an unknown `kid` not forcing a key
-refresh (up to an hour of company-wide refusal on a real Google key
-rotation), the key grace window not enforced between retries, and the
-absence of a CSRF/Origin/CORS layer of this app's own, documented as a
-stated assumption resting on IAP's cookie `SameSite` behaviour.
+findings 2, 4 and 5.** Findings 2 and 4 live in the IAP adapter
+(`identity/iap.py`): an unknown `kid` not forcing a key refresh (up to an
+hour of company-wide refusal on a real Google key rotation), and the key
+grace window not enforced between retries. Finding 5 is different in kind —
+the reviews document itself calls it "documentation, not code": the absence
+of a CSRF/Origin/CORS layer of this app's own, to be recorded in ADR-0013 as
+a stated assumption resting on IAP's cookie `SameSite` behaviour.
 
 **Slice 2's ledger is now durable.** `docs/superpowers/ledgers/2026-09-17-identity-is-googles/`
 holds the full pre-flight scan, validation battery and merge record for slice

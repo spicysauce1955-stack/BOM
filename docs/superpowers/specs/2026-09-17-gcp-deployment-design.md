@@ -334,6 +334,16 @@ to come up healthy, announce `identity provider: iap`, and then raise
 `ModuleNotFoundError` out of the gate on every route including `/api/session`:
 a server that passes its own health check and answers nobody.
 
+> **Amendment (post-merge review, implemented 2026-09-23).** This section
+> originally specified `uv sync --frozen --extra postgres --extra iap`
+> verbatim, and the Dockerfile was faithful to it. That command installs
+> uv's default dependency groups along with the extras — so `pytest`,
+> `httpx`, `websocket-client`, `pluggy`, `iniconfig` and `pygments` all
+> reached the runtime layer of a service that faces the public internet. The
+> spec, not the Dockerfile, was wrong: both `uv sync` lines now also carry
+> `--no-dev`, keeping the extras (still load-bearing, per the paragraph
+> above) while dropping the dev-only group from what ships.
+
 **Config.** `FENCEAI_DB` as a `postgres://` URL. `FENCEAI_AI=claude`.
 `FENCEAI_IDENTITY=iap`. `FENCEAI_BOOTSTRAP_ADMIN` set for the first deploy and
 **removed after — this is load-bearing, not hygiene**: it self-disables only

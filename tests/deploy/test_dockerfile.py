@@ -57,6 +57,15 @@ def test_every_sync_is_frozen():
         assert "--frozen" in line, line
 
 
+def test_every_sync_skips_dev_dependencies():
+    """uv installs default groups unless told not to. Without `--no-dev`,
+    `pytest`, `httpx`, `websocket-client`, `pluggy`, `iniconfig` and
+    `pygments` all reach the runtime layer of a service that faces the public
+    internet."""
+    for line in _sync_lines():
+        assert "--no-dev" in line, line
+
+
 def test_the_server_binds_every_interface():
     """Cloud Run routes to the container's external interface. A server bound to
     localhost answers its own health check and nobody else."""

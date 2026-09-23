@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from fenceai.api.app import app, state
 from fenceai.identity.dev import DEV_COOKIE
 from fenceai.identity.model import User
+from fenceai.identity.ports import Principal
 
 
 @pytest.fixture()
@@ -225,3 +226,45 @@ def test_two_admins_cannot_strand_the_deployment_by_leaving_at_once(client):
     # `last_admin`, or — if it arrived after the caller's own row went
     # inactive — 403 by the gate. Either is a refusal; two 200s is the defect.
     assert results.count(200) <= 1, results
+
+
+class _Iap:
+    """Enough of an IdentityProvider to make `lifespan` build an iap-shaped
+    app — the shape `dev_seed_lockout` refuses under. Mirrors the stand-in in
+    `tests/api/test_dev_seed_boot.py`."""
+
+    provider_id = "iap"
+
+    def principal(self, headers, cookies):
+        return Principal(email="founder@fences.co.il", subject="sub-founder")
+
+
+def test_granting_admin_at_example_com_is_refused(monkeypatch):
+    """`dev_seed_lockout` refuses a database at BOOT if it holds a seeded row
+    at `admin@example.com` — but nothing stopped `POST /api/users` from
+    creating exactly that row under `iap`. On Cloud Run `lifespan` runs on
+    EVERY new instance, not only at deploy, so such a row would leave the
+    instance that created it healthy and make every SUBSEQUENT instance
+    refuse to start, on the next scale-out or recycle. Closing the write
+    trades that delayed, uncorrectable failure for an immediate 409 — proven
+    here without ever booting a second `TestClient` under the lockout."""
+    monkeypatch.setattr("fenceai.api.app.build_provider", lambda: _Iap())
+    with TestClient(app) as client:
+        # No dev-mode seeding happens under `iap`, so the caller has to be
+        # granted directly against the store.
+        state.store.save_user(User(id="u_founder", name="Founder",
+                                   email="founder@fences.co.il",
+                                   capacity="admin"))
+
+        r = client.post("/api/users", json={"email": "admin@example.com",
+                                            "name": "Somebody",
+                                            "capacity": "sales"})
+        assert r.status_code == 409
+        assert r.json()["detail"]["code"] == "reserved_address"
+        assert state.store.user_by_email("admin@example.com") is None
+
+        # An ordinary company address is unaffected by the guard.
+        r2 = client.post("/api/users", json={"email": "dana@company.com",
+                                             "name": "Dana",
+                                             "capacity": "sales"})
+        assert r2.status_code == 201

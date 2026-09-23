@@ -17,12 +17,15 @@ WORKDIR /app
 # Dependencies in their own layer, before any source: they change when uv.lock
 # changes, which is rare, while src/ changes every commit.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --extra postgres --extra iap
+RUN uv sync --frozen --no-install-project --no-dev --extra postgres --extra iap
 
 # Then the project itself. Both extras again — `uv sync` without them would
-# PRUNE what the line above installed.
+# PRUNE what the line above installed. `--no-dev` again too: uv installs
+# default groups unless told not to, and without it `pytest`, `httpx`,
+# `websocket-client`, `pluggy`, `iniconfig` and `pygments` all reach the
+# runtime layer of a service that faces the public internet.
 COPY src ./src
-RUN uv sync --frozen --extra postgres --extra iap
+RUN uv sync --frozen --no-dev --extra postgres --extra iap
 
 # ---- runtime ----------------------------------------------------------------
 FROM python:3.12-slim AS runtime

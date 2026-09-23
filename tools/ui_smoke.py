@@ -4859,12 +4859,27 @@ def main() -> int:
         # entire premise, and its absence must be said plainly rather than
         # discovered 60 s later as a readiness timeout.
         try:
-            urllib.request.urlopen(f"{target_base_url()}/api/health", timeout=5)
+            resp = urllib.request.urlopen(f"{target_base_url()}/api/health", timeout=5)
         except Exception as exc:
             raw = os.environ.get(_BASE_URL_ENV, "")
             print(f"FATAL: {_BASE_URL_ENV}={raw!r} resolved to "
                   f"{target_base_url()}, but nothing answered /api/health "
                   f"there ({exc!r}) — start it first")
+            return 2
+        # Attached mode does not set the target's environment — that server
+        # was started by somebody else, however they started it — so the
+        # `FENCEAI_AI=stub` below (which we DO set when we own the server)
+        # cannot be assumed here. `.env.example` ships `FENCEAI_AI=claude`,
+        # so a developer's own server is plausibly in live mode. No case in
+        # this suite reaches the interpret path today, but a future one that
+        # does would silently drive the live Anthropic API and spend real
+        # money from a test suite — so this is checked now, before that is
+        # true, using the body this preflight already fetches.
+        interpreter = json.loads(resp.read())["interpreter"]
+        if interpreter != "stub":
+            print(f"FATAL: {target_base_url()} is running interpreter "
+                  f"{interpreter!r}, not 'stub' — set FENCEAI_AI=stub on "
+                  "that server before attaching this suite to it")
             return 2
     else:
         # a stale server on our port would silently serve old code/data — abort loudly

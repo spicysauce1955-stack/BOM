@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from fenceai.api.app import app
 from fenceai.identity.ports import Principal
+from fenceai.store.db import Store
 
 
 class _Iap:
@@ -48,3 +49,38 @@ def test_a_fresh_database_boots_under_iap_normally(monkeypatch):
     monkeypatch.setattr("fenceai.api.app.build_provider", lambda: _Iap())
     with TestClient(app) as c:
         assert c.get("/api/health").json()["ok"] is True
+
+
+def test_the_refusal_survives_a_failing_close(monkeypatch):
+    """Protects `lifespan`'s `try: state.store.close() / except Exception:
+    pass` around the lockout's `raise`. That wrapper exists so a failing
+    close (a dropped connection, a Postgres wobble) cannot swallow the
+    sentence that names the remedy — without it, the operator would see
+    whatever `close()` raised instead of `dev_seed_lockout`'s message, or a
+    hang (removing the `close()` call itself hangs the Postgres leg of
+    `test_a_dev_seeded_database_refuses_to_boot_under_iap` at DROP SCHEMA,
+    which is a poor regression signal: CI times out rather than fails). This
+    was previously proven twice by throwaway scripts, both deleted; this is
+    the same experiment, committed."""
+    with TestClient(app):
+        pass  # a dev boot; seeds the three demo rows including admin@example.com
+
+    monkeypatch.setattr("fenceai.api.app.build_provider", lambda: _Iap())
+    real_close = Store.close
+
+    def _raising_close(self) -> None:
+        # Actually close the connection (leaving it open is a second,
+        # unrelated way to hang a Postgres teardown — the DROP SCHEMA this
+        # docstring warns about) and THEN raise, so the test isolates the
+        # one thing under test: does a failing close swallow the refusal.
+        real_close(self)
+        raise RuntimeError("close failed")
+
+    monkeypatch.setattr(Store, "close", _raising_close)
+    with pytest.raises(RuntimeError) as e:
+        with TestClient(app):
+            pass
+
+    reason = str(e.value)
+    assert "admin@example.com" in reason
+    assert "FENCEAI_DB" in reason

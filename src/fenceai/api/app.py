@@ -114,8 +114,14 @@ state = AppState()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    state.store = Store(os.environ.get("FENCEAI_DB", "fenceai.db"))
+    # Provider before store: `build_provider()` can raise (an unset
+    # `FENCEAI_IDENTITY`, a missing `FENCEAI_IAP_AUDIENCE`), and nothing
+    # between the two lines needs the store open yet — provider-first means a
+    # configuration error surfaces before any I/O, rather than leaving
+    # `Store(...)`'s already-opened read orphaned by an exception one line
+    # later.
     state.provider = build_provider()
+    state.store = Store(os.environ.get("FENCEAI_DB", "fenceai.db"))
     # Loud, once. A machine running `dev` by accident should say so rather than
     # behave strangely — an impersonation switch nobody noticed is the one way
     # this arrangement fails silently.
@@ -2402,6 +2408,16 @@ def grant_capacity(request: Request, body: GrantRequest) -> dict:
         raise HTTPException(409, {"code": "user_exists"})
     user = User(id=f"u_{uuid.uuid4().hex[:8]}", name=body.name,
                 email=body.email, capacity=body.capacity)
+    # `lifespan` runs `dev_seed_lockout` at BOOT, but on Cloud Run `lifespan`
+    # runs on EVERY NEW INSTANCE, not only at deploy. A row that reaches
+    # `reserved_address` through this route leaves the CURRENT instance
+    # healthy — it already booted — and makes every SUBSEQUENT instance
+    # refuse to start, on the next scale-out or recycle, with no operator
+    # action, no warning, and manual SQL against Cloud SQL as the only cure.
+    # Closing the write here trades that delayed, uncorrectable failure for
+    # an immediate, correctable 409.
+    if dev_seed_lockout(state.provider.provider_id, [user]):
+        raise HTTPException(409, {"code": "reserved_address"})
     state.store.save_user(user, actor=actor_ref(admin))
     state.store.log(actor_ref(admin), "grant_capacity", user.id)
     return _public(user)
