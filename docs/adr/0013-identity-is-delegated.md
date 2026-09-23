@@ -153,8 +153,10 @@ This ADR does not otherwise expand what it covers. `docs/reviews/2026-09-23-slic
 records the eleven other findings this identity work surfaced by running,
 rather than reading, the code — including three (findings 1, 6, 7) that
 belong to the per-capacity authorization slice above and two (findings 2, 4)
-that live in `identity/iap.py` alongside this same lockout — and their
-dispositions; none of the eleven are addressed by this ADR.
+that live in `identity/iap.py`, the same adapter this ADR's Decision section
+names for IAP verification, though not the same file as
+`identity/dev.py:dev_seed_lockout` above — and their dispositions; none of
+the eleven are addressed by this ADR.
 
 Spec: `docs/superpowers/specs/2026-09-17-identity-is-googles-design.md`.
 Plan: `docs/superpowers/plans/2026-09-17-identity-is-googles.md`.
