@@ -7,6 +7,11 @@ Run manually at milestones (not part of pytest — keeps CI browser-free):
 Prereqs: google-chrome on PATH. Boots its own server on :8791 with a throwaway DB,
 drives the drawing/editing/undo/locale flows, saves screenshots to
 tools/smoke-out/, and exits non-zero on any failed check.
+
+Set FENCEAI_SMOKE_BASE_URL to point every check at a server this script did
+not start instead — e.g. a container's published port — which is how you
+prove an IMAGE serves this app; a uvicorn launched here from source would
+only prove the opposite.
 """
 
 from __future__ import annotations
@@ -4856,8 +4861,10 @@ def main() -> int:
         try:
             urllib.request.urlopen(f"{target_base_url()}/api/health", timeout=5)
         except Exception as exc:
-            print(f"FATAL: {_BASE_URL_ENV}={target_base_url()} but nothing "
-                  f"answered /api/health there ({exc!r}) — start it first")
+            raw = os.environ.get(_BASE_URL_ENV, "")
+            print(f"FATAL: {_BASE_URL_ENV}={raw!r} resolved to "
+                  f"{target_base_url()}, but nothing answered /api/health "
+                  f"there ({exc!r}) — start it first")
             return 2
     else:
         # a stale server on our port would silently serve old code/data — abort loudly
