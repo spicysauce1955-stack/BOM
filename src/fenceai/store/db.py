@@ -697,7 +697,7 @@ class Store:
     def save_run(self, result: GenerationResult, actor: str = "system") -> None:
         self._conn.execute(
             "INSERT INTO generation_runs (id, project_id, created_at, doc) "
-            "VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
+            "VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING",
             (result.run.id, result.run.project_id, _now(), result.model_dump_json()),
         )
         self._audit(actor, "save_run", result.run.id)
@@ -719,7 +719,7 @@ class Store:
     # -- supply runs (append-only) ----------------------------------------------
 
     def save_supply_run(self, s: SupplyRun, actor: str = "system") -> SupplyRun:
-        """ON CONFLICT DO NOTHING, for `save_run`'s reason: the id IS the content, so a
+        """ON CONFLICT(id) DO NOTHING, for `save_run`'s reason: the id IS the content, so a
         second write of the same id is the same fact arriving again. /bom
         resolves supply on every read, and an unchanged yard must not accumulate
         a row per read.
@@ -740,7 +740,7 @@ class Store:
         s.created_at = s.created_at or _now()
         self._conn.execute(
             "INSERT INTO supply_runs (id, design_id, created_at, doc) "
-            "VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
+            "VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING",
             (s.id, s.design_id, s.created_at, s.model_dump_json()),
         )
         self._audit(actor, "save_supply_run", s.id)
@@ -934,6 +934,61 @@ class Store:
         )
         self._audit(actor, "save_user", user.id)
         self._conn.commit()
+
+    @_serialized
+    def create_user_guarded(self, user: User,
+                            actor: str = "system") -> tuple[User | None, str]:
+        """Check the address is free and insert — under ONE lock.
+
+        Returns `(user, "ok")` or `(None, "user_exists")`.
+
+        `amend_user_guarded`'s shape, for `amend_user_guarded`'s reason: each
+        store CALL is atomic, so a route that reads and then writes across two
+        is still a TOCTOU window. `POST /api/users` read `user_by_email` and
+        then called `save_user`, and between them a second request could read
+        the same `None`.
+
+        What came out of that window was not a lost update but a 500. `users.email`
+        is UNIQUE while `save_user`'s upsert targets `id` only, so a second row
+        with a fresh uuid and the same address raised the DRIVER's
+        `IntegrityError` — `sqlite3.IntegrityError: UNIQUE constraint failed:
+        users.email`, verified — which no route catches, so the admin got a
+        generic alert instead of the `user_exists` refusal that already has a
+        locale string in both bundles. And it needed no concurrency trick to
+        reach: the people screen's submit button was not disabled during the
+        request, so a double-click fired both POSTs.
+
+        Answered HERE and not in `api/` because catching that exception across
+        both backends means naming a driver class per backend — `sqlite3` and
+        `psycopg` share no base beyond `Exception`, as `store/dialect.py`'s
+        docstring records — and `api/` must not import a driver to find out
+        which database it is talking to. A check and an insert under one lock
+        needs no driver exception at all, and returns a string the route can
+        map to its own 409.
+
+        The read is by `email` and NOT via `user_by_email`: that is a public
+        method, and calling it here would be correct (`@_serialized` is
+        re-entrant) but would hide the fact that this SELECT and the INSERT
+        below have to be the same two statements the lock is held across. The
+        address is already normalised — `User.email` does that on the way in,
+        which is why one spelling exists to compare.
+
+        A plain INSERT, not `save_user`'s upsert: this method's whole contract
+        is that it creates. An upsert here would silently rewrite a row when the
+        id collided, which is the opposite of reporting a conflict.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM users WHERE email=?", (user.email,)).fetchone()
+        if row is not None:
+            return None, "user_exists"
+        self._conn.execute(
+            "INSERT INTO users (id, email, doc) VALUES (?,?,?)",
+            (user.id, user.email, user.model_dump_json()),
+        )
+        self._audit(actor, "save_user", user.id)
+        self._audit(actor, "grant_capacity", user.id)
+        self._conn.commit()
+        return user, "ok"
 
     @_serialized
     def amend_user_guarded(self, user_id: str, capacity: str | None,

@@ -247,3 +247,122 @@ def test_a_refused_capacity_change_still_repaints_the_select(refusal):
     assert len(refusal["patchCalls"]) == 1
     assert refusal["patchCalls"][0]["body"] == {"capacity": "admin"}
     assert refusal["getUsersCalls"] == 1
+
+
+# ---------------------------------------------------------------------------
+# `initPeople`'s add-form handler, and the button that used to stay pressable.
+#
+# The reachability half of a server bug: `users.email` is UNIQUE while
+# `save_user`'s upsert targeted `id`, so two POSTs for one address raised a
+# driver `IntegrityError` and the admin got a 500 with a generic alert. What
+# produced two POSTs was not concurrency — it was a double-click on a submit
+# button nobody disabled during `await apiSend(...)`. The server is fixed where
+# correctness lives (`Store.create_user_guarded`); this pins the click that made
+# it reachable, on the screen slice 3 touched.
+#
+# Same hand-rolled double as `REFUSAL_SCRIPT` above, for the same reason: this
+# is not a pure function, and CLAUDE.md takes on no build step, so no jsdom.
+# The one moment that matters is observed from INSIDE the `fetch` stub — the
+# button's `disabled` while the request is in flight. Reading it after the
+# `await` would pass against the broken code too.
+# ---------------------------------------------------------------------------
+SUBMIT_SCRIPT = """
+const state = { posts: 0, duringPost: null, afterOk: null, afterRefusal: null,
+                duringRefusedPost: null, resets: 0 };
+globalThis.alert = () => {};                 // apiSend alerts a refusal; not under test here
+globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+
+const btn = { disabled: false };
+let refuse = false;
+globalThis.fetch = async (url, init) => {
+  if (!init || !init.method) return { ok: true, json: async () => [] };   // render()'s GET
+  if (init.method === "POST") {
+    state.posts += 1;
+    if (refuse) state.duringRefusedPost = btn.disabled;
+    else state.duringPost = btn.disabled;
+    if (refuse) {
+      const body = JSON.stringify({ detail: { code: "user_exists" } });
+      return { ok: false, status: 409, text: async () => body,
+               json: async () => JSON.parse(body) };
+    }
+    return { ok: true, json: async () => ({ id: "u1" }) };
+  }
+  throw new Error("unexpected fetch: " + url);
+};
+
+const listeners = {};
+const table = { addEventListener() {}, set innerHTML(v) {}, get innerHTML() { return ""; } };
+const fields = {
+  "people-new-email": { value: " dana@company.com " },
+  "people-new-name": { value: "Dana" },
+  "people-new-capacity": { value: "sales" },
+};
+const form = {
+  addEventListener(type, fn) { listeners[type] = fn; },
+  querySelector: (s) => (s === 'button[type="submit"]' ? btn : null),
+  reset() { state.resets += 1; },
+};
+globalThis.document = {
+  getElementById: (id) => (id === "people-table" ? table
+    : id === "people-add-form" ? form : (fields[id] || null)),
+  querySelectorAll: () => [],
+  documentElement: {},
+  addEventListener: () => {},
+};
+globalThis.window = { addEventListener: () => {} };
+
+import { initPeople } from "./js/people.js";
+initPeople();
+
+const submitEvent = { preventDefault() {} };
+await listeners.submit(submitEvent);
+state.afterOk = btn.disabled;
+
+refuse = true;
+try {
+  await listeners.submit(submitEvent);
+} catch {
+  // `apiSend` re-throws after alerting, exactly as it does in the browser.
+}
+state.afterRefusal = btn.disabled;
+
+console.log(JSON.stringify(state));
+"""
+
+
+@pytest.fixture(scope="module")
+def submits():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", SUBMIT_SCRIPT],
+        cwd=STATIC, capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_the_submit_button_is_disabled_while_the_grant_is_in_flight(submits):
+    """The double-click, closed. Observed from inside the request, because
+    `disabled` read after the `await` is `false` on the broken code too — the
+    window that produced two POSTs is precisely the time `fetch` is outstanding.
+
+    Before the fix this assertion sees `duringPost is False`."""
+    assert submits["posts"] == 2
+    assert submits["duringPost"] is True
+    assert submits["duringRefusedPost"] is True
+
+
+def test_the_submit_button_comes_back_on_both_outcomes(submits):
+    """`finally`, not a line after the `await`. `apiSend` re-throws every
+    refusal after showing its dialog, so a plain re-enable would be skipped on
+    the one outcome where the admin still needs the control — a mistyped
+    address, or a `user_exists` they meant to correct, would leave the form dead
+    until a page reload. Same lesson as the capacity `<select>` above, one form
+    along."""
+    assert submits["afterOk"] is False
+    assert submits["afterRefusal"] is False
+    # The successful grant clears the form; the refused one keeps what was
+    # typed, so there is something to correct.
+    assert submits["resets"] == 1

@@ -1,7 +1,12 @@
 """Where SQLite and Postgres disagree, and nowhere else.
 
-`store/db.py` holds 63 SQL statements and this module exists so that number
-stays 63. Every statement there is written once, in SQLite's spelling, and
+`store/db.py` holds one SQL statement per thing it does, and this module exists
+so that stays true — a new statement is a new capability, never a second
+spelling of one that is already there. (This line used to fix the count at 63;
+it was 64 by the time anyone next read it and 66 after
+`create_user_guarded`, so the number said "stale" where the invariant it stood
+for had not moved at all. The invariant is the thing to check.)
+Every statement there is written once, in SQLite's spelling, and
 translated on the way to a Postgres server — which is safe precisely because
 no SQL string in that file contains a literal `?` or `%`. Check that before
 adding one: a `LIKE '%x%'` would have to be escaped for psycopg, and the
@@ -15,10 +20,25 @@ Four differences, and they are the whole list:
                    AUTOINCREMENT                AS IDENTITY PRIMARY KEY
     prelude        PRAGMA journal_mode=WAL;     (none)
 
-`INSERT OR IGNORE` is NOT on the list. SQLite has accepted `ON CONFLICT DO
-NOTHING` since 3.24 and ships 3.45 here, so both statements that needed it
-were rewritten into the form both databases already understand — one fewer
-difference to carry is better than one more translation to trust.
+`INSERT OR IGNORE` is NOT on the list. Both statements that needed it
+(`save_run`, `save_supply_run`) are written `ON CONFLICT(id) DO NOTHING`, the
+form both databases already understand — one fewer difference to carry is
+better than one more translation to trust.
+
+THE CONFLICT TARGET IS LOAD-BEARING, and this docstring used to claim the
+opposite: it said SQLite had accepted `ON CONFLICT DO NOTHING` since 3.24,
+which is false. 3.24 added UPSERT but REQUIRED a conflict target; the
+targetless spelling only arrived in 3.35.0 (2021-03-12). The rewrite away from
+`INSERT OR IGNORE` therefore raised this app's minimum SQLite from "every
+version" to 3.35 without saying so, and on a host shipping 3.24–3.34 —
+Ubuntu 20.04, RHEL 8 — the first generation save died with
+`sqlite3.OperationalError: near "DO": syntax error`. The container image never
+saw it (bookworm ships 3.40), so this was a trap for a developer rather than
+for the deploy, which is exactly the kind of floor a docstring has to get
+right. Naming `(id)` — the PRIMARY KEY and the only unique constraint on
+either table, so the target and the actual conflict are the same thing — is
+valid from 3.24 AND accepted by Postgres, so the property survives with no
+version floor at all.
 
 Four differences in the SQL this module translates — a fifth exists, but is
 not ours to translate: `sqlite3` and `psycopg` name their own exception
@@ -178,11 +198,35 @@ class Conn:
         `sqlite3` has `executescript`; psycopg does not, but accepts several
         statements in one `execute` when there are no parameters — which
         schema DDL never has.
+
+        The rollback is `execute`'s, for `execute`'s reason and no other: a
+        failed statement leaves a Postgres connection idle-in-failed-
+        transaction, where every subsequent statement on it raises, so the
+        wrapper exists to keep one failure from turning the connection into a
+        500 machine. This method had no such wrapper while its only sibling
+        did, WITH a written justification — which is the kind of asymmetry a
+        later reader resolves in the wrong direction, by deciding the
+        justification must not have applied here.
+
+        It does apply here. `CREATE TABLE IF NOT EXISTS` is not race-safe on
+        Postgres: two instances booting against one schema can raise
+        `duplicate key value violates unique constraint
+        "pg_type_typname_nsp_index"`. Unreachable today — the deployment pins
+        `max-instances=1` — but the escape route is worse than `execute`'s,
+        because this runs from `Store.__init__`, so the exception leaves before
+        `state.store` is assigned and nothing ever closes the connection.
         """
-        if self.dialect is SQLITE:
-            self._raw.executescript(sql)
-        else:
-            self._raw.execute(sql)
+        try:
+            if self.dialect is SQLITE:
+                self._raw.executescript(sql)
+            else:
+                self._raw.execute(sql)
+        except Exception:
+            try:
+                self._raw.rollback()
+            except Exception:
+                pass  # never let a failed rollback hide the real failure
+            raise
         self._raw.commit()
 
     def commit(self) -> None:

@@ -142,8 +142,28 @@ export function initPeople() {
     const name = document.getElementById("people-new-name").value.trim();
     const capacity = document.getElementById("people-new-capacity").value;
     if (!email || !name) return;
-    // `user_exists` (that address already has a row) surfaces the same way.
-    await apiSend("POST", "/api/users", { email, name, capacity });
+    // in-flight: a second press must not post the same grant twice — the same
+    // guard `notes.js` puts on its add button, and for a sharper reason here.
+    // Without it a double-click fired two POSTs, both of which read no existing
+    // row on the server, and the second collided with `users.email`'s UNIQUE
+    // constraint: a 500 and a generic alert where the answer is a plain
+    // "that address already has a row". The server no longer 500s
+    // (`Store.create_user_guarded`) — correctness lives there, not here — but
+    // the second request is still a request nobody meant to send, and the
+    // button that stays pressable during a write is what makes it happen.
+    //
+    // `finally`, not a line after the `await`: `apiSend` RE-THROWS every
+    // refusal after showing its dialog, so a plain re-enable would be skipped
+    // on exactly the outcome where the admin needs the control back — a
+    // mistyped address would leave the form dead until a reload.
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = true;
+    try {
+      // `user_exists` (that address already has a row) surfaces the same way.
+      await apiSend("POST", "/api/users", { email, name, capacity });
+    } finally {
+      if (submit) submit.disabled = false;
+    }
     form.reset();
     render();
   });

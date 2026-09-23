@@ -148,6 +148,30 @@ rather than forking `Store` into two classes:
 > and no code under `src/` catches a driver exception at all — hoisting a
 > shared type into `Dialect` would add a shim seam with no consumer.
 
+> **Amendment (slice 3 PR review, implemented 2026-09-23).** The amendment
+> above is wrong on the SQLite floor, and the rewrite it describes silently
+> raised this app's minimum. **SQLite has NOT accepted `ON CONFLICT DO NOTHING`
+> since 3.24.** 3.24 added UPSERT but required a conflict target; the targetless
+> form arrived in **3.35.0 (2021-03-12)**. So on any host with SQLite 3.24–3.34
+> — Ubuntu 20.04, RHEL 8 — the first `save_run`/`save_supply_run` raised
+> `sqlite3.OperationalError: near "DO": syntax error`. The container image never
+> showed it (bookworm ships 3.40), so it was a developer's trap, not the
+> deploy's. Both statements now name their conflict target explicitly,
+> `ON CONFLICT(id) DO NOTHING` — `id` is the PRIMARY KEY and the only unique
+> constraint on either table, so the target IS the conflict — which is valid
+> from 3.24 and accepted by Postgres unchanged. The "one spelling both
+> databases understand" property the amendment above claims therefore now holds
+> with no version floor at all, which is what it should have said the first
+> time. Also corrected in `store/dialect.py`'s module docstring, the other
+> place the false claim lived.
+>
+> One clause of that amendment stands and is worth re-reading beside slice 3's
+> own findings: "no code under `src/` catches a driver exception at all." It is
+> still true, and it is why the duplicate-address 500 on `POST /api/users` was
+> closed with an atomic check-and-insert in the store
+> (`Store.create_user_guarded`) rather than by teaching `api/` to name a driver
+> class per backend.
+
 `FENCEAI_DB` gains a URL form: a value beginning `postgres://` selects the
 Postgres dialect; a bare path stays SQLite. Local and deployed then differ by
 one variable.

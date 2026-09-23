@@ -2404,6 +2404,12 @@ def grant_capacity(request: Request, body: GrantRequest) -> dict:
     Dana arrives on Tuesday, at which moment her Google `sub` binds to this row.
     """
     admin = require_admin(request)
+    # This read is NOT the guard — `Store.create_user_guarded` below is, and it
+    # is the one that cannot be raced. It stays because it fixes the ORDER of
+    # two refusals: an address that both already has a row AND is a reserved
+    # `example.com` one answers `user_exists`, which is what an admin can act
+    # on, rather than `reserved_address`. The guarded call cannot make that
+    # choice, because the lockout check sits between the two.
     if state.store.user_by_email(body.email) is not None:
         raise HTTPException(409, {"code": "user_exists"})
     user = User(id=f"u_{uuid.uuid4().hex[:8]}", name=body.name,
@@ -2418,9 +2424,18 @@ def grant_capacity(request: Request, body: GrantRequest) -> dict:
     # an immediate, correctable 409.
     if dev_seed_lockout(state.provider.provider_id, [user]):
         raise HTTPException(409, {"code": "reserved_address"})
-    state.store.save_user(user, actor=actor_ref(admin))
-    state.store.log(actor_ref(admin), "grant_capacity", user.id)
-    return _public(user)
+    # One store call, not a read then a write. Across two, a double-click on
+    # the people screen's submit button (which used to stay enabled during the
+    # request) fired two POSTs, both read `None` above, and the second hit
+    # `users.email`'s UNIQUE constraint — a driver `IntegrityError` nothing
+    # catches, so a refusal that HAS a locale string (`user_exists`) reached the
+    # admin as a 500 and a generic alert. See `Store.create_user_guarded`, and
+    # `amend_user_guarded` for the same shape on the PATCH twin.
+    created, status = state.store.create_user_guarded(
+        user, actor=actor_ref(admin))
+    if status == "user_exists":
+        raise HTTPException(409, {"code": "user_exists"})
+    return _public(created)
 
 
 @app.patch("/api/users/{user_id}")

@@ -4875,7 +4875,35 @@ def main() -> int:
         # does would silently drive the live Anthropic API and spend real
         # money from a test suite — so this is checked now, before that is
         # true, using the body this preflight already fetches.
-        interpreter = json.loads(resp.read())["interpreter"]
+        #
+        # `.get`, and a guarded parse, because THIS block's whole contract is to
+        # print a FATAL sentence rather than let a problem "be discovered 60 s
+        # later". Unguarded, the one artifact attached mode exists to diagnose —
+        # an image serving an OLDER build of this app, whose `/api/health`
+        # predates the `interpreter` key — came out as a `KeyError` traceback
+        # from a preflight, which says nothing about which server answered or
+        # what was wrong with its reply. A stale or non-JSON body is exactly as
+        # disqualifying as `interpreter: "claude"`; it just needs a different
+        # sentence.
+        try:
+            health = json.loads(resp.read())
+            if not isinstance(health, dict):
+                raise ValueError(f"not a JSON object: {type(health).__name__}")
+        except Exception as exc:
+            print(f"FATAL: {target_base_url()}/api/health answered something "
+                  f"this suite cannot read ({exc!r}) — that is not this app, "
+                  "or not a version of it this suite can drive")
+            return 2
+        interpreter = health.get("interpreter")
+        if interpreter is None:
+            print(f"FATAL: {target_base_url()}/api/health has no "
+                  "'interpreter' key, so which AI interpreter that server "
+                  "runs cannot be established. The key predates this suite's "
+                  "attached mode, so this is almost certainly an OLDER build "
+                  "of the app than the one under test — which is the one thing "
+                  "attaching to an image is supposed to prove it is not. "
+                  f"Answered: {sorted(health)}")
+            return 2
         if interpreter != "stub":
             print(f"FATAL: {target_base_url()} is running interpreter "
                   f"{interpreter!r}, not 'stub' — set FENCEAI_AI=stub on "

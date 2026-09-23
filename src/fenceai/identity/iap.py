@@ -75,6 +75,15 @@ class IapIdentity:
         #: which just triggers an extra fetch, never a security hole.
         self._fetched_at = 0.0
         self._last_attempt_at = 0.0
+        #: Why the last refresh attempt failed, kept only so the refusal
+        #: raised at the grace boundary can name the cause. The boundary is
+        #: now checked on every call, including calls that attempted no fetch
+        #: of their own (see `_key_for`), so the exception that explains the
+        #: outage is no longer in scope at the point of the refusal — without
+        #: this, an operator reading the ERROR line during a gstatic outage
+        #: would be told the keys are too old and nothing about why they
+        #: could not be replaced.
+        self._last_error: Exception | None = None
 
     def _fetch_google_keys(self) -> dict[str, Any]:
         import json
@@ -97,28 +106,73 @@ class IapIdentity:
             self._fetched_at = now
             self._last_attempt_at = now
         elif now - self._fetched_at > _KEY_TTL_SECONDS:
-            # Stale. Retry, but not on every single request while an outage
-            # lasts — that would turn a gstatic blip into a self-inflicted
-            # 5-second latency spike on every request in the building.
-            if now - self._last_attempt_at > _KEY_RETRY_BACKOFF_SECONDS:
+            # TWO INDEPENDENT DECISIONS live in this branch, and conflating
+            # them into one guard was a security hole. They are:
+            #
+            #   (a) how often a failed refresh is RE-ATTEMPTED — a latency
+            #       question, answered by `_KEY_RETRY_BACKOFF_SECONDS`;
+            #   (b) whether cached keys past the grace window may still be
+            #       SERVED — a correctness question, answered by
+            #       `_KEY_STALE_GRACE_SECONDS`.
+            #
+            # The grace check used to sit INSIDE the backoff branch, so it was
+            # only ever evaluated on the one request per 60 seconds that
+            # attempted a fetch. Every failed attempt reset
+            # `_last_attempt_at`, so for the following 59 seconds this whole
+            # branch was skipped and control fell through to
+            # `return self._keys.get(kid)` — handing out keys Google may
+            # already have retired. That was not a 60-second window that then
+            # closed: it repeated for as long as the outage lasted, so a
+            # multi-day gstatic outage authenticated callers against expired
+            # keys for 59 of every 60 seconds, indefinitely.
+            # `docs/reviews/2026-09-23-slice-2-carried-findings.md` (finding 4)
+            # deferred this as "up to 60s at a time"; that reading of the
+            # control flow was wrong, which is why it is fixed here.
+            #
+            # So: the backoff governs the FETCH only, and the grace boundary
+            # below is evaluated on every call that reaches this branch.
+            attempted = now - self._last_attempt_at > _KEY_RETRY_BACKOFF_SECONDS
+            if attempted:
+                # Stale. Retry, but not on every single request while an
+                # outage lasts — that would turn a gstatic blip into a
+                # self-inflicted 5-second latency spike on every request in
+                # the building.
                 self._last_attempt_at = now
                 try:
                     self._keys = self._fetch()
                     self._fetched_at = now
+                    self._last_error = None
                 except Exception as exc:
-                    # The keys we already have were themselves fetched from
-                    # Google and have verified signatures before; they just
-                    # are not provably CURRENT any more. Keep serving them —
-                    # up to the grace window, past which a key Google may
-                    # since have rotated away is no longer trustworthy enough
-                    # to accept a signature against.
-                    if now - self._fetched_at > _KEY_TTL_SECONDS + _KEY_STALE_GRACE_SECONDS:
-                        _log.error("IAP: key refresh has failed past the "
-                                   "grace window (%s); refusing every caller "
-                                   "until this recovers", exc)
-                        raise
-                    _log.warning("IAP: key refresh failed (%s); serving "
-                                 "cached keys within the grace window", exc)
+                    self._last_error = exc
+            if now - self._fetched_at > _KEY_TTL_SECONDS + _KEY_STALE_GRACE_SECONDS:
+                # The keys we hold were themselves fetched from Google and
+                # have verified signatures before; they just are not provably
+                # CURRENT any more. Past the grace window a key Google may
+                # since have rotated away is no longer trustworthy enough to
+                # accept a signature against, so this fails closed — and it
+                # does so on EVERY such call, not only on the ones that tried
+                # to fetch. `principal()` turns it into "nobody".
+                #
+                # A fresh exception rather than re-raising `self._last_error`:
+                # that object is reused across requests for the whole outage,
+                # and `raise exc` appends a frame to its traceback each time,
+                # so re-raising it would grow one exception's traceback for
+                # every request until the outage ended.
+                _log.error("IAP: cached keys are past the stale-key grace "
+                           "window (last refresh failure: %s); refusing every "
+                           "caller until a refresh succeeds", self._last_error)
+                raise RuntimeError(
+                    "IAP public keys are past the stale-key grace window"
+                ) from self._last_error
+            if attempted and self._last_error is not None:
+                # `attempted` gates this so the log volume stays what it was
+                # before the grace check moved out here: one line per failed
+                # REFRESH, not one per request. Without it a six-hour grace
+                # window would emit a warning for every request in the
+                # building, which is how a real signal gets scrolled past.
+                _log.warning("IAP: key refresh failed (%s); serving "
+                             "cached keys within the grace window",
+                             self._last_error)
         return self._keys.get(kid)
 
     def principal(self, headers: Mapping[str, str],

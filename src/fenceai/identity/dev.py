@@ -117,11 +117,24 @@ def dev_seed_lockout(provider_id: str, users: Sequence["User"]) -> str | None:
     typed `u_admin` for a real grant), and a message hard-coded to talk about
     `example.com` would then name an address that is not the one on the row.
     It also names both remedies — a fresh `FENCEAI_DB`, or removing the rows —
-    because `POST /api/users` can create an `example.com` row in a genuine
-    `iap` deployment too, and there is no route that deletes a user and no
-    `PATCH` that can change an email; an operator in that shape has to remove
-    the row by hand, and "point FENCEAI_DB elsewhere" alone would tell a real
-    company to discard its own data.
+    and the reason is NOT that a route could still create such a row. The
+    creation path is closed at the write: `POST /api/users` applies this very
+    function to the row it is about to insert and refuses with 409
+    `reserved_address`, so under `iap` no route can produce a lockout-triggering
+    row at all. (It has to be closed there and not only at boot, because on
+    Cloud Run `lifespan` runs per INSTANCE: a row admitted by a running instance
+    leaves that instance healthy and makes every subsequent one refuse to start.)
+
+    The reason that still holds is the DATABASE THIS FUNCTION IS LOOKING AT. A
+    company reaches this refusal by pointing `FENCEAI_DB` at a database that was
+    once booted in dev mode — after a trial run, a copied volume, a restore from
+    a developer's snapshot — and by then that database may well hold a week of
+    real jobs, quotes and audit rows beside the seeded ones. There is no route
+    that deletes a user and no `PATCH` that can change an email, so removing the
+    seeded rows is hand-written SQL; but "point FENCEAI_DB elsewhere" as the
+    ONLY remedy would be telling that company to discard its own data to escape
+    three demo rows. Both remedies, because only the operator can know which of
+    the two their database is.
     """
     if provider_id == "dev":
         return None

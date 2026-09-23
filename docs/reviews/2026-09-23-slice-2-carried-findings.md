@@ -101,6 +101,22 @@ gap between what Google publishes as valid and what this app accepts.
 **Disposition.** Slice 4, with finding 2 — same file (`identity/iap.py`),
 same trip through the code, no reason to open it twice.
 
+**Correction (slice 3 review of PR #14, 2026-09-23). Fixed, and the
+"60 seconds" above was wrong.** The gap was not bounded at 60 seconds and did
+not close. The grace check sat INSIDE the retry-backoff branch, and every
+failed refresh reset `_last_attempt_at` — so for the following 59 seconds the
+branch was skipped entirely and `_key_for` fell through to
+`return self._keys.get(kid)`, serving keys already past the boundary. It then
+repeated, so a multi-day outage of Google's key endpoint authenticated against
+retired keys for 59 of every 60 seconds, indefinitely. Reproduced with a fake
+clock: `t=TTL+GRACE+1` refused, `t=TTL+GRACE+2` served the stale key.
+"Up to 60s at a time" is what the backoff constant suggests and not what the
+control flow did, and it is why this was deferred rather than fixed at the
+time — so the deferral rested on a false premise. The boundary is now
+evaluated on every call independent of the backoff, which still governs only
+how often a refresh is ATTEMPTED; regression test
+`test_the_retry_backoff_does_not_reopen_the_expired_grace_window`.
+
 ## 5. No CSRF token, no Origin check, no CORS middleware
 
 **Finding.** The app has no CSRF defense of its own. Exploitability rests

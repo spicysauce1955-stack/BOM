@@ -347,6 +347,51 @@ def test_a_stale_key_fetch_failure_refuses_once_past_the_grace_window(monkeypatc
     assert prov.principal({IAP_HEADER: _token(private)}, {}) is None
 
 
+def test_the_retry_backoff_does_not_reopen_the_expired_grace_window(monkeypatch, keys):
+    """The refusal above must hold on the requests that attempt NO fetch.
+
+    The grace check used to live inside the retry-backoff branch, and every
+    failed attempt reset the backoff clock — so the request that tried the
+    fetch was refused (the test above) and the next 59 seconds' worth of
+    requests skipped the branch entirely and fell through to the cached key.
+    That did not close after a minute: it repeated for the whole outage, so
+    a multi-day gstatic outage authenticated callers against keys Google
+    considers retired for 59 of every 60 seconds, for ever. The carried-finding
+    note called it "up to 60s at a time", which is what a reader concludes from
+    the backoff constant and not what the control flow did.
+
+    So this asserts the SECOND call — inside the backoff window, attempting no
+    fetch of its own — is refused too, and asserts it attempted no fetch, which
+    is what makes it the second call rather than a repeat of the first.
+    """
+    private, public = keys
+    calls = {"n": 0}
+
+    def flaky_fetch():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {KID: public}
+        raise RuntimeError("gstatic blip")
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr("fenceai.identity.iap.time.monotonic", lambda: clock["t"])
+
+    prov = IapIdentity(audience=AUD, fetch_keys=flaky_fetch)
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is not None
+    assert calls["n"] == 1
+
+    # One refresh attempt, past the grace window, which fails and is refused.
+    clock["t"] = 3600 + 6 * 3600 + 1
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is None
+    assert calls["n"] == 2
+
+    # One second later: still past the grace window, but INSIDE the 60 s retry
+    # backoff, so no fetch is attempted. The keys are no less expired for that.
+    clock["t"] = 3600 + 6 * 3600 + 2
+    assert prov.principal({IAP_HEADER: _token(private)}, {}) is None
+    assert calls["n"] == 2, "the backoff must still govern fetching"
+
+
 # --- the two ways this refuses everybody while looking healthy ------------------
 
 def test_a_padded_audience_still_matches(monkeypatch):
