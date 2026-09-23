@@ -938,8 +938,31 @@ block and **before** `state.interpreter = build_interpreter()`:
     # "failing at boot is strictly better than failing per request".
     lockout = dev_seed_lockout(state.provider.provider_id, state.store.list_users())
     if lockout:
+        # `list_users()` just above is a read, and on Postgres a read still
+        # opens an implicit transaction that psycopg leaves open until
+        # something commits, rolls back, or closes it. Raising past `yield`
+        # skips the `state.store.close()` at the bottom of this function, so
+        # without this line the refusal would leave that transaction idle,
+        # holding a lock on the very database it just refused to serve — a
+        # second, self-inflicted way to make the database unusable, this time
+        # by the guard meant to protect it.
+        try:
+            state.store.close()
+        except Exception:
+            # Never let a failed close hide the refusal that names the remedy —
+            # `store/dialect.py`'s `Conn.execute` swallows a failed rollback for
+            # the same reason. The close matters (a raise past `yield` orphans
+            # the open read and deadlocks a DROP SCHEMA), but it matters less
+            # than the sentence the operator is about to read.
+            pass
         raise RuntimeError(f"[fenceai] {lockout}")
 ```
+
+(This snippet was corrected in review after implementation: raising past
+`yield` on a live Postgres connection deadlocked the test suite's own schema
+teardown, and the naive fix — an unguarded `state.store.close()` — could
+itself swallow the refusal's sentence if the close failed. Both the plan and
+`src/fenceai/api/app.py` now show the guarded version above.)
 
 - [ ] **Step 8: Run both test files to verify they pass**
 

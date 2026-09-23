@@ -151,7 +151,15 @@ async def lifespan(app: FastAPI):
         # holding a lock on the very database it just refused to serve — a
         # second, self-inflicted way to make the database unusable, this time
         # by the guard meant to protect it.
-        state.store.close()
+        try:
+            state.store.close()
+        except Exception:
+            # Never let a failed close hide the refusal that names the remedy —
+            # `store/dialect.py`'s `Conn.execute` swallows a failed rollback for
+            # the same reason. The close matters (a raise past `yield` orphans
+            # the open read and deadlocks a DROP SCHEMA), but it matters less
+            # than the sentence the operator is about to read.
+            pass
         raise RuntimeError(f"[fenceai] {lockout}")
     state.interpreter = build_interpreter()
     state.proposer = StubProposer()

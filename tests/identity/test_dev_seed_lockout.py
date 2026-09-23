@@ -59,3 +59,23 @@ def test_a_demo_address_is_caught_even_under_a_minted_id():
     disguised = [User(id="u_3f9a1c22", name="Admin", email="ADMIN@example.com",
                       capacity="admin")]
     assert dev_seed_lockout("iap", disguised) is not None
+
+
+def test_the_message_names_the_row_rather_than_guessing_its_address():
+    """The id half catches a row whose address is a company's own, so a message
+    hard-coded to talk about example.com would name an address that is not one."""
+    disguised = [User(id="u_admin", name="Admin", email="boss@fences.co.il",
+                      capacity="admin")]
+    reason = dev_seed_lockout("iap", disguised)
+    assert reason is not None
+    assert "u_admin" in reason and "boss@fences.co.il" in reason
+
+
+def test_the_message_offers_both_remedies():
+    """`POST /api/users` can create an example.com row in a real deployment, no
+    route deletes a user, and PATCH cannot change an email — so "use a fresh
+    database" as the only remedy tells a company to discard its own data."""
+    reason = dev_seed_lockout("iap", _demo_rows())
+    assert reason is not None
+    assert "FENCEAI_DB" in reason
+    assert "remove these rows" in reason

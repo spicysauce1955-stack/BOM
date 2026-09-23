@@ -10,14 +10,23 @@ in for.
 `provider.py` registers it only when `FENCEAI_IDENTITY=dev`, and `api/app.py`
 registers `POST /api/dev/identity` on the same condition, so under `iap` the
 route does not exist to be found.
+
+This file also holds `dev_seed_lockout`, which is a PRODUCTION-boot refusal,
+not a dev-mode capability — it lives here because it is about residue from a
+dev-mode boot (the seeded ids and IANA-reserved addresses this module already
+names), and it does not widen what `DevIdentity` itself may do: the cap above
+still holds.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping, Sequence
 
 from fenceai.identity.ports import Principal
+
+if TYPE_CHECKING:
+    from fenceai.identity.model import User
 
 #: Named for what it is. Not `session`, which would suggest it were one.
 DEV_COOKIE = "fenceai_dev_user"
@@ -73,7 +82,7 @@ _DEMO_IDS = frozenset(uid for uid, _, _, _ in DEMO_ACCOUNTS)
 _DEMO_EMAILS = frozenset(email for _, _, email, _ in DEMO_ACCOUNTS)
 
 
-def dev_seed_lockout(provider_id: str, users) -> str | None:
+def dev_seed_lockout(provider_id: str, users: Sequence["User"]) -> str | None:
     """Why this database may not be served under this provider, or None.
 
     Returns the operator's SENTENCE rather than a bool, for the same reason
@@ -102,19 +111,31 @@ def dev_seed_lockout(provider_id: str, users) -> str | None:
     nobody should be promoting from dev to production costs a fresh
     `FENCEAI_DB`; under-refusing the one arrangement that locks a company out of
     its own deployment costs database surgery.
+
+    The message names the matched ROW, not a guessed address: the id half can
+    catch a row already sitting at a company's own domain (an operator who
+    typed `u_admin` for a real grant), and a message hard-coded to talk about
+    `example.com` would then name an address that is not the one on the row.
+    It also names both remedies — a fresh `FENCEAI_DB`, or removing the rows —
+    because `POST /api/users` can create an `example.com` row in a genuine
+    `iap` deployment too, and there is no route that deletes a user and no
+    `PATCH` that can change an email; an operator in that shape has to remove
+    the row by hand, and "point FENCEAI_DB elsewhere" alone would tell a real
+    company to discard its own data.
     """
     if provider_id == "dev":
         return None
-    found = sorted({u.email for u in users
-                    if u.id in _DEMO_IDS or u.email.strip().lower() in _DEMO_EMAILS})
+    found = sorted(f"{u.id} ({u.email})" for u in users
+                   if u.id in _DEMO_IDS or u.email.strip().lower() in _DEMO_EMAILS)
     if not found:
         return None
     return (
         f"refusing to serve this database under FENCEAI_IDENTITY={provider_id}: "
-        f"it was created by a dev-mode boot and still holds the seeded demo "
-        f"account(s) {', '.join(found)}. Nobody can authenticate as an "
-        "example.com address under IAP, and while any seeded admin row is "
-        "active FENCEAI_BOOTSTRAP_ADMIN stays disabled — so no real first admin "
-        "can ever be seated and every request is refused. Point FENCEAI_DB at a "
-        "database that has never been booted in dev mode."
+        f"it holds the row(s) {', '.join(found)} — the accounts a dev-mode boot "
+        "seeds, recognised by the ids it mints and by the IANA-reserved "
+        "addresses it gives them. While any seeded admin row is active, "
+        "FENCEAI_BOOTSTRAP_ADMIN stays disabled, so no real first admin can be "
+        "seated; and no Google account can ever hold an example.com address. "
+        "Either way every request is refused for ever. Point FENCEAI_DB at a "
+        "database that has never been booted in dev mode, or remove these rows."
     )
