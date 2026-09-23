@@ -51,6 +51,63 @@ def test_the_store_no_longer_keeps_sessions():
         assert not hasattr(db.Store, name), name
 
 
+def test_two_creations_of_one_address_conflict_rather_than_raising(store):
+    """A double-click on the people screen's submit button, at store level.
+
+    `users.email` is UNIQUE while `save_user`'s upsert targets `id` only, so two
+    `save_user` calls with a fresh id and the same address raised the DRIVER's
+    `IntegrityError` — a different class per backend, sharing no base but
+    `Exception` (`store/dialect.py`), which is why no route caught it and the
+    admin got a 500 for a refusal that already has a locale string. This asserts
+    the CONFLICT rather than the exception: `create_user_guarded` does the check
+    and the insert under one lock and answers `user_exists`.
+
+    Both backends, because the constraint and the upsert are both SQL: SQLite
+    reporting the conflict while Postgres reported a duplicate row, or the other
+    way round, is the exact drift the `dsn`/`backend` fixtures exist to catch.
+    """
+    first, status = store.create_user_guarded(
+        _user(id="u_one", email="dana@example.com"), actor="user:u_admin")
+    assert status == "ok"
+    assert first is not None
+
+    second, status = store.create_user_guarded(
+        _user(id="u_two", email="dana@example.com"), actor="user:u_admin")
+    assert status == "user_exists"
+    assert second is None
+
+    # One row, and it is the FIRST one — a conflict must not have half-applied.
+    assert [u.id for u in store.list_users()] == ["u_one"]
+
+
+def test_a_refused_creation_writes_no_audit_row(store):
+    """The refusal is not an event that happened to somebody's account.
+
+    Worth pinning separately because the guard returns early, before the two
+    `_audit` calls — and an audit log naming a grant that was never made would
+    be worse than no line at all, since `audit_log` is the record that has to
+    keep resolving for people who have left.
+    """
+    store.create_user_guarded(_user(id="u_one", email="dana@example.com"),
+                             actor="user:u_admin")
+    before = len(store.audit_entries(200))
+    store.create_user_guarded(_user(id="u_two", email="dana@example.com"),
+                              actor="user:u_admin")
+    assert len(store.audit_entries(200)) == before
+
+
+def test_creating_an_account_is_still_found_by_any_casing(store):
+    """`create_user_guarded` reads `users.email` directly rather than going
+    through `user_by_email`, so it needs its own proof that the two spellings
+    agree — the SELECT compares against `User.email`'s normalised value, and a
+    guard that missed a differently-cased duplicate would let the UNIQUE
+    constraint raise after all, which is the whole failure it replaces."""
+    store.create_user_guarded(_user(id="u_one", email="  Dana@Example.COM "))
+    assert store.create_user_guarded(
+        _user(id="u_two", email="dana@example.com"))[1] == "user_exists"
+    assert store.user_by_email("DANA@example.com") is not None
+
+
 def test_saving_an_account_names_who_did_it_in_the_audit_log(store):
     """The column has always been there and has always said `system`. This is
     the first row that can say a person instead."""

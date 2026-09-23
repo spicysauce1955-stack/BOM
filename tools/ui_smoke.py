@@ -7,6 +7,11 @@ Run manually at milestones (not part of pytest — keeps CI browser-free):
 Prereqs: google-chrome on PATH. Boots its own server on :8791 with a throwaway DB,
 drives the drawing/editing/undo/locale flows, saves screenshots to
 tools/smoke-out/, and exits non-zero on any failed check.
+
+Set FENCEAI_SMOKE_BASE_URL to point every check at a server this script did
+not start instead — e.g. a container's published port — which is how you
+prove an IMAGE serves this app; a uvicorn launched here from source would
+only prove the opposite.
 """
 
 from __future__ import annotations
@@ -30,6 +35,31 @@ from cdp import Cdp
 # to wait or to kill somebody else's browser.
 PORT = int(os.environ.get("FENCEAI_SMOKE_PORT", "8791"))
 CDP_PORT = int(os.environ.get("FENCEAI_SMOKE_CDP_PORT", "9333"))
+
+#: Point the whole suite at a server that is ALREADY running, instead of one
+#: this script starts. Set to e.g. `http://localhost:8080` to check the
+#: container: the thing being proven there is that the IMAGE serves this app,
+#: and a uvicorn launched from the source tree would prove the opposite.
+_BASE_URL_ENV = "FENCEAI_SMOKE_BASE_URL"
+
+
+def target_base_url() -> str:
+    """Where the app under test lives, with no trailing slash.
+
+    Read at CALL time, not at import. `tools/persona_lab/stack.py:ports_for`
+    records what the other way costs: a module-level constant froze at its
+    default before any fixture could override it, and did nothing while looking
+    exactly as though it worked.
+    """
+    given = os.environ.get(_BASE_URL_ENV, "").strip().rstrip("/")
+    return given or f"http://localhost:{PORT}"
+
+
+def attached() -> bool:
+    """True when we did not start the server, and therefore must not stop it."""
+    return bool(os.environ.get(_BASE_URL_ENV, "").strip())
+
+
 OUT = os.path.join(os.path.dirname(__file__), "smoke-out")
 CHECKS: list[tuple[str, bool]] = []
 
@@ -417,7 +447,7 @@ def _smoke_post_inspector(c) -> None:
     # This case runs last, after a reload that discarded the tab and project
     # state everything above it built. It rebuilds what it needs rather than
     # inheriting it, so the order of the cases in _CHOICE_CASES cannot matter.
-    c.cmd("Page.navigate", url=f"http://localhost:{PORT}/")
+    c.cmd("Page.navigate", url=target_base_url() + "/")
     time.sleep(3)
     c.js("window.confirm = () => true; window.alert = () => {}; undefined")
     wait_for(c, PROJECT_LOADED_JS, timeout=10)
@@ -4823,14 +4853,71 @@ _CHOICE_CASES: list = [
 
 
 def main() -> int:
-    # a stale server on our port would silently serve old code/data — abort loudly
-    try:
-        urllib.request.urlopen(f"http://localhost:{PORT}/api/health", timeout=1)
-        print(f"FATAL: something is already listening on :{PORT} — kill it first "
-              f"(pkill -f 'port {PORT}')")
-        return 2
-    except Exception:
-        pass  # port free, good
+    if attached():
+        # Inverted deliberately. When we own the server a listener means a stale
+        # process serving old code; when we are attaching, a listener is the
+        # entire premise, and its absence must be said plainly rather than
+        # discovered 60 s later as a readiness timeout.
+        try:
+            resp = urllib.request.urlopen(f"{target_base_url()}/api/health", timeout=5)
+        except Exception as exc:
+            raw = os.environ.get(_BASE_URL_ENV, "")
+            print(f"FATAL: {_BASE_URL_ENV}={raw!r} resolved to "
+                  f"{target_base_url()}, but nothing answered /api/health "
+                  f"there ({exc!r}) — start it first")
+            return 2
+        # Attached mode does not set the target's environment — that server
+        # was started by somebody else, however they started it — so the
+        # `FENCEAI_AI=stub` below (which we DO set when we own the server)
+        # cannot be assumed here. `.env.example` ships `FENCEAI_AI=claude`,
+        # so a developer's own server is plausibly in live mode. No case in
+        # this suite reaches the interpret path today, but a future one that
+        # does would silently drive the live Anthropic API and spend real
+        # money from a test suite — so this is checked now, before that is
+        # true, using the body this preflight already fetches.
+        #
+        # `.get`, and a guarded parse, because THIS block's whole contract is to
+        # print a FATAL sentence rather than let a problem "be discovered 60 s
+        # later". Unguarded, the one artifact attached mode exists to diagnose —
+        # an image serving an OLDER build of this app, whose `/api/health`
+        # predates the `interpreter` key — came out as a `KeyError` traceback
+        # from a preflight, which says nothing about which server answered or
+        # what was wrong with its reply. A stale or non-JSON body is exactly as
+        # disqualifying as `interpreter: "claude"`; it just needs a different
+        # sentence.
+        try:
+            health = json.loads(resp.read())
+            if not isinstance(health, dict):
+                raise ValueError(f"not a JSON object: {type(health).__name__}")
+        except Exception as exc:
+            print(f"FATAL: {target_base_url()}/api/health answered something "
+                  f"this suite cannot read ({exc!r}) — that is not this app, "
+                  "or not a version of it this suite can drive")
+            return 2
+        interpreter = health.get("interpreter")
+        if interpreter is None:
+            print(f"FATAL: {target_base_url()}/api/health has no "
+                  "'interpreter' key, so which AI interpreter that server "
+                  "runs cannot be established. The key predates this suite's "
+                  "attached mode, so this is almost certainly an OLDER build "
+                  "of the app than the one under test — which is the one thing "
+                  "attaching to an image is supposed to prove it is not. "
+                  f"Answered: {sorted(health)}")
+            return 2
+        if interpreter != "stub":
+            print(f"FATAL: {target_base_url()} is running interpreter "
+                  f"{interpreter!r}, not 'stub' — set FENCEAI_AI=stub on "
+                  "that server before attaching this suite to it")
+            return 2
+    else:
+        # a stale server on our port would silently serve old code/data — abort loudly
+        try:
+            urllib.request.urlopen(f"http://localhost:{PORT}/api/health", timeout=1)
+            print(f"FATAL: something is already listening on :{PORT} — kill it first "
+                  f"(pkill -f 'port {PORT}')")
+            return 2
+        except Exception:
+            pass  # port free, good
 
     # ... and the same question about the BROWSER, which is not a smaller one. A
     # Chrome already holding :9333 answers `/json/version`, so the readiness loop
@@ -4851,26 +4938,29 @@ def main() -> int:
     except Exception:
         pass  # port free, good
 
-    db = tempfile.mktemp(suffix=".db")
-    # `FENCEAI_IDENTITY` has no default (`identity/provider.py`) — the app
-    # refuses to boot without it. `FENCEAI_DEV_USER` is deliberately EXCLUDED
-    # rather than left unset-by-omission: `DevIdentity` is cookie-first,
-    # env-second, and an env default would authenticate the page's own first
-    # `GET /api/session` before the login form below ever runs, making the
-    # form's sign-in redundant and racing its own tab placement against
-    # `queue.js` — the exact defect `tools/persona_lab/stack.py` diagnoses and
-    # fixes the same way. `tests/conftest.py`'s autouse `_dev_identity`
-    # fixture `monkeypatch.setenv`s this variable for every pytest test, so a
-    # bare `**os.environ` would silently re-inherit it if this were ever
-    # invoked from inside a pytest process; excluding it by name is what keeps
-    # this hermetic regardless of how it is invoked.
-    env = {**{k: v for k, v in os.environ.items() if k != "FENCEAI_DEV_USER"},
-           "FENCEAI_DB": db, "FENCEAI_AI": "stub", "FENCEAI_IDENTITY": "dev"}
-    server = subprocess.Popen(
-        ["uv", "run", "uvicorn", "fenceai.api.app:app", "--port", str(PORT)],
-        env=env, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
-    )
+    server = None
+    db = None
+    if not attached():
+        db = tempfile.mktemp(suffix=".db")
+        # `FENCEAI_IDENTITY` has no default (`identity/provider.py`) — the app
+        # refuses to boot without it. `FENCEAI_DEV_USER` is deliberately EXCLUDED
+        # rather than left unset-by-omission: `DevIdentity` is cookie-first,
+        # env-second, and an env default would authenticate the page's own first
+        # `GET /api/session` before the login form below ever runs, making the
+        # form's sign-in redundant and racing its own tab placement against
+        # `queue.js` — the exact defect `tools/persona_lab/stack.py` diagnoses and
+        # fixes the same way. `tests/conftest.py`'s autouse `_dev_identity`
+        # fixture `monkeypatch.setenv`s this variable for every pytest test, so a
+        # bare `**os.environ` would silently re-inherit it if this were ever
+        # invoked from inside a pytest process; excluding it by name is what keeps
+        # this hermetic regardless of how it is invoked.
+        env = {**{k: v for k, v in os.environ.items() if k != "FENCEAI_DEV_USER"},
+               "FENCEAI_DB": db, "FENCEAI_AI": "stub", "FENCEAI_IDENTITY": "dev"}
+        server = subprocess.Popen(
+            ["uv", "run", "uvicorn", "fenceai.api.app:app", "--port", str(PORT)],
+            env=env, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        )
     # A profile of its own, for the same reason the DB above is a fresh file.
     # Without it Chrome uses the DEFAULT profile — the developer's own — and
     # `localStorage` for this origin SURVIVES the run: `fenceai.locale` and
@@ -4895,8 +4985,12 @@ def main() -> int:
         # Chrome profile initialises slower than a warm one, so the old sleep
         # turned a hermetic run into a connection-refused traceback — and a fixed
         # sleep is what made the whole start-up fragile in the first place.
-        for url in (f"http://localhost:{CDP_PORT}/json/version",
-                    f"http://localhost:{PORT}/api/health"):
+        # (When attached, the app side of this was already proven above; waiting
+        # on it again here would just be waiting on somebody else's server.)
+        _wait_urls = [f"http://localhost:{CDP_PORT}/json/version"]
+        if not attached():
+            _wait_urls.append(target_base_url() + "/api/health")
+        for url in _wait_urls:
             for _ in range(120):          # 60 s, checked twice a second
                 try:
                     urllib.request.urlopen(url, timeout=1)
@@ -4906,7 +5000,7 @@ def main() -> int:
             else:
                 print(f"FATAL: {url} never answered")
                 return 2
-        c = Cdp(f"http://localhost:{PORT}/", cdp_port=CDP_PORT, out_dir=OUT)
+        c = Cdp(target_base_url() + "/", cdp_port=CDP_PORT, out_dir=OUT)
         # `confirm` true so a destructive action proceeds unattended. `alert` is
         # swallowed for a harder reason: `Page.enable` (cdp.py) makes a JS dialog
         # BLOCK until it is explicitly handled, and `apiSend` alerts on every
@@ -6914,7 +7008,7 @@ import('./js/state.js').then(m => fetch(`/api/projects/${m.state.projectId}`))
         check("no unit placeholder survives once warnings are rendered",
               not c.js("document.documentElement.innerHTML.includes('{u}')"))
         pid = current_project_id(c)
-        c.cmd("Page.navigate", url=f"http://localhost:{PORT}/")
+        c.cmd("Page.navigate", url=target_base_url() + "/")
         time.sleep(3)
         # the reload dropped both stubs
         c.js("window.confirm = () => true; window.alert = () => {}; undefined")
@@ -9063,7 +9157,7 @@ document.querySelector('#gaps .panel.gaps')
         # purpose: nothing after this depends on the project/tab state a full
         # reload discards.
         c.cmd("Page.navigate", url=(
-            f"http://localhost:{PORT}/#evidence="
+            target_base_url() + "/#evidence="
             "sref_00000000000000000000000000000001"))
         time.sleep(3)
         c.js("window.confirm = () => true; window.alert = () => {}; undefined")
@@ -9109,11 +9203,13 @@ document.querySelector('#gaps .panel.gaps')
         return 1 if failed else 0
     finally:
         for proc in (server, chrome):
+            if proc is None:
+                continue
             try:
                 os.killpg(proc.pid, signal.SIGTERM)
             except Exception:
                 pass
-        if os.path.exists(db):
+        if db is not None and os.path.exists(db):
             os.unlink(db)
         shutil.rmtree(profile, ignore_errors=True)
 

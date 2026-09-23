@@ -8,6 +8,7 @@ on a laptop with nothing installed.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -174,6 +175,81 @@ def test_a_refused_statement_does_not_brick_a_postgres_conn(pg_dsn):
         _refused_insert_leaves_the_connection_usable(conn)
     finally:
         conn.close()
+
+
+def _refused_script_leaves_the_connection_usable(conn):
+    """The same parity claim as `_refused_insert_leaves_the_connection_usable`,
+    for the OTHER statement path.
+
+    `Conn.execute` carried a rollback and a written reason; `executescript`
+    carried neither, although it is the path `Store.__init__` runs `_SCHEMA`
+    down. `CREATE TABLE IF NOT EXISTS` is not race-safe on Postgres — two
+    instances booting against one schema can raise `duplicate key value
+    violates unique constraint "pg_type_typname_nsp_index"` — and the escape
+    is worse there than in `execute`, because the exception leaves
+    `Store.__init__` before `state.store` is assigned, so nothing ever closes a
+    connection now sitting idle-in-failed-transaction.
+
+    A duplicate `CREATE TABLE` is that failure, reachable without a race.
+    """
+    conn.executescript("CREATE TABLE s (id TEXT PRIMARY KEY, doc TEXT);")
+    conn.execute("INSERT INTO s (id, doc) VALUES (?,?)", ("a", "first"))
+    conn.commit()
+
+    with pytest.raises(Exception):  # each driver names it differently
+        conn.executescript("CREATE TABLE s (id TEXT PRIMARY KEY, doc TEXT);")
+
+    # Without the rollback this READ is where Postgres says
+    # `InFailedSqlTransaction`, and it says it for every later statement too.
+    assert conn.execute("SELECT doc FROM s WHERE id=?", ("a",)).fetchone()[0] == "first"
+    conn.execute("INSERT INTO s (id, doc) VALUES (?,?)", ("b", "second"))
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) FROM s").fetchone()[0] == 2
+
+
+def test_a_refused_script_does_not_brick_a_sqlite_conn(tmp_path):
+    conn = Conn(str(tmp_path / "refused-script.db"))
+    try:
+        _refused_script_leaves_the_connection_usable(conn)
+    finally:
+        conn.close()
+
+
+def test_a_refused_script_does_not_brick_a_postgres_conn(pg_dsn):
+    """The half that could actually happen: `_SCHEMA` failing at boot."""
+    conn = Conn(pg_dsn)
+    try:
+        _refused_script_leaves_the_connection_usable(conn)
+    finally:
+        conn.close()
+
+
+def test_no_upsert_omits_its_conflict_target():
+    """A targetless `ON CONFLICT DO NOTHING` puts a version floor under SQLite.
+
+    3.24 added UPSERT but REQUIRED a conflict target; the targetless spelling
+    only arrived in 3.35.0 (2021-03-12). `dialect.py`'s docstring said 3.24 for
+    a while and was wrong, and two statements (`save_run`, `save_supply_run`)
+    were rewritten from `INSERT OR IGNORE` into that form — so on a host with
+    SQLite 3.24–3.34 (Ubuntu 20.04, RHEL 8) the first generation save died with
+    `sqlite3.OperationalError: near "DO": syntax error`. The container image
+    ships 3.40 and never showed it, which is why a text assertion is the guard:
+    no database this suite can reach will fail on the targetless form, so
+    nothing else here would catch it coming back.
+
+    Naming the target costs one word and is accepted by both databases, so
+    there is no reason for a statement in this file to omit it.
+    """
+    import re
+
+    from fenceai.store import db
+
+    src = Path(db.__file__).read_text()
+    offenders = re.findall(r"ON CONFLICT\s+DO\s+NOTHING", src)
+    assert not offenders, (
+        "an upsert in store/db.py omits its conflict target, which needs "
+        "SQLite 3.35+ — write `ON CONFLICT(<column>) DO NOTHING`, valid from "
+        "3.24 and accepted by Postgres unchanged")
 
 
 def test_a_failing_rollback_never_hides_the_statement_that_failed():

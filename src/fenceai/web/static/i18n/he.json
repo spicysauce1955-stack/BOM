@@ -1402,6 +1402,7 @@
   "error.user_exists": "הכתובת הזו כבר שייכת למישהו.",
   "error.user_not_found": "אין אדם כזה.",
   "error.last_admin": "זה המנהל האחרון שנותר.",
+  "error.reserved_address": "הכתובת הזו שמורה ואי אפשר לתת לה גישה.",
   "noaccess.title": "אין עדיין גישה",
   "noaccess.body": "בקשו ממנהל לתת גישה לכתובת הזו.",
   "noaccess.signed_in_as": "מחוברים בתור",

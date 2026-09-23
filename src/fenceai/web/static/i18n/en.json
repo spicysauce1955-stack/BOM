@@ -1402,6 +1402,7 @@
   "error.user_exists": "Somebody already has that address.",
   "error.user_not_found": "No such person.",
   "error.last_admin": "This is the only administrator left.",
+  "error.reserved_address": "This address is reserved and cannot be granted access.",
   "noaccess.title": "No access yet",
   "noaccess.body": "Ask an administrator to give this address access.",
   "noaccess.signed_in_as": "Signed in as",

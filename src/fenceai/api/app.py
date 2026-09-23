@@ -84,7 +84,7 @@ from fenceai.report.structure import build_structure
 from fenceai.identity.model import (
     Capacity, User, actor_ref, default_view, may_choose_view,
 )
-from fenceai.identity.dev import DEV_COOKIE
+from fenceai.identity.dev import DEMO_ACCOUNTS, DEV_COOKIE, dev_seed_lockout
 from fenceai.identity.provider import build_provider
 from fenceai.api.auth import (
     EXEMPT_PATHS, REFUSAL_STATUS_CODES, current_user, dev_mode, make_gate,
@@ -114,8 +114,14 @@ state = AppState()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    state.store = Store(os.environ.get("FENCEAI_DB", "fenceai.db"))
+    # Provider before store: `build_provider()` can raise (an unset
+    # `FENCEAI_IDENTITY`, a missing `FENCEAI_IAP_AUDIENCE`), and nothing
+    # between the two lines needs the store open yet — provider-first means a
+    # configuration error surfaces before any I/O, rather than leaving
+    # `Store(...)`'s already-opened read orphaned by an exception one line
+    # later.
     state.provider = build_provider()
+    state.store = Store(os.environ.get("FENCEAI_DB", "fenceai.db"))
     # Loud, once. A machine running `dev` by accident should say so rather than
     # behave strangely — an impersonation switch nobody noticed is the one way
     # this arrangement fails silently.
@@ -137,6 +143,30 @@ async def lifespan(app: FastAPI):
               f"with identity provider at startup ({state.provider.provider_id!r}) "
               "— dev-only routes and the docs switch were fixed at import time "
               "and will not match this process's actual provider", flush=True)
+    # Before anything is written and before any request can arrive. A database
+    # this provider cannot serve must say so at boot, not refuse every caller
+    # afterwards — `identity/provider.py` states the principle one level up:
+    # "failing at boot is strictly better than failing per request".
+    lockout = dev_seed_lockout(state.provider.provider_id, state.store.list_users())
+    if lockout:
+        # `list_users()` just above is a read, and on Postgres a read still
+        # opens an implicit transaction that psycopg leaves open until
+        # something commits, rolls back, or closes it. Raising past `yield`
+        # skips the `state.store.close()` at the bottom of this function, so
+        # without this line the refusal would leave that transaction idle,
+        # holding a lock on the very database it just refused to serve — a
+        # second, self-inflicted way to make the database unusable, this time
+        # by the guard meant to protect it.
+        try:
+            state.store.close()
+        except Exception:
+            # Never let a failed close hide the refusal that names the remedy —
+            # `store/dialect.py`'s `Conn.execute` swallows a failed rollback for
+            # the same reason. The close matters (a raise past `yield` orphans
+            # the open read and deadlocks a DROP SCHEMA), but it matters less
+            # than the sentence the operator is about to read.
+            pass
+        raise RuntimeError(f"[fenceai] {lockout}")
     state.interpreter = build_interpreter()
     state.proposer = StubProposer()
     state.critic = StubCritic()
@@ -2215,13 +2245,6 @@ def put_inventory(project_id: str, inventory: Inventory) -> Inventory:
 #: BE on a fresh database. Written only under `FENCEAI_IDENTITY=dev` (see
 #: `lifespan`), so a real deployment never sees them and its first admin arrives
 #: through `FENCEAI_BOOTSTRAP_ADMIN` instead.
-DEMO_ACCOUNTS = [
-    ("u_dana", "Dana", "dana@example.com", "sales"),
-    ("u_yossi", "Yossi", "yossi@example.com", "backoffice"),
-    ("u_admin", "Admin", "admin@example.com", "admin"),
-]
-
-
 def _seed_demo_accounts() -> None:
     """Only on an empty table, and only in dev. A company that has made its own
     accounts must never find three strangers in the list after an upgrade — and
@@ -2381,13 +2404,38 @@ def grant_capacity(request: Request, body: GrantRequest) -> dict:
     Dana arrives on Tuesday, at which moment her Google `sub` binds to this row.
     """
     admin = require_admin(request)
+    # This read is NOT the guard — `Store.create_user_guarded` below is, and it
+    # is the one that cannot be raced. It stays because it fixes the ORDER of
+    # two refusals: an address that both already has a row AND is a reserved
+    # `example.com` one answers `user_exists`, which is what an admin can act
+    # on, rather than `reserved_address`. The guarded call cannot make that
+    # choice, because the lockout check sits between the two.
     if state.store.user_by_email(body.email) is not None:
         raise HTTPException(409, {"code": "user_exists"})
     user = User(id=f"u_{uuid.uuid4().hex[:8]}", name=body.name,
                 email=body.email, capacity=body.capacity)
-    state.store.save_user(user, actor=actor_ref(admin))
-    state.store.log(actor_ref(admin), "grant_capacity", user.id)
-    return _public(user)
+    # `lifespan` runs `dev_seed_lockout` at BOOT, but on Cloud Run `lifespan`
+    # runs on EVERY NEW INSTANCE, not only at deploy. A row that reaches
+    # `reserved_address` through this route leaves the CURRENT instance
+    # healthy — it already booted — and makes every SUBSEQUENT instance
+    # refuse to start, on the next scale-out or recycle, with no operator
+    # action, no warning, and manual SQL against Cloud SQL as the only cure.
+    # Closing the write here trades that delayed, uncorrectable failure for
+    # an immediate, correctable 409.
+    if dev_seed_lockout(state.provider.provider_id, [user]):
+        raise HTTPException(409, {"code": "reserved_address"})
+    # One store call, not a read then a write. Across two, a double-click on
+    # the people screen's submit button (which used to stay enabled during the
+    # request) fired two POSTs, both read `None` above, and the second hit
+    # `users.email`'s UNIQUE constraint — a driver `IntegrityError` nothing
+    # catches, so a refusal that HAS a locale string (`user_exists`) reached the
+    # admin as a 500 and a generic alert. See `Store.create_user_guarded`, and
+    # `amend_user_guarded` for the same shape on the PATCH twin.
+    created, status = state.store.create_user_guarded(
+        user, actor=actor_ref(admin))
+    if status == "user_exists":
+        raise HTTPException(409, {"code": "user_exists"})
+    return _public(created)
 
 
 @app.patch("/api/users/{user_id}")

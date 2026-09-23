@@ -42,6 +42,39 @@ Environment:
 
 First start seeds the demo catalog and knowledge base automatically.
 
+## Container and Postgres
+
+```bash
+docker compose up -d --build --wait
+# open http://localhost:8080
+```
+
+The app listens on `http://localhost:8080` by default; set `FENCEAI_COMPOSE_PORT`
+to move it. To look inside the database the stack is using:
+
+```bash
+docker compose exec db psql -U fenceai fenceai
+```
+
+`docker compose down -v` tears down both containers AND the `pgdata` volume,
+so the next `up` starts from an empty database rather than one the app, or an
+earlier smoke run, has already seeded. Before an attached browser run this is
+not merely tidiness — **without it, checks fail.** `tools/ui_smoke.py:2805`
+takes a queue job and then `wait_for`s
+`document.querySelectorAll('.queue-take').length < 2`; each run leaves one
+takeable job behind, so a second run against the same volume never satisfies
+that wait, and `wait_for` returns falsy rather than raising, so the failure
+surfaces downstream and confusingly. `tools/ui_smoke.py:8944` retires
+`K-MAXSPAN/1`, which a second run cannot retire again. A fresh database is a
+precondition for an attached run, not an optimization.
+
+To point the 646 browser checks at the container instead of a bare `uvicorn`:
+
+```bash
+FENCEAI_SMOKE_BASE_URL=http://localhost:8080 \
+  uv run --with websocket-client python tools/ui_smoke.py
+```
+
 ## 10-minute walkthrough (exercises most of V1)
 
 0. **Language**: the UI opens in Hebrew (RTL). The עב/EN button in the header
@@ -94,3 +127,22 @@ uv run --with websocket-client python tools/ui_smoke.py
 - Empty UI project list: the app auto-creates `demo project` on first load; check the
   server log if not.
 - Delete the `FENCEAI_DB` file to reset all state (it reseeds on next start).
+- A container that exits at boot with a nonzero code and empty **stdout**,
+  and `FENCEAI_DB` unset: this is **expected**, not a bug — `docker logs`
+  shows a full traceback on **stderr**
+  (`sqlite3.OperationalError: unable to open database file`), so the failure
+  is loud, just not on the stream you might check first. `/app` is
+  root-owned in the image (it is created before the `USER fenceai` switch),
+  so the SQLite fallback path has nowhere to write and fails rather than
+  succeeding silently into the container's own writable layer — which would
+  let a salesperson's fence be lost on the very next revision, since that
+  layer does not survive a redeploy. The fix is to set `FENCEAI_DB` to a
+  mounted path or a Postgres URL. **Do not "fix" this by making `/app`
+  writable** — that is the failure mode this behaviour exists to prevent,
+  not an oversight.
+- A container that exits at boot naming `admin@example.com` (or the other
+  seeded dev addresses) is `identity/dev.py:dev_seed_lockout` refusing to
+  serve a dev-seeded database under `FENCEAI_IDENTITY=iap`. The fix is a
+  fresh `FENCEAI_DB` or removing those rows, never a code change — see
+  ADR-0013's Consequences and `docs/reviews/2026-09-23-slice-2-carried-findings.md`
+  finding 3.

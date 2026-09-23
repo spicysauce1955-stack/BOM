@@ -38,3 +38,22 @@ jobs:
         run: uv run pytest -q
       - name: Release gate
         run: uv run pytest tests/scenarios -q
+  container:
+    # Slice 5 owns build-and-push. This job pushes nothing: it builds the image
+    # and runs it, because `tests/deploy/test_container.py` skips without a
+    # daemon and slice 1's amendment already ruled on that shape — "a dual-run
+    # that nothing runs proves nothing". FENCEAI_TEST_DOCKER makes those tests
+    # FAIL rather than skip if Docker is unusable, so this job cannot go green
+    # by doing nothing.
+    runs-on: ubuntu-latest
+    env:
+      FENCEAI_TEST_DOCKER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # No extras on the RUNNER on purpose. psycopg and PyJWT belong in the
+      # IMAGE, and installing them here too would hide a deploy test that had
+      # quietly come to depend on the host environment.
+      - run: uv sync
+      - name: Build the image and run it
+        run: uv run pytest tests/deploy -q

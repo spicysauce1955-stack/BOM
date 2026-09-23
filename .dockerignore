@@ -1,0 +1,29 @@
+# Build-context hygiene, and one security control.
+#
+# `.env` is the one that matters. It is gitignored, it holds a live
+# ANTHROPIC_API_KEY, and nothing but this file stops a future `COPY . .` from
+# baking it into a pushed image. Spec §6 says no `.env` ever ships; this is what
+# makes that true by construction instead of by everybody remembering.
+.env
+.env.*
+
+# A developer's database has been 141 MB of accumulated state before now — see
+# tests/api/conftest.py, which records what that cost. None of it belongs in an
+# image.
+*.db
+*.db-wal
+*.db-shm
+
+.venv/
+**/__pycache__/
+**/*.pyc
+
+.git/
+.gitignore
+.github/
+.claude/
+
+tests/
+tools/
+docs/
+plan/

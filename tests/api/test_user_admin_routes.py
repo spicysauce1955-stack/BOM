@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from fenceai.api.app import app, state
 from fenceai.identity.dev import DEV_COOKIE
 from fenceai.identity.model import User
+from fenceai.identity.ports import Principal
 
 
 @pytest.fixture()
@@ -26,6 +27,21 @@ def _row(email: str, capacity: str, **kw) -> User:
              name=kw.pop("name", "Someone"), email=email, capacity=capacity, **kw)
     state.store.save_user(u)
     return u
+
+
+def _blind_to(monkeypatch, address: str):
+    """Make the route's pre-read answer `None` for ONE address.
+
+    The forced half of the double-click: both requests read no existing row.
+    Narrowed to one address because `user_by_email` is also how the `dev`
+    provider resolves the CALLER — stubbed wholesale it makes the admin
+    unidentifiable and the route answers 403 `no_capacity`, which proves nothing
+    about the duplicate at all.
+    """
+    real = state.store.user_by_email
+    monkeypatch.setattr(
+        state.store, "user_by_email",
+        lambda email: None if email.strip().lower() == address else real(email))
 
 
 def _as_admin(client):
@@ -107,6 +123,59 @@ def test_granting_the_same_address_twice_is_refused(client):
                                         "name": "Dana again", "capacity": "admin"})
     assert r.status_code == 409
     assert r.json()["detail"]["code"] == "user_exists"
+
+
+def test_a_double_clicked_grant_is_a_409_and_not_a_500(client, monkeypatch):
+    """Two POSTs for one address where BOTH read no existing row.
+
+    This is the double-click. `people.js`'s submit handler did not disable its
+    button during `await apiSend(...)`, so two POSTs went out, the route's
+    `user_by_email` read answered `None` in both, and the second reached
+    `users.email`'s UNIQUE constraint — `sqlite3.IntegrityError`, which no route
+    catches, so an admin who clicked twice got a 500 and a generic alert for a
+    refusal that has had a locale string in both bundles all along.
+
+    The interleaving is forced rather than raced: `user_by_email` is stubbed to
+    `None` for the second call, which is exactly what the second thread saw.
+    Real threads would prove the same thing less reliably and say less about
+    WHERE the window was. `Store.create_user_guarded` does its own read in SQL,
+    under the lock it holds across the insert, so the stub cannot defeat it —
+    which is the point: the guard is at the write, not in the route.
+    """
+    _as_admin(client)
+    first = client.post("/api/users", json={"email": "dana@company.com",
+                                            "name": "Dana", "capacity": "sales"})
+    assert first.status_code == 201
+
+    _blind_to(monkeypatch, "dana@company.com")
+    r = client.post("/api/users", json={"email": "dana@company.com",
+                                        "name": "Dana", "capacity": "sales"})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "user_exists"
+
+
+def test_a_refused_duplicate_grant_leaves_one_row_and_one_grant_in_the_audit(client, monkeypatch):
+    """The refusal above must not be a half-write.
+
+    A second row for one address makes "which one resolves" a question about
+    insertion order, and a `grant_capacity` audit line for a grant that never
+    happened misreports what an admin did. Both are asserted here because the
+    guard returns before the INSERT and before both `_audit` calls, and only a
+    test that looks at the table can tell that from a guard that returns after.
+    """
+    _as_admin(client)
+    client.post("/api/users", json={"email": "dana@company.com",
+                                    "name": "Dana", "capacity": "sales"})
+    _blind_to(monkeypatch, "dana@company.com")
+    client.post("/api/users", json={"email": "dana@company.com",
+                                    "name": "Dana again", "capacity": "admin"})
+
+    rows = [u for u in state.store.list_users() if u.email == "dana@company.com"]
+    assert len(rows) == 1
+    assert rows[0].capacity == "sales", "the refused grant must not have landed"
+    grants = [e for e in state.store.audit_entries(200)
+              if e["action"] == "grant_capacity" and e["ref"] == rows[0].id]
+    assert len(grants) == 1
 
 
 def test_an_unknown_capacity_is_refused_by_the_model(client):
@@ -225,3 +294,45 @@ def test_two_admins_cannot_strand_the_deployment_by_leaving_at_once(client):
     # `last_admin`, or — if it arrived after the caller's own row went
     # inactive — 403 by the gate. Either is a refusal; two 200s is the defect.
     assert results.count(200) <= 1, results
+
+
+class _Iap:
+    """Enough of an IdentityProvider to make `lifespan` build an iap-shaped
+    app — the shape `dev_seed_lockout` refuses under. Mirrors the stand-in in
+    `tests/api/test_dev_seed_boot.py`."""
+
+    provider_id = "iap"
+
+    def principal(self, headers, cookies):
+        return Principal(email="founder@fences.co.il", subject="sub-founder")
+
+
+def test_granting_admin_at_example_com_is_refused(monkeypatch):
+    """`dev_seed_lockout` refuses a database at BOOT if it holds a seeded row
+    at `admin@example.com` — but nothing stopped `POST /api/users` from
+    creating exactly that row under `iap`. On Cloud Run `lifespan` runs on
+    EVERY new instance, not only at deploy, so such a row would leave the
+    instance that created it healthy and make every SUBSEQUENT instance
+    refuse to start, on the next scale-out or recycle. Closing the write
+    trades that delayed, uncorrectable failure for an immediate 409 — proven
+    here without ever booting a second `TestClient` under the lockout."""
+    monkeypatch.setattr("fenceai.api.app.build_provider", lambda: _Iap())
+    with TestClient(app) as client:
+        # No dev-mode seeding happens under `iap`, so the caller has to be
+        # granted directly against the store.
+        state.store.save_user(User(id="u_founder", name="Founder",
+                                   email="founder@fences.co.il",
+                                   capacity="admin"))
+
+        r = client.post("/api/users", json={"email": "admin@example.com",
+                                            "name": "Somebody",
+                                            "capacity": "sales"})
+        assert r.status_code == 409
+        assert r.json()["detail"]["code"] == "reserved_address"
+        assert state.store.user_by_email("admin@example.com") is None
+
+        # An ordinary company address is unaffected by the guard.
+        r2 = client.post("/api/users", json={"email": "dana@company.com",
+                                             "name": "Dana",
+                                             "capacity": "sales"})
+        assert r2.status_code == 201
