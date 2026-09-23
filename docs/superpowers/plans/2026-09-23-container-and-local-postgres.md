@@ -1425,8 +1425,16 @@ In `plan/current-status.md`: slice 3 complete, the two suite counts with the
 commit they were measured at, the smoke result against the container, the row
 counts from Postgres, the refusal's exact message, and the pointer to
 `docs/superpowers/ledgers/2026-09-17-identity-is-googles/` now that slice 2's
-ledger is durable. Note what slice 4 inherits: findings 2, 4 and 5 all live in
-the IAP adapter and ADR-0013.
+ledger is durable. Note what slice 4 inherits: findings 2 and 4 live in the
+IAP adapter; finding 5 is different in kind — it is the absence of a
+CSRF/Origin/CORS layer of this app's own, to be recorded in ADR-0013 as a
+stated assumption resting on IAP's cookie `SameSite` behaviour, not something
+living in `identity/iap.py`.
+
+*(Corrected 2026-09-23: this step originally said "findings 2, 4 and 5 all
+live in the IAP adapter and ADR-0013," which is what was executed at the
+time; `plan/current-status.md` and the triage document now carry the
+accurate statement above.)*
 
 - [ ] **Step 5: Verify the docs did not break a fitness test**
 

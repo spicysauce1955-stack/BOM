@@ -64,7 +64,7 @@ takes a queue job and then `wait_for`s
 `document.querySelectorAll('.queue-take').length < 2`; each run leaves one
 takeable job behind, so a second run against the same volume never satisfies
 that wait, and `wait_for` returns falsy rather than raising, so the failure
-surfaces downstream and confusingly. `tools/ui_smoke.py:8929` retires
+surfaces downstream and confusingly. `tools/ui_smoke.py:8944` retires
 `K-MAXSPAN/1`, which a second run cannot retire again. A fresh database is a
 precondition for an attached run, not an optimization.
 

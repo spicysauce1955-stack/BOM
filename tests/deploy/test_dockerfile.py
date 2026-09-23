@@ -59,9 +59,10 @@ def test_every_sync_is_frozen():
 
 def test_every_sync_skips_dev_dependencies():
     """uv installs default groups unless told not to. Without `--no-dev`,
-    `pytest`, `httpx`, `websocket-client`, `pluggy`, `iniconfig` and
-    `pygments` all reach the runtime layer of a service that faces the public
-    internet."""
+    `pytest`, `websocket-client`, `pluggy`, `iniconfig` and `pygments` all
+    reach the runtime layer of a service that faces the public internet.
+    (`httpx` reaches it either way, as a transitive dependency of the
+    runtime `anthropic` package.)"""
     for line in _sync_lines():
         assert "--no-dev" in line, line
 

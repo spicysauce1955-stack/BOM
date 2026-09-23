@@ -21,9 +21,10 @@ RUN uv sync --frozen --no-install-project --no-dev --extra postgres --extra iap
 
 # Then the project itself. Both extras again — `uv sync` without them would
 # PRUNE what the line above installed. `--no-dev` again too: uv installs
-# default groups unless told not to, and without it `pytest`, `httpx`,
-# `websocket-client`, `pluggy`, `iniconfig` and `pygments` all reach the
-# runtime layer of a service that faces the public internet.
+# default groups unless told not to, and without it `pytest`, `websocket-client`,
+# `pluggy`, `iniconfig` and `pygments` all reach the runtime layer of a service
+# that faces the public internet. `httpx` stays either way — it is a
+# transitive dependency of `anthropic`, a real runtime dependency.
 COPY src ./src
 RUN uv sync --frozen --no-dev --extra postgres --extra iap
 

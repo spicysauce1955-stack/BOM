@@ -3,6 +3,37 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-09-23: post-merge review closes nine findings, one fix wave
+
+A whole-branch review followed the checkpoint below, and a single fix wave
+(commit `c1a753a`) closed all nine findings it raised. Full suite, both ways,
+foreground, measured at `c1a753a`: **4022 passed, 5 skipped**, 0 failed.
+
+**The most important finding.** `POST /api/users` could write a row that the
+boot-time dev-seed refusal (Task 4, checkpoint below) would later reject —
+and because Cloud Run runs `lifespan` per *instance*, not per deploy, such a
+row leaves the instance that wrote it healthy while making every subsequent
+instance fail to start: a scale-out degrades with no operator action taken,
+and the only cure was manual SQL. Closed by a write-time 409
+(`reserved_address`) at the same route, using the same predicate the boot
+check uses.
+
+**The production image no longer ships the dev dependency group.** The
+Dockerfile's two `uv sync` lines now both carry `--no-dev` (spec §6
+amendment); `pytest`, `websocket-client`, `pluggy`, `iniconfig` and
+`pygments` no longer reach the runtime layer. `httpx` still does — it is a
+transitive dependency of `anthropic`, a real runtime dependency, and stays
+regardless of `--no-dev`.
+
+**Residue shipping deliberately, for slice 4 to inherit knowingly:**
+
+- No route deletes a user, so a reserved row created by a *pre-fix*
+  deployment still needs manual SQL to clear — the write-time guard only
+  stops new ones.
+- The write-time guard is a no-op under `FENCEAI_IDENTITY=dev`, by
+  construction: that is precisely the case `dev_seed_lockout` exists to
+  catch at boot instead.
+
 ## Checkpoint — 2026-09-23: a fence built and a run generated, on Postgres
 
 Branch `worktree-slice3-container-postgres`, task 7 of slice 3 of

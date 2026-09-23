@@ -338,11 +338,14 @@ a server that passes its own health check and answers nobody.
 > originally specified `uv sync --frozen --extra postgres --extra iap`
 > verbatim, and the Dockerfile was faithful to it. That command installs
 > uv's default dependency groups along with the extras — so `pytest`,
-> `httpx`, `websocket-client`, `pluggy`, `iniconfig` and `pygments` all
-> reached the runtime layer of a service that faces the public internet. The
-> spec, not the Dockerfile, was wrong: both `uv sync` lines now also carry
-> `--no-dev`, keeping the extras (still load-bearing, per the paragraph
-> above) while dropping the dev-only group from what ships.
+> `websocket-client`, `pluggy`, `iniconfig` and `pygments` all reached the
+> runtime layer of a service that faces the public internet. The spec, not
+> the Dockerfile, was wrong: both `uv sync` lines now also carry `--no-dev`,
+> keeping the extras (still load-bearing, per the paragraph above) while
+> dropping the dev-only group from what ships. `httpx` is not part of that
+> group and `--no-dev` does not remove it: it is a transitive dependency of
+> `anthropic`, which is a real runtime dependency (the AI adapter needs it),
+> so it stays in the image regardless. A future removal list must not add it.
 
 **Config.** `FENCEAI_DB` as a `postgres://` URL. `FENCEAI_AI=claude`.
 `FENCEAI_IDENTITY=iap`. `FENCEAI_BOOTSTRAP_ADMIN` set for the first deploy and
