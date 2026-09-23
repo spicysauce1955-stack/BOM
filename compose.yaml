@@ -1,0 +1,61 @@
+# The local half of slice 3: the app exactly as it will be deployed, against a
+# real Postgres. `docker compose up -d --build --wait`, and the checkpoint is
+# reachable on http://localhost:8080.
+#
+# Three deliberate choices, each with a failure behind it:
+#
+#  * `db` publishes NO host port. 5432 here is already a test Postgres that
+#    `FENCEAI_TEST_POSTGRES` points at; a second publisher would collide with it
+#    or silently shadow it. Look inside with
+#    `docker compose exec db psql -U fenceai fenceai`.
+#  * `depends_on: condition: service_healthy`, never a sleep. `Store()` opens
+#    its connection during `lifespan`, and a fixed sleep racing a daemon's start
+#    is the defect that kept this repo's CI red from the day CI was added.
+#  * the app's host port is overridable. Every fixed port in this repository has
+#    eventually collided with another checkout, an agent, or a persona lab.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: fenceai
+      POSTGRES_PASSWORD: fenceai
+      POSTGRES_DB: fenceai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `-U` and `-d` are not decoration: bare `pg_isready` asks about a database
+      # named after the OS user, which does not exist here. `start_period`
+      # covers the entrypoint's temporary server, which answers while it is
+      # still running the init scripts.
+      test: ["CMD-SHELL", "pg_isready -U fenceai -d fenceai"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  app:
+    build: .
+    environment:
+      FENCEAI_DB: postgresql://fenceai:fenceai@db:5432/fenceai
+      FENCEAI_AI: stub
+      FENCEAI_IDENTITY: dev
+      PORT: "8080"
+      # FENCEAI_DEV_USER is absent on purpose, not merely unset — see
+      # tests/deploy/test_dockerfile.py:test_the_app_service_sets_no_dev_user.
+    ports:
+      - "${FENCEAI_COMPOSE_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # python, not curl: the runtime image is python:3.12-slim and has no curl.
+      # This is what makes `up --wait` mean something.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health', timeout=2)\""]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  pgdata:

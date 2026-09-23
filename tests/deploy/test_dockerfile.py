@@ -85,3 +85,43 @@ def test_no_env_file_can_enter_the_build_context():
     assert ".env" in patterns
     assert ".env.*" in patterns
     assert "*.db" in patterns
+
+
+COMPOSE = ROOT / "compose.yaml"
+
+
+def test_the_database_publishes_no_host_port():
+    """5432 on a developer's machine is already the test Postgres that
+    `FENCEAI_TEST_POSTGRES` names. A second publisher either collides with it or
+    quietly shadows it, and nothing here needs to reach the database from the
+    host — `docker compose exec db psql` does."""
+    text = COMPOSE.read_text(encoding="utf-8")
+    assert "5432:5432" not in text
+    assert "5433:5432" not in text
+
+
+def test_the_app_waits_for_a_healthy_database_rather_than_a_sleep():
+    """`Store()` opens its connection during `lifespan`, so the app must not
+    start before Postgres accepts one. A fixed sleep racing a daemon's startup
+    is the defect that kept this repository's CI red from the day CI was
+    added."""
+    text = COMPOSE.read_text(encoding="utf-8")
+    assert "condition: service_healthy" in text
+    assert "pg_isready" in text
+
+
+def test_the_app_service_sets_no_dev_user():
+    """`tools/ui_smoke.py` excludes FENCEAI_DEV_USER deliberately and documents
+    why at length: DevIdentity is cookie-first and env-second, so a default here
+    authenticates the page's first `GET /api/session` before the login form
+    runs, making the form's sign-in redundant and racing its own tab placement
+    against queue.js. The checkpoint suite signs in like a person.
+
+    Asserted as "not set as a key" rather than "absent from the file", because
+    compose.yaml earns the right to SAY why the variable is missing — and that
+    comment is the thing most likely to be deleted by someone re-adding the
+    variable later.
+    """
+    offenders = [ln for ln in COMPOSE.read_text(encoding="utf-8").splitlines()
+                 if re.match(r"^\s*FENCEAI_DEV_USER\s*:", ln)]
+    assert not offenders, f"set as a compose environment key: {offenders}"
