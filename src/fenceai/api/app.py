@@ -84,7 +84,7 @@ from fenceai.report.structure import build_structure
 from fenceai.identity.model import (
     Capacity, User, actor_ref, default_view, may_choose_view,
 )
-from fenceai.identity.dev import DEV_COOKIE
+from fenceai.identity.dev import DEMO_ACCOUNTS, DEV_COOKIE, dev_seed_lockout
 from fenceai.identity.provider import build_provider
 from fenceai.api.auth import (
     EXEMPT_PATHS, REFUSAL_STATUS_CODES, current_user, dev_mode, make_gate,
@@ -137,6 +137,22 @@ async def lifespan(app: FastAPI):
               f"with identity provider at startup ({state.provider.provider_id!r}) "
               "— dev-only routes and the docs switch were fixed at import time "
               "and will not match this process's actual provider", flush=True)
+    # Before anything is written and before any request can arrive. A database
+    # this provider cannot serve must say so at boot, not refuse every caller
+    # afterwards — `identity/provider.py` states the principle one level up:
+    # "failing at boot is strictly better than failing per request".
+    lockout = dev_seed_lockout(state.provider.provider_id, state.store.list_users())
+    if lockout:
+        # `list_users()` just above is a read, and on Postgres a read still
+        # opens an implicit transaction that psycopg leaves open until
+        # something commits, rolls back, or closes it. Raising past `yield`
+        # skips the `state.store.close()` at the bottom of this function, so
+        # without this line the refusal would leave that transaction idle,
+        # holding a lock on the very database it just refused to serve — a
+        # second, self-inflicted way to make the database unusable, this time
+        # by the guard meant to protect it.
+        state.store.close()
+        raise RuntimeError(f"[fenceai] {lockout}")
     state.interpreter = build_interpreter()
     state.proposer = StubProposer()
     state.critic = StubCritic()
@@ -2215,13 +2231,6 @@ def put_inventory(project_id: str, inventory: Inventory) -> Inventory:
 #: BE on a fresh database. Written only under `FENCEAI_IDENTITY=dev` (see
 #: `lifespan`), so a real deployment never sees them and its first admin arrives
 #: through `FENCEAI_BOOTSTRAP_ADMIN` instead.
-DEMO_ACCOUNTS = [
-    ("u_dana", "Dana", "dana@example.com", "sales"),
-    ("u_yossi", "Yossi", "yossi@example.com", "backoffice"),
-    ("u_admin", "Admin", "admin@example.com", "admin"),
-]
-
-
 def _seed_demo_accounts() -> None:
     """Only on an empty table, and only in dev. A company that has made its own
     accounts must never find three strangers in the list after an upgrade — and

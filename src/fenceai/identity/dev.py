@@ -51,3 +51,70 @@ class DevIdentity:
 
 def dev_identity_from_env() -> DevIdentity:
     return DevIdentity(default_email=os.environ.get("FENCEAI_DEV_USER", ""))
+
+
+#: The accounts a DEV boot seeds into an empty table, so that a developer who
+#: has granted nobody anything still lands somewhere. Here rather than in
+#: `api/app.py` because they are dev-identity data, and because
+#: `dev_seed_lockout` below has to name the same ids — once.
+DEMO_ACCOUNTS: tuple[tuple[str, str, str, str], ...] = (
+    ("u_dana", "Dana", "dana@example.com", "sales"),
+    ("u_yossi", "Yossi", "yossi@example.com", "backoffice"),
+    ("u_admin", "Admin", "admin@example.com", "admin"),
+)
+
+#: Both halves of the fingerprint, because each catches what the other cannot.
+#: The ID is the precise half: `POST /api/users` mints `u_{uuid4().hex[:8]}`,
+#: which is hex, and `admin`/`dana`/`yossi` are not — so a real grant can never
+#: collide with one of these. The ADDRESS is the belt: `example.com` is
+#: IANA-reserved for documentation, so no Google account can ever hold one,
+#: whatever id the row was given.
+_DEMO_IDS = frozenset(uid for uid, _, _, _ in DEMO_ACCOUNTS)
+_DEMO_EMAILS = frozenset(email for _, _, email, _ in DEMO_ACCOUNTS)
+
+
+def dev_seed_lockout(provider_id: str, users) -> str | None:
+    """Why this database may not be served under this provider, or None.
+
+    Returns the operator's SENTENCE rather than a bool, for the same reason
+    `provider.py` raises with one: the person who has to act on this is reading
+    a crash log, and a caller that had to re-derive which rows were found would
+    write a worse message than the check that found them.
+
+    The failure it prevents is unrecoverable, which is why it is a refusal and
+    not a warning. A dev boot seeds `admin@example.com` as an ACTIVE admin;
+    `api/auth.py:_bootstrap` fires only while no active admin exists anywhere
+    (deliberately — see `would_strand_the_admins`, which counts the same way);
+    and no Google account can authenticate as an IANA-reserved address. So under
+    `iap` nobody can ever sign in, `FENCEAI_BOOTSTRAP_ADMIN` cannot rescue it,
+    and the cure is database surgery.
+
+    `provider.py`'s docstring is the argument for doing this at boot: "failing
+    at boot is strictly better than failing per request". The counter-argument in
+    `lifespan` — that refusing to boot turns a legitimate configuration into a
+    restart loop — does not reach here, and the difference is the point. An
+    unset `FENCEAI_BOOTSTRAP_ADMIN` is recoverable by setting a variable; this
+    state refuses every caller for ever. A crash loop naming the remedy beats a
+    server that passes its own health check and answers nobody.
+
+    Deliberately strict: it refuses on ANY seeded row, including a lone `sales`
+    one that would not actually disable the bootstrap. Over-refusing a database
+    nobody should be promoting from dev to production costs a fresh
+    `FENCEAI_DB`; under-refusing the one arrangement that locks a company out of
+    its own deployment costs database surgery.
+    """
+    if provider_id == "dev":
+        return None
+    found = sorted({u.email for u in users
+                    if u.id in _DEMO_IDS or u.email.strip().lower() in _DEMO_EMAILS})
+    if not found:
+        return None
+    return (
+        f"refusing to serve this database under FENCEAI_IDENTITY={provider_id}: "
+        f"it was created by a dev-mode boot and still holds the seeded demo "
+        f"account(s) {', '.join(found)}. Nobody can authenticate as an "
+        "example.com address under IAP, and while any seeded admin row is "
+        "active FENCEAI_BOOTSTRAP_ADMIN stays disabled — so no real first admin "
+        "can ever be seated and every request is refused. Point FENCEAI_DB at a "
+        "database that has never been booted in dev mode."
+    )
