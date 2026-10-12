@@ -7,6 +7,8 @@ the save. Runs on every backend the `dsn` fixture is configured for.
 
 from __future__ import annotations
 
+import pytest
+
 from fenceai.project.model import Project
 from fenceai.store.db import Store
 
@@ -74,6 +76,39 @@ def test_one_jobs_history_holds_none_of_another_jobs(store):
     assert [e["changes"][0]["params"]["name"] for e in store.project_changes("p1")] == [
         "Levi"]
     assert store.project_changes("nope") == []
+
+
+def test_a_job_is_never_saved_without_its_change_entry(store):
+    """One commit or none. The job row overwrites the value an edit replaced;
+    committed without its change row, that value is gone for good. Provoked by
+    taking the change table away, so the second insert fails after the first
+    has run — and the connection must still answer afterwards (on Postgres a
+    failed statement poisons it until somebody rolls back)."""
+    project = Project(id="p1", name="Levi")
+    store.save_project(project, actor="user:u_dana")
+    store._conn.execute("DROP TABLE project_changes")
+    store._conn.commit()
+    project.name = "Cohen"
+    with pytest.raises(Exception):
+        store.save_project(project, actor="user:u_yossi")
+    assert store.load_project("p1").name == "Levi"
+
+
+def test_a_defect_in_the_diff_never_stops_a_save(store, monkeypatch):
+    """The job is the customer's; the history is ours. A bug in working out the
+    difference must not cost a salesperson the drawing she just saved."""
+    import fenceai.store.db as db
+
+    def broken(before, after):
+        raise RuntimeError("a bug in changes.py")
+    project = Project(id="p1", name="Levi")
+    store.save_project(project, actor="user:u_dana")
+    monkeypatch.setattr(db, "diff_project", broken)
+    project.name = "Cohen"
+    store.save_project(project, actor="user:u_yossi")
+    assert store.load_project("p1").name == "Cohen"
+    assert store.project_changes("p1")[0]["changes"] == [
+        {"code": "area_changed", "params": {"area": "unknown"}}]
 
 
 def test_the_history_survives_reopening_the_store(tmp_path):

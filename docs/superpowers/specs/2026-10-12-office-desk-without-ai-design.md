@@ -119,29 +119,53 @@ locale bundles. Lengths travel as `…_mm` params and render in the reader's uni
 | Whose desk | `status_changed` · `assignee_changed` · `plan_committed` · `plan_released` · `acknowledged` |
 | The property | `landmark_added` · `landmark_removed` · `landmark_changed` |
 | The fence line | `section_added` · `section_removed` · `section_length_changed` · `section_reshaped` |
-| The side view | `height_added` · `height_removed` · `height_changed` · `base_added` · `base_removed` · `base_changed` · `ground_changed` · `ground_point_added` · `ground_point_removed` · `ground_point_changed` |
-| Gates and model | `gate_added` · `gate_removed` · `gate_changed` · `model_added` · `model_removed` · `model_changed` · `default_model_changed` |
+| The side view | `height_added` · `height_removed` · `height_changed` · `base_added` · `base_removed` · `base_changed` · `ground_changed` · `ground_point_added` · `ground_point_removed` · `ground_point_changed` · `ground_point_moved` |
+| Gates and model | `gate_added` · `gate_removed` · `gate_changed` · `gate_moved` · `gate_details_changed` · `model_added` · `model_removed` · `model_changed` · `default_model_changed` |
 | Notes and claims | `note_added` · `stated_changed` |
 | Anything else | `section_changed` · `area_changed` |
 
-Events are matched **by id**. When one save removes an event and adds another of the
-same kind on the same section — which is how the base and model tools replace — the
-pair is reported as one `…_changed` from the old value to the new.
+**Heights, bases and models are compared by what each stretch is BUILT to**, never by
+their events (`topology.station.built_stretches`). These are the three kinds the
+generator reads first-covering-wins, and how they are stored is not a fact about the
+fence: carving stores one height as three events, a later height can sit hidden under
+an earlier one, and the base tool replaces an event with an identical one under a new
+id. Compared by events, the carving above credited the office with Dana's 1800, an
+unchanged re-save wrote an entry, and reordering two heights — which changes the
+fence — wrote none (architecture review, S1). Compared by what is built, a height
+drawn over the second half of Dana's 1800 is one entry, *Section B: height 1800 →
+1750 (3000–6000)*. The old events are resolved against the NEW geometry, so a
+stretched section does not read as a moved height.
+
+**Gates and ground points are matched by id**: a point is a thing at a place, and a
+moved gate is the same gate. One removed and one added in one save is the same point
+re-authored and reads as whatever differs between the two — nothing, when nothing does.
+
+**A letter is a position; the run id is the name.** Every section-bearing change also
+carries `run`, and the route re-letters it against the drawing as it is now
+(`changes.reletter`): delete section A and the old "B" reads A. A section no longer
+drawn keeps the letter it had, marked *no longer drawn*. Stored letters alone could not
+be repaired once written (review B1).
 
 ### Nothing changes silently
 
-The vocabulary will grow and will always be behind the model. So the diff ends with a
-completeness pass:
+The vocabulary will grow and will always be behind the model. So the diff has
+completeness passes, over facts rather than storage — ids, storage order and revision
+counters are not facts:
 
-* per section: if anything about a section differs and no specific change named it,
-  `section_changed {section}`;
-* per area of the job (`drawing`, `property`, `site`, `posts`, `choices`, `notes`,
-  `stated`, `policy`, `acknowledgements`): if the area differs and nothing named it,
+* per section: anything no sentence reads — kinds of event with no sentence, a model's
+  options, a height hidden under another — gives `section_changed {section}`;
+* the drawing: node kinds, loose nodes, and the order the sections are lettered in give
+  `area_changed {drawing}`, even beside named changes;
+* every other area of the job (`job`, `desk`, `property`, `model`, `notes`, `stated`,
+  `site`, `posts`, `choices`, `policy`): if it differs and nothing named it,
   `area_changed {area}`.
 
-A test asserts the property directly: for any two different job documents the diff is
-non-empty. Growing the vocabulary is then a matter of replacing a fallback with a
-better sentence — never of discovering a change that was missed.
+Tests hold each pass, beside a named change as well as alone, and every `Project`
+field belongs to exactly one area. Growing the vocabulary is then a matter of replacing
+a fallback with a better sentence — never of discovering a change that was missed.
+
+A defect in the diff never stops a save: the job is saved and the entry reads *the
+job changed (the details could not be worked out)* (`changes.unreadable`).
 
 ### Names
 
@@ -182,8 +206,10 @@ The Levi figures in the owner's guide are unaffected: there, the note became a
 *level top line*, which outranks any height.
 
 *Not changed here:* `project/intents.py: confirm_intent` appends a confirmed height the
-same way. It is the AI path, which the owner set aside; recorded in
-`docs/v1-known-limitations.md`.
+same way, and `PUT /topology` accepts overlapping heights from any client. The server
+still builds the first. The history now reports what is built, so such a hidden height
+is never logged as a change it is not; making the server refuse or normalise overlaps is
+recorded in `docs/v1-known-limitations.md` with its trigger.
 
 ### Not in this slice, with triggers
 
@@ -231,10 +257,11 @@ placed when a section is switched back to *draft*.
 
 ## Invariants, held by tests
 
-1. Every save of a job that changes it writes exactly one change entry; a save that
-   changes nothing writes none.
-2. For any two different job documents, `diff_project` is non-empty (the completeness
-   pass).
+1. Every save of a job that changes a fact writes exactly one change entry, in the
+   same commit as the job; a save that changes no fact (a revision bump, an identical
+   event under a new id) writes none.
+2. For any two job documents that differ in a fact, `diff_project` is non-empty — alone
+   or beside other changes (the completeness passes).
 3. Every code `diff_project` can emit has a `change.<code>` sentence in both locale
    bundles, and the two bundles carry the same keys.
 4. `diff_project` is pure: same two documents, same list, same order.

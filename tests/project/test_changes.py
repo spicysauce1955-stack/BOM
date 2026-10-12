@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from fenceai.fencemodel.selection import FenceModelChoice
-from fenceai.project.changes import AREAS, CHANGE_CODES, Change, diff_project
+from fenceai.project.changes import AREAS, CHANGE_CODES, Change, diff_project, reletter
 from fenceai.project.model import (
     Acknowledgement, Annotation, Job, Landmark, Project, Selection,
 )
@@ -162,13 +162,13 @@ def test_sections_are_named_by_their_letter():
         p.topology.nodes.append(Node(id="n4", x_mm=0, y_mm=-6000))
         p.topology.runs.append(Run(id="back", start_node_id="n3", end_node_id="n4"))
     assert only(add_c) == Change(code="section_added",
-                                 params={"section": "C", "length_mm": 9000})
+                                 params={"section": "C", "run": "back", "length_mm": 9000})
 
     def remove_b(p):
         p.topology.runs.pop()
         p.topology.nodes.pop()
     assert only(remove_b) == Change(code="section_removed",
-                                    params={"section": "B", "length_mm": 6000})
+                                    params={"section": "B", "run": "side", "length_mm": 6000})
 
 
 def test_moving_a_corner_changes_the_length_of_every_section_at_it():
@@ -176,7 +176,7 @@ def test_moving_a_corner_changes_the_length_of_every_section_at_it():
         p.topology.nodes[1].x_mm = 9500
     out = changes(move_n2)
     assert out[0] == Change(code="section_length_changed",
-                            params={"section": "A", "from_mm": 9000, "to_mm": 9500})
+                            params={"section": "A", "run": "street", "from_mm": 9000, "to_mm": 9500})
     assert out[1].code == "section_length_changed" and out[1].params["section"] == "B"
     # the heights stretched with their sections; nobody moved them
     assert [c.code for c in out] == ["section_length_changed"] * 2
@@ -185,7 +185,8 @@ def test_moving_a_corner_changes_the_length_of_every_section_at_it():
 def test_turning_a_section_without_changing_its_length_is_a_reshape():
     def swing(p):
         p.topology.nodes[2].x_mm, p.topology.nodes[2].y_mm = 15000, 0
-    assert only(swing) == Change(code="section_reshaped", params={"section": "B"})
+    assert only(swing) == Change(code="section_reshaped",
+                             params={"section": "B", "run": "side"})
 
 
 # -- the side view -------------------------------------------------------------------
@@ -199,22 +200,76 @@ def test_a_height_replacing_the_old_one_reads_from_and_to():
         add_interval_event(p.topology, "side", "h-yossi", 0, 6000,
                            HeightIntentPayload(height_mm=1750))
     assert only(replace) == Change(code="height_changed", params={
-        "section": "B", "from_mm": 1800, "to_mm": 1750, "start_mm": 0, "end_mm": 6000})
+        "section": "B", "run": "side", "from_mm": 1800, "to_mm": 1750,
+        "start_mm": 0, "end_mm": 6000})
 
 
-def test_a_height_carved_in_half_keeps_the_old_one_and_adds_the_new():
+def test_a_carved_height_is_one_change_over_the_stretch_that_changed():
+    """Carving stores Dana's 1800 as a shortened event and Yossi's 1750 as a new
+    one. What the fence gets is 1750 over the second half and nothing else — and
+    that is the whole entry: Dana's measurement is not re-credited to Yossi."""
     def carve(p):
         run = side(p)
         old = next(e for e in run.interval_events if e.id == "h-side")
         old.end_anchor = make_anchor(p.topology, run, 3000)
         add_interval_event(p.topology, "side", "h-yossi", 3000, 6000,
                            HeightIntentPayload(height_mm=1750))
-    assert changes(carve) == [
-        Change(code="height_moved", params={
-            "section": "B", "value_mm": 1800, "start_mm": 0, "end_mm": 3000}),
-        Change(code="height_added", params={
-            "section": "B", "value_mm": 1750, "start_mm": 3000, "end_mm": 6000}),
-    ]
+    assert changes(carve) == [Change(code="height_changed", params={
+        "section": "B", "run": "side", "from_mm": 1800, "to_mm": 1750,
+        "start_mm": 3000, "end_mm": 6000})]
+
+
+def test_a_height_split_around_a_new_one_credits_only_the_middle():
+    """The remnant after the split is a NEW event holding Dana's 1800 — the
+    case the reviewer found logged as the office setting 1800."""
+    def split(p):
+        run = side(p)
+        old = next(e for e in run.interval_events if e.id == "h-side")
+        old.end_anchor = make_anchor(p.topology, run, 3000)
+        add_interval_event(p.topology, "side", "h-rest", 4000, 6000,
+                           HeightIntentPayload(height_mm=1800))
+        add_interval_event(p.topology, "side", "h-yossi", 3000, 4000,
+                           HeightIntentPayload(height_mm=1750))
+    assert changes(split) == [Change(code="height_changed", params={
+        "section": "B", "run": "side", "from_mm": 1800, "to_mm": 1750,
+        "start_mm": 3000, "end_mm": 4000})]
+
+
+def test_reordering_heights_is_logged_when_it_changes_what_is_built():
+    """The generator builds the FIRST height covering a station, so putting a
+    later one first changes the fence — saved together with something else,
+    which used to hide it behind the named change."""
+    def stacked(p):
+        add_interval_event(p.topology, "side", "h-under", 3000, 6000,
+                           HeightIntentPayload(height_mm=1750))
+
+    def reorder(p):
+        run = side(p)
+        heights = [e for e in run.interval_events if e.payload.kind == "height_intent"]
+        others = [e for e in run.interval_events if e.payload.kind != "height_intent"]
+        run.interval_events = others + heights[::-1]
+        p.topology.nodes[1].z_mm = 100
+    out = _with(stacked, reorder)
+    assert [c.code for c in out] == ["height_changed", "ground_changed"]
+    assert out[0].params["start_mm"] == 3000 and out[0].params["to_mm"] == 1750
+
+
+def test_a_tool_replacing_an_event_with_an_identical_one_is_no_change():
+    """The base tool removes and re-adds; re-saving it unchanged is a new id for
+    the same fact, and a row for it would be a row for a save that did nothing."""
+    def resave(p):
+        run = side(p)
+        run.interval_events = [e for e in run.interval_events if e.id != "wall"]
+        add_interval_event(p.topology, "side", "wall-again", 3000, 6000,
+                           BasePayload(surface="masonry_wall"))
+    assert changes(resave) == []
+
+
+def test_a_height_hidden_under_another_is_not_silent():
+    """Built the same, stored to say something different."""
+    assert only(lambda p: add_interval_event(
+        p.topology, "side", "h-hidden", 0, 3000, HeightIntentPayload(height_mm=1500))) == \
+        Change(code="section_changed", params={"section": "B", "run": "side"})
 
 
 def test_a_height_edited_in_place():
@@ -232,26 +287,35 @@ def test_two_heights_removed_are_two_entries_not_a_pair():
         ("height_removed", "A"), ("height_removed", "B")]
 
 
-def test_the_base_tool_replacing_a_base_is_one_change():
+def test_the_base_tool_replacing_a_base_reads_what_each_stretch_stands_on():
+    """The wall ran 3000–6000 and the rest stood on soil by default. Replaced by
+    soil over the whole section: the first half is now STATED soil, the second
+    half changed from wall to soil."""
     def replace(p):
         run = side(p)
         run.interval_events = [e for e in run.interval_events if e.id != "wall"]
         add_interval_event(p.topology, "side", "soil", 0, 6000, BasePayload(surface="soil"))
-    assert only(replace) == Change(code="base_changed", params={
-        "section": "B", "from_surface": "masonry_wall", "to_surface": "soil",
-        "start_mm": 0, "end_mm": 6000})
+    assert changes(replace) == [
+        Change(code="base_added", params={
+            "section": "B", "run": "side", "surface": "soil", "start_mm": 0,
+            "end_mm": 3000}),
+        Change(code="base_changed", params={
+            "section": "B", "run": "side", "from_surface": "masonry_wall",
+            "to_surface": "soil", "start_mm": 3000, "end_mm": 6000}),
+    ]
 
 
 def test_ground_at_a_corner_is_named_by_every_section_meeting_there():
     assert only(lambda p: setattr(p.topology.nodes[1], "z_mm", 250)) == Change(
-        code="ground_changed", params={"section": "A/B", "from_mm": 0, "to_mm": 250})
+        code="ground_changed", params={"section": "A/B", "run": "street/side",
+                                       "from_mm": 0, "to_mm": 250})
 
 
 def test_a_ground_point_along_a_section():
     assert only(lambda p: add_point_event(
         p.topology, "side", "z1", 2000, ElevationSamplePayload(z_mm=300))) == Change(
         code="ground_point_added",
-        params={"section": "B", "value_mm": 300, "at_mm": 2000})
+        params={"section": "B", "run": "side", "value_mm": 300, "at_mm": 2000})
 
 
 # -- gates and models ------------------------------------------------------------------
@@ -261,28 +325,32 @@ def test_a_gate_widened_moved_and_reswung():
     gate = lambda p: street(p).point_events[0]  # noqa: E731
     assert only(lambda p: setattr(gate(p).payload, "width_mm", 1200)) == Change(
         code="gate_changed",
-        params={"section": "A", "from_mm": 1000, "to_mm": 1200, "at_mm": 4000})
+        params={"section": "A", "run": "street", "from_mm": 1000, "to_mm": 1200,
+                "at_mm": 4000})
     assert only(lambda p: setattr(gate(p), "anchor", make_anchor(
         p.topology, street(p), 5000))) == Change(
-        code="gate_moved", params={"section": "A", "value_mm": 1000, "at_mm": 5000})
-    # the width is the same and so is the place: still a change, not silence
-    assert only(lambda p: setattr(gate(p).payload, "opens_to", "left")).code == \
-        "gate_changed"
+        code="gate_moved", params={"section": "A", "run": "street", "value_mm": 1000,
+                                   "at_mm": 5000})
+    # the width is the same and so is the place: still a change, not silence —
+    # and not "width 1000 → 1000"
+    assert only(lambda p: setattr(gate(p).payload, "opens_to", "left")) == Change(
+        code="gate_details_changed", params={"section": "A", "run": "street"})
 
 
 def test_a_gate_beside_the_fence_is_named_by_the_sections_it_joins():
     def add_span(p):
         p.topology.nodes.append(Node(id="n4", x_mm=10000, y_mm=0))
         p.topology.gates.append(GateSpan(id="g1", start_node_id="n2", end_node_id="n4"))
-    assert only(add_span) == Change(code="gate_added",
-                                    params={"section": "A/B", "value_mm": 1000})
+    assert only(add_span) == Change(code="gate_added", params={
+        "section": "A/B", "run": "street/side", "value_mm": 1000})
 
 
 def test_a_model_on_a_stretch_and_the_job_default():
     assert only(lambda p: add_interval_event(
         p.topology, "side", "m1", 0, 6000, FenceModelPayload(model_id="M-SLAT"))) == Change(
         code="model_added",
-        params={"section": "B", "model": "M-SLAT", "start_mm": 0, "end_mm": 6000})
+        params={"section": "B", "run": "side", "model": "M-SLAT", "start_mm": 0,
+                "end_mm": 6000})
     assert only(lambda p: setattr(p, "fence_model",
                                   FenceModelChoice(model_id="M-SLAT"))) == Change(
         code="default_model_changed", params={"from_model": None, "to_model": "M-SLAT"})
@@ -295,7 +363,7 @@ def test_a_note_is_quoted_with_the_section_it_is_on():
     assert only(lambda p: p.annotations.append(Annotation(
         id="a1", target_ref="run:side", text="level with the neighbour, ~1750"))) == Change(
         code="note_added",
-        params={"text": "level with the neighbour, ~1750", "section": "B"})
+        params={"text": "level with the neighbour, ~1750", "section": "B", "run": "side"})
 
 
 def test_a_stated_claim():
@@ -309,7 +377,7 @@ def test_a_stated_claim():
 def test_a_kind_of_event_with_no_sentence_still_names_its_section():
     assert only(lambda p: add_interval_event(
         p.topology, "side", "tilt", 0, 6000, PostTiltPayload(mode="perpendicular"))) == \
-        Change(code="section_changed", params={"section": "B"})
+        Change(code="section_changed", params={"section": "B", "run": "side"})
 
 
 def test_an_unnamed_change_is_reported_beside_a_named_one():
@@ -323,6 +391,146 @@ def test_an_unnamed_change_is_reported_beside_a_named_one():
 def test_a_node_kind_alone_is_a_drawing_change():
     assert only(lambda p: setattr(p.topology.nodes[1], "kind", "terminal")) == Change(
         code="area_changed", params={"area": "drawing"})
+
+
+def test_a_node_kind_changed_beside_a_named_change_is_still_said():
+    """The area fallback covers a change made ALONE; this is the case it cannot."""
+    def both(p):
+        side(p).interval_events[1].payload.height_mm = 1750
+        p.topology.nodes[1].kind = "terminal"
+    assert [c.code for c in changes(both)] == ["height_changed", "area_changed"]
+
+
+def test_a_loose_node_moved_beside_a_named_change_is_still_said():
+    def both(p):
+        side(p).interval_events[1].payload.height_mm = 1750
+        p.topology.nodes.append(Node(id="loose", x_mm=20000, y_mm=0))
+    assert [c.code for c in changes(both)] == ["height_changed", "area_changed"]
+
+
+# -- the pairing rule, at its edges ------------------------------------------------
+
+
+def test_one_height_replacing_two_reports_both_stretches():
+    """What carving produces when a new height covers two older ones: each
+    stretch that was built to a different height says so — never one change
+    that silently swallows the second."""
+    def two(p):
+        run = side(p)
+        old = next(e for e in run.interval_events if e.id == "h-side")
+        old.end_anchor = make_anchor(p.topology, run, 3000)
+        add_interval_event(p.topology, "side", "h-second", 3000, 6000,
+                           HeightIntentPayload(height_mm=1750))
+    before, after = edit(two)
+    replaced = after.model_copy(deep=True)
+    run = replaced.topology.run("side")
+    run.interval_events = [e for e in run.interval_events
+                           if e.payload.kind != "height_intent"]
+    add_interval_event(replaced.topology, "side", "h-one", 0, 6000,
+                       HeightIntentPayload(height_mm=1700))
+    assert [(c.code, c.params["from_mm"], c.params["start_mm"])
+            for c in diff_project(after, replaced)] == [
+        ("height_changed", 1800, 0), ("height_changed", 1750, 3000)]
+
+
+def test_a_wall_redrawn_elsewhere_reads_where_it_now_is_and_is_not():
+    def rewall(p):
+        run = side(p)
+        run.interval_events = [e for e in run.interval_events if e.id != "wall"]
+        add_interval_event(p.topology, "side", "wall2", 0, 3000,
+                           BasePayload(surface="masonry_wall"))
+    assert [(c.code, c.params["start_mm"]) for c in changes(rewall)] == [
+        ("base_added", 0), ("base_removed", 3000)]
+
+
+# -- every code the vocabulary has is reachable ----------------------------------------
+
+
+def _drop(run: Run, event_id: str) -> None:
+    run.interval_events = [e for e in run.interval_events if e.id != event_id]
+    run.point_events = [e for e in run.point_events if e.id != event_id]
+
+
+def _sample(p: Project) -> None:
+    add_point_event(p.topology, "side", "z1", 2000, ElevationSamplePayload(z_mm=300))
+
+
+def _model(p: Project) -> None:
+    add_interval_event(p.topology, "side", "m1", 0, 6000, FenceModelPayload(model_id="M-SLAT"))
+
+
+def _with(setup, then):
+    """`then` applied to a job `setup` already changed — the before is `setup`'s."""
+    before = levi()
+    setup(before)
+    after = before.model_copy(deep=True)
+    then(after)
+    return diff_project(before, after)
+
+
+@pytest.mark.parametrize("setup, then, code", [
+    (lambda p: None, lambda p: add_interval_event(
+        p.topology, "street", "b1", 0, 9000, BasePayload(surface="concrete")), "base_added"),
+    (lambda p: None, lambda p: _drop(side(p), "wall"), "base_removed"),
+    (_model, lambda p: setattr(side(p).interval_events[-1].payload, "model_id", "M-V"),
+     "model_changed"),
+    (_model, lambda p: _drop(side(p), "m1"), "model_removed"),
+    (_model, lambda p: setattr(side(p).interval_events[-1], "end_anchor",
+                               make_anchor(p.topology, side(p), 3000)), "model_removed"),
+    (_sample, lambda p: setattr(side(p).point_events[0].payload, "z_mm", 400),
+     "ground_point_changed"),
+    (_sample, lambda p: _drop(side(p), "z1"), "ground_point_removed"),
+    (_sample, lambda p: setattr(side(p).point_events[0], "anchor",
+                                make_anchor(p.topology, side(p), 2500)), "ground_point_moved"),
+    (lambda p: None, lambda p: _drop(street(p), "gate"), "gate_removed"),
+])
+def test_every_kind_of_event_change_is_reachable(setup, then, code):
+    assert [c.code for c in _with(setup, then)] == [code]
+
+
+def test_a_gate_beside_the_fence_moved_without_changing_width():
+    def span(p):
+        p.topology.nodes.append(Node(id="n4", x_mm=10000, y_mm=0))
+        p.topology.gates.append(GateSpan(id="g1", start_node_id="n2", end_node_id="n4"))
+
+    def slide(p):
+        n4 = p.topology.node("n4")
+        n4.x_mm, n4.y_mm = 9000, 1000   # still 1000 from n2, turned 90°
+    assert [c.code for c in _with(span, slide)] == ["gate_moved"]
+
+
+def test_a_models_options_changed_alone_is_not_silent():
+    def options(p):
+        side(p).interval_events[-1].payload.options = {"colour": "anthracite"}
+    assert [c.code for c in _with(_model, options)] == ["section_changed"]
+
+
+# -- a letter is a position; the run id is the name ------------------------------------
+
+
+def test_a_section_is_relettered_from_the_drawing_it_is_read_against():
+    """Delete section A: the old "B" is drawn as A now, and its history must say so."""
+    entry = [c.model_dump() for c in changes(
+        lambda p: setattr(side(p).interval_events[1].payload, "height_mm", 1750))]
+    assert entry[0]["params"]["section"] == "B"
+    now = levi().topology
+    now.runs = [r for r in now.runs if r.id != "street"]
+    assert reletter(entry, now)[0]["params"]["section"] == "A"
+    assert "section_gone" not in reletter(entry, now)[0]["params"]
+
+
+def test_a_section_no_longer_drawn_keeps_its_letter_and_says_so():
+    entry = [{"code": "height_changed", "params": {"section": "B", "run": "side"}},
+             {"code": "section_removed", "params": {"section": "B", "run": "side"}},
+             {"code": "address_changed", "params": {"from": "a", "to": "b"}}]
+    now = levi().topology
+    now.runs = [r for r in now.runs if r.id != "side"]
+    out = reletter(entry, now)
+    assert out[0]["params"] == {"section": "B", "run": "side", "section_gone": True}
+    # a removal already says the section is gone
+    assert out[1]["params"] == {"section": "B", "run": "side"}
+    assert out[2] == entry[2]
+
 
 
 @pytest.mark.parametrize("area, fn", [

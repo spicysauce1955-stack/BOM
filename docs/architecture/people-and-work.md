@@ -228,18 +228,26 @@ remembering to log. A save that changes nothing writes no change row; a revision
 bump alone is a save, not a change.
 
 **Platform text.** A change is `code + params` with a `change.<code>` sentence in
-both bundles (`CHANGE_CODES`). Sections are named by letter (`section_tag`), lengths
-travel as `…_mm`, and the before-value lives in the entry. Events match by id; a
-removal and an addition of one kind on one section in one save read as one change
-from the old value to the new.
+both bundles (`CHANGE_CODES`). Lengths travel as `…_mm`, and the before-value lives in
+the entry.
+
+**Facts, not storage.** Heights, bases and models — the kinds the generator reads
+first-covering-wins — are compared by what each stretch is BUILT to
+(`topology.station.built_stretches`), so carving, a re-saved identical event or a height
+hidden under another never reads as a change the fence did not get, and reordering two
+heights, which does change it, is logged. Gates and ground points are matched by id.
 
 **Nothing changes silently.** Every `Project` field belongs to exactly one area
-(`AREAS`); an area that differs with nothing named gets `area_changed`, a section
-that differs in something the vocabulary does not read gets `section_changed`.
-Tests hold both: a field added to `Project` fails until it is placed.
+(`AREAS`); an area that differs with nothing named gets `area_changed`; a section that
+differs in something no sentence reads gets `section_changed`, and the drawing's node
+kinds, loose nodes and section order get `area_changed` even beside named changes. A
+defect in the diff never blocks a save: the entry reads as unreadable instead.
 
-**Names at read time.** `GET /projects/{id}/changes` resolves `user:<id>` actors and
-the bare ids a change is about (an assignee) from `users`; nothing stores a name.
+**Names at read time — sections too.** `GET /projects/{id}/changes` resolves
+`user:<id>` actors and the bare ids a change is about (an assignee) from `users`, and
+re-letters every section from its stored run id against the drawing as it is now
+(`changes.reletter`); a section no longer drawn keeps its old letter, marked so.
+Nothing stores a name as the truth.
 
 | Construct | How it relates to a change entry |
 |---|---|

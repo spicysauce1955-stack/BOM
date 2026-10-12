@@ -54,14 +54,21 @@ function entryHtml(entry) {
 function render() {
   const el = host();
   if (!el) return;
-  const body = status === "loading" ? `<div class="meta">${esc(t("change.loading"))}</div>`
+  // The summary is built ONCE and only its words change after: rewriting it
+  // would drop keyboard focus from the very control somebody just toggled.
+  if (!el.querySelector(":scope > summary")) {
+    el.innerHTML = `<summary><h3></h3></summary>
+      <div class="meta change-hint"></div><div class="change-body"></div>`;
+  }
+  el.querySelector(":scope > summary h3").textContent = t("change.title");
+  el.querySelector(".change-hint").textContent = t("change.hint");
+  el.querySelector(".change-body").innerHTML =
+    status === "loading" ? `<div class="meta">${esc(t("change.loading"))}</div>`
     : status === "failed" ? `<div class="warning">${esc(t("change.failed"))}</div>`
     : status === "ready" && !entries.length
       ? `<div class="meta">${esc(t("change.empty"))}</div>`
     : status === "ready" ? `<ul class="change-entries">${entries.map(entryHtml).join("")}</ul>`
     : "";
-  el.innerHTML = `<summary><h3>${esc(t("change.title"))}</h3></summary>
-    <div class="meta change-hint">${esc(t("change.hint"))}</div>${body}`;
 }
 
 async function load() {
@@ -88,7 +95,11 @@ export function initChangeLog() {
   const el = host();
   if (!el) return;
   el.addEventListener("toggle", () => { if (el.open) load(); });
-  on("project-opened", () => { loadedFor = null; entries = []; status = "idle"; load(); });
+  // A switch of job forgets the last one's entries and waits: `openProject`
+  // emits `project-loaded` right after, and that is the one fetch it needs.
+  on("project-opened", () => {
+    generation++; loadedFor = null; entries = []; status = "idle"; render();
+  });
   // every save that can change the job ends in one of these
   on("project-loaded", load);
   on("context-changed", load);

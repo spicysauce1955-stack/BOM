@@ -14,7 +14,9 @@
 //
 // Everything is escaped and bidi-isolated by `sentence`'s rule: a Latin id
 // inside a Hebrew sentence must not reorder the punctuation around it. A note's
-// text is the salesperson's own words and goes through the same escape.
+// text is the salesperson's own words and goes through the same escape — and the
+// substitution is ONE pass over the template, so a note that happens to contain
+// `{section}` is shown as written rather than filled in.
 
 import { esc } from "./api.js";
 import { t } from "./i18n.js";
@@ -34,7 +36,8 @@ export function actorName(actor, names = {}) {
   return t("change.system");
 }
 
-function word(code, key, value, names) {
+function word(change, key, value, names) {
+  const code = change.code;
   if (STATE_PARAMS.has(key)) return t(`queue.status.${value}`);
   if (SURFACE_PARAMS.has(key)) return enumWord(value);
   if (PERSON_PARAMS.has(key)) return value ? (names[value] || value) : t("change.nobody");
@@ -43,6 +46,10 @@ function word(code, key, value, names) {
   if (key === "what") return t(`change.${code === "acknowledged" ? "ack" : "stated"}.${value}`);
   if (typeof value === "boolean") return t(value ? "common.yes" : "common.no");
   if (BLANKABLE.has(key) && (value === null || value === "")) return t("change.blank");
+  // A section no longer drawn keeps the letter it had, and says so: no current
+  // letter is its name (`changes.reletter`).
+  if (key === "section" && change.params?.section_gone)
+    return `${value} (${t("change.gone")})`;
   return value;
 }
 
@@ -50,16 +57,19 @@ function word(code, key, value, names) {
 export function changeHtml(change, { names = {} } = {}) {
   const code = change?.code || "";
   const key = `change.${code}`;
-  const template = t(key);
-  // an unknown code still says SOMETHING true rather than printing a key
-  if (template === key) return esc(t("change.area_changed", { area: code }));
+  let template = t(key);
   const params = {};
-  for (const [k, v] of Object.entries(change.params || {}))
-    params[k] = k.endsWith("_mm") ? v : word(code, k, v, names);
-  let html = esc(template);
-  for (const [k, v] of Object.entries(unitParams(params)))
-    html = html.replaceAll(`{${k}}`, `<bdi>${esc(String(v ?? ""))}</bdi>`);
-  return html;
+  if (template === key) {
+    // an unknown code still says SOMETHING true rather than printing a key
+    template = t("change.area_changed");
+    params.area = code;
+  } else {
+    for (const [k, v] of Object.entries(change.params || {}))
+      params[k] = k.endsWith("_mm") ? v : word(change, k, v, names);
+  }
+  const filled = unitParams(params);
+  return esc(template).replace(/\{(\w+)\}/g, (whole, k) =>
+    Object.hasOwn(filled, k) ? `<bdi>${esc(String(filled[k] ?? ""))}</bdi>` : whole);
 }
 
 /** Is this change a turn in WHOSE desk the job is on — drawn as a divider? */

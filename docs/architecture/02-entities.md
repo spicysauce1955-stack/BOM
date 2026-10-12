@@ -205,7 +205,7 @@ plane.
 
 ## Topology — authored reality
 
-`src/fenceai/topology/model.py`, `topology/station.py`
+`src/fenceai/topology/model.py`, `topology/station.py`, `topology/naming.py` (section letters)
 
 ```mermaid
 classDiagram

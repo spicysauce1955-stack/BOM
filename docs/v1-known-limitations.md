@@ -243,6 +243,22 @@ why, and what would end each deferral.
   same defect (`js/intervals.js`, 2026-10-12); this path is the AI plane, which the
   owner set aside. **Trigger:** switching the interpreter on for real jobs.
 
+## Platform — the job's history
+
+- **The server accepts overlapping heights and builds the first.** `PUT /topology`
+  takes any interval list; a height hidden under an earlier one is stored and never
+  built. The history reports what is BUILT (`changes.py`), so it never logs such a
+  height as a change, and the height tool no longer creates one — but another client
+  could. **Trigger:** a second client writing topology, or the interpreter switched on;
+  then normalise first-wins overlaps in `topology/` or flag them on the handover sheet.
+- **`project_changes` is a second permanent copy of customer details.** Each entry
+  quotes what changed — names, addresses, a note's text — and, like `projects`, nothing
+  deletes it. **Trigger:** any erasure request; it must reach this table as well.
+- **A boundary station still reads the older height.** Carving leaves the older
+  remnant first in the list and the generator's check is inclusive, so anything read
+  exactly AT the carve station reads the old height. Bays sample their middle and are
+  unaffected.
+
 ## Platform
 
 - **Single-tenant, no auth, no concurrent-writer support** (SQLite WAL, one process).

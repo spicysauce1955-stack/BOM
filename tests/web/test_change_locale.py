@@ -14,14 +14,15 @@ from pathlib import Path
 
 import pytest
 
-from fenceai.project.changes import AREAS, CHANGE_CODES, _STATED_FIELDS
+from fenceai.project.changes import AREAS, CHANGE_CODES, UNKNOWN_AREA, _STATED_FIELDS
 from fenceai.project.model import SALE_READ, WARNINGS_REVIEWED
 
 I18N = Path(__file__).resolve().parents[2] / "src" / "fenceai" / "web" / "static" / "i18n"
 
 NEEDED = sorted(
     {f"change.{code}" for code in CHANGE_CODES}
-    | {f"change.area.{area}" for area in AREAS}
+    | {f"change.area.{area}" for area in (*AREAS, UNKNOWN_AREA)}
+    | {"change.gone", "change.blank", "change.nobody", "change.system"}
     | {f"change.stated.{field}" for field in _STATED_FIELDS}
     | {f"change.ack.{kind}" for kind in (SALE_READ, WARNINGS_REVIEWED)}
 )

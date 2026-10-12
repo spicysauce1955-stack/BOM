@@ -25,6 +25,9 @@
  *  other kinds pass through untouched, in order. Returns a NEW array; neither
  *  the array nor any event in it is mutated. */
 export function carveInterval(events, kind, start, end, { stationOf, anchorAt, newId }) {
+  // An empty or reversed stretch covers nothing, so it takes nothing — rather
+  // than splitting an older height around a point.
+  if (!(end > start)) return [...events];
   const out = [];
   for (const ev of events) {
     if (ev.payload?.kind !== kind) { out.push(ev); continue; }

@@ -61,6 +61,28 @@ const result = carveInterval(input, "height_intent", 2000, 4000, deps);
 out.input_untouched = JSON.stringify(input) === frozen;
 out.new_array = result !== input;
 out.payload_copied_not_shared = result[1].payload === input[0].payload;
+
+// an event the new stretch does not overlap is passed through AS IS: a fresh
+// copy would be re-anchored by the editor's anchorAt and logged as a move
+const touchingIn = [height("a", 0, 3000, 1800), height("b", 4000, 6000, 1700)];
+const touchingOut = carveInterval(touchingIn, "height_intent", 3000, 4000, deps);
+out.touching_same_objects = touchingOut.length === 2
+  && touchingOut[0] === touchingIn[0] && touchingOut[1] === touchingIn[1];
+const mixedIn = [base("b1", 0, 6000), height("a", 0, 6000, 1800)];
+out.other_kind_same_object = carveInterval(mixedIn, "height_intent", 0, 6000, deps)[0]
+  === mixedIn[0];
+out.empty_stretch = brief(carveInterval([height("a", 0, 6000, 1800)], "height_intent",
+                                        3000, 3000, deps));
+out.reversed_stretch = brief(carveInterval([height("a", 0, 6000, 1800)], "height_intent",
+                                           4000, 2000, deps));
+// every branch leaves its input alone, not only the split
+for (const [name, s0, s1] of [["overhang_start", 3000, 6000], ["overhang_end", 0, 2000],
+                               ["covered", 0, 6000]]) {
+  const ins = [height("a", 0, 6000, 1800)];
+  const frozenIn = JSON.stringify(ins);
+  carveInterval(ins, "height_intent", s0, s1, deps);
+  out[`${name}_input_untouched`] = JSON.stringify(ins) === frozenIn;
+}
 console.log(JSON.stringify(out));
 """
 
@@ -121,3 +143,18 @@ def test_the_input_is_never_mutated(carve):
 def test_the_two_halves_of_a_split_do_not_share_a_payload(carve):
     # an in-place edit of one half must not rewrite the other
     assert carve["payload_copied_not_shared"] is False
+
+
+def test_an_event_it_does_not_touch_is_passed_through_as_is(carve):
+    assert carve["touching_same_objects"] is True
+    assert carve["other_kind_same_object"] is True
+
+
+def test_an_empty_or_reversed_stretch_takes_nothing(carve):
+    assert carve["empty_stretch"] == [["a", "height_intent", 0, 6000, 1800]]
+    assert carve["reversed_stretch"] == [["a", "height_intent", 0, 6000, 1800]]
+
+
+@pytest.mark.parametrize("case", ["overhang_start", "overhang_end", "covered"])
+def test_no_branch_edits_its_input(carve, case):
+    assert carve[f"{case}_input_untouched"] is True

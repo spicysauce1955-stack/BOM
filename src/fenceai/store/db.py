@@ -25,7 +25,7 @@ from fenceai.knowledge.snapshot import Snapshot, ingest
 from fenceai.learning.model import Correction
 from fenceai.parts.model import Part, PartLibrary
 from fenceai.fulfillment.supply_run import SupplyRun
-from fenceai.project.changes import diff_project
+from fenceai.project.changes import diff_project, unreadable
 from fenceai.project.model import Project
 from fenceai.identity.model import User, would_strand_the_admins
 from fenceai.store.dialect import Conn
@@ -202,22 +202,39 @@ class Store:
         """
         row = self._conn.execute(
             "SELECT doc FROM projects WHERE id=?", (project.id,)).fetchone()
-        before = Project.model_validate_json(row[0]) if row else None
-        changes = diff_project(before, project)
-        self._conn.execute(
-            "INSERT INTO projects (id, doc) VALUES (?,?) "
-            "ON CONFLICT(id) DO UPDATE SET doc=excluded.doc",
-            (project.id, project.model_dump_json()),
-        )
-        self._audit(actor, "save_project", project.id)
-        if changes:
+        # A defect in the diff must not stop anybody saving a customer's job:
+        # the save goes ahead and the entry says the job changed and when, with
+        # the details marked as unreadable. Deliberately broad — this is the one
+        # caller, and what is caught is our bug, never the user's input.
+        try:
+            before = Project.model_validate_json(row[0]) if row else None
+            changes = diff_project(before, project)
+        except Exception:
+            changes = unreadable()
+        # ONE commit, or none. The job row overwrites the value an edit replaced,
+        # and the change row is the only place that value survives — a job
+        # committed without its change row has lost it for good, which is the
+        # one loss this table exists to prevent. Rolled back on ANY failure, as
+        # `replace_active_version` is, so nothing half-written waits for some
+        # later call's commit to land it.
+        try:
             self._conn.execute(
-                "INSERT INTO project_changes (project_id, at, actor, doc) "
-                "VALUES (?,?,?,?)",
-                (project.id, _now(), actor,
-                 json.dumps([c.model_dump(mode="json") for c in changes])),
+                "INSERT INTO projects (id, doc) VALUES (?,?) "
+                "ON CONFLICT(id) DO UPDATE SET doc=excluded.doc",
+                (project.id, project.model_dump_json()),
             )
-        self._conn.commit()
+            self._audit(actor, "save_project", project.id)
+            if changes:
+                self._conn.execute(
+                    "INSERT INTO project_changes (project_id, at, actor, doc) "
+                    "VALUES (?,?,?,?)",
+                    (project.id, _now(), actor,
+                     json.dumps([c.model_dump(mode="json") for c in changes])),
+                )
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
 
     def project_changes(self, project_id: str, limit: int = 200) -> list[dict]:
         """One job's change entries, newest first."""

@@ -3,6 +3,38 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-10-12: a job's history, and a new height that is built
+
+The owner set the AI aside and decided how the two desks split the work without it
+(`docs/superpowers/specs/2026-10-12-office-desk-without-ai-design.md`):
+
+1. The office person chooses between the engine's draft and placing posts by hand.
+2. Sales picks the fence model, and the office may change it.
+3. The office assigns products to the model's parts.
+4. When the office changes what sales entered, the change is **logged**, not approved and not notified.
+
+**Slice 1 (this checkpoint) is the log.**
+- Every job save now writes a `project_changes` row in the same commit as the job (`Store.save_project` → `project/changes.py: diff_project`).
+- The row says what changed, from what, to what, in 42 platform-text codes with sentences in both bundles.
+- `GET /api/projects/{id}/changes` reads it back with people's names and section letters resolved at read time.
+- The History panel (`#change-log`) shows it to the office while it reads a job and on its first step, and to the salesperson on her review step.
+- Answer 2 needed nothing new beyond this.
+
+**Heights, bases and models are compared by what each stretch is BUILT to**, not by their events. The architecture review showed the event-level diff crediting the office with the salesperson's measurement after a carve, logging an unchanged re-save, and missing a reorder that changed the fence.
+
+**Found and fixed on the way:** the height tool appended, and the generator builds the FIRST covering height. So a height the office drew over the one sales entered was never built. `js/intervals.js` now carves it.
+
+Reviews: `architecture-critic` (1 blocker, section letters stored without run ids, plus 4 should-fix items) and `test-reviewer` (22 surviving mutants, 2 high). All fixed in one wave. A smoke case, `_smoke_height_carves`, now drives the real height tool, undo and the panel in both languages.
+
+Full suite measured at this commit with CI's extras and Postgres: **4176 passed, 5 skipped**.
+
+**Next:** slice 2, products to the model's parts. The spec outlines it and lists the two questions to settle when it starts.
+
+**Left open, with triggers** (`docs/v1-known-limitations.md`):
+- The server still accepts overlapping heights from other clients and builds the first.
+- `project_changes` is a second permanent copy of customer details.
+- `confirm_intent` (AI path) still appends heights.
+
 ## Checkpoint — 2026-10-12: the architecture docs match the code, in three planes
 
 Docs only; no code changed. Every file in `docs/architecture/` was audited against

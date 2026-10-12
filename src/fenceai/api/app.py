@@ -74,6 +74,7 @@ from fenceai.report.flags import job_flags
 from fenceai.report.handover import handover_gaps
 from fenceai.report.readiness import readiness
 from fenceai.report.sections import section_facts
+from fenceai.project.changes import reletter
 from fenceai.project.model import (
     Annotation, Job, Project, Selection, SiteConditions, SiteContext, Stated,
 )
@@ -988,8 +989,13 @@ def get_project_changes(project_id: str, limit: int = 200) -> dict:
     person who has left still resolves. A person mentioned INSIDE a change — the
     new assignee — is resolved the same way, by bare id.
     """
-    _project(project_id)  # 404 for a job that does not exist, not an empty list
+    project = _project(project_id)  # 404 for a job that does not exist, not []
     entries = state.store.project_changes(project_id, limit=max(1, min(limit, 1000)))
+    # Sections too: a stored letter is a position, and deleting an earlier
+    # section re-letters every later one. Each change carries its run id, so
+    # it is named by the drawing as it is now (`changes.reletter`).
+    for entry in entries:
+        entry["changes"] = reletter(entry["changes"], project.topology)
     mentioned = {e["actor"] for e in entries} | {
         str(v) for e in entries for c in e["changes"] if c["code"] == "assignee_changed"
         for v in (c["params"].get("from_person"), c["params"].get("to_person")) if v}

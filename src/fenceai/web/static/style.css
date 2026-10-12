@@ -1523,7 +1523,14 @@ html[data-jobmode="read"] #job-panel { display: none; }
    reason: reading the job's history is reading, not editing. The office opens a
    job somebody else drew, and "what changed in it since she sent it" is part of
    understanding it (docs/superpowers/specs/2026-10-12-office-desk-without-ai-
-   design.md). */
+   design.md).
+
+   Exempting it from the rule above is not enough to SHOW it: `data-step` keeps
+   the office's last road step while reading, and every office step but `sale`
+   hides the panel. So it is shown outright here, with a selector that outranks
+   the step rules (a class more than `html[data-step] #change-log`), and the
+   road's rules apply again the moment editing removes `data-jobmode`. */
+html[data-jobmode="read"] .side-col > #change-log { display: block; }
 
 /* What was sold, read-only, where the form used to be. */
 .job-sale { border: 1px solid #d4dae2; border-radius: 6px; padding: 8px 10px;
@@ -1684,6 +1691,8 @@ button.job-card-tag { background: none; border: 0; padding: 0; cursor: pointer;
 #change-log > summary h3 { display: inline; margin: 0; }
 #change-log > summary h3::before { content: "▸ "; color: #6b7684; }
 #change-log[open] > summary h3::before { content: "▾ "; }
+/* the closed marker points along the reading direction */
+html[dir="rtl"] #change-log:not([open]) > summary h3::before { content: "◂ "; }
 #change-log .change-hint { margin-block: 6px; font-size: 12px; }
 .change-entries, .change-lines { list-style: none; margin: 0; padding: 0; }
 .change-entry { padding-block: 6px; border-block-start: 1px solid #e3e7ec; }

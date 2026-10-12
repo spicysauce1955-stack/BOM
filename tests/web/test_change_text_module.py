@@ -70,6 +70,13 @@ await setLocale("en");
 out.escaped = changeHtml({ code: "note_added",
                            params: { text: "<b>bold</b> & co", section: "" } });
 out.unknown = changeHtml({ code: "not_a_code", params: {} });
+out.blank_from = changeHtml({ code: "address_changed", params: { from: "", to: "Herzl 14" } });
+out.blank_section = changeHtml({ code: "gate_added", params: { section: "", value_mm: 1000 } });
+out.unstated = changeHtml({ code: "stated_changed", params: { what: "no_gates", value: false } });
+out.braces = changeHtml({ code: "note_added",
+                          params: { text: "check {section} and {to_mm}", section: "B" } });
+out.gone = changeHtml({ code: "gate_moved", params: { section: "B", run: "side",
+                                                      section_gone: true } });
 setUnits("cm");
 out.cm = changeHtml({ code: "height_changed", params: {
   section: "B", from_mm: 1800, to_mm: 1750, start_mm: 0, end_mm: 6000 } });
@@ -134,7 +141,33 @@ def test_lengths_follow_the_readers_unit(rendered):
 
 
 def test_an_unknown_code_still_says_something_true(rendered):
-    assert "not_a_code" in rendered["unknown"]
+    # the fallback sentence, never the raw key it failed to find
+    assert rendered["unknown"] == "Changed: <bdi>not_a_code</bdi>"
+
+
+def test_a_note_that_contains_braces_is_shown_as_written(rendered):
+    """One pass over the template: a param's VALUE is never searched for more
+    placeholders, so the salesperson's words are not rewritten."""
+    assert "check {section} and {to_mm}" in rendered["braces"]
+
+
+def test_a_section_no_longer_drawn_says_so(rendered):
+    assert rendered["gone"] == "Section <bdi>B (no longer drawn)</bdi>: gate moved"
+
+
+def test_a_stated_claim_reads_yes_or_no_the_right_way_round(rendered):
+    assert rendered["en"]["stated_changed"] == "Stated: <bdi>no gates</bdi> — <bdi>yes</bdi>"
+    assert rendered["unstated"] == "Stated: <bdi>no gates</bdi> — <bdi>no</bdi>"
+
+
+def test_a_landmark_is_named_in_the_readers_language(rendered):
+    assert rendered["en"]["landmark_added"] == "Property: <bdi>House</bdi> added"
+    assert "<bdi>בית</bdi>" in rendered["he"]["landmark_added"]
+
+
+def test_a_blank_value_or_section_reads_as_a_dash(rendered):
+    assert rendered["blank_from"] == "Address: <bdi>—</bdi> → <bdi>Herzl 14</bdi>"
+    assert rendered["blank_section"].startswith("Section <bdi>—</bdi>:")
 
 
 def test_who_did_it(rendered):

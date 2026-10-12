@@ -4829,6 +4829,116 @@ def _smoke_office_desk_acts(c) -> None:
     switch_user(c, ADMIN)
 
 
+def _smoke_height_carves(c) -> None:
+    """A new height takes its stretch from the old one, and the job's history
+    says so (docs/superpowers/specs/2026-10-12-office-desk-without-ai-design.md).
+
+    The height tool used to APPEND, and the generator builds the FIRST height
+    covering a station — so a height drawn over the salesperson's was never
+    built. `js/intervals.js` is pinned in node; what only a browser can prove is
+    that the tool really calls it, that undo puts the old height back, and that
+    the History panel reads the change in both languages.
+
+    The new height covers only the SECOND half on purpose: drawn over the whole
+    section, an editor that wrongly deleted the old height outright would pass.
+    """
+    c.js("""(() => {
+  const s = document.getElementById('view-select');
+  if (s.value !== 'all') { s.value = 'all'; s.dispatchEvent(new Event('change')); }
+  return 'ok';
+})()""")
+    # an earlier case leaves the display in cm; the popover's fields follow it
+    c.js("import('./js/units.js').then(m => m.setUnits('mm')).then(() => 'ok')")
+    new_project(c, 'carve')
+    pid = current_project_id(c)
+    seg = {"segment_index": 0, "seg_len_at_authoring_mm": 6000}
+    topo = {"revision": 0,
+            "nodes": [{"id": "n1", "x_mm": 0, "y_mm": 0},
+                      {"id": "n2", "x_mm": 6000, "y_mm": 0}],
+            "runs": [{"id": "run1", "start_node_id": "n1", "end_node_id": "n2",
+                      "interval_events": [{
+                          "id": "ev-dana",
+                          "start_anchor": {**seg, "offset_mm": 0},
+                          "end_anchor": {**seg, "offset_mm": 6000},
+                          "payload": {"kind": "height_intent", "height_mm": 1800}}]}]}
+    put = c.js("fetch('/api/projects/" + pid + "/topology', {method: 'PUT',"
+               " headers: {'Content-Type': 'application/json'},"
+               " body: JSON.stringify(" + json.dumps(topo) + ")}).then(r => r.status)")
+    check("a section sold at 1800 could be stored", put == 200, put)
+    reopen_project(c)
+    time.sleep(1.5)
+
+    heights = """
+fetch('/api/projects/%s').then(r => r.json()).then(p => ({
+  revision: p.topology.revision,
+  heights: p.topology.runs[0].interval_events
+    .filter(e => e.payload.kind === 'height_intent')
+    .map(e => [Math.round(e.start_anchor.offset_mm * 6000 / e.start_anchor.seg_len_at_authoring_mm),
+               Math.round(e.end_anchor.offset_mm * 6000 / e.end_anchor.seg_len_at_authoring_mm),
+               e.payload.height_mm, e.id])
+    .sort((a, b) => a[0] - b[0]),
+}))""" % pid
+    before = c.js(heights)
+
+    c.click(*c.element_center("#tool-height"))
+    c.click(*c.canvas_px(4500, 0))
+    time.sleep(0.5)
+    opened = c.js("""(() => {
+  const f = (id, v) => { const el = document.getElementById(id); if (!el) return false;
+                         el.value = v; el.dispatchEvent(new Event('change')); return true; };
+  const ok = f('pop-height', '1750') && f('pop-start', '3000') && f('pop-end', '6000');
+  if (ok) document.getElementById('pop-save').click();
+  return ok;
+})()""")
+    check("the height popover opens on the section", opened)
+    after = wait_for(c, "(" + heights + ").then(d => d.revision > %d && d)"
+                     % before["revision"], timeout=8)
+    rows = (after or {}).get("heights") or []
+    check("the old height survives where the new one does not reach",
+          len(rows) == 2 and rows[0] == [0, 3000, 1800, "ev-dana"], rows)
+    check("the new height is the one stored over the stretch it was drawn on",
+          len(rows) == 2 and rows[1][:3] == [3000, 6000, 1750], rows)
+
+    hist = c.js("fetch('/api/projects/%s/changes').then(r => r.json())" % pid)
+    first = ((hist or {}).get("entries") or [{}])[0].get("changes") or []
+    check("the history reads one change over the stretch that changed",
+          [ch["code"] for ch in first] == ["height_changed"]
+          and first[0]["params"].get("from_mm") == 1800
+          and first[0]["params"].get("to_mm") == 1750
+          and first[0]["params"].get("start_mm") == 3000, first)
+
+    c.click(*c.element_center("#btn-undo"))
+    undone = wait_for(c, "(" + heights + ").then(d => d.revision > %d && d)"
+                      % after["revision"], timeout=8)
+    check("undo puts the salesperson's height back, whole",
+          (undone or {}).get("heights") == [[0, 6000, 1800, "ev-dana"]], undone)
+
+    c.js("document.getElementById('change-log').open = true; 'ok'")
+    line = wait_for(c, """[...document.querySelectorAll('#change-log .change-line')]
+  .map(e => e.textContent).find(t => t.includes('1750')) || ''""", timeout=8)
+    check("the History panel shows the change", "1800" in line and "1750" in line, line)
+    c.js("import('./js/i18n.js').then(m => m.setLocale('he')).then(() => 'ok')")
+    he = wait_for(c, """[...document.querySelectorAll('#change-log .change-line')]
+  .map(e => e.textContent).find(t => t.includes('1750') && t.includes('מקטע')) || ''""",
+                  timeout=8)
+    check("...and reads it in Hebrew", bool(he), he)
+    c.js("import('./js/i18n.js').then(m => m.setLocale('en')).then(() => 'ok')")
+
+    # The office READS a job with `data-step` still naming its last road step,
+    # and every office step but `sale` hides the panel. Reading must show it.
+    shown = c.js("""(() => {
+  const html = document.documentElement;
+  const keep = {mode: html.dataset.jobmode, step: html.dataset.step};
+  html.dataset.jobmode = 'read'; html.dataset.step = 'blanks';
+  const visible = document.getElementById('change-log').checkVisibility();
+  if (keep.mode === undefined) delete html.dataset.jobmode; else html.dataset.jobmode = keep.mode;
+  if (keep.step === undefined) delete html.dataset.step; else html.dataset.step = keep.step;
+  return visible;
+})()""")
+    check("the office sees the history while reading, whatever step it last used", shown)
+    c.js("document.getElementById('change-log').open = false; 'ok'")
+
+
 _CHOICE_CASES: list = [
     _smoke_sales_mode,
     _smoke_job_identity,
@@ -4849,6 +4959,7 @@ _CHOICE_CASES: list = [
     _smoke_my_jobs_round_trip,
     _smoke_office_desk_acts,
     _smoke_office_job_screen,
+    _smoke_height_carves,
 ]
 
 

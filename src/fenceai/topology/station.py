@@ -374,6 +374,41 @@ def fence_model_at(topo: Topology, run: Run, station_mm: Mm) -> FenceModelChoice
     return None
 
 
+def built_stretches(topo: Topology, run: Run, events: list, key) -> list[tuple[Mm, Mm, object]]:
+    """What each stretch of a run is built to for one kind of interval event:
+    `(start, end, key(payload))` for maximal stretches, `None` where no event
+    covers. `events` are of ONE kind, in the run's order.
+
+    The rule every reader of these kinds shares — the generator's
+    `_interval_at`, `base_surface_at`, `fence_model_at` — is that the FIRST
+    event covering a station wins. They differ only at a boundary station
+    (inclusive or half-open), so this asks at the middle of every stretch
+    between two event ends, where all three agree. That is what makes it a
+    statement about the fence rather than about how the events happen to be
+    stored: a height stored as one event or carved into three, or a later event
+    hidden under an earlier one, reads the same here as it builds.
+
+    `events` may be another revision's events resolved against THIS run's
+    geometry, which is how a history compares two saves without a corner drag
+    reading as a change of height (anchors re-scale; the facts did not move).
+    """
+    total = run_length(topo, run)
+    spans = [(anchor_station(topo, run, ev.start_anchor),
+              anchor_station(topo, run, ev.end_anchor), key(ev.payload)) for ev in events]
+    cuts = sorted({0, total, *(min(max(s, 0), total) for s0, s1, _ in spans for s in (s0, s1))})
+    out: list[tuple[Mm, Mm, object]] = []
+    for a, b in zip(cuts, cuts[1:]):
+        if b <= a:
+            continue
+        mid = (a + b) / 2
+        value = next((v for s0, s1, v in spans if s0 <= mid <= s1), None)
+        if out and out[-1][2] == value and out[-1][1] == a:
+            out[-1] = (out[-1][0], b, value)
+        else:
+            out.append((a, b, value))
+    return out
+
+
 def fence_model_transition_stations(topo: Topology, run: Run) -> list[Mm]:
     """Interior stations where the fence model changes — structural boundaries.
 
