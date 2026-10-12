@@ -2,7 +2,12 @@
 
 Python 3.12, FastAPI, Pydantic v2. One process, no queue, no cache tier, no ORM.
 The database is SQLite or Postgres — the same SQL either way, translated by
-`store/dialect.py`, chosen by `FENCEAI_DB`'s URL scheme. ADR-0001, -0008, -0012.
+`store/dialect.py`, chosen by `FENCEAI_DB`'s URL scheme. ADR-0001, -0008, -0012,
+-0013.
+
+The backend serves all three planes of [`00-overview.md`](00-overview.md#three-planes)
+through one process: this document is organised by layer, and the API surface below
+is grouped by plane.
 
 ---
 
@@ -10,21 +15,25 @@ The database is SQLite or Postgres — the same SQL either way, translated by
 
 ```mermaid
 flowchart TB
+    subgraph L0["api/auth.py — the identity gate on every /api route but three"]
+        GT["IdentityProvider (iap | dev) → users row → capacity"]
+    end
     subgraph L1["api — the only layer that knows about HTTP"]
-        R["47 routes"]
-        CR["composition root:<br/>picks the AI adapter, opens the Store,<br/>seeds the demo"]
+        R["76 routes under dev · 74 under iap"]
+        CR["composition root:<br/>builds the identity provider, opens the Store,<br/>wires the AI ports, seeds the demo"]
     end
     subgraph L2["orchestration"]
-        PI["fulfillment/pipeline.py<br/>derive → resolve_supply → fulfill"]
-        LI["fencemodel/library.py · learning/review.py"]
+        PI["fulfillment/pipeline.py<br/>derive_demand → resolve_supply → fulfil"]
+        LI["fencemodel/library.py · learning/review.py<br/>learning/impact.py · commands.perform · agent.run_task"]
     end
     subgraph L3["pure domain"]
-        PD["generate() · resolve_panel() · fit_pattern()<br/>plan_cuts() · build_structure() · panel_elevation()"]
+        PD["generate() · resolve_panel() · fit_pattern()<br/>plan_cuts() · build_structure() · panel_elevation()<br/>handover_gaps() · readiness() · select_rows()"]
     end
     subgraph L4["persistence"]
-        ST["store/db.py — 13 tables, documents as JSON"]
+        ST["store/db.py — 14 tables, documents as JSON"]
     end
 
+    GT --> R
     R --> PI
     R --> LI
     PI --> PD
@@ -39,6 +48,13 @@ flowchart TB
 arguments — topology, catalog, knowledge base, inventory — and returns a value.
 Persistence happens *between* stages, in the route. That is what makes the whole
 domain testable without a database and what keeps `generate()` reproducible.
+
+**The composition root picks very little.** `lifespan` builds the identity provider
+from `FENCEAI_IDENTITY` (no default — boot refuses without it), opens the `Store`
+from `FENCEAI_DB`, refuses to serve a dev-seeded database under `iap`, and wires the
+four AI ports: only the interpreter is selectable (`FENCEAI_AI=claude`), and the
+proposer, critic and agent are always their stubs. Parts and fence models are seeded
+by the `Store` itself; demo accounts only under `dev`.
 
 ---
 
@@ -78,9 +94,9 @@ Three properties hold this together.
   and `width_mm` — populated for both kinds — is the field every consumer reads.
   A reader that subtracted the stations itself would get 0 for every standalone
   gate. In the read models a `None` means *belongs to no section*: `bom_groups`
-  leaves it out of the section partition and reports its kit under `unassigned`
-  (a group kind of its own is the follow-up and needs a `bom.group_*` locale
-  entry in both bundles), `section_decisions` gives it an empty section set, and
+  leaves it out of the section partition and gives its kit a group of its own
+  (`kind="gate"`, `bom.group_gate` in both bundles), `section_decisions` gives it
+  an empty section set, and
   `structure.py` lays it out in `StructureReport.gates` at the top level, between
   the tags of the two posts it hangs from.
 * **`_generate_gate_spans` runs after every run is generated, and that placement
@@ -132,35 +148,61 @@ Suppression stays out: a gate with a post on one side only is unbuildable.
 
 ## The API surface
 
-76 routes. Grouped by what they are for rather than by path:
+76 routes. 74 under `iap`; `dev` adds the two `/api/dev/identity` routes. Grouped by plane, then by what they are for rather than by path. Paths are written without the `/api` prefix.
+
+### Shared — the project document
+
+The one document all three planes write. Its job fields, its engine inputs and its notes each have their own unrevisioned or revisioned route.
 
 | Group | Routes | Notes |
 |---|---|---|
 | Projects & topology | `GET/POST /projects`, `GET /projects/{id}`, `PUT /projects/{id}/topology`, `PUT /projects/{id}/site`, `PUT /projects/{id}/job`, `PUT /projects/{id}/context`, `PUT /projects/{id}/stated` | The two revisioned PUTs bump their own `revision` server-side — a client that forgot to would make a stale document look current. `/job` is deliberately NOT revisioned: who bought the fence, where, who sold it and when changes no quantity and invalidates no derived view. It is a separate route from creation because a salesperson enters this after the visit from paper — they start with a customer name, draw for twenty minutes, and only then find the address on the sketch, which must not cost them the drawing. `GET /projects` carries `label` beside `name` for the same person: the picker said *"project 7"*. `/context` carries the house, the street and the boundary — everything on the property that is NOT the fence. It is on the PROJECT and never in `Topology`, because a landmark changes no quantity: in the topology it would bump the revision and 409 the structure sheet because somebody nudged a driveway. `/stated` is unrevisioned for `/job`'s reason and carries what the salesperson says this job does NOT have — `no_gates`, `no_promises`. Named facts rather than step keys, so a screen's structure stays out of the project record and `handover_gaps` can contradict a claim the drawing disagrees with without knowing that a road or a step exists. The claim is stored as GIVEN and never validated here: refusing it would mean a salesperson could not record what they believe, which is the one thing the field exists to capture |
+
+### Engine
+
+Everything that decides, prices, explains or stores what a fence is.
+
+| Group | Routes | Notes |
+|---|---|---|
 | Generation | `POST /projects/{id}/generate`, `GET /projects/{id}/runs`, `GET /runs/{id}` | The only write that decides a fence. WHICH run is the one people build from is `commit_plan` (`Project.committed_run_id`), performed through `/actions`. Its guards are STRICTER than any working view's and stricter than `create_quote`'s — the quote checks the site, the catalog and unresolved supply but not the topology revision — because a working view that renders something stale is re-read while a committed plan is built from. They are asked by `commands.perform` as a `precondition`, AFTER capacity and state: answered earlier, the door would tell a salesperson which run ids exist and how far a job had got. `revise_plan` takes it back (`planned`/`quoted` → `planning`), and `reopen_job` / `return_to_sales` clear it, so a job never comes back naming a plan from a previous life |
-| Explanation | `GET /runs/{id}/explain/{element_id}`, `GET /runs/{id}/sections/{section_id}/decisions`, `GET /runs/{id}/impact/{object_id}` | Takes `lang` **and** `units`. The section view 409s on a moved topology and the element view does not — see below |
-| Read models | `GET /runs/{id}/structure`, `GET /runs/{id}/bom`, `GET /projects/{id}/handover` | 409 on stale topology or catalog. `/bom` also carries `grouped` — the same demand by section, panel and decision, and it does NOT 409 on topology. Both are read models that WRITE: `/bom` returns the `supply` run it stored and `/structure` stamps its `supply_id`, through one construction so the sheet and the BOM can never name different yards. Idempotent by digest (ADR-0011). `/handover` is the salesperson MVP's read model and the odd one out: it is derived from the PROJECT rather than from a run, deliberately, because by the time a `Strategy` exists the silent defaults (1800 mm height, `soil` base) have been applied and look decided — catching them before that is its whole point. Both run-scoped ones also carry `quoted_warnings` — every warning the fence models QUOTE from their documents, each placed where §3.3.5 says it renders (`report/annexe.py`): the setting-out sheet draws the annexe, `/bom` draws the product notices on the line group, and each carries the buckets it does not draw so nothing is lost at the edge of a surface |
-| Run advice | `GET /runs/{id}/advice` | The one `fenceai/api/` door onto `fenceai.agent` — no other layer imports it. Runs `agent.tasks.RANK_CHOICE_SET` against an `AgentView` of the run through `agent.run.run_task`, and returns the checked `TaskResult` as-is: nothing is stored, nothing is generated. 409 `topology_changed` on the same stale-topology guard as `/structure`, since advice about a layout laid over an edited drawing is advice about a fence nobody drew (ADR-0009: no AI inside `generate()` — this reads a generation the user already asked for) |
+| Explanation | `GET /runs/{id}/explain/{element_id}`, `GET /runs/{id}/sections/{section_id}/decisions`, `GET /runs/{id}/impact/{object_id}` | Takes `lang` **and** `units`. The section view 409s on a moved topology or site and the element view does not — see below |
+| Read models | `GET /runs/{id}/structure`, `GET /runs/{id}/bom` | `/structure` refuses a moved drawing or site (409 `topology_changed` · `site_conditions_changed`); both refuse a moved catalog (409 `catalog_schema_changed` · `catalog_changed`). `/bom` also carries `grouped` — the same demand by section, panel and decision, and it does NOT 409 on topology. Both are read models that WRITE: `/bom` returns the `supply` run it stored and `/structure` stamps its `supply_id`, through one construction so the sheet and the BOM can never name different yards. Idempotent by digest (ADR-0011). Both also carry `quoted_warnings` — every warning the fence models QUOTE from their documents, each placed where §3.3.5 says it renders (`report/annexe.py`): the setting-out sheet draws the annexe, `/bom` draws the product notices on the line group, and each carries the buckets it does not draw so nothing is lost at the edge of a surface |
 | Money | `POST /runs/{id}/quote`, `GET/POST /quotes/{id}[/accept]`, `GET /projects/{id}/quotes` | Immutable snapshots with a lifecycle |
 | Knowledge | `GET/POST /knowledge`, `POST /knowledge/{id}/{v}/retire`, `POST /knowledge/preview-impact` | Versioned; never edited in place |
 | Published knowledge | `GET/POST /knowledge/snapshot`, `GET /knowledge/parts` | The boundary door (contract §1.2). Loading is explicit and never automatic — a knowledge base that swapped itself under a project would change numbers with no action anyone took. The POST's interesting path is the REFUSAL: an unknown contract major, a payload predating §1.1's typed `Date`, or a document whose members do not hash to the id it declares, each a typed 400 with one sentence. `/knowledge/parts` is item 7's surface: every published `SpecField` value with its §1.4 verdict and the `SourceDoc`s its citations resolve to — per value, not per part, because admissibility is decided per value |
-| Learning | `GET/POST /projects/{id}/corrections`, `POST /projects/{id}/propose-knowledge`, `GET /candidates`, `POST /candidates/{id}/{v}/review` | Candidates are inert. The GET is filterable by `decision_ref`/`element_ref`/`generation_run_id` |
 | Parts | `GET /parts`, `GET /part-types` | The shared library a model's slot names; read-only, versioned like knowledge |
 | Vocabularies | `GET /vocabularies` | The length rules, fixing bases and objective presets the schema accepts, so the editor offers exactly them rather than keeping a copy. Names only — the words live in the locale bundles the browser already loads. The seam for the handler registries of `specs/2026-08-25-engine-architecture.md` §4: when a fixing basis becomes a registration rather than a `Literal` arm, only `fencemodel/vocabulary.py` changes |
-| Fence models | `GET/POST /fence-models`, `PUT /fence-models/{id}/draft`, `POST .../publish`, `POST .../status`, `DELETE .../{v}`, `POST /fence-models/preview`, `POST /fence-models/{id}/preview-impact` | Publish is the gate |
-| Panel preview | `POST /runs/{id}/bays/{element_id}/panel-preview` | Reads the run, not the live catalog |
-| Annotations | `POST /projects/{id}/annotations[/{id}/interpret]`, `POST /projects/{id}/intents/{id}/confirm` | Verbatim in, proposals out |
+| Fence models | `GET/POST /fence-models`, `GET /fence-models/{id}/{v}`, `PUT /fence-models/{id}/draft`, `POST .../publish`, `POST .../status`, `DELETE .../{v}`, `POST /fence-models/preview`, `POST /fence-models/{id}/{v}/preview`, `POST /fence-models/{id}/preview-impact`, `PUT /projects/{id}/fence-model` | Publish is the gate: a draft may be saved with `validate_model` errors and is returned with them, and publishing refuses it (422). The project route picks the model a project is built from |
+| Panel preview | `POST /runs/{id}/bays/{element_id}/panel-preview` | Reads what the RUN decided — cut basis, counts, the stamped model version, options, parts — checks the live catalog against the run's stamp (409 if moved), and prices under the project's live objective preset, as `/bom` does |
 | Overrides | `POST /projects/{id}/overrides`, `DELETE .../{override_id}` | Anchored to `(run, station, kind)` |
 | Choices | `PUT /projects/{id}/choices`, `DELETE .../choices/{choice_set}?scope=...` | A row of its own, not part of Overrides, because a choice is **not** an override: nothing was wrong, the data simply left two admissible answers (specs/2026-09-03-design-choices-and-placement-design.md §3). So a selection anchors to a **scope** — `gap:run1:0`, `model:M-VINYL` — instead of a station, and survives a redraw that would kill an override; and it is an *input* to `generate()`, not a patch on its output. PUT upserts on `(choice_set, scope)`: choosing again replaces, or a project would hold two current answers to one question. `asked: false` on the same route is a **pin** (*"we always dig 610, stop asking"*) — the same record with one flag, because pinning and choosing differ in what happens next, not in what was decided. The DELETE takes the scope as a **query** parameter because a real scope is `model:mfr/certainteed/rail` and a path segment cannot carry the slashes |
 | Catalog & inventory | `GET /catalog`, `PUT /catalog/products`, `GET/PUT /projects/{id}/inventory` | |
 | Evidence | `POST /source-refs:batch` | Fixture-backed (`knowledge/discovery_stub.py`): resolves a `SourceRef.id` (core/gaps.py) against a vendored copy of fence-rag's design fixture, not a live Discovery API — see specs/2026-08-23-frontend-design.md §3. Batched from the first commit so a queue resolving many citations issues one call, not N |
-| Identity | `GET /api/session`, `GET/POST /api/users`, `PATCH /api/users/{id}`, `POST/DELETE /api/dev/identity` (dev only) | **Google holds the identity; a row here holds the capacity.** There is no password in this app and no session of ours: under `iap` a signed `X-Goog-IAP-JWT-Assertion` names the person before the request arrives, verified against Google's keys with the `aud` checked, because the plain header is spoofable by anything that reaches the service directly. `users` is a capacity assignment table — rows are created BY EMAIL before that person has ever signed in, and `subject` (Google's `sub`) binds on first arrival and is never used to FIND a row. A subject arriving on an address bound to a different one is `subject_mismatch`, refused and audited, because an admin reconciles that and the app must not hand the row to whoever holds the address today. **Every route in this table is gated**: one app-level dependency refuses `no_identity` · `no_capacity` · `account_deactivated` · `subject_mismatch` · `capacity_insufficient`, and the exempt list is three paths pinned by `tests/architecture/test_fitness.py`. `GET /api/session` is the one that answers without a row, because the screen telling somebody to ask an admin has to name them to the admin they are about to ask. Signing out is a redirect to IAP's logout — revoking access is central and for every device at once, which the app could never promise; `active=False` is the local half that still refuses. `FENCEAI_BOOTSTRAP_ADMIN` admits the first admin and self-disables the moment one is ACTIVE — an admin row that has since been deactivated does not lock the variable out, so the address it names is a live re-entry path for as long as it stays set and no admin is active, which is why it is removed after the first deploy. The demo accounts are seeded ONLY under `dev`, which is what lets `FENCEAI_BOOTSTRAP_ADMIN` fire at all: an unconditional seed put an admin row in every fresh database before the first request arrived, leaving a real company's first admin with no way in. `POST`/`DELETE /api/dev/identity` are registered ONLY under `FENCEAI_IDENTITY=dev`, so under `iap` they do not exist to be found; it is an impersonation switch and is named as one. The static mount at `/` is a `Mount` rather than a route, so the gate never reaches it — which is what lets the refusal screen render itself in Hebrew for somebody the API refuses. `/openapi.json`, `/docs` and `/redoc` are off outside `dev` — FastAPI registers them as plain `Route`s, so the gate cannot reach them, and left on they hand the whole API surface to anybody who reaches the service |
-| Commands | `POST /projects/{id}/actions` | **One door.** Every change that MOVES a job — whose desk it is on, or what it commits to — is a named, typed, permission-checked row in `fenceai/commands/` rather than a route of its own (backoffice design §10). Field edits are deliberately NOT commands: typing an address is not one, and forcing it to be turns the design into ceremony. The row answers three questions before anything happens — may this capacity perform this kind · is the job in a status that allows it · does the payload type-check — and in that ORDER, so a refusal never leaks whether the job was in a state that would have allowed it. `command_wrong_state` is a 409 because it is a conflict with the job as it stands (somebody moved the folder while the screen was open); everything else is a 403 or a 404. This was the **first** gated route in the app: it 401s an anonymous caller, because a command names who did it and `system` is not somebody who may take a job. It is no longer the only one — identity is now checked for EVERY route by one app-level dependency (see the Identity row), which is what that sentence used to say and stopped being true the moment default-deny landed. What survives of it is the narrower claim, and it is still worth making: this door asks what a CAPACITY may do, and only two other routes do (`POST /api/users`, `PATCH /api/users/{id}`). Per-capacity authorization for the rest is a separate slice, deliberately — retrofitting it in the slice that introduces the mechanism is how a feature ran away here before, and ADR-0013 records the gap rather than implying it is closed. The table is shared with the agent, which keeps the SUBSET it may propose (`agent/registry.py::KINDS`) — a human pressing a button and an agent proposing one reach the same row, or the second implementation drifts and the drift is where an untraceable change comes from |
-| The office road | `GET /api/projects/{id}/readiness` (resolves supply for step 5, and reports `supply_unknown` rather than refusing when the run cannot be priced) | What the OFFICE still has to do — the run-scoped sibling of `/handover`, and deliberately not folded into it. `/handover` is a pure function of the PROJECT and must stay one: that is what lets it catch the silent 1800 mm height before a strategy exists to make it look decided. These questions are about a run, so folding them in would drag a run into a function whose whole value is not needing one. The road reads both and GROUPS them; it never recounts, because three surfaces answering "what is left" and disagreeing is a defect this repo has already paid for. It reads the STORED run and loads no knowledge base — `readiness()` takes none, so there is nothing in scope to re-evaluate: re-running the evaluator would re-resolve to "current" (contract 3.2.1) and recompute a quantity in a read model (foundation §15). Nothing it returns is `blocking`, because contract 3.2.4 forbids failing a run over a gap and a step that stopped somebody generating would be the first thing worked around |
-| The office job screen | `GET /api/projects/{id}/sections`, `GET /api/projects/{id}/flags` | What each stretch of fence IS — length, what it stands on, the ground along it, whether anybody stated a height — as a pure function of the TOPOLOGY. The office opens a job it did not draw, and half of what it needs to understand exists the moment the salesperson stops drawing and long before `generate()` runs; `/structure` cannot answer any of it. It is the only per-stretch view here that **cannot go stale**: `/structure` and `/runs/{id}/sections/{id}/decisions` refuse with 409 `topology_changed` because they describe a stored run generated from a drawing that has since moved, while this describes the drawing — a moved drawing is a new answer, not a refusal, and a guard would lie about what the reader is looking at. A job with nothing drawn answers an empty list rather than a 404, because a job nobody has drawn is a real state the screen renders. It reports the SILENT DEFAULTS rather than blanking them: a run with no base event stands on `soil` and this says `soil`, because a blank reads as "nobody has looked" — the failure `/handover` exists to prevent, one surface further on. It carries no STEPS, and that omission is a decision: both step functions in `topology/station.py` take a `min_step_mm` whose value is knowledge rather than code (K-STEP-POST), so a read model picking one would hard-code a rule the knowledge base owns. The shape is a section fact; the judgement that a step is too big arrives after generation as `excessive_step` · `/flags` places what three other models already FOUND — the handover sheet, the office's readiness list, and the stored run's own warnings — so a mark can be drawn at the thing each one is about. It finds nothing itself. Until a finding can be drawn it is a line somebody scrolls past, which is how a review surface dies: the industry's cautionary tale is a dialog of a thousand unlinked warnings. Nothing is ever dropped — a scope this cannot place (`model:mfr/certainteed/rail` is a real one) lands on the job rather than vanishing, because a finding must not disappear over a formatting change nobody noticed. A `DocumentWarning` cannot reach it: `job_flags` takes no parameter one could arrive through, which makes contract §3.3.5 a signature rather than a filter somebody can delete. Severity comes from the SOURCE, never from a code table here — the rule that emitted it is the one with the reasoning behind it. Like `/sections` it never 409s: this is the screen that TELLS somebody the drawing moved (`plan_stale` is one of the items it carries), so refusing would hide the answer behind the problem it reports. A `run_id` naming another job's run is 422 `run_not_on_this_job`, the command door's refusal — not that the run does not exist, but that it is not this job's |
-| A salesperson's jobs | `GET /api/my-jobs` | Her home screen: the jobs HER account created (`Project.created_by`, written by `POST /projects` from the session and never from the body), each with a sales word for where it is — `draft · pending · needs_info · accepted · rejected`, folded from the eight job states by `lifecycle.sales_status` — and what the office has said about it: a count of notes written through another account, and the latest one verbatim. Pure over loaded projects (`queue.my_jobs`) and unpaged, because its per-row cost is a pass over one job's notes, not a handover sheet. A 401 without a session rather than an empty list, which would read as "you have no jobs". `POST /projects/{id}/annotations` now stamps `created_at` and lets the session outrank `author`, which is what lets this list tell the office's notes from hers |
-| The queue | `GET /api/queue` | What should I work on next, or — in the finished bucket — what did we do. A SECOND route rather than a rebuild of `GET /api/projects`, which stays the picker's bare list of three fields: they answer different questions and want different rows, and folding them together meant changing the picker's envelope from a list to an object under five existing callers. Paged from the first commit, because the open-question count is DERIVED per row — free for twenty-five, unaffordable for an unbounded list, which is what would make "read models are derived, never stored" a rule nobody could keep. `assignee=me` is resolved HERE from the session: the pure half REFUSES the literal string, because matched as an id it returns an empty page reading as "you have nothing to do". A bad cursor is a 400 rather than a silent restart (a paging loop would otherwise run for ever) and an over-large `limit` is a 422 rather than a clamp |
-| Ops | `GET /api/health`, `GET /api/audit` | |
+
+### People & work
+
+Who is asking, what they may do, and where the job is — see [`people-and-work.md`](people-and-work.md).
+
+| Group | Routes | Notes |
+|---|---|---|
+| Identity | `GET /session`, `GET/POST /users`, `PATCH /users/{id}`, `POST/DELETE /dev/identity` (dev only) | **Google holds the identity; a row here holds the capacity.** There is no password in this app and no session of ours: under `iap` a signed `X-Goog-IAP-JWT-Assertion` names the person before the request arrives, verified against Google's keys with the `aud` checked, because the plain header is spoofable by anything that reaches the service directly. `users` is a capacity assignment table — rows are created BY EMAIL before that person has ever signed in, and `subject` (Google's `sub`) binds on first arrival and is never used to FIND a row. A subject arriving on an address bound to a different one is `subject_mismatch`, refused and audited, because an admin reconciles that and the app must not hand the row to whoever holds the address today. **Every route in these tables carries the gate**: one app-level dependency refuses `no_identity` · `no_capacity` · `account_deactivated` · `subject_mismatch`, and returns early for an exempt list of three paths pinned by `tests/architecture/test_fitness.py`. `capacity_insufficient` is not the gate's — it comes from `require_admin` on the two user-admin writes. `GET /session` is the one that answers without a row, because the screen telling somebody to ask an admin has to name them to the admin they are about to ask. Signing out is a redirect to IAP's logout — revoking access is central and for every device at once, which the app could never promise; `active=False` is the local half that still refuses. `FENCEAI_BOOTSTRAP_ADMIN` admits the first admin and self-disables the moment one is ACTIVE — an admin row that has since been deactivated does not lock the variable out, so the address it names is a live re-entry path for as long as it stays set and no admin is active, which is why it is removed after the first deploy. The demo accounts are seeded ONLY under `dev`, which is what lets `FENCEAI_BOOTSTRAP_ADMIN` fire at all: an unconditional seed put an admin row in every fresh database before the first request arrived, leaving a real company's first admin with no way in. `POST`/`DELETE /dev/identity` are registered ONLY under `FENCEAI_IDENTITY=dev`, so under `iap` they do not exist to be found; it is an impersonation switch and is named as one. The static mount at `/` is a `Mount` rather than a route, so the gate never reaches it — which is what lets the refusal screen render itself in Hebrew for somebody the API refuses. `/openapi.json`, `/docs` and `/redoc` are off outside `dev` — FastAPI registers them as plain `Route`s, so the gate cannot reach them, and left on they hand the whole API surface to anybody who reaches the service |
+| Commands | `POST /projects/{id}/actions` | **One door.** Every change that MOVES a job — whose desk it is on, or what it commits to — is a named, typed, permission-checked row in `fenceai/commands/` rather than a route of its own (backoffice design §10). Field edits are deliberately NOT commands: typing an address is not one, and forcing it to be turns the design into ceremony. The row answers its questions before anything happens — may this capacity perform this kind · can this kind be performed at all · is the job in a status that allows it · does the payload type-check · does the precondition hold — and in that ORDER, so a refusal never leaks whether the job was in a state that would have allowed it. `command_wrong_state` is a 409 because it is a conflict with the job as it stands (somebody moved the folder while the screen was open); the rest are 403 (`command_not_permitted`, `command_not_performable`), 404 (`command_unknown`), 400 (`command_payload_invalid`), and `commit_plan`'s precondition (422 `run_not_on_this_job`, 409 topology · site · catalog). One check runs before `perform` and breaks the order: `assign_job`'s 422 `assignee_unknown`. This was the **first** gated route in the app: it 401s an anonymous caller, because a command names who did it and `system` is not somebody who may take a job. It is no longer the only one — identity is now checked for EVERY route by one app-level dependency (see the Identity row), which is what that sentence used to say and stopped being true the moment default-deny landed. What survives of it is the narrower claim, and it is still worth making: this door asks what a CAPACITY may do, and only two other routes do (`POST /users`, `PATCH /users/{id}`). Per-capacity authorization for the rest is a separate slice, deliberately — retrofitting it in the slice that introduces the mechanism is how a feature ran away here before, and ADR-0013 records the gap rather than implying it is closed. The table is shared with the agent — eleven kinds in all, ten desk rows and the agent's `select_choice_point`, registered with no capacities so every caller is refused — which keeps the SUBSET it may propose (`agent/registry.py::KINDS`) — a human pressing a button and an agent proposing one reach the same row, or the second implementation drifts and the drift is where an untraceable change comes from |
+| A salesperson's jobs | `GET /my-jobs` | Her home screen: the jobs HER account created (`Project.created_by`, written by `POST /projects` from the session and never from the body), each with a sales word for where it is — `draft · pending · needs_info · accepted · rejected`, folded from the eight job states by `lifecycle.sales_status` — and what the office has said about it: a count of notes written through another account, and the latest one verbatim. Pure over loaded projects (`queue.my_jobs`) and unpaged, because its per-row cost is a pass over one job's notes, not a handover sheet. A 401 without a session rather than an empty list, which would read as "you have no jobs". `POST /projects/{id}/annotations` stamps `created_at` and takes the author from the session — the body carries none — which is what lets this list tell the office's notes from hers |
+| The sales road | `GET /projects/{id}/handover` | The salesperson MVP's read model, and the odd one out among read models: it is derived from the PROJECT rather than from a run, deliberately, because by the time a `Strategy` exists the silent defaults (1800 mm height, `soil` base) have been applied and look decided — catching them before that is its whole point. It never 409s: a moved drawing is a new answer |
+| The queue | `GET /queue` | What should I work on next, or — in the finished bucket — what did we do. A SECOND route rather than a rebuild of `GET /projects`, which stays the picker's bare list of three fields: they answer different questions and want different rows, and folding them together meant changing the picker's envelope from a list to an object under five existing callers. Paged from the first commit, because the open-question count is DERIVED per row — free for twenty-five, unaffordable for an unbounded list, which is what would make "read models are derived, never stored" a rule nobody could keep. `assignee=me` is resolved HERE from the session: the pure half REFUSES the literal string, because matched as an id it returns an empty page reading as "you have nothing to do". A bad cursor is a 400 rather than a silent restart (a paging loop would otherwise run for ever) and an over-large `limit` is a 422 rather than a clamp |
+| The office road | `GET /projects/{id}/readiness` (resolves supply for step 5, and reports `supply_unknown` rather than refusing when the run cannot be priced) | What the OFFICE still has to do — the run-scoped sibling of `/handover`, and deliberately not folded into it. `/handover` is a pure function of the PROJECT and must stay one: that is what lets it catch the silent 1800 mm height before a strategy exists to make it look decided. These questions are about a run, so folding them in would drag a run into a function whose whole value is not needing one. The road reads both and GROUPS them; it never recounts, because three surfaces answering "what is left" and disagreeing is a defect this repo has already paid for. It reads the STORED run and loads no knowledge base — `readiness()` takes none, so there is nothing in scope to re-evaluate: re-running the evaluator would re-resolve to "current" (contract 3.2.1) and recompute a quantity in a read model (foundation §15). Nothing it returns is `blocking`, because contract 3.2.4 forbids failing a run over a gap and a step that stopped somebody generating would be the first thing worked around |
+| The office job screen | `GET /projects/{id}/sections`, `GET /projects/{id}/flags` | What each stretch of fence IS — length, what it stands on, the ground along it, whether anybody stated a height — as a pure function of the TOPOLOGY. The office opens a job it did not draw, and half of what it needs to understand exists the moment the salesperson stops drawing and long before `generate()` runs; `/structure` cannot answer any of it. It is the only per-stretch view here that **cannot go stale**: `/structure` and `/runs/{id}/sections/{id}/decisions` refuse with 409 `topology_changed` because they describe a stored run generated from a drawing that has since moved, while this describes the drawing — a moved drawing is a new answer, not a refusal, and a guard would lie about what the reader is looking at. A job with nothing drawn answers an empty list rather than a 404, because a job nobody has drawn is a real state the screen renders. It reports the SILENT DEFAULTS rather than blanking them: a run with no base event stands on `soil` and this says `soil`, because a blank reads as "nobody has looked" — the failure `/handover` exists to prevent, one surface further on. It carries no STEPS, and that omission is a decision: both step functions in `topology/station.py` take a `min_step_mm` whose value is knowledge rather than code (K-STEP-POST), so a read model picking one would hard-code a rule the knowledge base owns. The shape is a section fact; the judgement that a step is too big arrives after generation as `excessive_step` · `/flags` places what three other models already FOUND — the handover sheet, the office's readiness list, and the stored run's own warnings — so a mark can be drawn at the thing each one is about. It finds nothing itself. Until a finding can be drawn it is a line somebody scrolls past, which is how a review surface dies: the industry's cautionary tale is a dialog of a thousand unlinked warnings. Nothing is ever dropped — a scope this cannot place (`model:mfr/certainteed/rail` is a real one) lands on the job rather than vanishing, because a finding must not disappear over a formatting change nobody noticed. A `DocumentWarning` cannot reach it: `job_flags` takes no parameter one could arrive through, which makes contract §3.3.5 a signature rather than a filter somebody can delete. Severity comes from the SOURCE, never from a code table here — the rule that emitted it is the one with the reasoning behind it. Like `/sections` it never 409s: this is the screen that TELLS somebody the drawing moved (`plan_stale` is one of the items it carries), so refusing would hide the answer behind the problem it reports. A `run_id` naming another job's run is 422 `run_not_on_this_job`, the command door's refusal — not that the run does not exist, but that it is not this job's |
+| Ops | `GET /health`, `GET /audit` | `/health` is exempt from the gate and reports the interpreter id. `/audit` is readable by any active account |
+
+### AI & learning
+
+Every route that reaches an AI port or the learning loop — see [`ai-layer.md`](ai-layer.md).
+
+| Group | Routes | Notes |
+|---|---|---|
+| Annotations | `POST /projects/{id}/annotations[/{id}/interpret]`, `POST /projects/{id}/intents/{id}/confirm` | Verbatim in, proposals out. A note is also a people-plane fact (the sale, the office's question) — the author is always the session. `confirmed_by` on the confirm route is still taken from the body |
+| Learning | `GET/POST /projects/{id}/corrections`, `POST /projects/{id}/propose-knowledge`, `GET /candidates`, `POST /candidates/{id}/{v}/preview`, `POST /candidates/{id}/{v}/review` | Candidates are inert. The corrections GET filters by `decision_ref`/`element_ref`/`generation_run_id`, and a `decision_ref` without its run is 422 `decision_ref_needs_run`. No route here asks for a capacity — see [`ai-layer.md`](ai-layer.md) |
+| Run advice | `GET /runs/{id}/advice` | The one route onto `fenceai.agent` — no domain package may import it (`test_only_the_api_layer_imports_the_agent`); `ai/stub.py` implements its port. Runs `agent.tasks.RANK_CHOICE_SET` against an `AgentView` of the run through `agent.run.run_task`, and returns the checked `TaskResult` as-is: nothing is stored, nothing is generated. 409 `topology_changed` — the topology half of `/structure`'s guard, not the site half — since advice about a layout laid over an edited drawing is advice about a fence nobody drew (ADR-0009: no AI inside `generate()` — this reads a generation the user already asked for) |
 
 Two routes exist that look redundant and are not: `POST /fence-models/preview` takes
 an **unsaved** document in its body, while `POST /fence-models/{id}/{v}/preview`
@@ -186,18 +228,24 @@ route lets you filter by it: a ref means what it means only inside its own run.
 
 ## Refusals are typed, localized data
 
-Two exception types carry `code + params`; the English `message` is a fallback only.
+Refusals carry `code + params`; the English `message` is a fallback only. The
+staleness 409s are raised by the routes as `HTTPException(409, {"code": …})`; the
+rest are typed exceptions mapped at the edge:
 
 ```python
-ReadRefused(code="topology_changed", message="...", **params)   # → 409
-GenerationFailure(code="fence_model_unknown_sku", ...)          # → 422
+GenerationFailure(code="fence_model_unknown_sku", ...)   # → 422 (a hard tie: refs only, no code yet)
+RequestRefused(code="sku_not_eligible", ...)             # → 422
+ReadRefused(code="run_predates_fence_model", ...)        # → 400
+CommandRefused(code="command_wrong_state", ...)          # → 409; other command codes → 403/404/400
+SnapshotRefused(code="snapshot_id_mismatch")             # → 400
 ```
 
-A new code needs `warning.<code>` / `critique.<code>` / `error.<code>` entries in
-**both** locale bundles, and `tests/web/test_locale_bundles.py` enforces it — it
-scans `api/app.py` and both `code="..."` spellings, which immediately caught four
-codes shipping untranslated, including two 409s a user meets whenever they edit a
-catalog or a drawing.
+A new code needs `warning.<code>` / `critique.<code>` / `error.<code>` (or
+`handover.` / `readiness.` / `sourcewarning.`) entries in **both** locale bundles,
+and `tests/web/test_locale_bundles.py` enforces it — it scans `api/app.py`, the
+emitting modules and every `*CODES` table for both `code="..."` spellings, which
+immediately caught four codes shipping untranslated, including two 409s a user meets
+whenever they edit a catalog or a drawing.
 
 **Warnings carry structure, not sentences.** `js/warnings.js` owns the single
 `code + params` → sentence path, so a bay is named by its structure-report tag rather
@@ -208,6 +256,7 @@ than by an id the server happened to interpolate.
 | The drawing moved under a stored run | 409 `topology_changed` |
 | The SITE moved under a stored run | 409 `site_conditions_changed` |
 | A product this run bought was repriced | 409 `catalog_changed` |
+| The catalog's capability schema moved | 409 `catalog_schema_changed` |
 | Nothing in the catalog can supply a slot | warning `no_eligible_item` + `unresolved` line |
 | Candidates were tried and none fits | warning `no_feasible_item` |
 | A part could not be measured at all | **error** `panel_length_unresolved` |
@@ -234,7 +283,7 @@ is safer for `min_rail_separation_mm`.
 
 ## Persistence
 
-Fourteen tables — thirteen document stores plus the append-only `audit_log`. Documents are
+Fourteen tables — twelve document stores, the one-row `active_snapshot` pointer, and the append-only `audit_log`. Documents are
 stored as JSON `doc` columns; the schema holds only what is queried or ordered by.
 
 ```sql
@@ -253,6 +302,16 @@ active_snapshot(only_row, snapshot_id)                -- CHECK (only_row = 1)
 audit_log(seq, at, actor, action, ref)
 users(id, email, doc)                                 -- email UNIQUE
 ```
+
+| Table | Plane |
+|---|---|
+| `projects` | all three — engine inputs, job fields, notes and their interpretations |
+| `knowledge_versions` | engine (authored rules); AI & learning owns the `proposed` candidates |
+| `fence_models`, `parts`, `catalogs`, `inventories` | engine reference data |
+| `generation_runs`, `supply_runs`, `quotes` | engine results |
+| `knowledge_snapshots`, `active_snapshot` | engine — the published document from fence-rag |
+| `corrections` | AI & learning |
+| `users`, `audit_log` | people & work |
 
 **`email` is UNIQUE and `User.email` normalises.** It is what somebody signs in with, so
 two rows answering one address is a lookup with no right answer. Normalisation lives on
@@ -298,10 +357,13 @@ and is legitimately different tomorrow. One design has many supply runs, and a
 and idempotent by digest — the id IS the content, so `ON CONFLICT DO NOTHING` means a
 repeated read of an unchanged yard writes nothing.
 
-**Versioned rows are append-only.** A knowledge version and a published fence-model
-version are never updated in place; `DELETE` on a fence model is refused **in the
-store** for a published version, because an immutable document any route could delete
-is not immutable.
+**Versioned content is append-only; status is not.** A knowledge version, a
+published fence-model version and a part version never change content — an edit is a
+new version — while their `status` moves along a fixed set of transitions
+(`draft → active → retired`, `proposed → retired | rejected`). Drafts are the
+exception by design: a fence-model or part draft is upserted in place until it is
+published. `DELETE` on a fence model is refused **in the store** for anything but a
+draft, because an immutable document any route could delete is not immutable.
 
 **The store is serialized** (ADR-0008, and unchanged by ADR-0012). `Store` holds one
 connection — a `sqlite3.Connection` opened `check_same_thread=False`, or one psycopg
@@ -334,10 +396,12 @@ the smoke suite is a release gate and not a nicety.
 
 | Tier | Command | What it is for |
 |---|---|---|
-| Unit + integration | `uv run pytest -q` | ~1045 tests over pure functions and routes |
-| Golden scenarios | `uv run pytest tests/scenarios -q` | 155 scenarios — the behavioural contract, ⇄ `docs/scenarios/golden-scenarios.md` |
+| Unit + integration | `uv run pytest -q` | Pure functions and routes, plus the architecture fitness tests that read this document |
+| Golden scenarios | `uv run pytest tests/scenarios -q` | The behavioural contract, ⇄ `docs/scenarios/golden-scenarios.md`; the release gate |
+| Postgres | `FENCEAI_TEST_POSTGRES=<dsn> uv run pytest -q` | The same suite against the second dialect (ADR-0012); CI provides the database |
+| Container | `FENCEAI_TEST_DOCKER=1 uv run pytest tests/deploy -q` | Builds the image and runs it |
 | Compatibility gate | committed per-fixture requirement lines + BOM as JSON | Proves a refactor changed no number |
-| Browser smoke | `uv run --with websocket-client python tools/ui_smoke.py` | 159 CDP-driven checks; the only tier that sees concurrency and rendering |
+| Browser smoke | `uv run --with websocket-client python tools/ui_smoke.py` | CDP-driven checks (`plan/current-status.md` records the latest count); the only tier that sees concurrency and rendering |
 
 **Mutation is the standard, not coverage.** The recurring failure mode in this
 codebase is a green suite over a broken feature — a vacuous assertion
