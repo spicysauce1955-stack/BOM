@@ -58,6 +58,7 @@ from pydantic import BaseModel
 from fenceai.core.units import Mm
 from fenceai.report.handover import uncovered_mm
 from fenceai.topology.model import Run, Topology
+from fenceai.topology.naming import section_tag  # noqa: F401 — re-export
 from fenceai.topology.station import (
     anchor_station,
     base_surface_at,
@@ -77,31 +78,8 @@ from fenceai.topology.station import (
 #: supposed to stand for.
 DEFAULT_SURFACE = "soil"
 
-#: A, B, … Z, AA, AB … Sections are NAMED, not numbered, so a bay tag (B3) never
-#: reads like a section tag.
-#:
-#: It lives here rather than in `structure.py` — where it was first written —
-#: because this is the more primitive of the two models: it answers from the
-#: topology alone, while the structure report needs a generated strategy. The
-#: dependency has to run that way round or the two import each other.
-_SECTION_TAGS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-
-def section_tag(index: int) -> str:
-    """The letter for the n-th stretch of a drawing.
-
-    **One implementation, because two read models letter sections.** This one
-    answers before anything is generated; `structure.py` answers after. Two
-    private copies would agree on every job anybody has drawn and disagree on
-    the twenty-seventh run.
-    """
-    tag = ""
-    n = index
-    while True:
-        tag = _SECTION_TAGS[n % 26] + tag
-        n = n // 26 - 1
-        if n < 0:
-            return tag
+# The section letter lives in `topology/naming.py` and is re-exported here,
+# where `report.structure` and every older caller already import it from.
 
 
 #: What `base_surface` says when a stretch genuinely has more than one. The same

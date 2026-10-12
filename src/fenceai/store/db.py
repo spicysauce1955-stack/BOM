@@ -25,6 +25,7 @@ from fenceai.knowledge.snapshot import Snapshot, ingest
 from fenceai.learning.model import Correction
 from fenceai.parts.model import Part, PartLibrary
 from fenceai.fulfillment.supply_run import SupplyRun
+from fenceai.project.changes import diff_project, unreadable
 from fenceai.project.model import Project
 from fenceai.identity.model import User, would_strand_the_admins
 from fenceai.store.dialect import Conn
@@ -32,6 +33,15 @@ from fenceai.strategy.model import GenerationResult
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, doc TEXT NOT NULL);
+-- What changed in a job, one row per save that changed something
+-- (`project/changes.py`). Written by `save_project` and nothing else: the row
+-- before a save is overwritten BY that save, so the moment both documents exist
+-- is the only moment the difference can be taken. `doc` is the list of changes.
+CREATE TABLE IF NOT EXISTS project_changes (
+    seq __SERIAL_PK__, project_id TEXT NOT NULL, at TEXT NOT NULL,
+    actor TEXT NOT NULL, doc TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS project_changes_by_project
+    ON project_changes (project_id, seq);
 CREATE TABLE IF NOT EXISTS knowledge_versions (
     object_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
     doc TEXT NOT NULL, PRIMARY KEY (object_id, version));
@@ -181,13 +191,60 @@ class Store:
     # -- projects -------------------------------------------------------------
 
     def save_project(self, project: Project, actor: str = "system") -> None:
-        self._conn.execute(
-            "INSERT INTO projects (id, doc) VALUES (?,?) "
-            "ON CONFLICT(id) DO UPDATE SET doc=excluded.doc",
-            (project.id, project.model_dump_json()),
-        )
-        self._audit(actor, "save_project", project.id)
-        self._conn.commit()
+        """Write the job, its audit row and — when the save changed something —
+        one change entry, in one commit.
+
+        The change entry is taken HERE, against the stored document, rather than
+        by each route: there are sixteen routes that save a job and the next one
+        will not remember to log. Loading the stored row rather than trusting a
+        caller's "before" is the same choice — the store is the only party that
+        knows what was actually there.
+        """
+        row = self._conn.execute(
+            "SELECT doc FROM projects WHERE id=?", (project.id,)).fetchone()
+        # A defect in the diff must not stop anybody saving a customer's job:
+        # the save goes ahead and the entry says the job changed and when, with
+        # the details marked as unreadable. Deliberately broad — this is the one
+        # caller, and what is caught is our bug, never the user's input.
+        try:
+            before = Project.model_validate_json(row[0]) if row else None
+            changes = diff_project(before, project)
+        except Exception:
+            changes = unreadable()
+        # ONE commit, or none. The job row overwrites the value an edit replaced,
+        # and the change row is the only place that value survives — a job
+        # committed without its change row has lost it for good, which is the
+        # one loss this table exists to prevent. Rolled back on ANY failure, as
+        # `replace_active_version` is, so nothing half-written waits for some
+        # later call's commit to land it.
+        try:
+            self._conn.execute(
+                "INSERT INTO projects (id, doc) VALUES (?,?) "
+                "ON CONFLICT(id) DO UPDATE SET doc=excluded.doc",
+                (project.id, project.model_dump_json()),
+            )
+            self._audit(actor, "save_project", project.id)
+            if changes:
+                self._conn.execute(
+                    "INSERT INTO project_changes (project_id, at, actor, doc) "
+                    "VALUES (?,?,?,?)",
+                    (project.id, _now(), actor,
+                     json.dumps([c.model_dump(mode="json") for c in changes])),
+                )
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+    def project_changes(self, project_id: str, limit: int = 200) -> list[dict]:
+        """One job's change entries, newest first."""
+        rows = self._conn.execute(
+            "SELECT seq, at, actor, doc FROM project_changes WHERE project_id=? "
+            "ORDER BY seq DESC LIMIT ?",
+            (project_id, limit),
+        ).fetchall()
+        return [{"seq": r[0], "at": r[1], "actor": r[2], "changes": json.loads(r[3])}
+                for r in rows]
 
     def load_project(self, project_id: str) -> Project | None:
         row = self._conn.execute(

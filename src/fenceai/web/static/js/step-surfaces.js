@@ -120,8 +120,10 @@ const STEP_PANELS = {
     notes: ["#notes-panel"],
     // The notes, because what the office asked is read here beside the map it
     // was pinned on, and `#finish-job` — send it, or go back to her jobs.
+    // `#change-log` — what the office changed in her work, read where she
+    // checks the job over (the owner's "log it": she is not told, she can look).
     review: ["#handover-panel", "#warnings", "#site-conditions", "#notes-panel",
-             "#finish-job"],
+             "#finish-job", "#change-log"],
   },
   backoffice: {
     // `#handover-panel` is scoped to this road and kept by NO step. It renders
@@ -133,7 +135,8 @@ const STEP_PANELS = {
     // band is the office's answer, so the panel is not on this road at all.
     // `#desk-actions` — send the job back to the salesperson with a question —
     // on the two steps where the office finds out something is missing.
-    sale: ["#notes-panel", "#desk-actions"],
+    // `#change-log` — the sale as it was entered, and every change since.
+    sale: ["#notes-panel", "#desk-actions", "#change-log"],
     blanks: ["#run-editing-panel", "#profile", "#notes-panel", "#desk-actions"],
     questions: ["#choices"],
     // `#site-conditions` rides here as a COLLAPSED disclosure rather than a step

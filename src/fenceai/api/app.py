@@ -74,6 +74,7 @@ from fenceai.report.flags import job_flags
 from fenceai.report.handover import handover_gaps
 from fenceai.report.readiness import readiness
 from fenceai.report.sections import section_facts
+from fenceai.project.changes import reletter
 from fenceai.project.model import (
     Annotation, Job, Project, Selection, SiteConditions, SiteContext, Stated,
 )
@@ -976,6 +977,34 @@ def _queue_row(row) -> dict:
 @app.get("/api/projects/{project_id}")
 def get_project(project_id: str) -> Project:
     return _project(project_id)
+
+
+@app.get("/api/projects/{project_id}/changes")
+def get_project_changes(project_id: str, limit: int = 200) -> dict:
+    """What changed in this job, newest first, and who changed it.
+
+    Names are resolved HERE, at read time, and never stored: a row says
+    `user:u_yossi`, which cannot change, and the screen reads the name that
+    account carries today. Accounts are deactivated rather than deleted, so a
+    person who has left still resolves. A person mentioned INSIDE a change — the
+    new assignee — is resolved the same way, by bare id.
+    """
+    project = _project(project_id)  # 404 for a job that does not exist, not []
+    entries = state.store.project_changes(project_id, limit=max(1, min(limit, 1000)))
+    # Sections too: a stored letter is a position, and deleting an earlier
+    # section re-letters every later one. Each change carries its run id, so
+    # it is named by the drawing as it is now (`changes.reletter`).
+    for entry in entries:
+        entry["changes"] = reletter(entry["changes"], project.topology)
+    mentioned = {e["actor"] for e in entries} | {
+        str(v) for e in entries for c in e["changes"] if c["code"] == "assignee_changed"
+        for v in (c["params"].get("from_person"), c["params"].get("to_person")) if v}
+    names: dict[str, str] = {}
+    for user in state.store.list_users():
+        for ref in (actor_ref(user), user.id):
+            if ref in mentioned:
+                names[ref] = user.name
+    return {"entries": entries, "names": names}
 
 
 @app.put("/api/projects/{project_id}/site")
