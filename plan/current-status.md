@@ -3,6 +3,42 @@
 > **Start here.** This section is the handoff. Everything below it is history in
 > reverse order.
 
+## Checkpoint — 2026-10-12: the architecture docs match the code, in three planes
+
+Docs only; no code changed. Every file in `docs/architecture/` was audited against
+trunk `a204929` and rewritten where it had drifted — the map had been describing a
+47-route, 8-table, password-login system with `RequirementLine`, and the code has 74
+routes (76 under `dev`), 14 tables, Google-delegated identity, `DemandLine` →
+`ResolvedSupplyLine`, `SupplyRun`, quotes, the job lifecycle and the agent.
+
+**The docs now read the system as three planes** — Engine, People & work, AI &
+learning — and every package, entity, flow, route table and frontend module says
+which it belongs to (`00-overview.md` §Three planes). New:
+`docs/architecture/people-and-work.md`; `ai-layer.md` is now the AI plane's
+deep-dive. The one rule between the planes, *AI output reaches the engine only
+through a person*, is stated with the fitness tests that hold it.
+
+Full suite at this commit, with CI's extras: **3622 passed, 421 skipped**, 0 failed (SQLite; the Postgres half skips without
+`FENCEAI_TEST_POSTGRES` here).
+
+**Loose ends the audit found in the code, recorded rather than fixed** (each is
+written up where it lives in the docs):
+
+- No command moves a job to `quoted` or `delivered`; both states are unreachable.
+- Per-capacity authorization exists only at `/actions` and user admin (ADR-0013's
+  next slice) — any active account may generate, approve a rule or read the audit log.
+- `POST /intents/{id}/confirm` still takes `confirmed_by` from the body.
+- `assign_job`'s assignee check runs before the capacity check.
+- The impact preview regenerates without the project's answered choice sets, and
+  rebuilds the knowledge base without its `declined` bounds — so with a snapshot
+  loaded, "before" and "after" differ by more than the rule under review.
+- Undo after confirming an intent erases the materialised event while the intent
+  stays `confirmed` (`tabs.js` confirms without `pushSnapshot`).
+- `propose-knowledge` stores whatever the proposer returns; candidates are inert only
+  because the stub writes `status="proposed"`, `type="candidate"`.
+- The package graph has one 14-package cycle at package level (file level is
+  acyclic); `01-domains.md` lists the eleven edges that close it.
+
 ## Checkpoint — 2026-09-23: post-merge review closes nine findings, one fix wave
 
 A whole-branch review followed the checkpoint below, and a single fix wave
