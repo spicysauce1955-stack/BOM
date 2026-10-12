@@ -101,6 +101,7 @@ a note is attached by clicking the drawing, and `tabs.js` borrows its
 | `section-materials.js` | Cut pieces per stretch for an office job card — never money or bars, which are pooled across the job. Drawn only for `job-screen.js`. | — |
 | `animate.js` | Import-free: the assembly film's build order and clock. | — |
 | `base-top.js` | Import-free: base-top profile transforms (height, level, match, step). | — |
+| `intervals.js` | Import-free: `carveInterval` — a new interval takes its stretch from older ones of its kind (trimmed, split, or dropped). The height tool's replace; the generator reads the FIRST covering height. | — |
 | `condition-sentence.js` | Import-free: a variant condition `Expr` ⇄ a sentence. | — |
 | `gate-geom.js` | Import-free: gate opening, leaf, arc, slide, `swingOptions`. | — |
 | `joint.js` | Import-free: joint-section geometry from a `JointDetail`. | — |
@@ -136,6 +137,8 @@ navigate (`desk-actions`, `my-jobs`, `queue`, `road`) import `tabs.js` for `setT
 | `job-screen.js` † | The office's reading surface `#job-screen`: the read/edit switch, layer rail, flags list, a card per stretch. | GET `P/sections`, `P/flags`, `R/bom`, `R/structure` |
 | `flag-marks.js` | Draws `report/flags.py`'s placements as `!` / `?` glyphs in `#g-flags`; never invents a place. Used only by `job-screen.js`. | — |
 | `notes.js` † | Notes on the drawing: `#notes-panel`, `#g-notes`, the write popover, `isFromOffice`, `targetLabel`. | POST `P/annotations` |
+| `change-log.js` | The job's history `#change-log`: a closed `<details>`, fetched only while open; refreshed on `project-loaded`, `context-changed`, `job-changed`. Kept by the office's reading mode and step `sale`, and the sales step `review`. | GET `P/changes` |
+| `change-text.js` | One change as a sentence: `change.<code>`, words looked up (states, surfaces, landmarks, areas), people named from the route's map, lengths in the reader's unit. Node-tested. | — |
 
 ### AI & learning
 

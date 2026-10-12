@@ -236,6 +236,12 @@ why, and what would end each deferral.
   architecture reserves the port; ADR-0009).
 - **Claude adapter untested against the live API** in this environment (no key);
   contract tests cover the wire schema and fallback behavior.
+- **A confirmed height intent is appended, not carved.**
+  `project/intents.py: confirm_intent` adds the height over the whole section and
+  removes nothing, and the generator reads the FIRST height covering a station — so a
+  confirmed height over a stated one is not built. The height TOOL was fixed for the
+  same defect (`js/intervals.js`, 2026-10-12); this path is the AI plane, which the
+  owner set aside. **Trigger:** switching the interpreter on for real jobs.
 
 ## Platform
 

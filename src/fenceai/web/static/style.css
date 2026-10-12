@@ -907,6 +907,7 @@ html[data-view="backoffice"] #btn-my-jobs { display: none; }
 
 /* --- 1 the job: a form, not a drawing — keep only the job panel --- */
 html[data-step="job"] #tool-house,
+html[data-step="job"] #change-log,
 html[data-step="job"] #tool-street,
 html[data-step="job"] #tool-other,
 html[data-step="job"] #context-panel,
@@ -932,6 +933,7 @@ html[data-step="job"] #site-conditions { display: none; }
 
 /* --- 2 the property: everything on the plot that is NOT the fence --- */
 html[data-step="property"] #job-panel,
+html[data-step="property"] #change-log,
 html[data-step="property"] #tool-draw,
 html[data-step="property"] #tool-ground,
 html[data-step="property"] #tool-base,
@@ -950,6 +952,7 @@ html[data-step="property"] #site-conditions { display: none; }
 
 /* --- 3 the layout: the fence in plan, drawn to measured lengths --- */
 html[data-step="layout"] #job-panel,
+html[data-step="layout"] #change-log,
 html[data-step="layout"] #tool-house,
 html[data-step="layout"] #tool-street,
 html[data-step="layout"] #tool-other,
@@ -971,6 +974,7 @@ html[data-step="layout"] #site-conditions { display: none; }
 
 /* --- 4 the side view: ground, base and height along each stretch --- */
 html[data-step="sideview"] #job-panel,
+html[data-step="sideview"] #change-log,
 html[data-step="sideview"] #tool-house,
 html[data-step="sideview"] #tool-street,
 html[data-step="sideview"] #tool-other,
@@ -988,6 +992,7 @@ html[data-step="sideview"] #site-conditions { display: none; }
 
 /* --- 5 which fence: the model this fence is built to, and the picker for it --- */
 html[data-step="model"] #job-panel,
+html[data-step="model"] #change-log,
 html[data-step="model"] #tool-house,
 html[data-step="model"] #tool-street,
 html[data-step="model"] #tool-other,
@@ -1008,6 +1013,7 @@ html[data-step="model"] #site-conditions { display: none; }
 
 /* --- 6 gates & openings: which gate, then where and how wide --- */
 html[data-step="gates"] #job-panel,
+html[data-step="gates"] #change-log,
 html[data-step="gates"] #tool-house,
 html[data-step="gates"] #tool-street,
 html[data-step="gates"] #tool-other,
@@ -1027,6 +1033,7 @@ html[data-step="gates"] #site-conditions { display: none; }
 
 /* --- 7 notes & promises: attached by clicking the thing on the drawing --- */
 html[data-step="notes"] #job-panel,
+html[data-step="notes"] #change-log,
 html[data-step="notes"] #tool-house,
 html[data-step="notes"] #tool-street,
 html[data-step="notes"] #tool-other,
@@ -1243,12 +1250,14 @@ html[dir="rtl"] .actions-list li::before { content: "←"; }
    list exists twice and `test_the_two_copies_are_equal` checks them for
    EQUALITY rather than overlap. Generated from the module, never by hand. */
 html[data-step="blanks"] #choices,
+html[data-step="blanks"] #change-log,
 html[data-step="blanks"] #inspector,
 html[data-step="blanks"] #override-list,
 html[data-step="blanks"] #site-conditions,
 html[data-step="blanks"] #tool-pin,
 html[data-step="blanks"] #warnings { display: none; }
 html[data-step="generate"] #choices,
+html[data-step="generate"] #change-log,
 html[data-step="generate"] #notes-panel,
 html[data-step="generate"] #profile,
 html[data-step="generate"] #run-editing-panel,
@@ -1258,6 +1267,7 @@ html[data-step="generate"] #tool-ground,
 html[data-step="generate"] #tool-height,
 html[data-step="generate"] #tool-model { display: none; }
 html[data-step="materials"] #canvas,
+html[data-step="materials"] #change-log,
 html[data-step="materials"] #choices,
 html[data-step="materials"] #generate-toolbar,
 html[data-step="materials"] #inspector,
@@ -1276,6 +1286,7 @@ html[data-step="materials"] #tool-model,
 html[data-step="materials"] #tool-pin,
 html[data-step="materials"] #warnings { display: none; }
 html[data-step="plan"] #canvas,
+html[data-step="plan"] #change-log,
 html[data-step="plan"] #choices,
 html[data-step="plan"] #generate-toolbar,
 html[data-step="plan"] #inspector,
@@ -1294,6 +1305,7 @@ html[data-step="plan"] #tool-model,
 html[data-step="plan"] #tool-pin,
 html[data-step="plan"] #warnings { display: none; }
 html[data-step="price"] #canvas,
+html[data-step="price"] #change-log,
 html[data-step="price"] #choices,
 html[data-step="price"] #generate-toolbar,
 html[data-step="price"] #inspector,
@@ -1312,6 +1324,7 @@ html[data-step="price"] #tool-model,
 html[data-step="price"] #tool-pin,
 html[data-step="price"] #warnings { display: none; }
 html[data-step="questions"] #generate-toolbar,
+html[data-step="questions"] #change-log,
 html[data-step="questions"] #inspector,
 html[data-step="questions"] #notes-panel,
 html[data-step="questions"] #override-list,
@@ -1491,7 +1504,7 @@ html[data-step="sideview"] #desk-actions-plan { display: none; }
 html[data-jobmode="read"] #road,
 html[data-jobmode="read"] #toolbar,
 html[data-jobmode="read"] #profile-base-bar,
-html[data-jobmode="read"] .side-col > *:not(#job-screen) { display: none; }
+html[data-jobmode="read"] .side-col > *:not(#job-screen):not(#change-log) { display: none; }
 
 /* `#job-panel` is NOT in the side column — `js/job.js` mounts it into
    `.canvas-col` ("this job" is not a side note), so the rule above never
@@ -1505,6 +1518,12 @@ html[data-jobmode="read"] .side-col > *:not(#job-screen) { display: none; }
    edits to her work — reading mode is about not changing the drawing, not
    about being unable to do the job. */
 html[data-jobmode="read"] #job-panel { display: none; }
+
+/* `#change-log` STAYS while reading, beside the screen, for `#desk-actions`'
+   reason: reading the job's history is reading, not editing. The office opens a
+   job somebody else drew, and "what changed in it since she sent it" is part of
+   understanding it (docs/superpowers/specs/2026-10-12-office-desk-without-ai-
+   design.md). */
 
 /* What was sold, read-only, where the form used to be. */
 .job-sale { border: 1px solid #d4dae2; border-radius: 6px; padding: 8px 10px;
@@ -1654,3 +1673,20 @@ button.job-card-tag { background: none; border: 0; padding: 0; cursor: pointer;
    same way without implying the row itself is inactive. */
 #tab-people tr.inactive { opacity: 0.55; }
 .muted { color: #94a3b8; font-size: 12px; }
+
+/* ============================================================================
+   The job's history — js/change-log.js. A closed disclosure by default; a
+   status change draws the line across the list that the handover is.
+   Logical properties only, so the list mirrors in RTL like every other.
+   ========================================================================= */
+#change-log > summary { list-style: none; }
+#change-log > summary::-webkit-details-marker { display: none; }
+#change-log > summary h3 { display: inline; margin: 0; }
+#change-log > summary h3::before { content: "▸ "; color: #6b7684; }
+#change-log[open] > summary h3::before { content: "▾ "; }
+#change-log .change-hint { margin-block: 6px; font-size: 12px; }
+.change-entries, .change-lines { list-style: none; margin: 0; padding: 0; }
+.change-entry { padding-block: 6px; border-block-start: 1px solid #e3e7ec; }
+.change-entry.milestone { border-block-start: 2px solid #2f6fb0; }
+.change-who { font-size: 12px; color: #5b6573; }
+.change-line { font-size: 13px; margin-block-start: 2px; }

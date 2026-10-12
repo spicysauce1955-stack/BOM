@@ -2547,6 +2547,15 @@ by `Store.log` from routes, and read back as plain dicts by `Store.audit_entries
 `amend_capacity`, `identity_bound`, `subject_mismatch`, `bootstrap_admin`), or
 `command:<kind>` for a desk command, whose `ref` is `<project_id>|<origin>`.
 
+**A job's history is a second table beside it, with a model.** `project_changes`
+rows are `(seq, project_id, at, actor, doc)`, where `doc` is a list of
+`project/changes.py: Change(code, params)` — the difference between the stored job
+and the one being saved, taken inside `Store.save_project` and nowhere else. An
+audit row says *who saved*; a change entry says *what changed, from what, to what*.
+Both are written by every job save that changes something; only the audit row is
+written by one that changes nothing. Read by `Store.project_changes`
+(`GET /api/projects/{id}/changes`). See [`people-and-work.md`](people-and-work.md#a-jobs-history).
+
 ## The job
 
 `src/fenceai/project/model.py`, `project/lifecycle.py`, `src/fenceai/commands/model.py`, `commands/desk.py`

@@ -12,12 +12,14 @@ the three planes and the seams between them.
 | Where a job is | `project/lifecycle.py` (states, transitions) · `project/model.py` (the job fields) |
 | What each desk is shown | `project/queue.py` · `report/handover.py` · `report/readiness.py` · `report/flags.py` |
 | What happened, and who did it | `audit_log` via `Store.log` |
+| What changed in a job, from what, to what | `project/changes.py` → `project_changes`, written by `Store.save_project` |
 | The two roads | `web/static/js/roads.js` (data) · `road.js` · `desk-actions.js` · `my-jobs.js` · `queue.js` |
 
 Decision: ADR-0013 (identity is delegated). Specs under
 `docs/superpowers/specs/`: `2026-09-17-identity-is-googles-design.md`,
 `2026-09-15-backoffice-design.md`, `2026-09-06-salesperson-road-design.md`,
-`2026-09-07-eight-step-road-design.md`, `2026-09-16-office-job-screen-design.md`.
+`2026-09-07-eight-step-road-design.md`, `2026-09-16-office-job-screen-design.md`,
+`2026-10-12-office-desk-without-ai-design.md`.
 
 ---
 
@@ -209,6 +211,46 @@ because they are pure functions — the plane is about whom they serve, not wher
 code sits.
 
 ---
+
+## A job's history
+
+The office may change what the salesperson entered, and the owner's answer to what
+happens then is **log it** — no approval, no notification
+(`2026-10-12-office-desk-without-ai-design.md`). `audit_log` cannot be that log: it
+says *who saved*, and the job is one row each save overwrites, so the value before
+an edit is gone the moment it lands.
+
+**One door.** `Store.save_project` loads the stored document, calls
+`project/changes.py: diff_project(before, after)`, and writes the job, its audit row
+and — when the diff is non-empty — one `project_changes` row, in one commit. Every
+route that saves a job goes through it, so a route added later is logged without
+remembering to log. A save that changes nothing writes no change row; a revision
+bump alone is a save, not a change.
+
+**Platform text.** A change is `code + params` with a `change.<code>` sentence in
+both bundles (`CHANGE_CODES`). Sections are named by letter (`section_tag`), lengths
+travel as `…_mm`, and the before-value lives in the entry. Events match by id; a
+removal and an addition of one kind on one section in one save read as one change
+from the old value to the new.
+
+**Nothing changes silently.** Every `Project` field belongs to exactly one area
+(`AREAS`); an area that differs with nothing named gets `area_changed`, a section
+that differs in something the vocabulary does not read gets `section_changed`.
+Tests hold both: a field added to `Project` fails until it is placed.
+
+**Names at read time.** `GET /projects/{id}/changes` resolves `user:<id>` actors and
+the bare ids a change is about (an assignee) from `users`; nothing stores a name.
+
+| Construct | How it relates to a change entry |
+|---|---|
+| `audit_log` | Every store write, installation-wide, an action name — for an operator. A change entry is per job and says what changed — for the people on the job. Both are written by a job save. |
+| `topology.revision` | A save counter for staleness checks. Ignored by the diff. |
+| undo / redo | The browser's stack. An undo PUTs a new revision, so it is logged as a change back. |
+| desk commands | A command's effect on `status`, `assignee`, `committed_run_id` is a change like any other. The handover is the `drafting → waiting` entry. |
+
+On screen: `#change-log` (`js/change-log.js`, sentences in `js/change-text.js`) — the
+office while reading a job and on step 1, the salesperson on her review step, the
+admin everywhere. Fetched only while open.
 
 ## The seams
 

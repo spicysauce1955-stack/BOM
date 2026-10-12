@@ -14,6 +14,7 @@ import {
 import { pushSnapshot, redo, undo } from "./history.js";
 import { currentLocale, t } from "./i18n.js";
 import { inspect } from "./inspector.js";
+import { carveInterval } from "./intervals.js";
 import {
   clearDraft as clearContextDraft, landmarkAt, landmarkAtAny, landmarkById,
   nextLandmarkId, render as renderContext, renderDraft as renderContextDraft,
@@ -1241,6 +1242,16 @@ async function openEventPopover(tool, runId, station, clientX, clientY) {
         }, station);
       }
     } else if (tool === "height") {
+      // The new height takes its stretch from any older one, rather than
+      // landing behind it: the generator builds the FIRST height covering a
+      // station, so an appended height over an older one was never built
+      // (js/intervals.js). The older height survives where this one stops.
+      run.interval_events = carveInterval(
+        run.interval_events, "height_intent", values["pop-start"], values["pop-end"], {
+          stationOf: (anchor) => stationOfAnchor(run, anchor),
+          anchorAt: (station) => anchorFor(runId, station),
+          newId: () => `ev${Date.now()}_${state.evSeq++}`,
+        });
       addIntervalEvent(runId, {
         kind: "height_intent", height_mm: values["pop-height"], source: "user",
       }, values["pop-start"], values["pop-end"]);

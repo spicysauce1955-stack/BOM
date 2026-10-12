@@ -34,6 +34,7 @@ import { initQueue } from "./js/queue.js";
 import { initMyJobs } from "./js/my-jobs.js";
 import { initDeskActions } from "./js/desk-actions.js";
 import { initJobScreen } from "./js/job-screen.js";
+import { initChangeLog } from "./js/change-log.js";
 import { initPeople } from "./js/people.js";
 import { initUnits, toggleUnits, updateUnitsButton } from "./js/units.js";
 
@@ -203,6 +204,7 @@ async function main() {
   initEvidence();
   initAgentAdvice();
   initPeople();
+  initChangeLog();
   setupHeader();
   setupUndoButtons();
   // Last: `signed-in` opens the workspace, so every panel must already be
